@@ -8,10 +8,10 @@ type Params = Promise<{ id: string }>;
 
 export async function GET(req: Request, { params }: { params: Params }) {
   const { id } = await params;
-  return proxyToFastAPI(req, `/conversations/${id}/references`);
+  return proxyToFastAPI(req, `/conversations/${id}/context-refs`);
 }
 
 export async function POST(req: Request, { params }: { params: Params }) {
   const { id } = await params;
-  return proxyToFastAPI(req, `/conversations/${id}/references`);
+  return proxyToFastAPI(req, `/conversations/${id}/context-refs`);
 }

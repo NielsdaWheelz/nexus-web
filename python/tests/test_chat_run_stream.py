@@ -461,17 +461,17 @@ class TestChatRunEventStream:
     ):
         user_id = uuid4()
         run_id, conversation_id = _insert_terminal_run(direct_db, owner_user_id=user_id)
-        reference_id = uuid4()
-        resource_uri = f"chunk:{uuid4()}"
+        context_edge_id = uuid4()
+        resource_ref = f"content_chunk:{uuid4()}"
         created_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        # The ContextRefOut shape (resource provenance graph §5.1): id is the
+        # conversation context edge id.
         reference_payload = {
-            "reference_id": str(reference_id),
+            "id": str(context_edge_id),
             "conversation_id": str(conversation_id),
-            "resource_uri": resource_uri,
+            "resource_ref": resource_ref,
             "label": "Chunk evidence",
             "summary": "A cited chunk.",
-            "inline_body": "Quoted body.",
-            "fetch_hint": "inline",
             "missing": False,
             "created_at": created_at,
         }

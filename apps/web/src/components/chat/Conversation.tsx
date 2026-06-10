@@ -28,10 +28,8 @@ import {
 import { conversationResourceOptions } from "@/lib/actions/resourceActions";
 import { chatDraftKeyFor } from "@/lib/conversations/chatDraftKey";
 import { resolveObjectRefs } from "@/lib/objectRefs";
-import {
-  parseResourceUri,
-  resourceObjectTypeForScheme,
-} from "@/lib/resources/resourceKind";
+import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
+import { resourceObjectTypeForScheme } from "@/lib/resources/resourceKind";
 import { apiFetch } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
@@ -40,10 +38,8 @@ import {
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import type { SSEReferenceAddedEvent } from "@/lib/api/sse/events";
-import type {
-  BranchDraft,
-  ConversationReference,
-} from "@/lib/conversations/types";
+import type { ContextRefOut } from "@/lib/resourceGraph/contextRefs";
+import type { BranchDraft } from "@/lib/conversations/types";
 import {
   usePaneParam,
   usePaneRouter,
@@ -74,7 +70,7 @@ export default function Conversation() {
   // needs onReferenceAdded before that id exists — break the ordering cycle with
   // a stable callback that reads the live upsert/id through refs.
   const upsertReferenceRef = useRef<
-    ((reference: ConversationReference) => void) | null
+    ((reference: ContextRefOut) => void) | null
   >(null);
   const activeConversationIdRef = useRef<string | null>(conversationId);
 
@@ -82,17 +78,8 @@ export default function Conversation() {
     (data: SSEReferenceAddedEvent["data"]) => {
       const activeId = activeConversationIdRef.current;
       if (activeId !== null && data.conversation_id !== activeId) return;
-      upsertReferenceRef.current?.({
-        id: data.reference_id,
-        conversation_id: data.conversation_id,
-        resource_uri: data.resource_uri,
-        label: data.label,
-        summary: data.summary,
-        inline_body: data.inline_body,
-        fetch_hint: data.fetch_hint,
-        missing: data.missing,
-        created_at: data.created_at,
-      });
+      // The SSE payload is already a ContextRefOut (the materialized context edge).
+      upsertReferenceRef.current?.(data);
     },
     [],
   );
@@ -219,7 +206,7 @@ export default function Conversation() {
 
   const handleOpenResource = useCallback(
     async (uri: string) => {
-      const parsed = parseResourceUri(uri);
+      const parsed = parseResourceRef(uri);
       if (!parsed) return;
       if (parsed.scheme === "library") {
         openInNewPane?.(`/libraries/${parsed.id}`);

@@ -365,10 +365,10 @@ def note_block_sibling_sort_key(block: NoteBlock) -> tuple[str, datetime, UUID]:
     return (block.order_key, block.created_at, block.id)
 
 
-class ObjectLink(Base):
-    """User-owned relationship between two typed object refs."""
+class ResourceEdge(Base):
+    """One directed connection between two ResourceRefs in the provenance graph."""
 
-    __tablename__ = "object_links"
+    __tablename__ = "resource_edges"
 
     id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
@@ -380,31 +380,22 @@ class ObjectLink(Base):
         ForeignKey("users.id"),
         nullable=False,
     )
-    relation_type: Mapped[str] = mapped_column(Text, nullable=False)
-    a_type: Mapped[str] = mapped_column(Text, nullable=False)
-    a_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
-    b_type: Mapped[str] = mapped_column(Text, nullable=False)
-    b_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
-    a_order_key: Mapped[str | None] = mapped_column(Text, nullable=True)
-    b_order_key: Mapped[str | None] = mapped_column(Text, nullable=True)
-    a_locator_json: Mapped[dict[str, object] | None] = mapped_column(
-        "a_locator", JSONB(none_as_null=True), nullable=True
-    )
-    b_locator_json: Mapped[dict[str, object] | None] = mapped_column(
-        "b_locator", JSONB(none_as_null=True), nullable=True
-    )
-    metadata_json: Mapped[dict[str, object]] = mapped_column(
-        "metadata",
-        JSONB,
-        nullable=False,
-        server_default=text("'{}'::jsonb"),
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    origin: Mapped[str] = mapped_column(Text, nullable=False)
+    # Endpoints are polymorphic (scheme + id): deliberately no FKs; cleanup is
+    # the graph service's job (database.md: explicit cleanup, no cascades).
+    source_scheme: Mapped[str] = mapped_column(Text, nullable=False)
+    source_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    target_scheme: Mapped[str] = mapped_column(Text, nullable=False)
+    target_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    ordinal: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # none_as_null: a bare edge's None snapshot must persist as SQL NULL, not the
+    # JSON 'null' scalar, or it fails ck_resource_edges_snapshot_object (which
+    # requires SQL NULL or a jsonb object).
+    snapshot: Mapped[dict[str, object] | None] = mapped_column(
+        JSONB(none_as_null=True), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
         nullable=False,
@@ -412,47 +403,112 @@ class ObjectLink(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "a_type IN ('page', 'note_block', 'media', 'highlight', 'conversation', "
-            "'message', 'podcast', 'content_chunk', 'fragment', 'contributor', "
-            "'evidence_span')",
-            name="ck_object_links_a_type",
+            "kind IN ('context', 'supports', 'contradicts')",
+            name="ck_resource_edges_kind",
         ),
         CheckConstraint(
-            "b_type IN ('page', 'note_block', 'media', 'highlight', 'conversation', "
-            "'message', 'podcast', 'content_chunk', 'fragment', 'contributor', "
-            "'evidence_span')",
-            name="ck_object_links_b_type",
+            "origin IN ('user', 'citation', 'system', 'note_body', 'highlight_note')",
+            name="ck_resource_edges_origin",
         ),
         CheckConstraint(
-            "relation_type IN ('references', 'embeds', 'note_about', 'used_as_context', "
-            "'derived_from', 'related')",
-            name="ck_object_links_relation",
+            """
+            source_scheme IN (
+                'media', 'library', 'evidence_span', 'content_chunk',
+                'highlight', 'page', 'note_block', 'fragment',
+                'conversation', 'message', 'oracle_reading',
+                'oracle_corpus_passage', 'library_intelligence_artifact',
+                'external_snapshot', 'contributor', 'podcast'
+            )
+            """,
+            name="ck_resource_edges_source_scheme",
         ),
         CheckConstraint(
-            "a_order_key IS NULL OR char_length(a_order_key) BETWEEN 1 AND 64",
-            name="ck_object_links_a_order_key_length",
+            """
+            target_scheme IN (
+                'media', 'library', 'evidence_span', 'content_chunk',
+                'highlight', 'page', 'note_block', 'fragment',
+                'conversation', 'message', 'oracle_reading',
+                'oracle_corpus_passage', 'library_intelligence_artifact',
+                'external_snapshot', 'contributor', 'podcast'
+            )
+            """,
+            name="ck_resource_edges_target_scheme",
+        ),
+        CheckConstraint("ordinal >= 1", name="ck_resource_edges_ordinal_positive"),
+        CheckConstraint(
+            "ordinal IS NULL OR snapshot IS NOT NULL",
+            name="ck_resource_edges_citation_has_snapshot",
         ),
         CheckConstraint(
-            "b_order_key IS NULL OR char_length(b_order_key) BETWEEN 1 AND 64",
-            name="ck_object_links_b_order_key_length",
+            "snapshot IS NULL OR jsonb_typeof(snapshot) = 'object'",
+            name="ck_resource_edges_snapshot_object",
         ),
-        CheckConstraint(
-            "a_locator IS NULL OR jsonb_typeof(a_locator) = 'object'",
-            name="ck_object_links_a_locator",
-        ),
-        CheckConstraint(
-            "b_locator IS NULL OR jsonb_typeof(b_locator) = 'object'",
-            name="ck_object_links_b_locator",
-        ),
-        CheckConstraint("jsonb_typeof(metadata) = 'object'", name="ck_object_links_metadata"),
         Index(
-            "uix_object_links_unlocated_pair",
-            "user_id",
-            "relation_type",
-            text("LEAST(a_type || ':' || a_id::text, b_type || ':' || b_id::text)"),
-            text("GREATEST(a_type || ':' || a_id::text, b_type || ':' || b_id::text)"),
+            "uq_resource_edges_citation_ordinal",
+            "source_scheme",
+            "source_id",
+            "ordinal",
             unique=True,
-            postgresql_where=text("a_locator IS NULL AND b_locator IS NULL"),
+            postgresql_where=text("ordinal IS NOT NULL"),
+        ),
+        Index(
+            "uq_resource_edges_context_pair",
+            "source_scheme",
+            "source_id",
+            "target_scheme",
+            "target_id",
+            unique=True,
+            postgresql_where=text("ordinal IS NULL"),
+        ),
+        Index(
+            "ix_resource_edges_user_source",
+            "user_id",
+            "source_scheme",
+            "source_id",
+            "created_at",
+            "id",
+        ),
+        Index(
+            "ix_resource_edges_user_target",
+            "user_id",
+            "target_scheme",
+            "target_id",
+            "created_at",
+            "id",
+        ),
+    )
+
+
+class ResourceExternalSnapshot(Base):
+    """Stable citation target for a public web result or other non-local resource."""
+
+    __tablename__ = "resource_external_snapshots"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=False,
+    )
+    provider: Mapped[str] = mapped_column(Text, nullable=False)
+    url: Mapped[str] = mapped_column(Text, nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    snippet: Mapped[str] = mapped_column(Text, nullable=False)
+    source_snapshot: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "jsonb_typeof(source_snapshot) = 'object'",
+            name="ck_resource_external_snapshots_source_object",
         ),
     )
 
@@ -1551,55 +1607,6 @@ class LibraryIntelligenceRevisionEvent(Base):
             name="ck_li_revision_events_type",
         ),
         UniqueConstraint("revision_id", "seq", name="uq_li_revision_events_seq"),
-    )
-
-
-class LibraryIntelligenceCitation(Base):
-    """One typed citation of a revision; LI-private, written once with the snapshot."""
-
-    __tablename__ = "library_intelligence_citations"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    revision_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("library_intelligence_artifact_revisions.id"),
-        nullable=False,
-    )
-    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
-    role: Mapped[str] = mapped_column(Text, nullable=False)
-    target_type: Mapped[str] = mapped_column(Text, nullable=False)
-    target_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
-    locator: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
-    snapshot: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        CheckConstraint(
-            "role IN ('supports', 'contradicts', 'context')",
-            name="ck_li_citations_role",
-        ),
-        CheckConstraint(
-            "target_type IN ('evidence_span', 'content_chunk', 'media')",
-            name="ck_li_citations_target_type",
-        ),
-        CheckConstraint("ordinal >= 0", name="ck_li_citations_ordinal_non_negative"),
-        CheckConstraint(
-            "locator IS NULL OR jsonb_typeof(locator) = 'object'",
-            name="ck_li_citations_locator_object",
-        ),
-        CheckConstraint(
-            "snapshot IS NULL OR jsonb_typeof(snapshot) = 'object'",
-            name="ck_li_citations_snapshot_object",
-        ),
-        UniqueConstraint("revision_id", "ordinal", name="uq_li_citations_revision_ordinal"),
     )
 
 
@@ -3158,53 +3165,6 @@ class Conversation(Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
-    references: Mapped[list["ConversationReference"]] = relationship(
-        "ConversationReference",
-        back_populates="conversation",
-        order_by="ConversationReference.created_at",
-    )
-
-
-class ConversationReference(Base):
-    """Pointer from a conversation to a resource via opaque URI."""
-
-    __tablename__ = "conversation_references"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    conversation_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("conversations.id"),
-        nullable=False,
-    )
-    resource_uri: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        UniqueConstraint(
-            "conversation_id",
-            "resource_uri",
-            name="uq_conversation_references_conversation_uri",
-        ),
-        Index(
-            "ix_conversation_references_resource_uri",
-            "resource_uri",
-        ),
-        Index(
-            "ix_conversation_references_conversation_created",
-            "conversation_id",
-            "created_at",
-        ),
-    )
-
-    conversation: Mapped["Conversation"] = relationship("Conversation", back_populates="references")
 
 
 class ConversationShare(Base):
@@ -3733,7 +3693,10 @@ class MessageRetrieval(Base):
         nullable=False,
         server_default="false",
     )
-    citation_ordinal: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # One-way provenance pointer to the citation resource_edge, set when this
+    # result is cited. Deliberately no FK: edge and telemetry rows are cleaned
+    # up by different owners (resource provenance graph D6).
+    cited_edge_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -3744,10 +3707,6 @@ class MessageRetrieval(Base):
         CheckConstraint(
             "ordinal >= 0",
             name="ck_message_retrievals_ordinal_non_negative",
-        ),
-        CheckConstraint(
-            "citation_ordinal IS NULL OR citation_ordinal > 0",
-            name="ck_message_retrievals_citation_ordinal_positive",
         ),
         CheckConstraint(
             """
@@ -5607,34 +5566,26 @@ class OracleReading(Base):
     )
 
 
-class OracleReadingPassage(Base):
-    """One persisted citation in an oracle reading, library or public-domain."""
+class OracleReadingFolio(Base):
+    """Generated folio content for one reading phase, referencing its citation edge."""
 
-    __tablename__ = "oracle_reading_passages"
+    __tablename__ = "oracle_reading_folios"
 
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
     reading_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("oracle_readings.id"),
+        primary_key=True,
+    )
+    phase: Mapped[str] = mapped_column(Text, primary_key=True)
+    edge_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("resource_edges.id"),
         nullable=False,
     )
-    phase: Mapped[str] = mapped_column(Text, nullable=False)
     source_kind: Mapped[str] = mapped_column(Text, nullable=False)
-    exact_snippet: Mapped[str] = mapped_column(Text, nullable=False)
     locator_label: Mapped[str] = mapped_column(Text, nullable=False)
-    locator: Mapped[dict[str, object]] = mapped_column(
-        JSONB, nullable=False, server_default=text("'{}'::jsonb")
-    )
-    source: Mapped[dict[str, object]] = mapped_column(
-        JSONB, nullable=False, server_default=text("'{}'::jsonb")
-    )
     attribution_text: Mapped[str] = mapped_column(Text, nullable=False)
     marginalia_text: Mapped[str] = mapped_column(Text, nullable=False)
-    deep_link: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -5643,22 +5594,13 @@ class OracleReadingPassage(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "source_kind IN ('user_media', 'public_domain')",
-            name="ck_oracle_reading_passages_source_kind",
-        ),
-        CheckConstraint(
             "phase IN ('descent', 'ordeal', 'ascent')",
-            name="ck_oracle_reading_passages_phase",
+            name="ck_oracle_reading_folios_phase",
         ),
         CheckConstraint(
-            "jsonb_typeof(locator) = 'object'",
-            name="ck_oracle_reading_passages_locator_object",
+            "source_kind IN ('user_media', 'public_domain')",
+            name="ck_oracle_reading_folios_source_kind",
         ),
-        CheckConstraint(
-            "jsonb_typeof(source) = 'object'",
-            name="ck_oracle_reading_passages_source_object",
-        ),
-        UniqueConstraint("reading_id", "phase", name="uix_oracle_reading_passages_phase"),
     )
 
 

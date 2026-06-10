@@ -438,31 +438,12 @@ def persist_web_search_run(db: Session, run: WebSearchRun) -> None:
             },
         )
         persisted_count = ordinal + 1
-    db.execute(
-        text(
-            """
-            UPDATE message_retrieval_candidate_ledgers
-            SET retrieval_id = NULL
-            WHERE retrieval_id IN (
-                SELECT id
-                FROM message_retrievals
-                WHERE tool_call_id = :tool_call_id
-                  AND ordinal >= :persisted_count
-            )
-            """
-        ),
-        {"tool_call_id": tool_call_id, "persisted_count": persisted_count},
-    )
-    db.execute(
-        text(
-            """
-            DELETE FROM message_retrievals
-            WHERE tool_call_id = :tool_call_id
-              AND ordinal >= :persisted_count
-            """
-        ),
-        {"tool_call_id": tool_call_id, "persisted_count": persisted_count},
-    )
+    # Trim over-count rows from a previous attempt, cleaning their citation edges
+    # too. Deferred import: chat_runs imports this module, so the chat-run-owned
+    # prune owner is reached lazily to break the cycle.
+    from nexus.services.chat_runs import prune_tool_call_retrievals
+
+    prune_tool_call_retrievals(db, tool_call_id=tool_call_id, min_ordinal=persisted_count)
     db.execute(
         text(
             """

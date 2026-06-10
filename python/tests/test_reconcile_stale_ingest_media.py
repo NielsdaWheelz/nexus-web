@@ -185,15 +185,16 @@ def _seed_stale_pending_upload_child_rows(db: Session, media_id: UUID) -> None:
     )
     db.execute(
         text("""
-            INSERT INTO object_links (
+            INSERT INTO resource_edges (
                 user_id,
-                relation_type,
-                a_type,
-                a_id,
-                b_type,
-                b_id
+                kind,
+                origin,
+                source_scheme,
+                source_id,
+                target_scheme,
+                target_id
             )
-            VALUES (:user_id, 'references', 'media', :media_id, 'media', :other_id)
+            VALUES (:user_id, 'context', 'user', 'media', :media_id, 'media', :other_id)
         """),
         {"user_id": user_id, "media_id": media_id, "other_id": uuid4()},
     )
@@ -216,16 +217,17 @@ def _assert_stale_pending_upload_child_rows_deleted(db: Session, media_id: UUID)
         )
         == 0
     )
-    object_links = db.execute(
+    bare_edges = db.execute(
         text("""
             SELECT COUNT(*)
-            FROM object_links
-            WHERE (a_type = 'media' AND a_id = :media_id)
-               OR (b_type = 'media' AND b_id = :media_id)
+            FROM resource_edges
+            WHERE ordinal IS NULL
+              AND ((source_scheme = 'media' AND source_id = :media_id)
+                OR (target_scheme = 'media' AND target_id = :media_id))
         """),
         {"media_id": media_id},
     ).scalar_one()
-    assert int(object_links) == 0
+    assert int(bare_edges) == 0, "media deletion must clean bare edges (graph cleanup rule 2)"
 
 
 def _count_rows(db: Session, table: str, where: str, **params: object) -> int:

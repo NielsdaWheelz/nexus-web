@@ -2761,7 +2761,7 @@ class TestSchemaConstraints:
         assert vector_type == "vector(256)"
 
     def test_oracle_citation_metadata_columns_are_seeded(self, migrated_engine):
-        """Oracle corpus and reading passages carry structured citation metadata."""
+        """Oracle corpus passages carry structured citation metadata."""
         with Session(migrated_engine) as session:
             corpus_columns = {
                 row[0]
@@ -2771,18 +2771,6 @@ class TestSchemaConstraints:
                         SELECT column_name
                         FROM information_schema.columns
                         WHERE table_name = 'oracle_corpus_passages'
-                        """
-                    )
-                )
-            }
-            reading_columns = {
-                row[0]
-                for row in session.execute(
-                    text(
-                        """
-                        SELECT column_name
-                        FROM information_schema.columns
-                        WHERE table_name = 'oracle_reading_passages'
                         """
                     )
                 )
@@ -2817,7 +2805,6 @@ class TestSchemaConstraints:
             )
 
         assert {"locator", "source"}.issubset(corpus_columns)
-        assert {"locator", "source"}.issubset(reading_columns)
         assert {"embedding", "embedding_model"}.issubset(corpus_columns)
         assert vector_types == {
             "oracle_corpus_passages": "vector(256)",
@@ -4000,22 +3987,23 @@ class TestS2HighlightsNotesConstraints:
             )
             session.execute(
                 text("""
-                    INSERT INTO object_links (
-                        id, user_id, relation_type, a_type, a_id, b_type, b_id, metadata
+                    INSERT INTO resource_edges (
+                        id, user_id, kind, origin,
+                        source_scheme, source_id, target_scheme, target_id
                     )
                     VALUES
                         (
-                            :link_a_id, :user_id, 'note_about',
-                            'note_block', :note_a_id, 'highlight', :highlight_id, '{}'::jsonb
+                            :edge_a_id, :user_id, 'context', 'highlight_note',
+                            'highlight', :highlight_id, 'note_block', :note_a_id
                         ),
                         (
-                            :link_b_id, :user_id, 'note_about',
-                            'note_block', :note_b_id, 'highlight', :highlight_id, '{}'::jsonb
+                            :edge_b_id, :user_id, 'context', 'highlight_note',
+                            'highlight', :highlight_id, 'note_block', :note_b_id
                         )
                 """),
                 {
-                    "link_a_id": uuid4(),
-                    "link_b_id": uuid4(),
+                    "edge_a_id": uuid4(),
+                    "edge_b_id": uuid4(),
                     "user_id": user_id,
                     "note_a_id": note_a_id,
                     "note_b_id": note_b_id,
@@ -4027,17 +4015,19 @@ class TestS2HighlightsNotesConstraints:
             result = session.execute(
                 text("""
                     SELECT COUNT(*)
-                    FROM object_links
-                    WHERE relation_type = 'note_about'
-                      AND b_type = 'highlight'
-                      AND b_id = :highlight_id
+                    FROM resource_edges
+                    WHERE origin = 'highlight_note'
+                      AND source_scheme = 'highlight'
+                      AND source_id = :highlight_id
                 """),
                 {"highlight_id": highlight_id},
             )
             assert result.scalar_one() == 2
 
             # Clean up
-            session.execute(text("DELETE FROM object_links WHERE b_id = :id"), {"id": highlight_id})
+            session.execute(
+                text("DELETE FROM resource_edges WHERE source_id = :id"), {"id": highlight_id}
+            )
             session.execute(text("DELETE FROM note_blocks WHERE page_id = :id"), {"id": page_id})
             session.execute(text("DELETE FROM pages WHERE id = :id"), {"id": page_id})
             session.execute(text("DELETE FROM highlights WHERE id = :id"), {"id": highlight_id})
@@ -8317,13 +8307,13 @@ class TestConversationReferencesCutoverMigration0121:
     Migration 0121 drops the five fragmented chat-context tables
     (``conversation_memory_items``, ``conversation_memory_item_sources``,
     ``conversation_pinned_sources``, ``chat_singletons``,
-    ``message_context_items``) plus ``source_manifests``, and creates the
-    polymorphic ``conversation_references`` table. The pre-existing
-    ``scope_*`` columns on ``conversations`` were already dropped by 0114
-    and stay dropped at HEAD. Migration 0123 adds the read-path index used by
-    ``GET /api/conversations/{id}/references``. Migration 0124 drops the
-    legacy conversation state snapshot table and prompt-assembly memory/snapshot
-    columns.
+    ``message_context_items``) plus ``source_manifests``, and created the
+    polymorphic ``conversation_references`` table — which 0145 then folded into
+    ``resource_edges`` (see ``test_0145_folds_link_stores_into_resource_edges``),
+    so at HEAD the table no longer exists. The pre-existing ``scope_*`` columns
+    on ``conversations`` were already dropped by 0114 and stay dropped at HEAD.
+    Migration 0124 drops the legacy conversation state snapshot table and
+    prompt-assembly memory/snapshot columns.
     """
 
     def test_0121_and_0124_drop_fragmented_chat_context_tables(self, migrated_engine):
@@ -8355,85 +8345,50 @@ class TestConversationReferencesCutoverMigration0121:
             f"but they remain: {leftover}"
         )
 
-    def test_0121_creates_conversation_references_with_unique_and_index(self, migrated_engine):
+    def test_0145_folds_link_stores_into_resource_edges(self, migrated_engine):
+        """0145 drops the four per-feature link/citation stores for one edge table.
+
+        ``conversation_references``/``object_links``/``oracle_reading_passages`` are
+        gone at HEAD (``library_intelligence_citations`` is covered by the LI class),
+        and the provenance-graph owners exist. ``message_retrievals`` keeps its
+        telemetry row but trades ``citation_ordinal`` for the FK-free
+        ``cited_edge_id`` pointer (§8.4).
+        """
         with Session(migrated_engine) as session:
-            columns = {
-                row[0]: (row[1], row[2])
-                for row in session.execute(
-                    text(
-                        """
-                        SELECT column_name, data_type, is_nullable
-                        FROM information_schema.columns
-                        WHERE table_name = 'conversation_references'
-                        """
-                    )
-                ).fetchall()
-            }
-            constraints = {
+            tables = {
                 row[0]
                 for row in session.execute(
                     text(
                         """
-                        SELECT conname
-                        FROM pg_constraint
-                        WHERE conrelid = 'conversation_references'::regclass
+                        SELECT table_name FROM information_schema.tables
+                        WHERE table_schema = 'public'
                         """
                     )
                 ).fetchall()
             }
-            indexes = {
+            retrieval_columns = {
                 row[0]
                 for row in session.execute(
                     text(
                         """
-                        SELECT indexname
-                        FROM pg_indexes
-                        WHERE tablename = 'conversation_references'
-                        """
-                    )
-                ).fetchall()
-            }
-            fk_delete_actions = {
-                row[0]
-                for row in session.execute(
-                    text(
-                        """
-                        SELECT confdeltype
-                        FROM pg_constraint
-                        WHERE conrelid = 'conversation_references'::regclass
-                          AND contype = 'f'
+                        SELECT column_name FROM information_schema.columns
+                        WHERE table_name = 'message_retrievals'
                         """
                     )
                 ).fetchall()
             }
 
-        for required in ("id", "conversation_id", "resource_uri", "created_at"):
-            assert required in columns, (
-                f"conversation_references must have column '{required}'; got {set(columns)}"
-            )
-        assert "added_at" not in columns, (
-            "conversation_references must use created_at, not the legacy added_at name"
+        dropped = {"conversation_references", "object_links", "oracle_reading_passages"}
+        assert dropped.isdisjoint(tables), (
+            f"0145 must drop the per-feature link stores; still present: {dropped & tables}"
         )
-        for col in ("id", "conversation_id", "resource_uri", "created_at"):
-            assert columns[col][1] == "NO", (
-                f"conversation_references.{col} must be NOT NULL; got {columns[col]}"
-            )
-        assert fk_delete_actions == {"a"}, (
-            "conversation_references FK must not cascade on conversation delete; "
-            f"got delete actions {fk_delete_actions}"
+        for required in ("resource_edges", "resource_external_snapshots", "oracle_reading_folios"):
+            assert required in tables, f"0145 must create {required} at HEAD"
+        assert "cited_edge_id" in retrieval_columns, (
+            f"message_retrievals must gain cited_edge_id; got {retrieval_columns}"
         )
-        assert "uq_conversation_references_conversation_uri" in constraints, (
-            "conversation_references must declare UNIQUE on (conversation_id, resource_uri); "
-            f"got {constraints}"
-        )
-        assert "ix_conversation_references_resource_uri" in indexes, (
-            f"conversation_references must declare ix_conversation_references_resource_uri; "
-            f"got {indexes}"
-        )
-        assert "ix_conversation_references_conversation_created" in indexes, (
-            "conversation_references must declare "
-            "ix_conversation_references_conversation_created for ordered reads; "
-            f"got {indexes}"
+        assert "citation_ordinal" not in retrieval_columns, (
+            f"message_retrievals must drop citation_ordinal; got {retrieval_columns}"
         )
 
     def test_0124_drops_legacy_snapshot_and_memory_prompt_columns(self, migrated_engine):
@@ -9754,7 +9709,8 @@ class TestLibraryIntelligenceArtifactRewrite0142:
         reset_test_schema()
 
     # The deterministic-compiler subtables + old head dropped by 0142 (the
-    # source-set/version tables were already dropped in 0138).
+    # source-set/version tables were already dropped in 0138; the LI-private
+    # citation table folded into resource_edges by 0145).
     _DROPPED_LI_TABLES = (
         "library_intelligence_sections",
         "library_intelligence_nodes",
@@ -9764,12 +9720,12 @@ class TestLibraryIntelligenceArtifactRewrite0142:
         "library_intelligence_versions",
         "library_source_set_versions",
         "library_source_set_items",
+        "library_intelligence_citations",
     )
     _NEW_LI_TABLES = (
         "library_intelligence_artifacts",
         "library_intelligence_artifact_revisions",
         "library_intelligence_revision_events",
-        "library_intelligence_citations",
     )
 
     def test_dropped_li_tables_are_gone_at_head(self, li_head_engine):
@@ -9862,8 +9818,7 @@ class TestLibraryIntelligenceArtifactRewrite0142:
                       AND conrelid IN (
                         'library_intelligence_artifacts'::regclass,
                         'library_intelligence_artifact_revisions'::regclass,
-                        'library_intelligence_revision_events'::regclass,
-                        'library_intelligence_citations'::regclass
+                        'library_intelligence_revision_events'::regclass
                       )
                     """
                 )
@@ -9927,28 +9882,23 @@ class TestLibraryIntelligenceArtifactRewrite0142:
             ).scalar_one_or_none()
         assert present is None, "assistant_claim_support_status enum must be dropped"
 
-    def test_untouched_citation_stores_remain(self, li_head_engine):
-        """Anti-over-deletion: the four must-REMAIN stores survive the cutover (AC-11)."""
-        must_remain = (
-            "message_retrievals",
-            "conversation_references",
-            "oracle_reading_passages",
-            "object_links",
-        )
+    def test_message_retrievals_telemetry_survives(self, li_head_engine):
+        """Anti-over-deletion: retrieval telemetry stays chat-owned (LI AC-11, §8.4).
+
+        The LI cutover left the citation/link stores untouched; the later
+        provenance-graph cutover (0145) folded ``conversation_references``,
+        ``oracle_reading_passages`` and ``object_links`` into ``resource_edges``
+        (see ``test_0145_folds_link_stores_into_resource_edges``). But
+        ``message_retrievals`` is never folded — telemetry keeps its own table.
+        """
         with Session(li_head_engine) as session:
-            present = {
-                row[0]
-                for row in session.execute(
-                    text(
-                        """
-                        SELECT table_name FROM information_schema.tables
-                        WHERE table_schema = 'public' AND table_name = ANY(:names)
-                        """
-                    ),
-                    {"names": list(must_remain)},
-                ).fetchall()
-            }
-        assert present == set(must_remain), f"a must-REMAIN store was deleted: {present}"
+            present = session.execute(
+                text(
+                    "SELECT 1 FROM information_schema.tables "
+                    "WHERE table_schema = 'public' AND table_name = 'message_retrievals'"
+                )
+            ).scalar_one_or_none()
+        assert present is not None, "message_retrievals telemetry must survive the cutovers"
 
 
 class TestMigration0145LlmCallLedgerAndErrorFloor:

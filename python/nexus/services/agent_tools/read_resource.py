@@ -2,7 +2,7 @@
 
 The chat pipeline uses this tool to let the model fetch the exact text of a
 resource. Data access is shared with prompt assembly through
-:mod:`nexus.services.resource_loaders` (per-scheme bodies) and
+:mod:`nexus.services.resource_graph.resolve` (per-scheme bodies) and
 :mod:`nexus.services.media_document_map` (media documents); this module only
 presents the result, labelling every read with an explicit ``kind``:
 
@@ -12,10 +12,14 @@ presents the result, labelling every read with an explicit ``kind``:
 - ``full``        — a short media document, whole.
 - ``too_large``   — an over-budget media document; redirect to ``inspect_resource``.
 
-A media-derived pointer (``fragment``/``page_range``/``span``/``chunk``) is
-readable when its parent ``media:`` is referenced, even if the sub-URI itself is
-not — this is what lets the model open sections a ``document_map`` handed it.
-Authorization is unchanged: the loaders/core still gate every read.
+Non-citable bodies (``library_intelligence`` synthesis, ``oracle_reading``) carry
+their prose but no citation target: their inline chips are owned by their own pane.
+
+A media-derived pointer (``fragment``/``page_range``/``evidence_span``/
+``content_chunk``) is readable when its parent ``media:`` is referenced, even if
+the sub-URI itself is not — this is what lets the model open sections a
+``document_map`` handed it. Authorization is unchanged: the loaders/core still
+gate every read.
 """
 
 from __future__ import annotations
@@ -28,25 +32,47 @@ from xml.sax.saxutils import escape as xml_escape
 from sqlalchemy.orm import Session
 
 from nexus.services.chat_quote import render_quote_block
-from nexus.services.conversation_references import is_conversation_reference
 from nexus.services.media_document_map import (
     READ_DOCUMENT_MAX_CHARS,
     load_media_document,
     read_page_range,
 )
-from nexus.services.resource_loaders import (
+from nexus.services.resource_graph.context import is_context_ref
+from nexus.services.resource_graph.refs import (
+    ResourceRef,
+    ResourceRefParseFailure,
+    ResourceScheme,
+    parse_resource_ref,
+)
+from nexus.services.resource_graph.resolve import (
     LoadedQuote,
     LoadedResource,
     load_resource_batch,
     parent_media_id_for_read_pointer,
 )
-from nexus.services.resource_resolver import (
-    READ_REJECTED_RESOURCE_URI_SCHEMES,
-    ResourceUriParseFailure,
-    parse_resource_uri,
-)
 
 READ_RESOURCE_TOOL_NAME = "read_resource"
+
+# Read-tool scheme policy. `library` is rejected with a search redirect (it is a
+# scope, not a body); the graph's other non-body schemes (oracle, external
+# snapshots, contributors, podcasts) are simply not readable here. `media` is
+# readable (full / too_large) and `library_intelligence_artifact` HAS a
+# canonical body (the current revision's content_md) even though it is not a
+# search scope — the scope tuple lives in `resource_graph.refs`.
+_SCOPE_NOT_READABLE_SCHEMES: tuple[ResourceScheme, ...] = ("library",)
+_READABLE_SCHEMES: tuple[ResourceScheme, ...] = (
+    "media",
+    "library_intelligence_artifact",
+    "oracle_reading",
+    "evidence_span",
+    "content_chunk",
+    "highlight",
+    "page",
+    "note_block",
+    "fragment",
+    "conversation",
+    "message",
+)
 
 READ_RESOURCE_TOOL_DEFINITION: dict[str, Any] = {
     "name": READ_RESOURCE_TOOL_NAME,
@@ -54,8 +80,8 @@ READ_RESOURCE_TOOL_DEFINITION: dict[str, Any] = {
         "Fetch the exact text of a resource from <resources> in your system context, "
         "or a read_uri that inspect_resource returned. Accepts 'media:UUID' (the whole "
         "document if short, else a redirect to inspect_resource), 'page_range:MEDIA:a-b' "
-        "(PDF pages), 'fragment:UUID' (a section), 'highlight:UUID', 'span:UUID', "
-        "'chunk:UUID', 'page:UUID', 'note_block:UUID', 'message:UUID', "
+        "(PDF pages), 'fragment:UUID' (a section), 'highlight:UUID', 'evidence_span:UUID', "
+        "'content_chunk:UUID', 'page:UUID', 'note_block:UUID', 'message:UUID', "
         "'conversation:UUID', 'library_intelligence_artifact:UUID' (a library's "
         "synthesis), or 'oracle_reading:UUID' (a Black Forest Oracle reading). "
         "Not valid for 'library:UUID' — that is a search scope; use "
@@ -154,8 +180,8 @@ def execute_read_resource(
     if uri.startswith("page_range:"):
         return _read_page_range(db, viewer_id, uri)
 
-    parsed = parse_resource_uri(uri)
-    if isinstance(parsed, ResourceUriParseFailure):
+    parsed = parse_resource_ref(uri)
+    if isinstance(parsed, ResourceRefParseFailure):
         if parsed.reason == "unsupported_scheme":
             scheme = uri.partition(":")[0]
             return ReadResourceResult(
@@ -171,7 +197,7 @@ def execute_read_resource(
             error_code="invalid_uri",
         )
 
-    if parsed.scheme in READ_REJECTED_RESOURCE_URI_SCHEMES:
+    if parsed.scheme in _SCOPE_NOT_READABLE_SCHEMES:
         return ReadResourceResult(
             uri=uri,
             status="error",
@@ -182,8 +208,16 @@ def execute_read_resource(
             error_code="scope_not_readable",
         )
 
+    if parsed.scheme not in _READABLE_SCHEMES:
+        return ReadResourceResult(
+            uri=uri,
+            status="error",
+            body=f"Resource {uri} has no readable body for read_resource.",
+            error_code="not_readable",
+        )
+
     if parsed.scheme == "media":
-        return _read_media(db, viewer_id, parsed.resource_id, uri)
+        return _read_media(db, viewer_id, parsed.id, uri)
 
     loaded = load_resource_batch(db, [parsed], viewer_id=viewer_id)[uri]
     return _present_read(loaded)
@@ -305,16 +339,16 @@ def _present_read(loaded: LoadedResource) -> ReadResourceResult:
             kind="library_intelligence",
         )
     if scheme == "oracle_reading":
-        # The reading's body is its question + motto + argument + passages +
-        # interpretation. NON-citable (like the LI artifact): its passage chips
-        # are rendered by the oracle pane, not a get_search_result chip.
+        # The reading's body is its question + motto/argument + interpretation. NON-citable
+        # (like the LI artifact): its per-phase passages are rendered as chips by the oracle
+        # pane from the reading's own citation edges, not a get_search_result chip.
         return ReadResourceResult(
             uri=loaded.uri,
             status="complete",
             body=loaded.body or "",
             kind="oracle_reading",
         )
-    if scheme in ("span", "chunk", "page", "note_block"):
+    if scheme in ("evidence_span", "content_chunk", "page", "note_block"):
         return ReadResourceResult(
             uri=loaded.uri, status="complete", body=loaded.body or "", kind=scheme
         )
@@ -323,25 +357,26 @@ def _present_read(loaded: LoadedResource) -> ReadResourceResult:
 
 
 def _readable_in_conversation(db: Session, conversation_id: UUID, uri: str) -> bool:
-    """A URI is readable when it is referenced, or its parent media is (gate O2)."""
-    if is_conversation_reference(db, conversation_id, uri):
+    """A URI is readable when it is context, or its parent media is (gate O2)."""
+    parsed = parse_resource_ref(uri)
+    if not isinstance(parsed, ResourceRefParseFailure) and is_context_ref(
+        db, conversation_id=conversation_id, target=parsed
+    ):
         return True
-    parent = _parent_media_uri(db, uri)
-    return parent is not None and is_conversation_reference(db, conversation_id, parent)
+    parent = _parent_media_ref(db, uri)
+    return parent is not None and is_context_ref(db, conversation_id=conversation_id, target=parent)
 
 
-def _parent_media_uri(db: Session, uri: str) -> str | None:
-    """The ``media:`` URI a media-derived read pointer belongs to, else None."""
+def _parent_media_ref(db: Session, uri: str) -> ResourceRef | None:
+    """The ``media:`` ref a media-derived read pointer belongs to, else None."""
     if uri.startswith("page_range:"):
         parsed = _parse_page_range(uri)
-        return f"media:{parsed[0]}" if parsed is not None else None
-    parsed = parse_resource_uri(uri)
-    if isinstance(parsed, ResourceUriParseFailure):
+        return ResourceRef(scheme="media", id=parsed[0]) if parsed is not None else None
+    ref = parse_resource_ref(uri)
+    if isinstance(ref, ResourceRefParseFailure):
         return None
-    media_id = parent_media_id_for_read_pointer(
-        db, scheme=parsed.scheme, resource_id=parsed.resource_id
-    )
-    return f"media:{media_id}" if media_id is not None else None
+    media_id = parent_media_id_for_read_pointer(db, scheme=ref.scheme, resource_id=ref.id)
+    return ResourceRef(scheme="media", id=media_id) if media_id is not None else None
 
 
 def _parse_page_range(uri: str) -> tuple[UUID, int, int] | None:

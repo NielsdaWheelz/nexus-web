@@ -38,7 +38,7 @@ function stubDocChatFetch({ conversations = [] }: DocChatTabFetchOptions = {}) {
         url.pathname === "/api/conversations" &&
         (!init || !init.method || init.method === "GET")
       ) {
-        if (url.searchParams.get("has_reference") === RESOURCE_URI) {
+        if (url.searchParams.get("has_context_ref") === RESOURCE_URI) {
           return jsonResponse({
             data: conversations,
             page: { next_cursor: null },

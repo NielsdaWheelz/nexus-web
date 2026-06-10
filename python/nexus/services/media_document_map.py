@@ -133,8 +133,8 @@ def load_media_document_summary(
 ) -> MediaDocumentSummary | None:
     """Return the same user-visible metrics as inspect/read for a media item.
 
-    ``resource_resolver`` uses this for the pointer summary so section counts do
-    not drift from the document map's per-kind ownership rules.
+    ``resource_graph.resolve`` uses this for the pointer summary so section
+    counts do not drift from the document map's per-kind ownership rules.
     """
     if not can_read_media(db, viewer_id, media_id):
         return None

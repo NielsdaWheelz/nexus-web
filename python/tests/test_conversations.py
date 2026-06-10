@@ -27,6 +27,7 @@ from nexus.services.conversations import (
     derive_conversation_title,
 )
 from tests.factories import (
+    add_context_edge,
     create_test_conversation,
     create_test_media_in_library,
     create_test_message,
@@ -112,20 +113,21 @@ class TestCreateConversation:
         assert response.status_code == 201, response.text
         conversation_id = UUID(response.json()["data"]["id"])
         direct_db.register_cleanup("conversations", "id", conversation_id)
-        direct_db.register_cleanup("conversation_references", "conversation_id", conversation_id)
+        direct_db.register_cleanup("resource_edges", "source_id", conversation_id)
 
         with direct_db.session() as session:
             rows = session.execute(
                 text(
                     """
-                    SELECT resource_uri
-                    FROM conversation_references
-                    WHERE conversation_id = :conversation_id
+                    SELECT target_scheme, target_id
+                    FROM resource_edges
+                    WHERE source_scheme = 'conversation' AND source_id = :conversation_id
+                      AND kind = 'context'
                     """
                 ),
                 {"conversation_id": conversation_id},
-            ).scalars()
-            assert list(rows) == [f"media:{media_id}"]
+            ).all()
+            assert [f"{scheme}:{tid}" for scheme, tid in rows] == [f"media:{media_id}"]
 
     def test_create_conversation_with_artifact_and_library_refs_in_one_tx(
         self, auth_client, direct_db: DirectSessionManager
@@ -163,24 +165,25 @@ class TestCreateConversation:
         assert response.status_code == 201, response.text
         conversation_id = UUID(response.json()["data"]["id"])
         direct_db.register_cleanup("conversations", "id", conversation_id)
-        direct_db.register_cleanup("conversation_references", "conversation_id", conversation_id)
+        direct_db.register_cleanup("resource_edges", "source_id", conversation_id)
 
         with direct_db.session() as session:
             rows = session.execute(
                 text(
                     """
-                    SELECT resource_uri
-                    FROM conversation_references
-                    WHERE conversation_id = :conversation_id
+                    SELECT target_scheme, target_id
+                    FROM resource_edges
+                    WHERE source_scheme = 'conversation' AND source_id = :conversation_id
+                      AND kind = 'context'
                     """
                 ),
                 {"conversation_id": conversation_id},
-            ).scalars()
+            ).all()
             # Both refs are inserted in one create-time transaction (AC-4). They
             # share the transaction `created_at`, so relative row order is decided
             # by the random `gen_random_uuid()` id tiebreak — assert membership,
             # not a stable sequence.
-            assert set(rows) == {artifact_uri, library_uri}, (
+            assert {f"{scheme}:{tid}" for scheme, tid in rows} == {artifact_uri, library_uri}, (
                 "Both refs must be inserted in one create-time transaction (AC-4)"
             )
 
@@ -351,25 +354,25 @@ class TestListConversations:
         assert response.status_code == 400
         assert response.json()["error"]["code"] == "E_INVALID_CURSOR"
 
-    def test_list_conversations_has_reference_invalid_uri_returns_400(self, auth_client):
-        """Invalid has_reference URI returns the reference service contract error."""
+    def test_list_conversations_has_context_ref_invalid_uri_returns_400(self, auth_client):
+        """Invalid has_context_ref URI returns the contract error."""
         user_id = create_test_user_id()
 
         response = auth_client.get(
-            "/conversations?has_reference=not-a-uri",
+            "/conversations?has_context_ref=not-a-uri",
             headers=auth_headers(user_id),
         )
 
         assert response.status_code == 400
         assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
 
-    def test_list_conversations_has_reference_ignores_invalid_scope(
+    def test_list_conversations_has_context_ref_ignores_invalid_scope(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """has_reference returns the reference listing even with an invalid scope.
+        """has_context_ref returns the listing even with an invalid scope.
 
-        Pinned bypass (decision 14): when has_reference is set, scope is
-        meaningless (reference filtering is viewer-owned-only) and is neither
+        Pinned bypass (decision 14): when has_context_ref is set, scope is
+        meaningless (context filtering is viewer-owned-only) and is neither
         validated nor applied. An otherwise-400 scope value must NOT 400 here.
         """
         user_id = create_test_user_id()
@@ -383,19 +386,19 @@ class TestListConversations:
             )
             conversation_id = create_test_conversation(session, user_id)
 
-        direct_db.register_cleanup("conversation_references", "conversation_id", conversation_id)
+        direct_db.register_cleanup("resource_edges", "source_id", conversation_id)
         direct_db.register_cleanup("conversations", "id", conversation_id)
 
         uri = f"media:{media_id}"
         add_resp = auth_client.post(
-            f"/conversations/{conversation_id}/references",
+            f"/conversations/{conversation_id}/context-refs",
             headers=auth_headers(user_id),
-            json={"resource_uri": uri},
+            json={"resource_ref": uri},
         )
         assert add_resp.status_code == 201, add_resp.text
 
         response = auth_client.get(
-            f"/conversations?has_reference={uri}&scope=not-a-valid-scope",
+            f"/conversations?has_context_ref={uri}&scope=not-a-valid-scope",
             headers=auth_headers(user_id),
         )
 
@@ -476,19 +479,11 @@ class TestDeleteConversation:
         resource_uri = f"media:{uuid4()}"
 
         with direct_db.session() as session:
-            session.execute(
-                text(
-                    """
-                    INSERT INTO conversation_references (conversation_id, resource_uri)
-                    VALUES (:conversation_id, :resource_uri)
-                    """
-                ),
-                {"conversation_id": conversation_id, "resource_uri": resource_uri},
-            )
+            add_context_edge(session, UUID(conversation_id), resource_uri)
             session.commit()
 
         direct_db.register_cleanup("conversations", "id", conversation_id)
-        direct_db.register_cleanup("conversation_references", "conversation_id", conversation_id)
+        direct_db.register_cleanup("resource_edges", "source_id", conversation_id)
 
         response = auth_client.delete(
             f"/conversations/{conversation_id}", headers=auth_headers(user_id)
@@ -504,7 +499,10 @@ class TestDeleteConversation:
             )
             assert result.fetchone() is None
             result = session.execute(
-                text("SELECT 1 FROM conversation_references WHERE conversation_id = :id"),
+                text(
+                    "SELECT 1 FROM resource_edges "
+                    "WHERE source_scheme = 'conversation' AND source_id = :id"
+                ),
                 {"id": conversation_id},
             )
             assert result.fetchone() is None
@@ -545,22 +543,11 @@ class TestDeleteConversation:
 
         with direct_db.session() as session:
             conversation_id = create_test_conversation(session, user_a)
-            session.execute(
-                text(
-                    """
-                    INSERT INTO conversation_references (conversation_id, resource_uri)
-                    VALUES (:conversation_id, :resource_uri)
-                    """
-                ),
-                {
-                    "conversation_id": conversation_id,
-                    "resource_uri": f"media:{uuid4()}",
-                },
-            )
+            add_context_edge(session, conversation_id, f"media:{uuid4()}")
             session.commit()
 
         direct_db.register_cleanup("conversations", "id", conversation_id)
-        direct_db.register_cleanup("conversation_references", "conversation_id", conversation_id)
+        direct_db.register_cleanup("resource_edges", "source_id", conversation_id)
 
         response = auth_client.delete(
             f"/conversations/{conversation_id}", headers=auth_headers(user_b)
@@ -573,8 +560,8 @@ class TestDeleteConversation:
                 text(
                     """
                     SELECT COUNT(*)
-                    FROM conversation_references
-                    WHERE conversation_id = :conversation_id
+                    FROM resource_edges
+                    WHERE source_scheme = 'conversation' AND source_id = :conversation_id
                     """
                 ),
                 {"conversation_id": conversation_id},

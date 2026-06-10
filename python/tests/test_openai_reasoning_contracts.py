@@ -18,7 +18,8 @@ from nexus.services.chat_runs import (
     _max_output_tokens_for_reasoning,
     execute_chat_run,
 )
-from nexus.services.conversation_references import insert_reference_if_absent
+from nexus.services.resource_graph.context import add_context_ref_without_commit
+from nexus.services.resource_graph.refs import assert_resource_ref
 from tests.factories import (
     create_searchable_media,
     create_test_highlight,
@@ -26,7 +27,7 @@ from tests.factories import (
     get_user_default_library,
 )
 from tests.helpers import auth_headers, create_test_user_id
-from tests.test_resource_resolver import _make_pdf
+from tests.test_resource_graph_resolve import _make_pdf
 from tests.utils.db import DirectSessionManager
 
 
@@ -365,7 +366,13 @@ async def test_attached_highlight_public_run_persists_citation_index_and_reader_
         highlight_id = create_test_highlight(session, user_id, fragment_id, exact="selected words")
     conversation_id = _create_conversation(auth_client, user_id)
     with direct_db.session() as session:
-        insert_reference_if_absent(session, conversation_id, f"highlight:{highlight_id}")
+        add_context_ref_without_commit(
+            session,
+            viewer_id=user_id,
+            conversation_id=conversation_id,
+            target=assert_resource_ref(f"highlight:{highlight_id}"),
+            origin="user",
+        )
         session.commit()
     selection_payload = {
         "media_id": str(media_id),
@@ -390,9 +397,9 @@ async def test_attached_highlight_public_run_persists_citation_index_and_reader_
     direct_db.register_cleanup("fragments", "media_id", media_id)
     direct_db.register_cleanup("highlights", "id", highlight_id)
     direct_db.register_cleanup("highlight_fragment_anchors", "highlight_id", highlight_id)
+    direct_db.register_cleanup("resource_edges", "user_id", user_id)
     direct_db.register_cleanup("conversations", "id", conversation_id)
     direct_db.register_cleanup("messages", "conversation_id", conversation_id)
-    direct_db.register_cleanup("conversation_references", "conversation_id", conversation_id)
 
     with direct_db.session() as session:
         job_payload = session.execute(
@@ -436,7 +443,7 @@ async def test_attached_highlight_public_run_persists_citation_index_and_reader_
         row = session.execute(
             text(
                 """
-                SELECT mtc.tool_name, mtc.tool_call_index, mr.citation_ordinal, mr.result_ref
+                SELECT mtc.tool_name, mtc.tool_call_index, mr.cited_edge_id, mr.result_ref
                 FROM message_tool_calls mtc
                 JOIN message_retrievals mr ON mr.tool_call_id = mtc.id
                 WHERE mtc.assistant_message_id = :assistant_message_id
@@ -456,15 +463,27 @@ async def test_attached_highlight_public_run_persists_citation_index_and_reader_
             ),
             {"run_id": run_id},
         ).scalar_one_or_none()
+        edge_ordinal = session.execute(
+            text(
+                "SELECT ordinal FROM resource_edges "
+                "WHERE id = :edge_id AND source_scheme = 'message' "
+                "AND source_id = :assistant_message_id AND origin = 'citation'"
+            ),
+            {"edge_id": row.cited_edge_id, "assistant_message_id": assistant_message_id},
+        ).scalar_one_or_none()
 
     assert row is not None
     assert row.tool_name == "attached_resources"
     assert row.tool_call_index == 0
-    assert row.citation_ordinal == 1
+    assert row.cited_edge_id is not None, "the attached citation row must point at its edge"
+    assert edge_ordinal == 1, (
+        f"The attached citation edge must exist with ordinal 1; got {edge_ordinal}"
+    )
     assert row.result_ref["result_type"] == "highlight"
     assert isinstance(citation_event, dict)
-    assert citation_event["citations"][0]["ordinal"] == 1
-    assert citation_event["citations"][0]["snapshot"]["result_type"] == "highlight"
+    assert citation_event["entries"][0]["n"] == 1
+    assert citation_event["entries"][0]["citation_edge_id"] == str(row.cited_edge_id)
+    assert citation_event["entries"][0]["snapshot"]["result_type"] == "highlight"
 
 
 @pytest.mark.integration
@@ -481,7 +500,13 @@ async def test_document_summary_trace_inspects_then_reads_map_pointer(
         media_id = _make_pdf(session, library_id, pages=["PDF evidence page. "], title="Trace PDF")
     conversation_id = _create_conversation(auth_client, user_id)
     with direct_db.session() as session:
-        insert_reference_if_absent(session, conversation_id, f"media:{media_id}")
+        add_context_ref_without_commit(
+            session,
+            viewer_id=user_id,
+            conversation_id=conversation_id,
+            target=assert_resource_ref(f"media:{media_id}"),
+            origin="user",
+        )
         session.commit()
 
     response = _post_chat_run(
@@ -523,7 +548,7 @@ async def test_document_summary_trace_inspects_then_reads_map_pointer(
         retrieval_row = session.execute(
             text(
                 """
-                SELECT mr.result_type, mr.citation_ordinal, mr.result_ref
+                SELECT mr.result_type, mr.cited_edge_id, mr.result_ref
                 FROM message_retrievals mr
                 JOIN message_tool_calls mtc ON mtc.id = mr.tool_call_id
                 WHERE mtc.assistant_message_id = :assistant_message_id
@@ -552,11 +577,16 @@ async def test_document_summary_trace_inspects_then_reads_map_pointer(
     assert tool_rows[1][3][0]["uri"] == f"page_range:{media_id}:1-1"
     assert retrieval_row is not None
     assert retrieval_row[0] == "media"
-    assert retrieval_row[1] == 1
+    assert retrieval_row[1] is not None, "the cited read row must point at its citation edge"
     assert retrieval_row[2]["result_type"] == "media"
     assert isinstance(citation_event, dict)
-    assert citation_event["citations"][0]["ordinal"] == 1
-    assert citation_event["citations"][0]["snapshot"]["result_type"] == "media"
+    assert citation_event["entries"][0]["n"] == 1
+    assert citation_event["entries"][0]["citation_edge_id"] == str(retrieval_row[1])
+    assert citation_event["entries"][0]["target_ref"] == {
+        "type": "media",
+        "id": str(media_id),
+    }
+    assert citation_event["entries"][0]["snapshot"]["result_type"] == "media"
 
 
 @pytest.mark.integration

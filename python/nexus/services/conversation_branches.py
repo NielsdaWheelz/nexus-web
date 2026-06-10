@@ -35,7 +35,8 @@ from nexus.services.conversations import (
     message_to_out,
     retryable_assistant_message_ids,
 )
-from nexus.services.retrieval_citation import build_citation_outs_for_messages
+from nexus.services.resource_graph.citations import build_citation_outs
+from nexus.services.resource_graph.refs import ResourceRef
 
 
 def branch_anchor_for_message(
@@ -1110,20 +1111,15 @@ def _message_outs_by_id(
         viewer_id=viewer_id,
         assistant_message_ids=message_ids,
     )
-    citations_by_message = build_citation_outs_for_messages(
-        db,
-        assistant_message_ids=[
-            message.id for message in messages_by_id.values() if message.role == "assistant"
-        ],
-    )
-    return {
-        message_id: message_to_out(
-            message,
-            can_retry_response=message.id in retryable_message_ids,
-            citations=citations_by_message.get(message_id, []),
-        )
-        for message_id, message in messages_by_id.items()
-    }
+    outs: dict[UUID, MessageOut] = {}
+    for message_id, message in messages_by_id.items():
+        out = message_to_out(message, can_retry_response=message.id in retryable_message_ids)
+        if message.role == "assistant":
+            out.citations = build_citation_outs(
+                db, viewer_id=viewer_id, source=ResourceRef(scheme="message", id=message_id)
+            )
+        outs[message_id] = out
+    return outs
 
 
 def _preview(content: str) -> str:

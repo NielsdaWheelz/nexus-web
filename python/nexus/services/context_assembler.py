@@ -17,7 +17,6 @@ from nexus.auth.permissions import can_read_conversation
 from nexus.db.models import (
     ChatRun,
     Conversation,
-    ConversationReference,
     Highlight,
     Library,
     Media,
@@ -36,7 +35,6 @@ from nexus.services.chat_prompt import (
     validate_prompt_size,
 )
 from nexus.services.chat_quote import render_quote_block
-from nexus.services.conversation_references import is_conversation_reference
 from nexus.services.prompt_budget import (
     BudgetItem,
     BudgetSelection,
@@ -45,11 +43,15 @@ from nexus.services.prompt_budget import (
     build_prompt_budget,
     make_prompt_block,
 )
-from nexus.services.resource_resolver import (
+from nexus.services.resource_graph.context import is_context_ref, list_context_refs
+from nexus.services.resource_graph.refs import (
+    ResourceRef,
+    ResourceRefParseFailure,
+    parse_resource_ref,
+)
+from nexus.services.resource_graph.resolve import (
     ResolvedResource,
-    ResourceUriParseFailure,
-    parse_resource_uri,
-    resolve_batch,
+    resolve_ref,
 )
 from nexus.services.retrieval_citation import RetrievalCitation, citation_from_search_result
 from nexus.services.search import get_search_result
@@ -487,13 +489,17 @@ def _build_reader_selection_block(
     highlight = db.get(Highlight, reader_selection.highlight_id)
     if highlight is None or highlight.anchor_media_id != reader_selection.media_id:
         return None
-    if conversation_id is not None and not is_conversation_reference(
-        db, conversation_id, f"highlight:{reader_selection.highlight_id}"
+    if conversation_id is not None and not is_context_ref(
+        db,
+        conversation_id=conversation_id,
+        target=ResourceRef(scheme="highlight", id=reader_selection.highlight_id),
     ):
         return None
-    resource = resolve_batch(
-        db, [f"highlight:{reader_selection.highlight_id}"], viewer_id=viewer_id
-    )[0]
+    resource = resolve_ref(
+        db,
+        viewer_id=viewer_id,
+        ref=ResourceRef(scheme="highlight", id=reader_selection.highlight_id),
+    )
     if resource.missing or resource.quote is None:
         return None
     quote = resource.quote
@@ -520,8 +526,8 @@ def _build_reader_selection_block(
 # (summary) carry no in-prompt citable content and are absent here.
 _CITABLE_RESULT_TYPE: dict[str, str] = {
     "highlight": "highlight",
-    "span": "evidence_span",
-    "chunk": "content_chunk",
+    "evidence_span": "evidence_span",
+    "content_chunk": "content_chunk",
     "fragment": "fragment",
     "page": "page",
     "note_block": "note_block",
@@ -540,41 +546,30 @@ def _build_resources_block(
     tuple[RetrievalCitation, ...],
     tuple[Mapping[str, object], ...],
 ]:
-    rows = db.execute(
-        select(ConversationReference.resource_uri, ConversationReference.id)
-        .where(ConversationReference.conversation_id == conversation_id)
-        .order_by(ConversationReference.created_at.asc(), ConversationReference.id.asc())
-    ).all()
-    if not rows:
+    refs = list_context_refs(db, viewer_id=viewer_id, conversation_id=conversation_id)
+    if not refs:
         return None, {}, (), ()
-    uris = [row[0] for row in rows]
-    resolved = resolve_batch(db, uris, viewer_id=viewer_id)
     citations: list[RetrievalCitation] = []
-    # The exact revision each resolved resource consumed, stamped into the ledger's
-    # included_context_refs so "which edition did this chat read" is answerable
-    # after a regenerate orphans the head (§6.6; LI artifacts only — others None).
+    # "Which edition did this chat read" is answered post-cutover by the immutable
+    # snapshot on each citation edge minted this turn (§5.2), not by a per-edition
+    # stamp here: the edge-based ResolvedResource resolves the LI head fresh and
+    # carries no revision id. The ledger's revision-ref slot stays wired (the run
+    # ledger contract is unchanged) but empty until the graph resolve layer
+    # surfaces the consumed revision.
     revision_refs: list[Mapping[str, object]] = []
     lines = ["<resources>"]
-    for resource in resolved:
-        if resource.revision_id is not None:
-            revision_refs.append(
-                {
-                    "type": "conversation_reference",
-                    "resource_uri": resource.uri,
-                    "revision_id": str(resource.revision_id),
-                }
-            )
-        citation = _materialize_attached_citation(db, resource, viewer_id=viewer_id)
+    source_refs: list[Mapping[str, object]] = []
+    for ctx in refs:
+        citation = _materialize_attached_citation(db, ctx.resolved, viewer_id=viewer_id)
         if citation is None:
-            lines.append(_render_resource(resource))
+            lines.append(_render_resource(ctx.resolved))
         else:
             citations.append(citation)
-            lines.append(_render_resource(resource, n=len(citations)))
+            lines.append(_render_resource(ctx.resolved, n=len(citations)))
+        source_refs.append(
+            {"type": "context_ref", "id": str(ctx.edge_id), "resource_uri": ctx.target.uri}
+        )
     lines.append("</resources>")
-    source_refs = [
-        {"type": "conversation_reference", "id": str(row[1]), "resource_uri": row[0]}
-        for row in rows
-    ]
     block = make_prompt_block(
         block_id=f"resources:{conversation_id}",
         role="system",
@@ -583,6 +578,7 @@ def _build_resources_block(
         source_refs=source_refs,
         cache_policy=None,
     )
+    uris = [ctx.target.uri for ctx in refs]
     return (
         block,
         {"resource_count": len(uris), "resource_uris": uris},
@@ -603,14 +599,14 @@ def _materialize_attached_citation(
     """
     if resource.missing or (resource.quote is None and resource.inline_body is None):
         return None
-    parsed = parse_resource_uri(resource.uri)
-    if isinstance(parsed, ResourceUriParseFailure):
+    parsed = parse_resource_ref(resource.uri)
+    if isinstance(parsed, ResourceRefParseFailure):
         return None
     result_type = _CITABLE_RESULT_TYPE.get(parsed.scheme)
     if result_type is None:
         return None
     try:
-        result = get_search_result(db, viewer_id, result_type, str(parsed.resource_id))
+        result = get_search_result(db, viewer_id, result_type, str(parsed.id))
         citation = citation_from_search_result(result, filters={})
     except (NotFoundError, ValueError):
         # justify-ignore-error: no active content index / no resolvable anchor →

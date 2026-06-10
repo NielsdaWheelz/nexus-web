@@ -107,3 +107,15 @@ library the viewer can read.
 - Public owned Oracle plates are not library resources; readings may reference
   them, but the plate asset route is owned by `oracle_plates.py`.
 - Default-library closure affects visible media rows, not object-storage keys.
+
+## Library Intelligence Citations
+
+A Library Intelligence artifact's citations are `resource_edges`, not a per-feature
+citation table. The REDUCE worker (`services/library_intelligence_reduce.py`) adopts
+them inside the revision-promote transaction: `_promote_built_revision` calls
+`resource_graph.citations.replace_citations_for_output` with
+`source=library_intelligence_artifact:<id>` in the same SERIALIZABLE transaction
+that moves `current_revision_id` to the new revision, so an artifact's `[N]` markers
+and its content swap atomically (last promote wins; ordinals must be dense 1..N).
+The read-model is built by `build_citation_outs` over those edges, identically to
+chat and Oracle.

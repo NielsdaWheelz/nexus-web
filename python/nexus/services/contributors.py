@@ -28,7 +28,7 @@ from nexus.db.models import (
     ContributorCredit,
     ContributorExternalId,
     ContributorIdentityEvent,
-    ObjectLink,
+    ResourceEdge,
 )
 from nexus.db.retries import retry_serializable
 from nexus.errors import ApiError, ApiErrorCode, ForbiddenError, NotFoundError
@@ -58,6 +58,7 @@ from nexus.services.contributor_taxonomy import (
     normalize_contributor_name,
     normalize_contributor_role,
 )
+from nexus.services.resource_graph.refs import ResourceRef
 
 ACTIVE_STATUSES = ("unverified", "verified")
 CONTRIBUTOR_CURATOR_ROLES = frozenset({"admin", "contributor_curator"})
@@ -584,15 +585,11 @@ def split_contributor(
     request: ContributorSplitRequest,
 ) -> ContributorOut:
     _require_contributor_curator(actor_roles)
-    # Function-local import breaks the contributors → object_links → object_refs → contributors cycle.
-    from nexus.services.object_links import repoint_contributor_object_links
+    # Function-local import: resource_graph.edges reaches back here via
+    # resolve → notes → object_refs → contributors.
+    from nexus.services.resource_graph.edges import repoint_edges
 
-    if not (
-        request.credit_ids
-        or request.alias_ids
-        or request.external_id_ids
-        or request.object_link_ids
-    ):
+    if not (request.credit_ids or request.alias_ids or request.external_id_ids):
         raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Select contributor records to split")
     display_name = request.display_name.strip()
 
@@ -602,9 +599,6 @@ def split_contributor(
         selected_aliases = _load_selected_aliases_for_split(db, source.id, request.alias_ids)
         selected_external_ids = _load_selected_external_ids_for_split(
             db, source.id, request.external_id_ids
-        )
-        selected_object_links = _load_selected_object_links_for_split(
-            db, actor_user_id, source.id, request.object_link_ids
         )
 
         new_contributor = Contributor(
@@ -634,11 +628,13 @@ def split_contributor(
         moved_external_id_count = _move_selected_external_ids(
             selected_external_ids, new_contributor.id
         )
-        moved_link_count = repoint_contributor_object_links(
+        # All of the actor's graph edges follow the new identity (AC11);
+        # ordinals and snapshots ride along untouched.
+        moved_link_count = repoint_edges(
             db,
-            link_ids=[link.id for link in selected_object_links],
-            from_id=source.id,
-            to_id=new_contributor.id,
+            viewer_id=actor_user_id,
+            from_ref=ResourceRef(scheme="contributor", id=source.id),
+            to_ref=ResourceRef(scheme="contributor", id=new_contributor.id),
         )
 
         db_now = db.scalar(select(func.now()))
@@ -924,8 +920,13 @@ def merge_contributor(
 
     Repoints credits/aliases/external-ids onto the target (deduping equivalents), writes a confirmed
     merge-alias for the source name so name-only reingest resolves to the survivor, flattens prior
-    merge chains, and marks the source ``merged``. Object links are not touched — reads canonicalize."""
+    merge chains, and marks the source ``merged``. Graph edges are repointed explicitly and totally
+    through ``resource_graph.edges.repoint_edges`` (AC11) — including citation edges, whose
+    ordinals and snapshots are untouched."""
     _require_contributor_curator(actor_roles)
+    # Function-local import: resource_graph.edges reaches back here via
+    # resolve → notes → object_refs → contributors.
+    from nexus.services.resource_graph.edges import repoint_edges
 
     def _txn() -> ContributorOut:
         source = _load_contributor_for_merge(db, contributor_handle)
@@ -1026,6 +1027,14 @@ def merge_contributor(
             ),
             ids,
         )
+        # Every graph edge follows the survivor — bare links (dropping bare-pair
+        # duplicates) and citations with ordinals/snapshots intact (§9.6, AC11).
+        repointed_edges = repoint_edges(
+            db,
+            viewer_id=actor_user_id,
+            from_ref=ResourceRef(scheme="contributor", id=source.id),
+            to_ref=ResourceRef(scheme="contributor", id=target.id),
+        )
         # Flatten prior chains so resolution stays depth 1.
         db.execute(
             text(
@@ -1055,6 +1064,7 @@ def merge_contributor(
                     "target_handle": target.handle,
                     "merged_duplicate_credits": merged_duplicate_credits,
                     "repointed_credits": repointed_credits,
+                    "repointed_edges": repointed_edges,
                 },
             )
         )
@@ -1273,28 +1283,6 @@ def _move_selected_external_ids(
     return len(external_ids)
 
 
-def _load_selected_object_links_for_split(
-    db: Session,
-    actor_user_id: UUID,
-    source_id: UUID,
-    link_ids: list[UUID],
-) -> list[ObjectLink]:
-    if not link_ids:
-        return []
-    links = db.scalars(select(ObjectLink).where(ObjectLink.id.in_(link_ids))).all()
-    if len(links) != len(set(link_ids)):
-        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Split object-link selection is invalid")
-    for link in links:
-        if link.user_id != actor_user_id:
-            raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Split object-link selection is invalid")
-        if not (
-            (link.a_type == "contributor" and link.a_id == source_id)
-            or (link.b_type == "contributor" and link.b_id == source_id)
-        ):
-            raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Split object-link selection is invalid")
-    return list(links)
-
-
 def _blocking_contributor_reference_kind(db: Session, contributor: Contributor) -> str | None:
     credit_id = db.scalar(
         select(ContributorCredit.id)
@@ -1304,18 +1292,22 @@ def _blocking_contributor_reference_kind(db: Session, contributor: Contributor) 
     if credit_id is not None:
         return "credits"
 
-    object_link_id = db.scalar(
-        select(ObjectLink.id)
+    # Read-only existence probe on the graph (any user, either endpoint);
+    # writes stay with resource_graph (AC13).
+    edge_id = db.scalar(
+        select(ResourceEdge.id)
         .where(
             or_(
-                (ObjectLink.a_type == "contributor") & (ObjectLink.a_id == contributor.id),
-                (ObjectLink.b_type == "contributor") & (ObjectLink.b_id == contributor.id),
+                (ResourceEdge.source_scheme == "contributor")
+                & (ResourceEdge.source_id == contributor.id),
+                (ResourceEdge.target_scheme == "contributor")
+                & (ResourceEdge.target_id == contributor.id),
             )
         )
         .limit(1)
     )
-    if object_link_id is not None:
-        return "object links"
+    if edge_id is not None:
+        return "links"
 
     if contributor_is_referenced_in_persisted_context(db, contributor_handle=contributor.handle):
         return "persisted references"

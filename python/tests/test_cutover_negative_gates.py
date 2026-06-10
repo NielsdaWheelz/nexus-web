@@ -32,6 +32,9 @@ pytestmark = pytest.mark.unit
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _PY_ROOT = _REPO_ROOT / "python" / "nexus"
 _WEB_ROOT = _REPO_ROOT / "apps" / "web" / "src"
+# python/scripts (corpus seeds, e2e seed, migration helpers) is production-adjacent
+# code that the provenance-graph battery (§18.3) must also scrub.
+_SCRIPTS_ROOT = _REPO_ROOT / "python" / "scripts"
 
 # The post-split achieved line count of the artifact-head owner was 605. The gate
 # threshold is that count plus snug headroom (~15 lines) for small future edits,
@@ -209,10 +212,10 @@ def test_no_second_event_append_or_finalize_outside_run_kit():
 @pytest.mark.parametrize(
     "table",
     [
+        # conversation_references / oracle_reading_passages / object_links left
+        # this list when the resource provenance graph cutover dissolved them
+        # into resource_edges. Telemetry stays chat-owned.
         "message_retrievals",
-        "conversation_references",
-        "oracle_reading_passages",
-        "object_links",
     ],
 )
 def test_must_remain_store_has_table_def_and_a_consumer(table: str):
@@ -256,8 +259,11 @@ def test_allowed_rev3_symbols_present_and_unflagged():
 
 
 def test_reader_citation_color_owner_is_single():
-    # readerCitationColorForIndex is referenced only in readerCitation.ts / citations.ts.
-    allowed = re.compile(r"conversations/(readerCitation|citations)\.ts$")
+    # readerCitationColorForIndex is defined in conversations/readerCitation.ts and
+    # consumed only by the relocated citation adapter resourceGraph/citations.ts
+    # (the provenance-graph cutover moved the one CitationOut→ReaderCitationData
+    # adapter into resourceGraph/, §6/§11.11).
+    allowed = re.compile(r"(conversations/readerCitation|resourceGraph/citations)\.ts$")
     hits = [
         hit
         for hit in _grep(r"readerCitationColorForIndex", _WEB_ROOT)
@@ -267,9 +273,10 @@ def test_reader_citation_color_owner_is_single():
 
 
 def test_reader_citation_data_has_one_constructor():
-    # toReaderCitationData (in citations.ts) is the ONLY function that builds a
-    # ReaderCitationData; everything else is a type import/annotation. We assert
-    # that the only `: ReaderCitationData` *return type* is on toReaderCitationData.
+    # toReaderCitationData (the one citation adapter, now in resourceGraph/citations.ts)
+    # is the ONLY function that builds a ReaderCitationData; everything else is a type
+    # import/annotation. We assert the only `: ReaderCitationData` *return type* is on
+    # toReaderCitationData. conversations/citations.ts merely re-exports it.
     constructors = [
         hit
         for hit in _grep(r": ReaderCitationData\b", _WEB_ROOT)
@@ -278,11 +285,11 @@ def test_reader_citation_data_has_one_constructor():
         # not constructors — they keep a space/bracket after the type.
         and not re.search(r": ReaderCitationData\[\]", hit.text)
     ]
-    # Exactly one: the toReaderCitationData return type in citations.ts.
+    # Exactly one: the toReaderCitationData return type in resourceGraph/citations.ts.
     assert len(constructors) == 1, (
         f"expected one ReaderCitationData constructor:\n{_fmt(constructors)}"
     )
-    assert constructors[0].path.endswith("conversations/citations.ts")
+    assert constructors[0].path.endswith("resourceGraph/citations.ts")
     assert "toReaderCitationData" in constructors[0].text
 
 
@@ -534,8 +541,11 @@ def test_user_facing_job_kinds_subset_of_worker_allowlist():
 def test_generation_harness_must_remain_symbols_present():
     # Both SSE tailers stay (the two-tailer defense in _sse.py); the one token
     # estimator stays (char *budgets* are domain and orthogonal); chat keeps its
-    # user-copy map. (message_retrievals/conversation_references/oracle_reading_passages/
-    # object_links presence is covered by the parametrized must-REMAIN gate above.)
+    # user-copy map. (message_retrievals presence — the one chat-owned telemetry
+    # store that survives — is covered by the parametrized must-REMAIN gate above;
+    # conversation_references/oracle_reading_passages/object_links were folded into
+    # resource_edges by the provenance-graph cutover and are now BANNED by the
+    # §18.3 dropped-symbol gates below.)
     for symbol, where in (
         ("tail_cursor_stream", _PY_ROOT),
         ("tail_snapshot_stream", _PY_ROOT),
@@ -635,3 +645,102 @@ def test_optional_string_has_one_definition():
     ]
     assert len(definitions) == 1, f"expected one optionalString definition:\n{_fmt(definitions)}"
     assert definitions[0].path.endswith("lib/api/sse/guards.ts")
+
+
+# =============================================================================
+# Resource-provenance-graph cutover §18.3 — dropped symbols must be ABSENT
+# =============================================================================
+#
+# The flat-edge cutover dissolves the per-feature link/reference/citation stores
+# into ``resource_edges``. Each dropped table/column/verb/param below must be
+# gone from ALL production-adjacent code — ``python/nexus`` + ``apps/web/src`` +
+# ``python/scripts`` — so a revived store, a re-added relation verb, or a stale
+# ``citation_ordinal`` read fails here with a file:line pointer.
+#
+# Caveats baked into the patterns (spec §18.3 + this batch's notes):
+#   - Tokens are word-anchored (``\b``). That is load-bearing for two collisions:
+#     ``\bcitation_ordinal\b`` does NOT match the NEW ``uq_resource_edges_citation_ordinal``
+#     constraint name or the ``duplicate_citation_ordinal`` log key (``_`` is a word
+#     char, so there is no boundary inside ``edges_citation_ordinal``), and
+#     ``\bhas_reference\b`` does NOT match the live ``has_context_ref`` query param.
+#   - ``span:`` / ``chunk:`` are deliberately NOT grepped: a bare scheme grep
+#     false-matches ``lambda span:``, ``evidence_span:``, ``content_chunk:``, and
+#     f-strings. Alias rejection (D2) is proven directly by the ResourceRef parse
+#     test ``test_resource_graph_refs.test_assert_resource_ref_raises_on_invalid_input``.
+#   - Backtick-quoted historical prose (e.g. the ``conversation_context`` module
+#     docstring naming the routes it replaced) is allowed: see
+#     ``_DROPPED_TOKEN_BACKTICK_PROSE`` / ``_is_allowed_graph_residue``.
+#
+# These gates go green only once the parallel dead-code removals land; they are
+# written to the cutover's done-state, not its in-progress state.
+
+# Word-anchored tokens for the dropped stores / columns / verbs / params (§0, §13.2,
+# §5.7, §10.1). ``object_links`` carries its dead taxonomy (relation verbs + the
+# ``OBJECT_LINK_RELATIONS`` symbol) with it.
+_DROPPED_GRAPH_SYMBOLS: tuple[str, ...] = (
+    "conversation_references",
+    "oracle_reading_passages",
+    "object_links",
+    "library_intelligence_citations",
+    "relation_type",
+    "note_about",
+    "citation_ordinal",
+    "has_reference",
+    "OBJECT_LINK_RELATIONS",
+)
+
+# Documented, minimal allowance for backtick-quoted historical prose. A hit is
+# permitted ONLY when the dropped token appears double-backtick-wrapped (RST/Sphinx
+# prose styling) — which real code references (``__tablename__ = "object_links"``,
+# attribute access, route paths, SQL strings) never are. This permits the
+# replacement-explaining docstrings without masking a genuine code reintroduction,
+# and it stays green whether or not a parallel agent later scrubs the prose.
+_DROPPED_TOKEN_BACKTICK_PROSE = re.compile(
+    r"``[A-Za-z0-9_./]*(?:" + "|".join(_DROPPED_GRAPH_SYMBOLS) + r")[A-Za-z0-9_./]*``"
+)
+
+
+def _is_allowed_graph_residue(hit: _Hit) -> bool:
+    # Frontend absence-assertion tests legitimately name dropped symbols.
+    if _FRONTEND_TEST.search(hit.path):
+        return True
+    # Backtick-quoted historical prose (module/function docstrings explaining the
+    # store a route/cleanup path replaced).
+    return bool(_DROPPED_TOKEN_BACKTICK_PROSE.search(hit.text))
+
+
+@pytest.mark.parametrize("symbol", _DROPPED_GRAPH_SYMBOLS)
+def test_dropped_provenance_graph_symbols_absent_in_production(symbol: str):
+    hits = [
+        hit
+        for hit in _grep(rf"\b{symbol}\b", _PY_ROOT, _WEB_ROOT, _SCRIPTS_ROOT)
+        if not _is_allowed_graph_residue(hit)
+    ]
+    assert not hits, (
+        f"dropped provenance-graph symbol {symbol!r} still referenced in production-"
+        f"adjacent code (it dissolved into resource_edges; spec §18.3):\n{_fmt(hits)}"
+    )
+
+
+# =============================================================================
+# §18.3 file-absence — dropped service + route modules must be gone
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    "rel_path",
+    [
+        # The per-feature link/reference CRUD services and their route modules are
+        # deleted; user links + context refs now live on the graph routes.
+        "python/nexus/services/conversation_references.py",
+        "python/nexus/services/object_links.py",
+        "python/nexus/api/routes/conversation_references.py",
+        "python/nexus/api/routes/object_links.py",
+    ],
+)
+def test_dropped_provenance_graph_modules_absent(rel_path: str):
+    path = _REPO_ROOT / rel_path
+    assert not path.exists(), (
+        f"{rel_path} must be deleted in the provenance-graph cutover "
+        "(its concern moved to services/resource_graph/* + the graph routes)"
+    )

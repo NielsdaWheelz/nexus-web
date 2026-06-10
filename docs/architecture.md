@@ -363,17 +363,28 @@ current **library-intelligence** subgraph (`library_intelligence_artifacts`,
 `contributor_identity_events` (audit trail).
 
 **Notes** — `pages`, `daily_note_pages`, `note_blocks` (ProseMirror JSON +
-markdown + text), `object_links` (typed graph edges between any two object refs),
-`user_pinned_objects`.
+markdown + text), `user_pinned_objects`. (Inline note→object references and the
+note-body backlinks are `resource_edges`, below — notes own no link table.)
+
+**Resource graph** — `resource_edges` (the single directed connection table:
+stance `kind`, writer `origin`, polymorphic `scheme`+`id` endpoints with no
+endpoint FKs, and one optional citation pair `ordinal`+`snapshot`),
+`resource_external_snapshots` (stable targets for public web-search citations),
+and `oracle_reading_folios` (oracle-owned generated folio content referencing its
+citation edge). This subgraph replaced four superseded link/reference/citation
+stores — `object_links`, `conversation_references`, `oracle_reading_passages`,
+`library_intelligence_citations` — see §7.6.
 
 **Conversations / chat** — `conversations`, `messages` (the message tree with
 branch pointers), `conversation_branches`, `conversation_active_paths`
-(per-viewer), `conversation_shares`, `conversation_references`,
-`conversation_media`, `message_llm`, `models` (LLM registry); plus the **chat-run**
-machinery: `chat_runs`, `chat_run_events` (append-only SSE log),
-`chat_prompt_assemblies`; and the **retrieval/citation** ledgers:
-`message_tool_calls`, `message_retrievals`, `message_retrieval_candidate_ledgers`,
-`message_rerank_ledgers`.
+(per-viewer), `conversation_shares`, `conversation_media`, `message_llm`,
+`models` (LLM registry); plus the **chat-run** machinery: `chat_runs`,
+`chat_run_events` (append-only SSE log), `chat_prompt_assemblies`; and the
+**retrieval/citation** ledgers: `message_tool_calls`, `message_retrievals`
+(telemetry; carries `cited_edge_id` pointing back at the citation edge),
+`message_retrieval_candidate_ledgers`, `message_rerank_ledgers`. (Conversation
+context refs are now `resource_edges` with `source_scheme='conversation'`, not a
+`conversation_references` table.)
 
 **Podcasts / playback** — `podcasts`, `podcast_subscriptions`,
 `podcast_subscription_libraries`, `podcast_episodes` (PK = `media_id`),
@@ -385,9 +396,11 @@ machinery: `chat_runs`, `chat_run_events` (append-only SSE log),
 tables (`rate_limit_request_log`, `rate_limit_inflight`, `token_budget_*`) and
 stream-token replay claims.
 
-**Oracle** — `oracle_corpus_works`, `oracle_corpus_passages` (PGVector 256),
+**Oracle** — `oracle_corpus_works`, `oracle_corpus_passages` (PGVector 256; their
+uuid `id` doubles as the stable `oracle_corpus_passage:<id>` citation target),
 `oracle_corpus_images` (PGVector 256 + public owned plate object metadata),
-`oracle_readings`, `oracle_reading_passages`, `oracle_reading_events`.
+`oracle_readings`, `oracle_reading_folios` (the per-phase generated folio,
+referencing its citation `resource_edge`), `oracle_reading_events`.
 
 > Two things to know when reasoning about the schema: (1) `background_jobs` is
 > invisible if you only read `models.py` — it's raw SQL. (2) Because migrations
@@ -564,13 +577,21 @@ result-type grid. The package owns one concern per module (`kinds`, `query`, `sc
   for any semantic-capable kind regardless of structured filters. For chat, candidates are
   selected under a context-char budget and every candidate/rerank/selection
   decision is written to ledger tables; selected rows become `message_retrievals`
-  citation rows via the single validated writer `retrieval_citation.insert_retrieval_row`.
-- **The `resource_uri` grammar** (`services/resource_resolver.py`,
-  `resource_loaders.py`): a `<scheme>:<uuid>` URI (schemes: media, library, span,
-  chunk, highlight, page, note_block, fragment, conversation, message) is the
-  single vocabulary bridging conversation references, citations, prompt rendering,
-  and the read/inspect agent tools. `load_resource_batch` is the one place each
-  scheme's read SQL + permission check exists.
+  telemetry rows via the single validated writer
+  `retrieval_citation.insert_retrieval_row` (the cited ones link back to their
+  citation edge through `cited_edge_id`, §7.7).
+- **The `ResourceRef` grammar** (`services/resource_graph/refs.py`): a
+  `<scheme>:<uuid>` ref over a closed scheme set (`media`, `library`,
+  `evidence_span`, `content_chunk`, `highlight`, `page`, `note_block`, `fragment`,
+  `conversation`, `message`, `oracle_reading`, `oracle_corpus_passage`,
+  `library_intelligence_artifact`, `external_snapshot`, `contributor`, `podcast`)
+  is the one persisted resource-identity vocabulary. The same ref identifies a
+  resource everywhere: an edge endpoint, a citation target, an attached
+  conversation context ref, and a read/inspect agent-tool argument. Parsing is
+  strict (canonical lowercase uuid) and returns a typed failure, never `None`.
+  Hydration + permission checks live in `services/resource_graph/resolve.py` —
+  `load_resource_batch` is the one place each scheme's read SQL + visibility gate
+  exists.
 
 ### 7.7 Citations & the agent tool contract
 
@@ -579,14 +600,21 @@ The chat/oracle LLM can call four tools (`services/agent_tools/`):
 - **`app_search`** — RAG retrieval over the user's library (scoped to
   `media:`/`library:` refs); produces numbered, citable results.
 - **`web_search`** — Brave public web search; numbered, citable.
-- **`read_resource`** — reads exact text for a `resource_uri`; evidence reads are
+- **`read_resource`** — reads exact text for a `ResourceRef`; evidence reads are
   citable, oversized docs redirect to inspect.
-- **`inspect_resource`** — returns a navigable document map of a `media:` URI;
+- **`inspect_resource`** — returns a navigable document map of a `media:` ref;
   navigation only, never cited.
 
 Citation `[N]` is a **dense, turn-global ordinal** assigned across the whole turn
-(attached references first, then each tool's selected results); the frontend maps
-`[N]` → a `message_retrievals` row → a clickable reader target.
+(attached references first, then each tool's selected results). A citation **is an
+edge**: `[N]` is the `ordinal` on an `origin='citation'` `resource_edge` whose
+source is the assistant message and whose target is the cited resource. The
+backend builds the `CitationOut` read-model from those edges via
+`resource_graph.citations.build_citation_outs` (uniformly for chat, Oracle, and
+Library Intelligence), reconstructing the in-reader jump from the target's own
+anchoring. `message_retrievals` stays chat-owned **telemetry**, pointing back at
+the edge through `cited_edge_id`; the frontend maps `[N]` → a `CitationOut` → a
+clickable reader target.
 
 ---
 
@@ -817,10 +845,11 @@ are provenance, never identity) → confirmed alias → new unverified contribut
 (`contributor_identity_events`) and run under `run_identity_write` (SERIALIZABLE + bounded
 retry). `merge` redirects a duplicate into a survivor — repointing credits/aliases/external-ids,
 writing a confirmed `source="merge"` alias so name-only reingest resolves to the survivor, and
-leaving `object_links` untouched (reads canonicalize through `merged_into_contributor_id`).
-Visibility predicates (`visible_podcast_ids_cte_sql`, `visible_content_credit_rows_sql`,
-`visible_contributor_ids_cte_sql`) live solely in `auth/permissions.py`; persisted-chat-ref
-checks live in `chat_context_refs.py`; object-link writes go through `object_links.py`.
+repointing every `contributor:<id>` graph endpoint onto the survivor via
+`resource_graph.edges.repoint_edges` (which drops rows that would collapse into a self-edge or
+duplicate an existing pair). Visibility predicates (`visible_podcast_ids_cte_sql`,
+`visible_content_credit_rows_sql`, `visible_contributor_ids_cte_sql`) live solely in
+`auth/permissions.py`; persisted-chat-ref checks live in `chat_context_refs.py`.
 Surfaced in the UI as the `/authors` faceted **directory** (peer of Libraries — work counts,
 role/kind/content-kind/status facets, works|name sort, cursor paging) and author chips linking
 to `/authors/{handle}`; the detail pane offers curator-gated alias/external-id/split/tombstone
@@ -833,9 +862,11 @@ tree of `note_blocks`; each block's `body_pm_json` (ProseMirror) is the source o
 truth, with derived `body_markdown`/`body_text`. Sibling order is a dense,
 recomputed `%010d` rank in `order_key` (not fractional). Full outliner ops
 (create/update/split/merge/move, batched document patches with current-row
-conditional updates, quick-capture into daily notes). Inline `object_ref`
-nodes sync into `object_links` edges; highlights get a `note_about` backlink. Every
-page/block projects into the `object_search_documents` index. Frontend:
+conditional updates, quick-capture into daily notes). Inline `object_ref`/`object_embed`
+nodes sync into `resource_edges` with `origin='note_body'` (`replace_edges_for_origin`
+keeps the block's edge set in step with its body); a note attached to a highlight is itself
+a `note_block` linked by an `origin='highlight_note'` edge. Every page/block is reindexed
+into the polymorphic content index via `note_indexing.enqueue_page_reindex`. Frontend:
 `components/notes/ProseMirrorOutlineEditor.tsx` + `lib/notes/prosemirror/*`.
 
 ### 8.8 Podcasts & playback
@@ -1070,9 +1101,10 @@ The things most likely to bite you, distilled:
 7. **One send = one durable `ChatRun`**; HTTP never calls the provider; the worker
    does; the client only tails SSE and reconciles.
 8. **Active conversation path is per-viewer**; only path messages enter context.
-9. **Citation `[N]` is a dense, turn-global ordinal**, not a per-tool index; only
-   `message_retrievals` rows with a materialized citation get a number (the
-   attached-reference citation regression came from breaking this).
+9. **Citation `[N]` is a dense, turn-global ordinal carried on an
+   `origin='citation'` `resource_edge`**, not a per-tool index and not a column on
+   `message_retrievals` (which is telemetry pointing back via `cited_edge_id`); the
+   attached-reference citation regression came from breaking this density.
 10. **`background_jobs` is raw SQL**, invisible in `models.py`. Most ingest tasks'
    `{"status":"failed"}` returns mark the *queue* row succeeded; recovery is the
    reconciler + manual retry.
@@ -1102,7 +1134,8 @@ The things most likely to bite you, distilled:
 | Reader/highlights backend | `python/nexus/services/{reader,epub_*,pdf_*,fragment_blocks,highlights}.py` |
 | Chat / conversations | `python/nexus/services/chat_runs.py` + `chat_run_*`, `context_assembler.py`, `conversations.py` |
 | Oracle | `python/nexus/services/oracle.py`, `python/nexus/services/oracle_plates.py` |
-| Search / retrieval / indexing | `python/nexus/services/{search,content_indexing,semantic_chunks,retrieval_citation,resource_resolver}.py` |
+| Search / retrieval / indexing | `python/nexus/services/{search,content_indexing,semantic_chunks,retrieval_citation}.py` |
+| Resource graph (edges, refs, citations) | `python/nexus/services/resource_graph/` (`refs`, `resolve`, `edges`, `context`, `citations`, `cleanup`) |
 | Agent tools | `python/nexus/services/agent_tools/` |
 | Libraries / contributors / notes | `python/nexus/services/{library_governance,library_entries,library_invitations,default_library_closure,contributors,notes}.py` |
 | Podcasts / playback | `python/nexus/services/podcasts/`, `playback_queue.py` |

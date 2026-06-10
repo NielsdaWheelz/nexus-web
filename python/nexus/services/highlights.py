@@ -12,14 +12,11 @@ from nexus.auth.permissions import (
     highlight_visibility_filter,
 )
 from nexus.db.models import (
-    Conversation,
-    ConversationReference,
     Fragment,
     Highlight,
     HighlightFragmentAnchor,
     HighlightPdfAnchor,
     Media,
-    ObjectLink,
 )
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.logging import get_logger
@@ -36,6 +33,9 @@ from nexus.schemas.highlights import (
 )
 from nexus.services.capabilities import is_text_document_ready
 from nexus.services.notes import linked_note_blocks_for_highlights
+from nexus.services.resource_graph.cleanup import delete_edges_for_deleted_resource
+from nexus.services.resource_graph.context import batch_conversations_with_context_ref
+from nexus.services.resource_graph.refs import ResourceRef
 
 logger = get_logger(__name__)
 
@@ -238,36 +238,23 @@ def _require_media_readable_for_existing_highlight(db: Session, highlight: Highl
 def _batch_linked_conversations(
     db: Session, highlight_ids: list[UUID], viewer_id: UUID
 ) -> dict[UUID, list[LinkedConversationRef]]:
-    """Batch-fetch conversations that reference the given highlights.
+    """Conversations that reference the given highlights, projected to refs.
 
-    Walks `conversation_references` for each ``highlight:UUID`` URI; conversations
-    are returned only when owned by ``viewer_id``.
+    The reverse-lookup predicate is owned by its §9.4 home,
+    ``resource_graph.context.batch_conversations_with_context_ref`` (the batched
+    twin of ``list_conversations_with_context_ref``); this only maps the
+    conversation rows to ``LinkedConversationRef``, mirroring how
+    ``_batch_linked_note_blocks`` delegates to ``notes``.
     """
-    if not highlight_ids:
-        return {}
-    uri_by_id = {highlight_id: f"highlight:{highlight_id}" for highlight_id in highlight_ids}
-    rows = db.execute(
-        select(
-            ConversationReference.resource_uri,
-            Conversation.id,
-            Conversation.title,
-        )
-        .join(Conversation, Conversation.id == ConversationReference.conversation_id)
-        .where(
-            ConversationReference.resource_uri.in_(list(uri_by_id.values())),
-            Conversation.owner_user_id == viewer_id,
-        )
-    ).all()
-    id_by_uri = {uri: highlight_id for highlight_id, uri in uri_by_id.items()}
-    result: dict[UUID, list[LinkedConversationRef]] = {}
-    for resource_uri, conv_id, title in rows:
-        hl_id = id_by_uri.get(resource_uri)
-        if hl_id is None:
-            continue
-        result.setdefault(hl_id, []).append(
-            LinkedConversationRef(conversation_id=conv_id, title=title)
-        )
-    return result
+    return {
+        highlight_id: [
+            LinkedConversationRef(conversation_id=conv.id, title=conv.title)
+            for conv in conversations
+        ]
+        for highlight_id, conversations in batch_conversations_with_context_ref(
+            db, viewer_id=viewer_id, targets=highlight_ids, target_scheme="highlight"
+        ).items()
+    }
 
 
 def _batch_linked_note_blocks(
@@ -739,12 +726,7 @@ def delete_highlight(db: Session, viewer_id: UUID, highlight_id: UUID) -> None:
     # Verify highlight exists and is owned by viewer
     get_highlight_for_author_write_or_404(db, viewer_id, highlight_id)
 
-    db.execute(
-        delete(ObjectLink).where(
-            ((ObjectLink.a_type == "highlight") & (ObjectLink.a_id == highlight_id))
-            | ((ObjectLink.b_type == "highlight") & (ObjectLink.b_id == highlight_id))
-        )
-    )
+    delete_edges_for_deleted_resource(db, ref=ResourceRef(scheme="highlight", id=highlight_id))
     db.execute(delete(Highlight).where(Highlight.id == highlight_id))
     db.flush()
     db.commit()

@@ -13,6 +13,24 @@ Oracle has one current corpus. Runtime code does not select among corpus
 releases, persist provider request hashes, or store DB-only passage
 provenance objects.
 
+## Folios, Citation Edges, And Concordance
+
+A reading persists one `oracle_reading_folios` row per phase (descent / ordeal /
+ascent) carrying the generated content (attribution, marginalia, locator label).
+Each folio references its citation `resource_edge` by `edge_id`: in the same
+per-phase transaction `oracle.py` calls
+`resource_graph.citations.record_citation` to mint an `origin='citation'` edge
+whose source is the `oracle_reading:<id>` and whose target is the cited resource —
+a stable `oracle_corpus_passage:<id>` for public-domain text or an
+`evidence_span:`/`content_chunk:` for user media. The edge owns identity and the
+display snapshot (excerpt, deep link); the folio owns the generated prose, not
+duplicated on the edge.
+
+Concordance ("other readings that drew the same source") is
+`resource_graph.citations.concordant_sources` scoped to `source_scheme='oracle_reading'`:
+identity equality on the cited `(target_scheme, target_id)`, so two readings that
+drew the same public-domain passage share one target id by construction.
+
 ## Plate Contract
 
 - Frontend URL: `/api/oracle/plates/[id]`.

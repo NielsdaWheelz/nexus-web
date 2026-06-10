@@ -41,12 +41,12 @@ async function readReferences(
 ): Promise<ChatReferencesResponse["data"]> {
   const resourceUri = `media:${mediaId}`;
   const response = await page.request.get(
-    `/api/conversations?has_reference=${encodeURIComponent(resourceUri)}&limit=100`,
+    `/api/conversations?has_context_ref=${encodeURIComponent(resourceUri)}&limit=100`,
   );
   const body = await response.text();
   expect(
     response.ok(),
-    `GET /api/conversations?has_reference=${resourceUri} failed: status=${response.status()}; body=${body.slice(0, 300)}`,
+    `GET /api/conversations?has_context_ref=${resourceUri} failed: status=${response.status()}; body=${body.slice(0, 300)}`,
   ).toBeTruthy();
   return (JSON.parse(body) as ChatReferencesResponse).data;
 }

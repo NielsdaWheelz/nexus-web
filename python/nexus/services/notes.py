@@ -9,7 +9,7 @@ from typing import Any, cast, get_args
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from sqlalchemy import case, delete, func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -19,9 +19,9 @@ from nexus.db.models import (
     DailyNotePage,
     Highlight,
     NoteBlock,
-    ObjectLink,
     Page,
     PinnedObjectRef,
+    ResourceEdge,
 )
 from nexus.db.retries import retry_serializable
 from nexus.errors import ApiError, ApiErrorCode, ConflictError, NotFoundError
@@ -36,7 +36,6 @@ from nexus.schemas.notes import (
     NoteBlockOut,
     NotePageOut,
     NotePageSummaryOut,
-    ObjectRef,
     PatchPageDocumentRequest,
     PatchPageDocumentResponse,
     QuickCaptureRequest,
@@ -46,7 +45,9 @@ from nexus.schemas.notes import (
 )
 from nexus.services.content_indexing import IndexOwner, delete_content_index
 from nexus.services.note_indexing import enqueue_page_reindex
-from nexus.services.object_refs import hydrate_object_ref
+from nexus.services.resource_graph.cleanup import delete_edges_for_deleted_resource
+from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
+from nexus.services.resource_graph.schemas import EdgeCreate
 
 _OBJECT_REF_MARKDOWN_RE = re.compile(
     r"\[\[([a-z_]+):([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
@@ -404,7 +405,7 @@ def _patch_page_document_once(
             )
             db.add(block)
             db.flush()
-            _sync_inline_reference_links(db, viewer_id, block)
+            _sync_note_body_edges(db, viewer_id, block)
             created_blocks[block.id] = block
             changed = True
 
@@ -436,7 +437,7 @@ def _patch_page_document_once(
             if not block_changed:
                 continue
             if body_changed:
-                _sync_inline_reference_links(db, viewer_id, block)
+                _sync_note_body_edges(db, viewer_id, block)
             block.updated_at = func.now()
             changed = True
 
@@ -591,80 +592,7 @@ def create_note_block(
     viewer_id: UUID,
     request: CreateNoteBlockRequest,
 ) -> NoteBlockOut:
-    page = (
-        get_page_for_owner_or_404(db, viewer_id, request.page_id)
-        if request.page_id
-        else _default_page(db, viewer_id)
-    )
-    parent = None
-    if request.parent_block_id is not None:
-        parent = get_note_block_for_owner_or_404(db, viewer_id, request.parent_block_id)
-        parent_page_id = parent.page_id
-        assert parent_page_id is not None
-        if parent_page_id != page.id:
-            raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Parent must be on the same page")
-    _validate_position_anchor(
-        db,
-        page_id=page.id,
-        parent_id=parent.id if parent is not None else None,
-        before_block_id=request.before_block_id,
-        after_block_id=request.after_block_id,
-        moving_block_id=None,
-    )
-
-    body_pm_json = request.body_pm_json or pm_doc_from_text(request.body_markdown or "")
-    body_text = text_from_pm_json(body_pm_json)
-    body_markdown = (
-        markdown_from_pm_json(body_pm_json)
-        if request.body_pm_json is not None
-        else request.body_markdown or ""
-    )
-    block = NoteBlock(
-        id=request.id,
-        user_id=viewer_id,
-        page_id=page.id,
-        parent_block_id=parent.id if parent is not None else None,
-        order_key="0000000000",
-        block_kind=request.block_kind,
-        body_pm_json=body_pm_json,
-        body_markdown=body_markdown,
-        body_text=body_text,
-        collapsed=False,
-    )
-    db.add(block)
-    try:
-        db.flush()
-    except IntegrityError as exc:
-        db.rollback()
-        raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Note block id already exists") from exc
-    _insert_block_in_order(db, block, request.before_block_id, request.after_block_id)
-
-    if request.linked_object is not None:
-        linked = request.linked_object
-        hydrate_object_ref(
-            db,
-            viewer_id,
-            ObjectRef(object_type=linked.object_type, object_id=linked.object_id),
-        )
-        db.add(
-            ObjectLink(
-                user_id=viewer_id,
-                relation_type=linked.relation_type,
-                a_type="note_block",
-                a_id=block.id,
-                b_type=linked.object_type,
-                b_id=linked.object_id,
-                a_order_key=None,
-                b_order_key=None,
-                a_locator_json=None,
-                b_locator_json=None,
-                metadata_json={},
-            )
-        )
-    _sync_inline_reference_links(db, viewer_id, block)
-
-    page.updated_at = func.now()
-    enqueue_page_reindex(db, page_id=page.id, reason="block_create")
+    block = _create_note_block_without_commit(db, viewer_id, request)
     db.commit()
     db.refresh(block)
     return _block_out(block, [])
@@ -720,7 +648,7 @@ def _update_note_block_once(
         changed = True
     if changed:
         if body_changed:
-            _sync_inline_reference_links(db, viewer_id, block)
+            _sync_note_body_edges(db, viewer_id, block)
         block.updated_at = func.now()
         page = db.get(Page, page_id)
         if page is not None:
@@ -745,7 +673,7 @@ def set_note_block_markdown_body_without_commit(
         block.body_markdown = markdown_from_pm_json(body_pm_json)
         block.body_text = text_from_pm_json(body_pm_json)
         block.updated_at = func.now()
-        _sync_inline_reference_links(db, viewer_id, block)
+        _sync_note_body_edges(db, viewer_id, block)
         page_id = block.page_id
         assert page_id is not None
         enqueue_page_reindex(db, page_id=page_id, reason="block_markdown")
@@ -820,11 +748,11 @@ def split_note_block(
     db.add(new_block)
     db.flush()
     _insert_block_in_order(db, new_block, None, block.id)
-    _copy_split_note_about_links(
+    _copy_highlight_attachments(
         db, viewer_id, source_block_id=block.id, target_block_id=new_block.id
     )
-    _sync_inline_reference_links(db, viewer_id, block)
-    _sync_inline_reference_links(db, viewer_id, new_block)
+    _sync_note_body_edges(db, viewer_id, block)
+    _sync_note_body_edges(db, viewer_id, new_block)
     page = db.get(Page, page_id)
     if page is not None:
         page.updated_at = func.now()
@@ -856,7 +784,7 @@ def merge_note_block(db: Session, viewer_id: UUID, block_id: UUID) -> NoteBlockO
         source_block_id=block.id,
         target_block_id=previous.id,
     )
-    _sync_inline_reference_links(db, viewer_id, previous)
+    _sync_note_body_edges(db, viewer_id, previous)
     db.delete(block)
     previous_page_id = previous.page_id
     assert previous_page_id is not None
@@ -914,47 +842,28 @@ def linked_note_blocks_for_highlights(
     viewer_id: UUID,
     highlight_ids: list[UUID],
 ) -> dict[UUID, list[NoteBlock]]:
+    """Attached notes per highlight: ``origin=highlight_note`` edges (§5.7)."""
     if not highlight_ids:
         return {}
-    highlight_id = case(
-        (ObjectLink.a_type == "highlight", ObjectLink.a_id),
-        else_=ObjectLink.b_id,
-    )
-    endpoint_order = case(
-        (ObjectLink.a_type == "highlight", ObjectLink.a_order_key),
-        else_=ObjectLink.b_order_key,
-    )
     rows = db.execute(
-        select(highlight_id, NoteBlock)
+        select(ResourceEdge.source_id, NoteBlock)
         .join(
             NoteBlock,
-            (
-                ((ObjectLink.a_type == "note_block") & (NoteBlock.id == ObjectLink.a_id))
-                | ((ObjectLink.b_type == "note_block") & (NoteBlock.id == ObjectLink.b_id))
-            ),
+            (ResourceEdge.target_scheme == "note_block") & (ResourceEdge.target_id == NoteBlock.id),
         )
         .where(
-            ObjectLink.user_id == viewer_id,
-            ObjectLink.relation_type == "note_about",
+            ResourceEdge.user_id == viewer_id,
+            ResourceEdge.origin == "highlight_note",
+            ResourceEdge.source_scheme == "highlight",
+            ResourceEdge.source_id.in_(highlight_ids),
             NoteBlock.user_id == viewer_id,
-            (
-                (
-                    (ObjectLink.a_type == "note_block")
-                    & (ObjectLink.b_type == "highlight")
-                    & (ObjectLink.b_id.in_(highlight_ids))
-                )
-                | (
-                    (ObjectLink.a_type == "highlight")
-                    & (ObjectLink.a_id.in_(highlight_ids))
-                    & (ObjectLink.b_type == "note_block")
-                )
-            ),
         )
         .order_by(
-            highlight_id.asc(),
-            endpoint_order.asc().nullsfirst(),
-            ObjectLink.created_at.asc(),
-            ObjectLink.id.asc(),
+            ResourceEdge.source_id.asc(),
+            ResourceEdge.created_at.asc(),
+            # order_key reflects attachment creation order and is stable when
+            # edges share a transaction's created_at (the edge id is random).
+            NoteBlock.order_key.asc(),
             NoteBlock.id.asc(),
         )
     ).all()
@@ -993,11 +902,7 @@ def set_highlight_note_body(
     if existing is None:
         request = CreateNoteBlockRequest(
             body_markdown=normalized,
-            linked_object=LinkedObjectRequest(
-                object_type="highlight",
-                object_id=highlight_id,
-                relation_type="note_about",
-            ),
+            linked_object=LinkedObjectRequest(object_type="highlight", object_id=highlight_id),
         )
         block = _create_note_block_without_commit(db, viewer_id, request)
         if commit:
@@ -1011,7 +916,7 @@ def set_highlight_note_body(
         existing.body_markdown = normalized
         existing.body_text = normalized
         existing.updated_at = func.now()
-        _sync_inline_reference_links(db, viewer_id, existing)
+        _sync_note_body_edges(db, viewer_id, existing)
         page = db.get(Page, existing.page_id) if existing.page_id is not None else None
         if page is not None:
             page.updated_at = func.now()
@@ -1032,6 +937,10 @@ def _create_note_block_without_commit(
         if request.page_id
         else _default_page(db, viewer_id)
     )
+    if request.parent_block_id is not None:
+        parent = get_note_block_for_owner_or_404(db, viewer_id, request.parent_block_id)
+        if parent.page_id != page.id:
+            raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Parent must be on the same page")
     _validate_position_anchor(
         db,
         page_id=page.id,
@@ -1067,24 +976,23 @@ def _create_note_block_without_commit(
         raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Note block id already exists") from exc
     _insert_block_in_order(db, block, request.before_block_id, request.after_block_id)
     if request.linked_object is not None:
-        linked = request.linked_object
-        hydrate_object_ref(
+        # The quick-note composer's highlight↔note attachment (§5.7): one
+        # `origin=highlight_note` edge, flush-only in this transaction.
+        # justify-cycle: function-local import — `edges` imports `resolve`,
+        # which imports this module for `linked_note_blocks_for_highlights`.
+        from nexus.services.resource_graph.edges import create_edge
+
+        create_edge(
             db,
-            viewer_id,
-            ObjectRef(object_type=linked.object_type, object_id=linked.object_id),
+            viewer_id=viewer_id,
+            input=EdgeCreate(
+                source=ResourceRef(scheme="highlight", id=request.linked_object.object_id),
+                target=ResourceRef(scheme="note_block", id=block.id),
+                kind="context",
+                origin="highlight_note",
+            ),
         )
-        db.add(
-            ObjectLink(
-                user_id=viewer_id,
-                relation_type=linked.relation_type,
-                a_type="note_block",
-                a_id=block.id,
-                b_type=linked.object_type,
-                b_id=linked.object_id,
-                metadata_json={},
-            )
-        )
-    _sync_inline_reference_links(db, viewer_id, block)
+    _sync_note_body_edges(db, viewer_id, block)
     page.updated_at = func.now()
     enqueue_page_reindex(db, page_id=page.id, reason="block_create")
     return block
@@ -1292,189 +1200,98 @@ def _pm_split_text(node: object) -> str:
     return _pm_split_text(node.get("content"))
 
 
-def _inline_object_refs_from_pm_json(
-    value: object,
-) -> list[tuple[str, ObjectRef, dict[str, Any]]]:
-    refs: list[tuple[str, ObjectRef, dict[str, Any]]] = []
-    target_counts: dict[tuple[str, UUID], int] = {}
+def _body_target_refs(value: object) -> list[ResourceRef]:
+    """Distinct ``object_ref``/``object_embed`` targets in document order.
 
-    def visit(node: object, path: list[int]) -> None:
+    The references-vs-embeds distinction and positions are not stored: the body
+    itself knows where its refs sit, so the same ref twice in one body is one
+    target (§5.7).
+    """
+    refs: list[ResourceRef] = []
+    seen: set[str] = set()
+
+    def visit(node: object) -> None:
         if isinstance(node, list):
-            for index, child in enumerate(node):
-                visit(child, [*path, index])
+            for child in node:
+                visit(child)
             return
         if not isinstance(node, dict):
             return
-        node_type = node.get("type")
-        if node_type in {"object_ref", "object_embed"} and isinstance(node.get("attrs"), dict):
+        if node.get("type") in {"object_ref", "object_embed"} and isinstance(
+            node.get("attrs"), dict
+        ):
             attrs = node["attrs"]
             object_type = attrs.get("objectType")
             object_id = attrs.get("objectId")
             if isinstance(object_type, str) and isinstance(object_id, str):
-                ref = ObjectRef(
-                    object_type=cast(OBJECT_TYPES, object_type),
-                    object_id=UUID(object_id),
-                )
-                key = (ref.object_type, ref.object_id)
-                target_occurrence = target_counts.get(key, 0)
-                target_counts[key] = target_occurrence + 1
-                relation_type = "embeds" if node_type == "object_embed" else "references"
-                refs.append(
-                    (
-                        relation_type,
-                        ref,
-                        {
-                            "kind": (
-                                "note_object_embed"
-                                if node_type == "object_embed"
-                                else "note_inline_object_ref"
-                            ),
-                            "path": path,
-                            "occurrence": len(refs),
-                            "target_occurrence": target_occurrence,
-                        },
-                    )
-                )
-        visit(node.get("content"), path)
+                # Validated bodies constrain objectType to OBJECT_TYPES, a
+                # subset of ResourceScheme.
+                ref = ResourceRef(scheme=cast("ResourceScheme", object_type), id=UUID(object_id))
+                if ref.uri not in seen:
+                    seen.add(ref.uri)
+                    refs.append(ref)
+        visit(node.get("content"))
 
-    visit(value, [])
+    visit(value)
     return refs
 
 
-def _sync_inline_reference_links(db: Session, viewer_id: UUID, block: NoteBlock) -> None:
-    next_refs = _inline_object_refs_from_pm_json(block.body_pm_json)
-    existing_links = list(
-        db.scalars(
-            select(ObjectLink).where(
-                ObjectLink.user_id == viewer_id,
-                ObjectLink.relation_type.in_(["references", "embeds"]),
-                (
-                    ((ObjectLink.a_type == "note_block") & (ObjectLink.a_id == block.id))
-                    | ((ObjectLink.b_type == "note_block") & (ObjectLink.b_id == block.id))
-                ),
-            )
-        )
+def _sync_note_body_edges(db: Session, viewer_id: UUID, block: NoteBlock) -> None:
+    """Replace the block's ``origin=note_body`` edge set from its body refs (§5.7).
+
+    Replace-set scoping by ``(source, origin)`` means user links and the
+    highlight attachment are untouched by construction.
+    """
+    # justify-cycle: function-local import — `edges` imports `resolve`, which
+    # imports this module for `linked_note_blocks_for_highlights`.
+    from nexus.services.resource_graph.edges import replace_edges_for_origin
+
+    source = ResourceRef(scheme="note_block", id=block.id)
+    replace_edges_for_origin(
+        db,
+        viewer_id=viewer_id,
+        source=source,
+        origin="note_body",
+        edges=[
+            EdgeCreate(source=source, target=target, kind="context", origin="note_body")
+            for target in _body_target_refs(block.body_pm_json)
+        ],
     )
-    unlocated_targets = {
-        (link.relation_type, link.b_type, link.b_id)
-        if link.a_type == "note_block" and link.a_id == block.id
-        else (link.relation_type, link.a_type, link.a_id)
-        for link in existing_links
-        if link.a_locator_json is None and link.b_locator_json is None
-    }
-    kept_indexes: set[int] = set()
-    for link in existing_links:
-        if link.a_type != "note_block" or link.a_id != block.id:
-            continue
-        if not _is_managed_note_body_link(link):
-            continue
-        matched_index = None
-        for index, (relation_type, ref, locator) in enumerate(next_refs):
-            if index in kept_indexes:
-                continue
-            if (
-                link.relation_type != relation_type
-                or link.b_type != ref.object_type
-                or link.b_id != ref.object_id
-            ):
-                continue
-            if link.a_locator_json is None or link.a_locator_json == locator:
-                matched_index = index
-                break
-        if matched_index is None:
-            db.delete(link)
-            continue
-        kept_indexes.add(matched_index)
-        link.a_order_key = f"{matched_index + 1:010d}"
-
-    hydrated_refs: set[tuple[str, UUID]] = set()
-    for index, (relation_type, ref, locator) in enumerate(next_refs):
-        ref_key = (ref.object_type, ref.object_id)
-        if ref_key not in hydrated_refs:
-            hydrate_object_ref(db, viewer_id, ref)
-            hydrated_refs.add(ref_key)
-        if index in kept_indexes or (relation_type, *ref_key) in unlocated_targets:
-            continue
-        db.add(
-            ObjectLink(
-                user_id=viewer_id,
-                relation_type=relation_type,
-                a_type="note_block",
-                a_id=block.id,
-                b_type=ref.object_type,
-                b_id=ref.object_id,
-                a_order_key=f"{index + 1:010d}",
-                b_order_key=None,
-                a_locator_json=locator,
-                b_locator_json=None,
-                metadata_json={},
-            )
-        )
 
 
-def _is_managed_note_body_link(link: ObjectLink) -> bool:
-    if link.b_locator_json is not None:
-        return False
-    if link.a_locator_json is None:
-        return True
-    return isinstance(link.a_locator_json, dict) and link.a_locator_json.get("kind") in {
-        "note_inline_object_ref",
-        "note_object_embed",
-    }
-
-
-def _copy_split_note_about_links(
+def _copy_highlight_attachments(
     db: Session,
     viewer_id: UUID,
     *,
     source_block_id: UUID,
     target_block_id: UUID,
 ) -> None:
-    links = list(
-        db.scalars(
-            select(ObjectLink).where(
-                ObjectLink.user_id == viewer_id,
-                ObjectLink.relation_type == "note_about",
-                (
-                    ((ObjectLink.a_type == "note_block") & (ObjectLink.a_id == source_block_id))
-                    | ((ObjectLink.b_type == "note_block") & (ObjectLink.b_id == source_block_id))
-                ),
-            )
+    """Split keeps both halves attached: copy ``origin=highlight_note`` edges."""
+    # justify-cycle: function-local import — `edges` imports `resolve`, which
+    # imports this module for `linked_note_blocks_for_highlights`.
+    from nexus.services.resource_graph.edges import create_edge
+
+    highlight_ids = db.scalars(
+        select(ResourceEdge.source_id)
+        .where(
+            ResourceEdge.user_id == viewer_id,
+            ResourceEdge.origin == "highlight_note",
+            ResourceEdge.source_scheme == "highlight",
+            ResourceEdge.target_scheme == "note_block",
+            ResourceEdge.target_id == source_block_id,
         )
-    )
-    for link in links:
-        a_type, a_id, b_type, b_id = _replacement_link_endpoints(
-            link,
-            source_block_id=source_block_id,
-            target_block_id=target_block_id,
-        )
-        if a_type == b_type and a_id == b_id:
-            continue
-        if _has_duplicate_unlocated_link(
+        .order_by(ResourceEdge.created_at.asc(), ResourceEdge.id.asc())
+    ).all()
+    for highlight_id in highlight_ids:
+        create_edge(
             db,
-            viewer_id,
-            relation_type=link.relation_type,
-            a_type=a_type,
-            a_id=a_id,
-            b_type=b_type,
-            b_id=b_id,
-            exclude_link_id=None,
-        ):
-            continue
-        db.add(
-            ObjectLink(
-                user_id=viewer_id,
-                relation_type=link.relation_type,
-                a_type=a_type,
-                a_id=a_id,
-                b_type=b_type,
-                b_id=b_id,
-                a_order_key=link.a_order_key,
-                b_order_key=link.b_order_key,
-                a_locator_json=deepcopy(link.a_locator_json),
-                b_locator_json=deepcopy(link.b_locator_json),
-                metadata_json=deepcopy(link.metadata_json),
-            )
+            viewer_id=viewer_id,
+            input=EdgeCreate(
+                source=ResourceRef(scheme="highlight", id=highlight_id),
+                target=ResourceRef(scheme="note_block", id=target_block_id),
+                kind="context",
+                origin="highlight_note",
+            ),
         )
 
 
@@ -1485,101 +1302,23 @@ def _transfer_note_block_relationships(
     source_block_id: UUID,
     target_block_id: UUID,
 ) -> None:
-    links = list(
-        db.scalars(
-            select(ObjectLink).where(
-                ObjectLink.user_id == viewer_id,
-                (
-                    ((ObjectLink.a_type == "note_block") & (ObjectLink.a_id == source_block_id))
-                    | ((ObjectLink.b_type == "note_block") & (ObjectLink.b_id == source_block_id))
-                ),
-            )
-        )
+    """Merge moves every edge touching the absorbed block to the surviving one.
+
+    ``repoint_edges`` drops rows that would duplicate an existing bare pair and
+    rows that would collapse into a self-edge (an edge directly between the two
+    blocks); the surviving block's ``note_body`` set is replace-set right after
+    from the merged body, so repointed body edges are recomputed, not trusted.
+    """
+    # justify-cycle: function-local import — `edges` imports `resolve`, which
+    # imports this module for `linked_note_blocks_for_highlights`.
+    from nexus.services.resource_graph.edges import repoint_edges
+
+    repoint_edges(
+        db,
+        viewer_id=viewer_id,
+        from_ref=ResourceRef(scheme="note_block", id=source_block_id),
+        to_ref=ResourceRef(scheme="note_block", id=target_block_id),
     )
-    for link in links:
-        a_type, a_id, b_type, b_id = _replacement_link_endpoints(
-            link,
-            source_block_id=source_block_id,
-            target_block_id=target_block_id,
-        )
-        if a_type == b_type and a_id == b_id:
-            db.delete(link)
-            continue
-        if (
-            link.relation_type != "used_as_context"
-            and link.a_locator_json is None
-            and link.b_locator_json is None
-            and _has_duplicate_unlocated_link(
-                db,
-                viewer_id,
-                relation_type=link.relation_type,
-                a_type=a_type,
-                a_id=a_id,
-                b_type=b_type,
-                b_id=b_id,
-                exclude_link_id=link.id,
-            )
-        ):
-            db.delete(link)
-            continue
-        link.a_type = a_type
-        link.a_id = a_id
-        link.b_type = b_type
-        link.b_id = b_id
-        link.updated_at = func.now()
-
-
-def _replacement_link_endpoints(
-    link: ObjectLink,
-    *,
-    source_block_id: UUID,
-    target_block_id: UUID,
-) -> tuple[str, UUID, str, UUID]:
-    a_type = link.a_type
-    a_id = link.a_id
-    b_type = link.b_type
-    b_id = link.b_id
-    if a_type == "note_block" and a_id == source_block_id:
-        a_id = target_block_id
-    if b_type == "note_block" and b_id == source_block_id:
-        b_id = target_block_id
-    return a_type, a_id, b_type, b_id
-
-
-def _has_duplicate_unlocated_link(
-    db: Session,
-    viewer_id: UUID,
-    *,
-    relation_type: str,
-    a_type: str,
-    a_id: UUID,
-    b_type: str,
-    b_id: UUID,
-    exclude_link_id: UUID | None,
-) -> bool:
-    statement = select(ObjectLink.id).where(
-        ObjectLink.user_id == viewer_id,
-        ObjectLink.relation_type == relation_type,
-        (
-            (
-                (ObjectLink.a_type == a_type)
-                & (ObjectLink.a_id == a_id)
-                & (ObjectLink.b_type == b_type)
-                & (ObjectLink.b_id == b_id)
-            )
-            | (
-                (ObjectLink.a_type == b_type)
-                & (ObjectLink.a_id == b_id)
-                & (ObjectLink.b_type == a_type)
-                & (ObjectLink.b_id == a_id)
-            )
-        ),
-        ObjectLink.a_locator_json.is_(None),
-        ObjectLink.b_locator_json.is_(None),
-    )
-    if exclude_link_id is not None:
-        statement = statement.where(ObjectLink.id != exclude_link_id)
-    return db.scalar(statement.limit(1)) is not None
 
 
 def _page_out(db: Session, page: Page) -> NotePageOut:
@@ -1743,41 +1482,24 @@ def _is_descendant_of(db: Session, candidate_id: UUID, ancestor_id: UUID) -> boo
     return False
 
 
-def _delete_object_edges(db: Session, object_type: str, object_id: UUID) -> None:
-    db.execute(
-        delete(ObjectLink).where(
-            ((ObjectLink.a_type == object_type) & (ObjectLink.a_id == object_id))
-            | ((ObjectLink.b_type == object_type) & (ObjectLink.b_id == object_id))
-        )
-    )
+def _delete_object_edges(db: Session, scheme: ResourceScheme, object_id: UUID) -> None:
+    delete_edges_for_deleted_resource(db, ref=ResourceRef(scheme=scheme, id=object_id))
 
 
 def _first_highlight_note_block(
     db: Session, viewer_id: UUID, highlight_id: UUID
 ) -> NoteBlock | None:
-    note_block_join = ((ObjectLink.a_type == "note_block") & (ObjectLink.a_id == NoteBlock.id)) | (
-        (ObjectLink.b_type == "note_block") & (ObjectLink.b_id == NoteBlock.id)
-    )
-    highlight_filter = (
-        (ObjectLink.a_type == "note_block")
-        & (ObjectLink.b_type == "highlight")
-        & (ObjectLink.b_id == highlight_id)
-    ) | (
-        (ObjectLink.a_type == "highlight")
-        & (ObjectLink.a_id == highlight_id)
-        & (ObjectLink.b_type == "note_block")
-    )
-    endpoint_order = case(
-        (ObjectLink.a_type == "highlight", ObjectLink.a_order_key),
-        else_=ObjectLink.b_order_key,
-    )
     return db.scalar(
         select(NoteBlock)
-        .join(ObjectLink, note_block_join)
-        .where(
-            ObjectLink.user_id == viewer_id,
-            ObjectLink.relation_type == "note_about",
-            highlight_filter,
+        .join(
+            ResourceEdge,
+            (ResourceEdge.target_scheme == "note_block") & (ResourceEdge.target_id == NoteBlock.id),
         )
-        .order_by(endpoint_order.asc().nullsfirst(), NoteBlock.id.asc())
+        .where(
+            ResourceEdge.user_id == viewer_id,
+            ResourceEdge.origin == "highlight_note",
+            ResourceEdge.source_scheme == "highlight",
+            ResourceEdge.source_id == highlight_id,
+        )
+        .order_by(ResourceEdge.created_at.asc(), ResourceEdge.id.asc(), NoteBlock.id.asc())
     )

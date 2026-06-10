@@ -46,14 +46,12 @@ interface HighlightOut {
   }>;
 }
 
-interface ObjectLinksResponse {
-  data: {
-    links: Array<{
-      id: string;
-      a: { objectType: string; objectId: string };
-      b: { objectType: string; objectId: string };
-    }>;
-  };
+interface EdgesResponse {
+  data: Array<{
+    id: string;
+    source_ref: string;
+    target_ref: string;
+  }>;
 }
 
 function paragraphPmJsonFromText(text: string) {
@@ -67,20 +65,19 @@ async function upsertHighlightNote(
   highlightId: string,
   body: string,
 ): Promise<void> {
-  const linksResponse = await page.request.get(
-    `/api/object-links?object_type=highlight&object_id=${highlightId}&relation_type=note_about`
+  const edgesResponse = await page.request.get(
+    `/api/resource-graph/edges?ref=${encodeURIComponent(`highlight:${highlightId}`)}&origin=highlight_note`
   );
-  expect(linksResponse.ok()).toBeTruthy();
-  const linksPayload = (await linksResponse.json()) as ObjectLinksResponse;
+  expect(edgesResponse.ok()).toBeTruthy();
+  const edgesPayload = (await edgesResponse.json()) as EdgesResponse;
   const noteBlockIds = Array.from(
     new Set(
-      linksPayload.data.links
-        .map((link) => {
-          if (link.a.objectType === "note_block") return link.a.objectId;
-          if (link.b.objectType === "note_block") return link.b.objectId;
-          return null;
+      edgesPayload.data
+        .map((edge) => {
+          const [scheme, id] = edge.target_ref.split(":");
+          return scheme === "note_block" ? id : null;
         })
-        .filter((value): value is string => value !== null)
+        .filter((value): value is string => value != null)
     )
   );
 
@@ -91,7 +88,6 @@ async function upsertHighlightNote(
         linked_object: {
           object_type: "highlight",
           object_id: highlightId,
-          relation_type: "note_about",
         },
       },
       headers: stateChangingApiHeaders(),

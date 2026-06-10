@@ -2,7 +2,7 @@
 
 import ItemCard from "@/components/items/ItemCard";
 import ActionMenu from "@/components/ui/ActionMenu";
-import type { ConversationReference } from "@/lib/conversations/types";
+import type { ContextRefOut } from "@/lib/resourceGraph/contextRefs";
 import { resourceIconForUri } from "@/lib/resources/resourceKind";
 import styles from "./ConversationReferencesSurface.module.css";
 
@@ -11,8 +11,8 @@ export default function ConversationReferencesSurface({
   removeReference,
   onOpenResource,
 }: {
-  references: ConversationReference[];
-  removeReference: (referenceId: string) => Promise<void>;
+  references: ContextRefOut[];
+  removeReference: (edgeId: string) => Promise<void>;
   onOpenResource?: (uri: string) => void;
 }) {
   if (references.length === 0) {
@@ -21,7 +21,7 @@ export default function ConversationReferencesSurface({
   return (
     <div className={styles.secondary}>
       {references.map((reference) => {
-        const Icon = resourceIconForUri(reference.resource_uri);
+        const Icon = resourceIconForUri(reference.resource_ref);
         return (
           <ItemCard
             key={reference.id}
@@ -34,7 +34,7 @@ export default function ConversationReferencesSurface({
             meta={reference.summary || undefined}
             onActivate={
               onOpenResource && !reference.missing
-                ? () => onOpenResource(reference.resource_uri)
+                ? () => onOpenResource(reference.resource_ref)
                 : undefined
             }
             actions={
@@ -44,7 +44,7 @@ export default function ConversationReferencesSurface({
                     id: "open",
                     label: "Open",
                     disabled: !onOpenResource || reference.missing,
-                    onSelect: () => onOpenResource?.(reference.resource_uri),
+                    onSelect: () => onOpenResource?.(reference.resource_ref),
                   },
                   {
                     id: "remove",

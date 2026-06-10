@@ -1,87 +1,107 @@
 "use client";
 
-import { Link2 } from "lucide-react";
-import { FeedbackNotice, toFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
+import { useCallback } from "react";
+import {
+  FeedbackNotice,
+  toFeedback,
+  type FeedbackContent,
+} from "@/components/feedback/Feedback";
 import { useResource } from "@/lib/api/useResource";
-import type { ApiPath } from "@/lib/api/client";
-import type { HydratedObjectRef, ObjectRef } from "@/lib/objectRefs";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { edgesForRefPath, type EdgeOut } from "@/lib/resourceGraph/edges";
+import {
+  formatResourceRef,
+  parseResourceRef,
+} from "@/lib/resourceGraph/resourceRef";
+import { resourceIconForUri } from "@/lib/resources/resourceKind";
+import { isObjectType, resolveObjectRefs, type ObjectRef } from "@/lib/objectRefs";
 import styles from "./NoteBacklinks.module.css";
 
-type ObjectLinkRelation =
-  | "references"
-  | "embeds"
-  | "note_about"
-  | "used_as_context"
-  | "derived_from"
-  | "related";
-
-interface ObjectLink {
-  id: string;
-  relationType: ObjectLinkRelation;
-  a: HydratedObjectRef;
-  b: HydratedObjectRef;
-}
-
-interface ObjectLinksResponse {
-  data: {
-    links: ObjectLink[];
-  };
+/** The endpoint of a connection that is NOT the object being viewed. */
+interface Connection {
+  edgeId: string;
+  ref: string;
+  label: string;
+  missing: boolean;
 }
 
 export default function NoteBacklinks({ objectRef }: { objectRef: ObjectRef }) {
-  const { objectId, objectType } = objectRef;
-  const linksResource = useResource<ObjectLinksResponse>({
-    cacheKey: `${objectType}:${objectId}`,
-    path: () => objectLinksPath({ objectId, objectType }),
+  const selfRef = formatResourceRef({
+    scheme: objectRef.objectType,
+    id: objectRef.objectId,
   });
-  const links =
-    linksResource.status === "ready" ? linksResource.data.data.links : [];
-  const loading = linksResource.status === "loading";
+  const edgesResource = useResource<{ data: EdgeOut[] }>({
+    cacheKey: selfRef,
+    path: () => edgesForRefPath(selfRef),
+  });
+  const loading = edgesResource.status === "loading";
   const error: FeedbackContent | null =
-    linksResource.status === "error"
-      ? toFeedback(linksResource.error, {
-          fallback: "Backlinks could not be loaded.",
+    edgesResource.status === "error"
+      ? toFeedback(edgesResource.error, {
+          fallback: "Connections could not be loaded.",
         })
       : null;
 
-  const backlinks = links.flatMap((link) => {
-    const other =
-      link.a.objectType === objectType && link.a.objectId === objectId
-        ? link.b
-        : link.a;
-    const href = other.route;
-    return href
-      ? [{ id: link.id, href, label: other.label, relationType: link.relationType }]
+  const connections: Connection[] =
+    edgesResource.status === "ready"
+      ? edgesResource.data.data.map((edge) =>
+          edge.source_ref === selfRef
+            ? {
+                edgeId: edge.id,
+                ref: edge.target_ref,
+                label: edge.target_label,
+                missing: edge.target_missing,
+              }
+            : {
+                edgeId: edge.id,
+                ref: edge.source_ref,
+                label: edge.source_label,
+                missing: edge.source_missing,
+              },
+        )
       : [];
-  });
+
+  const openConnection = useCallback(async (ref: string) => {
+    const parsed = parseResourceRef(ref);
+    if (!parsed || !isObjectType(parsed.scheme)) return;
+    try {
+      const [resolved] = await resolveObjectRefs([
+        { objectType: parsed.scheme, objectId: parsed.id },
+      ]);
+      if (resolved?.route) window.location.assign(resolved.route);
+    } catch (err) {
+      if (handleUnauthenticatedApiError(err)) return;
+      console.error("Failed to open connection:", err);
+    }
+  }, []);
 
   return (
-    <section className={styles.backlinks} aria-label="Backlinks">
-      <h2 className={styles.title}>Backlinks</h2>
-      {loading ? <FeedbackNotice severity="info" title="Loading backlinks..." /> : null}
+    <section className={styles.backlinks} aria-label="Connections">
+      <h2 className={styles.title}>Connections</h2>
+      {loading ? <FeedbackNotice severity="info" title="Loading connections..." /> : null}
       {!loading && error ? <FeedbackNotice feedback={error} /> : null}
-      {!loading && !error && backlinks.length === 0 ? (
-        <FeedbackNotice severity="neutral" title="No linked objects yet." />
+      {!loading && !error && connections.length === 0 ? (
+        <FeedbackNotice severity="neutral" title="No connected objects yet." />
       ) : null}
-      {backlinks.length > 0 ? (
+      {connections.length > 0 ? (
         <div className={styles.list}>
-          {backlinks.map((link) => (
-            <a key={link.id} className={styles.linkRow} href={link.href}>
-              <Link2 size={14} aria-hidden="true" />
-              <span>{link.label}</span>
-              <span className={styles.relation}>{link.relationType}</span>
-            </a>
-          ))}
+          {connections.map((connection) => {
+            const Icon = resourceIconForUri(connection.ref);
+            return (
+              <button
+                key={connection.edgeId}
+                type="button"
+                className={`${styles.linkRow}${connection.missing ? ` ${styles.missing}` : ""}`}
+                disabled={connection.missing}
+                onClick={() => void openConnection(connection.ref)}
+              >
+                <Icon size={14} aria-hidden="true" />
+                <span>{connection.label}</span>
+              </button>
+            );
+          })}
         </div>
       ) : null}
     </section>
   );
-}
-
-function objectLinksPath(object: ObjectRef): ApiPath {
-  const params = new URLSearchParams({
-    object_type: object.objectType,
-    object_id: object.objectId,
-  });
-  return `/api/object-links?${params.toString()}`;
 }

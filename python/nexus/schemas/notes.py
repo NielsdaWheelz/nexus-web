@@ -1,23 +1,10 @@
-"""Schemas for notes, universal object refs, and object links."""
+"""Schemas for notes and universal object refs (pins, picker, ref chips)."""
 
-import enum
 from datetime import date, datetime
 from typing import Any, Literal, get_args
 from uuid import UUID
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
-
-
-class _UnsetType(enum.Enum):
-    """Sentinel distinguishing an omitted PATCH field from an explicit null."""
-
-    UNSET = "UNSET"
-
-    def __repr__(self) -> str:
-        return "UNSET"
-
-
-UNSET = _UnsetType.UNSET
 
 OBJECT_TYPES = Literal[
     "page",
@@ -33,14 +20,6 @@ OBJECT_TYPES = Literal[
     "evidence_span",
 ]
 NOTE_BLOCK_KINDS = Literal["bullet", "heading", "todo", "quote", "code", "image", "embed"]
-OBJECT_LINK_RELATIONS = Literal[
-    "references",
-    "embeds",
-    "note_about",
-    "used_as_context",
-    "derived_from",
-    "related",
-]
 
 NOTE_BLOCK_KIND_VALUES = {"bullet", "heading", "todo", "quote", "code", "image", "embed"}
 NOTE_PM_BODY_NODE_TYPES = {"paragraph", "code_block", "object_embed"}
@@ -233,9 +212,13 @@ class PatchPageDocumentResponse(BaseModel):
 
 
 class LinkedObjectRequest(BaseModel):
-    object_type: OBJECT_TYPES = Field(validation_alias=AliasChoices("object_type", "objectType"))
+    """The quick-note composer's highlight attachment: the created block becomes
+    the highlight's note (``origin=highlight_note`` edge). Verbless (graph §5.7)."""
+
+    object_type: Literal["highlight"] = Field(
+        "highlight", validation_alias=AliasChoices("object_type", "objectType")
+    )
     object_id: UUID = Field(validation_alias=AliasChoices("object_id", "objectId"))
-    relation_type: OBJECT_LINK_RELATIONS = Field("note_about")
 
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
@@ -338,8 +321,11 @@ def _validate_pm_attrs(node_type: str, attrs: dict[str, Any] | None, *, path: st
         label = attrs.get("label")
         if label is not None and not isinstance(label, str):
             raise ValueError(f"{path}.label must be a string")
-        relation_type = attrs.get("relationType")
-        if relation_type is not None and relation_type != "embeds":
+        # Editor document grammar: object_embed nodes carry a fixed
+        # relationType="embeds" attr (not link vocabulary — embeds-as-a-verb
+        # died with the link-verb table).
+        embed_relation_attr = attrs.get("relationType")
+        if embed_relation_attr is not None and embed_relation_attr != "embeds":
             raise ValueError(f"{path}.relationType must be embeds")
         display_mode = attrs.get("displayMode")
         if display_mode is not None and not isinstance(display_mode, str):
@@ -435,44 +421,6 @@ class QuickCaptureRequest(_NoteBodyPmJsonValidated):
         if self.body_pm_json is None and not (self.body_markdown or "").strip():
             raise ValueError("body_pm_json or body_markdown is required")
         return self
-
-
-class ObjectLinkOut(BaseModel):
-    id: UUID
-    relation_type: OBJECT_LINK_RELATIONS = Field(serialization_alias="relationType")
-    a: HydratedObjectRef
-    b: HydratedObjectRef
-    a_locator: dict[str, Any] | None = Field(None, serialization_alias="aLocator")
-    b_locator: dict[str, Any] | None = Field(None, serialization_alias="bLocator")
-    a_order_key: str | None = Field(None, serialization_alias="aOrderKey")
-    b_order_key: str | None = Field(None, serialization_alias="bOrderKey")
-    metadata: dict[str, Any]
-    created_at: datetime = Field(serialization_alias="createdAt")
-    updated_at: datetime = Field(serialization_alias="updatedAt")
-
-    model_config = ConfigDict(populate_by_name=True)
-
-
-class CreateObjectLinkRequest(BaseModel):
-    relation_type: OBJECT_LINK_RELATIONS = "related"
-    a_type: OBJECT_TYPES
-    a_id: UUID
-    b_type: OBJECT_TYPES
-    b_id: UUID
-    a_locator: dict[str, Any] | None = None
-    b_locator: dict[str, Any] | None = None
-    metadata: dict[str, Any] | None = None
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class UpdateObjectLinkRequest(BaseModel):
-    relation_type: OBJECT_LINK_RELATIONS | None = None
-    a_order_key: str | None | _UnsetType = Field(default=UNSET, min_length=1, max_length=64)
-    b_order_key: str | None | _UnsetType = Field(default=UNSET, min_length=1, max_length=64)
-    metadata: dict[str, Any] | None = None
-
-    model_config = ConfigDict(extra="forbid")
 
 
 class PinnedObjectRefOut(BaseModel):

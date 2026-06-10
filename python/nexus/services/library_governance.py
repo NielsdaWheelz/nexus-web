@@ -241,6 +241,8 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
     """Delete a non-default library. Owner-only; non-owner admins get E_OWNER_REQUIRED."""
     from nexus.services import library_entries, media_deletion
     from nexus.services.default_library_closure import remove_media_from_non_default_closure
+    from nexus.services.resource_graph.cleanup import delete_edges_for_deleted_resource
+    from nexus.services.resource_graph.refs import ResourceRef
 
     storage_paths: list[str] = []
     with transaction(db):
@@ -256,6 +258,13 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
             remove_media_from_non_default_closure(db, library_id, media_id)
 
         _delete_library_intelligence_rows(db, library_id)
+
+        # The library itself is a graph resource: context refs and app_search
+        # scopes point at ``library:<id>`` (§9.6 rule 2). Clean them with the
+        # row, mirroring conversation/media delete, or they dangle as phantom
+        # scopes. Cited edges sourced by the library (rule 1) — none today — die
+        # the same way.
+        delete_edges_for_deleted_resource(db, ref=ResourceRef(scheme="library", id=library_id))
 
         library_entries.delete_library_entries(db, library_id)
         db.execute(
@@ -286,14 +295,25 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
 def _delete_library_intelligence_rows(db: Session, library_id: UUID) -> None:
     """Tear down the head + its revisions for a deleted library (non-cascading FKs).
 
-    Order: null the circular head->revision pointer, then citations + events
-    (revision children), then revisions, then the head.
+    Order: null the circular head->revision pointer, then each artifact's edges
+    (citations die with their domain parent, §9.6 rule 1) + events, then
+    revisions, then the head.
     """
+    from nexus.services.resource_graph.cleanup import delete_edges_for_deleted_resource
+    from nexus.services.resource_graph.refs import ResourceRef
+
     revision_filter = (
         "revision_id IN (SELECT r.id FROM library_intelligence_artifact_revisions r "
         "JOIN library_intelligence_artifacts a ON a.id = r.artifact_id "
         "WHERE a.library_id = :library_id)"
     )
+    artifact_ids = [
+        row[0]
+        for row in db.execute(
+            text("SELECT id FROM library_intelligence_artifacts WHERE library_id = :library_id"),
+            {"library_id": library_id},
+        )
+    ]
     db.execute(
         text(
             "UPDATE library_intelligence_artifacts "
@@ -301,10 +321,10 @@ def _delete_library_intelligence_rows(db: Session, library_id: UUID) -> None:
         ),
         {"library_id": library_id},
     )
-    db.execute(
-        text(f"DELETE FROM library_intelligence_citations WHERE {revision_filter}"),
-        {"library_id": library_id},
-    )
+    for artifact_id in artifact_ids:
+        delete_edges_for_deleted_resource(
+            db, ref=ResourceRef(scheme="library_intelligence_artifact", id=artifact_id)
+        )
     db.execute(
         text(f"DELETE FROM library_intelligence_revision_events WHERE {revision_filter}"),
         {"library_id": library_id},

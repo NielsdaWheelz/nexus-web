@@ -18,7 +18,6 @@ from nexus.schemas.library_intelligence import (
     RevisionStatus,
 )
 from nexus.services import library_intelligence as library_intelligence_service
-from nexus.services.retrieval_citation import build_citation_outs_for_revision
 
 router = APIRouter(tags=["library-intelligence"])
 
@@ -31,11 +30,6 @@ def get_library_intelligence(
 ) -> dict:
     view = library_intelligence_service.get_artifact(
         db, viewer_id=viewer.user_id, library_id=library_id
-    )
-    citations = (
-        build_citation_outs_for_revision(db, revision_id=view.revision_id)
-        if view.revision_id is not None
-        else []
     )
     build = (
         LibraryIntelligenceBuildOut(
@@ -51,7 +45,7 @@ def get_library_intelligence(
             revision_id=view.revision_id,
             status=view.status,
             content_md=view.content_md,
-            citations=citations,
+            citations=view.citations,
             build=build,
             stale_source_count=view.stale_source_count,
         )

@@ -42,6 +42,8 @@ import {
   selectedPathMessageIds,
 } from "@/lib/conversations/branching";
 import type { SSEReferenceAddedEvent } from "@/lib/api/sse/events";
+import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
+import { addContextRef } from "@/lib/resourceGraph/contextRefs";
 import { toFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
 import type {
   BranchDraft,
@@ -597,10 +599,8 @@ export function useConversation(
       }
       for (const uri of refUris) {
         if (attachedRefsRef.current.uris.has(uri)) continue;
-        await apiFetch(`/api/conversations/${id}/references`, {
-          method: "POST",
-          body: JSON.stringify({ resource_uri: uri }),
-        });
+        const ref = parseResourceRef(uri);
+        if (ref) await addContextRef(id, ref);
         attachedRefsRef.current.uris.add(uri);
       }
       return id;

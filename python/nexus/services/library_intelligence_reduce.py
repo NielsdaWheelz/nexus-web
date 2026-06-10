@@ -21,6 +21,7 @@ can only point at an existing resolvable span.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import cast
 from uuid import UUID
 
 from llm_calling.errors import LLMError
@@ -44,6 +45,7 @@ from nexus.services.library_intelligence import (
     revision_orm_or_none,
 )
 from nexus.services.llm_ledger import LedgeredLLM, LlmCallOwner
+from nexus.services.locator_resolver import resolve_evidence_span
 from nexus.services.media_intelligence import (
     MediaUnit,
     ensure_media_unit,
@@ -52,7 +54,9 @@ from nexus.services.media_intelligence import (
 )
 from nexus.services.prompt_budget import estimate_tokens
 from nexus.services.rate_limit import get_rate_limiter
-from nexus.services.retrieval_citation import build_evidence_span_citation_target
+from nexus.services.resource_graph.citations import replace_citations_for_output
+from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.resource_graph.schemas import CitationInput, CitationSnapshot, EdgeKind
 from nexus.services.structured_synthesis import (
     StructuredSynthesisError,
     SynthesisRequest,
@@ -228,6 +232,7 @@ async def run_artifact_generation(db: Session, *, revision_id: UUID, llm: LLMRou
             db,
             revision_id=revision_id,
             artifact_id=artifact_id,
+            owner_id=owner_id,
             content_md=result.value.content_md,
             covered_targets=covered,
             citations=citations,
@@ -371,20 +376,20 @@ def _gather_candidates(db: Session, *, media_ids: list[UUID]) -> list[_Candidate
 
 def _materialize_citations(
     db: Session, *, owner_id: UUID, grounded: list[_GroundedCitation]
-) -> list[dict[str, object]]:
-    """Resolve each grounded citation to a stored locator + deep-link snapshot.
+) -> list[CitationInput]:
+    """Resolve each grounded citation to a citation-edge input with a display snapshot.
 
-    A span that no longer resolves at write time is skipped with a warning
-    (defensive; claims carry freshly-extracted not-null spans, so this is rare).
+    The snapshot carries what the chip renders (title/excerpt/section_label) plus
+    the canonical ``#evidence-`` deep link; position lives in the evidence-span
+    target, never on the edge (D11). A span that no longer resolves at write time
+    is skipped with a warning (defensive; claims carry freshly-extracted not-null
+    spans, so this is rare).
     """
-    citations: list[dict[str, object]] = []
+    citations: list[CitationInput] = []
     for citation in grounded:
         try:
-            locator, snapshot = build_evidence_span_citation_target(
-                db,
-                viewer_id=owner_id,
-                media_id=citation.media_id,
-                evidence_span_id=citation.evidence_span_id,
+            resolution = resolve_evidence_span(
+                db, viewer_id=owner_id, evidence_span_id=citation.evidence_span_id
             )
         except NotFoundError:
             logger.warning(
@@ -392,15 +397,23 @@ def _materialize_citations(
                 evidence_span_id=str(citation.evidence_span_id),
             )
             continue
+        title = db.execute(
+            text("SELECT title FROM media WHERE id = :media_id"),
+            {"media_id": citation.media_id},
+        ).scalar_one()
         citations.append(
-            {
-                "ordinal": citation.ordinal,
-                "role": citation.role,
-                "target_type": "evidence_span",
-                "target_id": citation.evidence_span_id,
-                "locator": locator,
-                "snapshot": snapshot,
-            }
+            CitationInput(
+                target=ResourceRef(scheme="evidence_span", id=citation.evidence_span_id),
+                ordinal=citation.ordinal,
+                kind=cast("EdgeKind", citation.role),
+                snapshot=CitationSnapshot(
+                    title=str(title) if title is not None else None,
+                    excerpt=str(resolution.get("span_text") or "")[:600],
+                    section_label=str(resolution.get("citation_label") or "") or None,
+                    result_type="evidence_span",
+                    deep_link=f"/media/{citation.media_id}#evidence-{citation.evidence_span_id}",
+                ),
+            )
         )
     return citations
 
@@ -440,9 +453,10 @@ def _promote_built_revision(
     *,
     revision_id: UUID,
     artifact_id: UUID,
+    owner_id: UUID,
     content_md: str,
     covered_targets: list[dict[str, object]],
-    citations: list[dict[str, object]],
+    citations: list[CitationInput],
     resolved_key: ResolvedKey,
 ) -> None:
     """Atomically mark the revision ready (run_kit) and promote it to current.
@@ -450,8 +464,13 @@ def _promote_built_revision(
     Order inside one SERIALIZABLE tx (run_kit stays the SOLE finalizer): re-load
     the revision ORM, guard ``building``, ``mark_terminal(ready)`` FIRST (sets
     status + completed_at + emits ``done``), THEN write content/covered/promoted,
-    (re)insert citations, and point the head at this revision (last-promote-wins).
-    BYOK key-status feedback rides the terminal write (chat precedent).
+    swap the artifact's citation edges (§5.5: citations key on the artifact and
+    move with ``current_revision_id``; this is the only promoting write path, so
+    draft and failed revisions never touch edges), and point the head at this
+    revision (last-promote-wins). A grounding drop that leaves a gapped ordinal
+    set is rejected by the dense-1..N citation contract and fails the revision
+    through the worker's exception handler. BYOK key-status feedback rides the
+    terminal write (chat precedent).
     """
 
     def op() -> None:
@@ -483,28 +502,15 @@ def _promote_built_revision(
                 "revision_id": revision_id,
             },
         )
-        db.execute(
-            text("DELETE FROM library_intelligence_citations WHERE revision_id = :revision_id"),
-            {"revision_id": revision_id},
+        # Citations key on the artifact and swap atomically with content in this
+        # same tx (§5.5); this is the only promoting write path, so draft/failed
+        # revisions never touch edges.
+        replace_citations_for_output(
+            db,
+            viewer_id=owner_id,
+            source=ResourceRef(scheme="library_intelligence_artifact", id=artifact_id),
+            citations=citations,
         )
-        for citation in citations:
-            db.execute(
-                text(
-                    """
-                    INSERT INTO library_intelligence_citations (
-                        revision_id, ordinal, role, target_type, target_id, locator, snapshot
-                    )
-                    VALUES (
-                        :revision_id, :ordinal, :role, :target_type, :target_id,
-                        :locator, :snapshot
-                    )
-                    """
-                ).bindparams(
-                    bindparam("locator", type_=JSONB),
-                    bindparam("snapshot", type_=JSONB),
-                ),
-                {"revision_id": revision_id, **citation},
-            )
         db.execute(
             text(
                 "UPDATE library_intelligence_artifacts "

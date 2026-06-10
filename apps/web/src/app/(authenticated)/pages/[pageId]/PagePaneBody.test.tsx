@@ -173,12 +173,10 @@ describe("PagePaneBody cross-pane note activation", () => {
       .mockImplementation(() => {});
 
     // Only the network boundary is mocked: the page loads from `initialPage`,
-    // so the sole fetch is NoteBacklinks' object-links GET.
+    // so the sole fetch is NoteBacklinks' resource-graph edges GET.
     fetchSpy = vi
       .spyOn(globalThis, "fetch")
-      .mockImplementation(async () =>
-        jsonResponse({ data: { links: [] } }),
-      );
+      .mockImplementation(async () => jsonResponse({ data: [] }));
   });
 
   afterEach(() => {

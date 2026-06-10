@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, TypedDict
 from uuid import UUID
 
-from sqlalchemy import case, delete, func, select, text
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -29,8 +29,8 @@ from nexus.db.models import (
     HighlightFragmentAnchor,
     Media,
     NoteBlock,
-    ObjectLink,
     Page,
+    ResourceEdge,
     note_block_sibling_sort_key,
 )
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
@@ -46,6 +46,8 @@ from nexus.services.notes import (
     set_highlight_note_body,
     set_note_block_markdown_body_without_commit,
 )
+from nexus.services.resource_graph.cleanup import delete_edges_for_deleted_resource
+from nexus.services.resource_graph.refs import ResourceRef
 from nexus.storage.client import StorageClientBase, get_storage_client
 from nexus.storage.paths import get_file_extension
 
@@ -704,21 +706,11 @@ def _sync_page_body(
 
 def _editable_page_blocks(db: Session, page_id: UUID) -> list[NoteBlock]:
     highlight_note_link = (
-        select(ObjectLink.id)
+        select(ResourceEdge.id)
         .where(
-            ObjectLink.relation_type == "note_about",
-            (
-                (
-                    (ObjectLink.a_type == "note_block")
-                    & (ObjectLink.a_id == NoteBlock.id)
-                    & (ObjectLink.b_type == "highlight")
-                )
-                | (
-                    (ObjectLink.a_type == "highlight")
-                    & (ObjectLink.b_type == "note_block")
-                    & (ObjectLink.b_id == NoteBlock.id)
-                )
-            ),
+            ResourceEdge.origin == "highlight_note",
+            ResourceEdge.target_scheme == "note_block",
+            ResourceEdge.target_id == NoteBlock.id,
         )
         .exists()
     )
@@ -966,41 +958,24 @@ def _highlight_note_blocks(
     viewer_id: UUID,
     highlight_id: UUID,
 ) -> list[NoteBlock]:
-    endpoint_order = case(
-        (ObjectLink.a_type == "highlight", ObjectLink.a_order_key),
-        else_=ObjectLink.b_order_key,
-    )
     return list(
         db.scalars(
             select(NoteBlock)
             .join(
-                ObjectLink,
-                (
-                    ((ObjectLink.a_type == "note_block") & (ObjectLink.a_id == NoteBlock.id))
-                    | ((ObjectLink.b_type == "note_block") & (ObjectLink.b_id == NoteBlock.id))
-                ),
+                ResourceEdge,
+                (ResourceEdge.target_scheme == "note_block")
+                & (ResourceEdge.target_id == NoteBlock.id),
             )
             .where(
-                ObjectLink.user_id == viewer_id,
-                ObjectLink.relation_type == "note_about",
+                ResourceEdge.user_id == viewer_id,
+                ResourceEdge.origin == "highlight_note",
+                ResourceEdge.source_scheme == "highlight",
+                ResourceEdge.source_id == highlight_id,
                 NoteBlock.user_id == viewer_id,
-                (
-                    (
-                        (ObjectLink.a_type == "note_block")
-                        & (ObjectLink.b_type == "highlight")
-                        & (ObjectLink.b_id == highlight_id)
-                    )
-                    | (
-                        (ObjectLink.a_type == "highlight")
-                        & (ObjectLink.a_id == highlight_id)
-                        & (ObjectLink.b_type == "note_block")
-                    )
-                ),
             )
             .order_by(
-                endpoint_order.asc().nullsfirst(),
-                ObjectLink.created_at.asc(),
-                ObjectLink.id.asc(),
+                ResourceEdge.created_at.asc(),
+                ResourceEdge.id.asc(),
                 NoteBlock.id.asc(),
             )
         )
@@ -1060,6 +1035,7 @@ def _resolve_fragment_selector(
 
 
 def _delete_highlight(db: Session, highlight: Highlight) -> None:
+    delete_edges_for_deleted_resource(db, ref=ResourceRef(scheme="highlight", id=highlight.id))
     db.execute(delete(Highlight).where(Highlight.id == highlight.id))
 
 

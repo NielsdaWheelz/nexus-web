@@ -47,8 +47,14 @@ from nexus.schemas.conversation import (
     MessagePageInfo,
     PageInfo,
 )
-from nexus.services import conversation_references as conversation_references_service
-from nexus.services.retrieval_citation import build_citation_outs_for_messages
+from nexus.services.resource_graph import cleanup as graph_cleanup
+from nexus.services.resource_graph import context as context_service
+from nexus.services.resource_graph.citations import build_citation_outs
+from nexus.services.resource_graph.refs import (
+    ResourceRef,
+    ResourceRefParseFailure,
+    parse_resource_ref,
+)
 
 logger = get_logger(__name__)
 
@@ -300,11 +306,18 @@ def create_conversation(
 
     if initial_references:
         for resource_uri in initial_references:
-            conversation_references_service.add_reference_without_commit(
-                db=db,
-                conversation_id=conversation.id,
-                resource_uri=resource_uri,
+            ref = parse_resource_ref(resource_uri)
+            if isinstance(ref, ResourceRefParseFailure):
+                raise InvalidRequestError(
+                    ApiErrorCode.E_INVALID_REQUEST,
+                    f"Invalid resource_uri: {resource_uri!r}. Expected '<scheme>:<uuid>'.",
+                )
+            context_service.add_context_ref_without_commit(
+                db,
                 viewer_id=viewer_id,
+                conversation_id=conversation.id,
+                target=ref,
+                origin="user",
             )
 
     db.commit()
@@ -368,14 +381,14 @@ def list_conversations(
     limit: int = DEFAULT_LIMIT,
     cursor: str | None = None,
     scope: str | None = None,
-    has_reference: str | None = None,
+    has_context_ref: str | None = None,
 ) -> tuple[list[ConversationOut], PageInfo]:
     """List conversations.
 
-    When ``has_reference`` is supplied, returns conversations whose
-    references contain that URI (single-user: viewer-owned only); ``scope`` is
-    meaningless there and is neither validated nor applied (pinned bypass).
-    Otherwise lists by visibility scope (defaulting to 'mine').
+    When ``has_context_ref`` is supplied, returns conversations with any edge to
+    that resource URI (single-user: viewer-owned only); ``scope`` is meaningless
+    there and is neither validated nor applied (pinned bypass). Otherwise lists
+    by visibility scope (defaulting to 'mine').
 
     Args:
         db: Database session.
@@ -383,24 +396,27 @@ def list_conversations(
         limit: Maximum number of results (clamped to 1-100).
         cursor: Opaque pagination cursor.
         scope: One of 'mine' (default), 'all', 'shared'.
-        has_reference: Resource URI to filter conversations by reference.
+        has_context_ref: Resource URI to filter conversations by context edge.
 
     Returns:
         Tuple of (conversations, page_info).
 
     Raises:
         InvalidRequestError(E_INVALID_REQUEST): If scope is invalid, or the
-            has_reference URI is malformed.
+            has_context_ref URI is malformed.
         InvalidRequestError(E_INVALID_CURSOR): If cursor is malformed.
     """
-    if has_reference is not None:
-        return conversation_references_service.list_conversations_with_reference(
-            db=db,
-            resource_uri=has_reference,
-            viewer_id=viewer_id,
-            limit=limit,
-            cursor=cursor,
+    if has_context_ref is not None:
+        ref = parse_resource_ref(has_context_ref)
+        if isinstance(ref, ResourceRefParseFailure):
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST,
+                f"Invalid has_context_ref: {has_context_ref!r}. Expected '<scheme>:<uuid>'.",
+            )
+        page = context_service.list_conversations_with_context_ref(
+            db, viewer_id=viewer_id, target=ref, limit=limit, cursor=cursor
         )
+        return page.conversations, page.page
 
     effective_scope = scope if scope is not None else "mine"
     if effective_scope not in VALID_SCOPES:
@@ -630,17 +646,12 @@ def list_messages(
         viewer_id=viewer_id,
         assistant_message_ids=message_ids,
     )
-    assistant_message_ids = [row[0] for row in rows if row[2] == "assistant"]
-    citations_by_message = build_citation_outs_for_messages(
-        db, assistant_message_ids=assistant_message_ids
-    )
     messages = [
         MessageOut(
             id=row[0],
             seq=row[1],
             role=row[2],
             message_document=MessageDocument.model_validate(row[12]),
-            citations=citations_by_message.get(row[0], []),
             parent_message_id=row[8],
             branch_root_message_id=row[9],
             branch_anchor_kind=row[10],
@@ -650,6 +661,13 @@ def list_messages(
             can_retry_response=row[0] in retryable_message_ids,
             created_at=row[6],
             updated_at=row[7],
+            citations=(
+                build_citation_outs(
+                    db, viewer_id=viewer_id, source=ResourceRef(scheme="message", id=row[0])
+                )
+                if row[2] == "assistant"
+                else []
+            ),
         )
         for row in rows
     ]
@@ -765,13 +783,8 @@ def delete_conversation_rows_without_commit(db: Session, conversation_id: UUID) 
     message_ids = _message_ids_for_conversation(db, conversation_id)
     delete_message_rows_without_commit(db, message_ids)
 
-    db.execute(
-        text("""
-            DELETE FROM object_links
-            WHERE (a_type = 'conversation' AND a_id = :conversation_id)
-               OR (b_type = 'conversation' AND b_id = :conversation_id)
-        """),
-        {"conversation_id": conversation_id},
+    graph_cleanup.delete_edges_for_deleted_resource(
+        db, ref=ResourceRef(scheme="conversation", id=conversation_id)
     )
 
     db.execute(
@@ -788,10 +801,6 @@ def delete_conversation_rows_without_commit(db: Session, conversation_id: UUID) 
     )
     db.execute(
         text("DELETE FROM conversation_shares WHERE conversation_id = :conversation_id"),
-        {"conversation_id": conversation_id},
-    )
-    db.execute(
-        text("DELETE FROM conversation_references WHERE conversation_id = :conversation_id"),
         {"conversation_id": conversation_id},
     )
     db.execute(delete(Conversation).where(Conversation.id == conversation_id))
@@ -863,14 +872,16 @@ def delete_message_rows_without_commit(db: Session, message_ids: Sequence[UUID])
             {"chat_run_ids": chat_run_ids},
         )
 
-    db.execute(
-        text("""
-            DELETE FROM object_links
-            WHERE (a_type = 'message' AND a_id = ANY(:message_ids))
-               OR (b_type = 'message' AND b_id = ANY(:message_ids))
-        """),
-        {"message_ids": list(message_ids)},
-    )
+    for message_id in message_ids:
+        graph_cleanup.delete_edges_for_deleted_resource(
+            db, ref=ResourceRef(scheme="message", id=message_id)
+        )
+    # NOTE: the polymorphic per-provider-call ledger ``llm_calls`` (migration
+    # 0145, which retired the chat-only per-message usage table) is keyed on the
+    # run parent (owner_kind='chat_run', owner_id=chat_runs.id), not on
+    # message_id, and carries no FK. The generation-run harness deliberately
+    # does not clean it up on conversation/message delete — it is an operational
+    # ledger with its own lifecycle — so there is no replacement DELETE here.
     db.execute(delete(Message).where(Message.id.in_(message_ids)))
     db.flush()
 

@@ -4,6 +4,7 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy import text
 
+from nexus.db.models import ResourceEdge
 from nexus.errors import ApiError, ApiErrorCode, ForbiddenError, NotFoundError
 from nexus.schemas.contributors import (
     ContributorAliasCreateRequest,
@@ -841,7 +842,7 @@ def test_public_contributor_reads_require_visible_credit(db_session):
 
 
 @pytest.mark.integration
-def test_contributor_pane_opens_from_user_object_link_with_no_visible_works(db_session):
+def test_contributor_pane_opens_from_user_edge_with_no_visible_works(db_session):
     viewer_id = uuid4()
     default_library_id = ensure_user_and_default_library(db_session, viewer_id)
     media_id = create_test_media(db_session, title=f"Contributor Link Empty Works {uuid4()}")
@@ -860,20 +861,18 @@ def test_contributor_pane_opens_from_user_object_link_with_no_visible_works(db_s
     with pytest.raises(NotFoundError):
         get_contributor_by_handle(db_session, handle, viewer_id)
 
-    db_session.execute(
-        text(
-            """
-            INSERT INTO object_links (
-                user_id, relation_type, a_type, a_id, b_type, b_id, metadata
-            )
-            VALUES (
-                :user_id, 'related', 'contributor', :contributor_id, 'media', :media_id,
-                '{}'::jsonb
-            )
-            """
-        ),
-        {"user_id": viewer_id, "contributor_id": contributor_id, "media_id": media_id},
+    db_session.add(
+        ResourceEdge(
+            user_id=viewer_id,
+            kind="context",
+            origin="user",
+            source_scheme="contributor",
+            source_id=contributor_id,
+            target_scheme="media",
+            target_id=media_id,
+        )
     )
+    db_session.flush()
 
     assert get_contributor_by_handle(db_session, handle, viewer_id).handle == handle
     assert list_contributor_works(db_session, viewer_id, handle) == []
@@ -1199,7 +1198,7 @@ def _credit_contributor(db_session, media_id):
 
 
 @pytest.mark.integration
-def test_split_contributor_moves_selected_records_only(db_session):
+def test_split_contributor_moves_selected_records_and_repoints_edges(db_session):
     actor_user_id = uuid4()
     db_session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": actor_user_id})
     media_a = create_test_media(db_session, title=f"Split A {uuid4()}")
@@ -1221,20 +1220,18 @@ def test_split_contributor_moves_selected_records_only(db_session):
 
     source_id, source_handle, moved_credit_id = _credit_contributor(db_session, media_a)
     _same_source_id, _same_handle, kept_credit_id = _credit_contributor(db_session, media_b)
-    link_id = db_session.execute(
-        text(
-            """
-            INSERT INTO object_links (
-                user_id, relation_type, a_type, a_id, b_type, b_id, metadata
-            )
-            VALUES (
-                :user_id, 'related', 'contributor', :source_id, 'media', :media_id, '{}'::jsonb
-            )
-            RETURNING id
-            """
-        ),
-        {"user_id": actor_user_id, "source_id": source_id, "media_id": media_a},
-    ).scalar_one()
+    edge = ResourceEdge(
+        user_id=actor_user_id,
+        kind="context",
+        origin="user",
+        source_scheme="contributor",
+        source_id=source_id,
+        target_scheme="media",
+        target_id=media_a,
+    )
+    db_session.add(edge)
+    db_session.flush()
+    edge_id = edge.id
 
     split = split_contributor(
         db_session,
@@ -1244,7 +1241,6 @@ def test_split_contributor_moves_selected_records_only(db_session):
         request=ContributorSplitRequest(
             display_name="Separated Author",
             credit_ids=[moved_credit_id],
-            object_link_ids=[link_id],
         ),
     )
     split_id = db_session.execute(
@@ -1260,7 +1256,7 @@ def test_split_contributor_moves_selected_records_only(db_session):
                     AS moved_credit,
                 (SELECT contributor_id FROM contributor_credits WHERE id = :kept_credit_id)
                     AS kept_credit,
-                (SELECT a_id FROM object_links WHERE id = :link_id) AS moved_link,
+                (SELECT source_id FROM resource_edges WHERE id = :edge_id) AS moved_link,
                 (
                     SELECT count(*)
                     FROM contributor_identity_events
@@ -1274,7 +1270,7 @@ def test_split_contributor_moves_selected_records_only(db_session):
         {
             "moved_credit_id": moved_credit_id,
             "kept_credit_id": kept_credit_id,
-            "link_id": link_id,
+            "edge_id": edge_id,
             "source_id": source_id,
             "split_id": split_id,
         },
@@ -1287,7 +1283,9 @@ def test_split_contributor_moves_selected_records_only(db_session):
 
 
 @pytest.mark.integration
-def test_split_contributor_rejects_other_users_object_links(db_session):
+def test_split_contributor_leaves_other_users_edges_untouched(db_session):
+    # repoint_edges is viewer-scoped: the split moves the actor's edges to the
+    # new identity, never another user's rows.
     actor_user_id = uuid4()
     other_user_id = uuid4()
     db_session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": actor_user_id})
@@ -1299,52 +1297,35 @@ def test_split_contributor_rejects_other_users_object_links(db_session):
         credits=[{"name": "Shared Author", "role": "author", "source": "manual"}],
     )
     source_id, source_handle, credit_id = _credit_contributor(db_session, media_id)
-    other_link_id = db_session.execute(
-        text(
-            """
-            INSERT INTO object_links (
-                user_id, relation_type, a_type, a_id, b_type, b_id, metadata
-            )
-            VALUES (
-                :user_id, 'related', 'contributor', :source_id, 'media', :media_id, '{}'::jsonb
-            )
-            RETURNING id
-            """
+    other_edge = ResourceEdge(
+        user_id=other_user_id,
+        kind="context",
+        origin="user",
+        source_scheme="contributor",
+        source_id=source_id,
+        target_scheme="media",
+        target_id=media_id,
+    )
+    db_session.add(other_edge)
+    db_session.flush()
+    other_edge_id = other_edge.id
+
+    split_contributor(
+        db_session,
+        actor_user_id=actor_user_id,
+        actor_roles=CURATOR_ROLES,
+        contributor_handle=source_handle,
+        request=ContributorSplitRequest(
+            display_name="Moved Author",
+            credit_ids=[credit_id],
         ),
-        {"user_id": other_user_id, "source_id": source_id, "media_id": media_id},
+    )
+
+    other_edge_contributor_id = db_session.execute(
+        text("SELECT source_id FROM resource_edges WHERE id = :edge_id"),
+        {"edge_id": other_edge_id},
     ).scalar_one()
-
-    with pytest.raises(ApiError) as error:
-        split_contributor(
-            db_session,
-            actor_user_id=actor_user_id,
-            actor_roles=CURATOR_ROLES,
-            contributor_handle=source_handle,
-            request=ContributorSplitRequest(
-                display_name="Moved Author",
-                credit_ids=[credit_id],
-                object_link_ids=[other_link_id],
-            ),
-        )
-
-    assert error.value.code == ApiErrorCode.E_INVALID_REQUEST
-    rows = db_session.execute(
-        text(
-            """
-            SELECT
-                (SELECT a_id FROM object_links WHERE id = :link_id) AS link_contributor_id,
-                (SELECT contributor_id FROM contributor_credits WHERE id = :credit_id)
-                    AS credit_contributor_id,
-                (SELECT count(*) FROM contributors WHERE display_name = 'Moved Author')
-                    AS moved_author_count
-            """
-        ),
-        {"link_id": other_link_id, "credit_id": credit_id},
-    ).one()
-
-    assert rows.link_contributor_id == source_id
-    assert rows.credit_contributor_id == source_id
-    assert rows.moved_author_count == 0
+    assert other_edge_contributor_id == source_id
 
 
 @pytest.mark.integration
@@ -1398,10 +1379,10 @@ def test_tombstone_rejects_active_credit_references(db_session):
 
 
 @pytest.mark.integration
-def test_tombstone_rejects_object_link_references(db_session):
+def test_tombstone_rejects_edge_references(db_session):
     actor_user_id = uuid4()
     db_session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": actor_user_id})
-    media_id = create_test_media(db_session, title=f"Tombstone Object Link {uuid4()}")
+    media_id = create_test_media(db_session, title=f"Tombstone Edge {uuid4()}")
     replace_media_contributor_credits(
         db_session,
         media_id=media_id,
@@ -1412,20 +1393,18 @@ def test_tombstone_rejects_object_link_references(db_session):
         text("DELETE FROM contributor_credits WHERE contributor_id = :contributor_id"),
         {"contributor_id": contributor_id},
     )
-    db_session.execute(
-        text(
-            """
-            INSERT INTO object_links (
-                user_id, relation_type, a_type, a_id, b_type, b_id, metadata
-            )
-            VALUES (
-                :user_id, 'related', 'contributor', :contributor_id, 'media', :media_id,
-                '{}'::jsonb
-            )
-            """
-        ),
-        {"user_id": actor_user_id, "contributor_id": contributor_id, "media_id": media_id},
+    db_session.add(
+        ResourceEdge(
+            user_id=actor_user_id,
+            kind="context",
+            origin="user",
+            source_scheme="media",
+            source_id=media_id,
+            target_scheme="contributor",
+            target_id=contributor_id,
+        )
     )
+    db_session.flush()
 
     with pytest.raises(ApiError) as error:
         tombstone_contributor(

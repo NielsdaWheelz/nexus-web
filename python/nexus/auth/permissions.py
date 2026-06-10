@@ -164,10 +164,12 @@ def visible_content_credit_rows_sql() -> str:
 
 
 def visible_contributor_ids_cte_sql() -> str:
-    """Contributors visible to a viewer: a visible credit OR a viewer-owned object link.
+    """Contributors visible to a viewer: a visible credit OR a viewer-owned graph edge.
 
     Binds :viewer_id. This is the single definition of contributor visibility; every
-    consumer (directory, search, object refs, detail reads) shares it.
+    consumer (directory, search, object refs, detail reads) shares it. The edge lane
+    succeeds the old object-link lane: a contributor the viewer connected (at either
+    endpoint of a ``resource_edges`` row) stays visible with zero visible credits.
     """
     return f"""
         SELECT vcc.contributor_id
@@ -175,15 +177,15 @@ def visible_contributor_ids_cte_sql() -> str:
 
         UNION
 
-        SELECT ol.a_id AS contributor_id
-        FROM object_links ol
-        WHERE ol.user_id = :viewer_id AND ol.a_type = 'contributor'
+        SELECT re.source_id AS contributor_id
+        FROM resource_edges re
+        WHERE re.user_id = :viewer_id AND re.source_scheme = 'contributor'
 
         UNION
 
-        SELECT ol.b_id AS contributor_id
-        FROM object_links ol
-        WHERE ol.user_id = :viewer_id AND ol.b_type = 'contributor'
+        SELECT re.target_id AS contributor_id
+        FROM resource_edges re
+        WHERE re.user_id = :viewer_id AND re.target_scheme = 'contributor'
     """
 
 

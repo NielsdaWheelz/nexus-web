@@ -13,6 +13,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import text
 
+from nexus.db.models import ResourceEdge
 from nexus.errors import ApiError, ApiErrorCode, ForbiddenError, NotFoundError
 from nexus.schemas.contributors import ContributorMergeRequest
 from nexus.services.bootstrap import ensure_user_and_default_library
@@ -28,6 +29,7 @@ from nexus.services.search import search
 from nexus.services.search.query import SearchQuery
 from tests.factories import (
     add_media_to_library,
+    create_test_conversation_with_message,
     create_test_media,
     create_test_media_in_library,
 )
@@ -136,6 +138,113 @@ def test_merge_repoints_credits_and_tombstones_source(db_session):
         {"source_id": source_id, "target_id": target_id},
     ).scalar_one()
     assert event_count == 1
+
+
+@pytest.mark.integration
+def test_merge_repoints_user_links_and_citations(db_session):
+    """AC11: merge repoints ALL graph edges through repoint_edges — bare user links
+    collapse onto an existing duplicate pair, citation edges follow the survivor with
+    ordinal and snapshot untouched, and nothing keeps touching the merged source."""
+    actor_user_id = uuid4()
+    db_session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": actor_user_id})
+
+    source_id, source_handle, source_media, _lib, _viewer = _mint_contributor(
+        db_session, display_name=f"Edge Merge Source {uuid4()}"
+    )
+    target_id, target_handle, _t_media, _t_lib, _t_viewer = _mint_contributor(
+        db_session, display_name=f"Edge Merge Target {uuid4()}"
+    )
+    _conversation_id, message_id = create_test_conversation_with_message(
+        db_session, actor_user_id, content="Cited the duplicate author"
+    )
+
+    moving_bare = ResourceEdge(
+        user_id=actor_user_id,
+        kind="context",
+        origin="user",
+        source_scheme="media",
+        source_id=source_media,
+        target_scheme="contributor",
+        target_id=source_id,
+    )
+    # Same (media → contributor) pair already exists against the target, so the
+    # moving bare edge must be dropped as a duplicate, not doubled.
+    existing_bare = ResourceEdge(
+        user_id=actor_user_id,
+        kind="context",
+        origin="user",
+        source_scheme="media",
+        source_id=source_media,
+        target_scheme="contributor",
+        target_id=target_id,
+    )
+    citation = ResourceEdge(
+        user_id=actor_user_id,
+        kind="context",
+        origin="citation",
+        source_scheme="message",
+        source_id=message_id,
+        target_scheme="contributor",
+        target_id=source_id,
+        ordinal=3,
+        snapshot={"title": "Edge Merge Source", "excerpt": "quoted line"},
+    )
+    db_session.add_all([moving_bare, existing_bare, citation])
+    db_session.flush()
+    existing_bare_id = existing_bare.id
+    citation_id = citation.id
+
+    merge_contributor(
+        db_session,
+        actor_user_id=actor_user_id,
+        actor_roles=CURATOR_ROLES,
+        contributor_handle=source_handle,
+        request=ContributorMergeRequest(target_handle=target_handle),
+    )
+
+    surviving_bare = db_session.execute(
+        text(
+            """
+            SELECT id
+            FROM resource_edges
+            WHERE ordinal IS NULL
+              AND source_scheme = 'media' AND source_id = :media_id
+              AND target_scheme = 'contributor' AND target_id = :target_id
+            """
+        ),
+        {"media_id": source_media, "target_id": target_id},
+    ).fetchall()
+    assert [row.id for row in surviving_bare] == [existing_bare_id], (
+        "The moving bare edge must collapse onto the existing duplicate pair"
+    )
+
+    citation_row = db_session.execute(
+        text(
+            """
+            SELECT target_scheme, target_id, ordinal, snapshot
+            FROM resource_edges
+            WHERE id = :citation_id
+            """
+        ),
+        {"citation_id": citation_id},
+    ).one()
+    assert citation_row.target_scheme == "contributor"
+    assert citation_row.target_id == target_id
+    assert citation_row.ordinal == 3
+    assert citation_row.snapshot == {"title": "Edge Merge Source", "excerpt": "quoted line"}
+
+    touching_source = db_session.execute(
+        text(
+            """
+            SELECT count(*)
+            FROM resource_edges
+            WHERE (source_scheme = 'contributor' AND source_id = :source_id)
+               OR (target_scheme = 'contributor' AND target_id = :source_id)
+            """
+        ),
+        {"source_id": source_id},
+    ).scalar_one()
+    assert touching_source == 0, "No edge may keep touching the merged source identity"
 
 
 @pytest.mark.integration
@@ -660,9 +769,9 @@ def test_directory_rejects_cross_mode_and_malformed_cursor(db_session):
 
 
 @pytest.mark.integration
-def test_object_link_only_contributor_appears_in_directory_and_search(db_session):
-    """AC4 / R6: a contributor with no visible credit but a viewer object link is present in
-    the directory (work_count 0) AND in unscoped search — the unified visibility predicate."""
+def test_edge_only_contributor_appears_in_directory_and_search(db_session):
+    """AC4 / R6: a contributor with no visible credit but a viewer-owned graph edge is present
+    in the directory (work_count 0) AND in unscoped search — the unified visibility predicate."""
     viewer_id = uuid4()
     library_id = ensure_user_and_default_library(db_session, viewer_id)
     # Distinctive coined token so the FTS query below matches only this contributor.
@@ -676,19 +785,21 @@ def test_object_link_only_contributor_appears_in_directory_and_search(db_session
         credits=[{"name": f"{distinctive} Author", "role": "author", "source": "manual"}],
     )
     contributor_id, handle, _credit = _credit_contributor(db_session, media_id)
-    # Drop the credit so the contributor is reachable ONLY through a viewer-owned object link.
+    # Drop the credit so the contributor is reachable ONLY through a viewer-owned edge.
     db_session.execute(
         text("DELETE FROM contributor_credits WHERE contributor_id = :id"),
         {"id": contributor_id},
     )
-    db_session.execute(
-        text(
-            """
-            INSERT INTO object_links (user_id, relation_type, a_type, a_id, b_type, b_id, metadata)
-            VALUES (:user_id, 'related', 'contributor', :cid, 'media', :media_id, '{}'::jsonb)
-            """
-        ),
-        {"user_id": viewer_id, "cid": contributor_id, "media_id": media_id},
+    db_session.add(
+        ResourceEdge(
+            user_id=viewer_id,
+            kind="context",
+            origin="user",
+            source_scheme="contributor",
+            source_id=contributor_id,
+            target_scheme="media",
+            target_id=media_id,
+        )
     )
     db_session.commit()
 

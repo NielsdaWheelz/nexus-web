@@ -260,7 +260,6 @@ class TestWebArticleHighlightE2E:
                 "linked_object": {
                     "object_type": "highlight",
                     "object_id": hl1_id,
-                    "relation_type": "note_about",
                 },
             },
             headers=auth_headers(user_id),
@@ -453,7 +452,6 @@ class TestSharedHighlightVisibility:
                 "linked_object": {
                     "object_type": "highlight",
                     "object_id": highlight_id,
-                    "relation_type": "note_about",
                 },
             },
             headers=auth_headers(user_b),

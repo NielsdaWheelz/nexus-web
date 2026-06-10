@@ -137,6 +137,21 @@ fields:
 - assistant selection: `branch_anchor.kind === "assistant_selection"`
 - reader selection: `reader_selection`
 
+## Citations Are Edges
+
+A chat citation is a `resource_edge`, not a column on the telemetry row. As the
+run selects results, `chat_runs.py` calls
+`resource_graph.citations.record_citation` to mint an `origin='citation'` edge
+whose source is the assistant `message:<id>`, whose target is the cited resource,
+and whose dense turn-global `[N]` is the edge `ordinal`. The assistant message's
+rendered `citations` are built from those edges by `build_citation_outs`
+(`chat_run_response.py`), uniformly with Oracle and Library Intelligence.
+
+`message_retrievals` stays chat-owned **telemetry**: every candidate/rerank/selected
+decision is still written there, and a cited row points back at its citation edge
+through `cited_edge_id`, set in the same transaction the edge is minted. The
+ordinal lives on the edge, never on the telemetry row.
+
 ## Backend Validation And Prompt Rendering
 
 FastAPI schemas accept `assistant_selection` branch anchors and `reader_selection` inputs as

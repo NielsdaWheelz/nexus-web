@@ -23,6 +23,8 @@ from nexus.services.default_library_closure import (
     remove_media_from_default_intrinsic,
     remove_media_from_non_default_closure,
 )
+from nexus.services.resource_graph import cleanup
+from nexus.services.resource_graph.refs import ResourceRef
 from nexus.storage.client import StorageError, get_storage_client
 
 if TYPE_CHECKING:
@@ -315,26 +317,13 @@ def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[s
         if storage_path not in storage_paths:
             storage_paths.append(storage_path)
 
-    db.execute(
-        text("""
-            DELETE FROM object_links
-            WHERE (a_type = 'media' AND a_id = :media_id)
-               OR (b_type = 'media' AND b_id = :media_id)
-               OR (a_type = 'highlight' AND a_id IN (
-                    SELECT id FROM highlights WHERE anchor_media_id = :media_id
-               ))
-               OR (b_type = 'highlight' AND b_id IN (
-                    SELECT id FROM highlights WHERE anchor_media_id = :media_id
-               ))
-               OR (a_type = 'content_chunk' AND a_id IN (
-                    SELECT id FROM content_chunks WHERE owner_kind = 'media' AND owner_id = :media_id
-               ))
-               OR (b_type = 'content_chunk' AND b_id IN (
-                    SELECT id FROM content_chunks WHERE owner_kind = 'media' AND owner_id = :media_id
-               ))
-        """),
-        {"media_id": media_id},
-    )
+    # Graph cleanup, one call per resource ref this deletion destroys (§9.6,
+    # AC12): the media row, its highlights, and its fragments. The media's
+    # evidence spans and content chunks are cleaned inside delete_content_index
+    # by their owner. Bare edges touching a destroyed ref die; cited edges
+    # sourced elsewhere survive on their snapshots (the evidence invariant).
+    for ref in _destroyed_media_refs(db, media_id):
+        cleanup.delete_edges_for_deleted_resource(db, ref=ref)
     db.execute(
         text("DELETE FROM conversation_media WHERE media_id = :media_id"),
         {"media_id": media_id},
@@ -478,40 +467,51 @@ def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[s
     return storage_paths
 
 
-def _delete_viewer_media_state(db: Session, viewer_id: UUID, media_id: UUID) -> None:
-    db.execute(
-        text("""
-            DELETE FROM object_links
-            WHERE user_id = :viewer_id
-              AND (
-                    (a_type = 'media' AND a_id = :media_id)
-                 OR (b_type = 'media' AND b_id = :media_id)
-                 OR (a_type = 'highlight' AND a_id IN (
-                        SELECT id
-                        FROM highlights
-                        WHERE user_id = :viewer_id
-                          AND anchor_media_id = :media_id
-                    ))
-                 OR (b_type = 'highlight' AND b_id IN (
-                        SELECT id
-                        FROM highlights
-                        WHERE user_id = :viewer_id
-                          AND anchor_media_id = :media_id
-                    ))
-                 OR (a_type = 'content_chunk' AND a_id IN (
-                        SELECT id
-                        FROM content_chunks
-                        WHERE owner_kind = 'media' AND owner_id = :media_id
-                    ))
-                 OR (b_type = 'content_chunk' AND b_id IN (
-                        SELECT id
-                        FROM content_chunks
-                        WHERE owner_kind = 'media' AND owner_id = :media_id
-                    ))
-              )
-        """),
-        {"viewer_id": viewer_id, "media_id": media_id},
+def _destroyed_media_refs(db: Session, media_id: UUID) -> list[ResourceRef]:
+    """Every resource ref the media hard-delete destroys, scheme-mapped (§9.6)."""
+    highlight_ids = (
+        db.execute(
+            text("SELECT id FROM highlights WHERE anchor_media_id = :media_id"),
+            {"media_id": media_id},
+        )
+        .scalars()
+        .all()
     )
+    fragment_ids = (
+        db.execute(
+            text("SELECT id FROM fragments WHERE media_id = :media_id"),
+            {"media_id": media_id},
+        )
+        .scalars()
+        .all()
+    )
+    return [
+        ResourceRef(scheme="media", id=media_id),
+        *(ResourceRef(scheme="highlight", id=highlight_id) for highlight_id in highlight_ids),
+        *(ResourceRef(scheme="fragment", id=fragment_id) for fragment_id in fragment_ids),
+    ]
+
+
+def _delete_viewer_media_state(db: Session, viewer_id: UUID, media_id: UUID) -> None:
+    # The viewer's highlights are the only resources this path destroys; the
+    # media itself may survive for other holders, so graph cleanup is scoped to
+    # the deleted refs (§9.6). When the media is hard-deleted right after, its
+    # own edges die in delete_document_media_if_unreferenced.
+    highlight_ids = (
+        db.execute(
+            text(
+                "SELECT id FROM highlights "
+                "WHERE user_id = :viewer_id AND anchor_media_id = :media_id"
+            ),
+            {"viewer_id": viewer_id, "media_id": media_id},
+        )
+        .scalars()
+        .all()
+    )
+    for highlight_id in highlight_ids:
+        cleanup.delete_edges_for_deleted_resource(
+            db, ref=ResourceRef(scheme="highlight", id=highlight_id)
+        )
     db.execute(
         text("""
             DELETE FROM conversation_media cm

@@ -93,9 +93,11 @@ def authorize_scope(
 #
 # `scope_filter_sql(scope, entity)` returns an AND-clause fragment + params to splice
 # into the entity's retriever WHERE, ("", {}) for the unscoped `all`, or the
-# UNSUPPORTED sentinel (the cell yields no results — the retriever returns []). Every
-# cell is the verbatim current retriever SQL; this module only centralizes and tests
-# what was previously inlined across 11 retrievers. No cell changes behavior.
+# UNSUPPORTED sentinel (the cell yields no results — the retriever returns []).
+# Connection-derived cells read `resource_edges` (provenance-graph cutover §11.9):
+# page/note_block media/library cells match edges at either endpoint, and the
+# conversation cells for page/note_block/highlight match conversation context
+# edges — any edge from the conversation, `context.is_context_ref` semantics.
 # =============================================================================
 
 
@@ -113,49 +115,52 @@ UNSUPPORTED = ScopeUnsupported()
 ScopeFilter = tuple[str, dict[str, Any]] | ScopeUnsupported
 
 
-def _note_object_scope(object_type: str, object_id_sql: str) -> dict[str, str | ScopeUnsupported]:
-    """object_links-based scope for a page/note_block keyed on (object_type, object_id_sql),
-    ported verbatim from the deleted note-substrate scope filter."""
-    link_match = (
-        f"((ol.a_type = '{object_type}' AND ol.a_id = {object_id_sql}) "
-        f"OR (ol.b_type = '{object_type}' AND ol.b_id = {object_id_sql}))"
+def _note_object_scope(scheme: str, object_id_sql: str) -> dict[str, str | ScopeUnsupported]:
+    """resource_edges-based scope for a page/note_block keyed on (scheme, object_id_sql).
+
+    Edges are matched at either endpoint (connections are undirected reads); the
+    media/library cells also honor an edge to a highlight anchored on the scoped
+    media, as the old link-based cells did. The conversation cell matches
+    conversation context edges — any kind/origin edge from the conversation to
+    the page/note_block (``context.is_context_ref`` semantics, spec §2.5)."""
+    edge_match = (
+        f"((e.source_scheme = '{scheme}' AND e.source_id = {object_id_sql}) "
+        f"OR (e.target_scheme = '{scheme}' AND e.target_id = {object_id_sql}))"
     )
     return {
         "media": f"""
             AND EXISTS (
-                SELECT 1 FROM object_links ol
+                SELECT 1 FROM resource_edges e
                 LEFT JOIN highlights h
-                  ON ((ol.a_type = 'highlight' AND h.id = ol.a_id)
-                   OR (ol.b_type = 'highlight' AND h.id = ol.b_id))
-                WHERE {link_match}
-                  AND ((ol.a_type = 'media' AND ol.a_id = :scope_id)
-                    OR (ol.b_type = 'media' AND ol.b_id = :scope_id)
+                  ON ((e.source_scheme = 'highlight' AND h.id = e.source_id)
+                   OR (e.target_scheme = 'highlight' AND h.id = e.target_id))
+                WHERE {edge_match}
+                  AND ((e.source_scheme = 'media' AND e.source_id = :scope_id)
+                    OR (e.target_scheme = 'media' AND e.target_id = :scope_id)
                     OR h.anchor_media_id = :scope_id)
             )
         """,
         "library": f"""
             AND EXISTS (
-                SELECT 1 FROM object_links ol
+                SELECT 1 FROM resource_edges e
                 LEFT JOIN highlights h
-                  ON ((ol.a_type = 'highlight' AND h.id = ol.a_id)
-                   OR (ol.b_type = 'highlight' AND h.id = ol.b_id))
+                  ON ((e.source_scheme = 'highlight' AND h.id = e.source_id)
+                   OR (e.target_scheme = 'highlight' AND h.id = e.target_id))
                 JOIN library_entries le
                   ON le.library_id = :scope_id AND le.media_id IS NOT NULL
-                 AND ((ol.a_type = 'media' AND le.media_id = ol.a_id)
-                   OR (ol.b_type = 'media' AND le.media_id = ol.b_id)
+                 AND ((e.source_scheme = 'media' AND le.media_id = e.source_id)
+                   OR (e.target_scheme = 'media' AND le.media_id = e.target_id)
                    OR le.media_id = h.anchor_media_id)
-                WHERE {link_match}
+                WHERE {edge_match}
             )
         """,
         "conversation": f"""
             AND EXISTS (
-                SELECT 1 FROM object_links ol
-                JOIN messages msg
-                  ON ((ol.a_type = 'message' AND msg.id = ol.a_id)
-                   OR (ol.b_type = 'message' AND msg.id = ol.b_id))
-                WHERE ol.relation_type = 'used_as_context'
-                  AND {link_match}
-                  AND msg.conversation_id = :scope_id
+                SELECT 1 FROM resource_edges e
+                WHERE e.source_scheme = 'conversation'
+                  AND e.source_id = :scope_id
+                  AND e.target_scheme = '{scheme}'
+                  AND e.target_id = {object_id_sql}
             )
         """,
     }
@@ -258,10 +263,12 @@ _SCOPE_MATRIX: dict[str, dict[str, str | ScopeUnsupported]] = {
             )
         """,
         "conversation": """
-            AND ('highlight:' || h.id::text) IN (
-                SELECT cr.resource_uri
-                FROM conversation_references cr
-                WHERE cr.conversation_id = :scope_id
+            AND EXISTS (
+                SELECT 1 FROM resource_edges e
+                WHERE e.source_scheme = 'conversation'
+                  AND e.source_id = :scope_id
+                  AND e.target_scheme = 'highlight'
+                  AND e.target_id = h.id
             )
         """,
     },

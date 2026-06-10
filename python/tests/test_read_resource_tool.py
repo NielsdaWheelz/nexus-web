@@ -20,14 +20,15 @@ from sqlalchemy.orm import Session
 from nexus.services.agent_tools.read_resource import ReadResourceResult, execute_read_resource
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.contributor_credits import replace_media_contributor_credits
-from nexus.services.conversation_references import insert_reference_if_absent
+from nexus.services.resource_graph.refs import ResourceRefParseFailure, parse_resource_ref
 from tests.factories import (
+    add_context_edge,
     create_test_conversation,
     create_test_media_in_library,
     create_test_message,
     get_user_default_library,
 )
-from tests.test_resource_resolver import (
+from tests.test_resource_graph_resolve import (
     _add_fragment,
     _make_highlight_with_anchor,
     _make_li_artifact,
@@ -62,8 +63,8 @@ def test_read_resource_tool_output_escapes_attribute_quotes():
 
 
 def _admit_reference(db: Session, conversation_id: UUID, uri: str) -> None:
-    """Add a reference row directly (skips owner check; mirrors citation path)."""
-    insert_reference_if_absent(db, conversation_id, uri)
+    """Add a context edge directly (skips owner check; mirrors citation path)."""
+    add_context_edge(db, conversation_id, uri)
     db.commit()
 
 
@@ -82,7 +83,7 @@ def test_read_resource_not_in_references_errors_with_actionable_hint(
         db_session, bootstrapped_user, library_id, title="Unrefed Source"
     )
     span_id = _make_span(db_session, media_id, text="Span content.")
-    uri = f"span:{span_id}"
+    uri = f"evidence_span:{span_id}"
 
     result = execute_read_resource(
         db_session, viewer_id=bootstrapped_user, conversation_id=conversation_id, uri=uri
@@ -330,7 +331,7 @@ def test_read_resource_span_returns_body(db_session: Session, bootstrapped_user:
     )
     span_text = "Full span body for read_resource."
     span_id = _make_span(db_session, media_id, text=span_text)
-    uri = f"span:{span_id}"
+    uri = f"evidence_span:{span_id}"
     _admit_reference(db_session, conversation_id, uri)
 
     result = execute_read_resource(
@@ -338,7 +339,7 @@ def test_read_resource_span_returns_body(db_session: Session, bootstrapped_user:
     )
 
     assert not result.is_error, f"Span read should succeed; got {result}"
-    assert result.kind == "span"
+    assert result.kind == "evidence_span"
     assert result.body == span_text, f"Expected full span text; got {result.body!r}"
 
 
@@ -456,51 +457,64 @@ def test_read_resource_message_returns_role_and_content(
 def test_read_resource_unknown_scheme_errors_without_raising(
     db_session: Session, bootstrapped_user: UUID
 ):
+    """A malformed URI is rejected with a structured error and never raises.
+
+    Pre-cutover, the retired conversation-ref store held raw URI strings, so an
+    unknown scheme passed admission and surfaced the grammar code ``unknown_scheme``.
+    Under the provenance graph, context edges are keyed on a parsed ``(scheme, uuid)`` ref
+    (``is_context_ref``), so an unparseable URI can never be admitted — there is no
+    ``resource_edges`` row that admits it (the ``target_scheme`` CHECK forbids the
+    scheme and ``target_id`` must be a uuid). Admission is the first gate, so the
+    service now returns ``not_in_references`` (no raise). The ``unknown_scheme``
+    classification this test guards is owned by ``parse_resource_ref``, asserted below.
+    """
     conversation_id = create_test_conversation(db_session, bootstrapped_user)
     uri = f"unknown_scheme:{uuid4()}"
-    # Admit raw via direct SQL because the public service path validates the URI grammar.
-    from sqlalchemy import text as sql_text
 
-    db_session.execute(
-        sql_text(
-            """
-            INSERT INTO conversation_references (conversation_id, resource_uri)
-            VALUES (:conversation_id, :resource_uri)
-            """
-        ),
-        {"conversation_id": conversation_id, "resource_uri": uri},
+    parsed = parse_resource_ref(uri)
+    assert isinstance(parsed, ResourceRefParseFailure)
+    assert parsed.reason == "unsupported_scheme", (
+        "an unknown scheme must classify as unsupported_scheme (-> unknown_scheme); "
+        f"got {parsed.reason}"
     )
-    db_session.commit()
 
     result = execute_read_resource(
         db_session, viewer_id=bootstrapped_user, conversation_id=conversation_id, uri=uri
     )
 
     assert result.is_error
-    assert result.error_code == "unknown_scheme"
+    assert result.error_code == "not_in_references", (
+        "an unparseable URI can hold no context edge, so admission rejects it first; "
+        f"got {result.error_code}"
+    )
 
 
 def test_read_resource_invalid_uuid_returns_invalid_uri_error(
     db_session: Session, bootstrapped_user: UUID
 ):
-    conversation_id = create_test_conversation(db_session, bootstrapped_user)
-    uri = "span:not-a-uuid"
-    from sqlalchemy import text as sql_text
+    """A known scheme with a non-uuid id classifies as invalid grammar and never raises.
 
-    db_session.execute(
-        sql_text(
-            """
-            INSERT INTO conversation_references (conversation_id, resource_uri)
-            VALUES (:conversation_id, :resource_uri)
-            """
-        ),
-        {"conversation_id": conversation_id, "resource_uri": uri},
+    As with the unknown-scheme case, no ``resource_edges`` row can admit a URI whose
+    id is not a uuid (``target_id`` is a uuid column), so admission returns
+    ``not_in_references``. The ``invalid_uri`` classification this test guards is
+    owned by ``parse_resource_ref`` (reason ``invalid_format``), asserted below.
+    """
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    uri = "evidence_span:not-a-uuid"
+
+    parsed = parse_resource_ref(uri)
+    assert isinstance(parsed, ResourceRefParseFailure)
+    assert parsed.reason == "invalid_format", (
+        "a known scheme with a non-uuid id must classify as invalid_format "
+        f"(-> invalid_uri); got {parsed.reason}"
     )
-    db_session.commit()
 
     result = execute_read_resource(
         db_session, viewer_id=bootstrapped_user, conversation_id=conversation_id, uri=uri
     )
 
     assert result.is_error
-    assert result.error_code == "invalid_uri"
+    assert result.error_code == "not_in_references", (
+        "a non-uuid id can hold no context edge, so admission rejects it first; "
+        f"got {result.error_code}"
+    )

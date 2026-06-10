@@ -9,17 +9,19 @@ import json
 import re
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
 from llm_calling.errors import LLMError, LLMErrorCode
 from llm_calling.types import LLMResponse, LLMUsage
-from sqlalchemy import inspect, text
+from sqlalchemy import inspect, select, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from nexus.config import clear_settings_cache
 from nexus.db.models import (
+    Fragment,
     OracleCorpusImage,
     OracleCorpusPassage,
     OracleCorpusWork,
@@ -29,6 +31,7 @@ from nexus.schemas.oracle import oracle_done_payload
 from nexus.services import run_kit
 from nexus.services.billing_entitlements import grant_entitlement_override
 from nexus.services.bootstrap import ensure_user_and_default_library
+from nexus.services.content_indexing import rebuild_fragment_content_index
 from nexus.services.image_validation import ValidatedImage
 from nexus.services.note_indexing import rebuild_page_content_index
 from nexus.services.oracle import (
@@ -77,7 +80,8 @@ def _require_oracle_schema(engine: Engine) -> None:
     missing = {
         "oracle_readings",
         "oracle_reading_events",
-        "oracle_reading_passages",
+        "oracle_reading_folios",
+        "resource_edges",
         "oracle_corpus_works",
         "oracle_corpus_passages",
         "oracle_corpus_images",
@@ -277,6 +281,59 @@ def _insert_pending_reading(
     db.add(reading)
     db.commit()
     return reading.id
+
+
+def _folio_edge_rows(db: Session, reading_id: UUID) -> list[dict[str, Any]]:
+    """A reading's folio rows joined to their citation edges, in ordinal order.
+
+    Schema-level exception (testing_standards §6): the folio<->edge pairing is
+    the persistence contract under test and is not exposed verbatim by any API.
+    """
+    return [
+        dict(row)
+        for row in db.execute(
+            text(
+                """
+                SELECT f.phase, f.source_kind, f.locator_label, f.attribution_text,
+                       f.marginalia_text, e.kind, e.origin, e.ordinal, e.snapshot,
+                       e.source_scheme, e.source_id, e.target_scheme, e.target_id
+                FROM oracle_reading_folios f
+                JOIN resource_edges e ON e.id = f.edge_id
+                WHERE f.reading_id = :reading_id
+                ORDER BY e.ordinal
+                """
+            ),
+            {"reading_id": reading_id},
+        ).mappings()
+    ]
+
+
+def _cited_targets(db: Session, reading_id: UUID, *, source_kind: str) -> set[tuple[str, UUID]]:
+    """The reading's cited (target_scheme, target_id) identities for one source kind."""
+    return {
+        (str(row["target_scheme"]), row["target_id"])
+        for row in _folio_edge_rows(db, reading_id)
+        if row["source_kind"] == source_kind
+    }
+
+
+def _owner_chunk_target_ids(db: Session, owner_kind: str, owner_id: UUID) -> set[UUID]:
+    """Expected §5.3 citation target ids for an owner's chunks (span, else chunk id)."""
+    rows = (
+        db.execute(
+            text(
+                """
+                SELECT id, primary_evidence_span_id
+                FROM content_chunks
+                WHERE owner_kind = :owner_kind AND owner_id = :owner_id
+                """
+            ),
+            {"owner_kind": owner_kind, "owner_id": owner_id},
+        )
+        .mappings()
+        .all()
+    )
+    return {row["primary_evidence_span_id"] or row["id"] for row in rows}
 
 
 def _candidate_indices(request) -> dict[int, str]:
@@ -1130,21 +1187,81 @@ def test_execute_reading_uses_indexed_user_library_content_chunks(
     assert any(source_kind == "user_media" for source_kind in router.indices.values()), (
         f"LLM request should include user-library candidates, got {router.indices}"
     )
-    sources = list(
+    user_media_targets = _cited_targets(db_session, reading_id, source_kind="user_media")
+    assert user_media_targets, (
+        "expected at least one persisted user-media folio with a citation edge, got "
+        f"{_folio_edge_rows(db_session, reading_id)}"
+    )
+    assert all(
+        scheme in ("evidence_span", "content_chunk") for scheme, _id in user_media_targets
+    ), f"user-media citations must target content-index rows (§5.3), got {user_media_targets}"
+
+
+def test_execute_reading_cites_content_chunk_when_user_chunk_has_no_span(
+    db_session: Session,
+    oracle_schema,
+) -> None:
+    """§5.3 no-span fallback (oracle.py ~1277-1282): when a ready user-media chunk
+    carries a NULL ``primary_evidence_span_id``, its citation grounds to the chunk
+    itself — ``content_chunk:<chunk_id>`` — rather than to a span. This covers the
+    fallback branch the span-backed user-media tests never reach.
+    """
+    user_id = uuid4()
+    ensure_user_and_default_library(db_session, user_id)
+    media_id = create_searchable_media(
+        db_session,
+        user_id,
+        title="Lantern Monograph",
+    )
+    # Strip the grounding span from every chunk so retrieval must fall back to the
+    # chunk-id target; the chunk row itself stays ready and embedded.
+    db_session.execute(
+        text(
+            """
+            UPDATE content_chunks
+            SET primary_evidence_span_id = NULL
+            WHERE owner_kind = 'media' AND owner_id = :media_id
+            """
+        ),
+        {"media_id": media_id},
+    )
+    chunk_ids = set(
         db_session.execute(
             text(
                 """
-                SELECT source
-                FROM oracle_reading_passages
-                WHERE reading_id = :reading_id
-                  AND source_kind = 'user_media'
+                SELECT id
+                FROM content_chunks
+                WHERE owner_kind = 'media' AND owner_id = :media_id
                 """
             ),
-            {"reading_id": reading_id},
+            {"media_id": media_id},
         ).scalars()
     )
-    assert any(source.get("media_id") for source in sources), (
-        f"expected at least one persisted passage from user media, got {sources}"
+    assert chunk_ids, "expected the searchable media to index at least one content chunk"
+    _seed_oracle_corpus(db_session)
+    reading_id = _insert_pending_reading(
+        db_session,
+        user_id=user_id,
+        question="Where does the lantern lead?",
+    )
+
+    result = asyncio.run(
+        execute_reading(db_session, reading_id=reading_id, llm_router=_SelectLibraryRouter())
+    )
+
+    assert result["status"] == "complete", f"expected reading to complete, got {result}"
+    user_media_targets = _cited_targets(db_session, reading_id, source_kind="user_media")
+    assert user_media_targets, (
+        "expected a persisted user-media folio with a citation edge, got "
+        f"{_folio_edge_rows(db_session, reading_id)}"
+    )
+    assert all(scheme == "content_chunk" for scheme, _id in user_media_targets), (
+        "a user-media chunk with no primary evidence span must cite the chunk itself "
+        f"(content_chunk:<id>, §5.3 fallback), got {user_media_targets}"
+    )
+    assert {target_id for _scheme, target_id in user_media_targets} <= chunk_ids, (
+        "the content_chunk citation target must be one of the media's own chunk ids, got "
+        f"{user_media_targets} vs media chunks {chunk_ids}"
     )
 
 
@@ -1267,10 +1384,11 @@ def test_get_reading_detail_degrades_citation_to_none_when_backing_span_is_gone(
     db_session: Session,
     oracle_schema,
 ) -> None:
-    """F04: oracle_reading_passages is a snapshot store with no FK to its evidence
-    span, so a completed folio can outlive the span (deleted media / lost read
-    access). get_reading_detail must degrade that passage to citation=None rather
-    than raise the resolver's NotFoundError and 404/500 the whole reading."""
+    """F04: a folio's citation edge snapshot has no FK to its evidence span, so a
+    completed folio can outlive the span (deleted media / lost read access). The
+    folio + edge still render the passage, but get_reading_detail must degrade its
+    CitationOut to citation=None rather than raise the resolver's NotFoundError and
+    404/500 the whole reading."""
     user_id = uuid4()
     ensure_user_and_default_library(db_session, user_id)
     create_searchable_media(db_session, user_id, title="Lantern Monograph")
@@ -1287,19 +1405,18 @@ def test_get_reading_detail_degrades_citation_to_none_when_backing_span_is_gone(
     )
     assert result["status"] == "complete", f"expected reading to complete, got {result}"
 
-    span_id = db_session.execute(
-        text(
-            """
-            SELECT (locator ->> 'evidence_span_id')::uuid
-            FROM oracle_reading_passages
-            WHERE reading_id = :reading_id AND source_kind = 'user_media'
-            """
-        ),
-        {"reading_id": reading_id},
-    ).scalar_one()
-    assert span_id is not None, "the user-media passage must reference an evidence span"
-    # The snapshot store keeps the passage row, but the backing span can vanish (media
-    # deletion cascades chunks/claims/spans; oracle_reading_passages has no FK to it).
+    # The user-media folio's citation edge targets the chunk's evidence span (§5.3).
+    user_media_targets = _cited_targets(db_session, reading_id, source_kind="user_media")
+    assert len(user_media_targets) == 1, (
+        f"expected exactly one user-media citation edge, got {user_media_targets}"
+    )
+    scheme, span_id = next(iter(user_media_targets))
+    assert scheme == "evidence_span", (
+        f"the user-media passage must cite an evidence span, got {scheme}:{span_id}"
+    )
+    assert span_id is not None
+    # The folio + edge snapshot keep the passage, but the backing span can vanish (media
+    # deletion cascades chunks/claims/spans; the citation edge has no FK to it, N4).
     # Clear the span's inbound references, then delete it, to model that vanished backing.
     db_session.execute(
         text("DELETE FROM message_retrievals WHERE evidence_span_id = :id"), {"id": span_id}
@@ -1661,10 +1778,16 @@ def test_execute_reading_reserves_and_commits_oracle_token_budget(
     assert reserve_event[3] is not None and reserve_event[3] >= 2000
 
 
-def test_execute_reading_persists_current_locator_and_source(
+def test_execute_reading_persists_folio_and_citation_edge_per_phase(
     db_session: Session,
     oracle_schema,
 ) -> None:
+    """Each phase writes one folio row paired with one citation edge (§5.3, AC8):
+    source ``oracle_reading:<id>``, ``kind=context``/``origin=citation``, dense
+    phase ordinals (descent 1, ordeal 2, ascent 3), and a display snapshot
+    carrying snippet/locator/deep link. Public-domain citations target the
+    stable ``oracle_corpus_passages`` rows.
+    """
     user_id = uuid4()
     db_session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
     _seed_oracle_corpus(db_session)
@@ -1678,35 +1801,55 @@ def test_execute_reading_persists_current_locator_and_source(
         execute_reading(db_session, reading_id=reading_id, llm_router=_PublicOnlyRouter())
     )
 
-    row = (
-        db_session.execute(
-            text(
-                """
-                SELECT locator, source, locator_label
-                FROM oracle_reading_passages
-                WHERE reading_id = :reading_id
-                  AND source_kind = 'public_domain'
-                ORDER BY phase
-                LIMIT 1
-                """
-            ),
-            {"reading_id": reading_id},
-        )
-        .mappings()
-        .one()
-    )
-    passage_columns = {
-        column["name"] for column in inspect(db_session.bind).get_columns("oracle_reading_passages")
-    }
+    rows = _folio_edge_rows(db_session, reading_id)
 
     assert result["status"] == "complete", f"expected reading to complete, got {result}"
-    assert row["locator"]["label"] == row["locator_label"]
-    assert isinstance(row["locator"]["passage_index"], int)
-    assert row["source"]["type"] == "public_domain_work"
-    assert row["source"]["url"].startswith("https://example.com/oracle-test-work-")
-    assert "source_ref" not in passage_columns
-    assert "citation_key" not in json.dumps(row["source"])
-    assert "text_sha256" not in json.dumps(row["source"])
+    assert [(row["phase"], row["ordinal"]) for row in rows] == [
+        ("descent", 1),
+        ("ordeal", 2),
+        ("ascent", 3),
+    ], f"phases must map to dense citation ordinals, got {rows}"
+    assert len({row["target_id"] for row in rows}) == 3, (
+        f"the three phases must cite three distinct passages, got {rows}"
+    )
+    for row in rows:
+        assert (row["kind"], row["origin"]) == ("context", "citation"), (
+            f"oracle citations are context edges with citation origin, got {row}"
+        )
+        assert (row["source_scheme"], row["source_id"]) == ("oracle_reading", reading_id), (
+            f"edge source must be the reading, got {row}"
+        )
+        assert row["source_kind"] == "public_domain"
+        assert row["target_scheme"] == "oracle_corpus_passage", (
+            f"public-domain citations target corpus passage rows, got {row}"
+        )
+        corpus = (
+            db_session.execute(
+                text(
+                    """
+                    SELECT p.canonical_text, p.locator_label, w.title, w.source_url
+                    FROM oracle_corpus_passages p
+                    JOIN oracle_corpus_works w ON w.id = p.work_id
+                    WHERE p.id = :target_id
+                    """
+                ),
+                {"target_id": row["target_id"]},
+            )
+            .mappings()
+            .one()
+        )
+        snapshot = row["snapshot"]
+        assert snapshot["excerpt"] == corpus["canonical_text"], (
+            f"snapshot excerpt must be the exact snippet, got {snapshot} for {corpus}"
+        )
+        assert snapshot["section_label"] == row["locator_label"] == corpus["locator_label"], (
+            f"snapshot section label and folio locator label must match, got {row}"
+        )
+        assert snapshot["title"] == corpus["title"], f"snapshot title is the work title: {snapshot}"
+        assert snapshot["deep_link"] == corpus["source_url"], (
+            f"deep link rides the snapshot, not the edge (D11): {snapshot}"
+        )
+        assert snapshot["result_type"] == "oracle_corpus_passage", snapshot
 
 
 def test_get_oracle_reading_returns_proxied_plate_urls(
@@ -1755,9 +1898,73 @@ def test_get_oracle_reading_returns_proxied_plate_urls(
     direct_db.register_cleanup("users", "id", user_id)
     _register_oracle_corpus_cleanup(direct_db, corpus_id, _work_ids)
     direct_db.register_cleanup("oracle_readings", "id", reading_id)
-    direct_db.register_cleanup("oracle_reading_passages", "reading_id", reading_id)
+    direct_db.register_cleanup("resource_edges", "source_id", reading_id)
+    direct_db.register_cleanup("oracle_reading_folios", "reading_id", reading_id)
     direct_db.register_cleanup("oracle_reading_events", "reading_id", reading_id)
     direct_db.register_cleanup("llm_calls", "owner_id", reading_id)
+
+
+def test_reading_detail_renders_passages_from_folio_and_edge_field_for_field(
+    auth_client,
+    direct_db: DirectSessionManager,
+    oracle_schema,
+) -> None:
+    """AC8: the reading wire shape is unchanged — GET detail rebuilds each
+    passage from its folio row plus its citation-edge snapshot, field-for-field
+    identical to the generation-time SSE ``passage`` payloads (which were built
+    directly from the retrieved candidates).
+    """
+    user_id = uuid4()
+    with direct_db.session() as session:
+        session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
+        corpus_id, _work_ids, _image_id = _seed_oracle_corpus(session)
+        reading_id = _insert_pending_reading(
+            session,
+            user_id=user_id,
+            question="What does the lamp reveal?",
+        )
+        result = asyncio.run(
+            execute_reading(session, reading_id=reading_id, llm_router=_PublicOnlyRouter())
+        )
+
+    direct_db.register_cleanup("users", "id", user_id)
+    _register_oracle_corpus_cleanup(direct_db, corpus_id, _work_ids)
+    direct_db.register_cleanup("oracle_readings", "id", reading_id)
+    direct_db.register_cleanup("resource_edges", "source_id", reading_id)
+    direct_db.register_cleanup("oracle_reading_folios", "reading_id", reading_id)
+    direct_db.register_cleanup("oracle_reading_events", "reading_id", reading_id)
+
+    response = auth_client.get(
+        f"/oracle/readings/{reading_id}",
+        headers=auth_headers(user_id),
+    )
+
+    assert result["status"] == "complete", f"expected reading to complete, got {result}"
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    passage_payloads = {
+        event["payload"]["phase"]: event["payload"]
+        for event in data["events"]
+        if event["event_type"] == "passage"
+    }
+    assert [passage["phase"] for passage in data["passages"]] == ["descent", "ordeal", "ascent"], (
+        f"detail passages must come back in phase order, got {data['passages']}"
+    )
+    for passage in data["passages"]:
+        assert set(passage) == {
+            "phase",
+            "source_kind",
+            "exact_snippet",
+            "locator_label",
+            "attribution_text",
+            "marginalia_text",
+            "deep_link",
+            "citation",
+        }, f"reading passage wire shape changed: {sorted(passage)}"
+        assert passage == passage_payloads[passage["phase"]], (
+            "detail passage must be field-for-field identical to its generation-time payload; "
+            f"got {passage} vs {passage_payloads[passage['phase']]}"
+        )
 
 
 @pytest.mark.parametrize(
@@ -1950,7 +2157,8 @@ def test_execute_reading_provider_failure_uses_feedback_safe_error_message(
     direct_db.register_cleanup("users", "id", user_id)
     _register_oracle_corpus_cleanup(direct_db, corpus_id, _work_ids)
     direct_db.register_cleanup("oracle_readings", "id", reading_id)
-    direct_db.register_cleanup("oracle_reading_passages", "reading_id", reading_id)
+    direct_db.register_cleanup("resource_edges", "source_id", reading_id)
+    direct_db.register_cleanup("oracle_reading_folios", "reading_id", reading_id)
     direct_db.register_cleanup("oracle_reading_events", "reading_id", reading_id)
     direct_db.register_cleanup("llm_calls", "owner_id", reading_id)
 
@@ -2142,12 +2350,22 @@ def test_execute_reading_rejects_model_minted_citation_details(
             {"reading_id": reading_id},
         ).scalars()
     )
-    passage_count = db_session.execute(
+    folio_count = db_session.execute(
         text(
             """
             SELECT count(*)
-            FROM oracle_reading_passages
+            FROM oracle_reading_folios
             WHERE reading_id = :reading_id
+            """
+        ),
+        {"reading_id": reading_id},
+    ).scalar_one()
+    edge_count = db_session.execute(
+        text(
+            """
+            SELECT count(*)
+            FROM resource_edges
+            WHERE source_scheme = 'oracle_reading' AND source_id = :reading_id
             """
         ),
         {"reading_id": reading_id},
@@ -2158,7 +2376,8 @@ def test_execute_reading_rejects_model_minted_citation_details(
         f"citation rejection should emit a single terminal done, got {events}"
     )
     assert "passage" not in events, f"invalid citation output must not persist passages: {events}"
-    assert passage_count == 0, "invalid citation output should not write passage rows"
+    assert folio_count == 0, "invalid citation output should not write folio rows"
+    assert edge_count == 0, "invalid citation output should not write citation edges"
 
 
 def test_execute_reading_emits_events_in_eternal_order(
@@ -2186,7 +2405,8 @@ def test_execute_reading_emits_events_in_eternal_order(
     direct_db.register_cleanup("users", "id", user_id)
     _register_oracle_corpus_cleanup(direct_db, corpus_id, _work_ids)
     direct_db.register_cleanup("oracle_readings", "id", reading_id)
-    direct_db.register_cleanup("oracle_reading_passages", "reading_id", reading_id)
+    direct_db.register_cleanup("resource_edges", "source_id", reading_id)
+    direct_db.register_cleanup("oracle_reading_folios", "reading_id", reading_id)
     direct_db.register_cleanup("oracle_reading_events", "reading_id", reading_id)
     direct_db.register_cleanup("llm_calls", "owner_id", reading_id)
 
@@ -2441,7 +2661,7 @@ def test_execute_reading_sortes_attribution_format(
             text(
                 """
                 SELECT attribution_text
-                FROM oracle_reading_passages
+                FROM oracle_reading_folios
                 WHERE reading_id = :reading_id
                   AND source_kind = 'public_domain'
                 """
@@ -2464,23 +2684,29 @@ def test_concordance_ordering_by_score(
     db_session: Session,
     oracle_schema,
 ) -> None:
-    """Folios sharing plate+theme rank above theme-only, which ranks above passage-only."""
+    """Folios sharing plate+theme+passages rank above plate+passages without theme.
+
+    All folios run the same question over the same corpus, so each pair shares
+    the three corpus-passage citation targets and the plate by construction
+    (§5.3 identity equality); theme is the differentiator under test.
+    """
     user_id = uuid4()
     db_session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
     corpus_id, _work_ids, image_id = _seed_oracle_corpus(db_session)
+    question = "Reference question for concordance test."
 
     # Reference reading — folio 1
     ref_reading_id = _insert_pending_reading(
         db_session,
         user_id=user_id,
-        question="Reference question for concordance test.",
+        question=question,
         folio_number=1,
     )
     asyncio.run(
         execute_reading(db_session, reading_id=ref_reading_id, llm_router=_PublicOnlyRouter())
     )
 
-    # Fetch the image_id and one current locator/source used by the reference reading
+    # Fetch the image_id used by the reference reading
     ref_row = (
         db_session.execute(
             text("SELECT image_id FROM oracle_readings WHERE id = :id"),
@@ -2491,28 +2717,11 @@ def test_concordance_ordering_by_score(
     )
     ref_image_id = ref_row["image_id"]
 
-    ref_passage = (
-        db_session.execute(
-            text(
-                """
-                SELECT source_kind, locator, source
-                FROM oracle_reading_passages
-                WHERE reading_id = :reading_id
-                ORDER BY phase
-                LIMIT 1
-                """
-            ),
-            {"reading_id": ref_reading_id},
-        )
-        .mappings()
-        .one()
-    )
-
-    # folio 2: shares plate + theme (score >= 4)
+    # folio 2: shares plate + theme on top of the shared passages
     folio2_id = _insert_pending_reading(
         db_session,
         user_id=user_id,
-        question="Second folio for concordance test.",
+        question=question,
         folio_number=2,
     )
     asyncio.run(execute_reading(db_session, reading_id=folio2_id, llm_router=_PublicOnlyRouter()))
@@ -2529,54 +2738,137 @@ def test_concordance_ordering_by_score(
     )
     db_session.commit()
 
-    # folio 3: shares only a current passage locator/source (score = N passages)
+    # folio 3: shares passages (and the deterministic plate) but not the theme
     folio3_id = _insert_pending_reading(
         db_session,
         user_id=user_id,
-        question="Third folio for concordance test.",
+        question=question,
         folio_number=3,
     )
     asyncio.run(execute_reading(db_session, reading_id=folio3_id, llm_router=_PublicOnlyRouter()))
-    # Ensure folio3 shares a passage locator/source with reference but not same image/theme
     db_session.execute(
         text("UPDATE oracle_readings SET folio_theme = 'Of Solitude' WHERE id = :id"),
         {"id": folio3_id},
-    )
-    db_session.execute(
-        text(
-            """
-            UPDATE oracle_reading_passages
-            SET source_kind = :source_kind,
-                locator = CAST(:locator AS jsonb),
-                source = CAST(:source AS jsonb)
-            WHERE reading_id = :reading_id
-              AND phase = 'descent'
-            """
-        ),
-        {
-            "reading_id": folio3_id,
-            "source_kind": ref_passage["source_kind"],
-            "locator": json.dumps(ref_passage["locator"]),
-            "source": json.dumps(ref_passage["source"]),
-        },
     )
     db_session.commit()
 
     entries = compute_concordance(db_session, viewer_id=user_id, reading_id=ref_reading_id)
 
-    assert len(entries) >= 1
-    # folio2 (plate+theme match) should rank above folio3 (passage-only)
-    entry_ids = [str(e.id) for e in entries]
-    assert str(folio2_id) in entry_ids
-    idx2 = entry_ids.index(str(folio2_id))
-    if str(folio3_id) in entry_ids:
-        idx3 = entry_ids.index(str(folio3_id))
-        assert idx2 < idx3, (
-            f"folio2 (plate+theme) should rank above folio3 (passage-only), got order {entry_ids}"
-        )
-    folio2_entry = entries[idx2]
+    # folio2 (plate+theme+passages, score 7) ranks above folio3 (no theme, score 5)
+    entry_ids = [str(entry.id) for entry in entries]
+    assert entry_ids == [str(folio2_id), str(folio3_id)], (
+        f"expected folio2 (plate+theme) above folio3 (theme differs), got order {entry_ids}"
+    )
+    folio2_entry, folio3_entry = entries
     assert folio2_entry.shared_plate is True
     assert folio2_entry.shared_theme is True
+    assert folio2_entry.shared_passage_count == 3, (
+        f"same-question folios share all three citation targets, got {folio2_entry}"
+    )
+    assert folio3_entry.shared_theme is False
+    assert folio3_entry.shared_passage_count == 3, (
+        f"theme divergence must not affect passage identity matches, got {folio3_entry}"
+    )
+
+
+def test_concordance_parity_shared_corpus_span_and_reindex_fixture(
+    db_session: Session,
+    oracle_schema,
+) -> None:
+    """AC21: the §5.3 identity contract over a seeded scenario.
+
+    Readings A and B (same question, user media indexed) share two corpus
+    passages AND the user-media evidence span — both match on
+    ``(target_scheme, target_id)``. A content reindex then regenerates the
+    media's spans/chunks, so reading C cites a NEW span id: the A/C pair keeps
+    its corpus matches but loses the user-media match. That non-match is the
+    pinned semantic delta from the old snapshot-JSONB equality, which could
+    still match across a reindex.
+    """
+    user_id = uuid4()
+    ensure_user_and_default_library(db_session, user_id)
+    media_id = create_searchable_media(db_session, user_id, title="Lantern Monograph")
+    _seed_oracle_corpus(db_session)
+    question = "Where does the lantern lead?"
+
+    reading_a = _insert_pending_reading(
+        db_session, user_id=user_id, question=question, folio_number=1
+    )
+    result_a = asyncio.run(
+        execute_reading(db_session, reading_id=reading_a, llm_router=_SelectLibraryRouter())
+    )
+    reading_b = _insert_pending_reading(
+        db_session, user_id=user_id, question=question, folio_number=2
+    )
+    result_b = asyncio.run(
+        execute_reading(db_session, reading_id=reading_b, llm_router=_SelectLibraryRouter())
+    )
+
+    # Reindex the media between B and C: spans/chunks are deleted and recreated
+    # with fresh ids while the text stays identical.
+    fragments = (
+        db_session.execute(select(Fragment).where(Fragment.media_id == media_id)).scalars().all()
+    )
+    rebuild_fragment_content_index(
+        db_session,
+        media_id=media_id,
+        source_kind="web_article",
+        fragments=fragments,
+        reason="test_reindex",
+    )
+    db_session.commit()
+
+    reading_c = _insert_pending_reading(
+        db_session, user_id=user_id, question=question, folio_number=3
+    )
+    result_c = asyncio.run(
+        execute_reading(db_session, reading_id=reading_c, llm_router=_SelectLibraryRouter())
+    )
+    assert (result_a["status"], result_b["status"], result_c["status"]) == (
+        "complete",
+        "complete",
+        "complete",
+    ), f"all fixture readings must complete, got {(result_a, result_b, result_c)}"
+
+    def one_user_media_target(reading_id: UUID) -> tuple[str, UUID]:
+        targets = _cited_targets(db_session, reading_id, source_kind="user_media")
+        assert len(targets) == 1, f"expected exactly one user-media citation, got {targets}"
+        return next(iter(targets))
+
+    span_a = one_user_media_target(reading_a)
+    span_b = one_user_media_target(reading_b)
+    span_c = one_user_media_target(reading_c)
+    assert span_a[0] == "evidence_span", (
+        f"user-media citations ground to the chunk's evidence span (§5.3), got {span_a}"
+    )
+    assert span_a == span_b, (
+        f"the same-span pair must cite the same target identity, got {span_a} vs {span_b}"
+    )
+    assert span_a != span_c, (
+        "the reindex pair must NOT share a user-media target — span ids regenerated "
+        f"(pinned §5.3 delta); got {span_a} vs {span_c}"
+    )
+    corpus_a = _cited_targets(db_session, reading_a, source_kind="public_domain")
+    corpus_c = _cited_targets(db_session, reading_c, source_kind="public_domain")
+    assert corpus_a and corpus_a == corpus_c, (
+        f"corpus passage targets are stable across the reindex, got {corpus_a} vs {corpus_c}"
+    )
+
+    entries = {
+        entry.id: entry
+        for entry in compute_concordance(db_session, viewer_id=user_id, reading_id=reading_a)
+    }
+    assert set(entries) == {reading_b, reading_c}, (
+        f"expected both sibling folios in the concordance, got {sorted(entries)}"
+    )
+    assert entries[reading_b].shared_passage_count == 3, (
+        "the pre-reindex pair shares two corpus passages plus the evidence span; "
+        f"got {entries[reading_b]}"
+    )
+    assert entries[reading_c].shared_passage_count == 2, (
+        "the reindex pair keeps its corpus matches but drops the span match; "
+        f"got {entries[reading_c]}"
+    )
 
 
 def test_list_oracle_readings_returns_all_readings(
@@ -2771,8 +3063,9 @@ def test_retrieve_user_library_passages_includes_page_owned_notes(
 ) -> None:
     """Oracle can cite your notes: a page-owned (owner_kind='page') note whose body
     embedding matches the oracle user-content retrieval query surfaces as a user-library
-    candidate carrying source['content_source_kind'] == 'note'. This pins the AC-9
-    headline that note evidence joins media evidence in oracle retrieval.
+    candidate targeting the note's content-index row (§5.3) and tagged with the 'note'
+    content source kind. This pins the AC-9 headline that note evidence joins media
+    evidence in oracle retrieval.
     """
     user_id = uuid4()
     ensure_user_and_default_library(db_session, user_id)
@@ -2801,21 +3094,24 @@ def test_retrieve_user_library_passages_includes_page_owned_notes(
         query_embedding=query_embedding,
     )
 
+    note_target_ids = _owner_chunk_target_ids(db_session, "page", page_id)
+    assert note_target_ids, "expected the seeded note to be indexed into content chunks"
     note_candidates = [
-        candidate
-        for candidate in candidates
-        if candidate.source.get("content_source_kind") == "note"
+        candidate for candidate in candidates if candidate.target.id in note_target_ids
     ]
     assert note_candidates, (
         "expected a page-owned note among the oracle user-library candidates "
-        f"(oracle cites your notes); got sources {[c.source for c in candidates]}"
+        f"(oracle cites your notes); got targets {[c.target.uri for c in candidates]}"
     )
     note_candidate = note_candidates[0]
-    assert note_candidate.source.get("owner_kind") == "page", (
-        f"note candidate should be owner_kind='page', got {note_candidate.source}"
+    assert note_candidate.target.scheme in ("evidence_span", "content_chunk"), (
+        f"note candidate must target a content-index row (§5.3), got {note_candidate.target.uri}"
     )
-    assert note_candidate.source.get("media_id") == str(page_id), (
-        f"note candidate owner id should be the page id {page_id}, got {note_candidate.source}"
+    assert "note" in note_candidate.tags, (
+        f"note candidate should carry the note content source kind tag, got {note_candidate.tags}"
+    )
+    assert note_candidate.title == "Lantern Notebook", (
+        f"note candidate title should be the page title, got {note_candidate.title!r}"
     )
     assert note_candidate.source_kind == "user_media", (
         f"note candidate should be offered as a user_media candidate, got {note_candidate.source_kind}"
@@ -2877,13 +3173,19 @@ def test_retrieve_user_content_keeps_note_when_id_collides_with_media(
         query_embedding_model=query_embedding_model,
         query_embedding=query_embedding,
     )
-    owner_kinds_kept = {
-        str(candidate.source.get("owner_kind"))
-        for candidate in candidates
-        if candidate.source.get("media_id") == str(media_id)
-    }
-    assert owner_kinds_kept == {"media", "page"}, (
-        "both owner kinds sharing the colliding id must survive the (owner_kind, owner_id) "
-        f"dedup (the note is not dropped); got {owner_kinds_kept} from sources "
-        f"{[c.source for c in candidates]}"
+    candidate_target_ids = {candidate.target.id for candidate in candidates}
+    media_target_ids = _owner_chunk_target_ids(db_session, "media", media_id)
+    page_target_ids = _owner_chunk_target_ids(db_session, "page", media_id)
+    assert media_target_ids and page_target_ids, (
+        "expected indexed chunks for both owner kinds sharing the colliding id, got "
+        f"media={media_target_ids} page={page_target_ids}"
+    )
+    assert candidate_target_ids & media_target_ids, (
+        "the media-owned chunk must survive the (owner_kind, owner_id) dedup; got targets "
+        f"{[c.target.uri for c in candidates]}"
+    )
+    assert candidate_target_ids & page_target_ids, (
+        "the page-owned note chunk sharing the colliding id must survive the "
+        "(owner_kind, owner_id) dedup (the note is not dropped); got targets "
+        f"{[c.target.uri for c in candidates]}"
     )

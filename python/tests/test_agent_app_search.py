@@ -18,6 +18,7 @@ from nexus.services.note_indexing import rebuild_page_content_index
 from nexus.services.retrieval_citation import RetrievalCitation
 from nexus.services.search import ALL_RESULT_TYPES
 from tests.factories import (
+    add_context_edge,
     create_searchable_media_in_library,
     create_test_conversation,
     create_test_highlight_note,
@@ -236,7 +237,6 @@ def test_li_artifact_reference_dropped_from_default_scope_resolution(
     from uuid import uuid4 as _uuid4
 
     from nexus.services.agent_tools.app_search import _resolve_scope_uris
-    from nexus.services.conversation_references import insert_reference_if_absent
 
     conversation_id = create_test_conversation(db_session, bootstrapped_user)
     library_id = create_test_library(db_session, bootstrapped_user, "Scope Library")
@@ -250,10 +250,8 @@ def test_li_artifact_reference_dropped_from_default_scope_resolution(
         ),
         {"id": artifact_id, "library_id": library_id, "user_id": bootstrapped_user},
     )
-    insert_reference_if_absent(
-        db_session, conversation_id, f"library_intelligence_artifact:{artifact_id}"
-    )
-    insert_reference_if_absent(db_session, conversation_id, f"library:{library_id}")
+    add_context_edge(db_session, conversation_id, f"library_intelligence_artifact:{artifact_id}")
+    add_context_edge(db_session, conversation_id, f"library:{library_id}")
     db_session.commit()
 
     resolved = _resolve_scope_uris(db_session, conversation_id=conversation_id, scopes=[])
@@ -480,18 +478,7 @@ def test_scoped_app_search_persists_no_indexed_evidence_as_empty_tool_result(
             content="",
             status="pending",
         )
-        session.execute(
-            text(
-                """
-                INSERT INTO conversation_references (conversation_id, resource_uri)
-                VALUES (:conversation_id, :resource_uri)
-                """
-            ),
-            {
-                "conversation_id": conversation_id,
-                "resource_uri": f"library:{library_id}",
-            },
-        )
+        add_context_edge(session, conversation_id, f"library:{library_id}")
 
         run = execute_app_search(
             session,
@@ -580,18 +567,7 @@ def test_scoped_app_search_persists_no_results_as_empty_tool_result(
             library_id,
             title="Indexed Evidence Present",
         )
-        session.execute(
-            text(
-                """
-                INSERT INTO conversation_references (conversation_id, resource_uri)
-                VALUES (:conversation_id, :resource_uri)
-                """
-            ),
-            {
-                "conversation_id": conversation_id,
-                "resource_uri": f"library:{library_id}",
-            },
-        )
+        add_context_edge(session, conversation_id, f"library:{library_id}")
 
         run = execute_app_search(
             session,
@@ -686,18 +662,7 @@ def test_execute_app_search_accepts_referenced_media_scope(
             library_id,
             title="Media Scope Needle",
         )
-        session.execute(
-            text(
-                """
-                INSERT INTO conversation_references (conversation_id, resource_uri)
-                VALUES (:conversation_id, :resource_uri)
-                """
-            ),
-            {
-                "conversation_id": conversation_id,
-                "resource_uri": f"media:{media_id}",
-            },
-        )
+        add_context_edge(session, conversation_id, f"media:{media_id}")
 
         run = execute_app_search(
             session,
@@ -718,7 +683,7 @@ def test_execute_app_search_accepts_referenced_media_scope(
     assert all(citation.media_id == str(media_id) for citation in run.citations)
     assert "Media Scope Needle" in run.context_text
 
-    direct_db.register_cleanup("conversation_references", "conversation_id", conversation_id)
+    direct_db.register_cleanup("resource_edges", "source_id", conversation_id)
     direct_db.register_cleanup("messages", "conversation_id", conversation_id)
     direct_db.register_cleanup("conversations", "id", conversation_id)
     direct_db.register_cleanup("library_entries", "media_id", media_id)
@@ -815,7 +780,7 @@ def test_execute_app_search_selects_highlight_result_as_prompt_evidence(
     direct_db.register_cleanup("highlight_fragment_anchors", "highlight_id", highlight_id)
     direct_db.register_cleanup("pages", "user_id", user_id)
     direct_db.register_cleanup("note_blocks", "user_id", user_id)
-    direct_db.register_cleanup("object_links", "user_id", user_id)
+    direct_db.register_cleanup("resource_edges", "user_id", user_id)
 
 
 def test_execute_app_search_cites_note_block_as_prompt_evidence(
@@ -920,7 +885,7 @@ def test_execute_app_search_cites_note_block_as_prompt_evidence(
     # Cleanup is LIFO (db.py: deleted in reverse of registration), so register parents
     # before children — users FIRST (deleted LAST) and the highlight_fragment_anchors LAST
     # (deleted FIRST). The pages(user_id) handler cascades note_blocks + page-owned content
-    # + page object_links before deleting the pages themselves.
+    # + the note_blocks' resource_edges before deleting the pages themselves.
     direct_db.register_cleanup("users", "id", user_id)
     direct_db.register_cleanup("libraries", "id", library_id)
     direct_db.register_cleanup("memberships", "library_id", library_id)
@@ -941,8 +906,8 @@ def test_scoped_app_search_with_only_indexed_notes_is_no_results(
     """A scope that holds ONLY page-owned (note) ready evidence — no indexed media — and a
     query that matches nothing is no_results, not no_indexed_evidence. Proves the
     page-owner union in _scoped_content_chunk_empty_status: a note in scope makes the scope
-    'indexed'. The note is put in scope for a media: URI via a direct note_block->media
-    object_link (the §4.6 note_block scope cell).
+    'indexed'. The note is put in scope for a media: URI via a note_block->media
+    resource_edge (the §4.6 note_block scope cell).
     """
     user_id = create_test_user_id()
     media_id = uuid4()
@@ -1020,32 +985,24 @@ def test_scoped_app_search_with_only_indexed_notes_is_no_results(
                 "body_text": "scoped note body about gardening tools and trellises",
             },
         )
-        # Put the note in scope for media:{media_id} via a direct note_block->media link
-        # (the note_block §4.6 scope cell matches ol.b_type='media' AND ol.b_id=:scope_id).
+        # Put the note in scope for media:{media_id} via a note_body edge note_block->media
+        # (the note_block §4.6 scope cell matches a resource_edges row touching BOTH the
+        # note_block and media:{media_id} at either endpoint — see _note_object_scope).
         session.execute(
             text(
                 """
-                INSERT INTO object_links (
-                    user_id, relation_type, a_type, a_id, b_type, b_id, metadata
+                INSERT INTO resource_edges (
+                    user_id, kind, origin, source_scheme, source_id, target_scheme, target_id
                 )
                 VALUES (
-                    :user_id, 'note_about', 'note_block', :note_block_id, 'media', :media_id,
-                    '{}'::jsonb
+                    :user_id, 'context', 'note_body', 'note_block', :note_block_id, 'media', :media_id
                 )
                 """
             ),
             {"user_id": user_id, "note_block_id": note_block_id, "media_id": media_id},
         )
         rebuild_page_content_index(session, page_id=page_id, reason="test")
-        session.execute(
-            text(
-                """
-                INSERT INTO conversation_references (conversation_id, resource_uri)
-                VALUES (:conversation_id, :resource_uri)
-                """
-            ),
-            {"conversation_id": conversation_id, "resource_uri": f"media:{media_id}"},
-        )
+        add_context_edge(session, conversation_id, f"media:{media_id}")
 
         run = execute_app_search(
             session,
@@ -1070,17 +1027,17 @@ def test_scoped_app_search_with_only_indexed_notes_is_no_results(
 
     # Cleanup is LIFO (db.py: deleted in reverse of registration), so register parents
     # before children — users FIRST (deleted LAST). The pages(id) handler cascades the
-    # page's note_blocks + page-owned content + the note_block->media object_link before
+    # page's note_blocks + page-owned content + the note_block->media resource_edge before
     # deleting the page, so it is registered after (deleted before) media/users.
     direct_db.register_cleanup("users", "id", user_id)
     direct_db.register_cleanup("libraries", "id", library_id)
     direct_db.register_cleanup("memberships", "library_id", library_id)
     direct_db.register_cleanup("conversations", "id", conversation_id)
     direct_db.register_cleanup("messages", "conversation_id", conversation_id)
-    direct_db.register_cleanup("conversation_references", "conversation_id", conversation_id)
+    direct_db.register_cleanup("resource_edges", "source_id", conversation_id)
     direct_db.register_cleanup("media", "id", media_id)
     direct_db.register_cleanup("library_entries", "media_id", media_id)
-    direct_db.register_cleanup("object_links", "user_id", user_id)
+    direct_db.register_cleanup("resource_edges", "user_id", user_id)
     direct_db.register_cleanup("note_blocks", "id", note_block_id)
     direct_db.register_cleanup("pages", "id", page_id)
 
@@ -1169,15 +1126,7 @@ def test_scoped_app_search_with_no_indexed_media_or_notes_is_no_indexed_evidence
             },
         )
         rebuild_page_content_index(session, page_id=page_id, reason="test")
-        session.execute(
-            text(
-                """
-                INSERT INTO conversation_references (conversation_id, resource_uri)
-                VALUES (:conversation_id, :resource_uri)
-                """
-            ),
-            {"conversation_id": conversation_id, "resource_uri": f"media:{media_id}"},
-        )
+        add_context_edge(session, conversation_id, f"media:{media_id}")
 
         run = execute_app_search(
             session,
@@ -1207,7 +1156,7 @@ def test_scoped_app_search_with_no_indexed_media_or_notes_is_no_indexed_evidence
     direct_db.register_cleanup("memberships", "library_id", library_id)
     direct_db.register_cleanup("conversations", "id", conversation_id)
     direct_db.register_cleanup("messages", "conversation_id", conversation_id)
-    direct_db.register_cleanup("conversation_references", "conversation_id", conversation_id)
+    direct_db.register_cleanup("resource_edges", "source_id", conversation_id)
     direct_db.register_cleanup("media", "id", media_id)
     direct_db.register_cleanup("library_entries", "media_id", media_id)
     direct_db.register_cleanup("note_blocks", "id", note_block_id)

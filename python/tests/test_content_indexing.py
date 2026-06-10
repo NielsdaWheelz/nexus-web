@@ -6,15 +6,19 @@ from collections.abc import Callable
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
+from nexus.db.models import ResourceEdge
 from nexus.services.content_indexing import (
     IndexableBlock,
     IndexOwner,
     rebuild_content_index,
     repair_ready_media_content_index_now,
 )
+from nexus.services.resource_graph.cleanup import assert_no_dangling_bare_edges
+from nexus.services.resource_graph.refs import ResourceRef
+from tests.factories import create_test_conversation_with_message
 
 pytestmark = pytest.mark.integration
 
@@ -519,3 +523,238 @@ def _web_locator(
         "end_offset": start_offset + len(text_value),
         "text_quote": {"exact": text_value, "prefix": "", "suffix": ""},
     }
+
+
+def test_reindex_applies_graph_cleanup_two_rules(db_session: Session):
+    """AC12 (§9.6): a reindex destroys the old spans/chunks, so bare edges
+    touching them die with the rows, while cited edges survive on their
+    snapshots (the jump fails closed against the regenerated index)."""
+    user_id = uuid4()
+    media_id = uuid4()
+    fragment_id = uuid4()
+    old_text = "Original evidence text before the reindex."
+    new_text = "Regenerated evidence text after the reindex."
+
+    _insert_ready_media(db_session, user_id=user_id, media_id=media_id)
+    rebuild_content_index(
+        db_session,
+        owner=IndexOwner("media", media_id),
+        source_kind="web_article",
+        blocks=[
+            _web_block(
+                media_id=media_id,
+                text_value=old_text,
+                locator=_web_locator(fragment_id, old_text),
+            )
+        ],
+        reason="reindex_cleanup_test_initial",
+    )
+    old_chunk_id = db_session.execute(
+        text("SELECT id FROM content_chunks WHERE owner_kind = 'media' AND owner_id = :media_id"),
+        {"media_id": media_id},
+    ).scalar_one()
+    old_span_id = db_session.execute(
+        text("SELECT id FROM evidence_spans WHERE owner_kind = 'media' AND owner_id = :media_id"),
+        {"media_id": media_id},
+    ).scalar_one()
+    conversation_id, message_id = create_test_conversation_with_message(
+        db_session, user_id, content="Cites the original evidence"
+    )
+
+    bare_edge = ResourceEdge(
+        user_id=user_id,
+        kind="context",
+        origin="user",
+        source_scheme="conversation",
+        source_id=conversation_id,
+        target_scheme="content_chunk",
+        target_id=old_chunk_id,
+    )
+    cited_edge = ResourceEdge(
+        user_id=user_id,
+        kind="context",
+        origin="citation",
+        source_scheme="message",
+        source_id=message_id,
+        target_scheme="evidence_span",
+        target_id=old_span_id,
+        ordinal=7,
+        snapshot={"title": "Original", "excerpt": old_text},
+    )
+    db_session.add_all([bare_edge, cited_edge])
+    db_session.flush()
+    bare_edge_id = bare_edge.id
+    cited_edge_id = cited_edge.id
+
+    rebuild_content_index(
+        db_session,
+        owner=IndexOwner("media", media_id),
+        source_kind="web_article",
+        blocks=[
+            _web_block(
+                media_id=media_id,
+                text_value=new_text,
+                locator=_web_locator(fragment_id, new_text),
+            )
+        ],
+        reason="reindex_cleanup_test_rebuild",
+    )
+
+    assert_no_dangling_bare_edges(
+        db_session, ref=ResourceRef(scheme="content_chunk", id=old_chunk_id)
+    )
+    assert_no_dangling_bare_edges(
+        db_session, ref=ResourceRef(scheme="evidence_span", id=old_span_id)
+    )
+    bare_count = db_session.execute(
+        text("SELECT count(*) FROM resource_edges WHERE id = :edge_id"),
+        {"edge_id": bare_edge_id},
+    ).scalar_one()
+    assert bare_count == 0, "Bare edge to a reindexed-away chunk must die with the row"
+
+    cited_row = db_session.execute(
+        text(
+            """
+            SELECT target_scheme, target_id, ordinal, snapshot
+            FROM resource_edges
+            WHERE id = :edge_id
+            """
+        ),
+        {"edge_id": cited_edge_id},
+    ).one()
+    assert cited_row.target_scheme == "evidence_span"
+    assert cited_row.target_id == old_span_id, "The citation keeps pointing at the dead span"
+    assert cited_row.ordinal == 7
+    assert cited_row.snapshot == {"title": "Original", "excerpt": old_text}
+
+    new_span_id = db_session.execute(
+        text("SELECT id FROM evidence_spans WHERE owner_kind = 'media' AND owner_id = :media_id"),
+        {"media_id": media_id},
+    ).scalar_one()
+    assert new_span_id != old_span_id, "Reindex must regenerate spans, not reuse rows"
+    span_exists = db_session.execute(
+        text("SELECT count(*) FROM evidence_spans WHERE id = :span_id"),
+        {"span_id": old_span_id},
+    ).scalar_one()
+    assert span_exists == 0, "The cited span row is gone — resolution fails closed"
+
+
+def test_reindex_batched_cleanup_kills_every_bare_edge_and_keeps_citations(db_session: Session):
+    """§9.6 (LOW #19): a reindex with many spans/chunks must apply rule 1/rule 2
+    in one set-batched cleanup, not N+1 per row — every bare edge to any
+    reindexed-away span/chunk dies in the same pass, while cited edges survive on
+    their snapshots."""
+    user_id = uuid4()
+    media_id = uuid4()
+    _insert_ready_media(db_session, user_id=user_id, media_id=media_id)
+
+    def _index(reason: str, suffix: str) -> None:
+        rebuild_content_index(
+            db_session,
+            owner=IndexOwner("media", media_id),
+            source_kind="web_article",
+            blocks=[
+                _web_block(
+                    media_id=media_id,
+                    text_value=f"Paragraph {i} evidence {suffix}.",
+                    locator=_web_locator(uuid4(), f"Paragraph {i} evidence {suffix}."),
+                    block_idx=i,
+                    # Distinct, non-overlapping source offsets per block — the
+                    # indexer rejects unsorted/overlapping ranges.
+                    source_start_offset=i * 200,
+                )
+                for i in range(3)
+            ],
+            reason=reason,
+        )
+
+    _index("reindex_batch_initial", "before")
+    old_chunk_ids = list(
+        db_session.execute(
+            text(
+                "SELECT id FROM content_chunks "
+                "WHERE owner_kind = 'media' AND owner_id = :media_id ORDER BY id"
+            ),
+            {"media_id": media_id},
+        ).scalars()
+    )
+    old_span_ids = list(
+        db_session.execute(
+            text(
+                "SELECT id FROM evidence_spans "
+                "WHERE owner_kind = 'media' AND owner_id = :media_id ORDER BY id"
+            ),
+            {"media_id": media_id},
+        ).scalars()
+    )
+    assert len(old_chunk_ids) >= 2 and len(old_span_ids) >= 2, (
+        f"need multiple rows to prove batching, got "
+        f"{len(old_chunk_ids)} chunks / {len(old_span_ids)} spans"
+    )
+    conversation_id, message_id = create_test_conversation_with_message(
+        db_session, user_id, content="Cites several spans"
+    )
+
+    # A bare edge to EVERY old span and chunk — the whole set must die at once.
+    bare_edges = [
+        ResourceEdge(
+            user_id=user_id,
+            kind="context",
+            origin="user",
+            source_scheme="conversation",
+            source_id=conversation_id,
+            target_scheme=scheme,
+            target_id=row_id,
+        )
+        for scheme, ids in (("evidence_span", old_span_ids), ("content_chunk", old_chunk_ids))
+        for row_id in ids
+    ]
+    cited_edges = [
+        ResourceEdge(
+            user_id=user_id,
+            kind="context",
+            origin="citation",
+            source_scheme="message",
+            source_id=message_id,
+            target_scheme="evidence_span",
+            target_id=span_id,
+            ordinal=ordinal,
+            snapshot={"title": "Original", "excerpt": f"span {ordinal}"},
+        )
+        for ordinal, span_id in enumerate(old_span_ids[:2], start=1)
+    ]
+    db_session.add_all([*bare_edges, *cited_edges])
+    db_session.flush()
+    bare_edge_ids = [edge.id for edge in bare_edges]
+    cited_edge_ids = [edge.id for edge in cited_edges]
+
+    _index("reindex_batch_rebuild", "after")
+
+    for scheme, ids in (("evidence_span", old_span_ids), ("content_chunk", old_chunk_ids)):
+        for row_id in ids:
+            assert_no_dangling_bare_edges(db_session, ref=ResourceRef(scheme=scheme, id=row_id))
+    surviving_bare = (
+        db_session.execute(select(ResourceEdge.id).where(ResourceEdge.id.in_(bare_edge_ids)))
+        .scalars()
+        .all()
+    )
+    assert surviving_bare == [], (
+        f"All {len(bare_edge_ids)} bare edges to reindexed-away rows must die in one batch, "
+        f"{len(surviving_bare)} survived"
+    )
+
+    surviving_cited = db_session.execute(
+        text(
+            """
+            SELECT target_id, ordinal, snapshot
+            FROM resource_edges
+            WHERE id = ANY(:ids)
+            ORDER BY ordinal
+            """
+        ),
+        {"ids": cited_edge_ids},
+    ).fetchall()
+    assert [(row.target_id, row.ordinal, row.snapshot) for row in surviving_cited] == [
+        (old_span_ids[0], 1, {"title": "Original", "excerpt": "span 1"}),
+        (old_span_ids[1], 2, {"title": "Original", "excerpt": "span 2"}),
+    ], "Cited edges keep pointing at the dead spans and render from their snapshots"

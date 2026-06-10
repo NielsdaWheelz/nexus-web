@@ -54,15 +54,15 @@ async function expectConversationReferencesReady(
   expectedUris: string[],
 ) {
   const response = await page.request.get(
-    `/api/conversations/${conversationId}/references`,
+    `/api/conversations/${conversationId}/context-refs`,
   );
   const body = await response.text();
   expect(
     response.ok(),
-    `conversation references should load: status=${response.status()}; body=${body.slice(0, 500)}`,
+    `conversation context refs should load: status=${response.status()}; body=${body.slice(0, 500)}`,
   ).toBeTruthy();
-  const payload = JSON.parse(body) as { data: Array<{ resource_uri: string }> };
-  expect(payload.data.map((reference) => reference.resource_uri)).toEqual(
+  const payload = JSON.parse(body) as { data: Array<{ resource_ref: string }> };
+  expect(payload.data.map((reference) => reference.resource_ref)).toEqual(
     expectedUris,
   );
 }
@@ -162,7 +162,7 @@ test("@real-media search evidence chat citations open each media reader", async 
           data: {
             initial_references: [
               `media:${mediaId}`,
-              `chunk:${result.context_ref.id}`,
+              `content_chunk:${result.context_ref.id}`,
             ],
           },
         },
@@ -173,7 +173,7 @@ test("@real-media search evidence chat citations open each media reader", async 
       conversationIds.push(conversationId);
       const expectedReferenceUris = [
         `media:${mediaId}`,
-        `chunk:${result.context_ref.id}`,
+        `content_chunk:${result.context_ref.id}`,
       ];
       await expectConversationTreeReady(page, conversationId);
       await expectConversationReferencesReady(

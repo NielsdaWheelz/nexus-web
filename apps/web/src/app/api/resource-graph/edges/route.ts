@@ -5,9 +5,5 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 export async function GET(req: Request) {
-  return proxyToFastAPI(req, "/object-links");
-}
-
-export async function POST(req: Request) {
-  return proxyToFastAPI(req, "/object-links");
+  return proxyToFastAPI(req, "/resource-graph/edges");
 }

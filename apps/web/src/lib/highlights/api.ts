@@ -175,7 +175,6 @@ export async function saveHighlightNote(
         id: createBlockId,
         bodyPmJson,
         linkedObject: { objectType: "highlight", objectId: highlightId },
-        relationType: "note_about",
       });
   return {
     note_block_id: noteBlock.id,

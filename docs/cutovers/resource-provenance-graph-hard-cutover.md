@@ -470,6 +470,8 @@ Constraints: `unique(reading_id, phase)`; pk `(reading_id, phase)`. Snippet and 
 
 Stable target for public-domain Oracle passages when they are not already backed by ordinary `media`/`evidence_span` rows.
 
+> Note (as built): migration `0145` does **not** create this table. The live `oracle_corpus_passages` from migration `0072` — seeded, embedding-backed, and read by Oracle retrieval — already has a uuid `id` that serves the `oracle_corpus_passage:<id>` target verbatim. Recreating the shape below would collide with the live table, and dropping the live corpus would destroy Oracle retrieval, so the existing table is reused untouched and the columns below document the contract it already satisfies.
+
 | column | type | notes |
 |---|---|---|
 | `id` | uuid pk | referenced by `oracle_corpus_passage:<id>` |

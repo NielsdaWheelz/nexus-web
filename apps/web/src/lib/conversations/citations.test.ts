@@ -10,7 +10,12 @@ const locator = {
   end_offset: 24,
 } as const;
 
-function citation(overrides: Partial<CitationOut> = {}): CitationOut {
+// A citation whose evidence-span target the backend reconstructed to a media
+// reader jump (real media_id + RetrievalLocator). The backend is the sole
+// CitationOut producer and reconstructs this from the target's own anchoring
+// (resource_graph.resolve.reader_target_for_citation_target), uniformly for
+// chat / Oracle / Library Intelligence.
+function mediaCitation(overrides: Partial<CitationOut> = {}): CitationOut {
   return {
     ordinal: 1,
     role: "context",
@@ -29,8 +34,8 @@ function citation(overrides: Partial<CitationOut> = {}): CitationOut {
 }
 
 describe("toReaderCitationData", () => {
-  it("renders reader citation data for an evidence-span citation", () => {
-    expect(toReaderCitationData(citation())).toEqual({
+  it("builds a media reader target from media_id + locator", () => {
+    expect(toReaderCitationData(mediaCitation())).toEqual({
       index: 1,
       color: "yellow",
       preview: {
@@ -54,53 +59,37 @@ describe("toReaderCitationData", () => {
     });
   });
 
-  it("uses deep_link for href when present", () => {
+  it("renders a link-only citation when no media reader target exists (e.g. an external snapshot or corpus passage)", () => {
     const data = toReaderCitationData(
-      citation({ deep_link: "https://example.com/source" }),
-    );
-    expect(data.href).toBe("https://example.com/source");
-    expect(data.target?.href).toBe("https://example.com/source");
-  });
-
-  it("falls back to hrefForReaderTarget when deep_link is null", () => {
-    expect(toReaderCitationData(citation()).href).toBe(
-      "/media/media-1#evidence-span-1",
-    );
-  });
-
-  it("surfaces a per-media summary_md as the preview summary", () => {
-    expect(
-      toReaderCitationData(
-        citation({
-          snapshot: {
-            ...citation().snapshot,
-            summary_md: "A concise per-media abstract.",
-          },
-        }),
-      ).preview.summary,
-    ).toBe("A concise per-media abstract.");
-  });
-
-  it("omits the preview summary when summary_md is absent or blank", () => {
-    expect(toReaderCitationData(citation()).preview.summary).toBeUndefined();
-    expect(
-      toReaderCitationData(
-        citation({ snapshot: { ...citation().snapshot, summary_md: "   " } }),
-      ).preview.summary,
-    ).toBeUndefined();
-  });
-
-  it("yields no reader target for a web_result citation (no media anchor)", () => {
-    const data = toReaderCitationData(
-      citation({
-        target_ref: { type: "web_result", id: "https://example.com/a" },
+      mediaCitation({
+        target_ref: { type: "external_snapshot", id: "ext-1" },
         media_id: null,
         locator: null,
-        deep_link: "https://example.com/a",
-        snapshot: { title: "Web result", excerpt: "A web snippet" },
+        deep_link: "https://example.com/source",
       }),
     );
     expect(data.target).toBeNull();
-    expect(data.href).toBe("https://example.com/a");
+    expect(data.href).toBe("https://example.com/source");
+  });
+
+  it("has a null target and href when neither a media reader nor a deep_link is present", () => {
+    const data = toReaderCitationData(
+      mediaCitation({
+        target_ref: { type: "note_block", id: "block-1" },
+        media_id: null,
+        locator: null,
+        deep_link: null,
+      }),
+    );
+    expect(data.target).toBeNull();
+    expect(data.href).toBeNull();
+  });
+
+  it("prefers deep_link for the href when present", () => {
+    const data = toReaderCitationData(
+      mediaCitation({ deep_link: "https://example.com/source" }),
+    );
+    expect(data.href).toBe("https://example.com/source");
+    expect(data.target?.href).toBe("https://example.com/source");
   });
 });

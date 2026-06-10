@@ -1,20 +1,16 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import type { ConversationReference } from "@/lib/conversations/types";
+import type { ContextRefOut } from "@/lib/resourceGraph/contextRefs";
 import ConversationReferencesSurface from "./ConversationReferencesSurface";
 
-function reference(
-  overrides: Partial<ConversationReference> = {},
-): ConversationReference {
+function reference(overrides: Partial<ContextRefOut> = {}): ContextRefOut {
   return {
     id: "ref-1",
     conversation_id: "conv-1",
-    resource_uri: "media:m1",
+    resource_ref: "media:m1",
     label: "Annual report",
     summary: "Page 4",
-    inline_body: null,
-    fetch_hint: "",
     missing: false,
     created_at: "2026-01-01T00:00:00Z",
     ...overrides,

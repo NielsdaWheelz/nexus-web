@@ -81,11 +81,13 @@ function message(
 }
 
 const CID = "conversation-1";
-const MEDIA_ID = "media-1";
+const MEDIA_ID = "11111111-1111-4111-8111-111111111111";
+const HID = "22222222-2222-4222-8222-222222222222";
+const QUOTE_URI = `highlight:${HID}`;
 const PENDING_SELECTION = {
   exact: "selected words",
   media_id: MEDIA_ID,
-  highlight_id: "HID",
+  highlight_id: HID,
 };
 const userMessage = message("user-1", 1, "user", "What is in this document?");
 const assistantMessage = message(
@@ -262,7 +264,7 @@ describe("ReaderChatDetail", () => {
       <ReaderChatDetail
         conversationId={CID}
         mediaId={MEDIA_ID}
-        pendingQuoteUri="highlight:HID"
+        pendingQuoteUri={QUOTE_URI}
         pendingReaderSelection={PENDING_SELECTION}
         onBack={vi.fn()}
         onOpenFullChat={vi.fn()}
@@ -297,7 +299,7 @@ describe("ReaderChatDetail", () => {
           return jsonResponse({ data: [], page: { next_cursor: null } });
         }
         if (
-          path === `/api/conversations/${CID}/references` &&
+          path === `/api/conversations/${CID}/context-refs` &&
           method === "POST"
         ) {
           return jsonResponse({ data: {} });
@@ -327,7 +329,7 @@ describe("ReaderChatDetail", () => {
       <ReaderChatDetail
         conversationId={CID}
         mediaId={MEDIA_ID}
-        pendingQuoteUri="highlight:HID"
+        pendingQuoteUri={QUOTE_URI}
         pendingReaderSelection={PENDING_SELECTION}
         onBack={vi.fn()}
         onOpenFullChat={vi.fn()}
@@ -357,12 +359,12 @@ describe("ReaderChatDetail", () => {
     // The quote URI must never have been POSTed to the references endpoint.
     const quoteRefPosted = fetchMock.mock.calls.some(([input, init]) => {
       if (
-        pathOf(input) !== `/api/conversations/${CID}/references` ||
+        pathOf(input) !== `/api/conversations/${CID}/context-refs` ||
         init?.method !== "POST"
       ) {
         return false;
       }
-      return String(init.body).includes("highlight:HID");
+      return String(init.body).includes(QUOTE_URI);
     });
     expect(quoteRefPosted).toBe(false);
     const chatRunCall = fetchMock.mock.calls.find(
@@ -399,7 +401,7 @@ describe("ReaderChatDetail", () => {
           return jsonResponse({ data: [], page: { next_cursor: null } });
         }
         if (
-          path === `/api/conversations/${CID}/references` &&
+          path === `/api/conversations/${CID}/context-refs` &&
           method === "POST"
         ) {
           return jsonResponse({ data: {} });
@@ -429,7 +431,7 @@ describe("ReaderChatDetail", () => {
       <ReaderChatDetail
         conversationId={CID}
         mediaId={MEDIA_ID}
-        pendingQuoteUri="highlight:HID"
+        pendingQuoteUri={QUOTE_URI}
         pendingReaderSelection={PENDING_SELECTION}
         onBack={vi.fn()}
         onOpenFullChat={vi.fn()}
@@ -446,12 +448,12 @@ describe("ReaderChatDetail", () => {
     await waitFor(() => {
       const quoteRefPosted = fetchMock.mock.calls.some(([input, init]) => {
         if (
-          pathOf(input) !== `/api/conversations/${CID}/references` ||
+          pathOf(input) !== `/api/conversations/${CID}/context-refs` ||
           init?.method !== "POST"
         ) {
           return false;
         }
-        return String(init.body).includes("highlight:HID");
+        return String(init.body).includes(QUOTE_URI);
       });
       expect(quoteRefPosted).toBe(true);
     });
@@ -521,7 +523,7 @@ describe("ReaderChatDetail", () => {
           return jsonResponse({ data: history, page: { next_cursor: null } });
         }
         if (
-          path === `/api/conversations/${CID}/references` &&
+          path === `/api/conversations/${CID}/context-refs` &&
           method === "POST"
         ) {
           return jsonResponse({ data: {} });

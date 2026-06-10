@@ -16,7 +16,7 @@ export function useChatsByReference(resourceUri: string | null): {
   const conversationsPath = useMemo<ApiPath | null>(
     () =>
       resourceUri
-        ? `/api/conversations?has_reference=${encodeURIComponent(resourceUri)}`
+        ? `/api/conversations?has_context_ref=${encodeURIComponent(resourceUri)}`
         : null,
     [resourceUri],
   );

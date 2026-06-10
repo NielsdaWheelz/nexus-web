@@ -48,16 +48,37 @@ MEDIA_SCOPE_COLUMN = {
     "contributor": "cc.media_id = :scope_id",
 }
 
-# The page/note_block cells are object_links EXISTS subqueries keyed on (object_type,
-# object_id_sql) via `_note_object_scope`. Spot-check that each scope cell wires the
-# right object_type/object-id into the link-match predicate (object_links shape).
-NOTE_OBJECT_LINK_MATCH = {
-    "page": ("(ol.a_type = 'page' AND ol.a_id = p.id) OR (ol.b_type = 'page' AND ol.b_id = p.id)"),
+# The page/note_block media/library cells are resource_edges EXISTS subqueries keyed
+# on (scheme, object_id_sql) via `_note_object_scope`, matching edges at either
+# endpoint (provenance graph §11.9). Spot-check that each cell wires the right
+# scheme/object-id into the edge-match predicate.
+NOTE_OBJECT_EDGE_MATCH = {
+    "page": (
+        "(e.source_scheme = 'page' AND e.source_id = p.id) "
+        "OR (e.target_scheme = 'page' AND e.target_id = p.id)"
+    ),
     "note_block": (
-        "(ol.a_type = 'note_block' AND ol.a_id = (cc.summary_locator->>'note_block_id')::uuid) "
-        "OR (ol.b_type = 'note_block' AND ol.b_id = (cc.summary_locator->>'note_block_id')::uuid)"
+        "(e.source_scheme = 'note_block'"
+        " AND e.source_id = (cc.summary_locator->>'note_block_id')::uuid) "
+        "OR (e.target_scheme = 'note_block'"
+        " AND e.target_id = (cc.summary_locator->>'note_block_id')::uuid)"
     ),
 }
+
+# The conversation cells match conversation context edges: any kind/origin edge from
+# the conversation to the object (`context.is_context_ref` semantics, graph §2.5).
+# Compared whitespace-squashed so SQL reformatting cannot break the pin.
+NOTE_OBJECT_CONTEXT_TARGET = {
+    "page": "AND e.target_scheme = 'page' AND e.target_id = p.id",
+    "note_block": (
+        "AND e.target_scheme = 'note_block' "
+        "AND e.target_id = (cc.summary_locator->>'note_block_id')::uuid"
+    ),
+}
+
+
+def _squash(sql: str) -> str:
+    return " ".join(sql.split())
 
 
 def test_all_scope_is_unscoped_for_every_entity() -> None:
@@ -92,19 +113,42 @@ def test_media_scope_targets_the_entity_column(entity: str, fragment: str) -> No
     assert fragment in result[0]
 
 
-@pytest.mark.parametrize("entity,link_match", NOTE_OBJECT_LINK_MATCH.items())
-@pytest.mark.parametrize("scope_type", ["media", "library", "conversation"])
-def test_note_object_cells_are_object_links_exists(
-    entity: str, link_match: str, scope_type: str
+@pytest.mark.parametrize("entity,edge_match", NOTE_OBJECT_EDGE_MATCH.items())
+@pytest.mark.parametrize("scope_type", ["media", "library"])
+def test_note_object_membership_cells_are_resource_edge_exists(
+    entity: str, edge_match: str, scope_type: str
 ) -> None:
-    # page/note_block scope by an object_links EXISTS subquery keyed on the object's
-    # (type, id); every scope flavor wires the same link-match predicate.
+    # page/note_block media/library scope by a resource_edges EXISTS subquery keyed
+    # on the object's (scheme, id), matched at either endpoint.
     result = scope_filter_sql(scope_type, uuid4(), entity)
     assert not isinstance(result, ScopeUnsupported)
-    sql = result[0]
-    assert "EXISTS (" in sql
-    assert "FROM object_links ol" in sql
-    assert link_match in sql
+    sql = _squash(result[0])
+    assert "EXISTS ( SELECT 1 FROM resource_edges e" in sql
+    assert _squash(edge_match) in sql
+
+
+@pytest.mark.parametrize("entity,target_match", NOTE_OBJECT_CONTEXT_TARGET.items())
+def test_note_object_conversation_cells_match_context_edges(entity: str, target_match: str) -> None:
+    # The conversation cell admits via a conversation context edge: source is the
+    # conversation, target is the page/note_block, any kind/origin (graph §2.5).
+    result = scope_filter_sql("conversation", uuid4(), entity)
+    assert not isinstance(result, ScopeUnsupported)
+    sql = _squash(result[0])
+    assert "EXISTS ( SELECT 1 FROM resource_edges e" in sql
+    assert "e.source_scheme = 'conversation' AND e.source_id = :scope_id" in sql
+    assert target_match in sql
+    assert "e.kind" not in sql and "e.origin" not in sql, (
+        "context admission is any-kind/any-origin (is_context_ref semantics)"
+    )
+
+
+def test_highlight_conversation_cell_matches_context_edges() -> None:
+    # The highlight conversation cell uses the same context-edge admission.
+    result = scope_filter_sql("conversation", uuid4(), "highlight")
+    assert not isinstance(result, ScopeUnsupported)
+    sql = _squash(result[0])
+    assert "e.source_scheme = 'conversation' AND e.source_id = :scope_id" in sql
+    assert "e.target_scheme = 'highlight' AND e.target_id = h.id" in sql
 
 
 def test_share_semantics_cells_use_conversation_shares() -> None:

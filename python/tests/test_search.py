@@ -198,7 +198,8 @@ class TestBasicSearch:
             )
 
         direct_db.register_cleanup("note_blocks", "id", note_block_id)
-        direct_db.register_cleanup("object_links", "a_id", note_block_id)
+        direct_db.register_cleanup("resource_edges", "source_id", note_block_id)
+        direct_db.register_cleanup("resource_edges", "target_id", note_block_id)
         direct_db.register_cleanup("highlights", "id", highlight_id)
 
         fragment_response = auth_client.get(
@@ -523,7 +524,8 @@ class TestBasicSearch:
             )
 
         direct_db.register_cleanup("note_blocks", "id", note_block_id)
-        direct_db.register_cleanup("object_links", "a_id", note_block_id)
+        direct_db.register_cleanup("resource_edges", "source_id", note_block_id)
+        direct_db.register_cleanup("resource_edges", "target_id", note_block_id)
         direct_db.register_cleanup("highlights", "id", highlight_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
@@ -705,7 +707,8 @@ class TestSearchVisibility:
             )
 
         direct_db.register_cleanup("note_blocks", "id", note_block_id)
-        direct_db.register_cleanup("object_links", "a_id", note_block_id)
+        direct_db.register_cleanup("resource_edges", "source_id", note_block_id)
+        direct_db.register_cleanup("resource_edges", "target_id", note_block_id)
         direct_db.register_cleanup("highlights", "id", highlight_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
@@ -976,16 +979,16 @@ class TestSearchScopes:
     def _link_note_block_to_media(
         self, session, *, user_id: UUID, note_block_id: UUID, media_id: UUID
     ) -> None:
-        """object_link note_block -> media (the §4.6 note `media:` scope cell)."""
+        """resource_edges note_block -> media (the §4.6 note `media:` scope cell)."""
         session.execute(
             text(
                 """
-                INSERT INTO object_links (
-                    user_id, relation_type, a_type, a_id, b_type, b_id, metadata
+                INSERT INTO resource_edges (
+                    user_id, kind, origin, source_scheme, source_id, target_scheme, target_id
                 )
                 VALUES (
-                    :user_id, 'references', 'note_block', :note_block_id, 'media', :media_id,
-                    '{}'::jsonb
+                    :user_id, 'context', 'user', 'note_block', :note_block_id,
+                    'media', :media_id
                 )
                 """
             ),
@@ -993,7 +996,7 @@ class TestSearchScopes:
         )
 
     def test_scope_media_filters_notes(self, auth_client, direct_db: DirectSessionManager):
-        """media: scope returns only note_blocks linked to that media (object_link path)."""
+        """media: scope returns only note_blocks with an edge to that media."""
         user_id = create_test_user_id()
         direct_db.register_cleanup("users", "id", user_id)
         direct_db.register_cleanup("libraries", "owner_user_id", user_id)
@@ -1026,7 +1029,8 @@ class TestSearchScopes:
             )
             session.commit()
 
-        direct_db.register_cleanup("object_links", "a_id", in_block_id)
+        direct_db.register_cleanup("resource_edges", "source_id", in_block_id)
+        direct_db.register_cleanup("resource_edges", "target_id", in_block_id)
         direct_db.register_cleanup("fragments", "media_id", scoped_media)
         direct_db.register_cleanup("library_entries", "media_id", scoped_media)
         direct_db.register_cleanup("media", "id", scoped_media)
@@ -1043,7 +1047,7 @@ class TestSearchScopes:
     def test_scope_media_filters_notes_via_highlight_anchor(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """media: scope also honors a note_about highlight whose anchor_media_id == scope."""
+        """media: scope also honors an attached highlight whose anchor_media_id == scope."""
         user_id = create_test_user_id()
         direct_db.register_cleanup("users", "id", user_id)
         direct_db.register_cleanup("libraries", "owner_user_id", user_id)
@@ -1054,7 +1058,7 @@ class TestSearchScopes:
         out_page_id, out_block_id = uuid4(), uuid4()
         with direct_db.session() as session:
             scoped_media = create_searchable_media(session, user_id, title="Highlight Anchor Media")
-            # In-scope note: a note_about highlight anchored to the scoped media.
+            # In-scope note: an attached highlight anchored to the scoped media.
             _highlight_id, in_block_id = create_test_highlight_note(
                 session, user_id, scoped_media, body="anchorscopeprobe in-scope highlight note"
             )
@@ -1068,7 +1072,8 @@ class TestSearchScopes:
             )
             session.commit()
 
-        direct_db.register_cleanup("object_links", "a_id", in_block_id)
+        direct_db.register_cleanup("resource_edges", "source_id", in_block_id)
+        direct_db.register_cleanup("resource_edges", "target_id", in_block_id)
         direct_db.register_cleanup("highlights", "anchor_media_id", scoped_media)
         direct_db.register_cleanup("fragments", "media_id", scoped_media)
         direct_db.register_cleanup("library_entries", "media_id", scoped_media)
@@ -1124,8 +1129,10 @@ class TestSearchScopes:
             )
             session.commit()
 
-        direct_db.register_cleanup("object_links", "a_id", in_block_id)
-        direct_db.register_cleanup("object_links", "a_id", out_block_id)
+        direct_db.register_cleanup("resource_edges", "source_id", in_block_id)
+        direct_db.register_cleanup("resource_edges", "target_id", in_block_id)
+        direct_db.register_cleanup("resource_edges", "source_id", out_block_id)
+        direct_db.register_cleanup("resource_edges", "target_id", out_block_id)
         direct_db.register_cleanup("fragments", "media_id", in_media)
         direct_db.register_cleanup("fragments", "media_id", out_media)
         direct_db.register_cleanup("library_entries", "media_id", in_media)
@@ -1145,7 +1152,11 @@ class TestSearchScopes:
         assert str(out_block_id) not in ids
 
     def test_scope_conversation_filters_notes(self, auth_client, direct_db: DirectSessionManager):
-        """conversation: scope returns notes used_as_context for a message in that conversation."""
+        """conversation: scope admits a note via a conversation context edge (graph §2.5).
+
+        Any kind/origin edge whose source is the conversation and whose target is
+        the note_block admits it (`context.is_context_ref` semantics). An edge
+        between the note and one of the conversation's MESSAGES does not."""
         user_id = create_test_user_id()
         direct_db.register_cleanup("users", "id", user_id)
         direct_db.register_cleanup("libraries", "owner_user_id", user_id)
@@ -1167,20 +1178,21 @@ class TestSearchScopes:
                 page_title="In Scope Conversation Page",
                 body_text="conversationscopeprobe in-scope note content",
             )
-            # relation_type matters: only 'used_as_context' satisfies the §4.6 cell.
+            # In scope: a context edge FROM the conversation TO the note_block.
             session.execute(
                 text(
                     """
-                    INSERT INTO object_links (
-                        user_id, relation_type, a_type, a_id, b_type, b_id, metadata
+                    INSERT INTO resource_edges (
+                        user_id, kind, origin, source_scheme, source_id,
+                        target_scheme, target_id
                     )
                     VALUES (
-                        :user_id, 'used_as_context', 'note_block', :note_block_id,
-                        'message', :message_id, '{}'::jsonb
+                        :user_id, 'context', 'user', 'conversation', :conversation_id,
+                        'note_block', :note_block_id
                     )
                     """
                 ),
-                {"user_id": user_id, "note_block_id": in_block_id, "message_id": msg_id},
+                {"user_id": user_id, "conversation_id": conv_id, "note_block_id": in_block_id},
             )
             self._seed_scope_note_block(
                 session,
@@ -1190,17 +1202,18 @@ class TestSearchScopes:
                 page_title="Out Of Scope Conversation Page",
                 body_text="conversationscopeprobe out-of-scope note content",
             )
-            # Out-of-scope note links to the same message but with the WRONG relation_type,
-            # so it must not appear under conversation scope.
+            # Out of scope: an edge to one of the conversation's messages is not
+            # a conversation context edge, so it must not admit the note.
             session.execute(
                 text(
                     """
-                    INSERT INTO object_links (
-                        user_id, relation_type, a_type, a_id, b_type, b_id, metadata
+                    INSERT INTO resource_edges (
+                        user_id, kind, origin, source_scheme, source_id,
+                        target_scheme, target_id
                     )
                     VALUES (
-                        :user_id, 'references', 'note_block', :note_block_id,
-                        'message', :message_id, '{}'::jsonb
+                        :user_id, 'context', 'user', 'note_block', :note_block_id,
+                        'message', :message_id
                     )
                     """
                 ),
@@ -1208,8 +1221,10 @@ class TestSearchScopes:
             )
             session.commit()
 
-        direct_db.register_cleanup("object_links", "a_id", in_block_id)
-        direct_db.register_cleanup("object_links", "a_id", out_block_id)
+        direct_db.register_cleanup("resource_edges", "source_id", conv_id)
+        direct_db.register_cleanup("resource_edges", "target_id", in_block_id)
+        direct_db.register_cleanup("resource_edges", "source_id", out_block_id)
+        direct_db.register_cleanup("resource_edges", "target_id", out_block_id)
         direct_db.register_cleanup("messages", "conversation_id", conv_id)
         direct_db.register_cleanup("conversations", "id", conv_id)
 
@@ -1405,7 +1420,8 @@ class TestSearchTypeFiltering:
             )
 
         direct_db.register_cleanup("note_blocks", "id", note_block_id)
-        direct_db.register_cleanup("object_links", "a_id", note_block_id)
+        direct_db.register_cleanup("resource_edges", "source_id", note_block_id)
+        direct_db.register_cleanup("resource_edges", "target_id", note_block_id)
         direct_db.register_cleanup("highlights", "id", highlight_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
@@ -2196,7 +2212,8 @@ class TestSearchResultFormat:
             session.commit()
 
         direct_db.register_cleanup("note_blocks", "id", note_block_id)
-        direct_db.register_cleanup("object_links", "a_id", note_block_id)
+        direct_db.register_cleanup("resource_edges", "source_id", note_block_id)
+        direct_db.register_cleanup("resource_edges", "target_id", note_block_id)
         direct_db.register_cleanup("highlights", "id", highlight_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
@@ -2725,7 +2742,8 @@ class TestSearchNoteBlockOwnership:
             )
 
         direct_db.register_cleanup("note_blocks", "id", note_block_id)
-        direct_db.register_cleanup("object_links", "a_id", note_block_id)
+        direct_db.register_cleanup("resource_edges", "source_id", note_block_id)
+        direct_db.register_cleanup("resource_edges", "target_id", note_block_id)
         direct_db.register_cleanup("highlights", "id", highlight_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
@@ -2761,7 +2779,8 @@ class TestSearchNoteBlockOwnership:
             )
 
         direct_db.register_cleanup("note_blocks", "id", note_block_id)
-        direct_db.register_cleanup("object_links", "a_id", note_block_id)
+        direct_db.register_cleanup("resource_edges", "source_id", note_block_id)
+        direct_db.register_cleanup("resource_edges", "target_id", note_block_id)
         direct_db.register_cleanup("highlights", "id", highlight_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
@@ -3885,26 +3904,24 @@ class TestSearchTranscriptNavigation:
             session.execute(
                 text(
                     """
-                    INSERT INTO object_links (
+                    INSERT INTO resource_edges (
                         user_id,
-                        relation_type,
-                        a_type,
-                        a_id,
-                        b_type,
-                        b_id,
-                        metadata,
-                        created_at,
-                        updated_at
+                        kind,
+                        origin,
+                        source_scheme,
+                        source_id,
+                        target_scheme,
+                        target_id,
+                        created_at
                     )
                     VALUES (
                         :user_id,
-                        'note_about',
-                        'note_block',
-                        :note_block_id,
+                        'context',
+                        'highlight_note',
                         'highlight',
                         :highlight_id,
-                        '{}'::jsonb,
-                        :now_ts,
+                        'note_block',
+                        :note_block_id,
                         :now_ts
                     )
                     """
@@ -3923,7 +3940,8 @@ class TestSearchTranscriptNavigation:
 
         direct_db.register_cleanup("pages", "id", page_id)
         direct_db.register_cleanup("note_blocks", "id", note_block_id)
-        direct_db.register_cleanup("object_links", "a_id", note_block_id)
+        direct_db.register_cleanup("resource_edges", "source_id", note_block_id)
+        direct_db.register_cleanup("resource_edges", "target_id", note_block_id)
         direct_db.register_cleanup("highlights", "id", highlight_id)
         direct_db.register_cleanup("fragments", "id", old_fragment_id)
         direct_db.register_cleanup("fragments", "id", active_fragment_id)

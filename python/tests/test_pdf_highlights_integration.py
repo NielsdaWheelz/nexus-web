@@ -11,6 +11,7 @@ from sqlalchemy import text
 
 from nexus.services.content_indexing import repair_ready_media_content_index_now
 from tests.factories import (
+    add_context_edge,
     create_pdf_media_with_text,
     get_user_default_library,
 )
@@ -509,19 +510,10 @@ class TestListPdfHighlights:
                 """),
                 {"id": conversation_id, "owner_user_id": user_id},
             )
-            session.execute(
-                text("""
-                    INSERT INTO conversation_references (conversation_id, resource_uri)
-                    VALUES (:conversation_id, :resource_uri)
-                """),
-                {
-                    "conversation_id": conversation_id,
-                    "resource_uri": f"highlight:{highlight_id}",
-                },
-            )
+            add_context_edge(session, conversation_id, f"highlight:{highlight_id}")
             session.commit()
 
-        direct_db.register_cleanup("conversation_references", "conversation_id", conversation_id)
+        direct_db.register_cleanup("resource_edges", "source_id", conversation_id)
         direct_db.register_cleanup("conversations", "id", conversation_id)
 
         page_resp = auth_client.get(
@@ -971,7 +963,6 @@ class TestGenericPdfHighlightCoverage:
                 "linked_object": {
                     "object_type": "highlight",
                     "object_id": h_id,
-                    "relation_type": "note_about",
                 },
             },
             headers=auth_headers(user_id),

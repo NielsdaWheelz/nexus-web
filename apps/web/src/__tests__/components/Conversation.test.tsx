@@ -466,7 +466,7 @@ describe("Conversation", () => {
       if (path === "/api/conversations/conversation-1/tree") {
         return jsonResponse({ data: failedRootRetryTree() });
       }
-      if (path === "/api/conversations/conversation-1/references") {
+      if (path === "/api/conversations/conversation-1/context-refs") {
         return jsonResponse({ data: [] });
       }
       if (path === "/api/models") {
@@ -517,7 +517,7 @@ describe("Conversation", () => {
         if (path === "/api/conversations/conversation-1/tree") {
           return jsonResponse({ data: treeResponse() });
         }
-        if (path === "/api/conversations/conversation-1/references") {
+        if (path === "/api/conversations/conversation-1/context-refs") {
           return jsonResponse({ data: [] });
         }
         if (path === "/api/models") {
@@ -591,7 +591,7 @@ describe("Conversation", () => {
       if (path === "/api/conversations/conversation-1/tree") {
         return jsonResponse({ data: treeResponse({ branchBStatus: "pending" }) });
       }
-      if (path === "/api/conversations/conversation-1/references") {
+      if (path === "/api/conversations/conversation-1/context-refs") {
         return jsonResponse({ data: [] });
       }
       if (path === "/api/models") {
@@ -752,7 +752,7 @@ describe("Conversation", () => {
       if (path === "/api/conversations/conversation-1/tree") {
         return new Promise<Response>(() => {});
       }
-      if (path === "/api/conversations/conversation-1/references") {
+      if (path === "/api/conversations/conversation-1/context-refs") {
         return jsonResponse({ data: [] });
       }
       if (path === "/api/chat-runs") {
@@ -783,7 +783,7 @@ describe("Conversation", () => {
           404,
         );
       }
-      if (path === "/api/conversations/conversation-1/references") {
+      if (path === "/api/conversations/conversation-1/context-refs") {
         return jsonResponse({ data: [] });
       }
       if (path === "/api/chat-runs") {
@@ -833,7 +833,7 @@ describe("Conversation", () => {
         if (path === "/api/conversations/conversation-1/tree") {
           return jsonResponse({ data: treeResponse() });
         }
-        if (path === "/api/conversations/conversation-1/references") {
+        if (path === "/api/conversations/conversation-1/context-refs") {
           return jsonResponse({ data: [] });
         }
         if (path === "/api/models") {

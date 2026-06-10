@@ -1,88 +1,78 @@
+/**
+ * Display mapping for resource refs: scheme → icon and scheme → object-ref
+ * type. Parsing/formatting and the scheme vocabulary are owned by
+ * `@/lib/resourceGraph/resourceRef` (AC17) — this module never splits a ref.
+ */
+
 import {
   AlignLeft,
+  Disc3,
   File,
   FileText,
+  Globe,
   Highlighter,
   Library,
   Link2,
   MessageSquare,
   MessagesSquare,
+  Sparkles,
   StickyNote,
   TextQuote,
+  User,
   type LucideIcon,
 } from "lucide-react";
 import type { ObjectType } from "@/lib/objectRefs";
-
-export const RESOURCE_URI_SCHEMES = [
-  "media",
-  "library",
-  "span",
-  "chunk",
-  "highlight",
-  "page",
-  "note_block",
-  "fragment",
-  "conversation",
-  "message",
-] as const;
-
-export type ResourceUriScheme = (typeof RESOURCE_URI_SCHEMES)[number];
-export interface ParsedResourceUri {
-  scheme: ResourceUriScheme;
-  id: string;
-}
+import {
+  isResourceScheme,
+  parseResourceRef,
+  type ResourceScheme,
+} from "@/lib/resourceGraph/resourceRef";
 
 const RESOURCE_SCHEME_ICONS = {
   media: FileText,
   library: Library,
-  span: TextQuote,
-  chunk: AlignLeft,
+  evidence_span: TextQuote,
+  content_chunk: AlignLeft,
   highlight: Highlighter,
   page: File,
   note_block: StickyNote,
   fragment: TextQuote,
   conversation: MessagesSquare,
   message: MessageSquare,
-} satisfies Record<ResourceUriScheme, LucideIcon>;
+  oracle_reading: Sparkles,
+  oracle_corpus_passage: TextQuote,
+  library_intelligence_artifact: Sparkles,
+  external_snapshot: Globe,
+  contributor: User,
+  podcast: Disc3,
+} satisfies Record<ResourceScheme, LucideIcon>;
 
-const RESOURCE_SCHEME_OBJECT_TYPES: Partial<Record<ResourceUriScheme, ObjectType>> = {
+// Schemes that map to an openable object-ref type (`objectRefs.ts`). Schemes
+// without an entry (library, oracle_*, library_intelligence_artifact,
+// external_snapshot) are not object-ref-resolvable.
+const RESOURCE_SCHEME_OBJECT_TYPES: Partial<Record<ResourceScheme, ObjectType>> = {
   media: "media",
-  span: "evidence_span",
-  chunk: "content_chunk",
+  evidence_span: "evidence_span",
+  content_chunk: "content_chunk",
   highlight: "highlight",
   page: "page",
   note_block: "note_block",
   fragment: "fragment",
   conversation: "conversation",
   message: "message",
+  contributor: "contributor",
+  podcast: "podcast",
 };
 
-const CANONICAL_UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-
-export function parseResourceUri(resourceUri: string): ParsedResourceUri | null {
-  const [scheme, id, extra] = resourceUri.split(":");
-  if (extra !== undefined || !scheme || !id) return null;
-  if (!isResourceUriScheme(scheme) || !CANONICAL_UUID_RE.test(id)) return null;
-  return { scheme, id };
-}
-
-export function resourceObjectTypeForScheme(scheme: ResourceUriScheme): ObjectType | null {
+export function resourceObjectTypeForScheme(scheme: ResourceScheme): ObjectType | null {
   return RESOURCE_SCHEME_OBJECT_TYPES[scheme] ?? null;
 }
 
-export function resourceIconForUri(resourceUri: string): LucideIcon {
-  const parsed = parseResourceUri(resourceUri);
-  return parsed ? resourceIconForScheme(parsed.scheme) : Link2;
+export function resourceIconForUri(resourceRef: string): LucideIcon {
+  const parsed = parseResourceRef(resourceRef);
+  return parsed ? RESOURCE_SCHEME_ICONS[parsed.scheme] : Link2;
 }
 
 export function resourceIconForScheme(scheme: string): LucideIcon {
-  if (isResourceUriScheme(scheme)) {
-    return RESOURCE_SCHEME_ICONS[scheme];
-  }
-  return Link2;
-}
-
-function isResourceUriScheme(scheme: string): scheme is ResourceUriScheme {
-  return (RESOURCE_URI_SCHEMES as readonly string[]).includes(scheme);
+  return isResourceScheme(scheme) ? RESOURCE_SCHEME_ICONS[scheme] : Link2;
 }

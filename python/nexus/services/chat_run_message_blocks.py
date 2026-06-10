@@ -1,4 +1,9 @@
-"""Block rendering for the persisted `message_document` on chat messages."""
+"""Block rendering for the persisted `message_document` on chat messages.
+
+Blocks are retrieval TELEMETRY (tool-call disclosures) only. Citation chips are
+not built here: they come from citation edges via
+``resource_graph.citations.build_citation_outs(source=message:<id>)``.
+"""
 
 from __future__ import annotations
 
@@ -75,8 +80,7 @@ def _retrieval_result_blocks_for_message(
                    mr.locator,
                    mr.retrieval_status,
                    mr.included_in_prompt,
-                   mr.created_at,
-                   mr.citation_ordinal
+                   mr.created_at
             FROM message_retrievals mr
             JOIN message_tool_calls mtc ON mtc.id = mr.tool_call_id
             WHERE mtc.assistant_message_id = :assistant_message_id
@@ -111,7 +115,6 @@ def _retrieval_result_blocks_for_message(
                 "retrieval_status": row[18],
                 "included_in_prompt": bool(row[19]),
                 "created_at": row[20].isoformat() if row[20] is not None else None,
-                "citation_ordinal": row[21],
             }
         )
     return blocks

@@ -13,7 +13,7 @@ from nexus.api.routes.browse import router as browse_router
 from nexus.api.routes.chat_runs import router as chat_runs_router
 from nexus.api.routes.contributors import router as contributors_router
 from nexus.api.routes.conversation_branches import router as conversation_branches_router
-from nexus.api.routes.conversation_references import router as conversation_references_router
+from nexus.api.routes.conversation_context import router as conversation_context_router
 from nexus.api.routes.conversation_shares import router as conversation_shares_router
 from nexus.api.routes.conversations import router as conversations_router
 from nexus.api.routes.extension_sessions import router as extension_sessions_router
@@ -33,7 +33,6 @@ from nexus.api.routes.message_retrievals import router as message_retrievals_rou
 from nexus.api.routes.messages import router as messages_router
 from nexus.api.routes.models import router as models_router
 from nexus.api.routes.notes import router as notes_router
-from nexus.api.routes.object_links import router as object_links_router
 from nexus.api.routes.object_refs import router as object_refs_router
 from nexus.api.routes.oracle import router as oracle_router
 from nexus.api.routes.pinned_objects import router as pinned_objects_router
@@ -41,6 +40,7 @@ from nexus.api.routes.playback import router as playback_router
 from nexus.api.routes.podcast_transcripts import router as podcast_transcripts_router
 from nexus.api.routes.podcasts import router as podcasts_router
 from nexus.api.routes.reader import router as reader_router
+from nexus.api.routes.resource_graph import router as resource_graph_router
 from nexus.api.routes.search import router as search_router
 from nexus.api.routes.stream import router as stream_router
 from nexus.api.routes.stream_tokens import router as stream_tokens_router
@@ -78,11 +78,11 @@ def create_api_router() -> APIRouter:
     api_router.include_router(notes_router)
     api_router.include_router(object_refs_router)
     api_router.include_router(pinned_objects_router)
-    api_router.include_router(object_links_router)
+    api_router.include_router(resource_graph_router)
     api_router.include_router(highlights_router)
     api_router.include_router(billing_router)
     api_router.include_router(conversations_router)
-    api_router.include_router(conversation_references_router)
+    api_router.include_router(conversation_context_router)
     api_router.include_router(conversation_branches_router)
     api_router.include_router(conversation_shares_router)
     api_router.include_router(messages_router)

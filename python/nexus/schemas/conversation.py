@@ -17,7 +17,7 @@ from pydantic import (
     model_validator,
 )
 
-from nexus.schemas.citation import CitationOut
+from nexus.schemas.citation import CitationOut, CitationRole, CitationSnapshot, CitationTargetRef
 from nexus.schemas.retrieval import RetrievalContextRef, RetrievalLocator, RetrievalResultRef
 from nexus.schemas.search import SEARCH_RESULT_TYPES
 
@@ -104,7 +104,6 @@ class MessageDocumentRetrievalResultBlock(BaseModel):
     tool_call_id: UUID | None = None
     tool_call_index: int | None = Field(default=None, ge=0)
     ordinal: int | None = Field(default=None, ge=0)
-    citation_ordinal: int | None = Field(default=None, ge=1)
     result_type: SEARCH_RESULT_TYPES
     source_id: str
     media_id: UUID | None = None
@@ -176,6 +175,8 @@ class MessageOut(BaseModel):
     seq: int
     role: str  # "user" | "assistant" | "system"
     message_document: MessageDocument = Field(default_factory=MessageDocument)
+    # Citations rehydrated from the assistant message's citation edges (AC23/§5.2);
+    # empty for user/system messages and assistants with no cited evidence.
     citations: list[CitationOut] = Field(default_factory=list)
     parent_message_id: UUID | None = None
     branch_root_message_id: UUID | None = None
@@ -310,25 +311,36 @@ class ChatRunDoneEventPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class ChatRunCitationIndexEntry(BaseModel):
+    """One citation edge: the `[n]` marker plus the display fields the chip renders."""
+
+    citation_edge_id: UUID
+    n: int = Field(ge=1)
+    target_ref: CitationTargetRef
+    kind: CitationRole
+    deep_link: str | None = None
+    snapshot: CitationSnapshot
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class ChatRunCitationIndexEventPayload(BaseModel):
-    """Strict SSE payload carrying the server-built `[N]` citation read-model."""
+    """Strict SSE payload mapping citation `[N]` markers to citation edges."""
 
     assistant_message_id: UUID
-    citations: list[CitationOut]
+    entries: list[ChatRunCitationIndexEntry]
 
     model_config = ConfigDict(extra="forbid")
 
 
 class ChatRunReferenceAddedEventPayload(BaseModel):
-    """Strict SSE payload emitted when a new conversation reference is inserted."""
+    """Strict SSE payload for a citation-materialized context edge (ContextRefOut shape)."""
 
-    reference_id: UUID
+    id: UUID
     conversation_id: UUID
-    resource_uri: str = Field(min_length=1)
+    resource_ref: str = Field(min_length=1)
     label: str
     summary: str
-    inline_body: str | None = None
-    fetch_hint: str
     missing: bool
     created_at: datetime
 

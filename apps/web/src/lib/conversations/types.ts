@@ -6,19 +6,7 @@ import type {
 } from "@/lib/api/sse/citations";
 import type { ChatToolStatus } from "@/lib/api/sse/events";
 import type { RetrievalLocator } from "@/lib/api/sse/locators";
-import type { CitationOut } from "./citationOut";
-
-export interface ConversationReference {
-  id: string;
-  conversation_id: string;
-  resource_uri: string;
-  label: string;
-  summary: string;
-  inline_body: string | null;
-  fetch_hint: string;
-  missing: boolean;
-  created_at: string;
-}
+import type { CitationOut } from "@/lib/conversations/citationOut";
 
 export interface ConversationSummary {
   id: string;
@@ -74,7 +62,6 @@ export interface MessageRetrieval {
   snippet_suffix?: string | null;
   retrieval_status?: MessageEvidenceRetrievalStatus;
   included_in_prompt?: boolean;
-  citation_ordinal?: number | null;
   created_at?: string;
 }
 
@@ -173,6 +160,11 @@ export interface ConversationMessage {
   branch_anchor?: BranchAnchor | null;
   tool_calls?: MessageToolCall[];
   retrievals?: MessageRetrieval[];
+  /**
+   * Citation chips (the `[N]` markers in the assistant prose), built backend-side
+   * from citation edges. Present on the message GET and refreshed live by the
+   * `citation_index` SSE event. Rendered via `toReaderCitationData`.
+   */
   citations?: CitationOut[];
   status: "pending" | "complete" | "error" | "cancelled";
   error_code: string | null;

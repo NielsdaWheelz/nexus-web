@@ -15,6 +15,8 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.services import media_intelligence
+from nexus.services.resource_graph import cleanup
+from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.semantic_chunks import (
     build_text_embeddings,
     current_transcript_embedding_model,
@@ -976,21 +978,39 @@ def delete_content_index(db: Session, *, owner: IndexOwner) -> None:
         ),
         params,
     )
-    db.execute(
-        text(
-            """
-            DELETE FROM object_links
-            WHERE (a_type = 'content_chunk' AND a_id IN (
-                    SELECT id FROM content_chunks
-                    WHERE owner_kind = :owner_kind AND owner_id = :owner_id
-                  ))
-               OR (b_type = 'content_chunk' AND b_id IN (
-                    SELECT id FROM content_chunks
-                    WHERE owner_kind = :owner_kind AND owner_id = :owner_id
-                  ))
-            """
-        ),
-        params,
+    # Graph cleanup, set-batched over every destroyed span/chunk (§9.6, AC12):
+    # bare edges touching one die with it; cited edges keep rendering from their
+    # snapshots and the jump fails closed. Two DELETEs total, not N+1 per row —
+    # this is a hot reindex path. Runs in the caller's transaction, before the
+    # rows below disappear.
+    span_ids = (
+        db.execute(
+            text(
+                "SELECT id FROM evidence_spans "
+                "WHERE owner_kind = :owner_kind AND owner_id = :owner_id"
+            ),
+            params,
+        )
+        .scalars()
+        .all()
+    )
+    chunk_ids = (
+        db.execute(
+            text(
+                "SELECT id FROM content_chunks "
+                "WHERE owner_kind = :owner_kind AND owner_id = :owner_id"
+            ),
+            params,
+        )
+        .scalars()
+        .all()
+    )
+    cleanup.delete_edges_for_deleted_resources(
+        db,
+        refs=[
+            *(ResourceRef(scheme="evidence_span", id=span_id) for span_id in span_ids),
+            *(ResourceRef(scheme="content_chunk", id=chunk_id) for chunk_id in chunk_ids),
+        ],
     )
     db.execute(
         text(

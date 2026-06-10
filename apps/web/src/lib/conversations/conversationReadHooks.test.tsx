@@ -2,10 +2,8 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useChatsByReference } from "./useChatsByReference";
 import { useConversationReferences } from "./useConversationReferences";
-import type {
-  ConversationListItem,
-  ConversationReference,
-} from "./types";
+import type { ConversationListItem } from "./types";
+import type { ContextRefOut } from "@/lib/resourceGraph/contextRefs";
 
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -36,15 +34,13 @@ function conversationItem(id: string): ConversationListItem {
   };
 }
 
-function reference(id: string, conversationId: string): ConversationReference {
+function reference(id: string, conversationId: string): ContextRefOut {
   return {
     id,
     conversation_id: conversationId,
-    resource_uri: `media:${id}`,
+    resource_ref: `media:${id}`,
     label: id,
     summary: "",
-    inline_body: null,
-    fetch_hint: "",
     missing: false,
     created_at: "2026-01-01T00:00:00Z",
   };
@@ -63,7 +59,7 @@ describe("conversation read hooks", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
-        const resourceUri = urlOf(input).searchParams.get("has_reference");
+        const resourceUri = urlOf(input).searchParams.get("has_context_ref");
         if (resourceUri === "media:a") {
           firstSignal = init?.signal ?? undefined;
           return first.promise;
@@ -113,11 +109,11 @@ describe("conversation read hooks", () => {
       "fetch",
       vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
         const path = urlOf(input).pathname;
-        if (path === "/api/conversations/conv-a/references") {
+        if (path === "/api/conversations/conv-a/context-refs") {
           firstSignal = init?.signal ?? undefined;
           return first.promise;
         }
-        if (path === "/api/conversations/conv-b/references") {
+        if (path === "/api/conversations/conv-b/context-refs") {
           secondSignal = init?.signal ?? undefined;
           return second.promise;
         }

@@ -99,7 +99,7 @@ def _delete_library_intelligence(session: Session, artifact_filter: str, value: 
 
     ``artifact_filter`` is a WHERE clause over ``library_intelligence_artifacts``
     (e.g. ``WHERE library_id = :value``). Order: null the circular pointer, drop
-    revision children (citations, events), then revisions, then the head.
+    revision children (events), then revisions, then the head.
     """
     revision_filter = (
         "revision_id IN (SELECT r.id FROM library_intelligence_artifact_revisions r "
@@ -109,10 +109,6 @@ def _delete_library_intelligence(session: Session, artifact_filter: str, value: 
         text(
             f"UPDATE library_intelligence_artifacts SET current_revision_id = NULL {artifact_filter}"
         ),
-        {"value": value},
-    )
-    session.execute(
-        text(f"DELETE FROM library_intelligence_citations WHERE {revision_filter}"),
         {"value": value},
     )
     session.execute(
@@ -346,8 +342,14 @@ class DirectSessionManager:
                         text("DELETE FROM billing_entitlement_overrides WHERE user_id = :value"),
                         {"value": value},
                     )
+                    # resource_edges / resource_external_snapshots FK users.id with no
+                    # cascade (provenance graph: cleanup is explicit application code).
                     session.execute(
-                        text("DELETE FROM object_links WHERE user_id = :value"),
+                        text("DELETE FROM resource_edges WHERE user_id = :value"),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text("DELETE FROM resource_external_snapshots WHERE user_id = :value"),
                         {"value": value},
                     )
                     session.execute(
@@ -436,17 +438,6 @@ class DirectSessionManager:
                     session.execute(
                         text(
                             """
-                            DELETE FROM conversation_references
-                            WHERE conversation_id IN (
-                                SELECT id FROM conversations WHERE owner_user_id = :value
-                            )
-                            """
-                        ),
-                        {"value": value},
-                    )
-                    session.execute(
-                        text(
-                            """
                             DELETE FROM messages
                             WHERE conversation_id IN (
                                 SELECT id FROM conversations WHERE owner_user_id = :value
@@ -483,6 +474,18 @@ class DirectSessionManager:
                     session.execute(
                         text(
                             "UPDATE message_retrievals SET media_id = NULL WHERE media_id = :value"
+                        ),
+                        {"value": value},
+                    )
+                    # Provenance-graph edges have no FKs; clear both endpoints
+                    # explicitly so deleted media leaves no dangling edges behind.
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM resource_edges
+                            WHERE (source_scheme = 'media' AND source_id = :value)
+                               OR (target_scheme = 'media' AND target_id = :value)
+                            """
                         ),
                         {"value": value},
                     )
@@ -590,8 +593,20 @@ class DirectSessionManager:
                     )
 
                 if table == "conversations" and column == "id":
+                    # Context edges (source conversation:<id>), citation edges
+                    # (source message:<one of its messages>), and any edges
+                    # targeting the conversation. No FKs — explicit cleanup.
                     session.execute(
-                        text("DELETE FROM conversation_references WHERE conversation_id = :value"),
+                        text(
+                            """
+                            DELETE FROM resource_edges
+                            WHERE (source_scheme = 'conversation' AND source_id = :value)
+                               OR (target_scheme = 'conversation' AND target_id = :value)
+                               OR (source_scheme = 'message' AND source_id IN (
+                                    SELECT id FROM messages WHERE conversation_id = :value
+                                  ))
+                            """
+                        ),
                         {"value": value},
                     )
                     session.execute(
@@ -666,6 +681,16 @@ class DirectSessionManager:
                     )
 
                 if table == "messages" and column == "id":
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM resource_edges
+                            WHERE (source_scheme = 'message' AND source_id = :value)
+                               OR (target_scheme = 'message' AND target_id = :value)
+                            """
+                        ),
+                        {"value": value},
+                    )
                     session.execute(
                         text(
                             """
@@ -808,6 +833,17 @@ class DirectSessionManager:
                     session.execute(
                         text(
                             """
+                            DELETE FROM resource_edges
+                            WHERE source_scheme = 'message' AND source_id IN (
+                                SELECT id FROM messages WHERE conversation_id = :value
+                            )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
                             DELETE FROM message_retrieval_candidate_ledgers
                             WHERE tool_call_id IN (
                                 SELECT mtc.id
@@ -906,13 +942,15 @@ class DirectSessionManager:
                     session.execute(
                         text(
                             """
-                            DELETE FROM object_links
-                            WHERE (a_type = 'note_block' AND a_id IN (
+                            DELETE FROM resource_edges
+                            WHERE (source_scheme = 'note_block' AND source_id IN (
                                     SELECT id FROM note_blocks WHERE page_id = :value
                                   ))
-                               OR (b_type = 'note_block' AND b_id IN (
+                               OR (target_scheme = 'note_block' AND target_id IN (
                                     SELECT id FROM note_blocks WHERE page_id = :value
                                   ))
+                               OR (source_scheme = 'page' AND source_id = :value)
+                               OR (target_scheme = 'page' AND target_id = :value)
                             """
                         ),
                         {"value": value},
@@ -948,11 +986,11 @@ class DirectSessionManager:
                     session.execute(
                         text(
                             """
-                            DELETE FROM object_links
+                            DELETE FROM resource_edges
                             WHERE user_id = :value
                               AND (
-                                  a_type IN ('page', 'note_block')
-                               OR b_type IN ('page', 'note_block')
+                                  source_scheme IN ('page', 'note_block')
+                               OR target_scheme IN ('page', 'note_block')
                               )
                             """
                         ),

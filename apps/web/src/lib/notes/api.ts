@@ -315,8 +315,8 @@ export async function createNoteBlock(input: {
   blockKind?: NoteBlockKind;
   bodyPmJson?: Record<string, unknown>;
   bodyMarkdown?: string;
+  /** A highlight to attach this block to (an `origin=highlight_note` edge). */
   linkedObject?: ObjectRef;
-  relationType?: "note_about" | "references" | "related";
 }): Promise<NoteBlock> {
   const response = await apiFetch<NoteBlockResponse>("/api/notes/blocks", {
     method: "POST",
@@ -332,7 +332,6 @@ export async function createNoteBlock(input: {
         ? {
             object_type: input.linkedObject.objectType,
             object_id: input.linkedObject.objectId,
-            relation_type: input.relationType ?? "note_about",
           }
         : null,
     }),

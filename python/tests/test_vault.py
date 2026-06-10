@@ -13,9 +13,9 @@ from nexus.db.models import (
     Media,
     MediaKind,
     NoteBlock,
-    ObjectLink,
     Page,
     ProcessingStatus,
+    ResourceEdge,
 )
 from nexus.services.notes import set_highlight_note_body
 from nexus.services.vault import export_vault, sync_vault
@@ -163,11 +163,14 @@ def test_vault_projects_multiple_highlight_notes_with_markers(
     _media_id, _fragment_id, highlight_id = _seed_article_highlight(db_session, bootstrapped_user)
     first_note = (
         db_session.query(NoteBlock)
-        .join(ObjectLink, (ObjectLink.a_type == "note_block") & (ObjectLink.a_id == NoteBlock.id))
+        .join(
+            ResourceEdge,
+            (ResourceEdge.target_scheme == "note_block") & (ResourceEdge.target_id == NoteBlock.id),
+        )
         .filter(
-            ObjectLink.relation_type == "note_about",
-            ObjectLink.b_type == "highlight",
-            ObjectLink.b_id == highlight_id,
+            ResourceEdge.origin == "highlight_note",
+            ResourceEdge.source_scheme == "highlight",
+            ResourceEdge.source_id == highlight_id,
         )
         .one()
     )
@@ -185,15 +188,14 @@ def test_vault_projects_multiple_highlight_notes_with_markers(
     db_session.add(second_note)
     db_session.flush()
     db_session.add(
-        ObjectLink(
+        ResourceEdge(
             user_id=bootstrapped_user,
-            relation_type="note_about",
-            a_type="highlight",
-            a_id=highlight_id,
-            b_type="note_block",
-            b_id=second_note.id,
-            a_order_key="0000000002",
-            metadata_json={},
+            kind="context",
+            origin="highlight_note",
+            source_scheme="highlight",
+            source_id=highlight_id,
+            target_scheme="note_block",
+            target_id=second_note.id,
         )
     )
     db_session.commit()
@@ -464,7 +466,7 @@ def _register_seed_cleanup(
 ) -> None:
     direct_db.register_cleanup("pages", "user_id", user_id)
     direct_db.register_cleanup("note_blocks", "user_id", user_id)
-    direct_db.register_cleanup("object_links", "b_id", highlight_id)
+    direct_db.register_cleanup("resource_edges", "source_id", highlight_id)
     direct_db.register_cleanup("highlight_fragment_anchors", "highlight_id", highlight_id)
     direct_db.register_cleanup("highlights", "id", highlight_id)
     direct_db.register_cleanup("fragments", "media_id", media_id)
@@ -476,11 +478,14 @@ def _register_seed_cleanup(
 def _highlight_note_body(session: Session, highlight_id: UUID) -> str | None:
     block = (
         session.query(NoteBlock)
-        .join(ObjectLink, (ObjectLink.a_type == "note_block") & (ObjectLink.a_id == NoteBlock.id))
+        .join(
+            ResourceEdge,
+            (ResourceEdge.target_scheme == "note_block") & (ResourceEdge.target_id == NoteBlock.id),
+        )
         .filter(
-            ObjectLink.relation_type == "note_about",
-            ObjectLink.b_type == "highlight",
-            ObjectLink.b_id == highlight_id,
+            ResourceEdge.origin == "highlight_note",
+            ResourceEdge.source_scheme == "highlight",
+            ResourceEdge.source_id == highlight_id,
         )
         .one_or_none()
     )

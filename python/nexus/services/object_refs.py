@@ -1,9 +1,13 @@
-"""Hydration for universal object refs."""
+"""Hydration for universal object refs (pins, the note-editor picker, ref chips).
+
+Loading and permissions ride ``resource_graph.resolve`` — the single per-scheme
+data-access owner; only the route/icon presentation for these surfaces lives
+here."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import cast
+from typing import assert_never, cast
 from uuid import UUID
 from xml.sax.saxutils import escape as xml_escape
 
@@ -14,7 +18,6 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import (
     can_read_conversation,
     can_read_highlight,
-    can_read_media,
     visible_content_credit_rows_sql,
     visible_contributor_ids_cte_sql,
     visible_media_ids_cte_sql,
@@ -23,7 +26,6 @@ from nexus.auth.permissions import (
 from nexus.db.errors import integrity_constraint_name
 from nexus.db.models import (
     Conversation,
-    Fragment,
     Highlight,
     Media,
     Message,
@@ -43,6 +45,12 @@ from nexus.services.note_block_markdown import (
     note_outline_markdown,
     ordered_note_blocks_for_page,
 )
+from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
+from nexus.services.resource_graph.resolve import (
+    LoadedResource,
+    load_resource_batch,
+    parent_media_id_for_read_pointer,
+)
 
 
 @dataclass(frozen=True)
@@ -59,175 +67,125 @@ class UpdatePinnedObjectRefPatch:
 
 
 def hydrate_object_ref(db: Session, viewer_id: UUID, ref: ObjectRef) -> HydratedObjectRef:
-    if ref.object_type == "page":
-        page = db.get(Page, ref.object_id)
-        if page is None or page.user_id != viewer_id:
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Object not found")
-        return HydratedObjectRef(
-            object_type="page",
-            object_id=page.id,
-            label=page.title,
-            snippet=page.description,
-            route=f"/pages/{page.id}",
-            icon="file-text",
-        )
-
-    if ref.object_type == "note_block":
-        block = db.get(NoteBlock, ref.object_id)
-        if block is None or block.user_id != viewer_id:
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Object not found")
-        label = block.body_text.strip().splitlines()[0][:120] if block.body_text.strip() else "Note"
-        return HydratedObjectRef(
-            object_type="note_block",
-            object_id=block.id,
-            label=label,
-            snippet=block.body_text[:300],
-            route=f"/notes/{block.id}",
-            icon="list",
-        )
-
-    if ref.object_type == "media":
-        media = db.get(Media, ref.object_id)
-        if media is None or not can_read_media(db, viewer_id, media.id):
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Object not found")
-        return HydratedObjectRef(
-            object_type="media",
-            object_id=media.id,
-            label=media.title,
-            snippet=media.description,
-            route=f"/media/{media.id}",
-            icon="book-open",
-        )
-
-    if ref.object_type == "highlight":
-        highlight = db.get(Highlight, ref.object_id)
-        if highlight is None or highlight.anchor_media_id is None:
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Object not found")
-        if not can_read_highlight(db, viewer_id, highlight.id):
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Object not found")
-        return HydratedObjectRef(
-            object_type="highlight",
-            object_id=highlight.id,
-            label=highlight.exact[:120] or "Highlight",
-            snippet=highlight.exact,
-            route=f"/media/{highlight.anchor_media_id}#highlight-{highlight.id}",
-            icon="highlighter",
-        )
-
-    if ref.object_type == "conversation":
-        row = db.execute(
-            text("SELECT id, title FROM conversations WHERE id = :id"),
-            {"id": ref.object_id},
-        ).fetchone()
-        if row is None or not can_read_conversation(db, viewer_id, ref.object_id):
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Object not found")
-        return HydratedObjectRef(
-            object_type="conversation",
-            object_id=row[0],
-            label=row[1],
-            route=f"/conversations/{row[0]}",
-            icon="messages-square",
-        )
-
-    if ref.object_type == "message":
-        message = db.get(Message, ref.object_id)
-        if message is None or not can_read_conversation(db, viewer_id, message.conversation_id):
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Object not found")
-        return HydratedObjectRef(
-            object_type="message",
-            object_id=message.id,
-            label=f"Message #{message.seq}",
-            snippet=message.content[:300],
-            route=f"/conversations/{message.conversation_id}",
-            icon="message-square",
-        )
-
     if ref.object_type == "contributor":
         return hydrate_contributor_object_ref(db, viewer_id, ref.object_id)
+    resource_ref = ResourceRef(scheme=cast("ResourceScheme", ref.object_type), id=ref.object_id)
+    loaded = load_resource_batch(db, [resource_ref], viewer_id=viewer_id)[resource_ref.uri]
+    if loaded.missing:
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Object not found")
+    return _hydrated_from_loaded(db, ref, loaded)
 
-    if ref.object_type == "podcast":
-        row = db.execute(
-            text(
-                f"""
-                SELECT p.id, p.title, p.description
-                FROM podcasts p
-                WHERE p.id = :id
-                  AND p.id IN ({visible_podcast_ids_cte_sql()})
-                """
-            ),
-            {"viewer_id": viewer_id, "id": ref.object_id},
-        ).fetchone()
-        if row is None:
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Object not found")
+
+def _hydrated_from_loaded(db: Session, ref: ObjectRef, loaded: LoadedResource) -> HydratedObjectRef:
+    """Map a visible :class:`LoadedResource` onto this surface's label/route/icon shape.
+
+    Parent media/conversation ids exist only as routes here, so they are looked
+    up locally; everything content-bearing comes from the loaded resource.
+    """
+    object_type = ref.object_type
+    object_id = ref.object_id
+    if object_type == "page":
+        return HydratedObjectRef(
+            object_type="page",
+            object_id=object_id,
+            label=loaded.title or "",
+            snippet=loaded.body or None,
+            route=f"/pages/{object_id}",
+            icon="file-text",
+        )
+    if object_type == "note_block":
+        body = loaded.body or ""
+        return HydratedObjectRef(
+            object_type="note_block",
+            object_id=object_id,
+            label=body.strip().splitlines()[0][:120] if body.strip() else "Note",
+            snippet=body[:300],
+            route=f"/notes/{object_id}",
+            icon="list",
+        )
+    if object_type == "media":
+        return HydratedObjectRef(
+            object_type="media",
+            object_id=object_id,
+            label=loaded.title or "",
+            snippet=db.scalar(select(Media.description).where(Media.id == object_id)),
+            route=f"/media/{object_id}",
+            icon="book-open",
+        )
+    if object_type == "highlight":
+        exact = loaded.quote.exact if loaded.quote is not None else ""
+        media_id = db.scalar(select(Highlight.anchor_media_id).where(Highlight.id == object_id))
+        return HydratedObjectRef(
+            object_type="highlight",
+            object_id=object_id,
+            label=exact[:120] or "Highlight",
+            snippet=exact,
+            route=f"/media/{media_id}#highlight-{object_id}",
+            icon="highlighter",
+        )
+    if object_type == "conversation":
+        return HydratedObjectRef(
+            object_type="conversation",
+            object_id=object_id,
+            label=loaded.title or "",
+            route=f"/conversations/{object_id}",
+            icon="messages-square",
+        )
+    if object_type == "message":
+        conversation_id, seq = db.execute(
+            select(Message.conversation_id, Message.seq).where(Message.id == object_id)
+        ).one()
+        return HydratedObjectRef(
+            object_type="message",
+            object_id=object_id,
+            label=f"Message #{seq}",
+            snippet=(loaded.body or "")[:300],
+            route=f"/conversations/{conversation_id}",
+            icon="message-square",
+        )
+    if object_type == "podcast":
         return HydratedObjectRef(
             object_type="podcast",
-            object_id=row[0],
-            label=row[1],
-            snippet=row[2],
-            route=f"/podcasts/{row[0]}",
+            object_id=object_id,
+            label=loaded.title or "",
+            snippet=loaded.body,
+            route=f"/podcasts/{object_id}",
             icon="podcast",
         )
-
-    if ref.object_type == "content_chunk":
-        row = db.execute(
-            text(
-                """
-                SELECT cc.id, cc.owner_id AS media_id, cc.chunk_text, m.title
-                FROM content_chunks cc
-                JOIN media m ON m.id = cc.owner_id AND cc.owner_kind = 'media'
-                WHERE cc.id = :id
-                """
-            ),
-            {"id": ref.object_id},
-        ).fetchone()
-        if row is None or not can_read_media(db, viewer_id, row[1]):
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Object not found")
+    if object_type == "content_chunk":
+        media_id = parent_media_id_for_read_pointer(db, scheme=object_type, resource_id=object_id)
         return HydratedObjectRef(
             object_type="content_chunk",
-            object_id=row[0],
-            label=row[3],
-            snippet=str(row[2] or "")[:300],
-            route=f"/media/{row[1]}",
+            object_id=object_id,
+            label=loaded.title or "",
+            snippet=(loaded.body or "")[:300],
+            route=f"/media/{media_id}",
             icon="text",
         )
-
-    if ref.object_type == "fragment":
-        fragment = db.get(Fragment, ref.object_id)
-        if fragment is None or not can_read_media(db, viewer_id, fragment.media_id):
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Object not found")
+    if object_type == "fragment":
+        media_id = parent_media_id_for_read_pointer(db, scheme=object_type, resource_id=object_id)
         return HydratedObjectRef(
             object_type="fragment",
-            object_id=fragment.id,
-            label=f"Fragment {fragment.idx + 1}",
-            snippet=fragment.canonical_text[:300],
-            route=f"/media/{fragment.media_id}#fragment-{fragment.id}",
+            object_id=object_id,
+            label=f"Fragment {(loaded.fragment_idx or 0) + 1}",
+            snippet=(loaded.body or "")[:300],
+            route=f"/media/{media_id}#fragment-{object_id}",
             icon="text",
         )
-
-    if ref.object_type == "evidence_span":
-        row = db.execute(
-            text(
-                """
-                SELECT es.id, es.owner_id AS media_id, es.span_text, es.citation_label, m.title
-                FROM evidence_spans es
-                JOIN media m ON m.id = es.owner_id AND es.owner_kind = 'media'
-                WHERE es.id = :id
-                """
-            ),
-            {"id": ref.object_id},
-        ).fetchone()
-        if row is None or not can_read_media(db, viewer_id, row[1]):
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Object not found")
+    if object_type == "evidence_span":
+        media_id = parent_media_id_for_read_pointer(db, scheme=object_type, resource_id=object_id)
         return HydratedObjectRef(
             object_type="evidence_span",
-            object_id=row[0],
-            label=f"{row[4]} - {row[3]}",
-            snippet=str(row[2] or "")[:300],
-            route=f"/media/{row[1]}#evidence-{row[0]}",
+            object_id=object_id,
+            label=f"{loaded.title} - {loaded.citation_label}",
+            snippet=(loaded.body or "")[:300],
+            route=f"/media/{media_id}#evidence-{object_id}",
             icon="quote",
         )
-
-    raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Object not found")
+    if object_type == "contributor":
+        # justify-defect: hydrate_object_ref handles contributors before loading.
+        raise AssertionError("contributor refs hydrate through contributors service")
+    assert_never(object_type)
 
 
 def search_object_refs(

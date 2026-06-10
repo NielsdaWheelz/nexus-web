@@ -19,6 +19,7 @@ import type {
   SSERetrievalResultEvent,
   SSEToolCallEvent,
 } from "@/lib/api/sse/events";
+import type { CitationOut } from "@/lib/conversations/citationOut";
 import { conversationMessageText } from "@/lib/conversations/types";
 import type {
   ConversationMessage,
@@ -319,10 +320,20 @@ export function useChatMessageUpdates({
 
   const handleCitationIndex = useCallback(
     (assistantId: string, data: SSECitationIndexEvent["data"]) => {
+      // Edge entries are already the chip read-model: map them straight to the
+      // message's CitationOut[]. media_id/locator are absent (D11) — the jump is
+      // the snapshot deep_link plus the target grain.
+      const citations: CitationOut[] = data.entries.map((entry) => ({
+        ordinal: entry.n,
+        role: entry.kind,
+        target_ref: entry.target_ref,
+        media_id: null,
+        locator: null,
+        deep_link: entry.deep_link,
+        snapshot: entry.snapshot,
+      }));
       setMessages((prev) =>
-        prev.map((m) =>
-          m.id === assistantId ? { ...m, citations: data.citations } : m,
-        ),
+        prev.map((m) => (m.id === assistantId ? { ...m, citations } : m)),
       );
     },
     [setMessages],

@@ -23,8 +23,9 @@ from nexus.services.api_key_resolver import (
     resolve_api_key,
 )
 from nexus.services.conversation_branches import branch_anchor_for_message
-from nexus.services.conversation_references import is_conversation_reference
 from nexus.services.rate_limit import get_rate_limiter
+from nexus.services.resource_graph.context import is_context_ref
+from nexus.services.resource_graph.refs import ResourceRef
 
 
 def validate_pre_phase(
@@ -150,8 +151,8 @@ def _validate_reader_selection(
             "reader_selection media_id must match the highlight anchor media",
         )
 
-    highlight_uri = f"highlight:{reader_selection.highlight_id}"
-    if not is_conversation_reference(db, conversation_id, highlight_uri):
+    highlight_ref = ResourceRef(scheme="highlight", id=reader_selection.highlight_id)
+    if not is_context_ref(db, conversation_id=conversation_id, target=highlight_ref):
         raise ApiError(
             ApiErrorCode.E_INVALID_REQUEST,
             "reader_selection highlight must be attached as a conversation reference",

@@ -1,5 +1,5 @@
 from datetime import date
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from pydantic import ValidationError
@@ -9,14 +9,12 @@ from nexus.db.models import (
     Conversation,
     DailyNotePage,
     NoteBlock,
-    ObjectLink,
     Page,
     PinnedObjectRef,
 )
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.jobs.queue import claim_next_job, complete_job
 from nexus.schemas.notes import (
-    UNSET,
     CreateNoteBlockRequest,
     CreatePageRequest,
     LinkedObjectRequest,
@@ -26,14 +24,16 @@ from nexus.schemas.notes import (
     QuickCaptureRequest,
     SplitNoteBlockRequest,
     UpdateNoteBlockRequest,
-    UpdateObjectLinkRequest,
     UpdatePageRequest,
 )
-from nexus.services import notes, object_links, object_refs
+from nexus.services import notes, object_refs
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.contributor_credits import replace_media_contributor_credits
 from nexus.services.note_indexing import rebuild_page_content_index
 from nexus.services.notes import markdown_from_pm_json, text_from_pm_json
+from nexus.services.resource_graph.edges import create_edge, list_edges_for_ref
+from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.resource_graph.schemas import EdgeCreate, EdgeOut
 from tests.factories import (
     add_library_member,
     add_media_to_library,
@@ -46,6 +46,7 @@ from tests.factories import (
     create_test_media,
     create_test_media_in_library,
     create_test_message,
+    get_user_default_library,
 )
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
@@ -91,6 +92,20 @@ def _paragraph_with_duplicate_page_refs(page_id, label: str) -> dict:
             },
         ],
     }
+
+
+def _note_body_edges(db, viewer_id, block_id: UUID) -> list[EdgeOut]:
+    """The block's ``origin=note_body`` edge set (the body-sync replace-set scope)."""
+    source = ResourceRef(scheme="note_block", id=block_id)
+    return [
+        edge
+        for edge in list_edges_for_ref(db, viewer_id=viewer_id, ref=source, origin="note_body")
+        if edge.source == source
+    ]
+
+
+def _note_body_targets(db, viewer_id, block_id: UUID) -> set[str]:
+    return {edge.target.uri for edge in _note_body_edges(db, viewer_id, block_id)}
 
 
 @pytest.mark.unit
@@ -159,23 +174,6 @@ def test_note_body_pm_json_rejects_non_prosemirror_shapes():
         )
 
 
-def test_update_object_link_request_distinguishes_absent_null_and_value():
-    """The order-key sentinel separates an omitted field, an explicit null, and a value."""
-    absent = UpdateObjectLinkRequest()
-    assert absent.a_order_key is UNSET
-    assert absent.b_order_key is UNSET
-
-    cleared = UpdateObjectLinkRequest(a_order_key=None)
-    assert cleared.a_order_key is None
-    assert cleared.b_order_key is UNSET
-
-    valued = UpdateObjectLinkRequest(a_order_key="0000000001")
-    assert valued.a_order_key == "0000000001"
-
-    with pytest.raises(ValidationError):
-        UpdateObjectLinkRequest(a_order_key="")
-
-
 @pytest.mark.integration
 def test_nested_note_create_move_and_delete_cleanup(db_session, bootstrapped_user):
     page = notes.create_page(
@@ -205,13 +203,19 @@ def test_nested_note_create_move_and_delete_cleanup(db_session, bootstrapped_use
             parent_block_id=parent.id,
             after_block_id=child_one.id,
             body_markdown="child two",
-            linked_object=LinkedObjectRequest(
-                object_type="page",
-                object_id=page.id,
-                relation_type="references",
-            ),
         ),
     )
+    create_edge(
+        db_session,
+        viewer_id=bootstrapped_user,
+        input=EdgeCreate(
+            source=ResourceRef(scheme="note_block", id=child_two.id),
+            target=ResourceRef(scheme="page", id=page.id),
+            kind="context",
+            origin="user",
+        ),
+    )
+    db_session.commit()
     child_zero = notes.create_note_block(
         db_session,
         bootstrapped_user,
@@ -273,12 +277,12 @@ def test_nested_note_create_move_and_delete_cleanup(db_session, bootstrapped_use
 
     with pytest.raises(NotFoundError):
         notes.get_note_block(db_session, bootstrapped_user, child_two.id)
-    remaining_links = object_links.list_object_links(
-        db_session,
-        bootstrapped_user,
-        object_ref=ObjectRef(object_type="page", object_id=page.id),
+    remaining = list_edges_for_ref(
+        db_session, viewer_id=bootstrapped_user, ref=ResourceRef(scheme="page", id=page.id)
     )
-    assert remaining_links == [], "Deleting a parent block should clean descendant object links"
+    assert remaining == [], (
+        f"Deleting a parent block should clean descendant edges, got {remaining}"
+    )
 
 
 @pytest.mark.integration
@@ -929,7 +933,7 @@ def test_object_ref_search_returns_contributors_and_content_chunks(
 
 
 @pytest.mark.integration
-def test_shared_reader_can_create_own_note_about_visible_highlight(db_session):
+def test_shared_reader_can_attach_own_note_to_visible_highlight(db_session):
     author_id = create_test_user_id()
     reader_id = create_test_user_id()
     ensure_user_and_default_library(db_session, author_id)
@@ -953,254 +957,157 @@ def test_shared_reader_can_create_own_note_about_visible_highlight(db_session):
         reader_id,
         CreateNoteBlockRequest(
             body_markdown="Reader-owned note",
-            linked_object=LinkedObjectRequest(
-                object_type="highlight",
-                object_id=highlight_id,
-                relation_type="note_about",
-            ),
+            linked_object=LinkedObjectRequest(object_id=highlight_id),
         ),
     )
 
     assert block.body_text == "Reader-owned note"
-    links = object_links.list_object_links(
+    edges = list_edges_for_ref(
         db_session,
-        reader_id,
-        object_ref=ObjectRef(object_type="highlight", object_id=highlight_id),
-        relation_type="note_about",
+        viewer_id=reader_id,
+        ref=ResourceRef(scheme="highlight", id=highlight_id),
+        origin="highlight_note",
     )
-    assert [(link.a.object_type, link.a.object_id, link.b.object_id) for link in links] == [
-        ("note_block", block.id, highlight_id)
-    ]
+    assert [(edge.source.uri, edge.target.uri) for edge in edges] == [
+        (f"highlight:{highlight_id}", f"note_block:{block.id}")
+    ], f"Expected one reader-owned attachment edge, got {edges}"
+    linked = notes.linked_note_blocks_for_highlights(db_session, reader_id, [highlight_id])
+    assert [b.id for b in linked.get(highlight_id, [])] == [block.id]
 
 
 @pytest.mark.integration
-def test_object_links_reject_duplicate_non_located_links(db_session, bootstrapped_user):
+def test_body_sync_replace_sets_only_its_origin_scope(db_session, bootstrapped_user):
+    """Body save replace-sets exactly the (source, origin='note_body') rows (§5.7).
+
+    A seeded user link and a highlight attachment on the same block survive every
+    body save, and a body ref whose bare pair already exists under the user
+    origin is not double-inserted.
+    """
     page = notes.create_page(
         db_session,
         bootstrapped_user,
-        CreatePageRequest(title=f"Duplicate links {uuid4()}"),
+        CreatePageRequest(title=f"Replace-set scope {uuid4()}"),
     )
+    first_target = notes.create_page(
+        db_session,
+        bootstrapped_user,
+        CreatePageRequest(title=f"Replace-set target A {uuid4()}"),
+    )
+    second_target = notes.create_page(
+        db_session,
+        bootstrapped_user,
+        CreatePageRequest(title=f"Replace-set target B {uuid4()}"),
+    )
+    library_id = get_user_default_library(db_session, bootstrapped_user)
+    assert library_id is not None
+    media_id = create_test_media_in_library(
+        db_session, bootstrapped_user, library_id, title=f"Replace-set media {uuid4()}"
+    )
+    fragment_id = create_test_fragment(db_session, media_id, "Quote for the attachment edge")
+    highlight_id = create_test_highlight(db_session, bootstrapped_user, fragment_id)
     block = notes.create_note_block(
         db_session,
         bootstrapped_user,
-        CreateNoteBlockRequest(page_id=page.id, body_markdown="linked block"),
-    )
-    request = object_links.CreateObjectLinkInput(
-        relation_type="related",
-        a=ObjectRef(object_type="page", object_id=page.id),
-        b=ObjectRef(object_type="note_block", object_id=block.id),
-    )
-
-    object_links.create_object_link(db_session, bootstrapped_user, request)
-    with pytest.raises(ApiError) as duplicate:
-        object_links.create_object_link(db_session, bootstrapped_user, request)
-
-    assert duplicate.value.code == ApiErrorCode.E_INVALID_REQUEST
-    reverse = object_links.CreateObjectLinkInput(
-        relation_type="related",
-        a=ObjectRef(object_type="note_block", object_id=block.id),
-        b=ObjectRef(object_type="page", object_id=page.id),
-    )
-    with pytest.raises(ApiError) as reverse_duplicate:
-        object_links.create_object_link(db_session, bootstrapped_user, reverse)
-
-    assert reverse_duplicate.value.code == ApiErrorCode.E_INVALID_REQUEST
-
-    located = object_links.CreateObjectLinkInput(
-        relation_type="related",
-        a=ObjectRef(object_type="page", object_id=page.id),
-        b=ObjectRef(object_type="note_block", object_id=block.id),
-        a_locator={"section": "intro"},
-        b_locator={"offset": 12},
-    )
-    first_located = object_links.create_object_link(db_session, bootstrapped_user, located)
-    second_located = object_links.create_object_link(db_session, bootstrapped_user, located)
-    assert first_located.id != second_located.id, "Located links may repeat for distinct anchors"
-    assert first_located.a_locator == {"section": "intro"}
-    assert first_located.b_locator == {"offset": 12}
-
-    references = object_links.create_object_link(
-        db_session,
-        bootstrapped_user,
-        object_links.CreateObjectLinkInput(
-            relation_type="references",
-            a=ObjectRef(object_type="page", object_id=page.id),
-            b=ObjectRef(object_type="note_block", object_id=block.id),
+        CreateNoteBlockRequest(
+            page_id=page.id,
+            body_pm_json=_paragraph_with_page_ref(first_target.id, "First target"),
+            linked_object=LinkedObjectRequest(object_id=highlight_id),
         ),
     )
-    with pytest.raises(ApiError) as update_duplicate:
-        object_links.update_object_link(
-            db_session,
-            bootstrapped_user,
-            references.id,
-            object_links.UpdateObjectLinkPatch(relation_type="related"),
-        )
-
-    assert update_duplicate.value.code == ApiErrorCode.E_INVALID_REQUEST
-    stored_relation = db_session.scalar(
-        select(ObjectLink.relation_type).where(ObjectLink.id == references.id)
-    )
-    assert stored_relation == "references"
-
-
-@pytest.mark.integration
-def test_object_link_reads_use_endpoint_order(db_session, bootstrapped_user):
-    page = notes.create_page(
+    block_ref = ResourceRef(scheme="note_block", id=block.id)
+    user_edge = create_edge(
         db_session,
-        bootstrapped_user,
-        CreatePageRequest(title=f"Endpoint order links {uuid4()}"),
-    )
-    first = notes.create_note_block(
-        db_session,
-        bootstrapped_user,
-        CreateNoteBlockRequest(page_id=page.id, body_markdown="first"),
-    )
-    second = notes.create_note_block(
-        db_session,
-        bootstrapped_user,
-        CreateNoteBlockRequest(page_id=page.id, body_markdown="second"),
-    )
-    db_session.add_all(
-        [
-            ObjectLink(
-                user_id=bootstrapped_user,
-                relation_type="related",
-                a_type="page",
-                a_id=page.id,
-                b_type="note_block",
-                b_id=first.id,
-                a_order_key="0000000002",
-                metadata_json={},
-            ),
-            ObjectLink(
-                user_id=bootstrapped_user,
-                relation_type="related",
-                a_type="page",
-                a_id=page.id,
-                b_type="note_block",
-                b_id=second.id,
-                a_order_key="0000000001",
-                metadata_json={},
-            ),
-        ]
+        viewer_id=bootstrapped_user,
+        input=EdgeCreate(
+            source=block_ref,
+            target=ResourceRef(scheme="page", id=second_target.id),
+            kind="context",
+            origin="user",
+        ),
     )
     db_session.commit()
+    assert _note_body_targets(db_session, bootstrapped_user, block.id) == {
+        f"page:{first_target.id}"
+    }
 
-    links = object_links.list_object_links(
-        db_session,
-        bootstrapped_user,
-        a_ref=ObjectRef(object_type="page", object_id=page.id),
-        relation_type="related",
-    )
-    backlink_links = object_links.list_object_links(
-        db_session,
-        bootstrapped_user,
-        object_ref=ObjectRef(object_type="page", object_id=page.id),
-        relation_type="related",
-    )
-
-    assert [link.b.object_id for link in links] == [second.id, first.id]
-    assert [link.b.object_id for link in backlink_links] == [second.id, first.id]
-
-
-@pytest.mark.integration
-def test_inline_reference_sync_skips_reverse_duplicate_link(db_session, bootstrapped_user):
-    page = notes.create_page(
-        db_session,
-        bootstrapped_user,
-        CreatePageRequest(title=f"Reverse inline refs {uuid4()}"),
-    )
-    target = notes.create_page(
-        db_session,
-        bootstrapped_user,
-        CreatePageRequest(title=f"Reverse inline target {uuid4()}"),
-    )
-    block = notes.create_note_block(
-        db_session,
-        bootstrapped_user,
-        CreateNoteBlockRequest(page_id=page.id, body_markdown="plain"),
-    )
-    db_session.add(
-        ObjectLink(
-            user_id=bootstrapped_user,
-            relation_type="references",
-            a_type="page",
-            a_id=target.id,
-            b_type="note_block",
-            b_id=block.id,
-            metadata_json={},
-        )
-    )
-    db_session.commit()
-
+    # Re-save with the body now pointing at second_target: the note_body set is
+    # replaced, but the bare pair block→second_target already exists under the
+    # user origin, so the connection stays single (owned by the user edge).
     notes.update_note_block(
         db_session,
         bootstrapped_user,
         block.id,
         UpdateNoteBlockRequest(
-            body_pm_json=_paragraph_with_page_ref(target.id, "Target"),
+            body_pm_json=_paragraph_with_page_ref(second_target.id, "Second target"),
         ),
     )
 
-    links = object_links.list_object_links(
-        db_session,
-        bootstrapped_user,
-        object_ref=ObjectRef(object_type="note_block", object_id=block.id),
-        relation_type="references",
+    assert _note_body_targets(db_session, bootstrapped_user, block.id) == set(), (
+        "the note_body insert must be skipped when the bare pair exists under origin=user"
     )
-    assert [(link.a.object_id, link.b.object_id) for link in links] == [(target.id, block.id)]
+    survivors = list_edges_for_ref(db_session, viewer_id=bootstrapped_user, ref=block_ref)
+    by_origin = {edge.origin: edge for edge in survivors}
+    assert by_origin["user"].id == user_edge.id, f"user link must survive body sync: {survivors}"
+    assert by_origin["highlight_note"].source.uri == f"highlight:{highlight_id}", (
+        f"highlight attachment must survive body sync: {survivors}"
+    )
+    assert len(survivors) == 2, f"body sync must not leak extra edges: {survivors}"
 
 
 @pytest.mark.integration
-def test_linked_note_blocks_for_highlights_reads_both_link_orientations(
+def test_highlight_note_attachment_round_trips_through_linked_note_blocks(
     db_session,
     bootstrapped_user,
 ):
-    page = notes.create_page(
-        db_session,
-        bootstrapped_user,
-        CreatePageRequest(title=f"Reverse highlight notes {uuid4()}"),
+    """Quick-note composer path: the attachment edge round-trips through
+    ``linked_note_blocks_for_highlights`` in creation order, and a body that
+    merely mentions the highlight is not an attachment (origin discrimination)."""
+    library_id = get_user_default_library(db_session, bootstrapped_user)
+    assert library_id is not None
+    media_id = create_test_media_in_library(
+        db_session, bootstrapped_user, library_id, title=f"Attachment media {uuid4()}"
     )
-    first = notes.create_note_block(
-        db_session,
-        bootstrapped_user,
-        CreateNoteBlockRequest(page_id=page.id, body_markdown="first note"),
-    )
+    fragment_id = create_test_fragment(db_session, media_id, "Quote for attachment round-trip")
+    highlight_id = create_test_highlight(db_session, bootstrapped_user, fragment_id)
+
+    first = notes.set_highlight_note_body(db_session, bootstrapped_user, highlight_id, "first note")
+    assert first is not None
     second = notes.create_note_block(
         db_session,
         bootstrapped_user,
-        CreateNoteBlockRequest(page_id=page.id, body_markdown="second note"),
+        CreateNoteBlockRequest(
+            body_markdown="second note",
+            linked_object=LinkedObjectRequest(object_id=highlight_id),
+        ),
     )
-    highlight_id = uuid4()
-    db_session.add_all(
-        [
-            ObjectLink(
-                user_id=bootstrapped_user,
-                relation_type="note_about",
-                a_type="highlight",
-                a_id=highlight_id,
-                b_type="note_block",
-                b_id=second.id,
-                a_order_key="0000000002",
-                metadata_json={},
-            ),
-            ObjectLink(
-                user_id=bootstrapped_user,
-                relation_type="note_about",
-                a_type="note_block",
-                a_id=first.id,
-                b_type="highlight",
-                b_id=highlight_id,
-                b_order_key="0000000001",
-                metadata_json={},
-            ),
-        ]
+    mention = notes.create_note_block(
+        db_session,
+        bootstrapped_user,
+        CreateNoteBlockRequest(
+            body_pm_json={
+                "type": "paragraph",
+                "content": [
+                    {"type": "text", "text": "Mentions "},
+                    {
+                        "type": "object_ref",
+                        "attrs": {
+                            "objectType": "highlight",
+                            "objectId": str(highlight_id),
+                            "label": "the quote",
+                        },
+                    },
+                ],
+            },
+        ),
     )
-    db_session.commit()
 
     linked = notes.linked_note_blocks_for_highlights(db_session, bootstrapped_user, [highlight_id])
-
-    assert [block.id for block in linked[highlight_id]] == [first.id, second.id]
+    assert [block.id for block in linked[highlight_id]] == [first.id, second.id], (
+        f"attachments must round-trip in creation order, got {linked}"
+    )
+    assert mention.id not in {block.id for block in linked[highlight_id]}, (
+        "a note_body mention must not read as an attachment (origin=note_body vs highlight_note)"
+    )
 
 
 @pytest.mark.integration
@@ -1267,20 +1174,12 @@ def test_split_note_block_preserves_rich_pm_json(db_session, bootstrapped_user):
             "label": "Source",
         },
     }
-    original_links = object_links.list_object_links(
-        db_session,
-        bootstrapped_user,
-        a_ref=ObjectRef(object_type="note_block", object_id=block.id),
-        relation_type="references",
+    assert _note_body_targets(db_session, bootstrapped_user, block.id) == set(), (
+        "Split should remove inline refs no longer present on original"
     )
-    new_links = object_links.list_object_links(
-        db_session,
-        bootstrapped_user,
-        a_ref=ObjectRef(object_type="note_block", object_id=new_block.id),
-        relation_type="references",
-    )
-    assert original_links == [], "Split should remove inline refs no longer present on original"
-    assert [link.b.object_id for link in new_links] == [target_page.id]
+    assert _note_body_targets(db_session, bootstrapped_user, new_block.id) == {
+        f"page:{target_page.id}"
+    }
 
 
 @pytest.mark.integration
@@ -1350,13 +1249,9 @@ def test_merge_note_block_preserves_rich_pm_json(db_session, bootstrapped_user):
             "label": "Source",
         },
     } in merged.body_pm_json["content"]
-    links = object_links.list_object_links(
-        db_session,
-        bootstrapped_user,
-        a_ref=ObjectRef(object_type="note_block", object_id=first.id),
-        relation_type="references",
-    )
-    assert [link.b.object_id for link in links] == [target_page.id]
+    assert _note_body_targets(db_session, bootstrapped_user, first.id) == {
+        f"page:{target_page.id}"
+    }, "Merge must move the absorbed block's body refs onto the surviving block"
 
 
 @pytest.mark.integration
@@ -1385,13 +1280,9 @@ def test_update_note_block_syncs_inline_reference_links(db_session, bootstrapped
         ),
     )
 
-    created_links = object_links.list_object_links(
-        db_session,
-        bootstrapped_user,
-        a_ref=ObjectRef(object_type="note_block", object_id=block.id),
-        relation_type="references",
-    )
-    assert [link.b.object_id for link in created_links] == [first_target.id]
+    assert _note_body_targets(db_session, bootstrapped_user, block.id) == {
+        f"page:{first_target.id}"
+    }
 
     notes.update_note_block(
         db_session,
@@ -1401,17 +1292,14 @@ def test_update_note_block_syncs_inline_reference_links(db_session, bootstrapped
             body_pm_json=_paragraph_with_page_ref(second_target.id, "Second target"),
         ),
     )
-    updated_links = object_links.list_object_links(
-        db_session,
-        bootstrapped_user,
-        a_ref=ObjectRef(object_type="note_block", object_id=block.id),
-        relation_type="references",
-    )
-    assert [link.b.object_id for link in updated_links] == [second_target.id]
+    assert _note_body_targets(db_session, bootstrapped_user, block.id) == {
+        f"page:{second_target.id}"
+    }, "body save must replace-set the note_body edges to the new body's targets"
 
 
 @pytest.mark.integration
-def test_inline_reference_sync_preserves_duplicate_occurrences(db_session, bootstrapped_user):
+def test_inline_reference_sync_dedups_repeated_refs_to_one_edge(db_session, bootstrapped_user):
+    """The same ref twice in one body is ONE edge — positions are not stored (§5.7)."""
     page = notes.create_page(
         db_session,
         bootstrapped_user,
@@ -1432,29 +1320,11 @@ def test_inline_reference_sync_preserves_duplicate_occurrences(db_session, boots
         ),
     )
 
-    links = object_links.list_object_links(
-        db_session,
-        bootstrapped_user,
-        a_ref=ObjectRef(object_type="note_block", object_id=block.id),
-        relation_type="references",
+    edges = _note_body_edges(db_session, bootstrapped_user, block.id)
+    assert [edge.target.uri for edge in edges] == [f"page:{target.id}"], (
+        f"a ref repeated in one body must produce exactly one edge, got {edges}"
     )
-
-    assert [link.b.object_id for link in links] == [target.id, target.id]
-    assert [link.a_locator for link in links] == [
-        {
-            "kind": "note_inline_object_ref",
-            "path": [0],
-            "occurrence": 0,
-            "target_occurrence": 0,
-        },
-        {
-            "kind": "note_inline_object_ref",
-            "path": [2],
-            "occurrence": 1,
-            "target_occurrence": 1,
-        },
-    ]
-    assert [link.b_locator for link in links] == [None, None]
+    assert edges[0].kind == "context" and edges[0].ordinal is None
 
 
 @pytest.mark.integration
@@ -1489,36 +1359,21 @@ def test_object_embed_block_syncs_embed_link(db_session, bootstrapped_user):
         ),
     )
 
-    link = db_session.scalar(
-        select(ObjectLink).where(
-            ObjectLink.relation_type == "embeds",
-            ObjectLink.a_type == "note_block",
-            ObjectLink.a_id == block.id,
-            ObjectLink.b_type == "page",
-            ObjectLink.b_id == target.id,
-        )
-    )
-
     assert block.body_text == "Embedded target"
     assert block.body_markdown == f"![[page:{target.id}|Embedded target]]"
-    assert link is not None
-    assert link.a_locator_json == {
-        "kind": "note_object_embed",
-        "path": [],
-        "occurrence": 0,
-        "target_occurrence": 0,
-    }
+    assert _note_body_targets(db_session, bootstrapped_user, block.id) == {f"page:{target.id}"}, (
+        "an object_embed body produces the same note_body edge as a ref (the verb died)"
+    )
 
 
 @pytest.mark.integration
-def test_notes_and_object_link_validation_through_api(auth_client, direct_db: DirectSessionManager):
+def test_notes_validation_through_api(auth_client, direct_db: DirectSessionManager):
     user_id = create_test_user_id()
     direct_db.register_cleanup("users", "id", user_id)
     direct_db.register_cleanup("libraries", "owner_user_id", user_id)
     direct_db.register_cleanup("memberships", "user_id", user_id)
     direct_db.register_cleanup("pages", "user_id", user_id)
     direct_db.register_cleanup("note_blocks", "user_id", user_id)
-    direct_db.register_cleanup("object_links", "user_id", user_id)
 
     headers = auth_headers(user_id)
     me_response = auth_client.get("/me", headers=headers)
@@ -1564,46 +1419,12 @@ def test_notes_and_object_link_validation_through_api(auth_client, direct_db: Di
     assert invalid_move.status_code == 400, invalid_move.text
     assert invalid_move.json()["error"]["code"] == ApiErrorCode.E_INVALID_REQUEST.value
 
-    first_link = auth_client.post(
-        "/object-links",
-        headers=headers,
-        json={
-            "relation_type": "related",
-            "a_type": "page",
-            "a_id": page_id,
-            "b_type": "note_block",
-            "b_id": child_id,
-        },
-    )
-    assert first_link.status_code == 201, first_link.text
-
-    duplicate_link = auth_client.post(
-        "/object-links",
-        headers=headers,
-        json={
-            "relation_type": "related",
-            "a_type": "page",
-            "a_id": page_id,
-            "b_type": "note_block",
-            "b_id": child_id,
-        },
-    )
-    assert duplicate_link.status_code == 400, duplicate_link.text
-    assert duplicate_link.json()["error"]["code"] == ApiErrorCode.E_INVALID_REQUEST.value
-
     invalid_object_ref_type = auth_client.get(
         f"/object-refs/resolve?ref=invalid_type:{page_id}",
         headers=headers,
     )
     assert invalid_object_ref_type.status_code == 400, invalid_object_ref_type.text
     assert invalid_object_ref_type.json()["error"]["code"] == ApiErrorCode.E_INVALID_REQUEST.value
-
-    invalid_object_link_type = auth_client.get(
-        f"/object-links?object_type=invalid_type&object_id={page_id}",
-        headers=headers,
-    )
-    assert invalid_object_link_type.status_code == 400, invalid_object_link_type.text
-    assert invalid_object_link_type.json()["error"]["code"] == ApiErrorCode.E_INVALID_REQUEST.value
 
 
 def _page_content_index_row_counts(db_session, page_id) -> dict[str, int]:

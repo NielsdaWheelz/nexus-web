@@ -323,13 +323,11 @@ describe("useConversation", () => {
   it("forwards reference_added events from the tail to the reference owner", async () => {
     const onReferenceAdded = vi.fn();
     const referenceAdded: SSEReferenceAddedEvent["data"] = {
-      reference_id: "ref-1",
+      id: "ref-1",
       conversation_id: "conversation-1",
-      resource_uri: "chunk:chunk-1",
+      resource_ref: "content_chunk:33333333-3333-4333-8333-333333333333",
       label: "Evidence chunk",
       summary: "Relevant context",
-      inline_body: "Evidence body",
-      fetch_hint: "inline",
       missing: false,
       created_at: timestamp,
     };
@@ -362,7 +360,7 @@ describe("useConversation", () => {
         return jsonResponse({ data: [], page: { next_cursor: null } });
       }
       if (
-        path === "/api/conversations/conversation-1/references" &&
+        path === "/api/conversations/conversation-1/context-refs" &&
         init?.method === "POST"
       ) {
         return jsonResponse({ data: { id: "ref-1" } });
@@ -370,10 +368,11 @@ describe("useConversation", () => {
       throw new Error(`Unexpected fetch: ${init?.method ?? "GET"} ${path}`);
     });
 
+    const mediaRef = "media:44444444-4444-4444-8444-444444444444";
     const { result } = renderHook(() =>
       useConversation({
         conversationId: "conversation-1",
-        initialReferences: ["media:media-1"],
+        initialReferences: [mediaRef],
         branching: false,
       }),
     );
@@ -389,12 +388,12 @@ describe("useConversation", () => {
     const refCall = fetchMock.mock.calls.find(
       ([input, init]) =>
         pathOf(input as RequestInfo | URL) ===
-          "/api/conversations/conversation-1/references" &&
+          "/api/conversations/conversation-1/context-refs" &&
         (init as RequestInit | undefined)?.method === "POST",
     );
     expect(refCall).toBeDefined();
     expect(JSON.parse((refCall?.[1] as RequestInit).body as string)).toEqual({
-      resource_uri: "media:media-1",
+      resource_ref: mediaRef,
     });
   });
 

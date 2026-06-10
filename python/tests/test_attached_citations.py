@@ -1,6 +1,6 @@
-"""Integration tests for S4 citation unification of attached ``<resources>``.
+"""Integration tests for citation unification of attached ``<resources>``.
 
-Covers the new behavior added in S4:
+Covers attached-resource citation behavior (resource provenance graph §5.2):
 
 - ``context_assembler._build_resources_block`` numbers an attached resource with
   ``n="…"`` only when ``_materialize_attached_citation`` resolves a durable
@@ -9,12 +9,14 @@ Covers the new behavior added in S4:
 - The dense ordinal (``n``) has no holes: only citable resources consume an ``n``.
 - ``chat_runs._persist_attached_citations`` writes ONE synthetic
   ``attached_resources`` parent tool-call plus one ``message_retrievals`` row per
-  citation (``citation_ordinal`` = 1..k, ``selected=true``,
-  ``retrieval_status='attached_context'``).
+  citation (``selected=true``, ``retrieval_status='attached_context'``), AND
+  records one ``origin='citation'`` resource edge per row (ordinal 1..k,
+  ``source = message:<assistant_message_id>``) with ``cited_edge_id`` pointing
+  back from the telemetry row.
 - ``chat_runs._persist_read_evidence_citation`` writes no row (returns None) when
   the read result has no materializable retrieval.
 
-Assertions go through the public service surface plus raw SQL reads of the two
+Assertions go through the public service surface plus raw SQL reads of the
 persisted tables, mirroring the style of ``test_read_resource_tool.py``.
 
 Isolation: the searchable-index setup and ``chat_runs._persist_attached_citations``
@@ -34,12 +36,13 @@ import pytest
 from sqlalchemy import text as sql_text
 from sqlalchemy.orm import Session
 
-from nexus.db.models import ChatRun, Fragment
+from nexus.db.models import ChatRun, Fragment, Message, ResourceEdge
 from nexus.errors import NotFoundError
 from nexus.services import chat_runs, context_assembler, search
 from nexus.services.agent_tools.read_resource import execute_read_resource
 from nexus.services.bootstrap import ensure_user_and_default_library
-from nexus.services.conversation_references import insert_reference_if_absent
+from nexus.services.resource_graph.context import add_context_ref_without_commit
+from nexus.services.resource_graph.refs import assert_resource_ref
 from tests.factories import (
     create_searchable_media,
     create_test_conversation,
@@ -50,7 +53,7 @@ from tests.factories import (
     get_user_default_library,
 )
 from tests.helpers import create_test_user_id
-from tests.test_resource_resolver import _make_highlight_with_anchor, _make_pdf
+from tests.test_resource_graph_resolve import _make_highlight_with_anchor, _make_pdf
 from tests.utils.db import DirectSessionManager
 
 pytestmark = pytest.mark.integration
@@ -83,7 +86,7 @@ def _register_user_cleanup(direct_db: DirectSessionManager, user_id: UUID) -> No
     direct_db.register_cleanup("users", "id", user_id)
     direct_db.register_cleanup("pages", "user_id", user_id)
     direct_db.register_cleanup("note_blocks", "user_id", user_id)
-    direct_db.register_cleanup("object_links", "user_id", user_id)
+    direct_db.register_cleanup("resource_edges", "user_id", user_id)
 
 
 def _register_media_cleanup(direct_db: DirectSessionManager, media_id: UUID) -> None:
@@ -104,10 +107,29 @@ def _register_highlight_cleanup(direct_db: DirectSessionManager, highlight_id: U
     direct_db.register_cleanup("highlight_fragment_anchors", "highlight_id", highlight_id)
 
 
-def _attach(db: Session, conversation_id: UUID, uri: str) -> None:
-    """Admit a reference row directly (mirrors the citation write-through path)."""
-    insert_reference_if_absent(db, conversation_id, uri)
+def _attach(db: Session, user_id: UUID, conversation_id: UUID, uri: str) -> None:
+    """Attach a resource as a conversation context edge (the user attach path)."""
+    add_context_ref_without_commit(
+        db,
+        viewer_id=user_id,
+        conversation_id=conversation_id,
+        target=assert_resource_ref(uri),
+        origin="user",
+    )
     db.commit()
+
+
+def _citation_edges(db: Session, assistant_message_id: UUID) -> list[ResourceEdge]:
+    return (
+        db.query(ResourceEdge)
+        .filter(
+            ResourceEdge.source_scheme == "message",
+            ResourceEdge.source_id == assistant_message_id,
+            ResourceEdge.origin == "citation",
+        )
+        .order_by(ResourceEdge.ordinal.asc())
+        .all()
+    )
 
 
 def _make_searchable_highlight(db: Session, user_id: UUID, *, title: str) -> tuple[UUID, UUID]:
@@ -181,7 +203,7 @@ def _retrievals_under(db: Session, tool_call_id: UUID) -> list:
     return (
         db.execute(
             sql_text(
-                "SELECT citation_ordinal, selected, retrieval_status, result_ref, "
+                "SELECT cited_edge_id, selected, retrieval_status, result_ref, "
                 "media_id, locator, result_type "
                 "FROM message_retrievals WHERE tool_call_id = :tcid ORDER BY ordinal"
             ),
@@ -245,7 +267,7 @@ def test_anchored_highlight_is_numbered_and_persists_valid_row(direct_db: Direct
         result = search.get_search_result(session, user_id, "highlight", str(highlight_id))
         assert result.type == "highlight"
 
-        _attach(session, conversation_id, uri)
+        _attach(session, user_id, conversation_id, uri)
 
         block, _metadata, citations, _revision_refs = context_assembler._build_resources_block(
             session, conversation_id=conversation_id, viewer_id=user_id
@@ -269,7 +291,6 @@ def test_anchored_highlight_is_numbered_and_persists_valid_row(direct_db: Direct
         rows = _retrievals_under(session, tool_call_id)
         assert len(rows) == 1, f"Expected one retrieval under the synthetic call; got {rows}"
         row = rows[0]
-        assert row["citation_ordinal"] == 1
         assert row["selected"] is True
         assert row["retrieval_status"] == "attached_context"
         assert row["result_type"] == "highlight"
@@ -278,8 +299,38 @@ def test_anchored_highlight_is_numbered_and_persists_valid_row(direct_db: Direct
         assert row["media_id"] is not None
         assert row["locator"] is not None
 
+        # The attached set is recorded as citation edges (dense 1..k) and the
+        # telemetry row points back at its edge.
+        edges = _citation_edges(session, run.assistant_message_id)
+        assert len(edges) == 1, f"Expected one citation edge; got {len(edges)}"
+        edge = edges[0]
+        assert edge.ordinal == 1
+        assert row["cited_edge_id"] == edge.id, (
+            f"Telemetry row must point at its citation edge; {row['cited_edge_id']} != {edge.id}"
+        )
+        assert (edge.target_scheme, edge.target_id) == ("media", media_id), (
+            "A media-anchored highlight citation targets its media; got "
+            f"{edge.target_scheme}:{edge.target_id}"
+        )
+        assert edge.snapshot is not None and edge.snapshot.get("result_type") == "highlight"
+
+        # The assistant message read-path rehydrates citations from edges (§5.2):
+        # a cold reload of the conversation shows the same [N] chips.
+        from nexus.services.conversation_branches import _message_outs_by_id
+
+        assistant = session.get(Message, run.assistant_message_id)
+        assert assistant is not None
+        rehydrated = _message_outs_by_id(session, user_id, [assistant])[run.assistant_message_id]
+        assert [c.ordinal for c in rehydrated.citations] == [1], (
+            f"assistant message GET must rehydrate its citation; got {rehydrated.citations}"
+        )
+        assert rehydrated.citations[0].target_ref.type == "media"
+
         chat_runs._persist_attached_citations(session, run, ())
         assert _tool_calls(session, run.assistant_message_id) == []
+        assert _citation_edges(session, run.assistant_message_id) == [], (
+            "Removing the attached set must delete its citation edges too"
+        )
 
     # Cleanups run LIFO. Register the durable parents (user, conversation, media,
     # highlight) FIRST so they delete LAST, then the chat-run + synthetic citation
@@ -318,7 +369,7 @@ def test_unanchored_highlight_is_not_numbered(direct_db: DirectSessionManager):
         with pytest.raises(NotFoundError):
             search.get_search_result(session, user_id, "highlight", str(highlight_id))
 
-        _attach(session, conversation_id, uri)
+        _attach(session, user_id, conversation_id, uri)
 
         block, _metadata, citations, _revision_refs = context_assembler._build_resources_block(
             session, conversation_id=conversation_id, viewer_id=user_id
@@ -365,9 +416,9 @@ def test_dense_ordinals_skip_uncitable_resources(direct_db: DirectSessionManager
         )
 
         # Attach in the order: searchable, un-anchored, searchable.
-        _attach(session, conversation_id, f"highlight:{first_id}")
-        _attach(session, conversation_id, f"highlight:{unanchored_id}")
-        _attach(session, conversation_id, f"highlight:{second_id}")
+        _attach(session, user_id, conversation_id, f"highlight:{first_id}")
+        _attach(session, user_id, conversation_id, f"highlight:{unanchored_id}")
+        _attach(session, user_id, conversation_id, f"highlight:{second_id}")
 
         block, _metadata, citations, _revision_refs = context_assembler._build_resources_block(
             session, conversation_id=conversation_id, viewer_id=user_id
@@ -398,6 +449,67 @@ def test_dense_ordinals_skip_uncitable_resources(direct_db: DirectSessionManager
 
 
 # =============================================================================
+# C2. Re-execution with FEWER citations leaves no phantom citation edge.
+# =============================================================================
+
+
+def test_reexecution_with_fewer_citations_prunes_phantom_edges(direct_db: DirectSessionManager):
+    """A second ``_persist_attached_citations`` with fewer citations must trim the
+    over-count telemetry rows AND the citation edges they cited; a pruned row's
+    edge would otherwise survive as a phantom ``[N]`` chip (resource provenance
+    graph: telemetry pruning and edge cleanup are one owner)."""
+    with direct_db.session() as session:
+        user_id = _bootstrap_user(session)
+        conversation_id = create_test_conversation(session, user_id)
+        first_media, first_id = _make_searchable_highlight(session, user_id, title="First")
+        second_media, second_id = _make_searchable_highlight(session, user_id, title="Second")
+        _attach(session, user_id, conversation_id, f"highlight:{first_id}")
+        _attach(session, user_id, conversation_id, f"highlight:{second_id}")
+
+        _block, _metadata, both, _revision_refs = context_assembler._build_resources_block(
+            session, conversation_id=conversation_id, viewer_id=user_id
+        )
+        assert len(both) == 2
+
+        run = _make_chat_run(session, conversation_id, user_id)
+        chat_runs._persist_attached_citations(session, run, both)
+        edges = _citation_edges(session, run.assistant_message_id)
+        assert [edge.ordinal for edge in edges] == [1, 2], (
+            f"Both attached highlights cite their media; got {[e.ordinal for e in edges]}"
+        )
+        tool_call_id, _name, _idx = _tool_calls(session, run.assistant_message_id)[0]
+        rows = _retrievals_under(session, tool_call_id)
+        assert all(row["cited_edge_id"] is not None for row in rows)
+
+        # Re-execute with only the FIRST citation. The second row (ordinal 1,
+        # 0-based) is pruned; its cited_edge_id still points at edge ordinal 2.
+        chat_runs._persist_attached_citations(session, run, (both[0],))
+
+        surviving = _citation_edges(session, run.assistant_message_id)
+        assert [edge.ordinal for edge in surviving] == [1], (
+            f"The pruned row's phantom citation edge must be deleted; got "
+            f"{[(e.ordinal, e.target_scheme, e.target_id) for e in surviving]}"
+        )
+        assert (surviving[0].target_scheme, surviving[0].target_id) == ("media", first_media)
+        remaining_rows = _retrievals_under(session, tool_call_id)
+        assert len(remaining_rows) == 1, (
+            f"Only one telemetry row should survive; got {remaining_rows}"
+        )
+        assert remaining_rows[0]["cited_edge_id"] == surviving[0].id
+
+    _register_user_cleanup(direct_db, user_id)
+    direct_db.register_cleanup("conversations", "id", conversation_id)
+    direct_db.register_cleanup("conversation_media", "conversation_id", conversation_id)
+    _register_media_cleanup(direct_db, first_media)
+    _register_media_cleanup(direct_db, second_media)
+    _register_highlight_cleanup(direct_db, first_id)
+    _register_highlight_cleanup(direct_db, second_id)
+    direct_db.register_cleanup("chat_runs", "id", run.id)
+    direct_db.register_cleanup("message_retrievals", "tool_call_id", tool_call_id)
+    direct_db.register_cleanup("message_tool_calls", "id", tool_call_id)
+
+
+# =============================================================================
 # D. read_resource highlight with materializable retrieval → next n.
 # =============================================================================
 
@@ -412,7 +524,7 @@ def test_read_evidence_with_materializable_retrieval_persists_next_ordinal(
             session, user_id, title="Readable Anchored Source"
         )
         uri = f"highlight:{highlight_id}"
-        _attach(session, conversation_id, uri)
+        _attach(session, user_id, conversation_id, uri)
 
         result = execute_read_resource(
             session, viewer_id=user_id, conversation_id=conversation_id, uri=uri
@@ -421,47 +533,19 @@ def test_read_evidence_with_materializable_retrieval_persists_next_ordinal(
         assert result.kind == "quote"
         assert result.citation_result_type == "highlight"
 
-        user_message_id = create_test_message(
-            session, conversation_id, seq=1, role="user", content="Read the source"
-        )
-        assistant_message_id = create_test_message(
+        run = _make_chat_run(session, conversation_id, user_id)
+        tool_call_id = _insert_read_tool_call(
             session,
-            conversation_id,
-            seq=2,
-            role="assistant",
-            content="",
-            status="pending",
-            parent_message_id=user_message_id,
+            conversation_id=conversation_id,
+            user_message_id=run.user_message_id,
+            assistant_message_id=run.assistant_message_id,
+            tool_call_index=1,
         )
-        tool_call_id = session.execute(
-            sql_text(
-                """
-                INSERT INTO message_tool_calls (
-                    conversation_id, user_message_id, assistant_message_id,
-                    tool_name, tool_call_index,
-                    scope, requested_types, result_refs, selected_context_refs,
-                    provider_request_ids, status
-                )
-                VALUES (
-                    :conversation_id, :user_message_id, :assistant_message_id,
-                    'read_resource', 1,
-                    'read_resource', '[]'::jsonb, '[]'::jsonb, '[]'::jsonb,
-                    '[]'::jsonb, 'complete'
-                )
-                RETURNING id
-                """
-            ),
-            {
-                "conversation_id": conversation_id,
-                "user_message_id": user_message_id,
-                "assistant_message_id": assistant_message_id,
-            },
-        ).scalar_one()
         session.commit()
 
         n = chat_runs._persist_read_evidence_citation(
             session,
-            viewer_id=user_id,
+            run=run,
             tool_call_id=tool_call_id,
             result=result,
             start_ordinal=5,
@@ -469,15 +553,26 @@ def test_read_evidence_with_materializable_retrieval_persists_next_ordinal(
         assert n == 5
         rows = _retrievals_under(session, tool_call_id)
         assert len(rows) == 1, f"Expected one read retrieval row; got {rows}"
-        assert rows[0]["citation_ordinal"] == 5
         assert rows[0]["result_type"] == "highlight"
         assert rows[0]["locator"] is not None
+        edges = _citation_edges(session, run.assistant_message_id)
+        assert len(edges) == 1, f"Read evidence must record one citation edge; got {len(edges)}"
+        assert edges[0].ordinal == 5, (
+            f"The edge ordinal is the read's turn-global n; got {edges[0].ordinal}"
+        )
+        assert rows[0]["cited_edge_id"] == edges[0].id
+        assert (edges[0].target_scheme, edges[0].target_id) == ("media", media_id), (
+            f"Highlight evidence cites its media; got {edges[0].target_scheme}"
+        )
 
     _register_user_cleanup(direct_db, user_id)
     direct_db.register_cleanup("conversations", "id", conversation_id)
     direct_db.register_cleanup("conversation_media", "conversation_id", conversation_id)
     _register_media_cleanup(direct_db, media_id)
     _register_highlight_cleanup(direct_db, highlight_id)
+    direct_db.register_cleanup("chat_runs", "id", run.id)
+    direct_db.register_cleanup("message_retrievals", "tool_call_id", tool_call_id)
+    direct_db.register_cleanup("message_tool_calls", "id", tool_call_id)
 
 
 def test_read_evidence_section_full_and_page_range_persist_citations(
@@ -498,8 +593,8 @@ def test_read_evidence_section_full_and_page_range_persist_citations(
         assert fragment is not None, "create_searchable_media should produce a fragment"
         fragment_id = fragment.id
         pdf_media_id = _make_pdf(session, library_id, pages=["PDF page one. "])
-        _attach(session, conversation_id, f"media:{media_id}")
-        _attach(session, conversation_id, f"media:{pdf_media_id}")
+        _attach(session, user_id, conversation_id, f"media:{media_id}")
+        _attach(session, user_id, conversation_id, f"media:{pdf_media_id}")
 
         reads = [
             execute_read_resource(
@@ -524,31 +619,21 @@ def test_read_evidence_section_full_and_page_range_persist_citations(
         assert [read.kind for read in reads] == ["section", "full", "page_range"]
         assert [read.citation_result_type for read in reads] == ["fragment", "media", "media"]
 
-        user_message_id = create_test_message(
-            session, conversation_id, seq=1, role="user", content="Read these"
-        )
-        assistant_message_id = create_test_message(
-            session,
-            conversation_id,
-            seq=2,
-            role="assistant",
-            content="",
-            status="pending",
-            parent_message_id=user_message_id,
-        )
+        run = _make_chat_run(session, conversation_id, user_id)
+        expected_target_media = [media_id, media_id, pdf_media_id]
         tool_call_ids: list[UUID] = []
         for offset, read in enumerate(reads):
             tool_call_id = _insert_read_tool_call(
                 session,
                 conversation_id=conversation_id,
-                user_message_id=user_message_id,
-                assistant_message_id=assistant_message_id,
+                user_message_id=run.user_message_id,
+                assistant_message_id=run.assistant_message_id,
                 tool_call_index=offset + 1,
             )
             tool_call_ids.append(tool_call_id)
             n = chat_runs._persist_read_evidence_citation(
                 session,
-                viewer_id=user_id,
+                run=run,
                 tool_call_id=tool_call_id,
                 result=read,
                 start_ordinal=10 + offset,
@@ -556,15 +641,26 @@ def test_read_evidence_section_full_and_page_range_persist_citations(
             assert n == 10 + offset
             rows = _retrievals_under(session, tool_call_id)
             assert len(rows) == 1
-            assert rows[0]["citation_ordinal"] == 10 + offset
             assert rows[0]["result_type"] == read.citation_result_type
             assert rows[0]["locator"] is not None or read.citation_result_type == "media"
+            assert rows[0]["cited_edge_id"] is not None, (
+                f"Read evidence rows must point at their citation edge; got {rows[0]}"
+            )
+
+        edges = _citation_edges(session, run.assistant_message_id)
+        assert [edge.ordinal for edge in edges] == [10, 11, 12], (
+            f"Each read consumes its own turn-global n; got {[edge.ordinal for edge in edges]}"
+        )
+        assert [(edge.target_scheme, edge.target_id) for edge in edges] == [
+            ("media", target) for target in expected_target_media
+        ], "Section/full/page_range evidence cites the anchoring media"
 
     _register_user_cleanup(direct_db, user_id)
     direct_db.register_cleanup("conversations", "id", conversation_id)
     direct_db.register_cleanup("conversation_media", "conversation_id", conversation_id)
     _register_media_cleanup(direct_db, media_id)
     _register_media_cleanup(direct_db, pdf_media_id)
+    direct_db.register_cleanup("chat_runs", "id", run.id)
     for tool_call_id in tool_call_ids:
         direct_db.register_cleanup("message_retrievals", "tool_call_id", tool_call_id)
         direct_db.register_cleanup("message_tool_calls", "id", tool_call_id)
@@ -588,7 +684,7 @@ def test_read_evidence_without_materializable_retrieval_persists_nothing(
         )
         highlight_id = _make_highlight_with_anchor(session, user_id, media_id)
         uri = f"highlight:{highlight_id}"
-        _attach(session, conversation_id, uri)
+        _attach(session, user_id, conversation_id, uri)
 
         result = execute_read_resource(
             session, viewer_id=user_id, conversation_id=conversation_id, uri=uri
@@ -598,49 +694,19 @@ def test_read_evidence_without_materializable_retrieval_persists_nothing(
         assert result.citation_result_type == "highlight"
 
         # A read tool-call to host any retrieval rows the evidence-citation would write.
-        # The assistant message needs a user parent to satisfy
-        # ``ck_messages_parent_role_shape`` (assistant rows require parent_message_id).
-        user_message_id = create_test_message(
-            session, conversation_id, seq=1, role="user", content="Read the source"
-        )
-        assistant_message_id = create_test_message(
+        run = _make_chat_run(session, conversation_id, user_id)
+        tool_call_id = _insert_read_tool_call(
             session,
-            conversation_id,
-            seq=2,
-            role="assistant",
-            content="",
-            status="pending",
-            parent_message_id=user_message_id,
+            conversation_id=conversation_id,
+            user_message_id=run.user_message_id,
+            assistant_message_id=run.assistant_message_id,
+            tool_call_index=1,
         )
-        tool_call_id = session.execute(
-            sql_text(
-                """
-                INSERT INTO message_tool_calls (
-                    conversation_id, user_message_id, assistant_message_id,
-                    tool_name, tool_call_index,
-                    scope, requested_types, result_refs, selected_context_refs,
-                    provider_request_ids, status
-                )
-                VALUES (
-                    :conversation_id, :user_message_id, :assistant_message_id,
-                    'read_resource', 1,
-                    'read_resource', '[]'::jsonb, '[]'::jsonb, '[]'::jsonb,
-                    '[]'::jsonb, 'complete'
-                )
-                RETURNING id
-                """
-            ),
-            {
-                "conversation_id": conversation_id,
-                "user_message_id": user_message_id,
-                "assistant_message_id": assistant_message_id,
-            },
-        ).scalar_one()
         session.commit()
 
         n = chat_runs._persist_read_evidence_citation(
             session,
-            viewer_id=user_id,
+            run=run,
             tool_call_id=tool_call_id,
             result=result,
             start_ordinal=5,
@@ -649,9 +715,14 @@ def test_read_evidence_without_materializable_retrieval_persists_nothing(
 
         rows = _retrievals_under(session, tool_call_id)
         assert rows == [], f"No retrieval row should be written for an un-anchored read; got {rows}"
+        assert _citation_edges(session, run.assistant_message_id) == [], (
+            "No retrieval row → no citation edge"
+        )
 
     _register_user_cleanup(direct_db, user_id)
     direct_db.register_cleanup("conversations", "id", conversation_id)
     direct_db.register_cleanup("conversation_media", "conversation_id", conversation_id)
     _register_media_cleanup(direct_db, media_id)
     _register_highlight_cleanup(direct_db, highlight_id)
+    direct_db.register_cleanup("chat_runs", "id", run.id)
+    direct_db.register_cleanup("message_tool_calls", "id", tool_call_id)

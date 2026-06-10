@@ -14,14 +14,15 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from tests.factories import (
-    add_media_to_library as add_media_entry_to_library,
-)
-from tests.factories import (
+    add_context_edge,
     create_epub_chapter_fragment,
     create_epub_media_in_library,
     create_pdf_media_with_text,
     create_searchable_media,
     get_user_default_library,
+)
+from tests.factories import (
+    add_media_to_library as add_media_entry_to_library,
 )
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
@@ -126,7 +127,6 @@ def create_linked_highlight_note(
             "linked_object": {
                 "object_type": "highlight",
                 "object_id": highlight_id,
-                "relation_type": "note_about",
             },
         },
         headers=auth_headers(user_id),
@@ -289,7 +289,7 @@ class TestListHighlights:
 
         direct_db.register_cleanup("pages", "user_id", user_id)
         direct_db.register_cleanup("note_blocks", "user_id", user_id)
-        direct_db.register_cleanup("object_links", "user_id", user_id)
+        direct_db.register_cleanup("resource_edges", "user_id", user_id)
         register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
@@ -524,7 +524,7 @@ class TestDeleteHighlight:
 
         direct_db.register_cleanup("pages", "user_id", user_id)
         direct_db.register_cleanup("note_blocks", "user_id", user_id)
-        direct_db.register_cleanup("object_links", "user_id", user_id)
+        direct_db.register_cleanup("resource_edges", "user_id", user_id)
         register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
@@ -558,16 +558,17 @@ class TestDeleteHighlight:
         assert get_resp.status_code == 404
 
         with direct_db.session() as session:
-            link_count = session.execute(
+            edge_count = session.execute(
                 text("""
                     SELECT COUNT(*)
-                    FROM object_links
-                    WHERE (a_type = 'highlight' AND a_id = :highlight_id)
-                       OR (b_type = 'highlight' AND b_id = :highlight_id)
+                    FROM resource_edges
+                    WHERE ordinal IS NULL
+                      AND ((source_scheme = 'highlight' AND source_id = :highlight_id)
+                        OR (target_scheme = 'highlight' AND target_id = :highlight_id))
                 """),
                 {"highlight_id": UUID(highlight_id)},
             ).scalar_one()
-        assert link_count == 0
+        assert edge_count == 0, "highlight delete must clean its bare edges (graph cleanup rule 2)"
 
 
 # =============================================================================
@@ -819,7 +820,7 @@ class TestLinkedHighlightNotes:
 
         direct_db.register_cleanup("pages", "user_id", user_id)
         direct_db.register_cleanup("note_blocks", "user_id", user_id)
-        direct_db.register_cleanup("object_links", "user_id", user_id)
+        direct_db.register_cleanup("resource_edges", "user_id", user_id)
         register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
@@ -886,7 +887,7 @@ class TestLinkedHighlightNotes:
 
         direct_db.register_cleanup("pages", "user_id", user_id)
         direct_db.register_cleanup("note_blocks", "user_id", user_id)
-        direct_db.register_cleanup("object_links", "user_id", user_id)
+        direct_db.register_cleanup("resource_edges", "user_id", user_id)
 
         note_resp = create_linked_highlight_note(auth_client, user_id, highlight_id, "")
         assert note_resp.status_code == 201
@@ -1490,7 +1491,7 @@ class TestHighlightSharedRead:
 
         direct_db.register_cleanup("pages", "user_id", user_b)
         direct_db.register_cleanup("note_blocks", "user_id", user_b)
-        direct_db.register_cleanup("object_links", "user_id", user_b)
+        direct_db.register_cleanup("resource_edges", "user_id", user_b)
         register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("library_entries", "library_id", lib_id)
         direct_db.register_cleanup("memberships", "library_id", lib_id)
@@ -2098,7 +2099,7 @@ class TestListMediaHighlights:
 
         direct_db.register_cleanup("pages", "user_id", user_id)
         direct_db.register_cleanup("note_blocks", "user_id", user_id)
-        direct_db.register_cleanup("object_links", "user_id", user_id)
+        direct_db.register_cleanup("resource_edges", "user_id", user_id)
         register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
@@ -2124,18 +2125,9 @@ class TestListMediaHighlights:
                 """),
                 {"id": conversation_id, "owner_user_id": user_id},
             )
-            session.execute(
-                text("""
-                    INSERT INTO conversation_references (conversation_id, resource_uri)
-                    VALUES (:conversation_id, :resource_uri)
-                """),
-                {
-                    "conversation_id": conversation_id,
-                    "resource_uri": f"highlight:{highlight_id}",
-                },
-            )
+            add_context_edge(session, conversation_id, f"highlight:{highlight_id}")
             session.commit()
-        direct_db.register_cleanup("conversation_references", "conversation_id", conversation_id)
+        direct_db.register_cleanup("resource_edges", "source_id", conversation_id)
         direct_db.register_cleanup("conversations", "id", conversation_id)
 
         resp = auth_client.get(

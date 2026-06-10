@@ -37,10 +37,11 @@ from nexus.services import media_intelligence
 from nexus.services.contributor_taxonomy import normalize_contributor_role
 from nexus.services.contributors import get_contributor_by_handle
 from nexus.services.media_intelligence import MediaUnit
-from nexus.services.resource_resolver import (
-    SEARCH_SCOPE_RESOURCE_URI_SCHEMES,
-    ResourceUriParseFailure,
-    parse_resource_uri,
+from nexus.services.resource_graph.context import search_scope_refs_for_conversation
+from nexus.services.resource_graph.refs import (
+    SEARCH_SCOPE_SCHEMES,
+    ResourceRefParseFailure,
+    parse_resource_ref,
 )
 from nexus.services.retrieval_citation import (
     RetrievalCitation,
@@ -312,25 +313,18 @@ def _resolve_scope_uris(
 ) -> list[str]:
     """Validate and return scope URIs for the search.
 
-    Empty input: returns the conversation's media/library reference URIs.
-    Non-empty input: validates each URI is a media:/library: reference of the
+    Empty input: returns the conversation's media/library context URIs.
+    Non-empty input: validates each URI is a media:/library: context ref of the
     conversation; raises InvalidScopeError otherwise.
     """
-    reference_rows = db.execute(
-        text(
-            """
-            SELECT resource_uri
-            FROM conversation_references
-            WHERE conversation_id = :conversation_id
-            """
-        ),
-        {"conversation_id": conversation_id},
-    ).fetchall()
-    reference_uris = {row[0] for row in reference_rows}
+    scope_uris = [
+        ref.uri for ref in search_scope_refs_for_conversation(db, conversation_id=conversation_id)
+    ]
 
     if not scopes:
-        return [uri for uri in reference_uris if _is_search_scope_uri(uri)]
+        return scope_uris
 
+    allowed = set(scope_uris)
     resolved: list[str] = []
     seen: set[str] = set()
     for raw in scopes:
@@ -339,25 +333,14 @@ def _resolve_scope_uris(
             raise InvalidScopeError("app_search scopes must be non-empty URI strings")
         if uri in seen:
             continue
-        parsed = parse_resource_uri(uri)
-        if (
-            isinstance(parsed, ResourceUriParseFailure)
-            or parsed.scheme not in SEARCH_SCOPE_RESOURCE_URI_SCHEMES
-        ):
+        parsed = parse_resource_ref(uri)
+        if isinstance(parsed, ResourceRefParseFailure) or parsed.scheme not in SEARCH_SCOPE_SCHEMES:
             raise InvalidScopeError(f"scope must be 'media:UUID' or 'library:UUID': {uri}")
-        if uri not in reference_uris:
-            raise InvalidScopeError(f"scope must be in conversation references: {uri}")
+        if uri not in allowed:
+            raise InvalidScopeError(f"scope must be in conversation context: {uri}")
         seen.add(uri)
         resolved.append(uri)
     return resolved
-
-
-def _is_search_scope_uri(uri: str) -> bool:
-    parsed = parse_resource_uri(uri)
-    return (
-        not isinstance(parsed, ResourceUriParseFailure)
-        and parsed.scheme in SEARCH_SCOPE_RESOURCE_URI_SCHEMES
-    )
 
 
 # Result types whose evidence lives in content_chunks (media-owned or page-owned), so a
@@ -703,31 +686,12 @@ def persist_app_search_run(db: Session, run: AppSearchRun) -> None:
             },
         )
         persisted_count = ordinal + 1
-    db.execute(
-        text(
-            """
-            UPDATE message_retrieval_candidate_ledgers
-            SET retrieval_id = NULL
-            WHERE retrieval_id IN (
-                SELECT id
-                FROM message_retrievals
-                WHERE tool_call_id = :tool_call_id
-                  AND ordinal >= :persisted_count
-            )
-            """
-        ),
-        {"tool_call_id": tool_call_id, "persisted_count": persisted_count},
-    )
-    db.execute(
-        text(
-            """
-            DELETE FROM message_retrievals
-            WHERE tool_call_id = :tool_call_id
-              AND ordinal >= :persisted_count
-            """
-        ),
-        {"tool_call_id": tool_call_id, "persisted_count": persisted_count},
-    )
+    # Trim over-count rows from a previous attempt, cleaning their citation edges
+    # too. Deferred import: chat_runs imports this module, so the chat-run-owned
+    # prune owner is reached lazily to break the cycle.
+    from nexus.services.chat_runs import prune_tool_call_retrievals
+
+    prune_tool_call_retrievals(db, tool_call_id=tool_call_id, min_ordinal=persisted_count)
     db.execute(
         text(
             """

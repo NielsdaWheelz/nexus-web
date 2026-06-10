@@ -6,11 +6,15 @@ import {
 } from "@/lib/api/sse/locators";
 
 export type CitationRole = "supports" | "contradicts" | "context";
+// The closed set of citation-edge target schemes that render as chips, mirroring
+// the backend `nexus.schemas.citation.CitationTargetType`.
 export type CitationTargetType =
   | "evidence_span"
   | "content_chunk"
   | "media"
-  | "web_result";
+  | "note_block"
+  | "external_snapshot"
+  | "oracle_corpus_passage";
 
 export interface CitationTargetRef {
   type: CitationTargetType;
@@ -21,8 +25,6 @@ export interface CitationSnapshot {
   title?: string | null;
   excerpt?: string | null;
   section_label?: string | null;
-  /** Per-media abstract from media_summaries; populated by the chat/search citation path, not by library-intelligence. */
-  summary_md?: string | null;
   result_type?: string | null;
 }
 
@@ -47,7 +49,9 @@ const CITATION_TARGET_TYPES = new Set<CitationTargetType>([
   "evidence_span",
   "content_chunk",
   "media",
-  "web_result",
+  "note_block",
+  "external_snapshot",
+  "oracle_corpus_passage",
 ]);
 
 function isCitationTargetRef(value: unknown): value is CitationTargetRef {
@@ -67,13 +71,11 @@ function isCitationSnapshot(value: unknown): value is CitationSnapshot {
       "title",
       "excerpt",
       "section_label",
-      "summary_md",
       "result_type",
     ]) &&
     isOptionalString(value.title) &&
     isOptionalString(value.excerpt) &&
     isOptionalString(value.section_label) &&
-    isOptionalString(value.summary_md) &&
     isOptionalString(value.result_type)
   );
 }

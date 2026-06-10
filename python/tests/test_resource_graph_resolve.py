@@ -1,10 +1,10 @@
-"""Integration tests for the URI-based resource resolver.
+"""Integration tests for ``resource_graph.resolve`` (the per-scheme hydration owner).
 
-Covers one happy-path and one permission/missing-path test per scheme that
-takes a UUID identifier in the resolver's dispatch table. Assertions go
-through the service surface (``resolve`` / ``resolve_batch``) rather than
-raw SQL so the resolver's permission and inline-threshold behavior is part
-of the contract under test.
+Covers one happy-path and one permission/missing-path test per scheme in the
+loader dispatch. Assertions go through the service surface (``resolve_refs``)
+rather than raw SQL so each scheme's permission and inline-threshold behavior
+is part of the contract under test. Ref-grammar rejection lives in the pure
+unit tests (``test_resource_graph_refs``).
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 from nexus.db.models import (
+    Contributor,
     EvidenceSpan,
     Fragment,
     Highlight,
@@ -23,16 +24,23 @@ from nexus.db.models import (
     MediaKind,
     Message,
     NoteBlock,
+    OracleCorpusPassage,
+    OracleCorpusWork,
+    OracleReading,
     Page,
     PdfPageTextSpan,
+    Podcast,
+    PodcastSubscription,
     ProcessingStatus,
+    ResourceExternalSnapshot,
 )
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.contributor_credits import replace_media_contributor_credits
-from nexus.services.resource_resolver import (
+from nexus.services.resource_graph.refs import assert_resource_ref
+from nexus.services.resource_graph.resolve import (
     INLINE_THRESHOLD_CHARS,
-    resolve,
-    resolve_batch,
+    ResolvedResource,
+    resolve_refs,
 )
 from tests.factories import (
     add_media_to_library,
@@ -44,6 +52,14 @@ from tests.factories import (
 )
 
 pytestmark = pytest.mark.integration
+
+
+def _resolve(db: Session, uri: str, *, viewer_id: UUID) -> ResolvedResource:
+    return resolve_refs(db, viewer_id=viewer_id, refs=[assert_resource_ref(uri)])[0]
+
+
+def _resolve_batch(db: Session, uris: list[str], *, viewer_id: UUID) -> list[ResolvedResource]:
+    return resolve_refs(db, viewer_id=viewer_id, refs=[assert_resource_ref(u) for u in uris])
 
 
 # =============================================================================
@@ -276,10 +292,12 @@ def _make_oracle_reading(
     argument: str = "Of the lamp kept burning through the closed forest.",
     interpretation: str = "I saw a road bending into shadow.",
 ) -> UUID:
-    """Create one completed oracle reading + its three phase passages.
+    """Create one completed oracle reading.
 
-    The loader reads question/motto/argument/passages/interpretation_text and
-    gates on ``user_id == viewer_id``; this raw insert is sufficient.
+    The cutover loader reads question/motto/argument/interpretation_text from the
+    reading row and gates on ``user_id == viewer_id``; the per-phase passages now
+    live on the reading's citation edges (``oracle_reading_folios``), not in the
+    readable body, so this raw reading insert is sufficient.
     """
     from sqlalchemy import text as sql_text
 
@@ -304,26 +322,6 @@ def _make_oracle_reading(
             "interpretation": interpretation,
         },
     ).scalar_one()
-    for phase, snippet in (
-        ("descent", "the ground falls away"),
-        ("ordeal", "the soul wrestles at the threshold"),
-        ("ascent", "the breaking through into dawn"),
-    ):
-        db.execute(
-            sql_text(
-                """
-                INSERT INTO oracle_reading_passages (
-                    reading_id, phase, source_kind, exact_snippet, locator_label,
-                    attribution_text, marginalia_text
-                )
-                VALUES (
-                    :reading_id, :phase, 'public_domain', :snippet, :phase,
-                    'A canonical work.', 'A short marginalia note.'
-                )
-                """
-            ),
-            {"reading_id": reading_id, "phase": phase, "snippet": snippet},
-        )
     db.commit()
     return UUID(str(reading_id))
 
@@ -352,7 +350,7 @@ def test_resolve_media_returns_label_summary_and_pointer_only_body(
     )
     db_session.commit()
 
-    resolved = resolve(db_session, f"media:{media_id}", viewer_id=bootstrapped_user)
+    resolved = _resolve(db_session, f"media:{media_id}", viewer_id=bootstrapped_user)
 
     assert not resolved.missing, f"Expected resolved media to be visible, got {resolved}"
     assert resolved.uri == f"media:{media_id}", (
@@ -375,7 +373,7 @@ def test_resolve_media_returns_label_summary_and_pointer_only_body(
 
 
 def test_resolve_media_unknown_id_returns_missing(db_session: Session, bootstrapped_user: UUID):
-    resolved = resolve(db_session, f"media:{uuid4()}", viewer_id=bootstrapped_user)
+    resolved = _resolve(db_session, f"media:{uuid4()}", viewer_id=bootstrapped_user)
     assert resolved.missing, (
         f"Unknown media URI must resolve as missing, got missing={resolved.missing}"
     )
@@ -390,7 +388,7 @@ def test_resolve_media_no_permission_returns_missing(db_session: Session, bootst
         db_session, other_user_id, other_library_id, title="Private Doc"
     )
 
-    resolved = resolve(db_session, f"media:{private_media_id}", viewer_id=bootstrapped_user)
+    resolved = _resolve(db_session, f"media:{private_media_id}", viewer_id=bootstrapped_user)
 
     assert resolved.missing, (
         f"Viewer without media permission must see missing=True; got {resolved}"
@@ -402,7 +400,7 @@ def test_resolve_library_member_returns_summary_pointer(
 ):
     library_id = create_test_library(db_session, bootstrapped_user, "Reading List")
 
-    resolved = resolve(db_session, f"library:{library_id}", viewer_id=bootstrapped_user)
+    resolved = _resolve(db_session, f"library:{library_id}", viewer_id=bootstrapped_user)
 
     assert not resolved.missing, f"Expected member to resolve library, got missing={resolved}"
     assert resolved.label == "Reading List", (
@@ -419,7 +417,7 @@ def test_resolve_library_non_member_returns_missing(db_session: Session, bootstr
     ensure_user_and_default_library(db_session, other_user_id)
     other_library_id = create_test_library(db_session, other_user_id, "Closed Library")
 
-    resolved = resolve(db_session, f"library:{other_library_id}", viewer_id=bootstrapped_user)
+    resolved = _resolve(db_session, f"library:{other_library_id}", viewer_id=bootstrapped_user)
 
     assert resolved.missing, "Non-member must see library as missing"
 
@@ -435,7 +433,7 @@ def test_resolve_li_artifact_promoted_inlines_current_revision(
         content_md="Overview line.\nThe library covers X and Y [1].",
     )
 
-    resolved = resolve(
+    resolved = _resolve(
         db_session, f"library_intelligence_artifact:{artifact_id}", viewer_id=bootstrapped_user
     )
 
@@ -462,7 +460,7 @@ def test_resolve_li_artifact_long_body_not_inlined(db_session: Session, bootstra
         db_session, library_id, bootstrapped_user, content_md=long_content
     )
 
-    resolved = resolve(
+    resolved = _resolve(
         db_session, f"library_intelligence_artifact:{artifact_id}", viewer_id=bootstrapped_user
     )
 
@@ -480,7 +478,7 @@ def test_resolve_li_artifact_no_current_revision_is_present_no_inline(
     library_id = create_test_library(db_session, bootstrapped_user, "Ungenerated Library")
     artifact_id = _make_li_artifact(db_session, library_id, bootstrapped_user, content_md=None)
 
-    resolved = resolve(
+    resolved = _resolve(
         db_session, f"library_intelligence_artifact:{artifact_id}", viewer_id=bootstrapped_user
     )
 
@@ -499,7 +497,7 @@ def test_resolve_li_artifact_non_member_returns_missing(
     other_library_id = create_test_library(db_session, other_user_id, "Closed Synthesis")
     artifact_id = _make_li_artifact(db_session, other_library_id, other_user_id)
 
-    resolved = resolve(
+    resolved = _resolve(
         db_session, f"library_intelligence_artifact:{artifact_id}", viewer_id=bootstrapped_user
     )
 
@@ -509,7 +507,7 @@ def test_resolve_li_artifact_non_member_returns_missing(
 def test_resolve_li_artifact_unknown_id_returns_missing(
     db_session: Session, bootstrapped_user: UUID
 ):
-    resolved = resolve(
+    resolved = _resolve(
         db_session, f"library_intelligence_artifact:{uuid4()}", viewer_id=bootstrapped_user
     )
     assert resolved.missing, "Unknown artifact URI must resolve as missing"
@@ -526,16 +524,14 @@ def test_li_artifact_resources_block_reflects_current_revision(
     from sqlalchemy import text as sql_text
 
     from nexus.services import context_assembler
-    from nexus.services.conversation_references import insert_reference_if_absent
+    from tests.factories import add_context_edge
 
     library_id = create_test_library(db_session, bootstrapped_user, "Fresh-Resolve Library")
     artifact_id = _make_li_artifact(
         db_session, library_id, bootstrapped_user, content_md="First revision prose."
     )
     conversation_id = create_test_conversation(db_session, bootstrapped_user)
-    insert_reference_if_absent(
-        db_session, conversation_id, f"library_intelligence_artifact:{artifact_id}"
-    )
+    add_context_edge(db_session, conversation_id, f"library_intelligence_artifact:{artifact_id}")
     db_session.commit()
 
     block, _meta, _citations, _revision_refs = context_assembler._build_resources_block(
@@ -585,16 +581,14 @@ def test_li_artifact_not_a_citable_attached_resource(db_session: Session, bootst
     not a get_search_result chip, so the attached-citation materializer skips it.
     """
     from nexus.services import context_assembler
-    from nexus.services.conversation_references import insert_reference_if_absent
+    from tests.factories import add_context_edge
 
     library_id = create_test_library(db_session, bootstrapped_user, "Noncitable Library")
     artifact_id = _make_li_artifact(
         db_session, library_id, bootstrapped_user, content_md="Inline synthesis [1]."
     )
     conversation_id = create_test_conversation(db_session, bootstrapped_user)
-    insert_reference_if_absent(
-        db_session, conversation_id, f"library_intelligence_artifact:{artifact_id}"
-    )
+    add_context_edge(db_session, conversation_id, f"library_intelligence_artifact:{artifact_id}")
     db_session.commit()
 
     block, _meta, citations, _revision_refs = context_assembler._build_resources_block(
@@ -605,59 +599,30 @@ def test_li_artifact_not_a_citable_attached_resource(db_session: Session, bootst
     assert ' n="' not in block.text, "A non-citable resource must not be numbered"
 
 
-def test_li_artifact_revision_id_stamped_into_included_context_refs(
-    db_session: Session, bootstrapped_user: UUID
-):
-    """§6.6: a chat run over an LI artifact records the consumed revision id in the
-    assembly ledger's ``included_context_refs`` (queryable via JSONB containment)."""
-    from sqlalchemy import text as sql_text
+def test_li_artifact_in_context_stamps_no_revision(db_session: Session, bootstrapped_user: UUID):
+    """The assembly ledger's revision-ref slot stays wired and empty post-cutover.
 
+    "Which edition did this chat read" is answered after the provenance-graph
+    cutover by the immutable snapshot on each citation edge minted that turn (§5.2),
+    not by a per-edition stamp in ``included_context_refs`` — the edge-based
+    ``ResolvedResource`` resolves the LI head fresh and carries no revision id. So an
+    attached LI artifact (with a promoted revision or not) contributes no stamp.
+    """
     from nexus.services import context_assembler
-    from nexus.services.conversation_references import insert_reference_if_absent
+    from tests.factories import add_context_edge
 
-    library_id = create_test_library(db_session, bootstrapped_user, "Stamped Library")
+    library_id = create_test_library(db_session, bootstrapped_user, "Stamp-Slot Library")
     artifact_id = _make_li_artifact(
         db_session, library_id, bootstrapped_user, content_md="Synthesis prose [1]."
     )
-    revision_id = db_session.execute(
-        sql_text("SELECT current_revision_id FROM library_intelligence_artifacts WHERE id = :id"),
-        {"id": artifact_id},
-    ).scalar_one()
     conversation_id = create_test_conversation(db_session, bootstrapped_user)
-    insert_reference_if_absent(
-        db_session, conversation_id, f"library_intelligence_artifact:{artifact_id}"
-    )
+    add_context_edge(db_session, conversation_id, f"library_intelligence_artifact:{artifact_id}")
     db_session.commit()
 
     _block, _meta, _citations, revision_refs = context_assembler._build_resources_block(
         db_session, conversation_id=conversation_id, viewer_id=bootstrapped_user
     )
-    assert revision_refs == (
-        {
-            "type": "conversation_reference",
-            "resource_uri": f"library_intelligence_artifact:{artifact_id}",
-            "revision_id": str(revision_id),
-        },
-    ), f"the consumed revision id must be stamped, got {revision_refs}"
-
-
-def test_li_artifact_without_revision_stamps_nothing(db_session: Session, bootstrapped_user: UUID):
-    """A head with no promoted revision contributes no revision stamp."""
-    from nexus.services import context_assembler
-    from nexus.services.conversation_references import insert_reference_if_absent
-
-    library_id = create_test_library(db_session, bootstrapped_user, "Ungenerated Stamp Library")
-    artifact_id = _make_li_artifact(db_session, library_id, bootstrapped_user, content_md=None)
-    conversation_id = create_test_conversation(db_session, bootstrapped_user)
-    insert_reference_if_absent(
-        db_session, conversation_id, f"library_intelligence_artifact:{artifact_id}"
-    )
-    db_session.commit()
-
-    _block, _meta, _citations, revision_refs = context_assembler._build_resources_block(
-        db_session, conversation_id=conversation_id, viewer_id=bootstrapped_user
-    )
-    assert revision_refs == (), "no current revision -> no stamp"
+    assert revision_refs == (), "the revision-ref slot is wired but empty post-cutover"
 
 
 # =============================================================================
@@ -665,47 +630,10 @@ def test_li_artifact_without_revision_stamps_nothing(db_session: Session, bootst
 # =============================================================================
 
 
-def test_resolve_oracle_reading_owner_inlines_full_reading(
-    db_session: Session, bootstrapped_user: UUID
-):
-    reading_id = _make_oracle_reading(
-        db_session,
-        bootstrapped_user,
-        question="Where does the path open?",
-        motto="Memento Mori",
-        argument="Of the road that answers after dread.",
-        interpretation="I stood at the threshold and the dawn opened.",
-    )
-
-    resolved = resolve(db_session, f"oracle_reading:{reading_id}", viewer_id=bootstrapped_user)
-
-    assert not resolved.missing, f"owner must resolve the reading; got {resolved}"
-    assert resolved.label == "Folio 1 — Memento Mori"
-    body = resolved.inline_body or ""
-    assert "Question: Where does the path open?" in body
-    assert "Motto: Memento Mori" in body
-    assert "Of the road that answers after dread." in body
-    assert "Interpretation:\nI stood at the threshold and the dawn opened." in body
-    assert "the soul wrestles at the threshold" in body, "passages must appear in the body"
-    assert "read_resource" in resolved.fetch_hint
-
-
-def test_resolve_oracle_reading_non_owner_returns_missing(
-    db_session: Session, bootstrapped_user: UUID
-):
-    other_user_id = uuid4()
-    ensure_user_and_default_library(db_session, other_user_id)
-    reading_id = _make_oracle_reading(db_session, other_user_id)
-
-    resolved = resolve(db_session, f"oracle_reading:{reading_id}", viewer_id=bootstrapped_user)
-
-    assert resolved.missing, "a non-owner must see another user's reading as missing"
-
-
 def test_resolve_oracle_reading_unknown_id_returns_missing(
     db_session: Session, bootstrapped_user: UUID
 ):
-    resolved = resolve(db_session, f"oracle_reading:{uuid4()}", viewer_id=bootstrapped_user)
+    resolved = _resolve(db_session, f"oracle_reading:{uuid4()}", viewer_id=bootstrapped_user)
     assert resolved.missing, "unknown reading URI must resolve as missing"
 
 
@@ -717,7 +645,7 @@ def test_resolve_span_inlines_body_under_threshold(db_session: Session, bootstra
     )
     span_id = _make_span(db_session, media_id, text="A short inline span.")
 
-    resolved = resolve(db_session, f"span:{span_id}", viewer_id=bootstrapped_user)
+    resolved = _resolve(db_session, f"evidence_span:{span_id}", viewer_id=bootstrapped_user)
 
     assert not resolved.missing, f"Expected span visibility, got {resolved}"
     assert resolved.inline_body == "A short inline span.", (
@@ -730,7 +658,7 @@ def test_resolve_span_inlines_body_under_threshold(db_session: Session, bootstra
 
 
 def test_resolve_span_unknown_returns_missing(db_session: Session, bootstrapped_user: UUID):
-    resolved = resolve(db_session, f"span:{uuid4()}", viewer_id=bootstrapped_user)
+    resolved = _resolve(db_session, f"evidence_span:{uuid4()}", viewer_id=bootstrapped_user)
     assert resolved.missing, "Unknown span URI must resolve as missing"
 
 
@@ -756,7 +684,7 @@ def test_resolve_highlight_returns_enriched_quote(db_session: Session, bootstrap
         suffix=" after",
     )
 
-    resolved = resolve(db_session, f"highlight:{highlight_id}", viewer_id=bootstrapped_user)
+    resolved = _resolve(db_session, f"highlight:{highlight_id}", viewer_id=bootstrapped_user)
 
     assert not resolved.missing, f"Expected highlight visibility, got {resolved}"
     assert resolved.quote is not None, "Highlights resolve as an enriched <quote>, not bare text"
@@ -782,7 +710,7 @@ def test_resolve_highlight_includes_linked_note(db_session: Session, bootstrappe
     highlight_id = _make_highlight_with_anchor(db_session, bootstrapped_user, media_id)
     set_highlight_note_body(db_session, bootstrapped_user, highlight_id, "my annotation")
 
-    resolved = resolve(db_session, f"highlight:{highlight_id}", viewer_id=bootstrapped_user)
+    resolved = _resolve(db_session, f"highlight:{highlight_id}", viewer_id=bootstrapped_user)
 
     assert resolved.quote is not None
     assert resolved.quote.note == "my annotation", (
@@ -792,7 +720,7 @@ def test_resolve_highlight_includes_linked_note(db_session: Session, bootstrappe
 
 def test_resolve_page_owner_inlines_short_description(db_session: Session, bootstrapped_user: UUID):
     page_id = _make_page(db_session, bootstrapped_user, description="Page description body.")
-    resolved = resolve(db_session, f"page:{page_id}", viewer_id=bootstrapped_user)
+    resolved = _resolve(db_session, f"page:{page_id}", viewer_id=bootstrapped_user)
 
     assert not resolved.missing, f"Owner-resolved page should be visible; got {resolved}"
     assert resolved.label == "Test Page", f"Page label should be the title; got {resolved.label}"
@@ -806,7 +734,7 @@ def test_resolve_page_non_owner_returns_missing(db_session: Session, bootstrappe
     ensure_user_and_default_library(db_session, other_user_id)
     page_id = _make_page(db_session, other_user_id, description="Private page.")
 
-    resolved = resolve(db_session, f"page:{page_id}", viewer_id=bootstrapped_user)
+    resolved = _resolve(db_session, f"page:{page_id}", viewer_id=bootstrapped_user)
 
     assert resolved.missing, "Non-owner viewer must see page as missing"
 
@@ -814,7 +742,7 @@ def test_resolve_page_non_owner_returns_missing(db_session: Session, bootstrappe
 def test_resolve_note_block_owner_inlines_body(db_session: Session, bootstrapped_user: UUID):
     block_id = _make_note_block(db_session, bootstrapped_user, body="Note block body.")
 
-    resolved = resolve(db_session, f"note_block:{block_id}", viewer_id=bootstrapped_user)
+    resolved = _resolve(db_session, f"note_block:{block_id}", viewer_id=bootstrapped_user)
 
     assert not resolved.missing, f"Owner should resolve note_block; got {resolved}"
     assert resolved.inline_body == "Note block body.", (
@@ -827,7 +755,7 @@ def test_resolve_note_block_non_owner_returns_missing(db_session: Session, boots
     ensure_user_and_default_library(db_session, other_user_id)
     block_id = _make_note_block(db_session, other_user_id, body="Private note.")
 
-    resolved = resolve(db_session, f"note_block:{block_id}", viewer_id=bootstrapped_user)
+    resolved = _resolve(db_session, f"note_block:{block_id}", viewer_id=bootstrapped_user)
 
     assert resolved.missing, "Non-owner must see note_block as missing"
 
@@ -838,7 +766,7 @@ def test_resolve_conversation_owner_returns_summary_no_inline(
     conversation_id = create_test_conversation(db_session, bootstrapped_user)
     create_test_message(db_session, conversation_id, seq=1, content="Hello")
 
-    resolved = resolve(db_session, f"conversation:{conversation_id}", viewer_id=bootstrapped_user)
+    resolved = _resolve(db_session, f"conversation:{conversation_id}", viewer_id=bootstrapped_user)
 
     assert not resolved.missing, f"Owner should resolve conversation; got {resolved}"
     assert resolved.inline_body is None, (
@@ -856,7 +784,7 @@ def test_resolve_conversation_non_owner_returns_missing(
     ensure_user_and_default_library(db_session, other_user_id)
     conversation_id = create_test_conversation(db_session, other_user_id)
 
-    resolved = resolve(db_session, f"conversation:{conversation_id}", viewer_id=bootstrapped_user)
+    resolved = _resolve(db_session, f"conversation:{conversation_id}", viewer_id=bootstrapped_user)
 
     assert resolved.missing, "Non-owner viewer must see conversation as missing"
 
@@ -872,7 +800,7 @@ def test_resolve_message_visible_inlines_short_body(db_session: Session, bootstr
     msg = db_session.get(Message, message_id)
     assert msg is not None
 
-    resolved = resolve(db_session, f"message:{message_id}", viewer_id=bootstrapped_user)
+    resolved = _resolve(db_session, f"message:{message_id}", viewer_id=bootstrapped_user)
 
     assert not resolved.missing, f"Owner should resolve message; got {resolved}"
     assert resolved.inline_body == "A short user message.", (
@@ -880,19 +808,187 @@ def test_resolve_message_visible_inlines_short_body(db_session: Session, bootstr
     )
 
 
-def test_resolve_unknown_scheme_returns_missing(db_session: Session, bootstrapped_user: UUID):
-    resolved = resolve(db_session, f"unknown_scheme:{uuid4()}", viewer_id=bootstrapped_user)
+def test_resolve_oracle_reading_owner_returns_question_label(
+    db_session: Session, bootstrapped_user: UUID
+):
+    reading = OracleReading(
+        id=uuid4(),
+        user_id=bootstrapped_user,
+        folio_number=1,
+        question_text="What endures of all this?",
+    )
+    db_session.add(reading)
+    db_session.commit()
 
-    assert resolved.missing, "Unknown URI scheme must resolve as missing"
-    assert resolved.label == "(resource unavailable)", (
-        f"Missing entries should carry the well-known label; got {resolved.label!r}"
+    resolved = _resolve(db_session, f"oracle_reading:{reading.id}", viewer_id=bootstrapped_user)
+
+    assert not resolved.missing, f"Owner should resolve their reading; got {resolved}"
+    assert "What endures of all this?" in resolved.label, (
+        f"Reading label should carry the question; got {resolved.label!r}"
+    )
+    assert resolved.inline_body is None, "Readings are pointer-only"
+
+
+def test_resolve_oracle_reading_non_owner_returns_missing(
+    db_session: Session, bootstrapped_user: UUID
+):
+    other_user_id = uuid4()
+    ensure_user_and_default_library(db_session, other_user_id)
+    reading = OracleReading(
+        id=uuid4(), user_id=other_user_id, folio_number=1, question_text="Private question?"
+    )
+    db_session.add(reading)
+    db_session.commit()
+
+    resolved = _resolve(db_session, f"oracle_reading:{reading.id}", viewer_id=bootstrapped_user)
+
+    assert resolved.missing, "Non-owner must see the oracle reading as missing"
+
+
+def test_resolve_oracle_corpus_passage_is_global(db_session: Session, bootstrapped_user: UUID):
+    work = OracleCorpusWork(
+        id=uuid4(),
+        slug=f"meditations-{uuid4().hex[:8]}",
+        title="Meditations",
+        author="Marcus Aurelius",
+        edition_label="Long tr.",
+        source_repository="gutenberg",
+        source_url="https://example.org/meditations",
+    )
+    db_session.add(work)
+    db_session.flush()
+    passage = OracleCorpusPassage(
+        id=uuid4(),
+        work_id=work.id,
+        passage_index=0,
+        canonical_text="The universe is change; our life is what our thoughts make it.",
+        locator_label="Book IV, 3",
+    )
+    db_session.add(passage)
+    db_session.commit()
+
+    resolved = _resolve(
+        db_session, f"oracle_corpus_passage:{passage.id}", viewer_id=bootstrapped_user
     )
 
+    assert not resolved.missing, f"Corpus passages are global; got {resolved}"
+    assert resolved.label == "Meditations — Book IV, 3", (
+        f"Passage label should be work title + locator; got {resolved.label!r}"
+    )
+    assert "The universe is change" in resolved.summary
 
-def test_resolve_invalid_uri_format_returns_missing(db_session: Session, bootstrapped_user: UUID):
-    resolved = resolve(db_session, "not-a-valid-uri", viewer_id=bootstrapped_user)
 
-    assert resolved.missing, "Malformed URI must resolve as missing without raising"
+def test_resolve_oracle_corpus_passage_unknown_returns_missing(
+    db_session: Session, bootstrapped_user: UUID
+):
+    resolved = _resolve(db_session, f"oracle_corpus_passage:{uuid4()}", viewer_id=bootstrapped_user)
+    assert resolved.missing, "Unknown corpus passage must resolve as missing"
+
+
+def test_resolve_external_snapshot_owner_returns_title_and_snippet(
+    db_session: Session, bootstrapped_user: UUID
+):
+    snapshot = ResourceExternalSnapshot(
+        id=uuid4(),
+        user_id=bootstrapped_user,
+        provider="brave",
+        url="https://example.org/article",
+        title="An External Article",
+        snippet="The first sentence of the result.",
+        source_snapshot={},
+    )
+    db_session.add(snapshot)
+    db_session.commit()
+
+    resolved = _resolve(db_session, f"external_snapshot:{snapshot.id}", viewer_id=bootstrapped_user)
+
+    assert not resolved.missing, f"Owner should resolve their snapshot; got {resolved}"
+    assert resolved.label == "An External Article"
+    assert resolved.summary == "The first sentence of the result."
+
+
+def test_resolve_external_snapshot_non_owner_returns_missing(
+    db_session: Session, bootstrapped_user: UUID
+):
+    other_user_id = uuid4()
+    ensure_user_and_default_library(db_session, other_user_id)
+    snapshot = ResourceExternalSnapshot(
+        id=uuid4(),
+        user_id=other_user_id,
+        provider="brave",
+        url="https://example.org/private",
+        title="Private Snapshot",
+        snippet="Hidden.",
+        source_snapshot={},
+    )
+    db_session.add(snapshot)
+    db_session.commit()
+
+    resolved = _resolve(db_session, f"external_snapshot:{snapshot.id}", viewer_id=bootstrapped_user)
+
+    assert resolved.missing, "Another user's snapshot must resolve as missing"
+
+
+def test_resolve_contributor_returns_display_name(db_session: Session, bootstrapped_user: UUID):
+    contributor = Contributor(
+        id=uuid4(),
+        handle=f"ada-lovelace-{uuid4().hex[:8]}",
+        display_name="Ada Lovelace",
+        sort_name="Lovelace, Ada",
+    )
+    db_session.add(contributor)
+    db_session.commit()
+
+    resolved = _resolve(db_session, f"contributor:{contributor.id}", viewer_id=bootstrapped_user)
+
+    assert not resolved.missing, f"Contributors are global identity rows; got {resolved}"
+    assert resolved.label == "Ada Lovelace"
+
+
+def test_resolve_contributor_unknown_returns_missing(db_session: Session, bootstrapped_user: UUID):
+    resolved = _resolve(db_session, f"contributor:{uuid4()}", viewer_id=bootstrapped_user)
+    assert resolved.missing, "Unknown contributor must resolve as missing"
+
+
+def test_resolve_podcast_subscribed_returns_title(db_session: Session, bootstrapped_user: UUID):
+    podcast = Podcast(
+        id=uuid4(),
+        provider="podcastindex",
+        provider_podcast_id=uuid4().hex,
+        title="A Subscribed Show",
+        feed_url=f"https://example.org/feed-{uuid4().hex[:8]}.xml",
+        description="Weekly episodes about things.",
+    )
+    db_session.add(podcast)
+    db_session.flush()
+    db_session.add(
+        PodcastSubscription(user_id=bootstrapped_user, podcast_id=podcast.id, status="active")
+    )
+    db_session.commit()
+
+    resolved = _resolve(db_session, f"podcast:{podcast.id}", viewer_id=bootstrapped_user)
+
+    assert not resolved.missing, f"Subscriber should resolve the podcast; got {resolved}"
+    assert resolved.label == "A Subscribed Show"
+    assert resolved.summary == "Weekly episodes about things."
+
+
+def test_resolve_podcast_not_visible_returns_missing(db_session: Session, bootstrapped_user: UUID):
+    podcast = Podcast(
+        id=uuid4(),
+        provider="podcastindex",
+        provider_podcast_id=uuid4().hex,
+        title="An Unrelated Show",
+        feed_url=f"https://example.org/feed-{uuid4().hex[:8]}.xml",
+    )
+    db_session.add(podcast)
+    db_session.commit()
+
+    resolved = _resolve(db_session, f"podcast:{podcast.id}", viewer_id=bootstrapped_user)
+
+    assert resolved.missing, (
+        "A podcast with no subscription or library entry must resolve as missing"
+    )
 
 
 def test_resolve_batch_groups_by_scheme(db_session: Session, bootstrapped_user: UUID):
@@ -909,7 +1005,7 @@ def test_resolve_batch_groups_by_scheme(db_session: Session, bootstrapped_user: 
         f"page:{page_id}",
         f"media:{uuid4()}",  # missing
     ]
-    results = resolve_batch(db_session, uris, viewer_id=bootstrapped_user)
+    results = _resolve_batch(db_session, uris, viewer_id=bootstrapped_user)
 
     assert [r.uri for r in results] == uris, (
         f"resolve_batch must preserve input order; got {[r.uri for r in results]}"

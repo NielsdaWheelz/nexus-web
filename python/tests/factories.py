@@ -11,7 +11,7 @@ relevant factory here — not in N test files.
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import (
@@ -34,15 +34,16 @@ from nexus.db.models import (
     Message,
     Model,
     NoteBlock,
-    ObjectLink,
     Page,
     PdfPageTextSpan,
     ProcessingStatus,
+    ResourceEdge,
 )
 from nexus.llm_catalog import MODEL_CATALOG
 from nexus.services.content_indexing import rebuild_fragment_content_index
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
 from nexus.services.note_indexing import rebuild_page_content_index
+from nexus.services.resource_graph.refs import ResourceRefParseFailure, parse_resource_ref
 
 # =============================================================================
 # Models
@@ -126,6 +127,44 @@ def create_test_conversation(
     session.add(conv)
     session.commit()
     return conv.id
+
+
+def add_context_edge(
+    session: Session, conversation_id: UUID, uri: str, *, origin: str = "user"
+) -> UUID:
+    """Attach a bare context edge conversation->uri (test fixture).
+
+    Mirrors the retired ``insert_reference_if_absent`` citation write-through:
+    raw insert keyed by the pair, idempotent, no resolution or owner check.
+    """
+    ref = parse_resource_ref(uri)
+    assert not isinstance(ref, ResourceRefParseFailure), f"malformed test uri: {uri!r}"
+    owner_id = session.execute(
+        select(Conversation.owner_user_id).where(Conversation.id == conversation_id)
+    ).scalar_one()
+    existing = session.execute(
+        select(ResourceEdge.id).where(
+            ResourceEdge.source_scheme == "conversation",
+            ResourceEdge.source_id == conversation_id,
+            ResourceEdge.target_scheme == ref.scheme,
+            ResourceEdge.target_id == ref.id,
+            ResourceEdge.ordinal.is_(None),
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        return existing
+    edge = ResourceEdge(
+        user_id=owner_id,
+        kind="context",
+        origin=origin,
+        source_scheme="conversation",
+        source_id=conversation_id,
+        target_scheme=ref.scheme,
+        target_id=ref.id,
+    )
+    session.add(edge)
+    session.flush()
+    return edge.id
 
 
 def _message_document(role: str, content: str) -> dict[str, object]:
@@ -561,15 +600,15 @@ def create_test_highlight_note(
     session.add(note_block)
     session.flush()
     session.add(
-        ObjectLink(
+        ResourceEdge(
             id=uuid4(),
             user_id=user_id,
-            relation_type="note_about",
-            a_type="note_block",
-            a_id=note_block.id,
-            b_type="highlight",
-            b_id=highlight.id,
-            metadata_json={},
+            kind="context",
+            origin="highlight_note",
+            source_scheme="highlight",
+            source_id=highlight.id,
+            target_scheme="note_block",
+            target_id=note_block.id,
         )
     )
     session.flush()

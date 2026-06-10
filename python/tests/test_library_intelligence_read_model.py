@@ -22,11 +22,11 @@ _CURRENT_INTELLIGENCE_TABLES = {
     "library_intelligence_artifacts",
     "library_intelligence_artifact_revisions",
     "library_intelligence_revision_events",
-    "library_intelligence_citations",
 }
 
 # The deterministic-compiler subtables dropped by 0141 (plus the already-dropped
-# source-set/version tables from 0138).
+# source-set/version tables from 0138, and the LI-private citation table folded
+# into resource_edges by 0145).
 _REMOVED_INTELLIGENCE_TABLES = {
     "library_intelligence_sections",
     "library_intelligence_nodes",
@@ -36,6 +36,7 @@ _REMOVED_INTELLIGENCE_TABLES = {
     "library_source_set_versions",
     "library_source_set_items",
     "library_intelligence_versions",
+    "library_intelligence_citations",
 }
 
 _NEW_HEAD_COLUMNS = {"current_revision_id", "user_id"}

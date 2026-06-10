@@ -1,11 +1,11 @@
 """Shared citation read-model.
 
 The wire contract for the `[N]` citation jump is pinned here, and the backend
-is the sole producer of the shape. ``retrieval_citation.build_citation_outs_for_revision``
-builds these from ``library_intelligence_citations``;
-``retrieval_citation.build_citation_outs_for_message`` builds the identical shape
-from a chat assistant message's ``message_retrievals``. The frontend renders
-``CitationOut`` directly and no longer constructs it.
+is the sole producer of the shape. The one backend producer is
+``resource_graph.citations.build_citation_outs``, reading citation edges
+(resource provenance graph §9.5), uniformly for chat, Oracle, and Library
+Intelligence. The frontend renders ``CitationOut`` directly and no longer
+constructs it.
 """
 
 from __future__ import annotations
@@ -16,18 +16,32 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict
 
 from nexus.schemas.retrieval import RetrievalLocator
+from nexus.services.resource_graph.schemas import EdgeKind
 
-CitationRole = Literal["supports", "contradicts", "context"]
-CitationTargetType = Literal["evidence_span", "content_chunk", "media", "web_result"]
+# A citation's role is exactly an edge kind; single-sourced as ``EdgeKind`` in
+# the graph-schema module (LOW #20). Kept as a distinct read-model name so the
+# citation contract reads in its own vocabulary.
+CitationRole = EdgeKind
+# The closed set of citation-edge target schemes that render as chips. Other
+# slices (oracle, library intelligence) rely on exactly this set.
+CitationTargetType = Literal[
+    "evidence_span",
+    "content_chunk",
+    "media",
+    "note_block",
+    "external_snapshot",
+    "oracle_corpus_passage",
+]
 
 
 class CitationTargetRef(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     type: CitationTargetType
-    # ``web_result`` targets key on the durable retrieval-row id (a string), every
-    # other target on a UUID.
-    id: UUID | str
+    # Every citation target is a ``resource_edges`` row whose ``target_id`` is a
+    # UUID (the finest-grained existing object, §5.2); external web results are
+    # snapshotted as ``external_snapshot`` rows, so there is no string-id target.
+    id: UUID
 
 
 class CitationSnapshot(BaseModel):

@@ -1,9 +1,20 @@
-"""Pure-schema contracts for the server-built chat citation read-model (S7).
+"""Pure-schema contracts for the resource-provenance-graph citation wire shapes.
 
-Chat citations are now built on the backend (``MessageOut.citations`` on the wire
-and a reshaped ``citation_index`` SSE payload). These tests pin the wire shapes
-without a database; the DB-backed read-model producer is exercised in
-``test_message_citations.py``.
+Chat citations are citation *edges* in the resource provenance graph (§9.5),
+built on the backend and rendered directly by the frontend. These tests pin the
+wire shapes without a database:
+
+- ``MessageOut.citations`` carries the server-built ``CitationOut`` read-model.
+- The ``citation_index`` SSE payload is ``{assistant_message_id, entries}`` where
+  each entry is a ``ChatRunCitationIndexEntry`` (``citation_edge_id`` + the ``[n]``
+  marker + the chip display fields). It is NOT ``{assistant_message_id, citations}``.
+- ``CitationTargetRef.id`` is a UUID (every target is a ``resource_edges`` row);
+  web results are snapshotted as ``external_snapshot`` targets, so there is no
+  string-id ``web_result`` target type.
+
+The DB-backed read-model producer is exercised in ``test_message_citations.py``
+and the end-to-end ``entries`` SSE persistence in
+``test_openai_reasoning_contracts.py``; these stay focused pure-schema contracts.
 """
 
 from __future__ import annotations
@@ -16,6 +27,7 @@ from pydantic import ValidationError
 
 from nexus.schemas.citation import CitationOut, CitationSnapshot, CitationTargetRef
 from nexus.schemas.conversation import (
+    ChatRunCitationIndexEntry,
     ChatRunCitationIndexEventPayload,
     MessageOut,
     chat_run_event_payload_json,
@@ -44,9 +56,10 @@ def _web_citation(rank: int = 1) -> WebSearchCitation:
 def test_web_result_result_ref_json_round_trips_through_validator() -> None:
     """The ``web_result`` branch of ``result_ref_json`` passes the strict validator.
 
-    The compact ``RetrievalCitation`` does not carry web-only fields
-    (extra_snippets/published_at/source_name/...); the branch passes the full
-    ``WebSearchCitation.to_json()`` shape straight through so the validated
+    Web results remain a *telemetry* result_type (``message_retrievals``); the
+    compact ``RetrievalCitation`` does not carry web-only fields
+    (extra_snippets/published_at/source_name/...), so the branch passes the full
+    ``WebSearchCitation.to_json()`` shape straight through and the validated
     ``WebRetrievalResultRef`` keeps them.
     """
     cit = _web_citation(rank=3)
@@ -80,20 +93,27 @@ def test_web_result_result_ref_json_round_trips_through_validator() -> None:
     assert serialized["context_ref"] == {"type": "web_result", "id": "web:example"}
 
 
-def test_citation_index_payload_carries_citation_outs() -> None:
-    """The reshaped citation_index payload is ``{assistant_message_id, citations}``."""
+def test_citation_index_payload_carries_entries() -> None:
+    """The citation_index payload is ``{assistant_message_id, entries}``.
+
+    Each entry pins one citation edge: ``citation_edge_id`` + the ``[n]`` marker
+    + the chip display fields (target_ref/kind/deep_link/snapshot).
+    """
     amid = uuid4()
-    media_id = uuid4()
+    edge_id = uuid4()
+    target_id = uuid4()
     payload = {
         "assistant_message_id": str(amid),
-        "citations": [
-            CitationOut(
-                ordinal=1,
-                role="context",
-                target_ref=CitationTargetRef(type="media", id=media_id),
-                media_id=media_id,
-                deep_link="/media/x",
-                snapshot=CitationSnapshot(title="Doc", result_type="media", summary_md="**S**"),
+        "entries": [
+            ChatRunCitationIndexEntry(
+                citation_edge_id=edge_id,
+                n=1,
+                target_ref=CitationTargetRef(type="content_chunk", id=target_id),
+                kind="supports",
+                deep_link="/media/x?chunk=1",
+                snapshot=CitationSnapshot(
+                    title="Doc", section_label="§2", result_type="content_chunk"
+                ),
             ).model_dump(mode="json")
         ],
     }
@@ -101,34 +121,67 @@ def test_citation_index_payload_carries_citation_outs() -> None:
     validated = chat_run_event_payload_json("citation_index", payload)
 
     assert validated["assistant_message_id"] == str(amid)
-    assert [c["ordinal"] for c in validated["citations"]] == [1]
-    assert validated["citations"][0]["snapshot"]["summary_md"] == "**S**"
-    assert validated["citations"][0]["target_ref"] == {"type": "media", "id": str(media_id)}
+    assert [e["n"] for e in validated["entries"]] == [1]
+    assert validated["entries"][0]["citation_edge_id"] == str(edge_id)
+    assert validated["entries"][0]["kind"] == "supports"
+    assert validated["entries"][0]["target_ref"] == {
+        "type": "content_chunk",
+        "id": str(target_id),
+    }
+    assert validated["entries"][0]["snapshot"]["section_label"] == "§2"
 
 
-def test_citation_index_payload_rejects_legacy_entries_shape() -> None:
-    """The old ``entries`` mapping is gone — ``extra=forbid`` rejects it."""
+def test_citation_index_payload_rejects_legacy_citations_shape() -> None:
+    """The ``{assistant_message_id, citations:[...]}`` shape is gone (extra=forbid)."""
+    media_id = uuid4()
     with pytest.raises(ValidationError):
         ChatRunCitationIndexEventPayload.model_validate(
             {
                 "assistant_message_id": str(uuid4()),
-                "entries": [
-                    {
-                        "n": 1,
-                        "retrieval_id": str(uuid4()),
-                        "tool_call_id": str(uuid4()),
-                        "ordinal": 0,
-                    }
+                "citations": [
+                    CitationOut(
+                        ordinal=1,
+                        role="context",
+                        target_ref=CitationTargetRef(type="media", id=media_id),
+                        media_id=media_id,
+                    ).model_dump(mode="json")
                 ],
             }
         )
 
 
-def test_chat_run_citation_index_entry_model_is_removed() -> None:
-    """``ChatRunCitationIndexEntry`` no longer exists in the schema module."""
-    import nexus.schemas.conversation as conversation_schema
+def test_chat_run_citation_index_entry_requires_marker_and_snapshot() -> None:
+    """``ChatRunCitationIndexEntry`` exists; ``n`` is a 1-based marker, snapshot required."""
+    edge_id = uuid4()
+    target_id = uuid4()
+    entry = ChatRunCitationIndexEntry(
+        citation_edge_id=edge_id,
+        n=2,
+        target_ref=CitationTargetRef(type="note_block", id=target_id),
+        kind="context",
+        snapshot=CitationSnapshot(title="Note"),
+    )
+    assert entry.n == 2
+    assert entry.deep_link is None
 
-    assert not hasattr(conversation_schema, "ChatRunCitationIndexEntry")
+    # n is the [N] marker — 1-based, never 0.
+    with pytest.raises(ValidationError):
+        ChatRunCitationIndexEntry(
+            citation_edge_id=edge_id,
+            n=0,
+            target_ref=CitationTargetRef(type="note_block", id=target_id),
+            kind="context",
+            snapshot=CitationSnapshot(title="Note"),
+        )
+
+    # snapshot is required (the chip always renders display fields).
+    with pytest.raises(ValidationError):
+        ChatRunCitationIndexEntry(
+            citation_edge_id=edge_id,
+            n=1,
+            target_ref=CitationTargetRef(type="note_block", id=target_id),
+            kind="context",
+        )
 
 
 def test_message_out_citations_defaults_empty_and_accepts_outs() -> None:
@@ -159,8 +212,25 @@ def test_message_out_citations_defaults_empty_and_accepts_outs() -> None:
     assert [c.ordinal for c in assistant_message.citations] == [1]
 
 
-def test_web_result_target_ref_accepts_string_id() -> None:
-    """``web_result`` targets key on the string retrieval ref, not a UUID."""
-    ref = CitationTargetRef(type="web_result", id="web:example")
-    assert ref.id == "web:example"
-    assert ref.model_dump(mode="json") == {"type": "web_result", "id": "web:example"}
+def test_citation_target_ref_requires_uuid_id_and_rejects_web_result() -> None:
+    """Every citation target keys on a UUID; web results are ``external_snapshot``.
+
+    The cutover narrowed ``CitationTargetRef.id`` to a UUID (every target is a
+    ``resource_edges`` row), and dropped the string-id ``web_result`` target type
+    in favour of snapshotting web results as ``external_snapshot`` rows.
+    """
+    snapshot_id = uuid4()
+    ref = CitationTargetRef(type="external_snapshot", id=snapshot_id)
+    assert ref.id == snapshot_id
+    assert ref.model_dump(mode="json") == {
+        "type": "external_snapshot",
+        "id": str(snapshot_id),
+    }
+
+    # web_result is no longer a citation target scheme.
+    with pytest.raises(ValidationError):
+        CitationTargetRef(type="web_result", id=snapshot_id)
+
+    # A string id (the old web retrieval ref) is rejected — id must be a UUID.
+    with pytest.raises(ValidationError):
+        CitationTargetRef(type="external_snapshot", id="web:example")

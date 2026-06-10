@@ -18,8 +18,8 @@ from nexus.schemas.conversation import NoBranchAnchorRequest, ReaderSelectionReq
 from nexus.services.chat_run_idempotency import compute_payload_hash
 from nexus.services.chat_run_validation import _validate_reader_selection
 from nexus.services.context_assembler import _build_reader_selection_block
-from nexus.services.conversation_references import insert_reference_if_absent
 from tests.factories import (
+    add_context_edge,
     create_test_conversation,
     create_test_fragment,
     create_test_highlight,
@@ -97,7 +97,7 @@ def test_reader_selection_requires_attached_highlight_reference(
         _validate_reader_selection(db_session, bootstrapped_user, conversation_id, selection)
     assert exc_info.value.code == ApiErrorCode.E_INVALID_REQUEST
 
-    insert_reference_if_absent(db_session, conversation_id, f"highlight:{highlight_id}")
+    add_context_edge(db_session, conversation_id, f"highlight:{highlight_id}")
     db_session.commit()
     _validate_reader_selection(db_session, bootstrapped_user, conversation_id, selection)
     assert (

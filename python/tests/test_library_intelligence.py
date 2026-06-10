@@ -13,7 +13,7 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from nexus.config import clear_settings_cache
-from nexus.db.models import LLMCall
+from nexus.db.models import LLMCall, ResourceEdge
 from nexus.services import run_kit
 from nexus.services.billing_entitlements import grant_entitlement_override
 from nexus.services.bootstrap import ensure_user_and_default_library
@@ -493,6 +493,19 @@ def _drive_generation(db: Session, *, owner_id: UUID, library_id: UUID, token: s
     return ref.revision_id
 
 
+def _artifact_citation_edges(db: Session, artifact_id: UUID) -> list[ResourceEdge]:
+    """The artifact's citation edge rows (§5.5: citations key on the artifact)."""
+    return (
+        db.query(ResourceEdge)
+        .filter(
+            ResourceEdge.source_scheme == "library_intelligence_artifact",
+            ResourceEdge.source_id == artifact_id,
+        )
+        .order_by(ResourceEdge.ordinal)
+        .all()
+    )
+
+
 @pytest.mark.integration
 class TestGenerateReduce:
     def test_generate_over_seeded_library_produces_grounded_citation(
@@ -516,35 +529,46 @@ class TestGenerateReduce:
         assert view.revision_id == revision_id
         assert "overview" in view.content_md
 
-        citations = (
-            db_session.execute(
-                text(
-                    "SELECT ordinal, role, target_type, target_id, locator, snapshot "
-                    "FROM library_intelligence_citations WHERE revision_id = :r ORDER BY ordinal"
-                ),
-                {"r": revision_id},
-            )
-            .mappings()
-            .all()
+        # The pane read-model is built from artifact-keyed citation edges (§5.5),
+        # roles verbatim and ordinals dense 1..N.
+        assert [(c.ordinal, c.role) for c in view.citations] == [(1, "supports"), (2, "context")], (
+            f"expected the two grounded citations; got {view.citations}"
         )
-        assert len(citations) == 2
-        for row in citations:
-            assert row["target_type"] == "evidence_span"
-            assert row["locator"] is not None
-            assert row["snapshot"]["deep_link"].startswith("/media/")
-            assert "#evidence-" in row["snapshot"]["deep_link"]
+        for out in view.citations:
+            assert out.target_ref.type == "evidence_span"
+            assert out.deep_link is not None
+            assert out.deep_link.startswith("/media/") and "#evidence-" in out.deep_link
+            # The edge stores no locator (position lives in the target grain,
+            # D11), but CitationOut reconstructs the in-reader jump from the
+            # media-owned span (§5.2/G6): chat, Oracle, and LI share one render
+            # path, so a span citation carries a real (media_id, locator).
+            assert out.media_id is not None and out.locator is not None
+            assert out.snapshot is not None and out.snapshot.excerpt
+            assert out.snapshot.result_type == "evidence_span"
             span_exists = db_session.execute(
                 text("SELECT 1 FROM evidence_spans WHERE id = :sid"),
-                {"sid": row["target_id"]},
+                {"sid": out.target_ref.id},
             ).scalar_one_or_none()
             assert span_exists == 1
 
-        # The shared read-model resolves and carries the deep link.
-        from nexus.services.retrieval_citation import build_citation_outs_for_revision
+        # The wire shape the pane consumes is unchanged.
+        assert set(view.citations[0].model_dump().keys()) == {
+            "ordinal",
+            "role",
+            "target_ref",
+            "media_id",
+            "locator",
+            "deep_link",
+            "snapshot",
+        }
 
-        outs = build_citation_outs_for_revision(db_session, revision_id=revision_id)
-        assert len(outs) == 2
-        assert all(out.deep_link and out.locator is not None for out in outs)
+        # Storage contract: edges key on the artifact (not the revision).
+        assert view.artifact_id is not None
+        edges = _artifact_citation_edges(db_session, view.artifact_id)
+        assert [(e.ordinal, e.kind, e.origin) for e in edges] == [
+            (1, "supports", "citation"),
+            (2, "context", "citation"),
+        ], f"expected two artifact-sourced citation edges; got {edges}"
 
         # Normalized terminal grammar + AC-3 ledger row for the one reduce call.
         assert _done_payload(db_session, revision_id=revision_id) == {
@@ -633,6 +657,12 @@ class TestGenerateReduce:
         }
         view = get_artifact(db_session, viewer_id=owner_id, library_id=library_id)
         assert view.status == "failed"
+        # AC22: only the promoting path writes citation edges.
+        assert view.citations == []
+        assert view.artifact_id is not None
+        assert _artifact_citation_edges(db_session, view.artifact_id) == [], (
+            "a failed revision must write no citation edges"
+        )
 
     def test_first_generate_builds_units_inline_and_succeeds(self, db_session: Session) -> None:
         # A fresh library whose per-media units were NOT pre-built: generation must
@@ -656,11 +686,7 @@ class TestGenerateReduce:
         view = get_artifact(db_session, viewer_id=owner_id, library_id=library_id)
         assert view.status == "current"
         assert view.revision_id == revision_id
-        count = db_session.execute(
-            text("SELECT COUNT(*) FROM library_intelligence_citations WHERE revision_id = :r"),
-            {"r": revision_id},
-        ).scalar_one()
-        assert count == 1, "the inline-built unit's claim must ground a citation"
+        assert len(view.citations) == 1, "the inline-built unit's claim must ground a citation"
 
     def test_out_of_range_citation_dropped_end_to_end(self, db_session: Session) -> None:
         owner_id = _create_owner(db_session)
@@ -671,14 +697,13 @@ class TestGenerateReduce:
             content_md="[1] keep [2] drop",
             citations=[(1, 0, "supports"), (2, 50, "supports")],
         )
-        revision_id = _drive_generation(
+        _drive_generation(
             db_session, owner_id=owner_id, library_id=library_id, token="t1", router=router
         )
-        count = db_session.execute(
-            text("SELECT COUNT(*) FROM library_intelligence_citations WHERE revision_id = :r"),
-            {"r": revision_id},
-        ).scalar_one()
-        assert count == 1
+        view = get_artifact(db_session, viewer_id=owner_id, library_id=library_id)
+        assert [c.ordinal for c in view.citations] == [1], (
+            f"the ungrounded citation must be dropped; got {view.citations}"
+        )
 
 
 @pytest.mark.integration
@@ -871,14 +896,31 @@ class TestRevisionsAndPromote:
         assert view.revision_id == first_rev
         assert "First synthesis" in view.content_md
         assert view.build is not None and view.build.revision_id == ref2.revision_id
+        # AC22: the in-flight draft has not touched the artifact's citation edges.
+        assert [(c.ordinal, c.role) for c in view.citations] == [(1, "supports")], (
+            f"a draft must not touch the current citation set; got {view.citations}"
+        )
 
-        router2 = _ReduceRouter(content_md="Second synthesis [1]", citations=[(1, 0, "supports")])
+        router2 = _ReduceRouter(
+            content_md="Second synthesis [1][2]",
+            citations=[(1, 0, "supports"), (2, 0, "context")],
+        )
         asyncio.run(run_artifact_generation(db_session, revision_id=ref2.revision_id, llm=router2))
         db_session.expire_all()
 
         view = get_artifact(db_session, viewer_id=owner_id, library_id=library_id)
         assert view.revision_id == ref2.revision_id
         assert "Second synthesis" in view.content_md
+        # The promote swapped the citation set atomically with the content: the
+        # new dense set fully replaces the old one (no remnant of first_rev's set).
+        assert [(c.ordinal, c.role) for c in view.citations] == [
+            (1, "supports"),
+            (2, "context"),
+        ], f"the promote must swap in the new citation set; got {view.citations}"
+        assert view.artifact_id is not None
+        assert len(_artifact_citation_edges(db_session, view.artifact_id)) == 2, (
+            "the old citation set must be gone, not appended to"
+        )
         # The prior revision is retained.
         prior = (
             db_session.execute(
@@ -913,10 +955,19 @@ class TestRevisionsAndPromote:
 
         promote_revision(db_session, viewer_id=owner_id, revision_id=first_rev)
         db_session.expire_all()
-        assert (
-            get_artifact(db_session, viewer_id=owner_id, library_id=library_id).revision_id
-            == first_rev
+        view = get_artifact(db_session, viewer_id=owner_id, library_id=library_id)
+        assert view.revision_id == first_rev
+        assert "One" in view.content_md
+        # Current-only doctrine (§5.5): the restored revision's per-revision
+        # citations died with the LI-private table, so the restore swaps the
+        # artifact's citation set to empty in the same transaction that moves the
+        # head — the superseded revision's chips must not survive under the
+        # restored prose.
+        assert view.citations == [], (
+            f"restore must clear the artifact's citation set; got {view.citations}"
         )
+        assert view.artifact_id is not None
+        assert _artifact_citation_edges(db_session, view.artifact_id) == []
         # Both revisions retained.
         summaries = list_revisions(db_session, viewer_id=owner_id, library_id=library_id)
         assert {s.revision_id for s in summaries} == {first_rev, second_rev}
@@ -960,6 +1011,8 @@ class TestWorkerBoundary:
             run_artifact_generation(db_session, revision_id=ref.revision_id, llm=_BadRouter())
         )
         db_session.expire_all()
+        # AC22: the failed (non-promoting) path wrote no citation edges.
+        assert _artifact_citation_edges(db_session, ref.artifact_id) == []
         revision = db_session.execute(
             text(
                 "SELECT status, error_code, error_detail "

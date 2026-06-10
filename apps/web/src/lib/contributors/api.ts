@@ -114,7 +114,6 @@ export async function splitContributor(
     credit_ids?: string[];
     alias_ids?: string[];
     external_id_ids?: string[];
-    object_link_ids?: string[];
   }
 ): Promise<ContributorSummary> {
   return contributorMutation(`/api/contributors/${encodeURIComponent(handle)}/split`, {

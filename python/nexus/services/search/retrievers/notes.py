@@ -273,25 +273,21 @@ def _search_note_chunks(
 
 
 def _highlight_excerpts(db: Session, viewer_id: UUID, note_ids: list[UUID]) -> dict[UUID, str]:
-    """First note_about highlight excerpt per note_block (sidecar context)."""
+    """First attached-highlight excerpt per note_block (``origin=highlight_note`` edges)."""
     if not note_ids:
         return {}
     excerpts: dict[UUID, str] = {}
     for row in db.execute(
         text(
             """
-            SELECT
-                CASE WHEN ol.a_type = 'note_block' THEN ol.a_id ELSE ol.b_id END AS note_block_id,
-                h.exact
-            FROM object_links ol
-            JOIN highlights h
-              ON ((ol.a_type = 'highlight' AND h.id = ol.a_id)
-               OR (ol.b_type = 'highlight' AND h.id = ol.b_id))
-            WHERE ol.user_id = :viewer_id
-              AND ol.relation_type = 'note_about'
-              AND ((ol.a_type = 'note_block' AND ol.a_id = ANY(:note_ids))
-                OR (ol.b_type = 'note_block' AND ol.b_id = ANY(:note_ids)))
-            ORDER BY ol.created_at ASC, ol.id ASC
+            SELECT e.target_id AS note_block_id, h.exact
+            FROM resource_edges e
+            JOIN highlights h ON e.source_scheme = 'highlight' AND h.id = e.source_id
+            WHERE e.user_id = :viewer_id
+              AND e.origin = 'highlight_note'
+              AND e.target_scheme = 'note_block'
+              AND e.target_id = ANY(:note_ids)
+            ORDER BY e.created_at ASC, e.id ASC
             """
         ),
         {"viewer_id": viewer_id, "note_ids": note_ids},

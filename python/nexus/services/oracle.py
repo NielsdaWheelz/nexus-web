@@ -8,8 +8,9 @@ and SSE event emission are all linear and explicit here.
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -19,7 +20,7 @@ from llm_calling.router import LLMRouter
 from llm_calling.types import LLMRequest
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func, select, text
-from sqlalchemy.exc import IntegrityError, NoResultFound
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import visible_media_ids_cte_sql
@@ -30,13 +31,13 @@ from nexus.db.models import (
     OracleCorpusWork,
     OracleReading,
     OracleReadingEvent,
-    OracleReadingPassage,
+    OracleReadingFolio,
 )
 from nexus.errors import LLM_ERROR_CODE_TO_API_ERROR_CODE, ApiError, ApiErrorCode, NotFoundError
 from nexus.jobs.queue import enqueue_job
 from nexus.llm_catalog import require_catalog_model
 from nexus.logging import get_logger
-from nexus.schemas.citation import CitationOut, CitationSnapshot, CitationTargetRef
+from nexus.schemas.citation import CitationOut
 from nexus.schemas.oracle import (
     ConcordanceEntryOut,
     OracleReadingDetailOut,
@@ -53,8 +54,14 @@ from nexus.services.llm_ledger import LedgeredLLM, LlmCallOwner
 from nexus.services.oracle_plates import oracle_plate_url
 from nexus.services.prompt_budget import estimate_tokens
 from nexus.services.rate_limit import get_rate_limiter
-from nexus.services.retrieval_citation import build_evidence_span_citation_target
-from nexus.services.search.constants import RETRIEVAL_LOCATOR_ADAPTER
+from nexus.services.resource_graph.citations import (
+    build_citation_outs,
+    concordant_sources,
+    record_citation,
+)
+from nexus.services.resource_graph.edges import list_edges_for_ref
+from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.resource_graph.schemas import CitationSnapshot
 from nexus.services.semantic_chunks import (
     build_deterministic_hash_embedding,
     build_text_embedding,
@@ -83,7 +90,6 @@ ORACLE_MAX_OUTPUT_TOKENS = 2000
 ORACLE_LLM_TIMEOUT_SECONDS = 45
 ORACLE_PUBLIC_DOMAIN_CANDIDATES = 6
 ORACLE_USER_LIBRARY_CANDIDATES = 4
-ORACLE_USER_CONTENT_CHUNK_CANDIDATES = 4
 ORACLE_FOLIO_ALLOCATE_ATTEMPTS = 8
 ORACLE_THEMES: tuple[str, ...] = (
     "Of Time",
@@ -325,15 +331,33 @@ def get_reading_detail(
     viewer_id: UUID,
     reading_id: UUID,
 ) -> OracleReadingDetailOut:
-    """Return the full reading record with persisted events for hydration."""
+    """Return the full reading record with persisted events for hydration.
+
+    Passage display data is split across the folio row (phase, marginalia,
+    attribution, locator label) and its citation edge snapshot (snippet, deep
+    link); this read joins the two back into the unchanged wire shape (§5.3).
+    """
     reading = _get_reading_owned_by(db, viewer_id=viewer_id, reading_id=reading_id)
-    passage_rows = (
-        db.execute(
-            select(OracleReadingPassage).where(OracleReadingPassage.reading_id == reading_id)
-        )
+    folio_rows = (
+        db.execute(select(OracleReadingFolio).where(OracleReadingFolio.reading_id == reading_id))
         .scalars()
         .all()
     )
+    reading_ref = ResourceRef(scheme="oracle_reading", id=reading_id)
+    edge_by_id = {
+        edge.id: edge
+        for edge in list_edges_for_ref(db, viewer_id=viewer_id, ref=reading_ref, origin="citation")
+        if edge.source == reading_ref and edge.ordinal is not None
+    }
+    # The clickable in-reader jump (AC8) is the shared edge-built CitationOut read
+    # model (G6): build_citation_outs is the sole producer; it reconstructs
+    # (media_id, locator) from each target's own anchoring. Keyed by ordinal
+    # (descent 1, ordeal 2, ascent 3); _surfaced_passage_citation then decides
+    # which phases render a chip vs. stay typographic.
+    citation_by_ordinal: dict[int, CitationOut] = {
+        citation.ordinal: citation
+        for citation in build_citation_outs(db, viewer_id=viewer_id, source=reading_ref)
+    }
     event_rows = (
         db.execute(
             select(OracleReadingEvent)
@@ -352,12 +376,33 @@ def get_reading_detail(
                 "Oracle reading references a missing image",
             )
         image_out = OracleReadingImageOut(**_oracle_image_payload(image))
-    passages_sorted = sorted(
-        passage_rows,
+    folios_sorted = sorted(
+        folio_rows,
         key=lambda row: ORACLE_PHASES.index(row.phase)
         if row.phase in ORACLE_PHASES
         else len(ORACLE_PHASES),
     )
+    passages: list[OracleReadingPassageOut] = []
+    for row in folios_sorted:
+        edge = edge_by_id.get(row.edge_id)
+        # justify-defect: the folio row and its citation edge are written in one
+        # transaction; a missing edge or snapshot means the pair was torn.
+        assert edge is not None and edge.snapshot is not None and edge.ordinal is not None, (
+            f"oracle folio (reading {row.reading_id}, phase {row.phase}) "
+            f"lost its citation edge {row.edge_id}"
+        )
+        passages.append(
+            OracleReadingPassageOut(
+                phase=row.phase,
+                source_kind=row.source_kind,
+                exact_snippet=edge.snapshot.excerpt or "",
+                locator_label=row.locator_label,
+                attribution_text=row.attribution_text,
+                marginalia_text=row.marginalia_text,
+                deep_link=edge.snapshot.deep_link,
+                citation=_surfaced_passage_citation(citation_by_ordinal.get(edge.ordinal)),
+            )
+        )
     return OracleReadingDetailOut(
         id=reading.id,
         folio_number=reading.folio_number,
@@ -368,26 +413,7 @@ def get_reading_detail(
         question_text=reading.question_text,
         status=reading.status,
         image=image_out,
-        passages=[
-            OracleReadingPassageOut(
-                phase=row.phase,
-                source_kind=row.source_kind,
-                exact_snippet=row.exact_snippet,
-                locator_label=row.locator_label,
-                attribution_text=row.attribution_text,
-                marginalia_text=row.marginalia_text,
-                deep_link=row.deep_link,
-                citation=_passage_citation(
-                    db,
-                    viewer_id=viewer_id,
-                    phase=row.phase,
-                    source_kind=row.source_kind,
-                    source=dict(row.source or {}),
-                    locator=dict(row.locator or {}),
-                ),
-            )
-            for row in passages_sorted
-        ],
+        passages=passages,
         events=[
             OracleReadingEventOut(
                 seq=row.seq, event_type=row.event_type, payload=dict(row.payload or {})
@@ -469,80 +495,65 @@ def compute_concordance(
     viewer_id: UUID,
     reading_id: UUID,
 ) -> list[ConcordanceEntryOut]:
-    """Return up to 5 prior folios that echo this reading (same plate, theme, or passage)."""
+    """Return up to 5 prior folios that echo this reading (same plate, theme, or passage).
+
+    Two readings share a passage iff their citation edges have equal
+    ``(target_scheme, target_id)`` (§5.3) — locators and snapshots are excluded
+    from the key, so a content reindex between two readings is a deliberate
+    non-match on user-media targets.
+    """
     reference = _get_reading_owned_by(db, viewer_id=viewer_id, reading_id=reading_id)
     if reference.status != "complete":
         return []
 
-    rows = (
-        db.execute(
-            text(
-                """
-                SELECT *
-                FROM (
-                    SELECT
-                        r.id,
-                        r.folio_number,
-                        r.folio_motto,
-                        r.folio_theme,
-                        r.created_at,
-                        (r.image_id IS NOT NULL AND r.image_id = :image_id) AS shared_plate,
-                        (r.folio_theme IS NOT NULL AND r.folio_theme = :folio_theme) AS shared_theme,
-                        (
-                            SELECT COUNT(*)
-                            FROM oracle_reading_passages p1
-                            JOIN oracle_reading_passages p2
-                                ON p1.source_kind = p2.source_kind
-                               AND p1.locator = p2.locator
-                               AND p1.source = p2.source
-                            WHERE p1.reading_id = r.id
-                              AND p2.reading_id = :reading_id
-                        ) AS shared_passage_count,
-                        2 * (r.image_id IS NOT NULL AND r.image_id = :image_id)::int
-                        + 2 * (r.folio_theme IS NOT NULL AND r.folio_theme = :folio_theme)::int
-                        + (
-                            SELECT COUNT(*)
-                            FROM oracle_reading_passages p1
-                            JOIN oracle_reading_passages p2
-                                ON p1.source_kind = p2.source_kind
-                               AND p1.locator = p2.locator
-                               AND p1.source = p2.source
-                            WHERE p1.reading_id = r.id
-                              AND p2.reading_id = :reading_id
-                        ) AS score
-                    FROM oracle_readings r
-                    WHERE r.user_id = :viewer_id
-                      AND r.status = 'complete'
-                      AND r.id != :reading_id
-                      AND r.folio_motto IS NOT NULL
-                ) candidates
-                WHERE score > 0
-                ORDER BY score DESC, created_at DESC
-                LIMIT 5
-                """
-            ),
-            {
-                "viewer_id": viewer_id,
-                "reading_id": reading_id,
-                "image_id": reference.image_id,
-                "folio_theme": reference.folio_theme,
-            },
+    shared_target_counts = {
+        entry.source.id: entry.shared_target_count
+        for entry in concordant_sources(
+            db,
+            viewer_id=viewer_id,
+            source=ResourceRef(scheme="oracle_reading", id=reading_id),
+            source_scheme="oracle_reading",
         )
-        .mappings()
+    }
+    candidates = (
+        db.execute(
+            select(OracleReading).where(
+                OracleReading.user_id == viewer_id,
+                OracleReading.status == "complete",
+                OracleReading.id != reading_id,
+                OracleReading.folio_motto.is_not(None),
+            )
+        )
+        .scalars()
         .all()
     )
-    return [
-        ConcordanceEntryOut(
-            id=row["id"],
-            folio_number=row["folio_number"],
-            folio_motto=row["folio_motto"],
-            folio_theme=row["folio_theme"],
-            shared_plate=bool(row["shared_plate"]),
-            shared_theme=bool(row["shared_theme"]),
-            shared_passage_count=int(row["shared_passage_count"]),
+    scored: list[tuple[int, datetime, ConcordanceEntryOut]] = []
+    for candidate in candidates:
+        shared_plate = candidate.image_id is not None and candidate.image_id == reference.image_id
+        shared_theme = (
+            candidate.folio_theme is not None and candidate.folio_theme == reference.folio_theme
         )
-        for row in rows
-    ]
+        shared_passage_count = shared_target_counts.get(candidate.id, 0)
+        score = 2 * int(shared_plate) + 2 * int(shared_theme) + shared_passage_count
+        if score == 0:
+            continue
+        scored.append(
+            (
+                score,
+                candidate.created_at,
+                ConcordanceEntryOut(
+                    id=candidate.id,
+                    folio_number=candidate.folio_number,
+                    folio_motto=candidate.folio_motto or "",
+                    folio_theme=candidate.folio_theme,
+                    shared_plate=shared_plate,
+                    shared_theme=shared_theme,
+                    shared_passage_count=shared_passage_count,
+                ),
+            )
+        )
+    scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    return [entry for _score, _created_at, entry in scored[:5]]
 
 
 def _validate_oracle_pre_enqueue_controls(*, viewer_id: UUID) -> None:
@@ -605,10 +616,30 @@ class _Candidate:
     locator_label: str
     attribution_text: str
     deep_link: str | None
-    locator: dict[str, Any]
-    source: dict[str, Any]
+    title: str  # source title for the citation snapshot
+    target: ResourceRef  # stable citation target (§5.3)
     tags: list[str]
     score: float
+
+
+def _surfaced_passage_citation(citation: CitationOut | None) -> CitationOut | None:
+    """The CitationOut a passage shows as a chip, or None for a typographic passage.
+
+    Every phase writes a citation edge (§5.3), but only a user-library passage
+    grounded in an evidence span with a live in-reader jump renders a chip
+    (``OracleReadingPassageOut.citation``): the edge-built CitationOut must target
+    an ``evidence_span`` and resolve to a media reader (``media_id`` set). Public-
+    domain (``oracle_corpus_passage``) passages, span-less (``content_chunk``)
+    chunks, note-owned spans, and spans deleted after generation (F04) all resolve
+    without a media jump and stay typographic only (citation=None).
+    """
+    if (
+        citation is not None
+        and citation.target_ref.type == "evidence_span"
+        and citation.media_id is not None
+    ):
+        return citation
+    return None
 
 
 async def execute_reading(
@@ -848,30 +879,55 @@ async def execute_reading(
         )
         db.commit()
 
-        for phase in ORACLE_PHASES:
+        reading_ref = ResourceRef(scheme="oracle_reading", id=reading_id)
+        for ordinal, phase in enumerate(ORACLE_PHASES, start=1):
             idx, marginalia = by_phase[phase]
             candidate = candidates[idx]
-            passage_row = OracleReadingPassage(
-                reading_id=reading_id,
-                phase=phase,
-                source_kind=candidate.source_kind,
-                exact_snippet=candidate.exact_snippet,
-                locator_label=candidate.locator_label,
-                locator=candidate.locator,
-                source=candidate.source,
-                attribution_text=candidate.attribution_text,
-                marginalia_text=marginalia,
-                deep_link=candidate.deep_link,
-            )
-            db.add(passage_row)
-            db.flush()
-            citation = _passage_citation(
+            # One citation edge plus one oracle-owned folio row per phase, in
+            # the same per-phase transaction (§5.3): the edge carries identity
+            # (target) and display snapshot; the folio carries generated content.
+            edge = record_citation(
                 db,
                 viewer_id=viewer_id,
-                phase=phase,
-                source_kind=candidate.source_kind,
-                source=candidate.source,
-                locator=candidate.locator,
+                source=reading_ref,
+                target=candidate.target,
+                ordinal=ordinal,
+                kind="context",
+                snapshot=CitationSnapshot(
+                    title=candidate.title,
+                    excerpt=candidate.exact_snippet,
+                    section_label=candidate.locator_label,
+                    result_type=candidate.target.scheme,
+                    deep_link=candidate.deep_link,
+                ),
+            )
+            db.add(
+                OracleReadingFolio(
+                    reading_id=reading_id,
+                    phase=phase,
+                    edge_id=edge.id,
+                    source_kind=candidate.source_kind,
+                    locator_label=candidate.locator_label,
+                    attribution_text=candidate.attribution_text,
+                    marginalia_text=marginalia,
+                )
+            )
+            db.flush()
+            # The streamed passage chip and the REST detail chip are one shape:
+            # the edge-built CitationOut read model (G6). build_citation_outs is
+            # the sole producer; the just-flushed edge is visible to it, and its
+            # ordinal selects this phase's chip (descent 1, ordeal 2, ascent 3).
+            # Only user-media passages with a live span jump surface a chip; the
+            # rest (public-domain, span-less) stay typographic.
+            citation = _surfaced_passage_citation(
+                next(
+                    (
+                        out
+                        for out in build_citation_outs(db, viewer_id=viewer_id, source=reading_ref)
+                        if out.ordinal == ordinal
+                    ),
+                    None,
+                )
             )
             run_kit.append_event(
                 db,
@@ -1006,58 +1062,6 @@ def _oracle_image_payload(image: OracleCorpusImage) -> dict[str, Any]:
     }
 
 
-def _passage_citation(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    phase: str,
-    source_kind: str,
-    source: Mapping[str, Any],
-    locator: Mapping[str, Any],
-) -> CitationOut | None:
-    """Mint the read-model CitationOut for one selected passage, or None.
-
-    Only a user-library passage whose chunk owns an evidence span (a media-owned
-    chunk with ``locator.evidence_span_id``) carries a chip: it resolves to the
-    canonical ``/media/{id}#evidence-{span}`` deep link via the same write-time
-    resolver + locator adapter the LI read-model uses. Public-domain passages,
-    page-owned chunks, and span-less chunks return None (typographic only). The
-    ordinal is the phase order (descent 1, ordeal 2, ascent 3).
-    """
-    if source_kind != "user_media" or source.get("owner_kind") != "media":
-        return None
-    media_raw = source.get("media_id")
-    span_raw = locator.get("evidence_span_id")
-    if not media_raw or not span_raw:
-        return None
-    media_id = UUID(str(media_raw))
-    evidence_span_id = UUID(str(span_raw))
-    try:
-        locator_dict, snapshot = build_evidence_span_citation_target(
-            db, viewer_id=viewer_id, media_id=media_id, evidence_span_id=evidence_span_id
-        )
-    except (NotFoundError, NoResultFound):
-        # justify-ignore-error: oracle_reading_passages is a snapshot store with no
-        # FK to media/evidence_spans, so a completed folio can outlive a deleted
-        # media or span (or a viewer who lost read access). The read-model degrades
-        # to typographic-only here rather than 404/500 the whole reading.
-        return None
-    return CitationOut(
-        ordinal=ORACLE_PHASES.index(phase) + 1,
-        role="context",
-        target_ref=CitationTargetRef(type="evidence_span", id=evidence_span_id),
-        media_id=media_id,
-        locator=RETRIEVAL_LOCATOR_ADAPTER.validate_python(locator_dict),
-        deep_link=snapshot["deep_link"],
-        snapshot=CitationSnapshot(
-            title=snapshot.get("title"),
-            excerpt=snapshot.get("excerpt"),
-            section_label=snapshot.get("section_label"),
-            result_type="evidence_span",
-        ),
-    )
-
-
 def _fail(db: Session, reading: OracleReading, *, code: str, detail: str | None = None) -> None:
     """Terminal failure: the one normalized ``done {status, error_code}`` event.
 
@@ -1148,15 +1152,10 @@ def _retrieve_corpus_passages(
                     ocp.passage_index,
                     ocp.canonical_text,
                     ocp.locator_label,
-                    ocp.locator,
-                    ocp.source,
                     ocp.tags,
                     ocw.slug AS work_slug,
                     ocw.title AS work_title,
                     ocw.author AS work_author,
-                    ocw.year AS work_year,
-                    ocw.edition_label AS edition_label,
-                    ocw.source_repository AS source_repository,
                     ocw.source_url AS source_url,
                     (1 - (ocp.embedding <=> qe.embedding)) AS semantic_score
                 FROM oracle_corpus_passages ocp
@@ -1203,8 +1202,8 @@ def _retrieve_corpus_passages(
                     f"{row['work_author']} opened to *{row['work_title']}* {row['locator_label']}."
                 ),
                 deep_link=str(row["source_url"]),
-                locator=_public_domain_locator_from_row(row),
-                source=_public_domain_source_from_row(row),
+                title=str(row["work_title"]),
+                target=ResourceRef(scheme="oracle_corpus_passage", id=row["passage_id"]),
                 tags=[str(tag) for tag in row["tags"] or []],
                 score=score,
             )
@@ -1221,38 +1220,6 @@ def _retrieve_user_library_passages(
     query_embedding_model: str,
     query_embedding: list[float],
 ) -> list[_Candidate]:
-    content_chunks = _retrieve_user_content_chunks(
-        db,
-        viewer_id=viewer_id,
-        query_embedding_model=query_embedding_model,
-        query_embedding=query_embedding,
-    )
-    chosen: list[_Candidate] = []
-    used_owners: set[tuple[str, str]] = set()
-    ranked = sorted(
-        content_chunks,
-        key=lambda candidate: (-candidate.score, candidate.exact_snippet),
-    )
-    for candidate in ranked:
-        owner_id = str(candidate.source.get("media_id") or "")
-        owner_key = (str(candidate.source.get("owner_kind") or "media"), owner_id)
-        if owner_id and owner_key in used_owners:
-            continue
-        if owner_id:
-            used_owners.add(owner_key)
-        chosen.append(candidate)
-        if len(chosen) >= ORACLE_USER_LIBRARY_CANDIDATES:
-            break
-    return chosen
-
-
-def _retrieve_user_content_chunks(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    query_embedding_model: str,
-    query_embedding: list[float],
-) -> list[_Candidate]:
     semantic_rows = _retrieve_user_content_chunks_by_embedding(
         db,
         viewer_id=viewer_id,
@@ -1260,20 +1227,21 @@ def _retrieve_user_content_chunks(
         query_embedding=query_embedding,
     )
     chosen: list[_Candidate] = []
-    used_semantic_owners: set[tuple[str, str]] = set()
+    used_owners: set[tuple[str, str]] = set()
     for row in semantic_rows:
         owner_key = (str(row["owner_kind"]), str(row["media_id"]))
-        if owner_key in used_semantic_owners:
+        if owner_key in used_owners:
             continue
-        used_semantic_owners.add(owner_key)
+        used_owners.add(owner_key)
         chosen.append(
             _candidate_from_content_chunk_row(
                 row,
                 score=float(row["semantic_score"] or 0.0),
             )
         )
-        if len(chosen) >= ORACLE_USER_CONTENT_CHUNK_CANDIDATES:
+        if len(chosen) >= ORACLE_USER_LIBRARY_CANDIDATES:
             break
+    chosen.sort(key=lambda candidate: (-candidate.score, candidate.exact_snippet))
     return chosen
 
 
@@ -1298,11 +1266,9 @@ def _retrieve_user_content_chunks_by_embedding(
                     cc.id AS content_chunk_id,
                     cc.owner_kind,
                     cc.owner_id AS media_id,
-                    cc.chunk_idx,
                     cc.chunk_text,
                     cc.source_kind,
                     cc.heading_path,
-                    cc.summary_locator,
                     cc.primary_evidence_span_id,
                     COALESCE(m.title, pg.title, 'Untitled note') AS media_title,
                     (1 - (ce.embedding_vector <=> qe.embedding)) AS semantic_score
@@ -1343,24 +1309,35 @@ def _retrieve_user_content_chunks_by_embedding(
 
 def _candidate_from_content_chunk_row(row: dict[str, Any], *, score: float) -> _Candidate:
     media_title = str(row["media_title"] or "Untitled")
-    summary_locator = dict(row["summary_locator"] or {})
     heading_path = [str(part) for part in row["heading_path"] or [] if str(part).strip()]
     locator_label = _content_chunk_locator_label(media_title, heading_path)
-    locator, source = _user_content_chunk_reference(
-        row,
-        media_title=media_title,
-        locator_label=locator_label,
-        summary_locator=summary_locator,
-        heading_path=heading_path,
+    # The citation target is the evidence span the chunk grounds to, falling
+    # back to the chunk itself when no span exists (§5.3). Both are stable
+    # content-index rows within an index generation.
+    span_id = row["primary_evidence_span_id"]
+    target = (
+        ResourceRef(scheme="evidence_span", id=span_id)
+        if span_id is not None
+        else ResourceRef(scheme="content_chunk", id=row["content_chunk_id"])
+    )
+    # A media-owned chunk that grounds to an evidence span carries the canonical
+    # in-reader jump in its snapshot (the chip's clickable href, mirroring LI
+    # synthesis); the CitationOut lifts deep_link from this snapshot (G6). A
+    # span-less chunk or a page-owned (note) chunk has no media reader, so it
+    # stays typographic (deep_link None) and renders no chip.
+    deep_link = (
+        f"/media/{row['media_id']}#evidence-{span_id}"
+        if span_id is not None and str(row["owner_kind"]) == "media"
+        else None
     )
     return _Candidate(
         source_kind="user_media",
         exact_snippet=str(row["chunk_text"] or "")[:1200],
         locator_label=locator_label,
         attribution_text=f"From *{media_title}*, your library.",
-        deep_link=None,
-        locator=locator,
-        source=source,
+        deep_link=deep_link,
+        title=media_title,
+        target=target,
         tags=["user-library", str(row["source_kind"])],
         score=score,
     )
@@ -1371,82 +1348,6 @@ def _content_chunk_locator_label(media_title: str, heading_path: list[str]) -> s
         heading = " / ".join(heading_path[-2:])
         return f"From your library: {media_title} - {heading}"
     return f"From your library: {media_title}"
-
-
-def _public_domain_locator_from_row(row: dict[str, Any]) -> dict[str, Any]:
-    locator = dict(row["locator"] or {})
-    if not locator:
-        locator = _structured_locator(str(row["locator_label"]), int(row["passage_index"]))
-    return locator
-
-
-def _public_domain_source_from_row(row: dict[str, Any]) -> dict[str, Any]:
-    source = dict(row["source"] or {})
-    source.pop("citation_key", None)
-    source.pop("text_sha256", None)
-    source.pop("source_ref", None)
-    current_source = {
-        "type": "public_domain_work",
-        "repository": str(row["source_repository"]),
-        "url": str(row["source_url"]),
-        "work_slug": str(row["work_slug"]),
-        "title": str(row["work_title"]),
-        "author": str(row["work_author"]),
-        "edition_label": str(row["edition_label"]),
-        "year": row["work_year"],
-    }
-    extras = {key: value for key, value in source.items() if key not in current_source}
-    return {**current_source, **extras}
-
-
-def _user_content_chunk_reference(
-    row: dict[str, Any],
-    *,
-    media_title: str,
-    locator_label: str,
-    summary_locator: dict[str, Any],
-    heading_path: list[str],
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    evidence_span_id = (
-        str(row["primary_evidence_span_id"])
-        if row["primary_evidence_span_id"] is not None
-        else None
-    )
-    source = {
-        "type": "user_media",
-        "media_id": str(row["media_id"]),
-        "owner_kind": str(row["owner_kind"]),
-        "title": media_title,
-        "content_source_kind": str(row["source_kind"]),
-    }
-    locator = {
-        "type": "content_chunk",
-        "label": locator_label,
-        "chunk_idx": int(row["chunk_idx"]),
-        "heading_path": heading_path,
-        "summary_locator": summary_locator,
-        "evidence_span_id": evidence_span_id,
-    }
-    return locator, source
-
-
-def _structured_locator(locator_label: str, passage_index: int) -> dict[str, Any]:
-    locator: dict[str, Any] = {
-        "type": "manifest_locator",
-        "label": locator_label,
-        "passage_index": int(passage_index),
-    }
-    section_line = re.search(
-        r"\b(?P<section>[IVXLCDM]+|\d+)\.(?P<start>\d+)(?:[-–](?P<end>\d+))?\b",
-        locator_label,
-        re.IGNORECASE,
-    )
-    if section_line is not None:
-        locator["section"] = section_line.group("section")
-        locator["start"] = int(section_line.group("start"))
-        if section_line.group("end"):
-            locator["end"] = int(section_line.group("end"))
-    return locator
 
 
 def _corpus_embedding_model() -> str:

@@ -65,13 +65,15 @@ def test_identity_evidence_is_strong_only_and_ignores_source_ref() -> None:
     assert "source_ref" not in code_only  # provenance is never read as identity evidence
 
 
-def test_contributors_issues_no_object_links_dml() -> None:
-    # I10: object_links is mutated through object_links.py only; contributors.py just reads it.
+def test_contributors_issues_no_resource_edges_dml() -> None:
+    # I10/AC13: resource_edges is mutated through services/resource_graph only;
+    # contributors.py reads it and repoints via resource_graph.edges.repoint_edges.
     src = _read("services", "contributors.py")
     for marker in (
-        "db.add(ObjectLink",
-        "INSERT INTO object_links",
-        "UPDATE object_links",
-        "DELETE FROM object_links",
+        "db.add(ResourceEdge",
+        "db.delete(ResourceEdge",
+        "INSERT INTO resource_edges",
+        "UPDATE resource_edges",
+        "DELETE FROM resource_edges",
     ):
         assert marker not in src

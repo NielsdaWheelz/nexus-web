@@ -269,11 +269,6 @@ class ContributorSplitRequest(BaseModel):
         validation_alias=AliasChoices("external_id_ids", "externalIdIds"),
         serialization_alias="externalIdIds",
     )
-    object_link_ids: list[UUID] = Field(
-        default_factory=list,
-        validation_alias=AliasChoices("object_link_ids", "objectLinkIds"),
-        serialization_alias="objectLinkIds",
-    )
 
     model_config = ConfigDict(str_strip_whitespace=True, populate_by_name=True, extra="forbid")
 

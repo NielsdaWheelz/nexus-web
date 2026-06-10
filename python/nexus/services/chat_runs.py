@@ -34,7 +34,10 @@ from nexus.db.models import (
     ChatRunEvent,
     Conversation,
     Message,
+    MessageToolCall,
     Model,
+    ResourceEdge,
+    ResourceExternalSnapshot,
 )
 from nexus.errors import (
     LLM_ERROR_CODE_TO_API_ERROR_CODE,
@@ -124,21 +127,20 @@ from nexus.services.conversation_branches import (
     ensure_branch_metadata,
     persist_active_leaf,
 )
-from nexus.services.conversation_references import (
-    insert_reference_if_absent,
-    reference_to_event_payload,
-    resolve_reference_row,
-)
 from nexus.services.llm_ledger import LlmCallOwner, observed_generate_stream
 from nexus.services.prompt_budget import ContextBudgetError, estimate_tokens
 from nexus.services.rate_limit import get_rate_limiter
-from nexus.services.resource_resolver import (
-    ResourceUriScheme,
-    format_resource_uri,
+from nexus.services.resource_graph import cleanup as graph_cleanup
+from nexus.services.resource_graph.citations import record_citation
+from nexus.services.resource_graph.context import (
+    add_context_ref_without_commit,
+    is_context_ref,
 )
+from nexus.services.resource_graph.edges import delete_edge, list_edges_for_ref
+from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.resource_graph.schemas import CitationSnapshot
 from nexus.services.retrieval_citation import (
     RetrievalCitation,
-    build_citation_outs_for_message,
     citation_from_search_result,
     insert_retrieval_row,
 )
@@ -175,17 +177,6 @@ _CHAT_TOOL_SPECS: tuple[ToolSpec, ...] = (
         parameters=INSPECT_RESOURCE_TOOL_DEFINITION["parameters"],
     ),
 )
-
-
-_RESULT_REF_RESOURCE_URI_SCHEMES: Mapping[str, ResourceUriScheme] = {
-    "content_chunk": "chunk",
-    "highlight": "highlight",
-    "page": "page",
-    "note_block": "note_block",
-    "conversation": "conversation",
-    "message": "message",
-    "fragment": "fragment",
-}
 
 
 def _app_search_scopes_from_tool_args(args: Mapping[str, Any]) -> tuple[list[str], str | None]:
@@ -229,40 +220,165 @@ def _max_output_tokens_for_reasoning(model: Model, reasoning: str) -> int:
     return min(DEFAULT_OUTPUT_TOKENS, model.max_context_tokens)
 
 
-def _assign_citation_ordinals(db: Session, *, tool_call_id: UUID | None, start_ordinal: int) -> int:
-    """Assign citation_ordinal to selected retrievals for a tool call; return next ordinal."""
+def _record_tool_citations(
+    db: Session, *, run: ChatRun, tool_call_id: UUID | None, start_ordinal: int
+) -> int:
+    """Record citation edges for a tool call's selected retrievals; return next ordinal.
+
+    The dense turn-global numbering is unchanged from the old per-row ordinal
+    column — only the storage moved: each selected row gets one
+    ``origin='citation'`` edge (``source = message:<assistant_message_id>``) and a
+    ``cited_edge_id`` back-pointer, in the same transaction the row was written.
+    """
     if tool_call_id is None:
         return start_ordinal
-    db.execute(
+    # Parity with the old column-nulling of unselected rows: a re-persisted row
+    # that is no longer selected loses its citation edge.
+    stale = db.execute(
         text(
             """
-            UPDATE message_retrievals
-            SET citation_ordinal = NULL
+            SELECT id, cited_edge_id FROM message_retrievals
             WHERE tool_call_id = :tool_call_id
               AND selected = false
+              AND cited_edge_id IS NOT NULL
             """
         ),
         {"tool_call_id": tool_call_id},
-    )
-    rows = db.execute(
-        text(
-            """
-            WITH numbered AS (
-                SELECT id, :start_ordinal + (ROW_NUMBER() OVER (ORDER BY ordinal) - 1) AS n
+    ).fetchall()
+    for row_id, edge_id in stale:
+        _delete_citation_edge(db, viewer_id=run.owner_user_id, edge_id=edge_id)
+        db.execute(
+            text("UPDATE message_retrievals SET cited_edge_id = NULL WHERE id = :id"),
+            {"id": row_id},
+        )
+    rows = (
+        db.execute(
+            text(
+                """
+                SELECT id, result_type, source_id, media_id, evidence_span_id,
+                       source_title, section_label, exact_snippet, deep_link, result_ref
                 FROM message_retrievals
                 WHERE tool_call_id = :tool_call_id
                   AND selected = true
-            )
-            UPDATE message_retrievals AS mr
-            SET citation_ordinal = numbered.n
-            FROM numbered
-            WHERE mr.id = numbered.id
-            RETURNING numbered.n
-            """
-        ),
-        {"tool_call_id": tool_call_id, "start_ordinal": start_ordinal},
-    ).fetchall()
+                ORDER BY ordinal
+                """
+            ),
+            {"tool_call_id": tool_call_id},
+        )
+        .mappings()
+        .all()
+    )
+    for offset, row in enumerate(rows):
+        _record_retrieval_citation(db, run=run, row=dict(row), ordinal=start_ordinal + offset)
     return start_ordinal + len(rows)
+
+
+def _record_retrieval_citation(
+    db: Session, *, run: ChatRun, row: Mapping[str, Any], ordinal: int
+) -> None:
+    """Write one citation edge for a selected telemetry row and point the row at it.
+
+    Replace-by-ordinal: a re-executed run owns its message's citation set, so an
+    existing edge at this ordinal (from a replaced tool result) is deleted first.
+    Rows with no edge target in the citation render contract (attached ``page:``/
+    ``message:`` refs) keep their `[n]` in the prompt but mint no edge.
+    """
+    target = _citation_target_ref(db, run=run, row=row)
+    if target is None:
+        return
+    existing = db.execute(
+        select(ResourceEdge.id).where(
+            ResourceEdge.source_scheme == "message",
+            ResourceEdge.source_id == run.assistant_message_id,
+            ResourceEdge.ordinal == ordinal,
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        _delete_citation_edge(db, viewer_id=run.owner_user_id, edge_id=existing)
+    try:
+        edge = record_citation(
+            db,
+            viewer_id=run.owner_user_id,
+            source=ResourceRef(scheme="message", id=run.assistant_message_id),
+            target=target,
+            ordinal=ordinal,
+            kind="context",
+            snapshot=CitationSnapshot(
+                title=row["source_title"],
+                excerpt=row["exact_snippet"],
+                section_label=row["section_label"],
+                result_type=row["result_type"],
+                deep_link=row["deep_link"],
+            ),
+        )
+    except NotFoundError:
+        # justify-ignore-error: the cited target was deleted between retrieval
+        # and citation (e.g. a note reindex mid-run). The telemetry row stays;
+        # the [n] renders without a chip.
+        logger.warning(
+            "chat_run.citation_target_vanished",
+            run_id=str(run.id),
+            target=target.uri,
+            ordinal=ordinal,
+        )
+        return
+    db.execute(
+        text("UPDATE message_retrievals SET cited_edge_id = :edge_id WHERE id = :id"),
+        {"edge_id": edge.id, "id": row["id"]},
+    )
+
+
+def _citation_target_ref(
+    db: Session, *, run: ChatRun, row: Mapping[str, Any]
+) -> ResourceRef | None:
+    """The finest citation-edge target for a cited telemetry row (spec §5.2).
+
+    Cited web results mint a ``resource_external_snapshots`` row here — at
+    citation time only, so uncited results stay telemetry-only (§11.4). Rows
+    whose finest existing object is outside the citation render contract fall
+    back to their anchoring ``media:``; with no media anchor there is no target.
+    """
+    result_type = row["result_type"]
+    if result_type == "web_result":
+        result_ref = row["result_ref"] or {}
+        snapshot_row = ResourceExternalSnapshot(
+            user_id=run.owner_user_id,
+            provider=str(result_ref.get("provider") or ""),
+            url=str(result_ref.get("url") or row["deep_link"] or ""),
+            title=row["source_title"] or "",
+            snippet=row["exact_snippet"] or "",
+            source_snapshot=dict(result_ref),
+        )
+        db.add(snapshot_row)
+        db.flush()
+        return ResourceRef(scheme="external_snapshot", id=snapshot_row.id)
+    if result_type == "evidence_span":
+        span_id = row["evidence_span_id"] or _uuid_or_none(row["source_id"])
+        return ResourceRef(scheme="evidence_span", id=span_id) if span_id else None
+    if result_type == "content_chunk":
+        chunk_id = _uuid_or_none(row["source_id"])
+        return ResourceRef(scheme="content_chunk", id=chunk_id) if chunk_id else None
+    if result_type == "note_block":
+        note_block_id = _uuid_or_none(row["source_id"])
+        return ResourceRef(scheme="note_block", id=note_block_id) if note_block_id else None
+    if result_type in {"media", "episode", "video"}:
+        media_id = row["media_id"] or _uuid_or_none(row["source_id"])
+        return ResourceRef(scheme="media", id=media_id) if media_id else None
+    if row["media_id"] is not None:
+        return ResourceRef(scheme="media", id=row["media_id"])
+    return None
+
+
+def _uuid_or_none(raw: object) -> UUID | None:
+    if isinstance(raw, UUID):
+        return raw
+    if not isinstance(raw, str):
+        return None
+    try:
+        parsed = UUID(raw)
+    except ValueError:
+        return None
+    return parsed if str(parsed) == raw else None
 
 
 def _app_search_tool_output(run_result: Any, start_ordinal: int) -> str:
@@ -314,8 +430,8 @@ def _persist_attached_citations(
     db: Session, run: ChatRun, citations: tuple[RetrievalCitation, ...]
 ) -> None:
     """Insert the synthetic parent tool-call + one retrieval per citable attached
-    resource, so attached ``<resources>`` get a ``[N]`` chip through the unchanged
-    citation pipeline. ``citation_ordinal`` is the resource's `n` (dense, 1..k).
+    resource, so attached ``<resources>`` get a ``[N]`` chip. The resource's `n`
+    (dense, 1..k) is recorded as a citation edge through ``_record_tool_citations``.
     Idempotent on the synthetic ``tool_call_index = 0``.
     """
     existing = db.execute(
@@ -329,10 +445,7 @@ def _persist_attached_citations(
     if not citations:
         if existing is not None:
             tool_call_id = existing[0]
-            db.execute(
-                text("DELETE FROM message_retrievals WHERE tool_call_id = :tool_call_id"),
-                {"tool_call_id": tool_call_id},
-            )
+            prune_tool_call_retrievals(db, tool_call_id=tool_call_id)
             db.execute(
                 text("DELETE FROM message_tool_calls WHERE id = :tool_call_id"),
                 {"tool_call_id": tool_call_id},
@@ -373,24 +486,96 @@ def _persist_attached_citations(
             scope="attached_context",
             retrieval_status="attached_context",
             included_in_prompt=True,
-            citation_ordinal=ordinal + 1,
         )
+    prune_tool_call_retrievals(db, tool_call_id=tool_call_id, min_ordinal=len(citations))
+    _record_tool_citations(db, run=run, tool_call_id=tool_call_id, start_ordinal=1)
+
+
+def prune_tool_call_retrievals(
+    db: Session, *, tool_call_id: UUID, min_ordinal: int | None = None
+) -> None:
+    """Delete a tool call's telemetry rows AND the citation edges they cite.
+
+    The single owner of "remove ``message_retrievals`` rows": every prune site —
+    attached-citation rebuild, read/inspect trace re-write, and the
+    ``app_search``/``web_search`` over-count trim on re-execution — routes here so
+    no row is ever dropped without its paired ``origin='citation'`` edge (and any
+    now-orphaned ``external_snapshot`` target) dying with it. A pruned cited row
+    would otherwise leave a dangling edge that renders as a phantom chip.
+
+    ``min_ordinal`` scopes the prune to ``ordinal >= min_ordinal`` (the over-count
+    trim); ``None`` prunes every row for the tool call (full rebuild). Pruned rows
+    rarely carry a ``cited_edge_id`` — citation edges are minted after persist — so
+    the edge-cleanup work runs only on the re-execution path that produced them.
+    """
+    ordinal_clause = "" if min_ordinal is None else " AND ordinal >= :min_ordinal"
+    params: dict[str, Any] = {"tool_call_id": tool_call_id}
+    if min_ordinal is not None:
+        params["min_ordinal"] = min_ordinal
+
+    cited_edge_ids = (
+        db.execute(
+            text(
+                "SELECT cited_edge_id FROM message_retrievals "
+                f"WHERE tool_call_id = :tool_call_id{ordinal_clause} "
+                "AND cited_edge_id IS NOT NULL"
+            ),
+            params,
+        )
+        .scalars()
+        .all()
+    )
+    if cited_edge_ids:
+        owner_user_id = db.execute(
+            select(Conversation.owner_user_id)
+            .select_from(MessageToolCall)
+            .join(Conversation, Conversation.id == MessageToolCall.conversation_id)
+            .where(MessageToolCall.id == tool_call_id)
+        ).scalar_one()
+        for edge_id in cited_edge_ids:
+            _delete_citation_edge(db, viewer_id=owner_user_id, edge_id=edge_id)
+
+    # The candidate ledger FKs message_retrievals; null its pointer before the
+    # delete (app_search/web_search write these; chat-run traces never do, so the
+    # UPDATE is a harmless no-op there).
     db.execute(
         text(
-            """
-            DELETE FROM message_retrievals
-            WHERE tool_call_id = :tool_call_id
-              AND ordinal >= :citation_count
-            """
+            "UPDATE message_retrieval_candidate_ledgers SET retrieval_id = NULL "
+            "WHERE retrieval_id IN ("
+            "  SELECT id FROM message_retrievals "
+            f"  WHERE tool_call_id = :tool_call_id{ordinal_clause}"
+            ")"
         ),
-        {"tool_call_id": tool_call_id, "citation_count": len(citations)},
+        params,
     )
+    db.execute(
+        text(f"DELETE FROM message_retrievals WHERE tool_call_id = :tool_call_id{ordinal_clause}"),
+        params,
+    )
+
+
+def _delete_citation_edge(db: Session, *, viewer_id: UUID, edge_id: UUID) -> None:
+    """Delete one citation edge and the external snapshot it leaves orphaned.
+
+    Web citations mint a ``resource_external_snapshots`` row per cited result
+    (``_citation_target_ref``); when the last edge pointing at one is deleted —
+    here, in the ordinal-replace path, or by ``prune_tool_call_retrievals`` — the
+    snapshot is garbage. Snapshot GC is owned by ``resource_graph.cleanup`` (the
+    same owner the domain-parent delete path uses), so every citation-edge
+    deletion path collapses to one rule.
+    """
+    target_scheme, target_id = db.execute(
+        select(ResourceEdge.target_scheme, ResourceEdge.target_id).where(ResourceEdge.id == edge_id)
+    ).one()
+    delete_edge(db, viewer_id=viewer_id, edge_id=edge_id)
+    if target_scheme == "external_snapshot":
+        graph_cleanup.delete_orphaned_external_snapshots(db, snapshot_ids=[target_id])
 
 
 def _persist_read_evidence_citation(
     db: Session,
     *,
-    viewer_id: UUID,
+    run: ChatRun,
     tool_call_id: UUID,
     result: Any,
     start_ordinal: int,
@@ -405,7 +590,7 @@ def _persist_read_evidence_citation(
         return None
     try:
         search_result = get_search_result(
-            db, viewer_id, result.citation_result_type, result.citation_source_id
+            db, run.owner_user_id, result.citation_result_type, result.citation_source_id
         )
         citation = citation_from_search_result(search_result, filters={})
         citation.selected = True
@@ -418,12 +603,12 @@ def _persist_read_evidence_citation(
             scope="read_resource",
             retrieval_status="selected",
             included_in_prompt=True,
-            citation_ordinal=start_ordinal,
         )
     except (NotFoundError, ValueError):
         # justify-ignore-error: no resolvable anchor → the read body still
         # returns, but it is not cited (no row, no `n`).
         return None
+    _record_tool_citations(db, run=run, tool_call_id=tool_call_id, start_ordinal=start_ordinal)
     return start_ordinal
 
 
@@ -488,7 +673,7 @@ def _persist_tool_call_trace(
                     :assistant_message_id,
                     :tool_name,
                     :tool_call_index,
-                    'conversation_references',
+                    'conversation_context',
                     CAST(:payload AS JSONB),
                     '[]'::jsonb,
                     '[]'::jsonb,
@@ -507,7 +692,7 @@ def _persist_tool_call_trace(
             """
             UPDATE message_tool_calls
             SET tool_name = :tool_name,
-                scope = 'conversation_references',
+                scope = 'conversation_context',
                 result_refs = CAST(:payload AS JSONB),
                 selected_context_refs = '[]'::jsonb,
                 provider_request_ids = '[]'::jsonb,
@@ -518,110 +703,87 @@ def _persist_tool_call_trace(
         ),
         {**params, "tool_call_id": tool_call_id},
     )
-    db.execute(
-        text("DELETE FROM message_retrievals WHERE tool_call_id = :tool_call_id"),
-        {"tool_call_id": tool_call_id},
-    )
+    prune_tool_call_retrievals(db, tool_call_id=tool_call_id)
     return tool_call_id
 
 
 def _emit_citation_index(db: Session, run: ChatRun) -> None:
-    rows = db.execute(
-        text(
-            """
-            SELECT mr.result_type,
-                   mr.evidence_span_id,
-                   mr.media_id,
-                   mr.result_ref
-            FROM message_retrievals mr
-            JOIN message_tool_calls mtc ON mtc.id = mr.tool_call_id
-            WHERE mtc.assistant_message_id = :amid
-              AND mr.citation_ordinal IS NOT NULL
-              AND mr.selected = true
-            ORDER BY mr.citation_ordinal ASC
-            """
+    """Emit the message's citation set (from edges) + graduate cited local targets.
+
+    The entries carry ``citation_edge_id`` and the chip display fields; cited
+    LOCAL resources not yet in the conversation context get an
+    ``origin='citation'`` context edge plus a ``reference_added`` event built
+    from the returned ContextRefOut (spec §5.1/§11.6).
+    """
+    message_ref = ResourceRef(scheme="message", id=run.assistant_message_id)
+    edges = sorted(
+        (
+            edge
+            for edge in list_edges_for_ref(
+                db, viewer_id=run.owner_user_id, ref=message_ref, origin="citation"
+            )
+            if edge.source == message_ref and edge.ordinal is not None
         ),
-        {"amid": run.assistant_message_id},
-    ).fetchall()
-    if not rows:
+        key=lambda edge: edge.ordinal or 0,
+    )
+    if not edges:
         return
-    citations = build_citation_outs_for_message(db, assistant_message_id=run.assistant_message_id)
+    entries = []
+    for edge in edges:
+        assert edge.snapshot is not None, f"citation edge {edge.id} lost its snapshot"
+        entries.append(
+            {
+                "citation_edge_id": str(edge.id),
+                "n": edge.ordinal,
+                "target_ref": {"type": edge.target.scheme, "id": str(edge.target.id)},
+                "kind": edge.kind,
+                "deep_link": edge.snapshot.deep_link,
+                "snapshot": {
+                    "title": edge.snapshot.title,
+                    "excerpt": edge.snapshot.excerpt,
+                    "section_label": edge.snapshot.section_label,
+                    "result_type": edge.snapshot.result_type,
+                },
+            }
+        )
     append_run_event(
         db,
         run,
         "citation_index",
-        {
-            "assistant_message_id": str(run.assistant_message_id),
-            "citations": [c.model_dump(mode="json") for c in citations],
-        },
+        {"assistant_message_id": str(run.assistant_message_id), "entries": entries},
     )
-    for row in rows:
-        uri = _retrieval_row_to_uri(
-            result_type=row[0],
-            evidence_span_id=row[1],
-            media_id=row[2],
-            result_ref=row[3] or {},
-        )
-        if uri is None:
+    for edge in edges:
+        if edge.target.scheme == "external_snapshot":
             continue
-        new_row = insert_reference_if_absent(db, run.conversation_id, uri)
-        if new_row is None:
+        if is_context_ref(db, conversation_id=run.conversation_id, target=edge.target):
             continue
-        resolved_reference = resolve_reference_row(db, new_row, viewer_id=run.owner_user_id)
+        try:
+            context_ref = add_context_ref_without_commit(
+                db,
+                viewer_id=run.owner_user_id,
+                conversation_id=run.conversation_id,
+                target=edge.target,
+                origin="citation",
+            )
+        except NotFoundError:
+            # justify-ignore-error: the cited target was deleted after the edge
+            # was recorded (mid-run reindex). The citation chip keeps rendering
+            # from its snapshot; there is just no context ref to add.
+            continue
         append_run_event(
             db,
             run,
             "reference_added",
-            reference_to_event_payload(resolved_reference),
+            {
+                "id": str(context_ref.edge_id),
+                "conversation_id": str(context_ref.conversation_id),
+                "resource_ref": context_ref.target.uri,
+                "label": context_ref.resolved.label,
+                "summary": context_ref.resolved.summary,
+                "missing": context_ref.resolved.missing,
+                "created_at": context_ref.created_at,
+            },
         )
-
-
-def _retrieval_row_to_uri(
-    *,
-    result_type: str,
-    evidence_span_id: UUID | None,
-    media_id: UUID | None,
-    result_ref: dict[str, Any],
-) -> str | None:
-    """Derive a conversation_reference URI from a cited MessageRetrieval row.
-
-    Returns ``None`` for retrieval types that have no persistent URI (e.g.
-    ``web_result``) or when required identifiers are missing.
-    """
-    if result_type == "evidence_span":
-        if evidence_span_id is None:
-            return None
-        return format_resource_uri("span", evidence_span_id)
-    if result_type == "media":
-        if media_id is None:
-            return None
-        return format_resource_uri("media", media_id)
-    if result_type in {"episode", "video"}:
-        if media_id is None:
-            return None
-        return format_resource_uri("media", media_id)
-    scheme = _RESULT_REF_RESOURCE_URI_SCHEMES.get(result_type)
-    if scheme is None:
-        return None
-    resource_id = _result_ref_resource_id(result_ref)
-    if resource_id is None:
-        return None
-    return format_resource_uri(scheme, resource_id)
-
-
-def _result_ref_resource_id(result_ref: Mapping[str, Any]) -> UUID | None:
-    raw_id = result_ref.get("id")
-    if isinstance(raw_id, UUID):
-        return raw_id
-    if not isinstance(raw_id, str):
-        return None
-    try:
-        resource_id = UUID(raw_id)
-    except ValueError:
-        return None
-    if str(resource_id) != raw_id:
-        return None
-    return resource_id
 
 
 def create_chat_run(
@@ -1253,8 +1415,9 @@ async def _execute_chat_run(
                             forced_error=forced_error,
                         )
                         start_n = citation_n_next
-                        citation_n_next = _assign_citation_ordinals(
+                        citation_n_next = _record_tool_citations(
                             db,
+                            run=run,
                             tool_call_id=run_result.tool_call_id,
                             start_ordinal=citation_n_next,
                         )
@@ -1297,8 +1460,9 @@ async def _execute_chat_run(
                             tool_call_index=tool_call_index_next,
                         )
                         start_n = citation_n_next
-                        citation_n_next = _assign_citation_ordinals(
+                        citation_n_next = _record_tool_citations(
                             db,
+                            run=run,
                             tool_call_id=run_result.tool_call_id,
                             start_ordinal=citation_n_next,
                         )
@@ -1335,7 +1499,7 @@ async def _execute_chat_run(
                         )
                         read_n = _persist_read_evidence_citation(
                             db,
-                            viewer_id=run.owner_user_id,
+                            run=run,
                             tool_call_id=read_tool_call_id,
                             result=read_result,
                             start_ordinal=citation_n_next,

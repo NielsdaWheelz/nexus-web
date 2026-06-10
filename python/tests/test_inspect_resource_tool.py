@@ -26,7 +26,7 @@ from tests.factories import (
     get_user_default_library,
 )
 from tests.test_read_resource_tool import _admit_reference
-from tests.test_resource_resolver import _make_pdf
+from tests.test_resource_graph_resolve import _make_pdf
 
 pytestmark = pytest.mark.integration
 

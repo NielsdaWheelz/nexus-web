@@ -64,6 +64,8 @@ from nexus.services.note_indexing import rebuild_page_content_index
 from nexus.services.notes import set_highlight_note_body
 from nexus.services.pdf_indexing import index_pdf_evidence
 from nexus.services.pdf_ingest import PdfExtractionError
+from nexus.services.resource_graph.cleanup import delete_edges_for_deleted_resource
+from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.transcript_segments import normalize_transcript_segments
 from nexus.services.transcripts.current import write_current_transcript
 from nexus.services.upload import confirm_ingest, init_upload
@@ -580,72 +582,58 @@ def _write_reader_overview_ruler_seed_file(
 
 
 def _clear_fragment_artifacts(db, media_id: UUID) -> None:
-    """Clear fragments, highlights, and linked notes attached to media transcript content."""
-    db.execute(
-        text(
-            """
-            DELETE FROM note_blocks
-            WHERE id IN (
-                SELECT ol.a_id
-                FROM object_links ol
-                JOIN highlights h ON h.id = ol.b_id
-                JOIN highlight_fragment_anchors hfa ON hfa.highlight_id = h.id
-                JOIN fragments f ON f.id = hfa.fragment_id
-                WHERE ol.a_type = 'note_block'
-                  AND ol.b_type = 'highlight'
-                  AND f.media_id = :media_id
-            )
-            """
-        ),
-        {"media_id": media_id},
-    )
-    db.execute(
-        text(
-            """
-            DELETE FROM object_links
-            WHERE (a_type = 'note_block' AND a_id IN (
-                SELECT ol.a_id
-                FROM object_links ol
-                JOIN highlights h ON h.id = ol.b_id
-                JOIN highlight_fragment_anchors hfa ON hfa.highlight_id = h.id
-                JOIN fragments f ON f.id = hfa.fragment_id
-                WHERE ol.a_type = 'note_block'
-                  AND ol.b_type = 'highlight'
-                  AND f.media_id = :media_id
-            ))
-               OR (b_type = 'highlight' AND b_id IN (
-                SELECT h.id
-                FROM highlights h
-                JOIN highlight_fragment_anchors hfa ON hfa.highlight_id = h.id
+    """Clear fragments, highlights, and linked notes attached to media transcript content.
+
+    Provenance edges (``resource_edges``, the store that replaced ``object_links``)
+    are torn down through the same per-resource cleanup the production note- and
+    highlight-delete paths use, so no bare edge survives either deleted endpoint.
+    """
+    highlight_ids = list(
+        db.scalars(
+            text(
+                """
+                SELECT hfa.highlight_id
+                FROM highlight_fragment_anchors hfa
                 JOIN fragments f ON f.id = hfa.fragment_id
                 WHERE f.media_id = :media_id
-            ))
-               OR (a_type = 'highlight' AND a_id IN (
-                SELECT h.id
-                FROM highlights h
-                JOIN highlight_fragment_anchors hfa ON hfa.highlight_id = h.id
-                JOIN fragments f ON f.id = hfa.fragment_id
-                WHERE f.media_id = :media_id
-            ))
-            """
-        ),
-        {"media_id": media_id},
+                """
+            ),
+            {"media_id": media_id},
+        ).all()
     )
-    db.execute(
-        text(
-            """
-            DELETE FROM highlights
-            WHERE id IN (
-                SELECT h.id
-                FROM highlights h
-                JOIN highlight_fragment_anchors hfa ON hfa.highlight_id = h.id
-                JOIN fragments f ON f.id = hfa.fragment_id
-                WHERE media_id = :media_id
+    if highlight_ids:
+        note_block_ids = list(
+            db.scalars(
+                text(
+                    """
+                    SELECT target_id
+                    FROM resource_edges
+                    WHERE origin = 'highlight_note'
+                      AND source_scheme = 'highlight'
+                      AND target_scheme = 'note_block'
+                      AND source_id = ANY(:highlight_ids)
+                    """
+                ),
+                {"highlight_ids": highlight_ids},
+            ).all()
+        )
+        for note_block_id in note_block_ids:
+            delete_edges_for_deleted_resource(
+                db, ref=ResourceRef(scheme="note_block", id=note_block_id)
             )
-            """
-        ),
-        {"media_id": media_id},
-    )
+        if note_block_ids:
+            db.execute(
+                text("DELETE FROM note_blocks WHERE id = ANY(:note_block_ids)"),
+                {"note_block_ids": note_block_ids},
+            )
+        for highlight_id in highlight_ids:
+            delete_edges_for_deleted_resource(
+                db, ref=ResourceRef(scheme="highlight", id=highlight_id)
+            )
+        db.execute(
+            text("DELETE FROM highlights WHERE id = ANY(:highlight_ids)"),
+            {"highlight_ids": highlight_ids},
+        )
     db.execute(
         text("DELETE FROM fragments WHERE media_id = :media_id"),
         {"media_id": media_id},
