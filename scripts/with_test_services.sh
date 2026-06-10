@@ -58,28 +58,14 @@ docker compose -f "$COMPOSE_FILE" up -d
 postgres_container="$(docker compose -f "$COMPOSE_FILE" ps -q postgres)"
 
 test_env_require_tool curl
+test_env_require_tool python3
 
-for i in {1..30}; do
-    if docker exec "$postgres_container" pg_isready -U postgres >/dev/null 2>&1; then
-        break
-    fi
-    if [ "$i" -eq 30 ]; then
-        echo "Error: Postgres did not become ready in time" >&2
-        exit 1
-    fi
-    sleep 1
-done
-
-for i in {1..30}; do
-    if curl -fsS "http://127.0.0.1:${MINIO_PORT}/minio/health/ready" >/dev/null 2>&1; then
-        break
-    fi
-    if [ "$i" -eq 30 ]; then
-        echo "Error: MinIO did not become ready in time" >&2
-        exit 1
-    fi
-    sleep 1
-done
+# pg_isready confirms Postgres is ready inside the container; test_env_tcp_accepts
+# then confirms the published host port the app actually connects through is live.
+test_env_wait_until "postgres" 30 1 docker exec "$postgres_container" pg_isready -U postgres
+test_env_wait_until "postgres host port" 120 0.25 test_env_tcp_accepts "$POSTGRES_PORT"
+test_env_wait_until "MinIO" 30 1 \
+    curl -fsS "http://127.0.0.1:${MINIO_PORT}/minio/health/ready"
 
 docker exec "$postgres_container" createdb -U postgres nexus_test >/dev/null 2>&1 || true
 docker exec "$postgres_container" createdb -U postgres nexus_test_migrations >/dev/null 2>&1 || true

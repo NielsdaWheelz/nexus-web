@@ -259,6 +259,51 @@ test_env_wait_for_port_close() {
     echo "Warning: $label port $port was still busy after cleanup" >&2
 }
 
+# Poll a readiness command until it succeeds, or fail after a bounded number of
+# attempts. Every "wait for service X to come up" check shares this shape: the
+# command's own exit status is the readiness signal (its output is noise and is
+# discarded). Keeps the retry/timeout policy in one place instead of re-rolled
+# per service.
+test_env_wait_until() {
+    local label="$1"
+    local attempts="$2"
+    local sleep_seconds="$3"
+    shift 3
+    local i
+
+    for ((i = 1; i <= attempts; i++)); do
+        if "$@" >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep "$sleep_seconds"
+    done
+    echo "Error: $label did not become ready in time" >&2
+    exit 1
+}
+
+# True when a TCP connection to the published host port is accepted. Container
+# health checks (e.g. `docker exec pg_isready`) prove a service is ready *inside*
+# the container, but every consumer connects through the published host port,
+# whose mapping Docker can finish establishing after the container reports
+# healthy. Pairing this with the in-container check (via test_env_wait_until)
+# makes readiness reflect what the app actually uses, so a publish failure
+# surfaces here instead of as a downstream "connection refused".
+test_env_tcp_accepts() {
+    local port="$1"
+
+    python3 - "$port" <<'PY'
+import socket
+import sys
+
+try:
+    with socket.create_connection(("127.0.0.1", int(sys.argv[1])), timeout=1):
+        pass
+except OSError:
+    sys.exit(1)
+sys.exit(0)
+PY
+}
+
 test_env_port_listener_pids() {
     local port="$1"
 
