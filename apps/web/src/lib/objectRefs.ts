@@ -56,14 +56,18 @@ export async function resolveObjectRefs(refs: ObjectRef[]): Promise<HydratedObje
   return response.data.objects;
 }
 
-export async function searchObjectRefs(query: string, limit = 8): Promise<HydratedObjectRef[]> {
+export async function searchObjectRefs(
+  query: string,
+  limit = 8,
+  options: { signal?: AbortSignal } = {}
+): Promise<HydratedObjectRef[]> {
   const params = new URLSearchParams({
     q: query,
     limit: String(limit),
   });
   const response = await apiFetch<ObjectRefsResolveResponse>(
     `/api/object-refs/search?${params.toString()}`,
-    { cache: "no-store" }
+    { cache: "no-store", signal: options.signal }
   );
   return response.data.objects;
 }

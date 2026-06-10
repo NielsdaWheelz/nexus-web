@@ -10,6 +10,7 @@
  */
 
 import type { ApiPath } from "@/lib/api/client";
+import { apiFetch } from "@/lib/api/client";
 
 export type EdgeKind = "context" | "supports" | "contradicts";
 export type EdgeOrigin =
@@ -34,6 +35,10 @@ export interface EdgeOut {
   created_at: string;
 }
 
+interface EdgeResponse {
+  data: EdgeOut;
+}
+
 /**
  * The GET URL for every edge touching `ref` on either endpoint (backlinks,
  * cited-by, refs). One source of truth for the read path; `ref` is a
@@ -41,4 +46,26 @@ export interface EdgeOut {
  */
 export function edgesForRefPath(ref: string): ApiPath {
   return `/api/resource-graph/edges?ref=${encodeURIComponent(ref)}` as ApiPath;
+}
+
+export async function createUserEdge(input: {
+  sourceRef: string;
+  targetRef: string;
+  kind: EdgeKind;
+}): Promise<EdgeOut> {
+  const response = await apiFetch<EdgeResponse>("/api/resource-graph/edges", {
+    method: "POST",
+    body: JSON.stringify({
+      source_ref: input.sourceRef,
+      target_ref: input.targetRef,
+      kind: input.kind,
+    }),
+  });
+  return response.data;
+}
+
+export async function deleteUserEdge(edgeId: string): Promise<void> {
+  await apiFetch(`/api/resource-graph/edges/${edgeId}` as ApiPath, {
+    method: "DELETE",
+  });
 }

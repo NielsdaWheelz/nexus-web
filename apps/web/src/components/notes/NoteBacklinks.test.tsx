@@ -1,4 +1,5 @@
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import NoteBacklinks from "./NoteBacklinks";
 import type { EdgeOut } from "@/lib/resourceGraph/edges";
@@ -145,8 +146,174 @@ describe("NoteBacklinks", () => {
     );
 
     expect(await screen.findByText("Citing media")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Deleted page/ })).toBeDisabled();
+  });
+
+  it("creates a user connection from an object search result and reloads", async () => {
+    const user = userEvent.setup();
+    const requests: Array<{
+      path: string;
+      init?: RequestInit;
+      resolve: (response: Response) => void;
+    }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (input: RequestInfo | URL, init?: RequestInit) =>
+          new Promise<Response>((resolve) => {
+            requests.push({ path: String(input), init, resolve });
+          }),
+      ),
+    );
+
+    render(
+      <NoteBacklinks objectRef={{ objectType: "note_block", objectId: BLOCK_A }} />,
+    );
+    await waitFor(() => expect(requests).toHaveLength(1));
+    requests[0].resolve(Response.json({ data: [] }));
+    expect(await screen.findByText("No connected objects yet.")).toBeInTheDocument();
+
+    await user.type(screen.getByLabelText("Connection target"), "linked");
+    await waitFor(() => expect(requests.length).toBeGreaterThan(1));
+    const searchRequests = requests.slice(1);
+    for (const staleSearch of searchRequests.slice(0, -1)) {
+      staleSearch.resolve(Response.json({ data: { objects: [] } }));
+    }
+    searchRequests[searchRequests.length - 1].resolve(
+      Response.json({
+        data: {
+          objects: [
+            {
+              objectType: "media",
+              objectId: "44444444-4444-4444-8444-444444444444",
+              label: "Linked media",
+              route: "/media/44444444-4444-4444-8444-444444444444",
+            },
+          ],
+        },
+      }),
+    );
+    await user.click(await screen.findByRole("button", { name: /Linked media/ }));
+    await user.click(screen.getByRole("button", { name: "Connect" }));
+
+    await waitFor(() =>
+      expect(
+        requests.some(
+          (request) =>
+            request.path === "/api/resource-graph/edges" &&
+            request.init?.method === "POST",
+        ),
+      ).toBe(true),
+    );
+    const postRequest = requests.find(
+      (request) =>
+        request.path === "/api/resource-graph/edges" &&
+        request.init?.method === "POST",
+    );
+    expect(postRequest).toBeDefined();
+    expect(JSON.parse(String(postRequest?.init?.body))).toEqual({
+      source_ref: `note_block:${BLOCK_A}`,
+      target_ref: "media:44444444-4444-4444-8444-444444444444",
+      kind: "context",
+    });
+    postRequest?.resolve(
+      Response.json({
+        data: edge({
+          id: "edge-created",
+          source_ref: `note_block:${BLOCK_A}`,
+          target_ref: "media:44444444-4444-4444-8444-444444444444",
+          target_label: "Linked media",
+          origin: "user",
+        }),
+      }),
+    );
+
+    await waitFor(() =>
+      expect(
+        requests.some(
+          (request, index) =>
+            index > requests.indexOf(postRequest!) &&
+            request.path.includes(encodeURIComponent(`note_block:${BLOCK_A}`)),
+        ),
+      ).toBe(true),
+    );
+    const reloadRequest = requests.find(
+      (request, index) =>
+        index > requests.indexOf(postRequest!) &&
+        request.path.includes(encodeURIComponent(`note_block:${BLOCK_A}`)),
+    );
+    reloadRequest?.resolve(
+      Response.json({
+        data: [
+          edge({
+            id: "edge-created",
+            source_ref: `note_block:${BLOCK_A}`,
+            target_ref: "media:44444444-4444-4444-8444-444444444444",
+            target_label: "Linked media",
+            origin: "user",
+          }),
+        ],
+      }),
+    );
+    expect(await screen.findByText("Linked media")).toBeInTheDocument();
+  });
+
+  it("deletes user-created connections but not graph-owned ones", async () => {
+    const user = userEvent.setup();
+    const requests: Array<{
+      path: string;
+      init?: RequestInit;
+      resolve: (response: Response) => void;
+    }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (input: RequestInfo | URL, init?: RequestInit) =>
+          new Promise<Response>((resolve) => {
+            requests.push({ path: String(input), init, resolve });
+          }),
+      ),
+    );
+
+    render(
+      <NoteBacklinks objectRef={{ objectType: "note_block", objectId: BLOCK_A }} />,
+    );
+    await waitFor(() => expect(requests).toHaveLength(1));
+    requests[0].resolve(
+      Response.json({
+        data: [
+          edge({
+            id: "edge-user",
+            origin: "user",
+            target_label: "Manual link",
+          }),
+          edge({
+            id: "edge-body",
+            origin: "note_body",
+            target_label: "Body link",
+          }),
+        ],
+      }),
+    );
+
+    expect(await screen.findByText("Manual link")).toBeInTheDocument();
+    expect(screen.getByText("Body link")).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /Deleted page/ }),
-    ).toBeDisabled();
+      screen.queryByRole("button", { name: "Delete connection to Body link" }),
+    ).not.toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("button", { name: "Delete connection to Manual link" }),
+    );
+    await waitFor(() => expect(requests).toHaveLength(2));
+    expect(requests[1].path).toBe("/api/resource-graph/edges/edge-user");
+    expect(requests[1].init?.method).toBe("DELETE");
+    requests[1].resolve(new Response(null, { status: 204 }));
+
+    await waitFor(() => expect(requests).toHaveLength(3));
+    requests[2].resolve(Response.json({ data: [] }));
+    await waitFor(() =>
+      expect(screen.queryByText("Manual link")).not.toBeInTheDocument(),
+    );
   });
 });

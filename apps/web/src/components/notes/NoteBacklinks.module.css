@@ -4,10 +4,42 @@
   padding-top: var(--space-4);
 }
 
+.header {
+  align-items: center;
+  display: flex;
+  gap: var(--space-2);
+  justify-content: space-between;
+}
+
 .title {
   font-size: var(--text-sm);
   font-weight: var(--weight-bold);
   margin: 0 0 var(--space-2);
+}
+
+.composer {
+  display: grid;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.composerControls {
+  align-items: start;
+  display: grid;
+  gap: var(--space-2);
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
+.searchWrap {
+  position: relative;
+}
+
+.autocomplete {
+  left: 0;
+  position: absolute;
+  top: calc(100% + 4px);
+  width: min(320px, 100%);
+  z-index: 4;
 }
 
 .list {
@@ -17,25 +49,74 @@
 
 .linkRow {
   align-items: center;
-  background: none;
+  background: color-mix(in srgb, currentColor 2%, transparent);
   border: 1px solid color-mix(in srgb, currentColor 10%, transparent);
   border-radius: var(--radius-lg);
+  color: inherit;
+  display: grid;
+  gap: var(--space-2);
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-height: 36px;
+  padding: var(--space-1);
+  text-align: left;
+  text-decoration: none;
+}
+
+.linkRow:hover {
+  background: color-mix(in srgb, currentColor 6%, transparent);
+}
+
+.linkButton {
+  align-items: center;
+  background: none;
+  border: 0;
   color: inherit;
   cursor: pointer;
   display: grid;
   gap: var(--space-2);
   grid-template-columns: auto minmax(0, 1fr);
-  min-height: 36px;
-  padding: var(--space-1) var(--space-2);
+  min-height: 28px;
+  min-width: 0;
+  padding: 0 var(--space-1);
   text-align: left;
-  text-decoration: none;
 }
 
-.linkRow:hover:not(:disabled) {
-  background: color-mix(in srgb, currentColor 6%, transparent);
+.linkButton:disabled {
+  cursor: default;
+}
+
+.connectionText {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.connectionText > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.connectionMeta {
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
+}
+
+.deleteWrap {
+  display: grid;
+  gap: var(--space-1);
 }
 
 .missing {
-  cursor: default;
   opacity: 0.55;
+}
+
+@media (max-width: 640px) {
+  .composerControls {
+    grid-template-columns: 1fr;
+  }
+
+  .autocomplete {
+    width: 100%;
+  }
 }
