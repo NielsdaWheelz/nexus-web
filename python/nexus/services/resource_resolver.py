@@ -28,6 +28,7 @@ ResourceUriScheme = Literal[
     "media",
     "library",
     "library_intelligence_artifact",
+    "oracle_reading",
     "span",
     "chunk",
     "highlight",
@@ -41,6 +42,7 @@ RESOURCE_URI_SCHEMES: tuple[ResourceUriScheme, ...] = (
     "media",
     "library",
     "library_intelligence_artifact",
+    "oracle_reading",
     "span",
     "chunk",
     "highlight",
@@ -85,6 +87,7 @@ class ResolvedResource:
     fetch_hint: str
     quote: LoadedQuote | None = None  # set for highlights → <quote> instead of <body>
     missing: bool = False
+    revision_id: UUID | None = None  # LI artifact: the CURRENT revision consumed (ledger stamp)
 
 
 def parse_resource_uri(raw: str) -> ParsedResourceUri | ResourceUriParseFailure:
@@ -223,6 +226,17 @@ def _present(loaded: LoadedResource) -> ResolvedResource:
                 content_md if content_md and len(content_md) < INLINE_THRESHOLD_CHARS else None
             ),
             fetch_hint=(f'read_resource("{loaded.uri}") for the full synthesis{library_search}'),
+            revision_id=loaded.revision_id,
+        )
+    if scheme == "oracle_reading":
+        title = loaded.title or "Oracle reading"
+        body = loaded.body or ""
+        return ResolvedResource(
+            uri=loaded.uri,
+            label=title,
+            summary=_first_line(body) or title,
+            inline_body=body if body and len(body) < INLINE_THRESHOLD_CHARS else None,
+            fetch_hint=f'read_resource("{loaded.uri}") for the full reading',
         )
     if scheme == "highlight":
         quote = loaded.quote

@@ -16,11 +16,13 @@ services:
       timeout: 5s
       retries: 10
       start_period: 10s
+    # journald is the only driver whose logs survive `up --force-recreate`
+    # (json-file/local store under the container id and die with it).
+    # `docker compose logs` still reads back per container via the journal.
     logging: &default-logging
-      driver: json-file
+      driver: journald
       options:
-        max-size: "10m"
-        max-file: "5"
+        tag: "{{.Name}}"
 
   caddy:
     image: caddy:2-alpine

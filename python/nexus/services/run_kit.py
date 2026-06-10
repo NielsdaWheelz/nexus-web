@@ -19,6 +19,7 @@ without materializing the parent row.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from typing import assert_never
@@ -145,12 +146,17 @@ def mark_terminal(
     stream: RunStream,
     status: str,
     done_payload: RunEventPayload,
+    error_code: str | None = None,
+    error_detail: str | None = None,
 ) -> None:
     """Idempotently transition the run to a terminal status and emit ``done``.
 
     No-op when the parent is already terminal. Otherwise sets the parent's
-    ``status`` and ``completed_at``, then appends the ``done`` event. Does not
-    commit — the caller owns the transaction boundary.
+    ``status`` and ``completed_at``, stamps ``error_code``/``error_detail`` on
+    the parent when given (this is the one writer of the run-parent error pair;
+    ``error_detail`` is operator-facing, never rendered), sets ``failed_at`` on
+    a failed oracle reading (its failed-has-error CHECK), then appends the
+    ``done`` event. Does not commit — the caller owns the transaction boundary.
     """
     parent = stream.parent
     if isinstance(parent, ChatRun):
@@ -165,7 +171,39 @@ def mark_terminal(
         return
     parent.status = status
     parent.completed_at = func.now()
+    if error_code is not None:
+        parent.error_code = error_code
+    if error_detail is not None:
+        parent.error_detail = error_detail
+    if isinstance(parent, OracleReading) and status == "failed":
+        parent.failed_at = func.now()
     append_event(db, stream=stream, event_type="done", payload=done_payload)
+
+
+def fail_run_after_worker_exception[P](
+    db: Session,
+    *,
+    load_parent: Callable[[Session], P | None],
+    is_terminal: Callable[[P], bool],
+    write_failure: Callable[[Session, P], None],
+) -> tuple[P | None, bool]:
+    """Shared worker-boundary failure write for oracle/LI/media-unit tasks.
+
+    Rolls back the broken transaction, reloads the run parent on the clean
+    session, no-ops when it is missing or already terminal, otherwise applies
+    ``write_failure`` (typically ``mark_terminal(status="failed", error_code=…,
+    error_detail=…)``) and commits. Returns ``(parent, failed_now)``: parent is
+    ``None`` when missing; ``failed_now`` is True only when this call wrote the
+    failure.
+    """
+    db.rollback()
+    parent = load_parent(db)
+    if parent is None or is_terminal(parent):
+        db.commit()
+        return parent, False
+    write_failure(db, parent)
+    db.commit()
+    return parent, True
 
 
 def _next_seq(db: Session, *, table: str, fk: str, parent_id: UUID) -> int:

@@ -530,7 +530,7 @@ wheels = [
 [[package]]
 name = "llm-calling"
 version = "0.1.0"
-source = { git = "https://github.com/NielsdaWheelz/llm-calling?rev=6b44ca727c70c3a4007064282e34187bfc1ab649#6b44ca727c70c3a4007064282e34187bfc1ab649" }
+source = { git = "https://github.com/NielsdaWheelz/llm-calling?rev=362eae20843d83e750f58ee3eec761958df5f618#362eae20843d83e750f58ee3eec761958df5f618" }
 dependencies = [
     { name = "httpx" },
 ]
@@ -804,7 +804,7 @@ requires-dist = [
     { name = "html5lib", specifier = ">=1.1" },
     { name = "httpx", specifier = ">=0.28.0" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.28.0" },
-    { name = "llm-calling", git = "https://github.com/NielsdaWheelz/llm-calling?rev=6b44ca727c70c3a4007064282e34187bfc1ab649" },
+    { name = "llm-calling", git = "https://github.com/NielsdaWheelz/llm-calling?rev=362eae20843d83e750f58ee3eec761958df5f618" },
     { name = "lxml", specifier = ">=5.0.0" },
     { name = "pillow", specifier = ">=10.0.0" },
     { name = "pip-audit", marker = "extra == 'dev'", specifier = ">=2.9.0" },

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from sqlalchemy import text
@@ -76,6 +76,7 @@ class LoadedResource:
     message_count: int | None = None  # conversation summary
     item_count: int | None = None  # library summary
     related_library_id: UUID | None = None  # LI artifact -> the library: scope for app_search
+    revision_id: UUID | None = None  # LI artifact -> the CURRENT revision consumed (ledger stamp)
 
 
 def load_resource_batch(
@@ -96,6 +97,8 @@ def load_resource_batch(
             loaded = _load_library(db, items, viewer_id=viewer_id)
         elif scheme == "library_intelligence_artifact":
             loaded = _load_library_intelligence_artifact(db, items, viewer_id=viewer_id)
+        elif scheme == "oracle_reading":
+            loaded = _load_oracle_reading(db, items, viewer_id=viewer_id)
         elif scheme == "span":
             loaded = _load_span(db, items, viewer_id=viewer_id)
         elif scheme == "chunk":
@@ -228,7 +231,7 @@ def _load_library_intelligence_artifact(
     rows = db.execute(
         text(
             """
-            SELECT a.id, a.library_id, l.name, r.content_md
+            SELECT a.id, a.library_id, l.name, r.content_md, r.id AS revision_id
             FROM library_intelligence_artifacts a
             JOIN libraries l ON l.id = a.library_id
             LEFT JOIN library_intelligence_artifact_revisions r
@@ -252,9 +255,85 @@ def _load_library_intelligence_artifact(
                 title=str(row[2]),
                 body=str(row[3]) if row[3] is not None else None,
                 related_library_id=UUID(str(row[1])),
+                revision_id=UUID(str(row[4])) if row[4] is not None else None,
             )
         )
     return out
+
+
+def _load_oracle_reading(
+    db: Session, items: list[ParsedResourceUri], *, viewer_id: UUID
+) -> list[LoadedResource]:
+    """Resolve each oracle reading to its full reading text (owner-only).
+
+    Body = question + motto (+ gloss) + argument + per-phase passages
+    (attribution + snippet + marginalia) + the interpretation. Ownership is
+    ``user_id == viewer_id`` (single-user readings); a non-owner or unknown id is
+    masked as missing. ``title`` is the folio label for the resolver/read presenters.
+    """
+    ids = [p.resource_id for p in items]
+    reading_rows = db.execute(
+        text(
+            """
+            SELECT id, user_id, folio_number, folio_motto, folio_motto_gloss,
+                   argument_text, question_text, interpretation_text
+            FROM oracle_readings
+            WHERE id = ANY(:ids)
+            """
+        ),
+        {"ids": ids},
+    ).fetchall()
+    by_id = {row[0]: row for row in reading_rows}
+    passage_rows = db.execute(
+        text(
+            """
+            SELECT reading_id, phase, attribution_text, exact_snippet, marginalia_text
+            FROM oracle_reading_passages
+            WHERE reading_id = ANY(:ids)
+            """
+        ),
+        {"ids": ids},
+    ).fetchall()
+    _phase_order = {"descent": 0, "ordeal": 1, "ascent": 2}
+    passages_by_reading: dict[UUID, list[Any]] = defaultdict(list)
+    for row in passage_rows:
+        passages_by_reading[row[0]].append(row)
+    out: list[LoadedResource] = []
+    for p in items:
+        row = by_id.get(p.resource_id)
+        if row is None or row[1] != viewer_id:
+            out.append(_missing(p.raw, "oracle_reading"))
+            continue
+        passages = sorted(
+            passages_by_reading.get(p.resource_id, []),
+            key=lambda passage: _phase_order.get(str(passage[1]), len(_phase_order)),
+        )
+        out.append(
+            LoadedResource(
+                uri=p.raw,
+                scheme="oracle_reading",
+                title=f"Folio {row[2]}" + (f" — {row[3]}" if row[3] else ""),
+                body=_oracle_reading_body(row, passages),
+            )
+        )
+    return out
+
+
+def _oracle_reading_body(reading_row: Any, passage_rows: list[Any]) -> str:
+    """Compose the readable oracle-reading body from the reading + its passages."""
+    lines = [f"Question: {reading_row[6]}"]
+    motto = reading_row[3]
+    if motto:
+        gloss = reading_row[4]
+        lines.append(f"Motto: {motto}" + (f" — {gloss}" if gloss else ""))
+    if reading_row[5]:
+        lines.append(f"Argument: {reading_row[5]}")
+    for passage in passage_rows:
+        phase, attribution, snippet, marginalia = passage[1], passage[2], passage[3], passage[4]
+        lines.append(f"\n[{str(phase).capitalize()}] {attribution}\n{snippet}\n— {marginalia}")
+    if reading_row[7]:
+        lines.append(f"\nInterpretation:\n{reading_row[7]}")
+    return "\n".join(lines)
 
 
 def _load_span(

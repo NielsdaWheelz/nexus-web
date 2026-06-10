@@ -34,17 +34,27 @@ describe("toLibraryIntelligenceEvent", () => {
 
   it("parses a successful done event", () => {
     expect(
-      toLibraryIntelligenceEvent("done", { revision_id: "rev-1" }),
+      toLibraryIntelligenceEvent("done", {
+        status: "ready",
+        error_code: null,
+        revision_id: "rev-1",
+      }),
     ).toEqual({
       type: "done",
-      data: { revision_id: "rev-1", error: null },
+      data: { status: "ready", error_code: null, revision_id: "rev-1" },
     });
   });
 
   it("parses a failed done event", () => {
-    expect(toLibraryIntelligenceEvent("done", { error: "E_INTERNAL" })).toEqual({
+    expect(
+      toLibraryIntelligenceEvent("done", {
+        status: "failed",
+        error_code: "E_INTERNAL",
+        revision_id: "rev-1",
+      }),
+    ).toEqual({
       type: "done",
-      data: { revision_id: null, error: "E_INTERNAL" },
+      data: { status: "failed", error_code: "E_INTERNAL", revision_id: "rev-1" },
     });
   });
 
@@ -60,9 +70,12 @@ describe("toLibraryIntelligenceEvent", () => {
     ).toThrow("Invalid SSE payload for progress");
   });
 
-  it("throws on a malformed done payload", () => {
+  it("throws on a malformed done payload (missing status)", () => {
     expect(() =>
-      toLibraryIntelligenceEvent("done", { revision_id: 7 }),
+      toLibraryIntelligenceEvent("done", {
+        error_code: null,
+        revision_id: "rev-1",
+      }),
     ).toThrow("Invalid SSE payload for done");
   });
 

@@ -36,6 +36,7 @@ from nexus.schemas.retrieval import (
 )
 from nexus.schemas.search import SearchResultOut
 from nexus.services.locator_resolver import locator_from_resolution, resolve_evidence_span
+from nexus.services.media_intelligence import get_ready_summaries
 
 _LOCATOR_ADAPTER: TypeAdapter[RetrievalLocator] = TypeAdapter(RetrievalLocator)
 
@@ -190,6 +191,11 @@ class RetrievalCitation:
                 "score": self.score,
                 "selected": self.selected,
             }
+        if self.result_type == "web_result":
+            # The web-search citation already carries the full validated
+            # ``WebRetrievalResultRef`` shape (extra fields the compact model does
+            # not hold, e.g. extra_snippets/published_at); pass it through.
+            return self.result_ref
         raise ValueError(f"Unsupported result type: {self.result_type}")
 
 
@@ -453,3 +459,123 @@ def _citation_out_from_row(row: Mapping[Any, Any]) -> CitationOut:
 
 def _opt_str(value: Any) -> str | None:
     return value if isinstance(value, str) else None
+
+
+# ---------- chat-message citation read-model producer -----------------------
+
+_MESSAGE_CITATION_SELECT = text(
+    """
+    SELECT mr.citation_ordinal,
+           mr.result_type,
+           mr.evidence_span_id,
+           mr.media_id,
+           mr.source_id,
+           mr.locator,
+           mr.deep_link,
+           mr.source_title,
+           mr.section_label,
+           mr.exact_snippet,
+           mtc.assistant_message_id
+    FROM message_retrievals mr
+    JOIN message_tool_calls mtc ON mtc.id = mr.tool_call_id
+    WHERE mtc.assistant_message_id = ANY(:assistant_message_ids)
+      AND mr.citation_ordinal IS NOT NULL
+      AND mr.selected = true
+    ORDER BY mtc.assistant_message_id, mr.citation_ordinal ASC
+    """
+)
+
+
+def build_citation_outs_for_message(
+    db: Session, *, assistant_message_id: UUID
+) -> list[CitationOut]:
+    """Build the shared ``CitationOut`` read-model for one assistant message.
+
+    Reads the selected, cited ``message_retrievals`` rows for the message and maps
+    each to the same render contract chat used to build on the frontend (target ref
+    by ``evidence_span_id``/``content_chunk``/``media``; locator-hoisted media id;
+    ``summary_md`` enrichment for media targets). The single-message twin of
+    :func:`build_citation_outs_for_revision`.
+    """
+    return build_citation_outs_for_messages(db, assistant_message_ids=[assistant_message_id]).get(
+        assistant_message_id, []
+    )
+
+
+def build_citation_outs_for_messages(
+    db: Session, *, assistant_message_ids: list[UUID]
+) -> dict[UUID, list[CitationOut]]:
+    """Batched :func:`build_citation_outs_for_message` over many assistant messages.
+
+    One query over all messages plus one ``get_ready_summaries`` call, so the
+    message-list path never issues a per-message query (no N+1).
+    """
+    if not assistant_message_ids:
+        return {}
+    rows = (
+        db.execute(_MESSAGE_CITATION_SELECT, {"assistant_message_ids": assistant_message_ids})
+        .mappings()
+        .all()
+    )
+    media_ids = sorted(
+        {
+            UUID(str(row["media_id"]))
+            for row in rows
+            if row["result_type"] == "media" and row["media_id"] is not None
+        }
+    )
+    summaries = get_ready_summaries(db, media_ids=media_ids) if media_ids else {}
+    by_message: dict[UUID, list[CitationOut]] = {mid: [] for mid in assistant_message_ids}
+    for row in rows:
+        message_id = UUID(str(row["assistant_message_id"]))
+        by_message[message_id].append(_citation_out_from_message_row(row, summaries))
+    return by_message
+
+
+def _citation_out_from_message_row(
+    row: Mapping[Any, Any], summaries: Mapping[UUID, str]
+) -> CitationOut:
+    raw_locator = row["locator"] if isinstance(row["locator"], dict) else None
+    locator: RetrievalLocator | None = (
+        _LOCATOR_ADAPTER.validate_python(raw_locator) if raw_locator else None
+    )
+    result_type = str(row["result_type"])
+    evidence_span_id = row["evidence_span_id"]
+    source_id = str(row["source_id"])
+    row_media_id = row["media_id"]
+    # Port of ``targetRefFromRetrieval``: evidence span → content chunk → media.
+    if evidence_span_id is not None:
+        target_ref = CitationTargetRef(type="evidence_span", id=UUID(str(evidence_span_id)))
+    elif result_type == "content_chunk":
+        target_ref = CitationTargetRef(type="content_chunk", id=UUID(source_id))
+    elif result_type == "web_result":
+        target_ref = CitationTargetRef(type="web_result", id=source_id)
+    else:
+        target_ref = CitationTargetRef(
+            type="media",
+            id=UUID(str(row_media_id)) if row_media_id is not None else UUID(source_id),
+        )
+    # Prefer the row media_id; otherwise hoist it from the locator (as the revision
+    # producer does) for the render href.
+    media_id = row_media_id if row_media_id is not None else getattr(locator, "media_id", None)
+    summary_md = (
+        summaries.get(UUID(str(row_media_id)))
+        if result_type == "media" and row_media_id is not None
+        else None
+    )
+    deep_link = row["deep_link"]
+    return CitationOut(
+        ordinal=int(row["citation_ordinal"]),
+        role="context",
+        target_ref=target_ref,
+        media_id=UUID(str(media_id)) if media_id is not None else None,
+        locator=locator,
+        deep_link=str(deep_link) if isinstance(deep_link, str) else None,
+        snapshot=CitationSnapshot(
+            title=_opt_str(row["source_title"]),
+            excerpt=_opt_str(row["exact_snippet"]),
+            section_label=_opt_str(row["section_label"]),
+            result_type=result_type,
+            summary_md=summary_md,
+        ),
+    )

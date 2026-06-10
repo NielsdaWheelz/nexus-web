@@ -1,11 +1,42 @@
+from uuid import uuid4
+
 import pytest
 from llm_calling.types import LLMRequest, ToolResult, ToolSpec, Turn
+from pydantic import BaseModel
 
+from nexus.services.library_intelligence_reduce import (
+    _LI_SYSTEM_PROMPT,
+    _LiSynthesis,
+    _map_li_citations,
+)
+from nexus.services.library_intelligence_reduce import (
+    _Candidate as LiCandidate,
+)
+from nexus.services.media_intelligence import (
+    _MEDIA_UNIT_SYSTEM_PROMPT,
+    MediaUnitSynthesis,
+    _map_claims_to_spans,
+)
+from nexus.services.media_intelligence import (
+    _Candidate as MediaUnitCandidate,
+)
+from nexus.services.oracle import (
+    _ORACLE_SYSTEM_PROMPT,
+    _OracleSynthesisOutput,
+    _validate_oracle_output,
+)
+from nexus.services.oracle import (
+    _Candidate as OracleCandidate,
+)
 from nexus.services.real_media_fixture_llm import (
     APP_SEARCH_TOOL_NAME,
     REAL_MEDIA_FIXTURE_RESPONSE,
     REAL_MEDIA_FIXTURE_RESPONSE_WITH_CITATION,
     RealMediaFixtureLLMRouter,
+)
+from nexus.services.structured_synthesis import (
+    SynthesisRequest,
+    run_structured_synthesis,
 )
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
@@ -93,6 +124,105 @@ async def test_real_media_fixture_llm_does_not_cite_empty_tool_result() -> None:
 
     assert chunks[0].delta_text == REAL_MEDIA_FIXTURE_RESPONSE
     assert chunks[1].done is True
+
+
+async def _synthesize[T: BaseModel](system_prompt: str, schema: type[T]) -> T:
+    """Run the fixture router's canned text through the real synthesis validation."""
+    result = await run_structured_synthesis(
+        llm=RealMediaFixtureLLMRouter(),
+        request=SynthesisRequest(
+            provider="anthropic",
+            llm_request=LLMRequest(
+                model_name="claude-haiku-4-5-20251001",
+                messages=[
+                    Turn(role="system", content=system_prompt, cache_ttl="5m"),
+                    Turn(
+                        role="user",
+                        content=(
+                            "CANDIDATES:\n[0] alpha\n\n"
+                            "Respond with the strict JSON object as instructed."
+                        ),
+                    ),
+                ],
+                max_tokens=2048,
+            ),
+            api_key="real-media-fixture",
+            timeout_s=45,
+        ),
+        schema=schema,
+    )
+    return result.value
+
+
+async def test_real_media_fixture_llm_oracle_synthesis_passes_real_validator() -> None:
+    value = await _synthesize(_ORACLE_SYSTEM_PROMPT, _OracleSynthesisOutput)
+
+    # Oracle invokes synthesis only with >= 3 candidates; validate at that minimum.
+    candidates = [
+        OracleCandidate(
+            source_kind="public_domain",
+            exact_snippet=snippet,
+            locator_label="Inferno",
+            attribution_text="Dante Alighieri",
+            deep_link=None,
+            locator={},
+            source={},
+            tags=[],
+            score=1.0,
+        )
+        for snippet in (
+            "Midway upon the journey of our life I found myself within a forest dark.",
+            "All hope abandon, ye who enter in!",
+            "Thence we came forth to rebehold the stars.",
+        )
+    ]
+    parsed = _validate_oracle_output(value, candidates=candidates)
+
+    assert parsed is not None
+    by_phase = parsed[4]
+    assert set(by_phase) == {"descent", "ordeal", "ascent"}
+    assert {index for index, _marginalia in by_phase.values()} == {0, 1, 2}
+
+
+async def test_real_media_fixture_llm_library_reduce_synthesis_grounds() -> None:
+    value = await _synthesize(_LI_SYSTEM_PROMPT, _LiSynthesis)
+
+    candidate = LiCandidate(
+        global_index=0,
+        media_id=uuid4(),
+        evidence_span_id=uuid4(),
+        claim_text="SOFIA confirmed water on the sunlit Moon.",
+        summary_md="s",
+    )
+    grounded = _map_li_citations(value, [candidate])
+
+    assert value.content_md.strip()
+    assert [(g.ordinal, g.role, g.evidence_span_id) for g in grounded] == [
+        (1, "supports", candidate.evidence_span_id)
+    ]
+
+
+async def test_real_media_fixture_llm_media_unit_synthesis_grounds() -> None:
+    value = await _synthesize(_MEDIA_UNIT_SYSTEM_PROMPT, MediaUnitSynthesis)
+
+    candidate = MediaUnitCandidate(evidence_span_id=uuid4(), text="chunk")
+    grounded = _map_claims_to_spans(value, [candidate])
+
+    assert value.summary_md.strip()
+    assert grounded == [(value.claims[0].claim_text, candidate.evidence_span_id, 0)]
+
+
+async def test_real_media_fixture_llm_generate_without_marker_keeps_chat_response() -> None:
+    router = RealMediaFixtureLLMRouter()
+
+    response = await router.generate(
+        "openai",
+        _request(Turn(role="user", content="What does this source say about SOFIA?")),
+        "real-media-fixture",
+        timeout_s=45,
+    )
+
+    assert response.text == REAL_MEDIA_FIXTURE_RESPONSE
 
 
 async def test_real_media_fixture_llm_does_not_cite_tool_error() -> None:

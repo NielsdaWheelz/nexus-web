@@ -28,7 +28,7 @@ from pydantic_settings import BaseSettings
 TRANSCRIPT_EMBEDDING_SCHEMA_DIMENSIONS = 256
 DEFAULT_WORKER_ALLOWED_JOB_KINDS = (
     "ingest_media_source,enrich_metadata,chat_run,"
-    "library_intelligence_artifact_generate,media_unit_build,"
+    "library_intelligence_artifact_generate,media_unit_build,page_reindex_job,"
     "podcast_sync_subscription_job,podcast_reindex_semantic_job,"
     "backfill_default_library_closure_job,oracle_reading_generate"
 )
@@ -361,14 +361,16 @@ class Settings(BaseSettings):
 
     # Metadata enrichment settings
     metadata_enrichment_enabled: bool = Field(default=True, alias="METADATA_ENRICHMENT_ENABLED")
+    # Defaults are the catalog "light" tier per provider; select_enrichment_providers
+    # asserts catalog membership via require_catalog_model at task use.
     metadata_enrichment_model_openai: str = Field(
-        default="gpt-4o-mini", alias="METADATA_ENRICHMENT_MODEL_OPENAI"
+        default="gpt-5.4-mini", alias="METADATA_ENRICHMENT_MODEL_OPENAI"
     )
     metadata_enrichment_model_anthropic: str = Field(
-        default="claude-3-5-haiku-20241022", alias="METADATA_ENRICHMENT_MODEL_ANTHROPIC"
+        default="claude-haiku-4-5-20251001", alias="METADATA_ENRICHMENT_MODEL_ANTHROPIC"
     )
     metadata_enrichment_model_gemini: str = Field(
-        default="gemini-3.5-flash", alias="METADATA_ENRICHMENT_MODEL_GEMINI"
+        default="gemini-3-flash-preview", alias="METADATA_ENRICHMENT_MODEL_GEMINI"
     )
     metadata_enrichment_max_content_chars: int = Field(
         default=2000, alias="METADATA_ENRICHMENT_MAX_CONTENT_CHARS"

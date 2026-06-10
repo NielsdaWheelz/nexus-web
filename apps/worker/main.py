@@ -6,13 +6,13 @@ import os
 import signal
 import socket
 import threading
-from collections.abc import Callable
 
 from nexus.config import get_settings
 from nexus.db.session import get_session_factory
 from nexus.jobs.registry import get_default_registry, get_task_contract_version
 from nexus.jobs.worker import JobWorker
 from nexus.logging import configure_logging, get_logger
+from nexus.services.rate_limit import RateLimiter, set_rate_limiter
 
 logger = get_logger(__name__)
 
@@ -41,7 +41,17 @@ def create_worker() -> JobWorker:
     if unknown_kinds:
         raise RuntimeError(f"Unknown worker job kinds: {', '.join(sorted(unknown_kinds))}")
 
-    session_factory: Callable = get_session_factory()
+    session_factory = get_session_factory()
+    # Install the process-global rate limiter at startup (same construction as
+    # the API lifespan in nexus/app.py) so the first job of any kind — not just
+    # chat — has a working limiter instead of failing E_RATE_LIMITER_UNAVAILABLE.
+    set_rate_limiter(
+        RateLimiter(
+            session_factory=session_factory,
+            rpm_limit=settings.rate_limit_rpm,
+            concurrent_limit=settings.rate_limit_concurrent,
+        )
+    )
     return JobWorker(
         session_factory=session_factory,
         worker_id=_worker_id(),

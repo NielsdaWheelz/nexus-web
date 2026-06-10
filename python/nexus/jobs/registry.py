@@ -34,6 +34,25 @@ class JobDefinition:
     dead_letter_handler: JobDeadLetterHandler | None = None
 
 
+# Non-periodic kinds whose work a user directly observes (ingest progress, chat/
+# oracle/intelligence output, search indexing, subscription sync, shared-library
+# backfill). Every kind here must be claimable by the production worker:
+# test_config.py asserts this tuple is a subset of
+# config.DEFAULT_WORKER_ALLOWED_JOB_KINDS.
+USER_FACING_JOB_KINDS = (
+    "ingest_media_source",
+    "enrich_metadata",
+    "chat_run",
+    "library_intelligence_artifact_generate",
+    "media_unit_build",
+    "page_reindex_job",
+    "podcast_sync_subscription_job",
+    "podcast_reindex_semantic_job",
+    "backfill_default_library_closure_job",
+    "oracle_reading_generate",
+)
+
+
 def get_default_registry() -> dict[str, JobDefinition]:
     """Return the canonical runtime registry for all durable job kinds."""
     return _build_default_registry()
@@ -198,7 +217,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             handler=_run_oracle_reading_generate,
             max_attempts=1,
             retry_delays_seconds=(0,),
-            lease_seconds=120,
+            lease_seconds=300,  # worst case: retrieval + 45s call + 45s repair round
         ),
         "media_unit_build": JobDefinition(
             kind="media_unit_build",

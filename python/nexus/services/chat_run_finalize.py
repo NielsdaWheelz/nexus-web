@@ -1,22 +1,20 @@
-"""Finalize chat runs: persist assistant message, MessageLLM usage, and the done event."""
+"""Finalize chat runs: persist the assistant message, key-status feedback, done event."""
 
 from __future__ import annotations
 
 from typing import Any
 from uuid import UUID
 
-from llm_calling.types import LLMUsage
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from nexus.db.models import ChatRun, Message, MessageLLM, Model
+from nexus.db.models import ChatRun, Message
 from nexus.errors import ApiErrorCode
 from nexus.schemas.conversation import chat_run_event_payload_json
 from nexus.services import run_kit
 from nexus.services.api_key_resolver import ResolvedKey, update_user_key_status
 from nexus.services.chat_run_event_store import TERMINAL_RUN_STATUSES
 from nexus.services.chat_run_message_blocks import message_document_with_run_components
-from nexus.services.chat_run_usage import usage_provider_json, usage_tokens
 
 MAX_ASSISTANT_CONTENT_LENGTH = 50000
 TRUNCATION_NOTICE = "\n\n[Response truncated due to length]"
@@ -43,22 +41,13 @@ ERROR_CODE_TO_MESSAGE = {
 }
 
 
-def dummy_resolved_key(model: Model) -> ResolvedKey:
-    return ResolvedKey(api_key="", mode="platform", provider=model.provider, user_key_id=None)
-
-
 def finalize_error(
     db: Session,
     *,
     run_id: UUID,
     error_code: str,
-    viewer_id: UUID | None,
-    model: Model | None = None,
+    error_detail: str | None = None,
     resolved_key: ResolvedKey | None = None,
-    key_mode: str = "auto",
-    latency_ms: int = 0,
-    usage: LLMUsage | None = None,
-    provider_request_id: str | None = None,
     assistant_content: str | None = None,
     commit: bool = True,
 ) -> None:
@@ -82,37 +71,17 @@ def finalize_error(
         run_status="error",
         done_status="error",
         error_code=error_code,
-        model=model,
+        error_detail=error_detail,
         resolved_key=resolved_key,
-        key_mode=key_mode,
-        latency_ms=latency_ms,
-        usage=usage,
-        provider_request_id=provider_request_id,
-        viewer_id=viewer_id,
         commit=commit,
     )
 
 
 def finalize_interrupted(db: Session, run: ChatRun) -> None:
-    model = db.get(Model, run.model_id)
-    finalize_error(
-        db,
-        run_id=run.id,
-        error_code=ApiErrorCode.E_LLM_INTERRUPTED.value,
-        viewer_id=run.owner_user_id,
-        model=model,
-        resolved_key=dummy_resolved_key(model) if model is not None else None,
-        key_mode=run.key_mode,
-    )
+    finalize_error(db, run_id=run.id, error_code=ApiErrorCode.E_LLM_INTERRUPTED.value)
 
 
-def finalize_cancelled(
-    db: Session,
-    run: ChatRun,
-    model: Model,
-    resolved_key: ResolvedKey | None,
-    latency_ms: int,
-) -> None:
+def finalize_cancelled(db: Session, run: ChatRun, resolved_key: ResolvedKey | None) -> None:
     finalize_run(
         db,
         run_id=run.id,
@@ -121,13 +90,7 @@ def finalize_cancelled(
         run_status="cancelled",
         done_status="cancelled",
         error_code=ApiErrorCode.E_CANCELLED.value,
-        model=model,
         resolved_key=resolved_key,
-        key_mode=run.key_mode,
-        latency_ms=latency_ms,
-        usage=None,
-        provider_request_id=None,
-        viewer_id=run.owner_user_id,
     )
 
 
@@ -140,13 +103,8 @@ def finalize_run(
     run_status: str,
     done_status: str,
     error_code: str | None,
-    model: Model | None,
-    resolved_key: ResolvedKey | None,
-    key_mode: str,
-    latency_ms: int,
-    usage: LLMUsage | None,
-    provider_request_id: str | None,
-    viewer_id: UUID | None,
+    error_detail: str | None = None,
+    resolved_key: ResolvedKey | None = None,
     commit: bool = True,
 ) -> None:
     run = (
@@ -173,36 +131,12 @@ def finalize_run(
             content=content,
         )
 
-    key = resolved_key or (model and dummy_resolved_key(model))
-    if assistant_message is not None and model is not None and key is not None:
-        existing_llm = db.get(MessageLLM, assistant_message.id)
-        target = existing_llm or MessageLLM(message_id=assistant_message.id)
-        tokens = usage_tokens(usage)
-        target.provider = model.provider
-        target.model_name = model.model_name
-        target.input_tokens = tokens["input_tokens"]
-        target.output_tokens = tokens["output_tokens"]
-        target.total_tokens = tokens["total_tokens"]
-        target.reasoning_tokens = tokens["reasoning_tokens"]
-        target.cache_write_input_tokens = tokens["cache_write_input_tokens"]
-        target.cache_read_input_tokens = tokens["cache_read_input_tokens"]
-        target.cached_input_tokens = tokens["cached_input_tokens"]
-        target.key_mode_requested = key_mode
-        target.key_mode_used = key.mode
-        target.latency_ms = latency_ms
-        target.error_class = error_code if assistant_status == "error" else None
-        target.provider_request_id = provider_request_id
-        target.provider_usage = usage_provider_json(usage)
-        if existing_llm is None:
-            db.add(target)
+    if resolved_key is not None and resolved_key.mode == "byok":
+        if assistant_status == "complete":
+            update_user_key_status(db, resolved_key.user_key_id, "valid")
+        elif error_code == ApiErrorCode.E_LLM_INVALID_KEY.value:
+            update_user_key_status(db, resolved_key.user_key_id, "invalid")
 
-        if key.mode == "byok":
-            if assistant_status == "complete":
-                update_user_key_status(db, key.user_key_id, "valid")
-            elif error_code == ApiErrorCode.E_LLM_INVALID_KEY.value:
-                update_user_key_status(db, key.user_key_id, "invalid")
-
-    run.error_code = error_code
     done_payload: dict[str, Any] = {"status": done_status}
     if error_code is not None:
         done_payload["error_code"] = error_code
@@ -213,6 +147,8 @@ def finalize_run(
         stream=run_kit.chat_run_stream(run),
         status=run_status,
         done_payload=chat_run_event_payload_json("done", done_payload),
+        error_code=error_code,
+        error_detail=error_detail,
     )
     if commit:
         db.commit()

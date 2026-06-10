@@ -321,3 +321,317 @@ def test_library_intelligence_line_count_within_budget():
         f"(budget {_LIBRARY_INTELLIGENCE_LINE_BUDGET}); split a concern out of the "
         f"artifact-head owner rather than raising the budget."
     )
+
+
+# #############################################################################
+# Generation-run harness (§14) — one LLM substrate for chat / oracle / LI
+#
+# Same grep idiom as above: each gate scans only python/nexus + apps/web/src and
+# asserts a dropped symbol is ABSENT or a must-REMAIN owner is PRESENT. Migrations
+# (repo-root migrations/) and python/tests/ live outside the scanned roots and so
+# can never appear in a hit; only the frontend *.test.{ts,tsx} files need excluding.
+# #############################################################################
+
+
+def _excluding(hits: list[_Hit], *suffixes: str) -> list[_Hit]:
+    """Drop hits whose path ends with one of ``suffixes`` (the gate's allowed owners)."""
+    return [hit for hit in hits if not hit.path.endswith(suffixes)]
+
+
+# =============================================================================
+# Ledger: message_llm dropped, llm_calls is the only LLM-call store
+# =============================================================================
+
+
+def test_message_llm_absent_from_production():
+    # The old chat-only usage table + ORM symbol are gone (rows migrated to
+    # llm_calls in migration 0145, which lives outside the scanned roots).
+    hits = _filtered(r"\bmessage_llm\b|\bMessageLLM\b", _PY_ROOT, _WEB_ROOT, exclude=_FRONTEND_TEST)
+    assert not hits, f"message_llm / MessageLLM still referenced in production:\n{_fmt(hits)}"
+
+
+# =============================================================================
+# Worker envelope: one event loop / client / router owner (AC-4)
+# =============================================================================
+
+
+def test_no_event_loop_construction_under_tasks_except_llm_task():
+    # asyncio.new_event_loop / run_until_complete live only in tasks/llm_task.py;
+    # every other task body runs inside run_llm_task's envelope.
+    hits = _grep(r"asyncio\.new_event_loop|run_until_complete", _PY_ROOT / "tasks")
+    hits = _excluding(hits, "tasks/llm_task.py")
+    assert not hits, f"event-loop construction outside tasks/llm_task.py:\n{_fmt(hits)}"
+
+
+# =============================================================================
+# Key spine: no raw settings.<provider>_api_key reads (AC-5)
+# =============================================================================
+
+
+def test_no_raw_provider_key_reads_outside_key_spine():
+    # The platform-key reads live only in llm_catalog.py (which exposes them via
+    # platform_key_for_provider) and api_key_resolver.py; config.py owns the
+    # settings fields. semantic_chunks.py is the embeddings provider path — a
+    # separate substrate with its own OpenAI key, not an LLM-generation surface,
+    # and not part of the resolve_api_key spine (out of §14 scope).
+    pattern = r"settings\.(anthropic|openai|gemini|deepseek)_api_key"
+    hits = _excluding(
+        _grep(pattern, _PY_ROOT),
+        "llm_catalog.py",
+        "services/api_key_resolver.py",
+        "config.py",
+        "services/semantic_chunks.py",
+    )
+    assert not hits, f"raw provider-key read outside the key spine:\n{_fmt(hits)}"
+
+
+# =============================================================================
+# SERIALIZABLE retries: one owner, db/retries.py (no hand-rolled loops)
+# =============================================================================
+
+
+def test_no_serializable_retry_loop_outside_db_retries():
+    # The retry constant and the manual loop both collapsed into retry_serializable.
+    const_hits = _filtered(r"\b_SERIALIZABLE_RETRIES\b", _PY_ROOT, exclude=_FRONTEND_TEST)
+    assert not const_hits, f"_SERIALIZABLE_RETRIES constant resurrected:\n{_fmt(const_hits)}"
+
+    # is_serialization_failure is referenced only where the loop is defined
+    # (db/retries.py) and where the predicate itself lives (db/errors.py).
+    loop_hits = _excluding(
+        _grep(r"is_serialization_failure", _PY_ROOT), "db/retries.py", "db/errors.py"
+    )
+    assert not loop_hits, f"serialization-failure loop outside db/retries.py:\n{_fmt(loop_hits)}"
+
+
+# =============================================================================
+# Synthesis scaffold: the RULES/closing literals live only in one owner
+# =============================================================================
+
+
+def test_synthesis_prompt_literals_only_in_scaffold():
+    # The shared strict-JSON wording is owned by structured_synthesis.py; the three
+    # call sites pass domain rules, never re-spell these closing lines.
+    pattern = r"No markdown fences, no extra keys|Respond with the strict JSON object"
+    hits = _excluding(_grep(pattern, _PY_ROOT), "services/structured_synthesis.py")
+    assert not hits, f"synthesis prompt literal outside structured_synthesis.py:\n{_fmt(hits)}"
+
+
+# =============================================================================
+# Oracle: BE failure-message map + 'error' event type deleted (normalized done)
+# =============================================================================
+
+
+def test_oracle_failure_symbols_absent():
+    # Oracle failures now route through run_kit.mark_terminal + done{status,error_code};
+    # the BE copy map and the read-time event rewrite are gone (FE owns oracle copy).
+    pattern = r"_oracle_failure_message|_oracle_event_out|ORACLE_LLM_CONFIGURATION_MESSAGE"
+    hits = _filtered(pattern, _PY_ROOT, _WEB_ROOT, exclude=_FRONTEND_TEST)
+    assert not hits, f"oracle failure-message symbols present:\n{_fmt(hits)}"
+
+
+def test_oracle_error_event_type_absent_in_writers():
+    # No 'error' / "error" event-type literal in the oracle service or its route.
+    # The DB CHECK forbidding it is asserted semantically in test_migrations
+    # (0146 drops 'error' from ck_oracle_reading_events_type).
+    oracle_files = (_PY_ROOT / "services" / "oracle.py", _PY_ROOT / "api" / "routes" / "oracle.py")
+    hits = _grep(r"""["']error["']""", *oracle_files)
+    assert not hits, f"oracle 'error' event literal present in a writer:\n{_fmt(hits)}"
+
+
+# =============================================================================
+# Stream plane: every browser stream lives under /stream/ (AC-8)
+# =============================================================================
+
+
+def test_stream_paths_predicate_is_a_prefix_check():
+    # stream_paths.is_stream_path is one prefix check — no per-kind startswith arm.
+    hits = _grep(r'startswith\("/chat-runs/"\)', _PY_ROOT)
+    assert not hits, f"per-kind chat-runs arm in the stream-path predicate:\n{_fmt(hits)}"
+
+
+def test_event_stream_path_literals_are_under_stream_prefix():
+    # A /chat-runs/.../events or /media/.../events path literal is only legal as the
+    # /stream/ route; the old off-prefix stream paths are removed. (The non-event
+    # /chat-runs/{id} + /cancel chat routes do not match this events-bearing pattern.)
+    pattern = r"/(chat-runs|media)/[^\"']*events"
+    off_prefix = [
+        hit
+        for hit in _filtered(pattern, _PY_ROOT, _WEB_ROOT, exclude=_FRONTEND_TEST)
+        if "/stream/" not in hit.text
+    ]
+    assert not off_prefix, f"event-stream path literal not under /stream/:\n{_fmt(off_prefix)}"
+
+
+# =============================================================================
+# Citations: one message_retrievals writer (AC-10)
+# =============================================================================
+
+
+def test_message_retrievals_insert_only_in_retrieval_citation():
+    # web_search no longer hand-rolls retrieval SQL; insert_retrieval_row is the
+    # sole writer (the INSERT lives in retrieval_citation.py).
+    hits = _excluding(
+        _grep(r"INSERT INTO message_retrievals", _PY_ROOT), "services/retrieval_citation.py"
+    )
+    assert not hits, f"message_retrievals INSERT outside retrieval_citation.py:\n{_fmt(hits)}"
+
+
+# =============================================================================
+# Dead-symbol sweep (generation-run harness consolidations)
+# =============================================================================
+
+
+def test_generation_harness_dead_symbols_absent():
+    # charge_token_budget (dead RateLimiter method), _unread_stream_api_error_code
+    # (nexus router-exception patch, superseded by the llm-calling catch widening),
+    # and generator_model_id (dropped oracle column) are all gone.
+    pattern = r"charge_token_budget|_unread_stream_api_error_code|generator_model_id"
+    hits = _filtered(pattern, _PY_ROOT, _WEB_ROOT, exclude=_FRONTEND_TEST)
+    assert not hits, f"generation-harness dead symbol present:\n{_fmt(hits)}"
+
+
+# =============================================================================
+# AC-2 — every catalog entry offers "default" reasoning
+# =============================================================================
+
+
+def test_every_catalog_model_offers_default_reasoning():
+    # Importing the catalog is allowed (pure data, no DB); the FE defaults to
+    # "default" for every model, so every entry must accept it.
+    from nexus.llm_catalog import MODEL_CATALOG
+
+    missing = [
+        f"{entry.provider}/{entry.model_name}"
+        for entry in MODEL_CATALOG
+        if "default" not in entry.reasoning_modes
+    ]
+    assert not missing, f"catalog entries missing 'default' reasoning mode: {missing}"
+
+
+# =============================================================================
+# AC-6 — USER_FACING_JOB_KINDS ⊆ DEFAULT_WORKER_ALLOWED_JOB_KINDS
+#
+# The authoritative guard already lives in test_config.py
+# (test_user_facing_job_kinds_are_allowlisted). It is restated here as a §14 gate
+# so the negative-gate suite is self-contained; both must hold.
+# =============================================================================
+
+
+def test_user_facing_job_kinds_subset_of_worker_allowlist():
+    from nexus.config import DEFAULT_WORKER_ALLOWED_JOB_KINDS
+    from nexus.jobs.registry import USER_FACING_JOB_KINDS
+
+    allowed = {kind.strip() for kind in DEFAULT_WORKER_ALLOWED_JOB_KINDS.split(",") if kind.strip()}
+    missing = set(USER_FACING_JOB_KINDS) - allowed
+    assert not missing, f"user-facing job kinds not in the worker allowlist: {sorted(missing)}"
+
+
+# =============================================================================
+# Must-REMAIN (anti-over-deletion) for the generation-run harness
+# =============================================================================
+
+
+def test_generation_harness_must_remain_symbols_present():
+    # Both SSE tailers stay (the two-tailer defense in _sse.py); the one token
+    # estimator stays (char *budgets* are domain and orthogonal); chat keeps its
+    # user-copy map. (message_retrievals/conversation_references/oracle_reading_passages/
+    # object_links presence is covered by the parametrized must-REMAIN gate above.)
+    for symbol, where in (
+        ("tail_cursor_stream", _PY_ROOT),
+        ("tail_snapshot_stream", _PY_ROOT),
+        ("ERROR_CODE_TO_MESSAGE", _PY_ROOT),
+    ):
+        assert _grep(re.escape(symbol), where), f"must-REMAIN symbol {symbol} is absent"
+
+    # prompt_budget.estimate_tokens is the one reservation estimator.
+    estimator = [
+        hit
+        for hit in _grep(r"def estimate_tokens\b", _PY_ROOT / "services")
+        if hit.path.endswith("services/prompt_budget.py")
+    ]
+    assert estimator, "prompt_budget.estimate_tokens is absent"
+
+
+# =============================================================================
+# Frontend generation-run client (§14 FE gates)
+#
+# TWO DOCUMENTED DIVERGENCES from the spec's §14 wording — the gate INTENT holds,
+# but the literal assertions are adjusted to the implemented reality:
+#
+#   1. fetchStreamToken is NOT confined to sse-client.ts, and the transport is not
+#      opened per surface. The single non-hook transport opener —
+#      openGenerationRunStream in useGenerationRun.ts — performs the one token mint
+#      + URL build + sseClientDirect call; both useGenerationRun (the single-id
+#      hook) and useChatRunTail (the multi-run imperative tailer) delegate to it.
+#      So fetchStreamToken and sseClientDirect are each CALLED from exactly one
+#      non-test caller (the opener); their definition modules (streamToken.ts,
+#      sse-client.ts — the latter also mints on its own reconnects) reference them
+#      too. No oracle/library/media surface, and not chat, re-implements the
+#      transport. We assert that.
+#
+#   2. lib/api/sse/citations.ts is NOT deleted (the spec mislabeled it as the
+#      citation_index validator). It validates the SURVIVING retrieval_result SSE
+#      event (tool-results display). The citation RENDER reconstruction — the
+#      messageToCitationOuts family + the 526-line CitationOut rebuild — IS deleted;
+#      citation_index now ships server-built CitationOut[]. We assert THAT instead.
+# =============================================================================
+
+# The shared transport primitives — minting a stream token and opening an SSE
+# connection — are CALLED from exactly one non-test caller: openGenerationRunStream
+# in useGenerationRun.ts. Their definition modules reference them too (streamToken.ts
+# defines fetchStreamToken; sse-client.ts defines sseClientDirect and mints fresh
+# tokens on its own reconnects). Any other file re-implementing the transport (an
+# oracle/library/media pane, or chat) would resurrect the duplication F01 removed.
+_TRANSPORT_PRIMITIVE_OWNERS = (
+    "lib/api/streamToken.ts",
+    "lib/api/sse-client.ts",
+    "lib/api/useGenerationRun.ts",
+)
+
+
+def test_sse_transport_primitives_have_one_caller_not_per_surface():
+    # Divergence 1: fetchStreamToken + sseClientDirect are used only inside their
+    # definition modules and the one opener — never re-implemented per surface.
+    hits = _excluding(
+        [
+            hit
+            for hit in _grep(r"\bfetchStreamToken\b|\bsseClientDirect\b", _WEB_ROOT)
+            if ".test." not in hit.path
+        ],
+        *_TRANSPORT_PRIMITIVE_OWNERS,
+    )
+    assert not hits, f"SSE transport primitive used outside the one opener:\n{_fmt(hits)}"
+
+    # ...and the opener IS that one caller (guard against the gate going vacuous if
+    # openGenerationRunStream is ever deleted or stops calling the primitives).
+    opener_src = (_WEB_ROOT / "lib" / "api" / "useGenerationRun.ts").read_text()
+    assert "fetchStreamToken" in opener_src, "openGenerationRunStream no longer mints the token"
+    assert "sseClientDirect" in opener_src, "openGenerationRunStream no longer opens the stream"
+
+
+def test_citation_render_reconstruction_family_absent():
+    # Divergence 2: the FE-side CitationOut reconstruction is gone (server-built now).
+    pattern = (
+        r"messageToCitationOuts|citationIndexFromBlocks|targetRefFromRetrieval|retrievalBlocksOf"
+    )
+    hits = [hit for hit in _grep(pattern, _WEB_ROOT) if ".test." not in hit.path]
+    assert not hits, f"FE citation-render reconstruction family still present:\n{_fmt(hits)}"
+
+
+def test_stream_events_with_reconnect_absent():
+    # Oracle's bespoke reconnect loop collapsed into the extended sseClientDirect.
+    hits = [
+        hit for hit in _grep(r"streamEventsWithReconnect", _WEB_ROOT) if ".test." not in hit.path
+    ]
+    assert not hits, f"streamEventsWithReconnect still present:\n{_fmt(hits)}"
+
+
+def test_optional_string_has_one_definition():
+    # The five optionalString variants collapsed to one in lib/api/sse/guards.ts.
+    definitions = [
+        hit
+        for hit in _grep(r"(export )?function optionalString\b|const optionalString\b", _WEB_ROOT)
+        if ".test." not in hit.path
+    ]
+    assert len(definitions) == 1, f"expected one optionalString definition:\n{_fmt(definitions)}"
+    assert definitions[0].path.endswith("lib/api/sse/guards.ts")

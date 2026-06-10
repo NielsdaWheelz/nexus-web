@@ -159,22 +159,38 @@ def test_generate_route_returns_202_and_revision_is_run(
 
     response = auth_client.post(
         f"/libraries/{library_id}/intelligence/generate",
-        json={"idempotency_key": "route-token-1"},
-        headers=auth_headers(owner_id),
+        headers={**auth_headers(owner_id), "Idempotency-Key": "route-token-1"},
     )
     assert response.status_code == 202, response.text
     data = response.json()["data"]
     assert data["run_id"] == data["revision_id"]
     assert UUID(data["artifact_id"])
 
-    # Idempotency: reusing the token returns the same revision.
+    # Idempotency: replaying the header key returns the same revision.
     again = auth_client.post(
         f"/libraries/{library_id}/intelligence/generate",
-        json={"idempotency_key": "route-token-1"},
-        headers=auth_headers(owner_id),
+        headers={**auth_headers(owner_id), "Idempotency-Key": "route-token-1"},
     )
     assert again.status_code == 202, again.text
     assert again.json()["data"]["revision_id"] == data["revision_id"]
+
+    # A different key forks a fresh draft; the body field is gone (hard cutover).
+    forked = auth_client.post(
+        f"/libraries/{library_id}/intelligence/generate",
+        headers={**auth_headers(owner_id), "Idempotency-Key": "route-token-2"},
+    )
+    assert forked.status_code == 202, forked.text
+    assert forked.json()["data"]["revision_id"] != data["revision_id"]
+
+    # The header is required: a body-only request is rejected (the app maps
+    # request-validation failures to 400 E_INVALID_REQUEST).
+    missing = auth_client.post(
+        f"/libraries/{library_id}/intelligence/generate",
+        json={"idempotency_key": "route-token-3"},
+        headers=auth_headers(owner_id),
+    )
+    assert missing.status_code == 400, missing.text
+    assert missing.json()["error"]["code"] == "E_INVALID_REQUEST", missing.text
 
 
 def test_chat_run_events_check_lacks_claim_values(db_session: Session, engine: Engine):

@@ -37,10 +37,6 @@ class LibraryIntelligenceArtifactOut(LibraryIntelligenceModel):
     stale_source_count: int | None = None
 
 
-class LibraryIntelligenceGenerateRequest(LibraryIntelligenceModel):
-    idempotency_key: str = Field(min_length=1, max_length=256)
-
-
 class LibraryIntelligenceGenerateOut(LibraryIntelligenceModel):
     artifact_id: UUID
     revision_id: UUID
@@ -65,3 +61,16 @@ class LibraryIntelligenceRevisionEventOut(LibraryIntelligenceModel):
     seq: int
     event_type: str
     payload: dict[str, Any]
+
+
+class LibraryIntelligenceDoneEventPayload(LibraryIntelligenceModel):
+    """Strict ``done`` SSE payload for a terminal revision (chat-done precedent).
+
+    The normalized terminal grammar: ``status`` + ``error_code`` (set on
+    failure) + the revision the event belongs to. Writers construct this model
+    and store ``model_dump(mode="json")``.
+    """
+
+    status: Literal["ready", "failed"]
+    error_code: str | None = None
+    revision_id: UUID

@@ -22,16 +22,14 @@ from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import select, text
-from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import is_library_member
-from nexus.db.errors import is_serialization_failure
 from nexus.db.models import (
     LibraryIntelligenceArtifactRevision,
     LibraryIntelligenceRevisionEvent,
 )
-from nexus.db.session import use_serializable_if_available
+from nexus.db.retries import retry_serializable
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.jobs.queue import enqueue_unique_job
 from nexus.logging import get_logger
@@ -44,8 +42,6 @@ from nexus.services import run_kit
 logger = get_logger(__name__)
 
 GENERATE_JOB_KIND = "library_intelligence_artifact_generate"
-
-_SERIALIZABLE_RETRIES = 3
 
 
 # ---------- public contract (typed dataclass returns) -----------------------
@@ -233,20 +229,15 @@ def generate_artifact(
     re-enqueuing.
     """
     _require_member(db, viewer_id, library_id)
-    for attempt in range(_SERIALIZABLE_RETRIES):
-        use_serializable_if_available(db)
-        try:
-            ref = _generate_artifact_core(
-                db, viewer_id=viewer_id, library_id=library_id, idempotency_key=idempotency_key
-            )
-            db.commit()
-            return ref
-        except OperationalError as exc:
-            db.rollback()
-            if not is_serialization_failure(exc) or attempt == _SERIALIZABLE_RETRIES - 1:
-                raise
-    # justify-defect: the loop returns or raises on the final attempt.
-    raise AssertionError("generate_artifact retry loop exhausted")
+
+    def op() -> RevisionRef:
+        ref = _generate_artifact_core(
+            db, viewer_id=viewer_id, library_id=library_id, idempotency_key=idempotency_key
+        )
+        db.commit()
+        return ref
+
+    return retry_serializable(db, "generate_artifact", op)
 
 
 def _generate_artifact_core(
@@ -336,39 +327,33 @@ def promote_revision(db: Session, *, viewer_id: UUID, revision_id: UUID) -> None
     """Restore a prior ``ready`` revision as the head's current (last-wins)."""
     artifact_id, library_id = _artifact_and_library_for_revision(db, revision_id=revision_id)
     _require_member(db, viewer_id, library_id)
-    for attempt in range(_SERIALIZABLE_RETRIES):
-        use_serializable_if_available(db)
-        try:
-            status = db.execute(
-                text("SELECT status FROM library_intelligence_artifact_revisions WHERE id = :rev"),
-                {"rev": revision_id},
-            ).scalar_one()
-            if status != "ready":
-                raise InvalidRequestError(
-                    ApiErrorCode.E_INVALID_REQUEST, "Only a ready revision can be promoted"
-                )
-            db.execute(
-                text(
-                    "UPDATE library_intelligence_artifact_revisions "
-                    "SET promoted_at = now() WHERE id = :rev"
-                ),
-                {"rev": revision_id},
+
+    def op() -> None:
+        status = db.execute(
+            text("SELECT status FROM library_intelligence_artifact_revisions WHERE id = :rev"),
+            {"rev": revision_id},
+        ).scalar_one()
+        if status != "ready":
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST, "Only a ready revision can be promoted"
             )
-            db.execute(
-                text(
-                    "UPDATE library_intelligence_artifacts "
-                    "SET current_revision_id = :rev, updated_at = now() WHERE id = :artifact_id"
-                ),
-                {"rev": revision_id, "artifact_id": artifact_id},
-            )
-            db.commit()
-            return
-        except OperationalError as exc:
-            db.rollback()
-            if not is_serialization_failure(exc) or attempt == _SERIALIZABLE_RETRIES - 1:
-                raise
-    # justify-defect: the loop returns or raises on the final attempt.
-    raise AssertionError("promote_revision retry loop exhausted")
+        db.execute(
+            text(
+                "UPDATE library_intelligence_artifact_revisions "
+                "SET promoted_at = now() WHERE id = :rev"
+            ),
+            {"rev": revision_id},
+        )
+        db.execute(
+            text(
+                "UPDATE library_intelligence_artifacts "
+                "SET current_revision_id = :rev, updated_at = now() WHERE id = :artifact_id"
+            ),
+            {"rev": revision_id, "artifact_id": artifact_id},
+        )
+        db.commit()
+
+    retry_serializable(db, "promote_revision", op)
 
 
 def list_revisions(db: Session, *, viewer_id: UUID, library_id: UUID) -> list[RevisionSummary]:

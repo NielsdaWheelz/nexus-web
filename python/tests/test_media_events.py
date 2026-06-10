@@ -10,7 +10,7 @@ import pytest
 from sqlalchemy import Engine, text
 
 from nexus.api.routes import _sse
-from nexus.api.routes import media_events as media_events_route
+from nexus.api.routes import stream as stream_route
 from nexus.services.bootstrap import ensure_user_and_default_library
 from tests.factories import create_test_media_in_library
 from tests.utils.db import DirectSessionManager
@@ -91,14 +91,14 @@ async def test_media_events_emits_state_on_open_and_changes_then_done(
     from nexus.db.session import create_session_factory
 
     session_factory = create_session_factory(engine)
-    monkeypatch.setattr(media_events_route, "get_session_factory", lambda: session_factory)
+    monkeypatch.setattr(stream_route, "get_session_factory", lambda: session_factory)
 
     request = _FakeRequest()
     listener = await _sse.open_sse_listener("media_events", str(media_id))
     generator = _sse.tail_snapshot_stream(
         request=request,
         listener=listener,
-        read_snapshot=lambda: media_events_route._read_media_snapshot(user_id, media_id),
+        read_snapshot=lambda: stream_route._read_media_snapshot(user_id, media_id),
     )
 
     # First yield: the initial `state` snapshot reflecting `pending`.

@@ -1,4 +1,5 @@
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildOraclePlateImageSrc } from "@/lib/media/oraclePlateImage";
 import OracleConcordance from "../OracleConcordance";
@@ -216,7 +217,6 @@ describe("OracleReadingPaneBody", () => {
               folioNumber: 1,
               status: "failed",
               errorCode: "E_LLM_BAD_REQUEST",
-              errorMessage: "raw provider invalid_request_error detail",
             }),
           });
         }
@@ -232,7 +232,165 @@ describe("OracleReadingPaneBody", () => {
         "The reading could not be completed. Start a new reading with a simpler question.",
       ),
     ).toBeVisible();
-    expect(screen.queryByText("raw provider invalid_request_error detail")).not.toBeInTheDocument();
+    // The raw error_code is never surfaced as user copy.
+    expect(screen.queryByText("E_LLM_BAD_REQUEST")).not.toBeInTheDocument();
+  });
+
+  it("marks the reading failed from a done event carrying status:failed", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (path: string) => {
+        if (path === "/api/oracle/readings/reading-1") {
+          return jsonResponse({
+            data: {
+              ...readingDetail({
+                id: "reading-1",
+                question: "What did the model decide?",
+                folioNumber: 1,
+                status: "streaming",
+              }),
+              events: [
+                {
+                  seq: 9,
+                  event_type: "done",
+                  payload: { status: "failed", error_code: "E_LLM_INVALID_KEY" },
+                },
+              ],
+            },
+          });
+        }
+        throw new Error(`Unexpected fetch path: ${path}`);
+      }),
+    );
+
+    render(<OracleReadingPaneBody readingId="reading-1" />);
+
+    expect(await screen.findByText("The reading could not finish.")).toBeVisible();
+    expect(
+      screen.getByText(
+        "Add or fix a model API key before the oracle can complete a reading.",
+      ),
+    ).toBeVisible();
+  });
+
+  it("surfaces a billing-required failure with AI-tier copy", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (path: string) => {
+        if (path === "/api/oracle/readings/reading-1") {
+          return jsonResponse({
+            data: readingDetail({
+              id: "reading-1",
+              question: "What does the platform require?",
+              folioNumber: 1,
+              status: "failed",
+              errorCode: "E_BILLING_REQUIRED",
+            }),
+          });
+        }
+        throw new Error(`Unexpected fetch path: ${path}`);
+      }),
+    );
+
+    render(<OracleReadingPaneBody readingId="reading-1" />);
+
+    expect(await screen.findByText("The reading could not finish.")).toBeVisible();
+    expect(
+      screen.getByText(
+        "Platform model access requires an AI tier — add an API key or upgrade.",
+      ),
+    ).toBeVisible();
+  });
+
+  it("renders a citation chip beside a user-media passage locator", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (path: string) => {
+        if (path === "/api/oracle/readings/reading-1") {
+          return jsonResponse({
+            data: readingDetail({
+              id: "reading-1",
+              question: "Where is the evidence?",
+              folioNumber: 1,
+              passages: [
+                {
+                  phase: "descent",
+                  source_kind: "user_media",
+                  exact_snippet: "A line from the user's own library.",
+                  locator_label: "p. 12",
+                  attribution_text: "From your library",
+                  marginalia_text: "A note in the margin.",
+                  deep_link: "/media/media-1#evidence-span-1",
+                  citation: {
+                    ordinal: 1,
+                    role: "context",
+                    target_ref: { type: "evidence_span", id: "span-1" },
+                    media_id: "media-1",
+                    locator: {
+                      type: "pdf_page_geometry",
+                      media_id: "media-1",
+                      page_number: 12,
+                      quads: [],
+                      exact: "A line from the user's own library.",
+                    },
+                    deep_link: "/media/media-1#evidence-span-1",
+                    snapshot: {
+                      title: "A User Document",
+                      excerpt: "A line from the user's own library.",
+                      section_label: "Chapter 1",
+                      result_type: "content_chunk",
+                    },
+                  },
+                },
+              ],
+            }),
+          });
+        }
+        throw new Error(`Unexpected fetch path: ${path}`);
+      }),
+    );
+
+    render(<OracleReadingPaneBody readingId="reading-1" />);
+
+    const chip = await screen.findByRole("link", { name: "Open citation 1" });
+    expect(chip).toBeInTheDocument();
+    expect(chip).toHaveAttribute("href", "/media/media-1#evidence-span-1");
+  });
+
+  it("shows chat-open failure copy when starting a conversation fails", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (path: string) => {
+        if (path === "/api/oracle/readings/reading-1") {
+          return jsonResponse({
+            data: readingDetail({
+              id: "reading-1",
+              question: "What follows the reading?",
+              folioNumber: 1,
+            }),
+          });
+        }
+        if (path === "/api/conversations") {
+          return errorResponse(500, "E_INTERNAL", "boom");
+        }
+        throw new Error(`Unexpected fetch path: ${path}`);
+      }),
+    );
+
+    render(<OracleReadingPaneBody readingId="reading-1" />);
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Chat about this reading" }),
+    );
+
+    expect(
+      await screen.findByText(
+        "A conversation about this reading could not begin.",
+      ),
+    ).toBeVisible();
+    expect(
+      screen.queryByText("The reading was interrupted."),
+    ).not.toBeInTheDocument();
   });
 
   it("clears concordance immediately when the reading status is no longer complete", async () => {
@@ -318,7 +476,7 @@ function readingDetail(input: {
   image?: ReadingDetail["image"];
   status?: ReadingDetail["status"];
   errorCode?: string | null;
-  errorMessage?: string | null;
+  passages?: ReadingDetail["passages"];
 }): ReadingDetail {
   return {
     id: input.id,
@@ -330,17 +488,23 @@ function readingDetail(input: {
     question_text: input.question,
     status: input.status ?? "complete",
     image: input.image ?? null,
-    passages: [],
+    passages: input.passages ?? [],
     events: [],
     created_at: "2026-05-01T12:00:00Z",
     error_code: input.errorCode ?? null,
-    error_message: input.errorMessage ?? null,
   };
 }
 
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), {
     status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+function errorResponse(status: number, code: string, message: string): Response {
+  return new Response(JSON.stringify({ error: { code, message } }), {
+    status,
     headers: { "Content-Type": "application/json" },
   });
 }

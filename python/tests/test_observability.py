@@ -9,7 +9,6 @@ Covers:
 """
 
 import pytest
-import structlog
 
 from nexus.logging import (
     add_request_context,
@@ -168,35 +167,6 @@ class TestNexusLLMLogFields:
 
         assert fields["llm_operation"] == "key_test"
         assert fields["key_mode"] == "byok"
-
-
-# ─── Log Capture Infrastructure ──────────────────────────────────────
-
-
-@pytest.fixture
-def log_sink():
-    """Configure structlog to capture events into a list.
-
-    Returns a list that will contain all emitted log event dicts.
-    After the test, structlog is reset to normal.
-    """
-    events: list[dict] = []
-    original_config = structlog.get_config()
-
-    def capture_processor(logger, method_name, event_dict):
-        events.append(event_dict.copy())
-        raise structlog.DropEvent
-
-    structlog.configure(
-        processors=[capture_processor],
-        wrapper_class=structlog.stdlib.BoundLogger,
-        cache_logger_on_first_use=False,
-    )
-
-    yield events
-
-    # Restore original configuration
-    structlog.configure(**original_config)
 
 
 # ─── Event Taxonomy Tests ────────────────────────────────────────────

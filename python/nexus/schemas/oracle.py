@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from nexus.schemas.citation import CitationOut
 
 
 class OracleReadingCreateRequest(BaseModel):
@@ -16,22 +18,28 @@ class OracleReadingCreateRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
 
-class OracleStreamConnectionOut(BaseModel):
-    """Direct SSE connection data returned with a newly created reading."""
-
-    token: str
-    stream_base_url: str
-    event_url: str
-    expires_at: str
-
-
 class OracleReadingCreateResponse(BaseModel):
-    """POST /oracle/readings response contract."""
+    """POST /oracle/readings response contract (clients stream via /stream-tokens)."""
 
     reading_id: UUID
     folio_number: int
     status: str
-    stream: OracleStreamConnectionOut
+
+
+class OracleDoneEventPayload(BaseModel):
+    """Strict payload of the one terminal ``done`` event (normalized grammar)."""
+
+    status: Literal["complete", "failed"]
+    error_code: str | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+def oracle_done_payload(
+    *, status: Literal["complete", "failed"], error_code: str | None
+) -> dict[str, Any]:
+    """Build the validated ``done`` payload for ``run_kit.mark_terminal``."""
+    return OracleDoneEventPayload(status=status, error_code=error_code).model_dump(mode="json")
 
 
 class OracleReadingSummaryOut(BaseModel):
@@ -54,7 +62,12 @@ class OracleReadingSummaryOut(BaseModel):
 
 
 class OracleReadingPassageOut(BaseModel):
-    """One persisted citation in a reading."""
+    """One persisted citation in a reading.
+
+    ``citation`` is the read-model CitationOut for user-library passages whose
+    chunk owns an evidence span (chip + ``/media/{id}#evidence-{span}`` jump);
+    public-domain and span-less passages carry ``None`` (typographic only).
+    """
 
     phase: str
     source_kind: str
@@ -63,6 +76,35 @@ class OracleReadingPassageOut(BaseModel):
     attribution_text: str
     marginalia_text: str
     deep_link: str | None = None
+    citation: CitationOut | None = None
+
+
+def oracle_passage_payload(
+    *,
+    phase: str,
+    source_kind: str,
+    exact_snippet: str,
+    locator_label: str,
+    attribution_text: str,
+    marginalia_text: str,
+    deep_link: str | None,
+    citation: CitationOut | None,
+) -> dict[str, Any]:
+    """Build the ``passage`` event payload for ``run_kit.append_event``.
+
+    The streamed payload is byte-identical to the REST ``OracleReadingPassageOut``;
+    that out model is its sole shape owner.
+    """
+    return OracleReadingPassageOut(
+        phase=phase,
+        source_kind=source_kind,
+        exact_snippet=exact_snippet,
+        locator_label=locator_label,
+        attribution_text=attribution_text,
+        marginalia_text=marginalia_text,
+        deep_link=deep_link,
+        citation=citation,
+    ).model_dump(mode="json")
 
 
 class OracleReadingImageOut(BaseModel):
@@ -104,7 +146,6 @@ class OracleReadingDetailOut(BaseModel):
     completed_at: datetime | None = None
     failed_at: datetime | None = None
     error_code: str | None = None
-    error_message: str | None = None
 
 
 class ConcordanceEntryOut(BaseModel):

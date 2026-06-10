@@ -3,21 +3,16 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, Header, Request, Response
 from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db, get_session_factory
 from nexus.responses import ok
-from nexus.schemas.oracle import (
-    OracleReadingCreateRequest,
-    OracleReadingCreateResponse,
-    OracleStreamConnectionOut,
-)
+from nexus.schemas.oracle import OracleReadingCreateRequest, OracleReadingCreateResponse
 from nexus.services import oracle as oracle_service
 from nexus.services import oracle_plates
 from nexus.services.image_proxy import etags_match
-from nexus.services.stream_tokens import mint_stream_token
 
 router = APIRouter(tags=["oracle"])
 
@@ -27,26 +22,23 @@ def create_oracle_reading(
     body: OracleReadingCreateRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
+    idempotency_key: Annotated[
+        str | None, Header(alias="Idempotency-Key", min_length=1, max_length=256)
+    ] = None,
 ) -> dict:
     reading = oracle_service.create_reading(
         db,
         viewer_id=viewer.user_id,
         question=body.question,
+        idempotency_key=idempotency_key,
     )
-    stream_token = mint_stream_token(viewer.user_id)
-    stream_base_url = stream_token.stream_base_url
-    response = OracleReadingCreateResponse(
-        reading_id=reading.id,
-        folio_number=reading.folio_number,
-        status=reading.status,
-        stream=OracleStreamConnectionOut(
-            token=stream_token.token,
-            stream_base_url=stream_base_url,
-            event_url=f"{stream_base_url}/stream/oracle-readings/{reading.id}/events",
-            expires_at=stream_token.expires_at,
-        ),
+    return ok(
+        OracleReadingCreateResponse(
+            reading_id=reading.id,
+            folio_number=reading.folio_number,
+            status=reading.status,
+        )
     )
-    return ok(response)
 
 
 @router.get("/oracle/readings")

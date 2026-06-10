@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { sseClientDirect } from "@/lib/api/sse-client";
-import { fetchStreamToken } from "@/lib/api/streamToken";
+import { useCallback, useState } from "react";
+import { useGenerationRun } from "@/lib/api/useGenerationRun";
+import { optionalString } from "@/lib/api/sse/guards";
 import {
   isDocumentProcessingTerminal,
   requireDocumentProcessingStatus,
@@ -38,11 +38,6 @@ export interface MediaProcessingSnapshot {
 type MediaSSEEvent =
   | { type: "state"; data: MediaProcessingSnapshot }
   | { type: "done"; data: MediaProcessingSnapshot };
-
-function optionalString(value: unknown): string | null | undefined {
-  if (value === undefined) return undefined;
-  return typeof value === "string" || value === null ? value : undefined;
-}
 
 function optionalTranscriptState(value: unknown): TranscriptState | undefined {
   if (value === undefined) return undefined;
@@ -210,56 +205,31 @@ export function useMediaProcessingStatus(
     mediaId: string;
     snapshot: MediaProcessingSnapshot;
   } | null>(null);
-  const [connectionState, setConnectionState] = useState<
-    "connecting" | "open" | "error"
-  >("connecting");
   const shouldStream =
     mediaId !== null && !isDocumentProcessingTerminal(initialStatus);
 
-  useEffect(() => {
-    if (!mediaId || !shouldStream) {
-      setConnectionState("open");
-      return;
-    }
-    setConnectionState("connecting");
-    const controller = new AbortController();
-    let firstToken: { token: string; stream_base_url: string } | null = null;
+  const handleEvent = useCallback(
+    (event: MediaSSEEvent) => {
+      if (mediaId === null) return;
+      setSnapshotState({ mediaId, snapshot: event.data });
+    },
+    [mediaId],
+  );
 
-    void (async () => {
-      try {
-        firstToken = await fetchStreamToken();
-      } catch {
-        setConnectionState("error");
-        return;
-      }
-      if (controller.signal.aborted) return;
+  // Idle (terminal initial status / no media) when `id` is null; otherwise the
+  // run owns token mint + reconnect. Every event carries a full snapshot, so
+  // reconnects are idempotent — no Last-Event-ID tracking needed.
+  const { phase } = useGenerationRun<MediaSSEEvent>({
+    kind: "media",
+    id: shouldStream ? mediaId : null,
+    decode: decodeMediaSSEEvent,
+    isTerminal: (event) => event.type === "done",
+    onEvent: handleEvent,
+  });
 
-      sseClientDirect<MediaSSEEvent>({
-        url: `${firstToken.stream_base_url}/media/${mediaId}/events`,
-        streamToken: async () => {
-          if (firstToken !== null) {
-            const t = firstToken.token;
-            firstToken = null;
-            return t;
-          }
-          return (await fetchStreamToken()).token;
-        },
-        decode: decodeMediaSSEEvent,
-        isTerminal: (event) => event.type === "done",
-        onEvent: (event) => {
-          if (controller.signal.aborted) return;
-          setConnectionState("open");
-          setSnapshotState({ mediaId, snapshot: event.data });
-        },
-        onError: () => {
-          if (!controller.signal.aborted) setConnectionState("error");
-        },
-        signal: controller.signal,
-      });
-    })();
-
-    return () => controller.abort();
-  }, [mediaId, shouldStream]);
+  // `idle` covers the not-streaming case (terminal status): treat as "open".
+  const connectionState: "connecting" | "open" | "error" =
+    phase === "connecting" ? "connecting" : phase === "failed" ? "error" : "open";
 
   return {
     snapshot:

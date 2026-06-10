@@ -9,10 +9,13 @@ from uuid import UUID, uuid4
 import pytest
 from llm_calling.types import LLMResponse
 from pydantic import ValidationError
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
+from nexus.config import clear_settings_cache
+from nexus.db.models import LLMCall
 from nexus.services import run_kit
+from nexus.services.billing_entitlements import grant_entitlement_override
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.library_intelligence import (
     generate_artifact,
@@ -27,9 +30,9 @@ from nexus.services.library_intelligence_reduce import (
     _LiCitationOut,
     _LiSynthesis,
     _map_li_citations,
-    fail_artifact_generation_after_worker_exception,
     run_artifact_generation,
 )
+from nexus.tasks.library_intelligence import _fail_revision_after_worker_exception
 from tests.factories import (
     add_media_to_library,
     create_searchable_media_in_library,
@@ -152,6 +155,92 @@ class TestSchemaStrictness:
 # =============================================================================
 
 
+@pytest.fixture(autouse=True)
+def anthropic_platform_key(monkeypatch):
+    """resolve_api_key needs a configured platform key for the pinned provider."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-platform-anthropic")
+    clear_settings_cache()
+    yield
+    clear_settings_cache()
+
+
+class _RecordingRateLimiter:
+    """Records the worker budget-envelope calls (the rate-limit boundary fake)."""
+
+    def __init__(self) -> None:
+        self.events: list[tuple[str, UUID, UUID | None, int | None]] = []
+
+    def acquire_inflight_slot(self, user_id: UUID) -> None:
+        self.events.append(("acquire_inflight_slot", user_id, None, None))
+
+    def release_inflight_slot(self, user_id: UUID) -> None:
+        self.events.append(("release_inflight_slot", user_id, None, None))
+
+    def reserve_token_budget(
+        self, user_id: UUID, reservation_id: UUID, est_tokens: int, ttl: int = 300
+    ) -> None:
+        self.events.append(("reserve_token_budget", user_id, reservation_id, est_tokens))
+
+    def commit_token_budget(self, user_id: UUID, reservation_id: UUID, actual_tokens: int) -> None:
+        self.events.append(("commit_token_budget", user_id, reservation_id, actual_tokens))
+
+    def release_token_budget(self, user_id: UUID, reservation_id: UUID) -> None:
+        self.events.append(("release_token_budget", user_id, reservation_id, None))
+
+    def event_names(self) -> list[str]:
+        return [event[0] for event in self.events]
+
+
+@pytest.fixture(autouse=True)
+def li_rate_limiter(monkeypatch) -> _RecordingRateLimiter:
+    # One recording limiter for both the reduce and the inline unit builds.
+    limiter = _RecordingRateLimiter()
+    monkeypatch.setattr(
+        "nexus.services.library_intelligence_reduce.get_rate_limiter", lambda: limiter
+    )
+    monkeypatch.setattr("nexus.services.media_intelligence.get_rate_limiter", lambda: limiter)
+    return limiter
+
+
+def _create_owner(db: Session) -> UUID:
+    """A bootstrapped user entitled to the platform key (resolve_api_key auto)."""
+    owner_id = create_test_user_id()
+    ensure_user_and_default_library(db, owner_id)
+    grant_entitlement_override(
+        db,
+        user_id=owner_id,
+        plan_tier="ai_plus",
+        platform_token_quota_mode="plan",
+        platform_token_limit_monthly=None,
+        transcription_quota_mode="plan",
+        transcription_minutes_limit_monthly=None,
+        expires_at=None,
+        reason="library intelligence test platform access",
+        actor_label="test",
+    )
+    return owner_id
+
+
+def _li_call_rows(db: Session, *, revision_id: UUID) -> list[LLMCall]:
+    return list(
+        db.scalars(
+            select(LLMCall)
+            .where(LLMCall.owner_kind == "li_revision", LLMCall.owner_id == revision_id)
+            .order_by(LLMCall.call_seq)
+        )
+    )
+
+
+def _done_payload(db: Session, *, revision_id: UUID) -> dict:
+    return db.execute(
+        text(
+            "SELECT payload FROM library_intelligence_revision_events "
+            "WHERE revision_id = :r AND event_type = 'done'"
+        ),
+        {"r": revision_id},
+    ).scalar_one()
+
+
 class _ReduceRouter:
     """Fake LLMRouter returning a fixed reduce synthesis."""
 
@@ -180,6 +269,31 @@ class _BadRouter:
     async def generate(self, _provider, _request, _api_key, *, timeout_s):
         return LLMResponse(
             text="not json",
+            usage=None,
+            provider_request_id=None,
+            status=None,
+            incomplete_details=None,
+        )
+
+
+class _RepairingReduceRouter:
+    """First reduce call returns malformed output; the one repair round succeeds."""
+
+    def __init__(self, *, content_md: str, citations: list[tuple[int, int, str]]) -> None:
+        self._payload = {
+            "content_md": content_md,
+            "citations": [
+                {"ordinal": ordinal, "claim_index": claim_index, "role": role}
+                for ordinal, claim_index, role in citations
+            ],
+        }
+        self.calls = 0
+
+    async def generate(self, _provider, _request, _api_key, *, timeout_s):
+        self.calls += 1
+        text_out = "not json" if self.calls == 1 else json.dumps(self._payload)
+        return LLMResponse(
+            text=text_out,
             usage=None,
             provider_request_id=None,
             status=None,
@@ -384,8 +498,7 @@ class TestGenerateReduce:
     def test_generate_over_seeded_library_produces_grounded_citation(
         self, db_session: Session
     ) -> None:
-        owner_id = create_test_user_id()
-        ensure_user_and_default_library(db_session, owner_id)
+        owner_id = _create_owner(db_session)
         library_id = create_test_library(db_session, owner_id, "Reduce Library")
         _ready_unit_media(db_session, owner_id, library_id, title="Source One")
         _ready_unit_media(db_session, owner_id, library_id, title="Source Two")
@@ -433,9 +546,65 @@ class TestGenerateReduce:
         assert len(outs) == 2
         assert all(out.deep_link and out.locator is not None for out in outs)
 
+        # Normalized terminal grammar + AC-3 ledger row for the one reduce call.
+        assert _done_payload(db_session, revision_id=revision_id) == {
+            "status": "ready",
+            "error_code": None,
+            "revision_id": str(revision_id),
+        }
+        rows = _li_call_rows(db_session, revision_id=revision_id)
+        assert [(row.call_seq, row.llm_operation) for row in rows] == [(1, "li_reduce")], (
+            f"expected one li_reduce row, got {[(r.call_seq, r.llm_operation) for r in rows]}"
+        )
+
+    def test_reduce_repair_round_ledgers_two_li_revision_calls(self, db_session: Session) -> None:
+        owner_id = _create_owner(db_session)
+        library_id = create_test_library(db_session, owner_id, "Repair Library")
+        _ready_unit_media(db_session, owner_id, library_id, title="Source")
+
+        router = _RepairingReduceRouter(content_md="Overview [1].", citations=[(1, 0, "supports")])
+        revision_id = _drive_generation(
+            db_session, owner_id=owner_id, library_id=library_id, token="t1", router=router
+        )
+
+        view = get_artifact(db_session, viewer_id=owner_id, library_id=library_id)
+        assert view.status == "current", "the repaired synthesis must still promote"
+        assert view.revision_id == revision_id
+        rows = _li_call_rows(db_session, revision_id=revision_id)
+        assert [row.call_seq for row in rows] == [1, 2], (
+            f"a repaired reduce must ledger both attempts, got "
+            f"{[(r.call_seq, r.error_class) for r in rows]}"
+        )
+        assert all(row.llm_operation == "li_reduce" for row in rows)
+
+    def test_reduce_runs_inside_the_budget_envelope(
+        self, db_session: Session, li_rate_limiter: _RecordingRateLimiter
+    ) -> None:
+        owner_id = _create_owner(db_session)
+        library_id = create_test_library(db_session, owner_id, "Envelope Library")
+        _ready_unit_media(db_session, owner_id, library_id, title="Source")
+        li_rate_limiter.events.clear()  # drop the pre-built unit's envelope events
+
+        router = _ReduceRouter(content_md="[1]", citations=[(1, 0, "supports")])
+        revision_id = _drive_generation(
+            db_session, owner_id=owner_id, library_id=library_id, token="t1", router=router
+        )
+
+        assert li_rate_limiter.event_names() == [
+            "acquire_inflight_slot",
+            "reserve_token_budget",
+            "commit_token_budget",
+            "release_inflight_slot",
+        ], f"unexpected envelope: {li_rate_limiter.events}"
+        reserve = li_rate_limiter.events[1]
+        assert reserve[1] == owner_id, "the envelope is keyed on the artifact owner"
+        assert reserve[2] == revision_id, "reservation must be keyed on the revision (the run)"
+        assert reserve[3] is not None and reserve[3] > 4000, (
+            "estimate must cover the rendered prompt plus max output tokens"
+        )
+
     def test_no_buildable_units_fails_revision(self, db_session: Session) -> None:
-        owner_id = create_test_user_id()
-        ensure_user_and_default_library(db_session, owner_id)
+        owner_id = _create_owner(db_session)
         library_id = create_test_library(db_session, owner_id, "Empty Reduce")
         # A library media with NO extractable content: the inline unit build finds
         # no candidates and fails the unit, so the reduce sees zero ready units.
@@ -447,11 +616,21 @@ class TestGenerateReduce:
             db_session, owner_id=owner_id, library_id=library_id, token="t1", router=router
         )
         assert router.calls == 0  # the reduce never ran (no ready units)
-        status = db_session.execute(
-            text("SELECT status FROM library_intelligence_artifact_revisions WHERE id = :r"),
+        revision = db_session.execute(
+            text(
+                "SELECT status, error_code, error_detail "
+                "FROM library_intelligence_artifact_revisions WHERE id = :r"
+            ),
             {"r": revision_id},
-        ).scalar_one()
-        assert status == "failed"
+        ).one()
+        assert revision.status == "failed"
+        assert revision.error_code == "no_ready_units"
+        assert revision.error_detail
+        assert _done_payload(db_session, revision_id=revision_id) == {
+            "status": "failed",
+            "error_code": "no_ready_units",
+            "revision_id": str(revision_id),
+        }
         view = get_artifact(db_session, viewer_id=owner_id, library_id=library_id)
         assert view.status == "failed"
 
@@ -459,8 +638,7 @@ class TestGenerateReduce:
         # A fresh library whose per-media units were NOT pre-built: generation must
         # build them inline (fix for the first-generate race) and still produce a
         # grounded revision.
-        owner_id = create_test_user_id()
-        ensure_user_and_default_library(db_session, owner_id)
+        owner_id = _create_owner(db_session)
         library_id = create_test_library(db_session, owner_id, "Fresh Inline")
         create_searchable_media_in_library(db_session, owner_id, library_id, title="Not Pre-Built")
         db_session.commit()
@@ -485,8 +663,7 @@ class TestGenerateReduce:
         assert count == 1, "the inline-built unit's claim must ground a citation"
 
     def test_out_of_range_citation_dropped_end_to_end(self, db_session: Session) -> None:
-        owner_id = create_test_user_id()
-        ensure_user_and_default_library(db_session, owner_id)
+        owner_id = _create_owner(db_session)
         library_id = create_test_library(db_session, owner_id, "Drop Library")
         _ready_unit_media(db_session, owner_id, library_id, title="Only Source")
 
@@ -507,8 +684,7 @@ class TestGenerateReduce:
 @pytest.mark.integration
 class TestStaleness:
     def test_reingest_flips_stale(self, db_session: Session) -> None:
-        owner_id = create_test_user_id()
-        ensure_user_and_default_library(db_session, owner_id)
+        owner_id = _create_owner(db_session)
         library_id = create_test_library(db_session, owner_id, "Stale Library")
         media_id = _ready_unit_media(db_session, owner_id, library_id, title="Mutable Source")
 
@@ -541,8 +717,7 @@ class TestStaleness:
         assert get_artifact(db_session, viewer_id=owner_id, library_id=library_id).status == "stale"
 
     def test_new_member_media_flips_stale(self, db_session: Session) -> None:
-        owner_id = create_test_user_id()
-        ensure_user_and_default_library(db_session, owner_id)
+        owner_id = _create_owner(db_session)
         library_id = create_test_library(db_session, owner_id, "Membership Library")
         _ready_unit_media(db_session, owner_id, library_id, title="First")
 
@@ -560,8 +735,7 @@ class TestStaleness:
         assert get_artifact(db_session, viewer_id=owner_id, library_id=library_id).status == "stale"
 
     def test_stale_source_count_is_none_when_current(self, db_session: Session) -> None:
-        owner_id = create_test_user_id()
-        ensure_user_and_default_library(db_session, owner_id)
+        owner_id = _create_owner(db_session)
         library_id = create_test_library(db_session, owner_id, "Fresh Count Library")
         _ready_unit_media(db_session, owner_id, library_id, title="Only Source")
 
@@ -577,8 +751,7 @@ class TestStaleness:
         )
 
     def test_stale_source_count_counts_added_media(self, db_session: Session) -> None:
-        owner_id = create_test_user_id()
-        ensure_user_and_default_library(db_session, owner_id)
+        owner_id = _create_owner(db_session)
         library_id = create_test_library(db_session, owner_id, "Added Count Library")
         _ready_unit_media(db_session, owner_id, library_id, title="First")
 
@@ -600,8 +773,7 @@ class TestStaleness:
         )
 
     def test_stale_source_count_counts_reingested_media(self, db_session: Session) -> None:
-        owner_id = create_test_user_id()
-        ensure_user_and_default_library(db_session, owner_id)
+        owner_id = _create_owner(db_session)
         library_id = create_test_library(db_session, owner_id, "Reingest Count Library")
         media_id = _ready_unit_media(db_session, owner_id, library_id, title="Mutable")
         _ready_unit_media(db_session, owner_id, library_id, title="Stable")
@@ -645,8 +817,7 @@ class TestPodcastExpansion:
     ) -> None:
         # AC-7: a podcast entry expands to its episode media; the episode is covered
         # by kind "media", and adding a 2nd episode flips the artifact stale.
-        owner_id = create_test_user_id()
-        ensure_user_and_default_library(db_session, owner_id)
+        owner_id = _create_owner(db_session)
         library_id = create_test_library(db_session, owner_id, "Podcast Library")
         podcast_id = _add_podcast_to_library(db_session, library_id, title="A Show")
         episode_media_id = _make_episode_media(
@@ -683,8 +854,7 @@ class TestPodcastExpansion:
 @pytest.mark.integration
 class TestRevisionsAndPromote:
     def test_regenerate_keeps_current_visible_then_promotes(self, db_session: Session) -> None:
-        owner_id = create_test_user_id()
-        ensure_user_and_default_library(db_session, owner_id)
+        owner_id = _create_owner(db_session)
         library_id = create_test_library(db_session, owner_id, "Regen Library")
         _ready_unit_media(db_session, owner_id, library_id, title="Source")
 
@@ -724,8 +894,7 @@ class TestRevisionsAndPromote:
         assert prior["promoted_at"] is not None
 
     def test_promote_restores_prior_revision(self, db_session: Session) -> None:
-        owner_id = create_test_user_id()
-        ensure_user_and_default_library(db_session, owner_id)
+        owner_id = _create_owner(db_session)
         library_id = create_test_library(db_session, owner_id, "Restore Library")
         _ready_unit_media(db_session, owner_id, library_id, title="Source")
 
@@ -753,8 +922,7 @@ class TestRevisionsAndPromote:
         assert {s.revision_id for s in summaries} == {first_rev, second_rev}
 
     def test_idempotency_key_dedupes(self, db_session: Session) -> None:
-        owner_id = create_test_user_id()
-        ensure_user_and_default_library(db_session, owner_id)
+        owner_id = _create_owner(db_session)
         library_id = create_test_library(db_session, owner_id, "Token Library")
         first = generate_artifact(
             db_session, viewer_id=owner_id, library_id=library_id, idempotency_key="same"
@@ -781,9 +949,8 @@ class TestRevisionsAndPromote:
 
 @pytest.mark.integration
 class TestWorkerBoundary:
-    def test_llm_failure_marks_revision_failed(self, db_session: Session) -> None:
-        owner_id = create_test_user_id()
-        ensure_user_and_default_library(db_session, owner_id)
+    def test_llm_failure_marks_revision_failed_with_error_floor(self, db_session: Session) -> None:
+        owner_id = _create_owner(db_session)
         library_id = create_test_library(db_session, owner_id, "Fail Library")
         _ready_unit_media(db_session, owner_id, library_id, title="Source")
         ref = generate_artifact(
@@ -793,32 +960,76 @@ class TestWorkerBoundary:
             run_artifact_generation(db_session, revision_id=ref.revision_id, llm=_BadRouter())
         )
         db_session.expire_all()
-        status = db_session.execute(
-            text("SELECT status FROM library_intelligence_artifact_revisions WHERE id = :r"),
-            {"r": ref.revision_id},
-        ).scalar_one()
-        assert status == "failed"
-        # A 'done' event was emitted on failure.
-        done = db_session.execute(
+        revision = db_session.execute(
             text(
-                "SELECT COUNT(*) FROM library_intelligence_revision_events "
-                "WHERE revision_id = :r AND event_type = 'done'"
+                "SELECT status, error_code, error_detail "
+                "FROM library_intelligence_artifact_revisions WHERE id = :r"
             ),
             {"r": ref.revision_id},
-        ).scalar_one()
-        assert done == 1
+        ).one()
+        assert revision.status == "failed"
+        assert revision.error_code == "E_LLM_BAD_REQUEST", f"got {revision.error_code!r}"
+        assert revision.error_detail, "error_detail must carry the operator-facing reason"
+        assert _done_payload(db_session, revision_id=ref.revision_id) == {
+            "status": "failed",
+            "error_code": "E_LLM_BAD_REQUEST",
+            "revision_id": str(ref.revision_id),
+        }
+        # AC-3: the failed synthesis still ledgers both attempts (one repair round).
+        rows = _li_call_rows(db_session, revision_id=ref.revision_id)
+        assert [row.call_seq for row in rows] == [1, 2], (
+            f"expected attempt + repair rows, got {[(r.call_seq, r.error_class) for r in rows]}"
+        )
 
-    def test_worker_exception_failer_is_terminal_and_emits_done(self, db_session: Session) -> None:
-        owner_id = create_test_user_id()
-        ensure_user_and_default_library(db_session, owner_id)
+    def test_worker_exception_boundary_is_terminal_with_error_floor(
+        self, db_session: Session
+    ) -> None:
+        owner_id = _create_owner(db_session)
         library_id = create_test_library(db_session, owner_id, "Crash Library")
         ref = generate_artifact(
             db_session, viewer_id=owner_id, library_id=library_id, idempotency_key="t1"
         )
-        fail_artifact_generation_after_worker_exception(db_session, revision_id=ref.revision_id)
+        _fail_revision_after_worker_exception(
+            db_session, RuntimeError("worker exploded"), revision_id=ref.revision_id
+        )
         db_session.expire_all()
-        status = db_session.execute(
-            text("SELECT status FROM library_intelligence_artifact_revisions WHERE id = :r"),
+        revision = db_session.execute(
+            text(
+                "SELECT status, error_code, error_detail "
+                "FROM library_intelligence_artifact_revisions WHERE id = :r"
+            ),
             {"r": ref.revision_id},
-        ).scalar_one()
-        assert status == "failed"
+        ).one()
+        assert revision.status == "failed"
+        assert revision.error_code == "E_INTERNAL"
+        assert revision.error_detail == "RuntimeError: worker exploded"
+        assert _done_payload(db_session, revision_id=ref.revision_id) == {
+            "status": "failed",
+            "error_code": "E_INTERNAL",
+            "revision_id": str(ref.revision_id),
+        }
+
+    def test_worker_exception_boundary_noop_when_already_terminal(
+        self, db_session: Session
+    ) -> None:
+        owner_id = _create_owner(db_session)
+        library_id = create_test_library(db_session, owner_id, "Late Crash Library")
+        _ready_unit_media(db_session, owner_id, library_id, title="Source")
+        router = _ReduceRouter(content_md="Kept [1]", citations=[(1, 0, "supports")])
+        revision_id = _drive_generation(
+            db_session, owner_id=owner_id, library_id=library_id, token="t1", router=router
+        )
+
+        _fail_revision_after_worker_exception(
+            db_session, RuntimeError("late"), revision_id=revision_id
+        )
+        db_session.expire_all()
+        revision = db_session.execute(
+            text(
+                "SELECT status, error_code "
+                "FROM library_intelligence_artifact_revisions WHERE id = :r"
+            ),
+            {"r": revision_id},
+        ).one()
+        assert revision.status == "ready", "a terminal revision must not be re-failed"
+        assert revision.error_code is None

@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 
 from nexus.config import Settings, get_settings
 from nexus.db.models import Media
+from nexus.llm_catalog import require_catalog_model
 from nexus.logging import get_logger
 from nexus.services.contributor_credits import replace_machine_derived_media_author_credits
 
@@ -527,34 +528,23 @@ def merge_enrichment(
 
 def select_enrichment_providers(
     settings: Settings,
-) -> list[tuple[str, str, str]]:
-    """Return available providers in reliability-first failover order."""
+) -> list[tuple[str, str]]:
+    """Return enabled (provider, model) pairs in reliability-first failover order.
+
+    Key availability is resolved per attempt via ``resolve_api_key``; each model
+    setting is asserted catalog-valid here, at task use.
+    """
     if not settings.metadata_enrichment_enabled:
         return []
 
     candidates = [
-        (
-            "openai",
-            settings.metadata_enrichment_model_openai,
-            settings.openai_api_key,
-            settings.enable_openai,
-        ),
-        (
-            "anthropic",
-            settings.metadata_enrichment_model_anthropic,
-            settings.anthropic_api_key,
-            settings.enable_anthropic,
-        ),
-        (
-            "gemini",
-            settings.metadata_enrichment_model_gemini,
-            settings.gemini_api_key,
-            settings.enable_gemini,
-        ),
+        ("openai", settings.metadata_enrichment_model_openai, settings.enable_openai),
+        ("anthropic", settings.metadata_enrichment_model_anthropic, settings.enable_anthropic),
+        ("gemini", settings.metadata_enrichment_model_gemini, settings.enable_gemini),
     ]
 
     return [
-        (provider, model, api_key)
-        for provider, model, api_key, enabled in candidates
-        if enabled and api_key
+        (provider, require_catalog_model(provider, model).model_name)
+        for provider, model, enabled in candidates
+        if enabled
     ]

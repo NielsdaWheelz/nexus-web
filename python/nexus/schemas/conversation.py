@@ -17,6 +17,7 @@ from pydantic import (
     model_validator,
 )
 
+from nexus.schemas.citation import CitationOut
 from nexus.schemas.retrieval import RetrievalContextRef, RetrievalLocator, RetrievalResultRef
 from nexus.schemas.search import SEARCH_RESULT_TYPES
 
@@ -175,6 +176,7 @@ class MessageOut(BaseModel):
     seq: int
     role: str  # "user" | "assistant" | "system"
     message_document: MessageDocument = Field(default_factory=MessageDocument)
+    citations: list[CitationOut] = Field(default_factory=list)
     parent_message_id: UUID | None = None
     branch_root_message_id: UUID | None = None
     branch_anchor_kind: BRANCH_ANCHOR_KINDS = "none"
@@ -308,21 +310,11 @@ class ChatRunDoneEventPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class ChatRunCitationIndexEntry(BaseModel):
-    n: int = Field(ge=1)
-    retrieval_id: UUID
-    tool_call_id: UUID
-    ordinal: int = Field(ge=0)
-    result: dict[str, Any] | None = None
-
-    model_config = ConfigDict(extra="forbid")
-
-
 class ChatRunCitationIndexEventPayload(BaseModel):
-    """Strict SSE payload mapping citation `[N]` markers to retrievals."""
+    """Strict SSE payload carrying the server-built `[N]` citation read-model."""
 
     assistant_message_id: UUID
-    entries: list[ChatRunCitationIndexEntry]
+    citations: list[CitationOut]
 
     model_config = ConfigDict(extra="forbid")
 

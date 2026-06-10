@@ -23,6 +23,15 @@ write_files:
       PermitRootLogin no
       X11Forwarding no
       AllowUsers nexus
+  # Container logs use the journald driver, so the host journal must persist
+  # across reboots and stay bounded.
+  - path: /etc/systemd/journald.conf.d/10-nexus.conf
+    owner: root:root
+    permissions: "0644"
+    content: |
+      [Journal]
+      Storage=persistent
+      SystemMaxUse=2G
 
 users:
   - default
@@ -50,4 +59,5 @@ runcmd:
   - ufw --force enable
   - sshd -t
   - systemctl reload ssh || systemctl reload ssh.socket || systemctl restart ssh
+  - systemctl restart systemd-journald
   - systemctl enable --now docker

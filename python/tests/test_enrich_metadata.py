@@ -1,15 +1,18 @@
 """Integration tests for metadata enrichment task behavior."""
 
+import base64
 import importlib
 from datetime import UTC, datetime
-from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
 from llm_calling.errors import LLMError, LLMErrorCode
+from llm_calling.types import LLMResponse
 from sqlalchemy import text
 
+from nexus.services.api_key_resolver import ResolvedKey
 from nexus.services.contributor_credits import replace_media_contributor_credits
+from nexus.services.crypto import MASTER_KEY_SIZE, _get_master_key, encrypt_api_key
 from tests.helpers import create_test_user_id
 from tests.utils.db import DirectSessionManager
 
@@ -18,6 +21,27 @@ pytestmark = pytest.mark.integration
 
 def _enrich_metadata_module():
     return importlib.import_module("nexus.tasks.enrich_metadata")
+
+
+def _stub_resolved_keys(monkeypatch, enrich_module, api_key: str = "sk-test") -> None:
+    """Stub the key-resolution seam; the real path is covered by the BYOK test."""
+    monkeypatch.setattr(
+        enrich_module,
+        "resolve_api_key",
+        lambda _db, _user_id, provider, _key_mode: ResolvedKey(
+            api_key=api_key, mode="platform", provider=provider
+        ),
+    )
+
+
+def _completed_response(structured_output: dict | None, text: str = "") -> LLMResponse:
+    return LLMResponse(
+        text=text,
+        usage=None,
+        provider_request_id=None,
+        status="completed",
+        structured_output=structured_output,
+    )
 
 
 class TestEnrichMetadata:
@@ -117,11 +141,13 @@ class TestEnrichMetadata:
             session.commit()
 
         enrich_module = _enrich_metadata_module()
+        direct_db.register_cleanup("llm_calls", "owner_id", media_id)
         monkeypatch.setattr(
             enrich_module,
             "select_enrichment_providers",
-            lambda _settings: [("openai", "gpt-test", "sk-test")],
+            lambda _settings: [("openai", "gpt-test")],
         )
+        _stub_resolved_keys(monkeypatch, enrich_module)
 
         prompt_holder: dict[str, str] = {}
         structured_output_seen: dict[str, bool] = {}
@@ -130,16 +156,15 @@ class TestEnrichMetadata:
             _ = self, provider, api_key, timeout_s
             prompt_holder["prompt"] = req.messages[0].content
             structured_output_seen["present"] = getattr(req, "structured_output", None) is not None
-            return SimpleNamespace(
-                status="completed",
-                structured_output={
+            return _completed_response(
+                {
                     "title": None,
                     "authors": ["Episode Host"],
                     "publisher": "Systems Show",
                     "language": "en",
                     "description": "A short summary of the episode.",
                     "published_date": "2026-03-02",
-                },
+                }
             )
 
         monkeypatch.setattr(enrich_module.LLMRouter, "generate", _fake_generate)
@@ -247,24 +272,25 @@ class TestEnrichMetadata:
             session.commit()
 
         enrich_module = _enrich_metadata_module()
+        direct_db.register_cleanup("llm_calls", "owner_id", media_id)
         monkeypatch.setattr(
             enrich_module,
             "select_enrichment_providers",
-            lambda _settings: [("openai", "gpt-test", "sk-test")],
+            lambda _settings: [("openai", "gpt-test")],
         )
+        _stub_resolved_keys(monkeypatch, enrich_module)
 
         async def _fake_generate(self, provider, req, api_key, timeout_s):
             _ = self, provider, req, api_key, timeout_s
-            return SimpleNamespace(
-                status="completed",
-                structured_output={
+            return _completed_response(
+                {
                     "title": "Analytical Engine Notes",
                     "authors": ["Ada Lovelace"],
                     "publisher": "Nexus Archive",
                     "description": "Ada Lovelace's notes on the analytical engine.",
                     "published_date": "1843",
                     "language": "en",
-                },
+                }
             )
 
         monkeypatch.setattr(enrich_module.LLMRouter, "generate", _fake_generate)
@@ -335,24 +361,25 @@ class TestEnrichMetadata:
             session.commit()
 
         enrich_module = _enrich_metadata_module()
+        direct_db.register_cleanup("llm_calls", "owner_id", media_id)
         monkeypatch.setattr(
             enrich_module,
             "select_enrichment_providers",
-            lambda _s: [("openai", "gpt-test", "sk-test")],
+            lambda _s: [("openai", "gpt-test")],
         )
+        _stub_resolved_keys(monkeypatch, enrich_module)
 
         async def _fake_generate(self, provider, req, api_key, timeout_s):
             _ = self, provider, req, api_key, timeout_s
-            return SimpleNamespace(
-                status="completed",
-                structured_output={
+            return _completed_response(
+                {
                     "title": "Better Article Title",
                     "authors": None,
                     "publisher": None,
                     "description": None,
                     "published_date": None,
                     "language": "en",
-                },
+                }
             )
 
         monkeypatch.setattr(enrich_module.LLMRouter, "generate", _fake_generate)
@@ -391,24 +418,25 @@ class TestEnrichMetadata:
             session.commit()
 
         enrich_module = _enrich_metadata_module()
+        direct_db.register_cleanup("llm_calls", "owner_id", media_id)
         monkeypatch.setattr(
             enrich_module,
             "select_enrichment_providers",
-            lambda _s: [("openai", "gpt-test", "sk-test")],
+            lambda _s: [("openai", "gpt-test")],
         )
+        _stub_resolved_keys(monkeypatch, enrich_module)
 
         async def _fake_generate(self, provider, req, api_key, timeout_s):
             _ = self, provider, req, api_key, timeout_s
-            return SimpleNamespace(
-                status="completed",
-                structured_output={
+            return _completed_response(
+                {
                     "title": "New Title",
                     "authors": None,
                     "publisher": "New Publisher",
                     "description": "New description.",
                     "published_date": None,
                     "language": None,
-                },
+                }
             )
 
         monkeypatch.setattr(enrich_module.LLMRouter, "generate", _fake_generate)
@@ -493,24 +521,25 @@ class TestEnrichMetadata:
             session.commit()
 
         enrich_module = _enrich_metadata_module()
+        direct_db.register_cleanup("llm_calls", "owner_id", media_id)
         monkeypatch.setattr(
             enrich_module,
             "select_enrichment_providers",
-            lambda _s: [("openai", "gpt-test", "sk-test")],
+            lambda _s: [("openai", "gpt-test")],
         )
+        _stub_resolved_keys(monkeypatch, enrich_module)
 
         async def _fake_generate(self, provider, req, api_key, timeout_s):
             _ = self, provider, req, api_key, timeout_s
-            return SimpleNamespace(
-                status="completed",
-                structured_output={
+            return _completed_response(
+                {
                     "title": "Analytical Engine Notes",
                     "authors": ["Ada Lovelace", "Ada  Lovelace", "Charles Babbage"],
                     "publisher": None,
                     "description": None,
                     "published_date": None,
                     "language": None,
-                },
+                }
             )
 
         monkeypatch.setattr(enrich_module.LLMRouter, "generate", _fake_generate)
@@ -569,11 +598,13 @@ class TestEnrichMetadata:
             session.commit()
 
         enrich_module = _enrich_metadata_module()
+        direct_db.register_cleanup("llm_calls", "owner_id", media_id)
         monkeypatch.setattr(
             enrich_module,
             "select_enrichment_providers",
-            lambda _s: [("openai", "gpt-test", "sk-test")],
+            lambda _s: [("openai", "gpt-test")],
         )
+        _stub_resolved_keys(monkeypatch, enrich_module)
 
         async def _fake_generate(self, provider, req, api_key, timeout_s):
             _ = self, provider, req, api_key, timeout_s
@@ -649,18 +680,18 @@ class TestEnrichMetadata:
             session.commit()
 
         enrich_module = _enrich_metadata_module()
+        direct_db.register_cleanup("llm_calls", "owner_id", media_id)
         monkeypatch.setattr(
             enrich_module,
             "select_enrichment_providers",
-            lambda _s: [("openai", "gpt-test", "sk-test")],
+            lambda _s: [("openai", "gpt-test")],
         )
+        _stub_resolved_keys(monkeypatch, enrich_module)
 
         async def _fake_generate(self, provider, req, api_key, timeout_s):
             _ = self, provider, req, api_key, timeout_s
-            return SimpleNamespace(
-                status="completed",
-                text='{"title":"Unstructured text payload must be ignored"}',
-                structured_output=None,
+            return _completed_response(
+                None, text='{"title":"Unstructured text payload must be ignored"}'
             )
 
         monkeypatch.setattr(enrich_module.LLMRouter, "generate", _fake_generate)
@@ -718,14 +749,16 @@ class TestEnrichMetadata:
             session.commit()
 
         enrich_module = _enrich_metadata_module()
+        direct_db.register_cleanup("llm_calls", "owner_id", media_id)
         monkeypatch.setattr(
             enrich_module,
             "select_enrichment_providers",
             lambda _s: [
-                ("gemini", "gemini-test", "gemini-key"),
-                ("openai", "gpt-test", "openai-key"),
+                ("gemini", "gemini-test"),
+                ("openai", "gpt-test"),
             ],
         )
+        _stub_resolved_keys(monkeypatch, enrich_module)
 
         observed_providers: list[str] = []
 
@@ -733,27 +766,25 @@ class TestEnrichMetadata:
             _ = self, req, api_key, timeout_s
             observed_providers.append(provider)
             if provider == "gemini":
-                return SimpleNamespace(
-                    status="completed",
-                    structured_output={
+                return _completed_response(
+                    {
                         "title": "Bad Date",
                         "authors": None,
                         "publisher": None,
                         "description": None,
                         "published_date": "March 1843",
                         "language": "en",
-                    },
+                    }
                 )
-            return SimpleNamespace(
-                status="completed",
-                structured_output={
+            return _completed_response(
+                {
                     "title": "Recovered Title",
                     "authors": None,
                     "publisher": "Recovered Publisher",
                     "description": None,
                     "published_date": None,
                     "language": "en",
-                },
+                }
             )
 
         monkeypatch.setattr(enrich_module.LLMRouter, "generate", _fake_generate)
@@ -810,24 +841,25 @@ class TestEnrichMetadata:
             session.commit()
 
         enrich_module = _enrich_metadata_module()
+        direct_db.register_cleanup("llm_calls", "owner_id", media_id)
         monkeypatch.setattr(
             enrich_module,
             "select_enrichment_providers",
-            lambda _s: [("openai", "gpt-test", "sk-test")],
+            lambda _s: [("openai", "gpt-test")],
         )
+        _stub_resolved_keys(monkeypatch, enrich_module)
 
         async def _fake_generate(self, provider, req, api_key, timeout_s):
             _ = self, provider, req, api_key, timeout_s
-            return SimpleNamespace(
-                status="completed",
-                structured_output={
+            return _completed_response(
+                {
                     "title": None,
                     "authors": None,
                     "publisher": "Recovered Publisher",
                     "description": None,
                     "published_date": None,
                     "language": None,
-                },
+                }
             )
 
         monkeypatch.setattr(enrich_module.LLMRouter, "generate", _fake_generate)
@@ -979,3 +1011,340 @@ class TestEnrichMetadata:
             ).fetchone()
 
         assert row == ("failed", "embed", "E_INGEST_FAILED")
+
+    def test_failover_trail_ledgers_one_llm_calls_row_per_provider_attempt(
+        self, direct_db: DirectSessionManager, monkeypatch
+    ):
+        """Provider A fails, provider B succeeds: two llm_calls rows, seq 1..2 (AC-3)."""
+        user_id = create_test_user_id()
+        media_id = uuid4()
+
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("users", "id", user_id)
+        direct_db.register_cleanup("llm_calls", "owner_id", media_id)
+
+        with direct_db.session() as session:
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.execute(
+                text(
+                    """
+                    INSERT INTO media (
+                        id, kind, title, canonical_source_url, processing_status,
+                        created_by_user_id
+                    ) VALUES (
+                        :id, 'web_article', 'notes.pdf', 'https://example.com/a',
+                        'ready_for_reading', :user_id
+                    )
+                    """
+                ),
+                {"id": media_id, "user_id": user_id},
+            )
+            session.commit()
+
+        enrich_module = _enrich_metadata_module()
+        monkeypatch.setattr(
+            enrich_module,
+            "select_enrichment_providers",
+            lambda _s: [
+                ("openai", "gpt-test"),
+                ("anthropic", "claude-test"),
+            ],
+        )
+        _stub_resolved_keys(monkeypatch, enrich_module)
+
+        async def _fake_generate(self, provider, req, api_key, timeout_s):
+            _ = self, req, api_key, timeout_s
+            if provider == "openai":
+                raise LLMError(LLMErrorCode.PROVIDER_DOWN, "openai down", provider="openai")
+            return _completed_response(
+                {
+                    "title": "Recovered Title",
+                    "authors": None,
+                    "publisher": None,
+                    "description": None,
+                    "published_date": None,
+                    "language": None,
+                }
+            )
+
+        monkeypatch.setattr(enrich_module.LLMRouter, "generate", _fake_generate)
+
+        result = enrich_module.enrich_metadata(str(media_id))
+
+        assert result["status"] == "success"
+        assert result["provider"] == "anthropic"
+
+        with direct_db.session() as session:
+            rows = session.execute(
+                text(
+                    """
+                    SELECT call_seq, provider, model_name, llm_operation,
+                           key_mode_requested, key_mode_used, error_class, error_detail
+                    FROM llm_calls
+                    WHERE owner_kind = 'media_enrichment' AND owner_id = :id
+                    ORDER BY call_seq
+                    """
+                ),
+                {"id": media_id},
+            ).fetchall()
+
+        assert [(row.call_seq, row.provider) for row in rows] == [
+            (1, "openai"),
+            (2, "anthropic"),
+        ], f"Expected one ledger row per provider attempt, got {rows}"
+        assert rows[0].error_class == "E_LLM_PROVIDER_DOWN"
+        assert rows[0].error_detail == "LLMError: openai down"
+        assert rows[1].error_class is None and rows[1].error_detail is None
+        assert {row.llm_operation for row in rows} == {"metadata_enrichment"}
+        assert {(row.key_mode_requested, row.key_mode_used) for row in rows} == {
+            ("auto", "platform")
+        }
+
+    def test_byok_success_marks_key_valid(
+        self, direct_db: DirectSessionManager, monkeypatch, request
+    ):
+        """Real resolve_api_key path: the owner's BYOK key is used and a
+        successful enrichment marks it 'valid' (terminal key-status feedback)."""
+        _get_master_key.cache_clear()
+        request.addfinalizer(_get_master_key.cache_clear)
+        test_key = b"test_master_key_for_encryption!!"
+        assert len(test_key) == MASTER_KEY_SIZE
+        monkeypatch.setenv("NEXUS_KEY_ENCRYPTION_KEY", base64.b64encode(test_key).decode("ascii"))
+
+        user_id = create_test_user_id()
+        media_id = uuid4()
+        byok_plaintext = "sk-byok-openai-key-1234567890"
+        ciphertext, nonce, version, fingerprint = encrypt_api_key(byok_plaintext)
+
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("users", "id", user_id)
+        direct_db.register_cleanup("llm_calls", "owner_id", media_id)
+
+        with direct_db.session() as session:
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.execute(
+                text(
+                    """
+                    INSERT INTO media (
+                        id, kind, title, canonical_source_url, processing_status,
+                        created_by_user_id
+                    ) VALUES (
+                        :id, 'web_article', 'notes.pdf', 'https://example.com/a',
+                        'ready_for_reading', :user_id
+                    )
+                    """
+                ),
+                {"id": media_id, "user_id": user_id},
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO user_api_keys (
+                        user_id, provider, encrypted_key, key_nonce,
+                        master_key_version, key_fingerprint, status
+                    ) VALUES (
+                        :user_id, 'openai', :encrypted_key, :key_nonce,
+                        :version, :fingerprint, 'untested'
+                    )
+                    """
+                ),
+                {
+                    "user_id": user_id,
+                    "encrypted_key": ciphertext,
+                    "key_nonce": nonce,
+                    "version": version,
+                    "fingerprint": fingerprint,
+                },
+            )
+            session.commit()
+
+        enrich_module = _enrich_metadata_module()
+        monkeypatch.setattr(
+            enrich_module,
+            "select_enrichment_providers",
+            lambda _s: [("openai", "gpt-test")],
+        )
+
+        seen: dict[str, str] = {}
+
+        async def _fake_generate(self, provider, req, api_key, timeout_s):
+            _ = self, provider, req, timeout_s
+            seen["api_key"] = api_key
+            return _completed_response(
+                {
+                    "title": "BYOK Title",
+                    "authors": None,
+                    "publisher": None,
+                    "description": None,
+                    "published_date": None,
+                    "language": None,
+                }
+            )
+
+        monkeypatch.setattr(enrich_module.LLMRouter, "generate", _fake_generate)
+
+        result = enrich_module.enrich_metadata(str(media_id))
+
+        assert result["status"] == "success", f"Expected BYOK-backed success, got {result}"
+        assert seen["api_key"] == byok_plaintext, "the decrypted BYOK key must reach the provider"
+
+        with direct_db.session() as session:
+            key_row = session.execute(
+                text(
+                    """
+                    SELECT status, last_tested_at, last_used_at
+                    FROM user_api_keys WHERE user_id = :user_id AND provider = 'openai'
+                    """
+                ),
+                {"user_id": user_id},
+            ).fetchone()
+            ledger_row = session.execute(
+                text(
+                    """
+                    SELECT key_mode_requested, key_mode_used FROM llm_calls
+                    WHERE owner_kind = 'media_enrichment' AND owner_id = :id
+                    """
+                ),
+                {"id": media_id},
+            ).fetchone()
+
+        assert key_row is not None
+        status, last_tested_at, last_used_at = key_row
+        assert status == "valid", f"BYOK success must mark the key valid, got {status!r}"
+        assert last_tested_at is not None and last_used_at is not None, (
+            f"valid feedback must stamp last_tested_at/last_used_at, got {key_row}"
+        )
+        assert ledger_row == ("auto", "byok")
+
+    def test_byok_invalid_key_marks_key_invalid(
+        self, direct_db: DirectSessionManager, monkeypatch, request
+    ):
+        """A BYOK key that the provider rejects with E_LLM_INVALID_KEY is marked
+        'invalid' so it stops being retried forever (terminal key-status feedback)."""
+        _get_master_key.cache_clear()
+        request.addfinalizer(_get_master_key.cache_clear)
+        test_key = b"test_master_key_for_encryption!!"
+        assert len(test_key) == MASTER_KEY_SIZE
+        monkeypatch.setenv("NEXUS_KEY_ENCRYPTION_KEY", base64.b64encode(test_key).decode("ascii"))
+
+        user_id = create_test_user_id()
+        media_id = uuid4()
+        byok_plaintext = "sk-byok-openai-key-1234567890"
+        ciphertext, nonce, version, fingerprint = encrypt_api_key(byok_plaintext)
+
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("users", "id", user_id)
+        direct_db.register_cleanup("llm_calls", "owner_id", media_id)
+
+        with direct_db.session() as session:
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.execute(
+                text(
+                    """
+                    INSERT INTO media (
+                        id, kind, title, canonical_source_url, processing_status,
+                        created_by_user_id
+                    ) VALUES (
+                        :id, 'web_article', 'notes.pdf', 'https://example.com/a',
+                        'ready_for_reading', :user_id
+                    )
+                    """
+                ),
+                {"id": media_id, "user_id": user_id},
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO user_api_keys (
+                        user_id, provider, encrypted_key, key_nonce,
+                        master_key_version, key_fingerprint, status
+                    ) VALUES (
+                        :user_id, 'openai', :encrypted_key, :key_nonce,
+                        :version, :fingerprint, 'untested'
+                    )
+                    """
+                ),
+                {
+                    "user_id": user_id,
+                    "encrypted_key": ciphertext,
+                    "key_nonce": nonce,
+                    "version": version,
+                    "fingerprint": fingerprint,
+                },
+            )
+            session.commit()
+
+        enrich_module = _enrich_metadata_module()
+        monkeypatch.setattr(
+            enrich_module,
+            "select_enrichment_providers",
+            lambda _s: [("openai", "gpt-test")],
+        )
+
+        async def _fake_generate(self, provider, req, api_key, timeout_s):
+            _ = self, provider, req, api_key, timeout_s
+            raise LLMError(LLMErrorCode.INVALID_KEY, "rejected", provider="openai")
+
+        monkeypatch.setattr(enrich_module.LLMRouter, "generate", _fake_generate)
+
+        result = enrich_module.enrich_metadata(str(media_id))
+
+        assert result["status"] == "failed"
+        assert result["error_code"] == "E_LLM_INVALID_KEY", f"got {result}"
+
+        with direct_db.session() as session:
+            status = session.execute(
+                text(
+                    "SELECT status FROM user_api_keys "
+                    "WHERE user_id = :user_id AND provider = 'openai'"
+                ),
+                {"user_id": user_id},
+            ).scalar_one()
+
+        assert status == "invalid", (
+            f"BYOK invalid-key failure must mark the key invalid, got {status!r}"
+        )
+
+    def test_ownerless_media_records_no_provider_failure(
+        self, direct_db: DirectSessionManager, monkeypatch
+    ):
+        """Without an owning user there is no key spine to resolve against."""
+        media_id = uuid4()
+        direct_db.register_cleanup("media", "id", media_id)
+
+        with direct_db.session() as session:
+            session.execute(
+                text(
+                    """
+                    INSERT INTO media (
+                        id, kind, title, canonical_source_url, processing_status
+                    ) VALUES (
+                        :id, 'web_article', 'notes.pdf', 'https://example.com/a',
+                        'ready_for_reading'
+                    )
+                    """
+                ),
+                {"id": media_id},
+            )
+            session.commit()
+
+        enrich_module = _enrich_metadata_module()
+        monkeypatch.setattr(
+            enrich_module,
+            "select_enrichment_providers",
+            lambda _s: [("openai", "gpt-test")],
+        )
+
+        result = enrich_module.enrich_metadata(str(media_id))
+
+        assert result["status"] == "failed"
+        assert result["reason"] == "no_provider"
+        assert result["error_code"] == "E_METADATA_NO_PROVIDER"
+
+        with direct_db.session() as session:
+            row = session.execute(
+                text("SELECT failure_stage, last_error_code FROM media WHERE id = :id"),
+                {"id": media_id},
+            ).fetchone()
+
+        assert row == ("metadata", "E_METADATA_NO_PROVIDER")

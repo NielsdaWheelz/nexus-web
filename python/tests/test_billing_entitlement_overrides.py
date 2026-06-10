@@ -81,41 +81,6 @@ def test_unlimited_token_grant_skips_monthly_cap_but_records_reservation(
     assert reserved == 10_000_000
 
 
-def test_token_budget_charge_is_idempotent(engine, direct_db: DirectSessionManager):
-    user_id = uuid4()
-    message_id = uuid4()
-    direct_db.register_cleanup("users", "id", user_id)
-    conversation_id = None
-
-    with direct_db.session() as session:
-        session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
-        conversation_id = _insert_message(session, user_id=user_id, message_id=message_id)
-        session.commit()
-    direct_db.register_cleanup("conversations", "id", conversation_id)
-    direct_db.register_cleanup("messages", "conversation_id", conversation_id)
-    direct_db.register_cleanup("token_budget_charges", "user_id", user_id)
-    direct_db.register_cleanup("token_budget_daily_usage", "user_id", user_id)
-
-    limiter = RateLimiter(session_factory=create_session_factory(engine))
-    limiter.charge_token_budget(user_id, message_id, 100)
-    limiter.charge_token_budget(user_id, message_id, 100)
-
-    with direct_db.session() as session:
-        row = session.execute(
-            text(
-                """
-                SELECT usage.spent_tokens, COUNT(charges.message_id)
-                FROM token_budget_daily_usage usage
-                LEFT JOIN token_budget_charges charges ON charges.user_id = usage.user_id
-                WHERE usage.user_id = :user_id
-                GROUP BY usage.spent_tokens
-                """
-            ),
-            {"user_id": user_id},
-        ).one()
-    assert row == (100, 1)
-
-
 def test_token_budget_commit_is_idempotent(engine, direct_db: DirectSessionManager):
     user_id = uuid4()
     reservation_id = uuid4()

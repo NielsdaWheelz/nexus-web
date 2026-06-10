@@ -4,7 +4,7 @@
  * The backend emits three event kinds over `/stream/library-intelligence/{revision_id}/events`:
  *   - `meta`     once on subscribe: `{revision_id, library_id}`
  *   - `progress` optional human-readable build progress: `{message, stage?}`
- *   - `done`     terminal: `{revision_id}` on success, `{error}` on failure
+ *   - `done`     terminal: `{status, error_code, revision_id}` (`error_code` set on failure)
  *
  * Mirrors `toChatSSEEvent`: each branch validates its payload with field guards
  * (json-values.md) and throws on a malformed payload so the SSE client surfaces
@@ -12,10 +12,7 @@
  */
 
 import { isRecord } from "@/lib/validation";
-
-function isOptionalString(value: unknown): value is string | null | undefined {
-  return value === undefined || value === null || typeof value === "string";
-}
+import { isOptionalString } from "@/lib/api/sse/guards";
 
 interface LiMetaEvent {
   type: "meta";
@@ -36,10 +33,11 @@ interface LiProgressEvent {
 interface LiDoneEvent {
   type: "done";
   data: {
-    /** Present on success; the promoted revision. */
-    revision_id: string | null;
-    /** Present on failure; the error code. */
-    error: string | null;
+    status: "ready" | "failed";
+    /** Set on failure; the error code. */
+    error_code: string | null;
+    /** The revision this terminal event belongs to. */
+    revision_id: string;
   };
 }
 
@@ -70,12 +68,17 @@ function parseProgressData(data: unknown): LiProgressEvent["data"] {
 function parseDoneData(data: unknown): LiDoneEvent["data"] {
   if (
     !isRecord(data) ||
-    !isOptionalString(data.revision_id) ||
-    !isOptionalString(data.error)
+    (data.status !== "ready" && data.status !== "failed") ||
+    typeof data.revision_id !== "string" ||
+    !isOptionalString(data.error_code)
   ) {
     throw new Error("Invalid SSE payload for done");
   }
-  return { revision_id: data.revision_id ?? null, error: data.error ?? null };
+  return {
+    status: data.status,
+    error_code: data.error_code ?? null,
+    revision_id: data.revision_id,
+  };
 }
 
 export function toLibraryIntelligenceEvent(

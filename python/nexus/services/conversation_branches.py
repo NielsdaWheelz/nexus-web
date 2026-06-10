@@ -35,6 +35,7 @@ from nexus.services.conversations import (
     message_to_out,
     retryable_assistant_message_ids,
 )
+from nexus.services.retrieval_citation import build_citation_outs_for_messages
 
 
 def branch_anchor_for_message(
@@ -1109,10 +1110,17 @@ def _message_outs_by_id(
         viewer_id=viewer_id,
         assistant_message_ids=message_ids,
     )
+    citations_by_message = build_citation_outs_for_messages(
+        db,
+        assistant_message_ids=[
+            message.id for message in messages_by_id.values() if message.role == "assistant"
+        ],
+    )
     return {
         message_id: message_to_out(
             message,
             can_retry_response=message.id in retryable_message_ids,
+            citations=citations_by_message.get(message_id, []),
         )
         for message_id, message in messages_by_id.items()
     }

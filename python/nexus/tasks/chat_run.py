@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Mapping
 from typing import Any
 from uuid import UUID
@@ -14,19 +13,19 @@ from web_search_tool.brave import BraveSearchProvider
 from web_search_tool.types import WebSearchProvider
 
 from nexus.config import get_settings
-from nexus.db.models import ChatRun, Model
-from nexus.db.session import get_session_factory
+from nexus.db.models import ChatRun
 from nexus.errors import ApiErrorCode
 from nexus.jobs.queue import JobRow
 from nexus.logging import get_logger
 from nexus.schemas.conversation import ReaderContextHint, ReaderSelectionRequest
 from nexus.services.chat_run_event_store import TERMINAL_RUN_STATUSES
-from nexus.services.chat_run_finalize import dummy_resolved_key, finalize_error
+from nexus.services.chat_run_finalize import finalize_error
 from nexus.services.chat_runs import execute_chat_run
-from nexus.services.rate_limit import RateLimiter, set_rate_limiter
-from nexus.services.real_media_fixture_llm import RealMediaFixtureLLMRouter
+from nexus.tasks.llm_task import LlmTaskSpec, run_llm_task
 
 logger = get_logger(__name__)
+
+_CHAT_RUN_SPEC = LlmTaskSpec(label="chat_run", http_timeout_s=60.0, http_limits=(100, 20))
 
 
 def chat_run(
@@ -44,59 +43,30 @@ def chat_run(
         else None
     )
     settings = get_settings()
-    session_factory = get_session_factory()
-    set_rate_limiter(
-        RateLimiter(
-            session_factory=session_factory,
-            rpm_limit=settings.rate_limit_rpm,
-            concurrent_limit=settings.rate_limit_concurrent,
+
+    async def _handler(db: Session, router: LLMRouter, client: httpx.AsyncClient) -> dict:
+        web_search_provider: WebSearchProvider | None = (
+            BraveSearchProvider(client, api_key=settings.brave_search_api_key)
+            if settings.brave_search_api_key
+            else None
         )
-    )
-    db = session_factory()
+        return await execute_chat_run(
+            db,
+            run_id=run_uuid,
+            llm_router=router,
+            web_search_provider=web_search_provider,
+            reader_context=reader_context_hint,
+            reader_selection=reader_selection_anchor,
+        )
 
-    async def _call() -> dict:
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(60.0, connect=10.0),
-            limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
-        ) as client:
-            if settings.real_media_provider_fixtures:
-                router = RealMediaFixtureLLMRouter(
-                    enable_openai=settings.enable_openai,
-                    enable_anthropic=settings.enable_anthropic,
-                    enable_gemini=settings.enable_gemini,
-                    enable_deepseek=settings.enable_deepseek,
-                )
-            else:
-                router = LLMRouter(
-                    client,
-                    enable_openai=settings.enable_openai,
-                    enable_anthropic=settings.enable_anthropic,
-                    enable_gemini=settings.enable_gemini,
-                    enable_deepseek=settings.enable_deepseek,
-                )
-            web_search_provider: WebSearchProvider | None = (
-                BraveSearchProvider(client, api_key=settings.brave_search_api_key)
-                if settings.brave_search_api_key
-                else None
-            )
-            return await execute_chat_run(
-                db,
-                run_id=run_uuid,
-                llm_router=router,
-                web_search_provider=web_search_provider,
-                reader_context=reader_context_hint,
-                reader_selection=reader_selection_anchor,
-            )
-
+    # No on_worker_exception: chat's per-attempt boundary lives inside
+    # execute_chat_run; an exception escaping it (finalize itself failed) must
+    # propagate to the queue's retry policy and, at exhaustion, the dead-letter
+    # finalizer below.
     logger.info("chat_run_started", run_id=run_id)
-    loop = asyncio.new_event_loop()
-    try:
-        result = loop.run_until_complete(_call())
-        logger.info("chat_run_completed", run_id=run_id, result=result)
-        return result
-    finally:
-        loop.close()
-        db.close()
+    result = run_llm_task(_CHAT_RUN_SPEC, _handler)
+    logger.info("chat_run_completed", run_id=run_id, result=result)
+    return result
 
 
 def finalize_dead_lettered_chat_run(db: Session, job: JobRow) -> None:
@@ -110,16 +80,11 @@ def finalize_dead_lettered_chat_run(db: Session, job: JobRow) -> None:
     if run is None or run.status in TERMINAL_RUN_STATUSES:
         return
 
-    model = db.get(Model, run.model_id)
-    error_code = job.error_code or ApiErrorCode.E_INTERNAL.value
     finalize_error(
         db,
         run_id=run.id,
-        error_code=error_code,
-        viewer_id=run.owner_user_id,
-        model=model,
-        resolved_key=dummy_resolved_key(model) if model is not None else None,
-        key_mode=run.key_mode,
+        error_code=job.error_code or ApiErrorCode.E_INTERNAL.value,
+        error_detail=job.last_error[:1000] if job.last_error else None,
         assistant_content=(
             "The background job handling this response exhausted its attempts before "
             "the model response could finish. Please retry."

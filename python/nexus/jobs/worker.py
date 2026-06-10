@@ -11,11 +11,10 @@ from uuid import UUID
 
 import psycopg
 from sqlalchemy import text
-from sqlalchemy.exc import OperationalError, SQLAlchemyError
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from nexus.db.errors import is_serialization_failure
-from nexus.db.session import use_serializable_if_available
+from nexus.db.retries import retry_serializable
 from nexus.jobs.queue import (
     claim_next_job,
     complete_job,
@@ -273,48 +272,40 @@ class JobWorker:
         if not definitions:
             return 0
 
-        for attempt in range(3):
-            try:
-                with self.session_factory() as db:
-                    use_serializable_if_available(db)
+        with self.session_factory() as db:
 
-                    now_value = now or db.execute(text("SELECT now()")).scalar_one()
-                    inserted = 0
-                    for definition in definitions:
-                        slot_start = periodic_slot_start(
-                            now=now_value,
-                            interval_seconds=int(definition.periodic_interval_seconds or 0),
-                        )
-                        dedupe_key = periodic_dedupe_key(
-                            kind=definition.kind,
-                            slot_start=slot_start,
-                        )
+            def op() -> int:
+                now_value = now or db.execute(text("SELECT now()")).scalar_one()
+                inserted = 0
+                for definition in definitions:
+                    slot_start = periodic_slot_start(
+                        now=now_value,
+                        interval_seconds=int(definition.periodic_interval_seconds or 0),
+                    )
+                    dedupe_key = periodic_dedupe_key(
+                        kind=definition.kind,
+                        slot_start=slot_start,
+                    )
 
-                        _, was_inserted = enqueue_unique_job(
-                            db,
-                            kind=definition.kind,
-                            payload={
-                                "request_id": (
-                                    f"periodic:{definition.kind}:{slot_start.isoformat()}"
-                                ),
-                                "scheduler_identity": self.worker_id,
-                            },
-                            priority=100,
-                            max_attempts=definition.max_attempts,
-                            available_at=slot_start,
-                            dedupe_key=dedupe_key,
-                        )
-                        if was_inserted:
-                            inserted += 1
+                    _, was_inserted = enqueue_unique_job(
+                        db,
+                        kind=definition.kind,
+                        payload={
+                            "request_id": (f"periodic:{definition.kind}:{slot_start.isoformat()}"),
+                            "scheduler_identity": self.worker_id,
+                        },
+                        priority=100,
+                        max_attempts=definition.max_attempts,
+                        available_at=slot_start,
+                        dedupe_key=dedupe_key,
+                    )
+                    if was_inserted:
+                        inserted += 1
 
-                    db.commit()
-                    return inserted
-            except OperationalError as exc:
-                if attempt < 2 and is_serialization_failure(exc):
-                    continue
-                raise
+                db.commit()
+                return inserted
 
-        raise AssertionError("Worker scheduler retry loop exhausted")
+            return retry_serializable(db, "worker_scheduler", op)
 
     def run_forever(self, *, stop_event: threading.Event | None = None) -> None:
         """Run polling + scheduler loops until stop_event is set."""

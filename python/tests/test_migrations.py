@@ -10,6 +10,7 @@ Do NOT run with: make test (these are excluded)
 import json
 import os
 import subprocess
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import pytest
@@ -2552,7 +2553,6 @@ class TestMigrationUpgradeDowngrade:
                         "stable_prefix_hash",
                         "provider_request_hash",
                     },
-                    "message_llm": {"stable_prefix_hash"},
                 }.items():
                     columns = {
                         row[0]
@@ -8459,21 +8459,17 @@ class TestConversationReferencesCutoverMigration0121:
 
     def test_0137_drops_prompt_version_and_hash_provenance_columns(self, migrated_engine):
         with Session(migrated_engine) as session:
-            columns_by_table = {
-                table_name: {
-                    row[0]
-                    for row in session.execute(
-                        text(
-                            """
-                            SELECT column_name
-                            FROM information_schema.columns
-                            WHERE table_name = :table_name
-                            """
-                        ),
-                        {"table_name": table_name},
-                    ).fetchall()
-                }
-                for table_name in ("chat_prompt_assemblies", "message_llm")
+            prompt_assembly_columns = {
+                row[0]
+                for row in session.execute(
+                    text(
+                        """
+                        SELECT column_name
+                        FROM information_schema.columns
+                        WHERE table_name = 'chat_prompt_assemblies'
+                        """
+                    )
+                ).fetchall()
             }
 
         assert {
@@ -8482,15 +8478,9 @@ class TestConversationReferencesCutoverMigration0121:
             "assembler_version",
             "stable_prefix_hash",
             "provider_request_hash",
-        }.isdisjoint(columns_by_table["chat_prompt_assemblies"]), (
+        }.isdisjoint(prompt_assembly_columns), (
             "chat_prompt_assemblies must not retain prompt version/hash provenance columns; "
-            f"got {columns_by_table['chat_prompt_assemblies']}"
-        )
-        assert {"prompt_version", "prompt_plan_version", "stable_prefix_hash"}.isdisjoint(
-            columns_by_table["message_llm"]
-        ), (
-            "message_llm must not retain prompt version/hash provenance columns; "
-            f"got {columns_by_table['message_llm']}"
+            f"got {prompt_assembly_columns}"
         )
 
     def test_0121_conversations_has_no_scope_columns(self, migrated_engine):
@@ -9959,3 +9949,560 @@ class TestLibraryIntelligenceArtifactRewrite0142:
                 ).fetchall()
             }
         assert present == set(must_remain), f"a must-REMAIN store was deleted: {present}"
+
+
+class TestMigration0145LlmCallLedgerAndErrorFloor:
+    """0145: message_llm -> polymorphic llm_calls + the run-parent error floor."""
+
+    @pytest.fixture(scope="class")
+    def head_engine(self):
+        """A freshly head-migrated engine for this class.
+
+        Earlier tests (including this class's own data-move test) call
+        ``reset_test_schema()`` in their teardown, so the module-scoped
+        ``migrated_engine`` cannot be trusted this late in the file — same
+        rationale as ``li_head_engine`` above.
+        """
+        reset_test_schema()
+        result = run_alembic_command("upgrade head")
+        if result.returncode != 0:
+            pytest.fail(f"Migration upgrade failed: {result.stderr}")
+        engine = create_engine(get_test_database_url())
+        yield engine
+        engine.dispose()
+        reset_test_schema()
+
+    def test_0145_moves_message_llm_history_and_recuts_oracle_error_columns(self):
+        """Seed pre-0145 rows, upgrade, and assert the data moves losslessly.
+
+        Covers: the assistant-message join (one llm_calls row per message_llm
+        row that has a chat run; orphans dropped), reasoning_effort taken from
+        the run row, the oracle error_message -> error_detail rename preserving
+        values, the delta-event interpretation backfill (seq-order concat,
+        readings without deltas stay NULL), and the generator_model_id drop.
+        """
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0144")
+            assert result.returncode == 0, f"upgrade to 0144 failed: {result.stderr}"
+
+            user_id = uuid4()
+            model_id = uuid4()
+            conversation_id = uuid4()
+            run_id = uuid4()
+            user_message_id = uuid4()
+            assistant_message_id = uuid4()
+            orphan_user_message_id = uuid4()
+            orphan_assistant_message_id = uuid4()
+            failed_reading_id = uuid4()
+            complete_reading_id = uuid4()
+            with Session(engine) as session:
+                session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO models (
+                            id, provider, model_name, max_context_tokens, is_available
+                        )
+                        VALUES (:id, 'anthropic', :model_name, 200000, true)
+                        """
+                    ),
+                    {"id": model_id, "model_name": f"migration-test-{model_id}"},
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO conversations (id, owner_user_id, sharing, next_seq)
+                        VALUES (:id, :owner_user_id, 'private', 5)
+                        """
+                    ),
+                    {"id": conversation_id, "owner_user_id": user_id},
+                )
+                for message_id, seq, role, parent_id in (
+                    (user_message_id, 1, "user", None),
+                    (assistant_message_id, 2, "assistant", user_message_id),
+                    (orphan_user_message_id, 3, "user", None),
+                    (orphan_assistant_message_id, 4, "assistant", orphan_user_message_id),
+                ):
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO messages (
+                                id, conversation_id, seq, role, content, status,
+                                parent_message_id
+                            )
+                            VALUES (
+                                :id, :conversation_id, :seq, :role, 'migration seed',
+                                'complete', :parent_message_id
+                            )
+                            """
+                        ),
+                        {
+                            "id": message_id,
+                            "conversation_id": conversation_id,
+                            "seq": seq,
+                            "role": role,
+                            "parent_message_id": parent_id,
+                        },
+                    )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO chat_runs (
+                            id, owner_user_id, conversation_id, user_message_id,
+                            assistant_message_id, idempotency_key, payload_hash,
+                            status, model_id, reasoning, key_mode
+                        )
+                        VALUES (
+                            :id, :owner_user_id, :conversation_id, :user_message_id,
+                            :assistant_message_id, :idempotency_key, 'hash',
+                            'complete', :model_id, 'medium', 'auto'
+                        )
+                        """
+                    ),
+                    {
+                        "id": run_id,
+                        "owner_user_id": user_id,
+                        "conversation_id": conversation_id,
+                        "user_message_id": user_message_id,
+                        "assistant_message_id": assistant_message_id,
+                        "idempotency_key": f"migration-{run_id}",
+                        "model_id": model_id,
+                    },
+                )
+                # One ledger row joined to the run, one orphan (no chat_runs row
+                # points at its message) that the INSERT-SELECT must drop.
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO message_llm (
+                            message_id, provider, model_name, input_tokens, output_tokens,
+                            total_tokens, reasoning_tokens, cache_write_input_tokens,
+                            cache_read_input_tokens, cached_input_tokens,
+                            key_mode_requested, key_mode_used, latency_ms, error_class,
+                            provider_request_id, provider_usage, created_at
+                        )
+                        VALUES (
+                            :message_id, 'anthropic', 'claude-test', 11, 7, 18, 3, 2, 1, 0,
+                            'byok_only', 'byok', 1234, 'E_LLM_TIMEOUT', 'req_abc',
+                            '{"total_tokens": 18}'::jsonb, '2026-01-02T03:04:05Z'
+                        )
+                        """
+                    ),
+                    {"message_id": assistant_message_id},
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO message_llm (
+                            message_id, provider, model_name, key_mode_requested, key_mode_used
+                        )
+                        VALUES (:message_id, 'openai', 'orphan-model', 'auto', 'platform')
+                        """
+                    ),
+                    {"message_id": orphan_assistant_message_id},
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO oracle_readings (
+                            id, user_id, folio_number, question_text, status,
+                            error_code, error_message, failed_at, generator_model_id
+                        )
+                        VALUES (
+                            :id, :user_id, 1, 'What fails?', 'failed',
+                            'E_INTERNAL', 'operator detail survives the rename', now(),
+                            :model_id
+                        )
+                        """
+                    ),
+                    {"id": failed_reading_id, "user_id": user_id, "model_id": model_id},
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO oracle_readings (
+                            id, user_id, folio_number, question_text, status, completed_at
+                        )
+                        VALUES (:id, :user_id, 2, 'What completes?', 'complete', now())
+                        """
+                    ),
+                    {"id": complete_reading_id, "user_id": user_id},
+                )
+                for seq, event_type, payload in (
+                    (1, "argument", '{"text": "not interpretation"}'),
+                    (2, "delta", '{"text": "Part one. "}'),
+                    (3, "delta", '{"text": "Part two."}'),
+                ):
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO oracle_reading_events (
+                                reading_id, seq, event_type, payload
+                            )
+                            VALUES (:reading_id, :seq, :event_type, CAST(:payload AS jsonb))
+                            """
+                        ),
+                        {
+                            "reading_id": complete_reading_id,
+                            "seq": seq,
+                            "event_type": event_type,
+                            "payload": payload,
+                        },
+                    )
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade to head failed: {result.stderr}"
+
+            with Session(engine) as session:
+                tables = {
+                    row[0]
+                    for row in session.execute(
+                        text(
+                            """
+                            SELECT table_name FROM information_schema.tables
+                            WHERE table_schema = 'public'
+                              AND table_name IN ('llm_calls', 'message_llm')
+                            """
+                        )
+                    ).fetchall()
+                }
+                assert tables == {"llm_calls"}, (
+                    f"expected llm_calls to replace message_llm, got {tables}"
+                )
+
+                calls = session.execute(text("SELECT * FROM llm_calls")).mappings().all()
+                assert len(calls) == 1, (
+                    "exactly the run-joined message_llm row must migrate "
+                    f"(orphans dropped), got {[dict(c) for c in calls]}"
+                )
+                call = calls[0]
+                assert call["owner_kind"] == "chat_run"
+                assert call["owner_id"] == run_id
+                assert call["call_seq"] == 1
+                assert call["provider"] == "anthropic"
+                assert call["model_name"] == "claude-test"
+                assert call["llm_operation"] == "chat_send"
+                assert call["streaming"] is True
+                assert call["reasoning_effort"] == "medium", (
+                    "reasoning_effort must come from the run row"
+                )
+                assert call["key_mode_requested"] == "byok_only"
+                assert call["key_mode_used"] == "byok"
+                assert (
+                    call["input_tokens"],
+                    call["output_tokens"],
+                    call["total_tokens"],
+                    call["reasoning_tokens"],
+                ) == (11, 7, 18, 3)
+                assert (
+                    call["cache_write_input_tokens"],
+                    call["cache_read_input_tokens"],
+                    call["cached_input_tokens"],
+                ) == (2, 1, 0)
+                assert call["latency_ms"] == 1234
+                assert call["error_class"] == "E_LLM_TIMEOUT"
+                assert call["error_detail"] is None
+                assert call["provider_request_id"] == "req_abc"
+                assert call["provider_usage"] == {"total_tokens": 18}
+                assert call["created_at"] == datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC), (
+                    f"history timestamps must be preserved, got {call['created_at']}"
+                )
+
+                reading_columns = {
+                    row[0]
+                    for row in session.execute(
+                        text(
+                            """
+                            SELECT column_name FROM information_schema.columns
+                            WHERE table_name = 'oracle_readings'
+                            """
+                        )
+                    ).fetchall()
+                }
+                assert "error_message" not in reading_columns
+                assert "generator_model_id" not in reading_columns
+                assert {"error_detail", "interpretation_text"}.issubset(reading_columns)
+
+                readings = {
+                    row["id"]: row
+                    for row in session.execute(
+                        text(
+                            """
+                            SELECT id, error_detail, interpretation_text
+                            FROM oracle_readings
+                            """
+                        )
+                    ).mappings()
+                }
+                assert (
+                    readings[failed_reading_id]["error_detail"]
+                    == "operator detail survives the rename"
+                )
+                assert readings[failed_reading_id]["interpretation_text"] is None, (
+                    "a reading without delta events must stay NULL"
+                )
+                assert (
+                    readings[complete_reading_id]["interpretation_text"] == "Part one. Part two."
+                ), "interpretation must concatenate delta payload text in seq order"
+        finally:
+            engine.dispose()
+            reset_test_schema()
+
+    def test_llm_calls_constraints_enforced_at_head(self, head_engine):
+        """The 0145 ledger CHECKs + per-owner call_seq uniqueness reject bad rows."""
+        owner_id = uuid4()
+        insert_sql = text(
+            """
+            INSERT INTO llm_calls (
+                owner_kind, owner_id, call_seq, provider, model_name,
+                llm_operation, streaming, reasoning_effort,
+                key_mode_requested, key_mode_used, input_tokens, provider_usage
+            )
+            VALUES (
+                :owner_kind, :owner_id, :call_seq, :provider, 'm',
+                'chat_send', true, 'none', 'auto', 'platform', :input_tokens,
+                CAST(:provider_usage AS jsonb)
+            )
+            """
+        )
+
+        def good_params() -> dict:
+            return {
+                "owner_kind": "chat_run",
+                "owner_id": owner_id,
+                "call_seq": 1,
+                "provider": "openai",
+                "input_tokens": None,
+                "provider_usage": None,
+            }
+
+        negative_cases = [
+            ({"owner_kind": "bogus"}, "ck_llm_calls_owner_kind"),
+            ({"call_seq": 0}, "ck_llm_calls_call_seq_positive"),
+            ({"provider": "mistral"}, "ck_llm_calls_provider"),
+            ({"input_tokens": -1}, "ck_llm_calls_token_counts_non_negative"),
+            ({"provider_usage": "[1]"}, "ck_llm_calls_provider_usage_object"),
+        ]
+        for override, expected_constraint in negative_cases:
+            params = good_params()
+            params.update(override)
+            with Session(head_engine) as session:
+                with pytest.raises(IntegrityError) as exc_info:
+                    session.execute(insert_sql, params)
+                    session.commit()
+                session.rollback()
+            assert expected_constraint in str(exc_info.value), (
+                f"expected {expected_constraint} for override {override!r}, got: {exc_info.value}"
+            )
+
+        with Session(head_engine) as session:
+            session.execute(insert_sql, good_params())
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(insert_sql, good_params())
+            session.rollback()
+        assert "uq_llm_calls_owner_call_seq" in str(exc_info.value)
+
+    def test_error_floor_columns_exist_at_head(self, head_engine):
+        """Every run parent gained its operator-facing failure columns."""
+        with Session(head_engine) as session:
+            columns_by_table = {
+                table_name: {
+                    row[0]
+                    for row in session.execute(
+                        text(
+                            """
+                            SELECT column_name FROM information_schema.columns
+                            WHERE table_name = :table_name
+                            """
+                        ),
+                        {"table_name": table_name},
+                    ).fetchall()
+                }
+                for table_name in (
+                    "chat_runs",
+                    "library_intelligence_artifact_revisions",
+                    "media_summaries",
+                )
+            }
+        assert "error_detail" in columns_by_table["chat_runs"]
+        assert {"error_code", "error_detail"}.issubset(
+            columns_by_table["library_intelligence_artifact_revisions"]
+        )
+        assert {"error_code", "error_detail"}.issubset(columns_by_table["media_summaries"])
+
+
+class TestMigration0146OracleDoneNormalization:
+    """0146: oracle ``error`` events deleted + 8-type CHECK + create idempotency."""
+
+    @pytest.fixture(scope="class")
+    def head_engine(self):
+        """A freshly head-migrated engine for this class (same rationale as 0145's)."""
+        reset_test_schema()
+        result = run_alembic_command("upgrade head")
+        if result.returncode != 0:
+            pytest.fail(f"Migration upgrade failed: {result.stderr}")
+        engine = create_engine(get_test_database_url())
+        yield engine
+        engine.dispose()
+        reset_test_schema()
+
+    def test_0146_deletes_error_events_and_keeps_the_rest(self):
+        """Seed a pre-0146 failed reading with an ``error`` event; upgrade deletes
+        exactly the retired rows (0142 DELETE-then-tighten pattern)."""
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0145")
+            assert result.returncode == 0, f"upgrade to 0145 failed: {result.stderr}"
+
+            user_id = uuid4()
+            failed_reading_id = uuid4()
+            complete_reading_id = uuid4()
+            with Session(engine) as session:
+                session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO oracle_readings (
+                            id, user_id, folio_number, question_text, status,
+                            error_code, error_detail, failed_at
+                        )
+                        VALUES (
+                            :id, :user_id, 1, 'What fails?', 'failed',
+                            'E_INTERNAL', 'operator detail', now()
+                        )
+                        """
+                    ),
+                    {"id": failed_reading_id, "user_id": user_id},
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO oracle_readings (
+                            id, user_id, folio_number, question_text, status, completed_at
+                        )
+                        VALUES (:id, :user_id, 2, 'What completes?', 'complete', now())
+                        """
+                    ),
+                    {"id": complete_reading_id, "user_id": user_id},
+                )
+                for reading_id, seq, event_type, payload in (
+                    (failed_reading_id, 1, "meta", '{"question": "What fails?"}'),
+                    (failed_reading_id, 2, "error", '{"code": "E_INTERNAL", "message": "x"}'),
+                    (complete_reading_id, 1, "meta", '{"question": "What completes?"}'),
+                    (complete_reading_id, 2, "done", "{}"),
+                ):
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO oracle_reading_events (
+                                reading_id, seq, event_type, payload
+                            )
+                            VALUES (:reading_id, :seq, :event_type, CAST(:payload AS jsonb))
+                            """
+                        ),
+                        {
+                            "reading_id": reading_id,
+                            "seq": seq,
+                            "event_type": event_type,
+                            "payload": payload,
+                        },
+                    )
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade to head failed: {result.stderr}"
+
+            with Session(engine) as session:
+                events = {
+                    (row[0], row[1], row[2])
+                    for row in session.execute(
+                        text("SELECT reading_id, seq, event_type FROM oracle_reading_events")
+                    ).fetchall()
+                }
+                assert events == {
+                    (failed_reading_id, 1, "meta"),
+                    (complete_reading_id, 1, "meta"),
+                    (complete_reading_id, 2, "done"),
+                }, f"only the retired 'error' rows are deleted, got {events}"
+                reading_columns = {
+                    row[0]
+                    for row in session.execute(
+                        text(
+                            """
+                            SELECT column_name FROM information_schema.columns
+                            WHERE table_name = 'oracle_readings'
+                            """
+                        )
+                    ).fetchall()
+                }
+                assert "idempotency_key" in reading_columns
+        finally:
+            engine.dispose()
+            reset_test_schema()
+
+    def test_oracle_event_check_rejects_error_at_head(self, head_engine):
+        """The tightened CHECK forbids the retired ``error`` event type."""
+        user_id = uuid4()
+        reading_id = uuid4()
+        with Session(head_engine) as session:
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.execute(
+                text(
+                    """
+                    INSERT INTO oracle_readings (id, user_id, folio_number, question_text, status)
+                    VALUES (:id, :user_id, 1, 'May an error event exist?', 'pending')
+                    """
+                ),
+                {"id": reading_id, "user_id": user_id},
+            )
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO oracle_reading_events (reading_id, seq, event_type, payload)
+                        VALUES (:reading_id, 1, 'error', '{}'::jsonb)
+                        """
+                    ),
+                    {"reading_id": reading_id},
+                )
+            session.rollback()
+        assert "ck_oracle_reading_events_type" in str(exc_info.value)
+
+    def test_oracle_idempotency_partial_unique_at_head(self, head_engine):
+        """(user_id, idempotency_key) is unique only when a key is present;
+        NULL keys stay unrestricted and other users may reuse a key."""
+        first_user = uuid4()
+        second_user = uuid4()
+
+        def insert_reading(session, *, user_id, folio_number, idempotency_key):
+            session.execute(
+                text(
+                    """
+                    INSERT INTO oracle_readings (
+                        user_id, folio_number, question_text, status, idempotency_key
+                    )
+                    VALUES (:user_id, :folio_number, 'Same key?', 'pending', :idempotency_key)
+                    """
+                ),
+                {
+                    "user_id": user_id,
+                    "folio_number": folio_number,
+                    "idempotency_key": idempotency_key,
+                },
+            )
+
+        with Session(head_engine) as session:
+            for user_id in (first_user, second_user):
+                session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            insert_reading(session, user_id=first_user, folio_number=1, idempotency_key="key-1")
+            insert_reading(session, user_id=second_user, folio_number=1, idempotency_key="key-1")
+            insert_reading(session, user_id=first_user, folio_number=2, idempotency_key=None)
+            insert_reading(session, user_id=first_user, folio_number=3, idempotency_key=None)
+            with pytest.raises(IntegrityError) as exc_info:
+                insert_reading(session, user_id=first_user, folio_number=4, idempotency_key="key-1")
+            session.rollback()
+        assert "uq_oracle_readings_user_idempotency_key" in str(exc_info.value)

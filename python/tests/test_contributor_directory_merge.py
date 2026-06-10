@@ -12,7 +12,6 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy import text
-from sqlalchemy.exc import OperationalError
 
 from nexus.errors import ApiError, ApiErrorCode, ForbiddenError, NotFoundError
 from nexus.schemas.contributors import ContributorMergeRequest
@@ -24,7 +23,6 @@ from nexus.services.contributors import (
     list_contributors,
     merge_contributor,
     resolve_canonical_contributor_ids,
-    run_identity_write,
 )
 from nexus.services.search import search
 from nexus.services.search.query import SearchQuery
@@ -727,87 +725,5 @@ def test_resolve_canonical_contributor_ids_drops_unknown_handles(db_session):
     assert resolved == [contributor_id]
 
 
-# ---------------------------------------------------------------------------
-# run_identity_write transaction boundary (AC7 — SERIALIZABLE + bounded retry)
-# ---------------------------------------------------------------------------
-
-
-class _FakeBind:
-    def in_transaction(self) -> bool:
-        return True
-
-
-class _FakeSession:
-    """Stand-in: run_identity_write only calls get_bind/in_transaction/rollback on the session."""
-
-    def __init__(self) -> None:
-        self.rollbacks = 0
-
-    def get_bind(self) -> _FakeBind:
-        return _FakeBind()
-
-    def in_transaction(self) -> bool:
-        return True
-
-    def rollback(self) -> None:
-        self.rollbacks += 1
-
-
-class _FakeOrig:
-    def __init__(self, *, sqlstate: str, message: str) -> None:
-        self.sqlstate = sqlstate
-        self._message = message
-
-    def __str__(self) -> str:
-        return self._message
-
-
-def _serialization_error() -> OperationalError:
-    return OperationalError(
-        "UPDATE ...", {}, _FakeOrig(sqlstate="40001", message="could not serialize access")
-    )
-
-
-@pytest.mark.unit
-def test_run_identity_write_retries_serialization_failure_then_succeeds() -> None:
-    db = _FakeSession()
-    attempts = {"n": 0}
-
-    def fn():
-        attempts["n"] += 1
-        if attempts["n"] == 1:
-            raise _serialization_error()
-        return "ok"
-
-    assert run_identity_write(db, fn) == "ok"  # type: ignore[arg-type]
-    assert attempts["n"] == 2
-    assert db.rollbacks == 1
-
-
-@pytest.mark.unit
-def test_run_identity_write_propagates_non_serialization_error() -> None:
-    db = _FakeSession()
-    attempts = {"n": 0}
-
-    def fn():
-        attempts["n"] += 1
-        raise OperationalError("UPDATE ...", {}, _FakeOrig(sqlstate="42P01", message="undefined"))
-
-    with pytest.raises(OperationalError):
-        run_identity_write(db, fn)  # type: ignore[arg-type]
-    assert attempts["n"] == 1  # non-serialization failures are not retried
-    assert db.rollbacks == 1
-
-
-@pytest.mark.unit
-def test_run_identity_write_raises_after_exhausting_retries() -> None:
-    db = _FakeSession()
-    attempts = {"n": 0}
-
-    def fn():
-        attempts["n"] += 1
-        raise _serialization_error()
-
-    with pytest.raises(OperationalError):
-        run_identity_write(db, fn, retries=3)  # type: ignore[arg-type]
-    assert attempts["n"] == 3
+# Identity-write SERIALIZABLE + bounded-retry semantics (AC7) are owned by
+# nexus.db.retries.retry_serializable and pinned in tests/test_db_retries.py.

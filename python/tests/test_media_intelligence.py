@@ -9,9 +9,13 @@ from uuid import UUID, uuid4
 import pytest
 from llm_calling.types import LLMResponse
 from pydantic import ValidationError
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
+from nexus.config import clear_settings_cache
+from nexus.db.models import LLMCall
+from nexus.services.api_key_resolver import ResolvedKey
+from nexus.services.billing_entitlements import grant_entitlement_override
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.content_indexing import rebuild_fragment_content_index
 from nexus.services.media_intelligence import (
@@ -23,11 +27,11 @@ from nexus.services.media_intelligence import (
     _map_claims_to_spans,
     _persist_unit,
     ensure_media_unit,
-    fail_media_unit_after_worker_exception,
     get_media_unit,
     run_media_unit_build,
 )
 from nexus.services.search.query import SearchQuery
+from nexus.tasks.media_unit_build import _fail_unit_after_worker_exception
 from tests.helpers import auth_headers, create_test_user_id
 
 # =============================================================================
@@ -103,6 +107,75 @@ class TestMediaUnitSynthesisSchema:
 # =============================================================================
 
 
+@pytest.fixture(autouse=True)
+def anthropic_platform_key(monkeypatch):
+    """resolve_api_key needs a configured platform key for the pinned provider."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-platform-anthropic")
+    clear_settings_cache()
+    yield
+    clear_settings_cache()
+
+
+class _RecordingRateLimiter:
+    """Records the worker budget-envelope calls (the rate-limit boundary fake)."""
+
+    def __init__(self) -> None:
+        self.events: list[tuple[str, UUID, UUID | None, int | None]] = []
+
+    def acquire_inflight_slot(self, user_id: UUID) -> None:
+        self.events.append(("acquire_inflight_slot", user_id, None, None))
+
+    def release_inflight_slot(self, user_id: UUID) -> None:
+        self.events.append(("release_inflight_slot", user_id, None, None))
+
+    def reserve_token_budget(
+        self, user_id: UUID, reservation_id: UUID, est_tokens: int, ttl: int = 300
+    ) -> None:
+        self.events.append(("reserve_token_budget", user_id, reservation_id, est_tokens))
+
+    def commit_token_budget(self, user_id: UUID, reservation_id: UUID, actual_tokens: int) -> None:
+        self.events.append(("commit_token_budget", user_id, reservation_id, actual_tokens))
+
+    def release_token_budget(self, user_id: UUID, reservation_id: UUID) -> None:
+        self.events.append(("release_token_budget", user_id, reservation_id, None))
+
+    def event_names(self) -> list[str]:
+        return [event[0] for event in self.events]
+
+
+@pytest.fixture(autouse=True)
+def unit_rate_limiter(monkeypatch) -> _RecordingRateLimiter:
+    limiter = _RecordingRateLimiter()
+    monkeypatch.setattr("nexus.services.media_intelligence.get_rate_limiter", lambda: limiter)
+    return limiter
+
+
+def _grant_platform_llm(db: Session, user_id: UUID) -> None:
+    """Entitle the user to the platform key (resolve_api_key auto -> platform)."""
+    grant_entitlement_override(
+        db,
+        user_id=user_id,
+        plan_tier="ai_plus",
+        platform_token_quota_mode="plan",
+        platform_token_limit_monthly=None,
+        transcription_quota_mode="plan",
+        transcription_minutes_limit_monthly=None,
+        expires_at=None,
+        reason="media unit test platform access",
+        actor_label="test",
+    )
+
+
+def _llm_call_rows(db: Session, *, owner_kind: str, owner_id: UUID) -> list[LLMCall]:
+    return list(
+        db.scalars(
+            select(LLMCall)
+            .where(LLMCall.owner_kind == owner_kind, LLMCall.owner_id == owner_id)
+            .order_by(LLMCall.call_seq)
+        )
+    )
+
+
 class _UnitRouter:
     """Fake LLMRouter returning a fixed unit synthesis (the external boundary)."""
 
@@ -142,6 +215,7 @@ class _RawTextRouter:
 def _seed_unit_media(db: Session, *, title: str = "Unit Doc") -> UUID:
     user_id = uuid4()
     ensure_user_and_default_library(db, user_id)
+    _grant_platform_llm(db, user_id)
     from tests.factories import create_searchable_media
 
     return create_searchable_media(db, user_id, title=title)
@@ -267,7 +341,7 @@ class TestEnsureMediaUnit:
 class TestRunMediaUnitBuild:
     def test_persists_summary_and_grounded_claims(self, db_session: Session) -> None:
         media_id = _seed_unit_media(db_session)
-        ensure_media_unit(db_session, media_id=media_id)
+        ref = ensure_media_unit(db_session, media_id=media_id)
         router = _UnitRouter(summary_md="An abstract.", claims=[("Claim one.", 0)])
 
         asyncio.run(run_media_unit_build(db_session, media_id=media_id, llm=router))
@@ -287,6 +361,49 @@ class TestRunMediaUnitBuild:
             {"sid": unit.claims[0].evidence_span_id, "mid": media_id},
         ).scalar_one_or_none()
         assert span_exists == 1
+        # AC-3: the one provider call is ledgered against the unit head.
+        rows = _llm_call_rows(db_session, owner_kind="media_summary", owner_id=ref.summary_id)
+        assert [row.call_seq for row in rows] == [1], (
+            f"expected exactly one ledgered call, got {[(r.call_seq, r.error_class) for r in rows]}"
+        )
+        assert rows[0].llm_operation == "media_unit"
+        assert rows[0].error_class is None
+
+    def test_build_runs_inside_the_budget_envelope(
+        self, db_session: Session, unit_rate_limiter: _RecordingRateLimiter
+    ) -> None:
+        media_id = _seed_unit_media(db_session)
+        ref = ensure_media_unit(db_session, media_id=media_id)
+        router = _UnitRouter(summary_md="An abstract.", claims=[("Claim one.", 0)])
+
+        asyncio.run(run_media_unit_build(db_session, media_id=media_id, llm=router))
+
+        assert unit_rate_limiter.event_names() == [
+            "acquire_inflight_slot",
+            "reserve_token_budget",
+            "commit_token_budget",
+            "release_inflight_slot",
+        ], f"unexpected envelope: {unit_rate_limiter.events}"
+        reserve = unit_rate_limiter.events[1]
+        assert reserve[2] == ref.summary_id, "reservation must be keyed on the unit head id"
+        assert reserve[3] is not None and reserve[3] > 2000, (
+            "estimate must cover the rendered prompt plus max output tokens"
+        )
+
+    def test_envelope_releases_reservation_on_failure(
+        self, db_session: Session, unit_rate_limiter: _RecordingRateLimiter
+    ) -> None:
+        media_id = _seed_unit_media(db_session)
+        ensure_media_unit(db_session, media_id=media_id)
+
+        asyncio.run(run_media_unit_build(db_session, media_id=media_id, llm=_RawTextRouter()))
+
+        assert unit_rate_limiter.event_names() == [
+            "acquire_inflight_slot",
+            "reserve_token_budget",
+            "release_token_budget",
+            "release_inflight_slot",
+        ], f"unexpected envelope: {unit_rate_limiter.events}"
 
     def test_drops_claim_with_unresolvable_index(self, db_session: Session) -> None:
         media_id = _seed_unit_media(db_session)
@@ -301,13 +418,27 @@ class TestRunMediaUnitBuild:
         assert isinstance(unit, MediaUnit)
         assert [c.claim_text for c in unit.claims] == ["kept"]
 
-    def test_llm_failure_marks_failed(self, db_session: Session) -> None:
+    def test_llm_failure_marks_failed_with_error_floor_and_ledgered_attempts(
+        self, db_session: Session
+    ) -> None:
         media_id = _seed_unit_media(db_session)
-        ensure_media_unit(db_session, media_id=media_id)
+        ref = ensure_media_unit(db_session, media_id=media_id)
 
         asyncio.run(run_media_unit_build(db_session, media_id=media_id, llm=_RawTextRouter()))
         db_session.expire_all()
         assert get_media_unit(db_session, media_id=media_id) is NotReady.Failed
+        # The error floor lands on the head row.
+        head = db_session.execute(
+            text("SELECT error_code, error_detail FROM media_summaries WHERE id = :sid"),
+            {"sid": ref.summary_id},
+        ).one()
+        assert head.error_code == "E_LLM_BAD_REQUEST", f"got {head.error_code!r}"
+        assert head.error_detail, "error_detail must carry the operator-facing reason"
+        # AC-3: the failed synthesis still ledgers both attempts (one repair round).
+        rows = _llm_call_rows(db_session, owner_kind="media_summary", owner_id=ref.summary_id)
+        assert [row.call_seq for row in rows] == [1, 2], (
+            f"expected attempt + repair rows, got {[(r.call_seq, r.error_class) for r in rows]}"
+        )
 
     def test_replay_guard_noop_when_not_building(self, db_session: Session) -> None:
         media_id = _seed_unit_media(db_session)
@@ -343,6 +474,7 @@ class TestRunMediaUnitBuild:
             summary_md="superseded summary",
             expected_fingerprint="a-different-generation-fingerprint",
             grounded=[("stale claim", UUID(str(span_id)), 0)],
+            resolved_key=ResolvedKey(api_key="k", mode="platform", provider="anthropic"),
         )
         db_session.expire_all()
 
@@ -381,12 +513,20 @@ class TestGetMediaUnitStates:
 
 @pytest.mark.integration
 class TestFailAfterWorkerException:
-    def test_sets_failed_when_nonterminal(self, db_session: Session) -> None:
+    def test_sets_failed_with_error_floor_when_nonterminal(self, db_session: Session) -> None:
         media_id = _seed_unit_media(db_session)
-        ensure_media_unit(db_session, media_id=media_id)
-        fail_media_unit_after_worker_exception(db_session, media_id=media_id)
+        ref = ensure_media_unit(db_session, media_id=media_id)
+        _fail_unit_after_worker_exception(
+            db_session, RuntimeError("worker exploded"), media_id=media_id
+        )
         db_session.expire_all()
         assert get_media_unit(db_session, media_id=media_id) is NotReady.Failed
+        head = db_session.execute(
+            text("SELECT error_code, error_detail FROM media_summaries WHERE id = :sid"),
+            {"sid": ref.summary_id},
+        ).one()
+        assert head.error_code == "E_INTERNAL"
+        assert head.error_detail == "RuntimeError: worker exploded"
 
     def test_noop_when_already_ready(self, db_session: Session) -> None:
         media_id = _seed_unit_media(db_session)
@@ -394,7 +534,7 @@ class TestFailAfterWorkerException:
         ensure_media_unit(db_session, media_id=media_id)
         asyncio.run(run_media_unit_build(db_session, media_id=media_id, llm=router))
         db_session.expire_all()
-        fail_media_unit_after_worker_exception(db_session, media_id=media_id)
+        _fail_unit_after_worker_exception(db_session, RuntimeError("late"), media_id=media_id)
         db_session.expire_all()
         unit = get_media_unit(db_session, media_id=media_id)
         assert isinstance(unit, MediaUnit)

@@ -2,53 +2,53 @@
 
 from __future__ import annotations
 
-import asyncio
 from uuid import UUID
 
 import httpx
 from llm_calling.router import LLMRouter
+from sqlalchemy.orm import Session
 
-from nexus.config import get_settings
-from nexus.db.session import get_session_factory
-from nexus.logging import get_logger
+from nexus.db.models import MediaSummary
+from nexus.errors import ApiErrorCode
+from nexus.services import run_kit
 from nexus.services.media_intelligence import (
-    fail_media_unit_after_worker_exception,
+    fail_media_unit,
+    media_summary_orm_or_none,
     run_media_unit_build,
 )
+from nexus.tasks.llm_task import LlmTaskSpec, run_llm_task
 
-logger = get_logger(__name__)
+_SPEC = LlmTaskSpec(label="media_unit_build")
 
 
 def media_unit_build(media_id: str) -> dict:
     media_uuid = UUID(media_id)
-    settings = get_settings()
-    db = get_session_factory()()
 
-    async def _call() -> str:
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(60.0, connect=10.0),
-            limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
-        ) as client:
-            router = LLMRouter(
-                client,
-                enable_openai=settings.enable_openai,
-                enable_anthropic=settings.enable_anthropic,
-                enable_gemini=settings.enable_gemini,
-                enable_deepseek=settings.enable_deepseek,
-            )
-            return await run_media_unit_build(db, media_id=media_uuid, llm=router)
-
-    logger.info("media_unit_build_started", media_id=media_id)
-    loop = asyncio.new_event_loop()
-    try:
-        status = loop.run_until_complete(_call())
-        logger.info("media_unit_build_completed", media_id=media_id, status=status)
+    async def _handler(db: Session, router: LLMRouter, _client: httpx.AsyncClient) -> dict:
+        status = await run_media_unit_build(db, media_id=media_uuid, llm=router)
         return {"status": status, "media_id": media_id}
-    # justify-ignore-error: worker boundary stores a safe terminal unit failure.
-    except Exception:
-        logger.exception("media_unit_build_failed_unexpected", media_id=media_id)
-        fail_media_unit_after_worker_exception(db, media_id=media_uuid)
+
+    def _boundary(db: Session, exc: Exception) -> dict:
+        _fail_unit_after_worker_exception(db, exc, media_id=media_uuid)
         return {"status": "failed", "media_id": media_id}
-    finally:
-        loop.close()
-        db.close()
+
+    return run_llm_task(_SPEC, _handler, on_worker_exception=_boundary)
+
+
+def _fail_unit_after_worker_exception(db: Session, exc: Exception, *, media_id: UUID) -> None:
+    """Worker-boundary failure write: a nonterminal unit head -> ``failed`` + error floor."""
+
+    def write_failure(s: Session, summary: MediaSummary) -> None:
+        fail_media_unit(
+            s,
+            summary_id=summary.id,
+            error_code=ApiErrorCode.E_INTERNAL.value,
+            error_detail=f"{type(exc).__name__}: {exc}"[:1000],
+        )
+
+    run_kit.fail_run_after_worker_exception(
+        db,
+        load_parent=lambda s: media_summary_orm_or_none(s, media_id=media_id),
+        is_terminal=lambda summary: summary.status in ("ready", "failed"),
+        write_failure=write_failure,
+    )

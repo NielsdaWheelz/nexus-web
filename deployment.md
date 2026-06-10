@@ -149,6 +149,11 @@ remote env was already verified for the same deploy:
 NEXUS_SYNC_ENV=0 ./deploy/hetzner/deploy.sh
 ```
 
+`sync-env.sh` pins the safe production worker allowlist and dies on mismatch.
+When a release changes the safe allowlist (for example adding a new job kind),
+update `WORKER_ALLOWED_JOB_KINDS` in the local `deploy/env/env-prod-worker` to
+the new value before running it.
+
 The Hetzner scripts default to the current production IPv4 listed above. Set
 `NEXUS_HOST` to target another host, or `NEXUS_SSH_TARGET` to override the full
 SSH target. The deploy script syncs the repo to `/opt/nexus-web`, builds Docker
@@ -246,6 +251,29 @@ docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.
 docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml logs -f caddy
 ```
 
+Containers log through the `journald` driver tagged with the container name,
+so the `docker compose ... logs` recipes above keep working and log history
+survives deploys (`deploy.sh` force-recreates all containers, which destroys
+`json-file` logs). Logs from replaced containers are in the host journal under
+the stable container-name tag; this is also the manual check that retention
+works — after a deploy, pre-deploy lines must still appear:
+
+```bash
+journalctl CONTAINER_TAG=nexus-worker-1 --since "24 hours ago"
+```
+
+One-time step for a VPS provisioned before the journald cutover (new servers
+get this from `cloud-init.yml`); the logging driver applies on container
+recreate, so the `--force-recreate` is required once after switching drivers:
+
+```bash
+sudo install -d /etc/systemd/journald.conf.d
+printf '[Journal]\nStorage=persistent\nSystemMaxUse=2G\n' \
+  | sudo tee /etc/systemd/journald.conf.d/10-nexus.conf
+sudo systemctl restart systemd-journald
+docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml up -d --force-recreate
+```
+
 Stop only the worker:
 
 ```bash
@@ -277,6 +305,15 @@ Check recent X provider failures by request ID after an ingest failure:
 docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml exec postgres \
   sh -lc 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
   -c "select created_at, request_id, status, api_error_code, provider_status_code, provider_error_title from external_provider_events where provider = '\''x'\'' order by created_at desc limit 20"'
+```
+
+Check recent LLM provider calls in the `llm_calls` ledger (table lands with
+migration 0145):
+
+```bash
+docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml exec postgres \
+  sh -lc 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+  -c "select * from llm_calls order by created_at desc limit 20"'
 ```
 
 ## Cutover

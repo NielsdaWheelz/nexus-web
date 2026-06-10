@@ -63,6 +63,15 @@ function methodOf(input: RequestInfo | URL, init?: RequestInit): string {
   return init?.method ?? "GET";
 }
 
+function headerOf(
+  input: RequestInfo | URL,
+  init: RequestInit | undefined,
+  name: string,
+): string | null {
+  if (input instanceof Request) return input.headers.get(name);
+  return new Headers(init?.headers).get(name);
+}
+
 const CITATION = {
   ordinal: 1,
   role: "context",
@@ -119,6 +128,10 @@ function stubFetch(artifactBody: ReturnType<typeof artifact>) {
         path === `/api/libraries/${LIBRARY_ID}/intelligence/generate` &&
         method === "POST"
       ) {
+        // idempotency_key now travels as an Idempotency-Key header, not a body
+        // field — regression-lock the header convention.
+        expect(headerOf(input, init, "Idempotency-Key")).toMatch(/^li-gen/);
+        expect(init?.body ?? null).toBeNull();
         return jsonResponse({
           data: {
             artifact_id: ARTIFACT_ID,
@@ -301,9 +314,37 @@ describe("LibraryIntelligencePane", () => {
     // SSE client options, exactly as the live stream would.
     lastSseOptions().onEvent({
       type: "done",
-      data: { revision_id: REVISION_ID, error: null },
+      data: { status: "ready", error_code: null, revision_id: REVISION_ID },
     });
     await waitFor(() => expect(getCalls).toBe(callsBeforeDone + 1));
+  });
+
+  it("shows a Generation failed alert on a failed done event", async () => {
+    stubFetch(
+      artifact({
+        status: "unavailable",
+        artifact_id: null,
+        revision_id: null,
+        content_md: "",
+        citations: [],
+      }),
+    );
+    const user = userEvent.setup();
+    renderPane();
+    const generateButton = await screen.findByRole("button", {
+      name: "Generate",
+    });
+    await user.click(generateButton);
+    await waitFor(() =>
+      expect(streamMocks.sseClientDirect).toHaveBeenCalledTimes(1),
+    );
+    // A failed terminal event must surface the in-band notice, independent of
+    // the follow-on artifact GET.
+    lastSseOptions().onEvent({
+      type: "done",
+      data: { status: "failed", error_code: "E_INTERNAL", revision_id: REVISION_ID },
+    });
+    expect(await screen.findByText("Generation failed")).toBeVisible();
   });
 
   it("enables the Chat button only with an artifact id and calls onOpenChat", async () => {

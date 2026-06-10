@@ -319,53 +319,9 @@ export function useChatMessageUpdates({
 
   const handleCitationIndex = useCallback(
     (assistantId: string, data: SSECitationIndexEvent["data"]) => {
-      const retrievals: MessageRetrieval[] = data.entries.flatMap((entry) => {
-        const result = entry.result;
-        if (!result) return [];
-        const eventData = {
-          tool_call_id: entry.tool_call_id,
-          tool_call_index: null,
-          tool_name: "app_search" as const,
-        };
-        const retrieval = isWebCitationEventData(result)
-          ? retrievalFromWebCitation(result, eventData, entry.ordinal)
-          : isSearchCitationEventData(result)
-            ? retrievalFromSearchCitation(result, eventData, entry.ordinal)
-            : null;
-        return retrieval
-          ? [
-              {
-                ...retrieval,
-                id: entry.retrieval_id,
-                ordinal: entry.ordinal,
-                citation_ordinal: entry.n,
-                selected: true,
-                included_in_prompt: true,
-              },
-            ]
-          : [];
-      });
       setMessages((prev) =>
         prev.map((m) =>
-          m.id === assistantId
-            ? {
-                ...m,
-                citation_index: data.entries,
-                retrievals: retrievals.length
-                  ? [
-                      ...(m.retrievals ?? []).filter(
-                        (r) =>
-                          !retrievals.some(
-                            (next) =>
-                              next.tool_call_id === r.tool_call_id &&
-                              next.ordinal === r.ordinal,
-                          ),
-                      ),
-                      ...retrievals,
-                    ]
-                  : m.retrievals,
-              }
-            : m,
+          m.id === assistantId ? { ...m, citations: data.citations } : m,
         ),
       );
     },

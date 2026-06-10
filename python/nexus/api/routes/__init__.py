@@ -28,7 +28,6 @@ from nexus.api.routes.listening_state import router as listening_state_router
 from nexus.api.routes.me import router as me_router
 from nexus.api.routes.media import router as media_router
 from nexus.api.routes.media_assets import router as media_assets_router
-from nexus.api.routes.media_events import router as media_events_router
 from nexus.api.routes.media_ingest import router as media_ingest_router
 from nexus.api.routes.message_retrievals import router as message_retrievals_router
 from nexus.api.routes.messages import router as messages_router
@@ -104,11 +103,9 @@ def create_api_router() -> APIRouter:
     api_router.include_router(internal_libraries_router)
     api_router.include_router(internal_ingest_router)
 
-    # Browser-callable SSE event streams + the BFF stream-token mint. Registered
-    # after the media router so /media/{media_id}/events keeps its order relative
-    # to /media/{media_id}. Tags are self-declared on each router.
+    # Browser-callable SSE event streams (all under /stream/) + the BFF
+    # stream-token mint. Tags are self-declared on each router.
     api_router.include_router(stream_router)
-    api_router.include_router(media_events_router)
     api_router.include_router(stream_tokens_router)
 
     return api_router

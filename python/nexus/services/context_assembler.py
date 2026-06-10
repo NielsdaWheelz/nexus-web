@@ -189,8 +189,8 @@ def assemble_chat_context(
             )
         )
 
-    resources_block, resources_metadata, attached_citations = _build_resources_block(
-        db, conversation_id=conversation.id, viewer_id=run.owner_user_id
+    resources_block, resources_metadata, attached_citations, resource_revision_refs = (
+        _build_resources_block(db, conversation_id=conversation.id, viewer_id=run.owner_user_id)
     )
 
     tool_call_events, retrieval_result_events = _load_tool_events(
@@ -306,15 +306,20 @@ def assemble_chat_context(
         max_tokens=max_output_tokens,
         reasoning_effort=run.reasoning,
     )
+    included_context_refs: list[Mapping[str, object]] = [
+        metadata for key, _text, metadata in mandatory_blocks if key in included_keys
+    ]
+    # Resources are not a mandatory_block (own BudgetItem); stamp the consumed
+    # revision of each included resource (LI artifacts) into the ledger.
+    if "resources" in included_keys:
+        included_context_refs.extend(resource_revision_refs)
     ledger = _build_ledger(
         selection,
         prompt_plan=prompt_plan,
         estimated_input_tokens=estimated_input_tokens,
         model=model,
         included_history_units=selected_history_units,
-        included_context_refs=[
-            metadata for key, _text, metadata in mandatory_blocks if key in included_keys
-        ],
+        included_context_refs=included_context_refs,
     )
     return ContextAssembly(
         llm_request=llm_request,
@@ -529,19 +534,36 @@ def _build_resources_block(
     *,
     conversation_id: UUID,
     viewer_id: UUID,
-) -> tuple[PromptBlock | None, Mapping[str, object], tuple[RetrievalCitation, ...]]:
+) -> tuple[
+    PromptBlock | None,
+    Mapping[str, object],
+    tuple[RetrievalCitation, ...],
+    tuple[Mapping[str, object], ...],
+]:
     rows = db.execute(
         select(ConversationReference.resource_uri, ConversationReference.id)
         .where(ConversationReference.conversation_id == conversation_id)
         .order_by(ConversationReference.created_at.asc(), ConversationReference.id.asc())
     ).all()
     if not rows:
-        return None, {}, ()
+        return None, {}, (), ()
     uris = [row[0] for row in rows]
     resolved = resolve_batch(db, uris, viewer_id=viewer_id)
     citations: list[RetrievalCitation] = []
+    # The exact revision each resolved resource consumed, stamped into the ledger's
+    # included_context_refs so "which edition did this chat read" is answerable
+    # after a regenerate orphans the head (§6.6; LI artifacts only — others None).
+    revision_refs: list[Mapping[str, object]] = []
     lines = ["<resources>"]
     for resource in resolved:
+        if resource.revision_id is not None:
+            revision_refs.append(
+                {
+                    "type": "conversation_reference",
+                    "resource_uri": resource.uri,
+                    "revision_id": str(resource.revision_id),
+                }
+            )
         citation = _materialize_attached_citation(db, resource, viewer_id=viewer_id)
         if citation is None:
             lines.append(_render_resource(resource))
@@ -561,7 +583,12 @@ def _build_resources_block(
         source_refs=source_refs,
         cache_policy=None,
     )
-    return block, {"resource_count": len(uris), "resource_uris": uris}, tuple(citations)
+    return (
+        block,
+        {"resource_count": len(uris), "resource_uris": uris},
+        tuple(citations),
+        tuple(revision_refs),
+    )
 
 
 def _materialize_attached_citation(

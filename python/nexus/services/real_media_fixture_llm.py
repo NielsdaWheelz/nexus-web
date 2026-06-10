@@ -34,9 +34,10 @@ class RealMediaFixtureLLMRouter:
         *,
         timeout_s: int,
     ) -> LLMResponse:
+        text = _synthesis_response(req) or REAL_MEDIA_FIXTURE_RESPONSE
         return LLMResponse(
-            text=REAL_MEDIA_FIXTURE_RESPONSE,
-            usage=_usage_for(req, REAL_MEDIA_FIXTURE_RESPONSE),
+            text=text,
+            usage=_usage_for(req, text),
             provider_request_id="real-media-fixture",
             status="completed",
         )
@@ -89,6 +90,90 @@ REAL_MEDIA_FIXTURE_RESPONSE = (
     "water signature in Clavius Crater."
 )
 REAL_MEDIA_FIXTURE_RESPONSE_WITH_CITATION = REAL_MEDIA_FIXTURE_RESPONSE + " [1]"
+
+# Canned strict-JSON structured-synthesis outputs, keyed on the spec-pinned
+# persona opening of each synthesis system prompt. Indices are the lowest that
+# every call site guarantees: oracle fails the reading before synthesis when
+# fewer than 3 candidates exist (its validator demands 3 distinct in-range
+# indices), and LI reduce / media-unit build fail before synthesis on an empty
+# candidate list, so index 0 always grounds.
+ORACLE_SYNTHESIS_FIXTURE_RESPONSE = json.dumps(
+    {
+        "argument": (
+            "Of the steady lamp the fixture keeps, and the deterministic road "
+            "it lights through the dark of every run."
+        ),
+        "folio_motto": "Lumen In Tenebris",
+        "folio_motto_gloss": "A light in the darkness.",
+        "folio_theme": "Of the Threshold",
+        "passages": [
+            {
+                "phase": "descent",
+                "candidate_index": 0,
+                "marginalia": "The descent names the question's first shadow.",
+            },
+            {
+                "phase": "ordeal",
+                "candidate_index": 1,
+                "marginalia": "The ordeal holds the matter at its standstill.",
+            },
+            {
+                "phase": "ascent",
+                "candidate_index": 2,
+                "marginalia": "The ascent shows what the dawn gives to see.",
+            },
+        ],
+        "interpretation": (
+            "I saw a lamp carried through a quiet archive, and every record "
+            "answered in its appointed order."
+        ),
+        "omens": ["a lamp in the archive", "an index that holds", "a door opening on order"],
+    }
+)
+LIBRARY_REDUCE_SYNTHESIS_FIXTURE_RESPONSE = json.dumps(
+    {
+        "content_md": (
+            "This library centers on one documented finding: SOFIA confirmed water "
+            "on the sunlit Moon by detecting a water signature in Clavius Crater [1]. "
+            "Start with that source; the fixture corpus raises no cross-source "
+            "tensions or open questions."
+        ),
+        "citations": [{"ordinal": 1, "claim_index": 0, "role": "supports"}],
+    }
+)
+MEDIA_UNIT_SYNTHESIS_FIXTURE_RESPONSE = json.dumps(
+    {
+        "summary_md": (
+            "The document reports that SOFIA confirmed water on the sunlit Moon, "
+            "detecting a water signature in Clavius Crater."
+        ),
+        "claims": [
+            {
+                "claim_text": (
+                    "SOFIA detected a water signature in Clavius Crater, "
+                    "confirming water on the sunlit Moon."
+                ),
+                "candidate_index": 0,
+            }
+        ],
+    }
+)
+_SYNTHESIS_MARKERS: tuple[tuple[str, str], ...] = (
+    ("You are the Black Forest Oracle", ORACLE_SYNTHESIS_FIXTURE_RESPONSE),
+    (
+        "whole-library synthesis from per-document claims",
+        LIBRARY_REDUCE_SYNTHESIS_FIXTURE_RESPONSE,
+    ),
+    ("building a reusable unit for one document", MEDIA_UNIT_SYNTHESIS_FIXTURE_RESPONSE),
+)
+
+
+def _synthesis_response(req: LLMRequest) -> str | None:
+    system = next((turn.content for turn in req.messages if turn.role == "system"), "")
+    for marker, response in _SYNTHESIS_MARKERS:
+        if marker in system:
+            return response
+    return None
 
 
 def _should_request_app_search(req: LLMRequest) -> bool:

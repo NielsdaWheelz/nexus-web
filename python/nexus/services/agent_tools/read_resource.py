@@ -56,8 +56,9 @@ READ_RESOURCE_TOOL_DEFINITION: dict[str, Any] = {
         "document if short, else a redirect to inspect_resource), 'page_range:MEDIA:a-b' "
         "(PDF pages), 'fragment:UUID' (a section), 'highlight:UUID', 'span:UUID', "
         "'chunk:UUID', 'page:UUID', 'note_block:UUID', 'message:UUID', "
-        "'conversation:UUID', or 'library_intelligence_artifact:UUID' (a library's "
-        "synthesis). Not valid for 'library:UUID' — that is a search scope; use "
+        "'conversation:UUID', 'library_intelligence_artifact:UUID' (a library's "
+        "synthesis), or 'oracle_reading:UUID' (a Black Forest Oracle reading). "
+        "Not valid for 'library:UUID' — that is a search scope; use "
         "app_search with scopes=[...]. Every result is labelled with a kind attribute."
     ),
     "parameters": {
@@ -302,6 +303,16 @@ def _present_read(loaded: LoadedResource) -> ReadResourceResult:
             status="complete",
             body=loaded.body or "",
             kind="library_intelligence",
+        )
+    if scheme == "oracle_reading":
+        # The reading's body is its question + motto + argument + passages +
+        # interpretation. NON-citable (like the LI artifact): its passage chips
+        # are rendered by the oracle pane, not a get_search_result chip.
+        return ReadResourceResult(
+            uri=loaded.uri,
+            status="complete",
+            body=loaded.body or "",
+            kind="oracle_reading",
         )
     if scheme in ("span", "chunk", "page", "note_block"):
         return ReadResourceResult(

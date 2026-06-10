@@ -52,7 +52,7 @@ build-backend = "hatchling.build"
 packages = ["nexus"]
 
 [tool.uv.sources]
-llm-calling = { git = "https://github.com/NielsdaWheelz/llm-calling", rev = "6b44ca727c70c3a4007064282e34187bfc1ab649" }
+llm-calling = { git = "https://github.com/NielsdaWheelz/llm-calling", rev = "362eae20843d83e750f58ee3eec761958df5f618" }
 web-search-tool = { git = "https://github.com/NielsdaWheelz/web-search-tool", rev = "ce911344a2e31900eaee3039b5d61109ef54bcb1" }
 
 [tool.ruff]

@@ -1,36 +1,117 @@
-"""SSE replay/tail routes for durable chat runs and oracle readings.
+"""SSE replay/tail routes for durable runs and media processing status.
 
-Push-driven: an AFTER trigger ``pg_notify``s the per-run / per-reading channel
-on each new event; the tail uses the shared stream LISTEN resource and re-reads
-on each notification. The synchronous DB reads run in a threadpool so they
-never block the event loop. The framing and tail envelope live in ``_sse``.
+All four browser-callable streams live under ``/stream/`` (auth via stream-token
+bearer; see ``stream_paths.is_stream_path``). Three are append-cursor durable-run
+streams (chat run, oracle reading, library-intelligence revision) that share one
+generic factory; the fourth is the media processing-status snapshot/diff stream.
+
+Push-driven: an AFTER trigger ``pg_notify``s the per-entity channel on each new
+event/state change; the tail uses the shared stream LISTEN resource and re-reads
+on each notification. The synchronous DB reads run in a threadpool so they never
+block the event loop. The framing and tail envelope live in ``_sse``.
 """
 
 from __future__ import annotations
 
-from typing import Annotated
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
+from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, Query, Request
 from fastapi.responses import StreamingResponse
+from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
 from nexus.api.deps import get_stream_viewer
-from nexus.api.routes._sse import open_sse_listener, tail_cursor_stream
+from nexus.api.routes._sse import open_sse_listener, tail_cursor_stream, tail_snapshot_stream
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiError, ApiErrorCode
-from nexus.schemas.conversation import ChatRunEventOut
-from nexus.schemas.library_intelligence import LibraryIntelligenceRevisionEventOut
-from nexus.schemas.oracle import OracleReadingEventOut
 from nexus.services import chat_runs as chat_runs_service
 from nexus.services import library_intelligence as library_intelligence_service
+from nexus.services import media as media_service
 from nexus.services import oracle as oracle_service
 from nexus.services import run_kit
 
 router = APIRouter(tags=["streaming"])
 
+_SSE_HEADERS = {"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"}
 
-@router.get("/chat-runs/{run_id}/events")
+
+@dataclass(frozen=True)
+class CursorStreamKind:
+    """Binds a durable-run kind to its ownership assert and after-cursor read.
+
+    ``assert_viewer`` and ``read_after`` both run inside an open session opened by
+    the shared wrapper; they receive ``viewer_id`` even when the underlying read is
+    viewer-less (oracle/LI gate ownership in ``assert_viewer``, so the read ignores
+    the param — a redundant viewer arg on those service reads would be dead checks).
+    """
+
+    run_kind: run_kit.RunStreamKind
+    assert_viewer: Callable[[Session, UUID, UUID], None]
+    read_after: Callable[[Session, UUID, UUID, int], tuple[Sequence[Any], bool]]
+
+
+_CHAT_RUN_KIND = CursorStreamKind(
+    run_kind=run_kit.RunStreamKind.ChatRun,
+    assert_viewer=lambda db, viewer_id, run_id: chat_runs_service.assert_chat_run_owner(
+        db, viewer_id=viewer_id, run_id=run_id
+    ),
+    read_after=lambda db, viewer_id, run_id, after: (
+        chat_runs_service.get_chat_run_events(db, viewer_id=viewer_id, run_id=run_id, after=after),
+        chat_runs_service.is_chat_run_terminal(db, viewer_id=viewer_id, run_id=run_id),
+    ),
+)
+
+_ORACLE_READING_KIND = CursorStreamKind(
+    run_kind=run_kit.RunStreamKind.OracleReading,
+    assert_viewer=lambda db, viewer_id, reading_id: oracle_service.assert_reading_owner(
+        db, viewer_id=viewer_id, reading_id=reading_id
+    ),
+    read_after=lambda db, viewer_id, reading_id, after: (
+        oracle_service.get_reading_events(db, reading_id=reading_id, after=after),
+        oracle_service.is_reading_terminal(db, reading_id=reading_id),
+    ),
+)
+
+_LIBRARY_INTELLIGENCE_KIND = CursorStreamKind(
+    run_kind=run_kit.RunStreamKind.LibraryIntelligence,
+    assert_viewer=lambda db, viewer_id, revision_id: (
+        library_intelligence_service.assert_revision_viewer(
+            db, viewer_id=viewer_id, revision_id=revision_id
+        )
+    ),
+    read_after=lambda db, viewer_id, revision_id, after: (
+        library_intelligence_service.get_revision_events(db, revision_id=revision_id, after=after),
+        library_intelligence_service.is_revision_terminal(db, revision_id=revision_id),
+    ),
+)
+
+
+async def make_cursor_stream_response(
+    kind: CursorStreamKind, *, request: Request, entity_id: UUID, viewer_id: UUID, after: int
+) -> StreamingResponse:
+    """Threadpool ownership assert + open listener + append-cursor tail, one envelope."""
+
+    def assert_viewer() -> None:
+        with get_session_factory()() as db:
+            kind.assert_viewer(db, viewer_id, entity_id)
+
+    def read_after(after: int) -> tuple[Sequence[Any], bool]:
+        with get_session_factory()() as db:
+            return kind.read_after(db, viewer_id, entity_id, after)
+
+    await run_in_threadpool(assert_viewer)
+    listener = await open_sse_listener(run_kit.notify_channel(kind.run_kind), str(entity_id))
+    return StreamingResponse(
+        tail_cursor_stream(request=request, listener=listener, after=after, read_after=read_after),
+        media_type="text/event-stream; charset=utf-8",
+        headers=_SSE_HEADERS,
+    )
+
+
+@router.get("/stream/chat-runs/{run_id}/events")
 async def stream_chat_run_events(
     request: Request,
     run_id: UUID,
@@ -39,36 +120,9 @@ async def stream_chat_run_events(
     last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
 ) -> StreamingResponse:
     cursor = after if after is not None else _parse_last_event_id(last_event_id)
-    await run_in_threadpool(_assert_chat_run_owner, viewer_id, run_id)
-    listener = await open_sse_listener(
-        run_kit.notify_channel(run_kit.RunStreamKind.ChatRun), str(run_id)
+    return await make_cursor_stream_response(
+        _CHAT_RUN_KIND, request=request, entity_id=run_id, viewer_id=viewer_id, after=cursor
     )
-    return StreamingResponse(
-        tail_cursor_stream(
-            request=request,
-            listener=listener,
-            after=cursor,
-            read_after=lambda c: _read_chat_run_events(viewer_id, run_id, c),
-        ),
-        media_type="text/event-stream; charset=utf-8",
-        headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"},
-    )
-
-
-def _assert_chat_run_owner(viewer_id: UUID, run_id: UUID) -> None:
-    with get_session_factory()() as db:
-        chat_runs_service.assert_chat_run_owner(db, viewer_id=viewer_id, run_id=run_id)
-
-
-def _read_chat_run_events(
-    viewer_id: UUID, run_id: UUID, after: int
-) -> tuple[list[ChatRunEventOut], bool]:
-    with get_session_factory()() as db:
-        events = chat_runs_service.get_chat_run_events(
-            db, viewer_id=viewer_id, run_id=run_id, after=after
-        )
-        terminal = chat_runs_service.is_chat_run_terminal(db, viewer_id=viewer_id, run_id=run_id)
-    return events, terminal
 
 
 @router.get("/stream/oracle-readings/{reading_id}/events")
@@ -80,32 +134,13 @@ async def stream_oracle_reading_events(
     last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
 ) -> StreamingResponse:
     cursor = after if after is not None else _parse_last_event_id(last_event_id)
-    await run_in_threadpool(_assert_reading_owner, viewer_id, reading_id)
-    listener = await open_sse_listener(
-        run_kit.notify_channel(run_kit.RunStreamKind.OracleReading), str(reading_id)
+    return await make_cursor_stream_response(
+        _ORACLE_READING_KIND,
+        request=request,
+        entity_id=reading_id,
+        viewer_id=viewer_id,
+        after=cursor,
     )
-    return StreamingResponse(
-        tail_cursor_stream(
-            request=request,
-            listener=listener,
-            after=cursor,
-            read_after=lambda c: _read_reading_events(reading_id, c),
-        ),
-        media_type="text/event-stream; charset=utf-8",
-        headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"},
-    )
-
-
-def _assert_reading_owner(viewer_id: UUID, reading_id: UUID) -> None:
-    with get_session_factory()() as db:
-        oracle_service.assert_reading_owner(db, viewer_id=viewer_id, reading_id=reading_id)
-
-
-def _read_reading_events(reading_id: UUID, after: int) -> tuple[list[OracleReadingEventOut], bool]:
-    with get_session_factory()() as db:
-        events = oracle_service.get_reading_events(db, reading_id=reading_id, after=after)
-        terminal = oracle_service.is_reading_terminal(db, reading_id=reading_id)
-    return events, terminal
 
 
 @router.get("/stream/library-intelligence/{revision_id}/events")
@@ -117,38 +152,45 @@ async def stream_library_intelligence_events(
     last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
 ) -> StreamingResponse:
     cursor = after if after is not None else _parse_last_event_id(last_event_id)
-    await run_in_threadpool(_assert_revision_viewer, viewer_id, revision_id)
-    listener = await open_sse_listener(
-        run_kit.notify_channel(run_kit.RunStreamKind.LibraryIntelligence), str(revision_id)
+    return await make_cursor_stream_response(
+        _LIBRARY_INTELLIGENCE_KIND,
+        request=request,
+        entity_id=revision_id,
+        viewer_id=viewer_id,
+        after=cursor,
     )
+
+
+@router.get("/stream/media/{media_id}/events")
+async def stream_media_events(
+    request: Request,
+    media_id: UUID,
+    viewer_id: Annotated[UUID, Depends(get_stream_viewer)],
+) -> StreamingResponse:
+    # Surfaces NotFoundError (E_MEDIA_NOT_FOUND, 404) if the viewer cannot
+    # read the media — masks existence, matching GET /media/{id}.
+    await run_in_threadpool(_assert_media_readable, viewer_id, media_id)
+    listener = await open_sse_listener("media_events", str(media_id))
     return StreamingResponse(
-        tail_cursor_stream(
+        tail_snapshot_stream(
             request=request,
             listener=listener,
-            after=cursor,
-            read_after=lambda c: _read_revision_events(revision_id, c),
+            read_snapshot=lambda: _read_media_snapshot(viewer_id, media_id),
         ),
         media_type="text/event-stream; charset=utf-8",
-        headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"},
+        headers=_SSE_HEADERS,
     )
 
 
-def _assert_revision_viewer(viewer_id: UUID, revision_id: UUID) -> None:
+def _assert_media_readable(viewer_id: UUID, media_id: UUID) -> None:
     with get_session_factory()() as db:
-        library_intelligence_service.assert_revision_viewer(
-            db, viewer_id=viewer_id, revision_id=revision_id
-        )
+        media_service.get_media_for_viewer(db, viewer_id, media_id)
 
 
-def _read_revision_events(
-    revision_id: UUID, after: int
-) -> tuple[list[LibraryIntelligenceRevisionEventOut], bool]:
+def _read_media_snapshot(viewer_id: UUID, media_id: UUID) -> tuple[dict, bool]:
     with get_session_factory()() as db:
-        events = library_intelligence_service.get_revision_events(
-            db, revision_id=revision_id, after=after
-        )
-        terminal = library_intelligence_service.is_revision_terminal(db, revision_id=revision_id)
-    return events, terminal
+        snapshot = media_service.read_event_snapshot(db, viewer_id=viewer_id, media_id=media_id)
+    return snapshot.payload, snapshot.terminal
 
 
 def _parse_last_event_id(value: str | None) -> int:

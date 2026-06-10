@@ -7,10 +7,10 @@ cycle back through the route modules those middlewares help serve).
 
 
 def is_stream_path(path: str) -> bool:
-    """True for the browser-callable SSE endpoints (auth via stream-token bearer)."""
-    return (
-        (path.startswith("/chat-runs/") and path.endswith("/events"))
-        or (path.startswith("/stream/oracle-readings/") and path.endswith("/events"))
-        or (path.startswith("/stream/library-intelligence/") and path.endswith("/events"))
-        or (path.startswith("/media/") and path.endswith("/events"))
-    )
+    """True for the browser-callable SSE endpoints (auth via stream-token bearer).
+
+    One prefix check: every browser-callable SSE stream lives under `/stream/`.
+    An unrouted `/stream/*` path now skips Supabase auth and falls through to the
+    router, which 404s it — no data exposure (no such route exists to leak).
+    """
+    return path.startswith("/stream/")

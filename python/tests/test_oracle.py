@@ -13,7 +13,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from llm_calling.errors import LLMError, LLMErrorCode
-from llm_calling.types import LLMResponse
+from llm_calling.types import LLMResponse, LLMUsage
 from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
@@ -25,6 +25,9 @@ from nexus.db.models import (
     OracleCorpusWork,
     OracleReading,
 )
+from nexus.schemas.oracle import oracle_done_payload
+from nexus.services import run_kit
+from nexus.services.billing_entitlements import grant_entitlement_override
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.image_validation import ValidatedImage
 from nexus.services.note_indexing import rebuild_page_content_index
@@ -39,6 +42,7 @@ from nexus.services.oracle import (
     compute_concordance,
     create_reading,
     execute_reading,
+    get_reading_detail,
     is_reading_terminal,
 )
 from nexus.services.semantic_chunks import (
@@ -237,6 +241,23 @@ def _register_oracle_corpus_cleanup(
     )
 
 
+def _grant_platform_llm(db: Session, user_id: UUID) -> None:
+    """execute_reading resolves keys via resolve_api_key(mode="auto"); platform-key
+    use requires the ai_plus entitlement (chat parity). Upsert; commits."""
+    grant_entitlement_override(
+        db,
+        user_id=user_id,
+        plan_tier="ai_plus",
+        platform_token_quota_mode="plan",
+        platform_token_limit_monthly=None,
+        transcription_quota_mode="plan",
+        transcription_minutes_limit_monthly=None,
+        expires_at=None,
+        reason="oracle test access",
+        actor_label="test",
+    )
+
+
 def _insert_pending_reading(
     db: Session,
     *,
@@ -244,6 +265,8 @@ def _insert_pending_reading(
     question: str,
     folio_number: int = 1,
 ) -> UUID:
+    """One pending reading for a user entitled to run it (platform-LLM grant)."""
+    _grant_platform_llm(db, user_id)
     reading = OracleReading(
         id=uuid4(),
         user_id=user_id,
@@ -257,7 +280,9 @@ def _insert_pending_reading(
 
 
 def _candidate_indices(request) -> dict[int, str]:
-    user_message = request.messages[-1].content
+    # The candidates turn is the first user turn (index 1) in both the original
+    # request and the repair-round request (repair appends turns after it).
+    user_message = request.messages[1].content
     return {
         int(match.group(1)): match.group(2)
         for match in re.finditer(r"^\[(\d+)] source_kind=([a-z_]+)", user_message, re.MULTILINE)
@@ -265,7 +290,7 @@ def _candidate_indices(request) -> dict[int, str]:
 
 
 def _candidate_text(request, index: int) -> str:
-    user_message = request.messages[-1].content
+    user_message = request.messages[1].content
     pattern = rf"^\[{index}] source_kind=.*?^passage_text: (.*?)(?:\n\n\[|\n\nQUESTION:)"
     match = re.search(pattern, user_message, re.MULTILINE | re.DOTALL)
     assert match is not None, f"expected candidate {index} text in prompt: {user_message}"
@@ -585,6 +610,39 @@ class _InvalidJsonShapeRouter:
         return LLMResponse(
             text=text_value,
             usage=None,
+            provider_request_id=None,
+            status=None,
+            incomplete_details=None,
+        )
+
+
+class _SemanticRepairRouter:
+    """First response violates oracle semantics (four omens); the repaired
+    second attempt is valid. Captures both requests; reports summable usage."""
+
+    def __init__(self) -> None:
+        self.requests: list = []
+
+    async def generate(self, _provider, request, _api_key, *, timeout_s):
+        self.requests.append(request)
+        indices = _candidate_indices(request)
+        public_indices = [
+            idx for idx, source_kind in indices.items() if source_kind == "public_domain"
+        ]
+        assert len(public_indices) >= 3, f"expected three public candidates, got {indices}"
+        omens = (
+            ["a lamp in rain", "a door unlatched", "dawn under branches", "a fourth sign"]
+            if len(self.requests) == 1
+            else None
+        )
+        return LLMResponse(
+            text=_reading_json(
+                descent=public_indices[0],
+                ordeal=public_indices[1],
+                ascent=public_indices[2],
+                omens=omens,
+            ),
+            usage=LLMUsage(input_tokens=10, output_tokens=5, total_tokens=15),
             provider_request_id=None,
             status=None,
             incomplete_details=None,
@@ -968,12 +1026,14 @@ def test_create_reading_allocates_unique_folios_under_concurrent_requests(
     )
 
 
-def test_post_oracle_reading_returns_stream_connection_shape(
+def test_post_oracle_reading_returns_reading_ref_without_stream_block(
     auth_client,
     direct_db: DirectSessionManager,
     oracle_schema,
     monkeypatch,
 ) -> None:
+    """The dead create-response ``stream`` block is gone; clients stream via
+    the generic /stream-tokens flow."""
     user_id = uuid4()
     with direct_db.session() as db:
         corpus_id, _work_ids, _image_id = _seed_oracle_corpus(db)
@@ -994,15 +1054,55 @@ def test_post_oracle_reading_returns_stream_connection_shape(
 
     assert response.status_code == 200, response.text
     data = response.json()["data"]
-    assert set(data) == {"reading_id", "folio_number", "status", "stream"}
+    assert set(data) == {"reading_id", "folio_number", "status"}
     assert data["status"] == "pending"
     assert data["folio_number"] == 1
-    assert data["stream"]["token"], f"expected stream token in create response, got {data}"
-    assert data["stream"]["stream_base_url"] == "http://localhost:8000"
-    assert data["stream"]["event_url"].endswith(
-        f"/stream/oracle-readings/{data['reading_id']}/events"
+
+
+def test_post_oracle_reading_replays_idempotency_key(
+    auth_client,
+    direct_db: DirectSessionManager,
+    oracle_schema,
+    monkeypatch,
+) -> None:
+    """Two POSTs with the same Idempotency-Key return the same reading and
+    enqueue exactly one job (LI replay semantics); a different key mints a
+    fresh folio."""
+    user_id = uuid4()
+    with direct_db.session() as db:
+        corpus_id, _work_ids, _image_id = _seed_oracle_corpus(db)
+        db.commit()
+
+    direct_db.register_cleanup("users", "id", user_id)
+    direct_db.register_cleanup("libraries", "owner_user_id", user_id)
+    direct_db.register_cleanup("memberships", "user_id", user_id)
+    _register_oracle_corpus_cleanup(direct_db, corpus_id, _work_ids)
+    direct_db.register_cleanup("oracle_readings", "user_id", user_id)
+    enqueued: list[dict] = []
+    monkeypatch.setattr(
+        "nexus.services.oracle.enqueue_job",
+        lambda _db, **kwargs: enqueued.append(kwargs),
     )
-    assert data["stream"]["expires_at"], f"expected stream expiry in create response, got {data}"
+
+    def post(key: str):
+        return auth_client.post(
+            "/oracle/readings",
+            json={"question": "Where does the path open?"},
+            headers={**auth_headers(user_id), "Idempotency-Key": key},
+        )
+
+    first = post("oracle-key-1")
+    replay = post("oracle-key-1")
+    fresh = post("oracle-key-2")
+
+    assert first.status_code == 200, first.text
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["data"] == first.json()["data"], (
+        "a reused Idempotency-Key must replay the same reading"
+    )
+    assert fresh.json()["data"]["reading_id"] != first.json()["data"]["reading_id"]
+    assert fresh.json()["data"]["folio_number"] == 2
+    assert len(enqueued) == 2, "the replayed POST must not enqueue a second job"
 
 
 def test_execute_reading_uses_indexed_user_library_content_chunks(
@@ -1046,6 +1146,318 @@ def test_execute_reading_uses_indexed_user_library_content_chunks(
     assert any(source.get("media_id") for source in sources), (
         f"expected at least one persisted passage from user media, got {sources}"
     )
+
+
+def test_execute_reading_user_media_passage_carries_citation_out(
+    db_session: Session,
+    oracle_schema,
+) -> None:
+    """S7: a user-library passage whose chunk owns an evidence span mints a
+    CitationOut (chip + canonical deep link, ordinal = phase order); public-domain
+    passages stay typographic (citation=None)."""
+    user_id = uuid4()
+    ensure_user_and_default_library(db_session, user_id)
+    create_searchable_media(db_session, user_id, title="Lantern Monograph")
+    _seed_oracle_corpus(db_session)
+    reading_id = _insert_pending_reading(
+        db_session,
+        user_id=user_id,
+        question="Where does the lantern lead?",
+    )
+
+    # _SelectLibraryRouter puts the user-media candidate in the ORDEAL phase.
+    result = asyncio.run(
+        execute_reading(db_session, reading_id=reading_id, llm_router=_SelectLibraryRouter())
+    )
+    assert result["status"] == "complete", f"expected reading to complete, got {result}"
+
+    detail = get_reading_detail(db_session, viewer_id=user_id, reading_id=reading_id)
+    by_phase = {passage.phase: passage for passage in detail.passages}
+
+    ordeal = by_phase["ordeal"]
+    assert ordeal.source_kind == "user_media"
+    assert ordeal.citation is not None, "a user-media passage with a span must mint a CitationOut"
+    citation = ordeal.citation
+    assert citation.ordinal == 2, "ordeal is the second phase -> ordinal 2"
+    assert citation.role == "context"
+    assert citation.target_ref.type == "evidence_span"
+    assert citation.media_id is not None
+    assert citation.deep_link == (
+        f"/media/{citation.media_id}#evidence-{citation.target_ref.id}"
+    ), f"deep link must jump to the exact span, got {citation.deep_link}"
+    assert citation.snapshot is not None and citation.snapshot.result_type == "evidence_span"
+
+    for phase in ("descent", "ascent"):
+        passage = by_phase[phase]
+        assert passage.source_kind == "public_domain"
+        assert passage.citation is None, (
+            f"public-domain {phase} passage must stay typographic, got {passage.citation}"
+        )
+
+
+def test_execute_reading_passage_event_carries_citation_for_user_media(
+    db_session: Session,
+    oracle_schema,
+) -> None:
+    """The streamed ``passage`` event payload mirrors the REST out: the user-media
+    phase carries the citation, public-domain phases carry ``citation: null``."""
+    user_id = uuid4()
+    ensure_user_and_default_library(db_session, user_id)
+    create_searchable_media(db_session, user_id, title="Lantern Monograph")
+    _seed_oracle_corpus(db_session)
+    reading_id = _insert_pending_reading(
+        db_session,
+        user_id=user_id,
+        question="Where does the lantern lead?",
+    )
+
+    asyncio.run(
+        execute_reading(db_session, reading_id=reading_id, llm_router=_SelectLibraryRouter())
+    )
+
+    events = (
+        db_session.execute(
+            text(
+                """
+                SELECT payload
+                FROM oracle_reading_events
+                WHERE reading_id = :reading_id AND event_type = 'passage'
+                ORDER BY seq
+                """
+            ),
+            {"reading_id": reading_id},
+        )
+        .scalars()
+        .all()
+    )
+    by_phase = {event["phase"]: event for event in events}
+    assert by_phase["ordeal"]["source_kind"] == "user_media"
+    assert by_phase["ordeal"]["citation"] is not None
+    assert by_phase["ordeal"]["citation"]["ordinal"] == 2
+    assert by_phase["ordeal"]["citation"]["target_ref"]["type"] == "evidence_span"
+    assert by_phase["descent"]["citation"] is None
+    assert by_phase["ascent"]["citation"] is None
+
+
+def test_execute_reading_public_only_passages_have_no_citation(
+    db_session: Session,
+    oracle_schema,
+) -> None:
+    """A reading with no user library (public-domain only) mints no citations."""
+    user_id = uuid4()
+    db_session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
+    _seed_oracle_corpus(db_session)
+    reading_id = _insert_pending_reading(
+        db_session,
+        user_id=user_id,
+        question="What does the lamp reveal?",
+    )
+
+    asyncio.run(execute_reading(db_session, reading_id=reading_id, llm_router=_PublicOnlyRouter()))
+
+    detail = get_reading_detail(db_session, viewer_id=user_id, reading_id=reading_id)
+    assert detail.passages, "expected three persisted passages"
+    assert all(passage.source_kind == "public_domain" for passage in detail.passages)
+    assert all(passage.citation is None for passage in detail.passages), (
+        "public-domain passages are typographic only — no CitationOut"
+    )
+
+
+def test_get_reading_detail_degrades_citation_to_none_when_backing_span_is_gone(
+    db_session: Session,
+    oracle_schema,
+) -> None:
+    """F04: oracle_reading_passages is a snapshot store with no FK to its evidence
+    span, so a completed folio can outlive the span (deleted media / lost read
+    access). get_reading_detail must degrade that passage to citation=None rather
+    than raise the resolver's NotFoundError and 404/500 the whole reading."""
+    user_id = uuid4()
+    ensure_user_and_default_library(db_session, user_id)
+    create_searchable_media(db_session, user_id, title="Lantern Monograph")
+    _seed_oracle_corpus(db_session)
+    reading_id = _insert_pending_reading(
+        db_session,
+        user_id=user_id,
+        question="Where does the lantern lead?",
+    )
+
+    # _SelectLibraryRouter puts the user-media (span-owning) candidate in ORDEAL.
+    result = asyncio.run(
+        execute_reading(db_session, reading_id=reading_id, llm_router=_SelectLibraryRouter())
+    )
+    assert result["status"] == "complete", f"expected reading to complete, got {result}"
+
+    span_id = db_session.execute(
+        text(
+            """
+            SELECT (locator ->> 'evidence_span_id')::uuid
+            FROM oracle_reading_passages
+            WHERE reading_id = :reading_id AND source_kind = 'user_media'
+            """
+        ),
+        {"reading_id": reading_id},
+    ).scalar_one()
+    assert span_id is not None, "the user-media passage must reference an evidence span"
+    # The snapshot store keeps the passage row, but the backing span can vanish (media
+    # deletion cascades chunks/claims/spans; oracle_reading_passages has no FK to it).
+    # Clear the span's inbound references, then delete it, to model that vanished backing.
+    db_session.execute(
+        text("DELETE FROM message_retrievals WHERE evidence_span_id = :id"), {"id": span_id}
+    )
+    db_session.execute(
+        text("DELETE FROM media_claims WHERE evidence_span_id = :id"), {"id": span_id}
+    )
+    db_session.execute(
+        text(
+            "UPDATE content_chunks SET primary_evidence_span_id = NULL "
+            "WHERE primary_evidence_span_id = :id"
+        ),
+        {"id": span_id},
+    )
+    db_session.execute(text("DELETE FROM evidence_spans WHERE id = :id"), {"id": span_id})
+    db_session.commit()
+
+    detail = get_reading_detail(db_session, viewer_id=user_id, reading_id=reading_id)
+    by_phase = {passage.phase: passage for passage in detail.passages}
+    assert by_phase["ordeal"].source_kind == "user_media"
+    assert by_phase["ordeal"].citation is None, (
+        "a snapshot passage whose evidence span was deleted degrades to citation=None"
+    )
+
+
+def test_execute_reading_repairs_semantic_rejection_once_and_ledgers_both_attempts(
+    db_session: Session,
+    oracle_schema,
+    oracle_rate_limiter: _RecordingRateLimiter,
+) -> None:
+    """AC-11: a semantic rejection triggers the ONE bounded repair round; the
+    reading completes on attempt 2, llm_calls carries one row per attempt, and
+    the budget commit uses usage summed across attempts."""
+    user_id = uuid4()
+    db_session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
+    corpus_id, _work_ids, _image_id = _seed_oracle_corpus(db_session)
+    reading_id = _insert_pending_reading(
+        db_session,
+        user_id=user_id,
+        question="What does the lamp reveal?",
+    )
+
+    router = _SemanticRepairRouter()
+    result = asyncio.run(execute_reading(db_session, reading_id=reading_id, llm_router=router))
+
+    assert result["status"] == "complete", f"expected repaired reading to complete, got {result}"
+    assert len(router.requests) == 2, "semantic rejection must trigger exactly one repair round"
+    repair_turns = list(router.requests[1].messages[-2:])
+    assert [turn.role for turn in repair_turns] == ["assistant", "user"]
+    assert "the JSON violates the reading rules" in repair_turns[1].content
+
+    ledger = (
+        db_session.execute(
+            text(
+                """
+                SELECT call_seq, error_class, llm_operation
+                FROM llm_calls
+                WHERE owner_kind = 'oracle_reading' AND owner_id = :reading_id
+                ORDER BY call_seq
+                """
+            ),
+            {"reading_id": reading_id},
+        )
+        .mappings()
+        .all()
+    )
+    assert [row["call_seq"] for row in ledger] == [1, 2], (
+        f"one llm_calls row per attempt, got {[dict(r) for r in ledger]}"
+    )
+    assert all(row["error_class"] is None for row in ledger), (
+        "a semantic rejection is not a provider error; both attempts succeed at the provider"
+    )
+    assert all(row["llm_operation"] == "oracle_reading" for row in ledger)
+
+    done_payload = db_session.execute(
+        text(
+            """
+            SELECT payload FROM oracle_reading_events
+            WHERE reading_id = :reading_id AND event_type = 'done'
+            """
+        ),
+        {"reading_id": reading_id},
+    ).scalar_one()
+    assert done_payload == {"status": "complete", "error_code": None}
+
+    commit_event = next(
+        event for event in oracle_rate_limiter.events if event[0] == "commit_token_budget"
+    )
+    assert commit_event[3] == 30, "budget commit uses usage summed across both attempts"
+
+    interpretation_text = db_session.execute(
+        text("SELECT interpretation_text FROM oracle_readings WHERE id = :reading_id"),
+        {"reading_id": reading_id},
+    ).scalar_one()
+    assert (
+        interpretation_text
+        == "I saw a road bending into shadow, and the lamp's small flame thrown forward."
+    ), "the interpretation is written to its canonical column at generation time"
+
+
+def test_execute_reading_fails_without_platform_llm_entitlement(
+    db_session: Session,
+    oracle_schema,
+) -> None:
+    """resolve_api_key(mode="auto") gates platform-key use on entitlements; the
+    failure routes through the normalized done grammar with the error floor set."""
+    user_id = uuid4()
+    db_session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
+    _seed_oracle_corpus(db_session)
+    reading = OracleReading(
+        id=uuid4(),
+        user_id=user_id,
+        folio_number=1,
+        question_text="Who may consult the oracle?",
+        status="pending",
+    )
+    db_session.add(reading)
+    db_session.commit()
+    router = _UnexpectedRouter()
+
+    result = asyncio.run(execute_reading(db_session, reading_id=reading.id, llm_router=router))
+
+    row = (
+        db_session.execute(
+            text(
+                """
+                SELECT status, failed_at, error_code, error_detail
+                FROM oracle_readings
+                WHERE id = :reading_id
+                """
+            ),
+            {"reading_id": reading.id},
+        )
+        .mappings()
+        .one()
+    )
+    events = list(
+        db_session.execute(
+            text(
+                """
+                SELECT event_type, payload
+                FROM oracle_reading_events
+                WHERE reading_id = :reading_id
+                ORDER BY seq
+                """
+            ),
+            {"reading_id": reading.id},
+        ).mappings()
+    )
+
+    assert result == {"status": "failed", "error_code": "E_BILLING_REQUIRED"}
+    assert router.called is False, "key resolution must fail before any LLM call"
+    assert row["status"] == "failed"
+    assert row["failed_at"] is not None
+    assert row["error_code"] == "E_BILLING_REQUIRED"
+    assert row["error_detail"], "the error floor persists operator-facing detail"
+    assert [event["event_type"] for event in events] == ["done"]
+    assert events[0]["payload"] == {"status": "failed", "error_code": "E_BILLING_REQUIRED"}
 
 
 def test_execute_reading_fails_when_required_user_embeddings_are_unavailable(
@@ -1095,7 +1507,7 @@ def test_execute_reading_fails_when_required_user_embeddings_are_unavailable(
 
     assert result == {"status": "failed", "error_code": "E_APP_SEARCH_FAILED"}
     assert router.called is False, "Oracle should fail before spending an LLM call"
-    assert events == ["error"], f"embedding-backed user retrieval should fail closed: {events}"
+    assert events == ["done"], f"embedding-backed user retrieval should fail closed: {events}"
 
 
 def test_execute_reading_requires_user_passage_when_visible_media_is_searchable(
@@ -1140,23 +1552,24 @@ def test_execute_reading_requires_user_passage_when_visible_media_is_searchable(
         db_session.execute(
             text(
                 """
-                SELECT event_type
+                SELECT event_type, payload
                 FROM oracle_reading_events
                 WHERE reading_id = :reading_id
                 ORDER BY seq
                 """
             ),
             {"reading_id": reading_id},
-        ).scalars()
+        ).mappings()
     )
 
     assert result == {"status": "failed", "error_code": "E_APP_SEARCH_FAILED"}
     assert row["status"] == "failed"
     assert row["error_code"] == "E_APP_SEARCH_FAILED"
     assert router.called is False, "Oracle should fail before spending an LLM call"
-    assert events == ["error"], (
+    assert [event["event_type"] for event in events] == ["done"], (
         f"required user-media retrieval should fail before meta, got {events}"
     )
+    assert events[0]["payload"] == {"status": "failed", "error_code": "E_APP_SEARCH_FAILED"}
 
 
 def test_execute_reading_has_no_provider_or_corpus_identity_columns(
@@ -1344,6 +1757,7 @@ def test_get_oracle_reading_returns_proxied_plate_urls(
     direct_db.register_cleanup("oracle_readings", "id", reading_id)
     direct_db.register_cleanup("oracle_reading_passages", "reading_id", reading_id)
     direct_db.register_cleanup("oracle_reading_events", "reading_id", reading_id)
+    direct_db.register_cleanup("llm_calls", "owner_id", reading_id)
 
 
 @pytest.mark.parametrize(
@@ -1407,8 +1821,8 @@ def test_execute_reading_rejects_omens_unless_exactly_three_nonblank_lines(
     assert row["status"] == "failed"
     assert row["error_code"] == "E_LLM_BAD_REQUEST"
     assert "omens" not in events, f"invalid omen output should not be emitted, got {events}"
-    assert events.count("error") == 1 and "done" not in events, (
-        f"failed readings should emit one terminal error event, got {events}"
+    assert events.count("done") == 1 and "error" not in events, (
+        f"failed readings should emit one terminal done event, got {events}"
     )
 
 
@@ -1453,8 +1867,8 @@ def test_execute_reading_rejects_non_strict_provider_json(
     )
 
     assert result == {"status": "failed", "error_code": "E_LLM_BAD_REQUEST"}
-    assert events.count("error") == 1 and "done" not in events, (
-        f"strict JSON rejection should emit one terminal error event, got {events}"
+    assert events.count("done") == 1 and "error" not in events, (
+        f"strict JSON rejection should emit one terminal done event, got {events}"
     )
     assert "passage" not in events, f"invalid JSON must not persist passages: {events}"
 
@@ -1482,7 +1896,7 @@ def test_execute_reading_provider_failure_uses_feedback_safe_error_message(
             db_session.execute(
                 text(
                     """
-                    SELECT status, error_code, error_message
+                    SELECT status, error_code, error_detail
                     FROM oracle_readings
                     WHERE id = :reading_id
                     """
@@ -1506,11 +1920,26 @@ def test_execute_reading_provider_failure_uses_feedback_safe_error_message(
             ).mappings()
         )
         serialized_events = json.dumps([dict(event) for event in events])
+        ledger = (
+            db_session.execute(
+                text(
+                    """
+                    SELECT call_seq, provider, model_name, llm_operation, streaming, error_class
+                    FROM llm_calls
+                    WHERE owner_kind = 'oracle_reading' AND owner_id = :reading_id
+                    ORDER BY call_seq
+                    """
+                ),
+                {"reading_id": reading_id},
+            )
+            .mappings()
+            .all()
+        )
         db_session.execute(
             text(
                 """
                 UPDATE oracle_readings
-                SET error_message = 'raw persisted provider detail'
+                SET error_detail = 'raw persisted provider detail'
                 WHERE id = :reading_id
                 """
             ),
@@ -1523,6 +1952,7 @@ def test_execute_reading_provider_failure_uses_feedback_safe_error_message(
     direct_db.register_cleanup("oracle_readings", "id", reading_id)
     direct_db.register_cleanup("oracle_reading_passages", "reading_id", reading_id)
     direct_db.register_cleanup("oracle_reading_events", "reading_id", reading_id)
+    direct_db.register_cleanup("llm_calls", "owner_id", reading_id)
 
     response = auth_client.get(
         f"/oracle/readings/{reading_id}",
@@ -1534,20 +1964,26 @@ def test_execute_reading_provider_failure_uses_feedback_safe_error_message(
     detail = response.json()["data"]
     assert row["status"] == "failed"
     assert row["error_code"] == "E_LLM_BAD_REQUEST"
-    assert row["error_message"] == (
-        "The reading could not be completed. Start a new reading with a simpler question."
+    assert "raw anthropic invalid_request_error" in str(row["error_detail"]), (
+        "error_detail is the operator-facing exception detail"
     )
-    assert detail["error_message"] == row["error_message"]
-    assert "raw anthropic invalid_request_error" not in str(row["error_message"])
+    assert "error_message" not in detail, "failure copy is FE-owned, keyed on error_code"
+    assert "error_detail" not in detail, "operator detail never reaches the wire"
+    assert detail["error_code"] == "E_LLM_BAD_REQUEST"
     assert "raw anthropic invalid_request_error" not in json.dumps(detail)
     assert "raw persisted provider detail" not in json.dumps(detail)
     assert "raw anthropic invalid_request_error" not in serialized_events
-    assert events[-1]["event_type"] == "error"
-    assert events[-1]["payload"] == {
-        "code": "E_LLM_BAD_REQUEST",
-        "message": (
-            "The reading could not be completed. Start a new reading with a simpler question."
-        ),
+    assert events[-1]["event_type"] == "done"
+    assert events[-1]["payload"] == {"status": "failed", "error_code": "E_LLM_BAD_REQUEST"}
+    # Provider errors are never repaired: exactly one ledgered call, failed.
+    assert len(ledger) == 1, f"expected one llm_calls row, got {[dict(r) for r in ledger]}"
+    assert dict(ledger[0]) == {
+        "call_seq": 1,
+        "provider": "anthropic",
+        "model_name": "claude-haiku-4-5-20251001",
+        "llm_operation": "oracle_reading",
+        "streaming": False,
+        "error_class": "E_LLM_BAD_REQUEST",
     }
 
 
@@ -1590,7 +2026,7 @@ def test_execute_reading_maps_provider_error_codes_explicitly(
         db_session.execute(
             text(
                 """
-                SELECT status, error_code, error_message
+                SELECT status, error_code, error_detail
                 FROM oracle_readings
                 WHERE id = :reading_id
                 """
@@ -1617,8 +2053,8 @@ def test_execute_reading_maps_provider_error_codes_explicitly(
     assert result == {"status": "failed", "error_code": api_error_code}
     assert row["status"] == "failed"
     assert row["error_code"] == api_error_code
-    assert row["error_message"], f"expected feedback-safe message for {api_error_code}"
-    assert event_payloads[-1]["code"] == api_error_code
+    assert row["error_detail"], f"expected operator-facing detail for {api_error_code}"
+    assert event_payloads[-1] == {"status": "failed", "error_code": api_error_code}
 
 
 def test_execute_reading_fails_closed_before_meta_when_corpus_seed_is_incomplete(
@@ -1657,7 +2093,7 @@ def test_execute_reading_fails_closed_before_meta_when_corpus_seed_is_incomplete
     )
 
     assert result == {"status": "failed", "error_code": "E_ORACLE_CORPUS_INCOMPLETE"}
-    assert events == ["error"], f"incomplete setup should not emit meta or plate, got {events}"
+    assert events == ["done"], f"incomplete setup should not emit meta or plate, got {events}"
 
 
 @pytest.mark.parametrize(
@@ -1718,8 +2154,8 @@ def test_execute_reading_rejects_model_minted_citation_details(
     ).scalar_one()
 
     assert result == {"status": "failed", "error_code": "E_LLM_BAD_REQUEST"}
-    assert events.count("error") == 1 and "done" not in events, (
-        f"citation rejection should emit a single terminal error, got {events}"
+    assert events.count("done") == 1 and "error" not in events, (
+        f"citation rejection should emit a single terminal done, got {events}"
     )
     assert "passage" not in events, f"invalid citation output must not persist passages: {events}"
     assert passage_count == 0, "invalid citation output should not write passage rows"
@@ -1734,6 +2170,7 @@ def test_execute_reading_emits_events_in_eternal_order(
 
     with direct_db.session() as db:
         db.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
+        _grant_platform_llm(db, user_id)
         corpus_id, _work_ids, _image_id = _seed_oracle_corpus(db)
         db.add(
             OracleReading(
@@ -1751,6 +2188,7 @@ def test_execute_reading_emits_events_in_eternal_order(
     direct_db.register_cleanup("oracle_readings", "id", reading_id)
     direct_db.register_cleanup("oracle_reading_passages", "reading_id", reading_id)
     direct_db.register_cleanup("oracle_reading_events", "reading_id", reading_id)
+    direct_db.register_cleanup("llm_calls", "owner_id", reading_id)
 
     router = _ObservingRouter(direct_db, reading_id)
     with direct_db.session() as db:
@@ -1793,7 +2231,7 @@ def test_execute_reading_emits_events_in_eternal_order(
     ]
 
 
-def test_oracle_task_unexpected_failure_marks_reading_failed_and_emits_single_error(
+def test_oracle_task_unexpected_failure_marks_reading_failed_and_emits_single_done(
     db_session: Session,
     oracle_schema,
     monkeypatch,
@@ -1810,7 +2248,7 @@ def test_oracle_task_unexpected_failure_marks_reading_failed_and_emits_single_er
         raise RuntimeError("raw worker stack detail")
 
     monkeypatch.setattr(
-        "nexus.tasks.oracle_reading.get_session_factory",
+        "nexus.tasks.llm_task.get_session_factory",
         lambda: task_session_factory(db_session),
     )
     monkeypatch.setattr("nexus.tasks.oracle_reading.execute_reading", fail_unexpectedly)
@@ -1822,7 +2260,7 @@ def test_oracle_task_unexpected_failure_marks_reading_failed_and_emits_single_er
         db_session.execute(
             text(
                 """
-                SELECT status, failed_at, error_code, error_message
+                SELECT status, failed_at, error_code, error_detail
                 FROM oracle_readings
                 WHERE id = :reading_id
                 """
@@ -1850,14 +2288,89 @@ def test_oracle_task_unexpected_failure_marks_reading_failed_and_emits_single_er
     assert row["status"] == "failed"
     assert row["failed_at"] is not None
     assert row["error_code"] == "E_INTERNAL"
-    assert "raw worker stack detail" not in str(row["error_message"])
+    assert row["error_detail"] == "RuntimeError: raw worker stack detail", (
+        "the worker boundary persists the operator-facing exception detail"
+    )
     assert [event["seq"] for event in events] == [1]
-    assert [event["event_type"] for event in events] == ["error"]
-    assert events[0]["payload"] == {
-        "code": "E_INTERNAL",
-        "message": "The reading could not be completed. Please try again.",
-    }
+    assert [event["event_type"] for event in events] == ["done"]
+    assert events[0]["payload"] == {"status": "failed", "error_code": "E_INTERNAL"}
     assert "raw worker stack detail" not in json.dumps([dict(event) for event in events])
+
+
+def test_post_synthesis_fault_keeps_synthesis_llm_call_through_worker_rollback(
+    db_session: Session,
+    oracle_schema,
+    monkeypatch,
+) -> None:
+    """F04/AC-3: LedgeredLLM only flushes the synthesis llm_calls row, and the
+    worker boundary (fail_run_after_worker_exception) rolls back first. A fault in
+    post-synthesis finalization must therefore find the row already committed, so
+    the boundary's E_INTERNAL failure leaves >=1 oracle_reading llm_calls row."""
+    user_id = uuid4()
+    db_session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
+    _seed_oracle_corpus(db_session)
+    reading_id = _insert_pending_reading(
+        db_session,
+        user_id=user_id,
+        question="What survives the worker rollback?",
+    )
+
+    real_append_event = run_kit.append_event
+
+    def _append_event(db, *, stream, event_type, payload):
+        if event_type == "bind":
+            # The first finalization append, right after the F04 synthesis commit.
+            raise RuntimeError("post-synthesis finalization fault")
+        return real_append_event(db, stream=stream, event_type=event_type, payload=payload)
+
+    monkeypatch.setattr(run_kit, "append_event", _append_event)
+
+    with pytest.raises(RuntimeError, match="post-synthesis finalization fault"):
+        asyncio.run(
+            execute_reading(db_session, reading_id=reading_id, llm_router=_PublicOnlyRouter())
+        )
+
+    # Drive the real shared worker boundary exactly as nexus.tasks.oracle_reading does.
+    reading, failed_now = run_kit.fail_run_after_worker_exception(
+        db_session,
+        load_parent=lambda session: session.get(OracleReading, reading_id, populate_existing=True),
+        is_terminal=lambda r: r.status
+        in run_kit.terminal_statuses(run_kit.RunStreamKind.OracleReading),
+        write_failure=lambda session, r: run_kit.mark_terminal(
+            session,
+            stream=run_kit.oracle_reading_stream(r),
+            status="failed",
+            done_payload=oracle_done_payload(status="failed", error_code="E_INTERNAL"),
+            error_code="E_INTERNAL",
+            error_detail="RuntimeError: post-synthesis finalization fault",
+        ),
+    )
+    assert failed_now and reading is not None
+
+    db_session.expire_all()
+    row = (
+        db_session.execute(
+            text("SELECT status, error_code FROM oracle_readings WHERE id = :reading_id"),
+            {"reading_id": reading_id},
+        )
+        .mappings()
+        .one()
+    )
+    assert row["status"] == "failed"
+    assert row["error_code"] == "E_INTERNAL", "the boundary writes the E_INTERNAL floor"
+
+    call_count = db_session.execute(
+        text(
+            """
+            SELECT COUNT(*) FROM llm_calls
+            WHERE owner_kind = 'oracle_reading' AND owner_id = :reading_id
+            """
+        ),
+        {"reading_id": reading_id},
+    ).scalar_one()
+    assert call_count == 1, (
+        "the committed synthesis llm_calls row must survive the boundary rollback"
+    )
 
 
 def test_execute_reading_rejects_out_of_list_theme(

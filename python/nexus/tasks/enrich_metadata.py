@@ -5,8 +5,6 @@ failures are recorded as `failure_stage='metadata'` on the media row
 (soft warning) without touching `processing_status`.
 """
 
-import asyncio
-import time
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -14,12 +12,15 @@ import httpx
 from llm_calling.errors import LLMError
 from llm_calling.router import LLMRouter
 from llm_calling.types import LLMRequest, Turn
+from sqlalchemy.orm import Session
 
 from nexus.config import get_settings
 from nexus.db.models import FailureStage, Media, ProcessingStatus
 from nexus.db.session import get_session_factory
-from nexus.errors import LLM_ERROR_CODE_TO_API_ERROR_CODE, ApiErrorCode
+from nexus.errors import LLM_ERROR_CODE_TO_API_ERROR_CODE, ApiError, ApiErrorCode
 from nexus.logging import get_logger
+from nexus.services.api_key_resolver import resolve_api_key, update_user_key_status
+from nexus.services.llm_ledger import LlmCallOwner, observed_generate
 from nexus.services.metadata_dispatch import try_enqueue_metadata_enrichment
 from nexus.services.metadata_enrichment import (
     build_enrichment_prompt,
@@ -29,7 +30,7 @@ from nexus.services.metadata_enrichment import (
     select_enrichment_providers,
     validate_structured_enrichment,
 )
-from nexus.services.redact import safe_kv
+from nexus.tasks.llm_task import LlmTaskSpec, run_llm_task
 
 logger = get_logger(__name__)
 
@@ -76,6 +77,8 @@ def _failed_result(
 
 
 def _llm_error_code(exc: Exception) -> str:
+    if isinstance(exc, ApiError):
+        return exc.code.value
     if isinstance(exc, LLMError):
         return LLM_ERROR_CODE_TO_API_ERROR_CODE.get(
             exc.error_code, ApiErrorCode.E_LLM_PROVIDER_DOWN
@@ -98,7 +101,6 @@ def enrich_metadata(
     {"status": "failed", ...}.
     """
     media_uuid = UUID(media_id)
-    settings = get_settings()
 
     logger.info(
         "enrich_metadata_started",
@@ -106,10 +108,8 @@ def enrich_metadata(
         request_id=request_id,
     )
 
-    session_factory = get_session_factory()
-    db = session_factory()
-
-    try:
+    async def _run(db: Session, router: LLMRouter, _client: httpx.AsyncClient) -> dict:
+        settings = get_settings()
         media = db.get(Media, media_uuid)
         if media is None:
             return {"status": "skipped", "reason": "media_not_found"}
@@ -119,16 +119,20 @@ def enrich_metadata(
             return {"status": "skipped", "reason": "not_ready"}
 
         providers = select_enrichment_providers(settings)
-        if not providers:
+        owner_user_id = media.created_by_user_id
+        if not providers or owner_user_id is None:
             error_code = ApiErrorCode.E_METADATA_NO_PROVIDER.value
             _record_metadata_failure(
                 media,
                 error_code,
-                "No metadata enrichment provider is configured.",
+                "No metadata enrichment provider is configured."
+                if not providers
+                else "Media has no owning user to resolve an API key for.",
             )
             db.commit()
             return _failed_result(reason="no_provider", error_code=error_code)
 
+        owner = LlmCallOwner(kind="media_enrichment", id=media.id)
         content_sample = get_content_sample(db, media)
         prompt = build_enrichment_prompt(db, media, content_sample)
         structured_output = metadata_structured_output_spec()
@@ -141,8 +145,26 @@ def enrich_metadata(
             "model": None,
         }
 
-        for provider, model, api_key in providers:
+        for provider, model in providers:
             attempted_providers.append({"provider": provider, "model": model})
+            try:
+                resolved = resolve_api_key(db, owner_user_id, provider, "auto")
+            except (ApiError, LLMError) as exc:
+                logger.warning(
+                    "enrich_metadata_key_unavailable",
+                    media_id=media_id,
+                    provider=provider,
+                    error=str(exc),
+                )
+                last_failure = {
+                    "reason": "key_unavailable",
+                    "error_code": _llm_error_code(exc),
+                    "error_message": str(exc),
+                    "provider": provider,
+                    "model": model,
+                }
+                continue
+
             req = LLMRequest(
                 model_name=model,
                 messages=[Turn(role="user", content=prompt)],
@@ -151,51 +173,21 @@ def enrich_metadata(
                 structured_output=structured_output,
             )
 
-            llm_start = time.monotonic()
-            llm_log_fields = safe_kv(
-                provider=provider,
-                model_name=req.model_name,
-                reasoning_effort=req.reasoning_effort,
-                key_mode="platform",
-                streaming=False,
-                llm_operation="metadata_enrichment",
-                media_id=media_id,
-                message_chars=sum(len(message.content) for message in req.messages),
-            )
-            logger.info("llm.request.started", **llm_log_fields)
-
             try:
-
-                async def _call(provider=provider, req=req, api_key=api_key):
-                    async with httpx.AsyncClient() as client:
-                        router = LLMRouter(
-                            client,
-                            enable_openai=settings.enable_openai,
-                            enable_anthropic=settings.enable_anthropic,
-                            enable_gemini=settings.enable_gemini,
-                            enable_deepseek=settings.enable_deepseek,
-                        )
-                        return await router.generate(provider, req, api_key, timeout_s=30)
-
-                # Use an explicit event loop so the handler stays self-contained in
-                # the long-lived worker process.
-                loop = asyncio.new_event_loop()
-                try:
-                    response = loop.run_until_complete(_call())
-                finally:
-                    loop.close()
+                response = await observed_generate(
+                    db,
+                    owner=owner,
+                    llm=router,
+                    provider=provider,
+                    request=req,
+                    api_key=resolved.api_key,
+                    timeout_s=30,
+                    llm_operation="metadata_enrichment",
+                    key_mode_requested="auto",
+                    key_mode_used=resolved.mode,
+                )
             except Exception as exc:
                 error_code = _llm_error_code(exc)
-                logger.error(
-                    "llm.request.failed",
-                    **safe_kv(
-                        **llm_log_fields,
-                        outcome="error",
-                        error_class=error_code,
-                        latency_ms=int((time.monotonic() - llm_start) * 1000),
-                        exception_type=type(exc).__name__,
-                    ),
-                )
                 logger.warning(
                     "enrich_metadata_llm_failed",
                     media_id=media_id,
@@ -203,6 +195,8 @@ def enrich_metadata(
                     model=model,
                     error=str(exc),
                 )
+                if resolved.mode == "byok" and error_code == ApiErrorCode.E_LLM_INVALID_KEY.value:
+                    update_user_key_status(db, resolved.user_key_id, "invalid")
                 last_failure = {
                     "reason": "llm_failed",
                     "error_code": error_code,
@@ -212,50 +206,17 @@ def enrich_metadata(
                 }
                 continue
 
-            if getattr(response, "status", None) == "incomplete":
-                usage = getattr(response, "usage", None)
-                logger.error(
-                    "llm.request.failed",
-                    **safe_kv(
-                        **llm_log_fields,
-                        outcome="error",
-                        error_class=ApiErrorCode.E_LLM_INCOMPLETE.value,
-                        incomplete_details=getattr(response, "incomplete_details", None),
-                        latency_ms=int((time.monotonic() - llm_start) * 1000),
-                        tokens_input=usage.input_tokens if usage else None,
-                        tokens_output=usage.output_tokens if usage else None,
-                        tokens_total=usage.total_tokens if usage else None,
-                        tokens_reasoning=usage.reasoning_tokens if usage else None,
-                        provider_request_id=getattr(response, "provider_request_id", None),
-                    ),
-                )
+            if response.status == "incomplete":
                 last_failure = {
                     "reason": "llm_incomplete",
                     "error_code": ApiErrorCode.E_LLM_INCOMPLETE.value,
-                    "error_message": str(
-                        getattr(response, "incomplete_details", None) or "llm response incomplete"
-                    ),
+                    "error_message": str(response.incomplete_details or "llm response incomplete"),
                     "provider": provider,
                     "model": model,
                 }
                 continue
 
-            usage = getattr(response, "usage", None)
-            logger.info(
-                "llm.request.finished",
-                **safe_kv(
-                    **llm_log_fields,
-                    outcome="success",
-                    latency_ms=int((time.monotonic() - llm_start) * 1000),
-                    tokens_input=usage.input_tokens if usage else None,
-                    tokens_output=usage.output_tokens if usage else None,
-                    tokens_total=usage.total_tokens if usage else None,
-                    provider_request_id=getattr(response, "provider_request_id", None),
-                ),
-            )
-
-            structured_payload = getattr(response, "structured_output", None)
-            enrichment = validate_structured_enrichment(structured_payload)
+            enrichment = validate_structured_enrichment(response.structured_output)
             if enrichment is None:
                 logger.warning(
                     "enrich_metadata_parse_failed",
@@ -297,6 +258,8 @@ def enrich_metadata(
                 media.failure_stage = None
                 media.last_error_code = None
                 media.last_error_message = None
+            if resolved.mode == "byok":
+                update_user_key_status(db, resolved.user_key_id, "valid")
             db.commit()
 
             logger.info(
@@ -328,20 +291,19 @@ def enrich_metadata(
             attempted_providers=attempted_providers,
         )
 
-    except Exception as exc:
+    def _record_unexpected(db: Session, exc: Exception) -> dict:
         db.rollback()
-        logger.warning(
-            "enrich_metadata_unexpected_error",
-            media_id=media_id,
-            error=str(exc),
-        )
         media = db.get(Media, media_uuid)
         if media is not None:
             _record_metadata_failure(media, "E_METADATA_UNEXPECTED", str(exc))
             db.commit()
         return _failed_result(reason="unexpected_error", error_code="E_METADATA_UNEXPECTED")
-    finally:
-        db.close()
+
+    return run_llm_task(
+        LlmTaskSpec(label="enrich_metadata"),
+        _run,
+        on_worker_exception=_record_unexpected,
+    )
 
 
 def dispatch_enrich_metadata(media_id: str, request_id: str | None) -> None:

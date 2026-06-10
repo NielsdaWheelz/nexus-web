@@ -15,8 +15,8 @@ import {
   type SSEEvent,
   type SSEReferenceAddedEvent,
 } from "@/lib/api/sse/events";
-import { sseClientDirect } from "@/lib/api/sse-client";
-import { fetchStreamToken } from "@/lib/api/streamToken";
+import type { SseBackoffConfig } from "@/lib/api/sse-client";
+import { openGenerationRunStream } from "@/lib/api/useGenerationRun";
 import type {
   ChatRunResponse,
   ConversationMessage,
@@ -38,22 +38,17 @@ type RunVisibilityTarget = {
   assistantMessageId: string;
 };
 
-const CHAT_STREAM_RETRY_BASE_MS = 1000;
-const CHAT_STREAM_RETRY_MAX_MS = 8000;
-const CHAT_STREAM_RETRY_JITTER_MS = 250;
 const CHAT_STREAM_MAX_RECONNECTS = 8;
+const CHAT_STREAM_BACKOFF: SseBackoffConfig = {
+  baseMs: 1000,
+  maxMs: 8000,
+  jitterMs: 250,
+};
 
 function isTerminalRunStatus(
   status: ChatRunData["run"]["status"],
 ): status is TerminalRunStatus {
   return status === "complete" || status === "error" || status === "cancelled";
-}
-
-function chatStreamRetryDelayMs(attempt: number): number {
-  return (
-    Math.min(CHAT_STREAM_RETRY_BASE_MS * 2 ** attempt, CHAT_STREAM_RETRY_MAX_MS) +
-    Math.floor(Math.random() * CHAT_STREAM_RETRY_JITTER_MS)
-  );
 }
 
 export function useChatRunTail({
@@ -137,11 +132,7 @@ export function useChatRunTail({
       const originalAssistantId = runData.assistant_message.id;
       let currentUserId = originalUserId;
       let currentAssistantId = originalAssistantId;
-      let lastEventId = "";
       let replayDeltaCharsToSkip = 0;
-      let retryAttempt = 0;
-      let reconnectCount = 0;
-      let retryTimer: ReturnType<typeof setTimeout> | null = null;
       let doneNotified = false;
       let finished = false;
       const token = (runTokensRef.current.get(runId) ?? 0) + 1;
@@ -193,11 +184,10 @@ export function useChatRunTail({
       mergeRunMessagesIfVisible(runData);
       onConversationAvailable?.(runData.conversation.id, runId);
 
-      const clearRetryTimer = () => {
-        if (retryTimer === null) return;
-        clearTimeout(retryTimer);
-        retryTimer = null;
-      };
+      // Aborting this stops the SSE connection (its signal feeds the opener) and,
+      // because the opener honors the signal post-mint, also cancels a tail that
+      // is superseded (abortAll) or finished mid-token-mint.
+      const streamAbort = new AbortController();
 
       const notifyDone = (status: TerminalRunStatus, errorCode: string | null) => {
         if (doneNotified) return;
@@ -208,7 +198,7 @@ export function useChatRunTail({
       const finishRun = () => {
         if (finished) return;
         finished = true;
-        clearRetryTimer();
+        streamAbort.abort();
         activeStreamsRef.current.delete(runId);
         setActiveRunId((current) => (current === runId ? null : current));
         onRunFinished?.(runId);
@@ -228,7 +218,7 @@ export function useChatRunTail({
       }
 
       setActiveRunId(runId);
-      activeStreamsRef.current.set(runId, clearRetryTimer);
+      activeStreamsRef.current.set(runId, () => streamAbort.abort());
 
       const reconcile = async () => {
         try {
@@ -266,15 +256,134 @@ export function useChatRunTail({
         }
       };
 
-      const continueAfterStreamBoundary = async (terminalEventSeen: boolean) => {
-        const persisted = await reconcile();
-        if (runTokensRef.current.get(runId) !== token || finished) return;
-        if (terminalEventSeen) {
+      const startStream = async (): Promise<void> => {
+        if (runTokensRef.current.get(runId) !== token || finished || !runCanStart()) {
           finishRun();
           return;
         }
-        reconnectCount += 1;
-        if (reconnectCount >= CHAT_STREAM_MAX_RECONNECTS) {
+
+        try {
+          await openGenerationRunStream<SSEEvent>("chat-runs", runId, {
+            decode: toChatSSEEvent,
+            isTerminal: (event) => event.type === "done",
+            onEvent: (event) => {
+              if (runTokensRef.current.get(runId) !== token) return;
+              switch (event.type) {
+                case "meta":
+                  currentUserId = event.data.user_message_id;
+                  currentAssistantId = event.data.assistant_message_id;
+                  if (currentRunIsVisible()) {
+                    handleMetaReceived(
+                      originalUserId,
+                      currentUserId,
+                      originalAssistantId,
+                      currentAssistantId,
+                    );
+                  }
+                  onConversationAvailable?.(event.data.conversation_id, runId);
+                  break;
+                case "delta":
+                  if (currentRunIsVisible() && !firstDeltaRunIdsRef.current.has(runId)) {
+                    firstDeltaRunIdsRef.current.add(runId);
+                    onFirstDelta?.(runId);
+                  }
+                  if (replayDeltaCharsToSkip > 0) {
+                    if (event.data.delta.length <= replayDeltaCharsToSkip) {
+                      replayDeltaCharsToSkip -= event.data.delta.length;
+                      break;
+                    }
+                    const remainingDelta = event.data.delta.slice(replayDeltaCharsToSkip);
+                    replayDeltaCharsToSkip = 0;
+                    if (!currentRunIsVisible()) break;
+                    handleDelta(currentAssistantId, remainingDelta);
+                    break;
+                  }
+                  if (!currentRunIsVisible()) break;
+                  handleDelta(currentAssistantId, event.data.delta);
+                  break;
+                case "tool_call":
+                  if (!currentRunIsVisible()) break;
+                  handleToolCall(currentAssistantId, event.data);
+                  break;
+                case "retrieval_result":
+                  if (!currentRunIsVisible()) break;
+                  handleToolResult(currentAssistantId, event.data);
+                  break;
+                case "citation_index":
+                  if (!currentRunIsVisible()) break;
+                  handleCitationIndex(currentAssistantId, event.data);
+                  break;
+                case "reference_added":
+                  handleReferenceAdded(event.data);
+                  break;
+                case "done":
+                  if (currentRunIsVisible()) {
+                    handleDone(
+                      currentAssistantId,
+                      event.data.status,
+                      event.data.error_code,
+                    );
+                  }
+                  notifyDone(event.data.status, event.data.error_code);
+                  break;
+                default: {
+                  const _exhaustive: never = event;
+                  return _exhaustive;
+                }
+              }
+            },
+            // A recoverable boundary (network/401/5xx/clean-EOF/interrupt) before a
+            // terminal event: reconcile against the persisted run, then either stop
+            // (the run is terminal in the DB) or resume — skipping the assistant
+            // text already persisted so the reconnect doesn't double-render deltas.
+            onReconnect: async () => {
+              const persisted = await reconcile();
+              if (runTokensRef.current.get(runId) !== token || finished) {
+                return "stop";
+              }
+              replayDeltaCharsToSkip = persisted
+                ? conversationMessageText(persisted.assistant_message).length
+                : 0;
+              return "continue";
+            },
+            onError: (err) => {
+              if (runTokensRef.current.get(runId) !== token || finished) return;
+              // Reconnect budget exhausted (or a fatal stream error). Reconcile one
+              // last time — the run may have completed in the DB exactly as the
+              // stream died — and only surface the interruption if it did not.
+              console.error("Chat run stream failed:", err);
+              void (async () => {
+                await reconcile();
+                if (runTokensRef.current.get(runId) !== token || finished) return;
+                if (currentRunIsVisible()) {
+                  handleDone(currentAssistantId, "error", "E_STREAM_INTERRUPTED");
+                }
+                notifyDone("error", "E_STREAM_INTERRUPTED");
+                finishRun();
+              })();
+            },
+            onComplete: () => {
+              // Fires on a terminal event (the `done` handler already notified) or
+              // after `onReconnect` returned "stop" (reconcile finished the run).
+              if (runTokensRef.current.get(runId) !== token) return;
+              finishRun();
+            },
+            // The client owns Last-Event-ID resumption across its own reconnects;
+            // a fresh tail always starts from the stream head.
+            maxReconnects: CHAT_STREAM_MAX_RECONNECTS,
+            backoff: CHAT_STREAM_BACKOFF,
+            // Aborts the live stream on finish/supersede; the opener also honors
+            // it post-mint, so a tail superseded mid-token-mint never connects.
+            signal: streamAbort.signal,
+          });
+        } catch (err) {
+          // First-token mint failed. 401 hands off to the auth boundary; anything
+          // else mirrors onError — the run may already be terminal in the DB, so
+          // reconcile once and only surface the interruption if it did not finish.
+          if (handleUnauthenticatedApiError(err)) return;
+          console.error("Failed to open chat run stream:", err);
+          await reconcile();
+          if (runTokensRef.current.get(runId) !== token || finished) return;
           if (currentRunIsVisible()) {
             handleDone(currentAssistantId, "error", "E_STREAM_INTERRUPTED");
           }
@@ -282,143 +391,12 @@ export function useChatRunTail({
           finishRun();
           return;
         }
-        if (persisted) {
-          replayDeltaCharsToSkip = conversationMessageText(
-            persisted.assistant_message,
-          ).length;
-        }
-        const delayMs = chatStreamRetryDelayMs(retryAttempt);
-        retryAttempt += 1;
-        retryTimer = setTimeout(() => {
-          retryTimer = null;
-          void startStream();
-        }, delayMs);
-        activeStreamsRef.current.set(runId, clearRetryTimer);
-      };
 
-      const startStream = async (): Promise<void> => {
+        // Superseded (abortAll bumped the token) or unmounted during the mint:
+        // the opener skipped connecting; still run finish orchestration.
         if (runTokensRef.current.get(runId) !== token || finished || !runCanStart()) {
           finishRun();
-          return;
         }
-        clearRetryTimer();
-        let streamBaseUrl: string;
-        let firstStreamToken: string | null = null;
-
-        try {
-          const tokenResponse = await fetchStreamToken();
-          streamBaseUrl = tokenResponse.stream_base_url;
-          firstStreamToken = tokenResponse.token;
-        } catch (err) {
-          if (handleUnauthenticatedApiError(err)) return;
-          console.error("Failed to fetch chat stream token:", err);
-          await continueAfterStreamBoundary(false);
-          return;
-        }
-
-        if (runTokensRef.current.get(runId) !== token || finished || !runCanStart()) {
-          finishRun();
-          return;
-        }
-
-        const abort = sseClientDirect<SSEEvent>({
-          url: `${streamBaseUrl}/chat-runs/${runId}/events`,
-          streamToken: async () => {
-            if (firstStreamToken !== null) {
-              const streamToken = firstStreamToken;
-              firstStreamToken = null;
-              return streamToken;
-            }
-            return (await fetchStreamToken()).token;
-          },
-          decode: toChatSSEEvent,
-          isTerminal: (event) => event.type === "done",
-          onEvent: (event) => {
-            if (runTokensRef.current.get(runId) !== token) return;
-            switch (event.type) {
-              case "meta":
-                currentUserId = event.data.user_message_id;
-                currentAssistantId = event.data.assistant_message_id;
-                if (currentRunIsVisible()) {
-                  handleMetaReceived(
-                    originalUserId,
-                    currentUserId,
-                    originalAssistantId,
-                    currentAssistantId,
-                  );
-                }
-                onConversationAvailable?.(event.data.conversation_id, runId);
-                break;
-              case "delta":
-                if (currentRunIsVisible() && !firstDeltaRunIdsRef.current.has(runId)) {
-                  firstDeltaRunIdsRef.current.add(runId);
-                  onFirstDelta?.(runId);
-                }
-                if (replayDeltaCharsToSkip > 0) {
-                  if (event.data.delta.length <= replayDeltaCharsToSkip) {
-                    replayDeltaCharsToSkip -= event.data.delta.length;
-                    break;
-                  }
-                  const remainingDelta = event.data.delta.slice(replayDeltaCharsToSkip);
-                  replayDeltaCharsToSkip = 0;
-                  if (!currentRunIsVisible()) break;
-                  retryAttempt = 0;
-                  reconnectCount = 0;
-                  handleDelta(currentAssistantId, remainingDelta);
-                  break;
-                }
-                if (!currentRunIsVisible()) break;
-                retryAttempt = 0;
-                reconnectCount = 0;
-                handleDelta(currentAssistantId, event.data.delta);
-                break;
-              case "tool_call":
-                if (!currentRunIsVisible()) break;
-                handleToolCall(currentAssistantId, event.data);
-                break;
-              case "retrieval_result":
-                if (!currentRunIsVisible()) break;
-                handleToolResult(currentAssistantId, event.data);
-                break;
-              case "citation_index":
-                if (!currentRunIsVisible()) break;
-                handleCitationIndex(currentAssistantId, event.data);
-                break;
-              case "reference_added":
-                handleReferenceAdded(event.data);
-                break;
-              case "done":
-                if (currentRunIsVisible()) {
-                  handleDone(
-                    currentAssistantId,
-                    event.data.status,
-                    event.data.error_code,
-                  );
-                }
-                notifyDone(event.data.status, event.data.error_code);
-                break;
-              default: {
-                const _exhaustive: never = event;
-                return _exhaustive;
-              }
-            }
-          },
-          onError: (err) => {
-            if (runTokensRef.current.get(runId) !== token) return;
-            console.error("Chat run stream failed:", err);
-            void continueAfterStreamBoundary(false);
-          },
-          onComplete: (terminalEventSeen) => {
-            if (runTokensRef.current.get(runId) !== token) return;
-            void continueAfterStreamBoundary(terminalEventSeen);
-          },
-          onLastEventId: (id) => {
-            lastEventId = id;
-          },
-          lastEventId,
-          maxReconnects: 0,
-        });
-        activeStreamsRef.current.set(runId, abort);
       };
 
       await startStream();

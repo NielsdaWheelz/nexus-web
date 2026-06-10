@@ -38,6 +38,7 @@ from nexus.errors import (
     NotFoundError,
 )
 from nexus.logging import get_logger
+from nexus.schemas.citation import CitationOut
 from nexus.schemas.conversation import (
     BRANCH_ANCHOR_KINDS,
     ConversationOut,
@@ -47,6 +48,7 @@ from nexus.schemas.conversation import (
     PageInfo,
 )
 from nexus.services import conversation_references as conversation_references_service
+from nexus.services.retrieval_citation import build_citation_outs_for_messages
 
 logger = get_logger(__name__)
 
@@ -210,14 +212,20 @@ def conversation_to_out(
 def message_to_out(
     message: Message,
     can_retry_response: bool = False,
+    citations: list[CitationOut] | None = None,
 ) -> MessageOut:
-    """Convert Message ORM model to MessageOut schema."""
+    """Convert Message ORM model to MessageOut schema.
+
+    Pure mapper: ``citations`` (the server-built ``[N]`` read-model for assistant
+    messages) is computed by the caller and threaded through here.
+    """
     branch_anchor = {"kind": message.branch_anchor_kind, **(message.branch_anchor or {})}
     return MessageOut(
         id=message.id,
         seq=message.seq,
         role=message.role,
         message_document=MessageDocument.model_validate(message.message_document),
+        citations=citations or [],
         parent_message_id=message.parent_message_id,
         branch_root_message_id=message.branch_root_message_id,
         branch_anchor_kind=cast(BRANCH_ANCHOR_KINDS, message.branch_anchor_kind),
@@ -622,12 +630,17 @@ def list_messages(
         viewer_id=viewer_id,
         assistant_message_ids=message_ids,
     )
+    assistant_message_ids = [row[0] for row in rows if row[2] == "assistant"]
+    citations_by_message = build_citation_outs_for_messages(
+        db, assistant_message_ids=assistant_message_ids
+    )
     messages = [
         MessageOut(
             id=row[0],
             seq=row[1],
             role=row[2],
             message_document=MessageDocument.model_validate(row[12]),
+            citations=citations_by_message.get(row[0], []),
             parent_message_id=row[8],
             branch_root_message_id=row[9],
             branch_anchor_kind=row[10],
@@ -856,10 +869,6 @@ def delete_message_rows_without_commit(db: Session, message_ids: Sequence[UUID])
             WHERE (a_type = 'message' AND a_id = ANY(:message_ids))
                OR (b_type = 'message' AND b_id = ANY(:message_ids))
         """),
-        {"message_ids": list(message_ids)},
-    )
-    db.execute(
-        text("DELETE FROM message_llm WHERE message_id = ANY(:message_ids)"),
         {"message_ids": list(message_ids)},
     )
     db.execute(delete(Message).where(Message.id.in_(message_ids)))

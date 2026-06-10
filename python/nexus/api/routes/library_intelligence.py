@@ -3,7 +3,7 @@
 from typing import Annotated, cast
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Header
 from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
@@ -13,7 +13,6 @@ from nexus.schemas.library_intelligence import (
     LibraryIntelligenceArtifactOut,
     LibraryIntelligenceBuildOut,
     LibraryIntelligenceGenerateOut,
-    LibraryIntelligenceGenerateRequest,
     LibraryIntelligenceRevisionsOut,
     LibraryIntelligenceRevisionSummaryOut,
     RevisionStatus,
@@ -62,15 +61,15 @@ def get_library_intelligence(
 @router.post("/libraries/{library_id}/intelligence/generate", status_code=202)
 def generate_library_intelligence(
     library_id: UUID,
-    body: LibraryIntelligenceGenerateRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=256)],
 ) -> dict:
     ref = library_intelligence_service.generate_artifact(
         db,
         viewer_id=viewer.user_id,
         library_id=library_id,
-        idempotency_key=body.idempotency_key,
+        idempotency_key=idempotency_key,
     )
     return ok(
         LibraryIntelligenceGenerateOut(

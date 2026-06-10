@@ -9,15 +9,22 @@ from __future__ import annotations
 
 import dataclasses
 import json
-import time
 from collections.abc import AsyncIterator, Mapping
 from datetime import UTC, datetime
 from typing import Any, Protocol, cast
 from uuid import UUID
 
-import httpx
-from llm_calling.errors import LLMError, classify_provider_error
-from llm_calling.types import LLMChunk, LLMRequest, LLMUsage, ToolResult, ToolSpec, Turn
+from llm_calling.errors import LLMError
+from llm_calling.router import LLMRouter
+from llm_calling.types import (
+    LLMChunk,
+    LLMRequest,
+    LLMUsage,
+    ProviderItem,
+    ToolResult,
+    ToolSpec,
+    Turn,
+)
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 from web_search_tool.types import WebSearchProvider
@@ -86,7 +93,6 @@ from nexus.services.chat_run_finalize import (
     ERROR_CODE_TO_MESSAGE,
     MAX_ASSISTANT_CONTENT_LENGTH,
     TRUNCATION_NOTICE,
-    dummy_resolved_key,
     finalize_cancelled,
     finalize_error,
     finalize_interrupted,
@@ -108,7 +114,7 @@ from nexus.services.chat_run_prompt_tracking import (
     reconcile_prompt_retrievals,
 )
 from nexus.services.chat_run_response import build_chat_run_response
-from nexus.services.chat_run_usage import usage_log_fields, usage_tokens
+from nexus.services.chat_run_usage import usage_tokens
 from nexus.services.chat_run_validation import validate_pre_phase
 from nexus.services.context_assembler import (
     assemble_chat_context,
@@ -123,15 +129,16 @@ from nexus.services.conversation_references import (
     reference_to_event_payload,
     resolve_reference_row,
 )
-from nexus.services.prompt_budget import ContextBudgetError
+from nexus.services.llm_ledger import LlmCallOwner, observed_generate_stream
+from nexus.services.prompt_budget import ContextBudgetError, estimate_tokens
 from nexus.services.rate_limit import get_rate_limiter
-from nexus.services.redact import safe_kv
 from nexus.services.resource_resolver import (
     ResourceUriScheme,
     format_resource_uri,
 )
 from nexus.services.retrieval_citation import (
     RetrievalCitation,
+    build_citation_outs_for_message,
     citation_from_search_result,
     insert_retrieval_row,
 )
@@ -139,23 +146,6 @@ from nexus.services.search import get_search_result
 from nexus.services.seq import assign_next_message_seq
 
 logger = get_logger(__name__)
-
-
-def _unread_stream_api_error_code(provider: str, exc: httpx.ResponseNotRead) -> str | None:
-    """Recover provider classification when a streaming HTTP body was not read."""
-    context = exc.__context__
-    if not isinstance(context, httpx.HTTPStatusError):
-        return None
-    response = context.response
-    if response is None:
-        return None
-    llm_error_code = classify_provider_error(
-        provider,
-        response.status_code,
-        None,
-        None,
-    )
-    return LLM_ERROR_CODE_TO_API_ERROR_CODE[llm_error_code].value
 
 
 REASONING_OUTPUT_TOKENS = 25000
@@ -539,11 +529,7 @@ def _emit_citation_index(db: Session, run: ChatRun) -> None:
     rows = db.execute(
         text(
             """
-            SELECT mr.citation_ordinal,
-                   mr.id,
-                   mr.tool_call_id,
-                   mr.ordinal,
-                   mr.result_type,
+            SELECT mr.result_type,
                    mr.evidence_span_id,
                    mr.media_id,
                    mr.result_ref
@@ -559,30 +545,22 @@ def _emit_citation_index(db: Session, run: ChatRun) -> None:
     ).fetchall()
     if not rows:
         return
+    citations = build_citation_outs_for_message(db, assistant_message_id=run.assistant_message_id)
     append_run_event(
         db,
         run,
         "citation_index",
         {
             "assistant_message_id": str(run.assistant_message_id),
-            "entries": [
-                {
-                    "n": row[0],
-                    "retrieval_id": str(row[1]),
-                    "tool_call_id": str(row[2]),
-                    "ordinal": row[3],
-                    "result": row[7] or None,
-                }
-                for row in rows
-            ],
+            "citations": [c.model_dump(mode="json") for c in citations],
         },
     )
     for row in rows:
         uri = _retrieval_row_to_uri(
-            result_type=row[4],
-            evidence_span_id=row[5],
-            media_id=row[6],
-            result_ref=row[7] or {},
+            result_type=row[0],
+            evidence_span_id=row[1],
+            media_id=row[2],
+            result_ref=row[3] or {},
         )
         if uri is None:
             continue
@@ -1038,7 +1016,7 @@ async def execute_chat_run(
                 db,
                 run_id=run_id,
                 error_code=exc.code.value,
-                viewer_id=None,
+                error_detail=f"{type(exc).__name__}: {exc}"[:1000],
                 assistant_content=ERROR_CODE_TO_MESSAGE.get(exc.code.value, exc.message),
             )
             return {"status": "error", "error_code": exc.code.value}
@@ -1052,7 +1030,7 @@ async def execute_chat_run(
                 db,
                 run_id=run_id,
                 error_code=ApiErrorCode.E_INTERNAL.value,
-                viewer_id=None,
+                error_detail=f"{type(exc).__name__}: {exc}"[:1000],
             )
             return {"status": "error", "error_code": ApiErrorCode.E_INTERNAL.value}
         except Exception:
@@ -1087,8 +1065,6 @@ async def _execute_chat_run(
             db,
             run_id=run.id,
             error_code=ApiErrorCode.E_MODEL_NOT_AVAILABLE.value,
-            viewer_id=run.owner_user_id,
-            key_mode=run.key_mode,
         )
         return {"status": "error", "error_code": ApiErrorCode.E_MODEL_NOT_AVAILABLE.value}
 
@@ -1097,7 +1073,7 @@ async def _execute_chat_run(
     if run is None or run.status in TERMINAL_RUN_STATUSES:
         return {"status": "skipped", "reason": "terminal"}
     if run.cancel_requested_at is not None:
-        finalize_cancelled(db, run, model, None, 0)
+        finalize_cancelled(db, run, None)
         return {"status": "cancelled"}
 
     try:
@@ -1108,10 +1084,7 @@ async def _execute_chat_run(
             db,
             run_id=run.id,
             error_code=error_code,
-            viewer_id=run.owner_user_id,
-            model=model,
-            resolved_key=dummy_resolved_key(model),
-            key_mode=run.key_mode,
+            error_detail=f"{type(exc).__name__}: {exc}"[:1000],
             assistant_content=ERROR_CODE_TO_MESSAGE["E_LLM_INVALID_KEY"],
         )
         return {"status": "error", "error_code": error_code}
@@ -1119,16 +1092,8 @@ async def _execute_chat_run(
     rate_limiter = get_rate_limiter()
     rate_limiter.acquire_inflight_slot(run.owner_user_id)
     budget_reserved = False
-    start_time = time.monotonic()
     max_output_tokens = _max_output_tokens_for_reasoning(model, run.reasoning)
     try:
-        if resolved_key.mode == "platform":
-            est_tokens = len(run.user_message.content) // 4 + max_output_tokens
-            rate_limiter.reserve_token_budget(
-                run.owner_user_id, run.assistant_message_id, est_tokens
-            )
-            budget_reserved = True
-
         conversation = db.get(Conversation, run.conversation_id)
         user_message = db.get(Message, run.user_message_id)
         if conversation is None or user_message is None:
@@ -1136,19 +1101,13 @@ async def _execute_chat_run(
                 db,
                 run_id=run.id,
                 error_code=ApiErrorCode.E_CONVERSATION_NOT_FOUND.value,
-                viewer_id=run.owner_user_id,
-                model=model,
                 resolved_key=resolved_key,
-                key_mode=run.key_mode,
-                latency_ms=int((time.monotonic() - start_time) * 1000),
                 assistant_content="Conversation not found.",
             )
             return {"status": "error", "error_code": ApiErrorCode.E_CONVERSATION_NOT_FOUND.value}
 
         if is_cancel_requested(db, run.id):
-            finalize_cancelled(
-                db, run, model, resolved_key, int((time.monotonic() - start_time) * 1000)
-            )
+            finalize_cancelled(db, run, resolved_key)
             return {"status": "cancelled"}
 
         try:
@@ -1178,15 +1137,21 @@ async def _execute_chat_run(
                 db,
                 run_id=run.id,
                 error_code=error_code,
-                viewer_id=run.owner_user_id,
-                model=model,
+                error_detail=f"{type(exc).__name__}: {exc}"[:1000],
                 resolved_key=resolved_key,
-                key_mode=run.key_mode,
-                latency_ms=int((time.monotonic() - start_time) * 1000),
             )
             return {"status": "error", "error_code": error_code}
 
         llm_request = dataclasses.replace(assembly.llm_request, tools=_CHAT_TOOL_SPECS)
+        if resolved_key.mode == "platform":
+            est_tokens = (
+                estimate_tokens("\n".join(turn.content for turn in llm_request.messages))
+                + llm_request.max_tokens
+            )
+            rate_limiter.reserve_token_budget(
+                run.owner_user_id, run.assistant_message_id, est_tokens
+            )
+            budget_reserved = True
         turns: list[Turn] = list(llm_request.messages)
         full_content = ""
         usage: LLMUsage | None = None
@@ -1196,31 +1161,28 @@ async def _execute_chat_run(
         locally_truncated = False
         citation_n_next = len(assembly.attached_citations) + 1
         tool_call_index_next = 0
-        llm_start = time.monotonic()
-        llm_log_fields = safe_kv(
-            provider=model.provider,
-            model_name=llm_request.model_name,
-            reasoning_effort=llm_request.reasoning_effort,
-            key_mode=resolved_key.mode,
-            streaming=True,
-            llm_operation="chat_send",
-            conversation_id=str(run.conversation_id),
-            assistant_message_id=str(run.assistant_message_id),
-            prompt_chars=assembly.prompt_plan.text_char_count(),
-            cacheable_input_tokens_estimate=assembly.prompt_plan.cacheable_input_tokens_estimate,
-        )
-        logger.info("llm.request.started", **llm_log_fields)
+        call_owner = LlmCallOwner(kind="chat_run", id=run.id)
         try:
             for _iteration in range(MAX_TOOL_ITERATIONS):
                 pending_tool_calls: list[Any] = []
+                provider_items: list[ProviderItem] = []
                 iter_text = ""
                 iter_terminal = False
                 iter_request = dataclasses.replace(llm_request, messages=turns)
-                async for chunk in llm_router.generate_stream(
-                    model.provider,
-                    iter_request,
-                    resolved_key.api_key,
+                async for chunk in observed_generate_stream(
+                    db,
+                    owner=call_owner,
+                    # The ledger is typed against the nominal router; chat's seam
+                    # stays the structural ChatRunLLMRouter (test fakes), same
+                    # cast precedent as llm_task's fixture swap.
+                    llm=cast(LLMRouter, llm_router),
+                    provider=model.provider,
+                    request=iter_request,
+                    api_key=resolved_key.api_key,
                     timeout_s=int(LLM_TIMEOUT_SECONDS),
+                    llm_operation="chat_send",
+                    key_mode_requested=run.key_mode,
+                    key_mode_used=resolved_key.mode,
                 ):
                     if chunk.done:
                         iter_terminal = True
@@ -1247,14 +1209,10 @@ async def _execute_chat_run(
                             break
                     if chunk.tool_call is not None:
                         pending_tool_calls.append(chunk.tool_call)
+                    if chunk.provider_item is not None:
+                        provider_items.append(chunk.provider_item)
                     if is_cancel_requested(db, run.id):
-                        finalize_cancelled(
-                            db,
-                            run,
-                            model,
-                            resolved_key,
-                            int((time.monotonic() - start_time) * 1000),
-                        )
+                        finalize_cancelled(db, run, resolved_key)
                         return {"status": "cancelled"}
                 if locally_truncated or not pending_tool_calls:
                     break
@@ -1265,6 +1223,7 @@ async def _execute_chat_run(
                         role="assistant",
                         content=iter_text,
                         tool_calls=tuple(pending_tool_calls),
+                        provider_items=tuple(provider_items),
                     )
                 )
                 tool_results: list[ToolResult] = []
@@ -1431,145 +1390,50 @@ async def _execute_chat_run(
                     iterations=MAX_TOOL_ITERATIONS,
                 )
         except LLMError as llm_error:
-            latency_ms = int((time.monotonic() - start_time) * 1000)
             error_code = LLM_ERROR_CODE_TO_API_ERROR_CODE[llm_error.error_code].value
-            logger.error(
-                "llm.request.failed",
-                **safe_kv(
-                    **llm_log_fields,
-                    outcome="error",
-                    error_class=error_code,
-                    provider_error_message=llm_error.message,
-                    latency_ms=int((time.monotonic() - llm_start) * 1000),
-                ),
-            )
+            error_detail = f"{type(llm_error).__name__}: {llm_error}"[:1000]
+            if provider_request_id is not None:
+                error_detail = f"{error_detail} (provider_request_id={provider_request_id})"
             finalize_error(
                 db,
                 run_id=run.id,
                 error_code=error_code,
-                viewer_id=run.owner_user_id,
-                model=model,
+                error_detail=error_detail,
                 resolved_key=resolved_key,
-                key_mode=run.key_mode,
-                latency_ms=latency_ms,
-                usage=usage,
-                provider_request_id=provider_request_id,
-            )
-            return {"status": "error", "error_code": error_code}
-        except httpx.ResponseNotRead as unread_error:
-            error_code = _unread_stream_api_error_code(model.provider, unread_error)
-            if error_code is None:
-                raise
-            latency_ms = int((time.monotonic() - start_time) * 1000)
-            logger.error(
-                "llm.request.failed",
-                **safe_kv(
-                    **llm_log_fields,
-                    outcome="error",
-                    error_class=error_code,
-                    provider_error_message=str(unread_error),
-                    latency_ms=int((time.monotonic() - llm_start) * 1000),
-                ),
-            )
-            finalize_error(
-                db,
-                run_id=run.id,
-                error_code=error_code,
-                viewer_id=run.owner_user_id,
-                model=model,
-                resolved_key=resolved_key,
-                key_mode=run.key_mode,
-                latency_ms=latency_ms,
-                usage=usage,
-                provider_request_id=provider_request_id,
             )
             return {"status": "error", "error_code": error_code}
 
         if not terminal_seen and not locally_truncated:
-            latency_ms = int((time.monotonic() - start_time) * 1000)
             finalize_error(
                 db,
                 run_id=run.id,
                 error_code=ApiErrorCode.E_LLM_INTERRUPTED.value,
-                viewer_id=run.owner_user_id,
-                model=model,
                 resolved_key=resolved_key,
-                key_mode=run.key_mode,
-                latency_ms=latency_ms,
-                usage=usage,
-                provider_request_id=provider_request_id,
             )
             return {"status": "error", "error_code": ApiErrorCode.E_LLM_INTERRUPTED.value}
 
         if incomplete_reason is not None:
-            latency_ms = int((time.monotonic() - start_time) * 1000)
-            logger.error(
-                "llm.request.failed",
-                **safe_kv(
-                    **llm_log_fields,
-                    outcome="error",
-                    error_class=ApiErrorCode.E_LLM_INCOMPLETE.value,
-                    incomplete_reason=incomplete_reason,
-                    latency_ms=int((time.monotonic() - llm_start) * 1000),
-                    **usage_log_fields(usage),
-                    provider_request_id=provider_request_id,
-                ),
-            )
             finalize_error(
                 db,
                 run_id=run.id,
                 error_code=ApiErrorCode.E_LLM_INCOMPLETE.value,
-                viewer_id=run.owner_user_id,
-                model=model,
+                error_detail=f"provider stopped early: {incomplete_reason}",
                 resolved_key=resolved_key,
-                key_mode=run.key_mode,
-                latency_ms=latency_ms,
-                usage=usage,
-                provider_request_id=provider_request_id,
             )
             return {"status": "error", "error_code": ApiErrorCode.E_LLM_INCOMPLETE.value}
 
         if usage_tokens(usage)["total_tokens"] is None:
-            latency_ms = int((time.monotonic() - start_time) * 1000)
             error_code = ApiErrorCode.E_LLM_PROVIDER_DOWN.value
-            logger.error(
-                "llm.request.failed",
-                **safe_kv(
-                    **llm_log_fields,
-                    outcome="error",
-                    error_class=error_code,
-                    missing_provider_usage=True,
-                    latency_ms=int((time.monotonic() - llm_start) * 1000),
-                    provider_request_id=provider_request_id,
-                ),
-            )
             finalize_error(
                 db,
                 run_id=run.id,
                 error_code=error_code,
-                viewer_id=run.owner_user_id,
-                model=model,
+                error_detail="provider terminal chunk carried no usage",
                 resolved_key=resolved_key,
-                key_mode=run.key_mode,
-                latency_ms=latency_ms,
-                usage=usage,
-                provider_request_id=provider_request_id,
             )
             return {"status": "error", "error_code": error_code}
 
-        logger.info(
-            "llm.request.finished",
-            **safe_kv(
-                **llm_log_fields,
-                outcome="success",
-                latency_ms=int((time.monotonic() - llm_start) * 1000),
-                **usage_log_fields(usage),
-                provider_request_id=provider_request_id,
-            ),
-        )
-
         _emit_citation_index(db, run)
-        latency_ms = int((time.monotonic() - start_time) * 1000)
         finalize_run(
             db,
             run_id=run.id,
@@ -1578,13 +1442,7 @@ async def _execute_chat_run(
             run_status="complete",
             done_status="complete",
             error_code=None,
-            model=model,
             resolved_key=resolved_key,
-            key_mode=run.key_mode,
-            latency_ms=latency_ms,
-            usage=usage,
-            provider_request_id=provider_request_id,
-            viewer_id=run.owner_user_id,
         )
         db.commit()
         if resolved_key.mode == "platform":

@@ -436,7 +436,7 @@ class TestChatRunEventStream:
         stream_token = mint_stream_token(user_id).token
 
         response = auth_client.get(
-            f"/chat-runs/{run_id}/events?after=1",
+            f"/stream/chat-runs/{run_id}/events?after=1",
             headers={"Authorization": f"Bearer {stream_token}"},
         )
 
@@ -492,7 +492,7 @@ class TestChatRunEventStream:
         stream_token = mint_stream_token(user_id).token
 
         response = auth_client.get(
-            f"/chat-runs/{run_id}/events?after=1",
+            f"/stream/chat-runs/{run_id}/events?after=1",
             headers={"Authorization": f"Bearer {stream_token}"},
         )
 
@@ -514,7 +514,7 @@ class TestChatRunEventStream:
         stream_token = mint_stream_token(user_id).token
 
         response = auth_client.get(
-            f"/chat-runs/{run_id}/events",
+            f"/stream/chat-runs/{run_id}/events",
             headers={
                 "Authorization": f"Bearer {stream_token}",
                 "Last-Event-ID": "2",
@@ -541,7 +541,7 @@ class TestChatRunEventStream:
         stream_token = mint_stream_token(user_id).token
 
         response = auth_client.get(
-            f"/chat-runs/{run_id}/events?after=3",
+            f"/stream/chat-runs/{run_id}/events?after=3",
             headers={"Authorization": f"Bearer {stream_token}"},
         )
 
@@ -578,7 +578,10 @@ class TestChatRunEventStream:
         async def reject_capacity(*_args, **_kwargs):
             raise StreamListenCapacityError()
 
-        monkeypatch.setattr(stream_routes, "_assert_chat_run_owner", lambda *_args: None)
+        async def skip_assert(*_args, **_kwargs):
+            return None
+
+        monkeypatch.setattr(stream_routes, "run_in_threadpool", skip_assert)
         monkeypatch.setattr(stream_routes, "open_sse_listener", reject_capacity)
 
         with pytest.raises(StreamListenCapacityError):
@@ -615,7 +618,7 @@ class TestStreamCORSMiddleware:
         middleware = StreamCORSMiddleware(app, allowed_origins=["https://nexus.test"])
         scope = {
             "type": "http",
-            "path": "/chat-runs/00000000-0000-0000-0000-000000000000/events",
+            "path": "/stream/chat-runs/00000000-0000-0000-0000-000000000000/events",
             "method": "GET",
             "headers": [],
         }
@@ -636,7 +639,7 @@ class TestStreamCORSMiddleware:
         middleware = StreamCORSMiddleware(app, allowed_origins=["https://nexus.test"])
         scope = {
             "type": "http",
-            "path": "/chat-runs/00000000-0000-0000-0000-000000000000/events",
+            "path": "/stream/chat-runs/00000000-0000-0000-0000-000000000000/events",
             "method": "GET",
             "headers": [(b"origin", b"https://evil.com")],
         }
@@ -657,7 +660,7 @@ class TestStreamCORSMiddleware:
         middleware = StreamCORSMiddleware(app, allowed_origins=["https://nexus.test"])
         scope = {
             "type": "http",
-            "path": "/chat-runs/00000000-0000-0000-0000-000000000000/events",
+            "path": "/stream/chat-runs/00000000-0000-0000-0000-000000000000/events",
             "method": "OPTIONS",
             "headers": [(b"origin", b"https://nexus.test")],
         }
@@ -689,7 +692,7 @@ class TestStreamCORSMiddleware:
         middleware = StreamCORSMiddleware(app, allowed_origins=["https://nexus.test"])
         scope = {
             "type": "http",
-            "path": "/chat-runs/00000000-0000-0000-0000-000000000000/events",
+            "path": "/stream/chat-runs/00000000-0000-0000-0000-000000000000/events",
             "method": "GET",
             "headers": [
                 (b"origin", b"https://nexus.test"),
@@ -708,7 +711,7 @@ class TestStreamAuthMiddlewareBoundary:
     def test_chat_run_events_use_stream_token_auth_boundary(self):
         app = FastAPI()
 
-        @app.get("/chat-runs/{run_id}/events")
+        @app.get("/stream/chat-runs/{run_id}/events")
         def events(run_id: str):
             return {"run_id": run_id}
 
@@ -720,7 +723,9 @@ class TestStreamAuthMiddlewareBoundary:
             bootstrap_callback=lambda user_id, email=None: user_id,
         )
 
-        response = TestClient(app).get("/chat-runs/00000000-0000-0000-0000-000000000000/events")
+        response = TestClient(app).get(
+            "/stream/chat-runs/00000000-0000-0000-0000-000000000000/events"
+        )
 
         assert response.status_code == 200
 
@@ -751,3 +756,21 @@ class TestStreamAuthMiddlewareBoundary:
         )
 
         assert response.status_code == 200
+
+    def test_unrouted_stream_path_skips_auth_then_404s(self):
+        # R5: an unrouted /stream/* is treated as a stream path (auth skips
+        # Supabase, no 401 from the object() verifier) and falls through to the
+        # router, which 404s it — no data exposure, no such route to leak.
+        app = FastAPI()
+
+        app.add_middleware(
+            AuthMiddleware,
+            verifier=object(),
+            requires_internal_header=True,
+            internal_secret="secret",
+            bootstrap_callback=lambda user_id, email=None: user_id,
+        )
+
+        response = TestClient(app).get("/stream/foo")
+
+        assert response.status_code == 404

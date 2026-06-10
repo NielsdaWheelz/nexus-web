@@ -32,6 +32,7 @@ from tests.test_resource_resolver import (
     _make_highlight_with_anchor,
     _make_li_artifact,
     _make_note_block,
+    _make_oracle_reading,
     _make_page,
     _make_pdf,
     _make_span,
@@ -273,6 +274,50 @@ def test_read_resource_li_artifact_non_member_masked(db_session: Session, bootst
     )
 
     assert result.is_error, "A non-member must not read another library's artifact"
+    assert result.error_code == "missing"
+
+
+def test_read_resource_oracle_reading_returns_body_non_citable(
+    db_session: Session, bootstrapped_user: UUID
+):
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    reading_id = _make_oracle_reading(
+        db_session,
+        bootstrapped_user,
+        question="What does the lamp reveal?",
+        interpretation="I saw the dawn break over the wood.",
+    )
+    uri = f"oracle_reading:{reading_id}"
+    _admit_reference(db_session, conversation_id, uri)
+
+    result = execute_read_resource(
+        db_session, viewer_id=bootstrapped_user, conversation_id=conversation_id, uri=uri
+    )
+
+    assert not result.is_error, f"the owner should read the reading body; got {result}"
+    assert result.kind == "oracle_reading"
+    assert "Question: What does the lamp reveal?" in result.body
+    assert "I saw the dawn break over the wood." in result.body
+    # NON-citable, like the LI artifact: passage chips are rendered by the oracle pane.
+    assert result.citation_result_type is None
+    assert result.citation_source_id is None
+
+
+def test_read_resource_oracle_reading_non_owner_masked(
+    db_session: Session, bootstrapped_user: UUID
+):
+    other_user_id = uuid4()
+    ensure_user_and_default_library(db_session, other_user_id)
+    reading_id = _make_oracle_reading(db_session, other_user_id)
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    uri = f"oracle_reading:{reading_id}"
+    _admit_reference(db_session, conversation_id, uri)
+
+    result = execute_read_resource(
+        db_session, viewer_id=bootstrapped_user, conversation_id=conversation_id, uri=uri
+    )
+
+    assert result.is_error, "a non-owner must not read another user's reading"
     assert result.error_code == "missing"
 
 

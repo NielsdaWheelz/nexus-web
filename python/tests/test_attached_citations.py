@@ -247,7 +247,7 @@ def test_anchored_highlight_is_numbered_and_persists_valid_row(direct_db: Direct
 
         _attach(session, conversation_id, uri)
 
-        block, _metadata, citations = context_assembler._build_resources_block(
+        block, _metadata, citations, _revision_refs = context_assembler._build_resources_block(
             session, conversation_id=conversation_id, viewer_id=user_id
         )
         assert block is not None
@@ -320,7 +320,7 @@ def test_unanchored_highlight_is_not_numbered(direct_db: DirectSessionManager):
 
         _attach(session, conversation_id, uri)
 
-        block, _metadata, citations = context_assembler._build_resources_block(
+        block, _metadata, citations, _revision_refs = context_assembler._build_resources_block(
             session, conversation_id=conversation_id, viewer_id=user_id
         )
         assert block is not None
@@ -369,7 +369,7 @@ def test_dense_ordinals_skip_uncitable_resources(direct_db: DirectSessionManager
         _attach(session, conversation_id, f"highlight:{unanchored_id}")
         _attach(session, conversation_id, f"highlight:{second_id}")
 
-        block, _metadata, citations = context_assembler._build_resources_block(
+        block, _metadata, citations, _revision_refs = context_assembler._build_resources_block(
             session, conversation_id=conversation_id, viewer_id=user_id
         )
         assert block is not None

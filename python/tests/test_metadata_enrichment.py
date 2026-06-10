@@ -5,15 +5,65 @@ from types import SimpleNamespace
 import pytest
 from pydantic import ValidationError
 
+from nexus.config import Settings
+from nexus.llm_catalog import require_catalog_model
 from nexus.services.metadata_enrichment import (
     MetadataEnrichmentOutput,
     build_enrichment_prompt,
     merge_enrichment,
     metadata_structured_output_spec,
+    select_enrichment_providers,
     validate_structured_enrichment,
 )
 
 pytestmark = pytest.mark.unit
+
+
+def test_default_enrichment_models_are_catalog_valid_light_tier():
+    """Pins the config defaults to honest cheap-tier MODEL_CATALOG entries (AC-5)."""
+    defaults = Settings.model_fields
+    for provider, field in [
+        ("openai", "metadata_enrichment_model_openai"),
+        ("anthropic", "metadata_enrichment_model_anthropic"),
+        ("gemini", "metadata_enrichment_model_gemini"),
+    ]:
+        entry = require_catalog_model(provider, defaults[field].default)
+        assert entry.model_tier == "light", (
+            f"enrichment default for {provider} must be the cheap tier, got {entry}"
+        )
+
+
+def test_select_enrichment_providers_rejects_non_catalog_model():
+    """A drifted env override fails loudly at task use, not at the provider."""
+    settings = SimpleNamespace(
+        metadata_enrichment_enabled=True,
+        enable_openai=True,
+        enable_anthropic=False,
+        enable_gemini=False,
+        metadata_enrichment_model_openai="gpt-4o-mini",
+        metadata_enrichment_model_anthropic="claude-haiku-4-5-20251001",
+        metadata_enrichment_model_gemini="gemini-3-flash-preview",
+    )
+
+    with pytest.raises(AssertionError, match="not in MODEL_CATALOG"):
+        select_enrichment_providers(settings)  # type: ignore[arg-type]
+
+
+def test_select_enrichment_providers_returns_enabled_pairs_without_keys():
+    settings = SimpleNamespace(
+        metadata_enrichment_enabled=True,
+        enable_openai=True,
+        enable_anthropic=True,
+        enable_gemini=False,
+        metadata_enrichment_model_openai="gpt-5.4-mini",
+        metadata_enrichment_model_anthropic="claude-haiku-4-5-20251001",
+        metadata_enrichment_model_gemini="gemini-3-flash-preview",
+    )
+
+    assert select_enrichment_providers(settings) == [  # type: ignore[arg-type]
+        ("openai", "gpt-5.4-mini"),
+        ("anthropic", "claude-haiku-4-5-20251001"),
+    ]
 
 
 def test_structured_metadata_output_accepts_required_nullable_fields():

@@ -19,6 +19,10 @@ import {
   isCitationEventData,
   type CitationEventData,
 } from "./citations";
+import {
+  isCitationOut,
+  type CitationOut,
+} from "@/lib/conversations/citationOut";
 
 /** Meta event: initial IDs and model info. */
 interface SSEMetaEvent {
@@ -96,13 +100,7 @@ export interface SSECitationIndexEvent {
   type: "citation_index";
   data: {
     assistant_message_id: string;
-    entries: Array<{
-      n: number;
-      retrieval_id: string;
-      tool_call_id: string;
-      ordinal: number;
-      result?: CitationEventData;
-    }>;
+    citations: CitationOut[];
   };
 }
 
@@ -270,56 +268,17 @@ function isChatToolStatus(value: unknown): value is ChatToolStatus {
 function parseCitationIndexData(data: unknown): SSECitationIndexEvent["data"] {
   if (
     !isRecord(data) ||
-    !hasOnlyKeys(data, ["assistant_message_id", "entries"]) ||
+    !hasOnlyKeys(data, ["assistant_message_id", "citations"]) ||
     hasLegacyArtifactIdentityKey(data) ||
     typeof data.assistant_message_id !== "string" ||
-    !Array.isArray(data.entries)
+    !Array.isArray(data.citations) ||
+    !data.citations.every(isCitationOut)
   ) {
     throw new Error("Invalid SSE payload for citation_index");
   }
   return {
     assistant_message_id: data.assistant_message_id,
-    entries: data.entries.map(parseCitationIndexEntry),
-  };
-}
-
-function parseCitationIndexEntry(
-  entry: unknown,
-): SSECitationIndexEvent["data"]["entries"][number] {
-  if (!isRecord(entry)) {
-    throw new Error("Invalid SSE payload for citation_index");
-  }
-  if (
-    !hasOnlyKeys(entry, ["n", "retrieval_id", "tool_call_id", "ordinal", "result"]) ||
-    hasLegacyArtifactIdentityKey(entry)
-  ) {
-    throw new Error("Invalid SSE payload for citation_index");
-  }
-  const n = entry.n;
-  const retrievalId = entry.retrieval_id;
-  const toolCallId = entry.tool_call_id;
-  const ordinal = entry.ordinal;
-  const result = entry.result;
-  if (
-    typeof n !== "number" ||
-    !Number.isInteger(n) ||
-    n < 1 ||
-    typeof retrievalId !== "string" ||
-    typeof toolCallId !== "string" ||
-    typeof ordinal !== "number" ||
-    !Number.isInteger(ordinal)
-  ) {
-    throw new Error("Invalid SSE payload for citation_index");
-  }
-  if (result !== undefined && !isCitationEventData(result)) {
-    throw new Error("Invalid SSE payload for citation_index");
-  }
-  return {
-    n,
-    retrieval_id: retrievalId,
-    tool_call_id: toolCallId,
-    ordinal,
-    ...(result !== undefined ? { result } : {}),
+    citations: data.citations,
   };
 }
 

@@ -26,6 +26,7 @@ from nexus.schemas.retrieval import (
     retrieval_locator_json,
     retrieval_result_ref_json,
 )
+from nexus.services.retrieval_citation import RetrievalCitation, insert_retrieval_row
 
 logger = get_logger(__name__)
 
@@ -353,82 +354,6 @@ def persist_web_search_run(db: Session, run: WebSearchRun) -> None:
         )
     run.tool_call_id = tool_call_id
 
-    select_retrieval = text(
-        """
-        SELECT id
-        FROM message_retrievals
-        WHERE tool_call_id = :tool_call_id
-          AND ordinal = :ordinal
-        """
-    )
-    update_retrieval = text(
-        """
-        UPDATE message_retrievals
-        SET result_type = :result_type,
-            source_id = :source_id,
-            media_id = NULL,
-            context_ref = :context_ref,
-            result_ref = :result_ref,
-            deep_link = :deep_link,
-            score = :score,
-            selected = :selected,
-            source_title = :source_title,
-            exact_snippet = :exact_snippet,
-            snippet_prefix = NULL,
-            snippet_suffix = NULL,
-            locator = :locator,
-            retrieval_status = :retrieval_status,
-            included_in_prompt = :included_in_prompt
-        WHERE id = :retrieval_id
-        """
-    ).bindparams(
-        bindparam("context_ref", type_=JSONB),
-        bindparam("result_ref", type_=JSONB),
-        bindparam("locator", type_=JSONB),
-    )
-    insert_retrieval = text(
-        """
-        INSERT INTO message_retrievals (
-            tool_call_id,
-            ordinal,
-            result_type,
-            source_id,
-            media_id,
-            context_ref,
-            result_ref,
-            deep_link,
-            score,
-            selected,
-            source_title,
-            exact_snippet,
-            locator,
-            retrieval_status,
-            included_in_prompt
-        )
-        VALUES (
-            :tool_call_id,
-            :ordinal,
-            :result_type,
-            :source_id,
-            NULL,
-            :context_ref,
-            :result_ref,
-            :deep_link,
-            :score,
-            :selected,
-            :source_title,
-            :exact_snippet,
-            :locator,
-            :retrieval_status,
-            :included_in_prompt
-        )
-        RETURNING id
-        """
-    ).bindparams(
-        bindparam("context_ref", type_=JSONB),
-        bindparam("result_ref", type_=JSONB),
-        bindparam("locator", type_=JSONB),
-    )
     insert_candidate_ledger = text(
         """
         INSERT INTO message_retrieval_candidate_ledgers (
@@ -471,30 +396,31 @@ def persist_web_search_run(db: Session, run: WebSearchRun) -> None:
         score = 1.0 / max(citation.rank, 1)
         result_ref = retrieval_result_ref_json(citation.to_json())
         locator = citation.locator_json()
-        retrieval_payload = {
-            "tool_call_id": tool_call_id,
-            "ordinal": ordinal,
-            "result_type": "web_result",
-            "source_id": citation.result_ref,
-            "context_ref": retrieval_context_ref_json(
-                {"type": "web_result", "id": citation.result_ref}
+        retrieval_id = insert_retrieval_row(
+            db,
+            tool_call_id=tool_call_id,
+            ordinal=ordinal,
+            citation=RetrievalCitation(
+                result_type="web_result",
+                source_id=citation.result_ref,
+                title=citation.title,
+                source_label=None,
+                snippet=citation.snippet,
+                deep_link=citation.url,
+                citation_label=None,
+                locator=locator,
+                context_ref={"type": "web_result", "id": citation.result_ref},
+                evidence_span_id=None,
+                media_id=None,
+                media_kind=None,
+                score=score,
+                result_ref=citation.to_json(),
+                selected=selected,
             ),
-            "result_ref": result_ref,
-            "deep_link": citation.url,
-            "score": score,
-            "selected": selected,
-            "source_title": citation.title,
-            "exact_snippet": citation.snippet,
-            "locator": locator,
-            "retrieval_status": "web_result",
-            "included_in_prompt": False,
-        }
-        existing_retrieval = db.execute(select_retrieval, retrieval_payload).first()
-        if existing_retrieval is None:
-            retrieval_id = db.execute(insert_retrieval, retrieval_payload).scalar_one()
-        else:
-            retrieval_id = existing_retrieval[0]
-            db.execute(update_retrieval, {**retrieval_payload, "retrieval_id": retrieval_id})
+            selected=selected,
+            scope="public_web",
+            retrieval_status="web_result",
+        )
         db.execute(
             insert_candidate_ledger,
             {

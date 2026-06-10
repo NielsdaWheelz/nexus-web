@@ -25,33 +25,40 @@ from uuid import UUID
 
 from llm_calling.errors import LLMError
 from llm_calling.router import LLMRouter
-from llm_calling.types import LLMRequest, Turn
+from llm_calling.types import LLMRequest
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import bindparam, text
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
-from nexus.config import get_settings
-from nexus.db.errors import is_serialization_failure
-from nexus.db.session import use_serializable_if_available
-from nexus.errors import ApiErrorCode, NotFoundError
+from nexus.db.retries import retry_serializable
+from nexus.errors import LLM_ERROR_CODE_TO_API_ERROR_CODE, ApiError, ApiErrorCode, NotFoundError
+from nexus.llm_catalog import require_catalog_model
 from nexus.logging import get_logger
+from nexus.schemas.library_intelligence import LibraryIntelligenceDoneEventPayload
 from nexus.services import run_kit
+from nexus.services.api_key_resolver import ResolvedKey, resolve_api_key, update_user_key_status
+from nexus.services.chat_run_usage import usage_tokens
 from nexus.services.library_intelligence import (
     resolve_library_media_ids,
     revision_orm_or_none,
 )
+from nexus.services.llm_ledger import LedgeredLLM, LlmCallOwner
 from nexus.services.media_intelligence import (
     MediaUnit,
     ensure_media_unit,
     get_media_unit,
     run_media_unit_build,
 )
+from nexus.services.prompt_budget import estimate_tokens
+from nexus.services.rate_limit import get_rate_limiter
 from nexus.services.retrieval_citation import build_evidence_span_citation_target
 from nexus.services.structured_synthesis import (
     StructuredSynthesisError,
     SynthesisRequest,
+    build_synthesis_prompt,
+    build_synthesis_request,
+    ground_indices,
     run_structured_synthesis,
 )
 
@@ -66,7 +73,8 @@ LI_LLM_TIMEOUT_SECONDS = 90
 # are dropped with a warning rather than silently capped (R1-minimal).
 LI_REDUCE_INPUT_CHAR_BUDGET = 120_000
 
-_SERIALIZABLE_RETRIES = 3
+# The pinned model must exist in MODEL_CATALOG (code/catalog mismatch is a defect).
+require_catalog_model(LI_PROVIDER, LI_MODEL_NAME)
 
 
 # ---------- worker: run_artifact_generation (the reduce) --------------------
@@ -85,90 +93,156 @@ async def run_artifact_generation(db: Session, *, revision_id: UUID, llm: LLMRou
     A media whose unit cannot be built (no content -> ``failed``) is simply absent
     from the candidate set; only an all-empty library yields zero candidates and
     fails the revision.
+
+    The reduce call is attributed to the artifact owner (``resolve_api_key``,
+    BYOK-first) and runs inside the rate-limit/budget envelope; each attempt is
+    ledgered as one ``llm_calls`` row (owner ``li_revision`` — the revision IS
+    the run). Expected failures land on the revision via the error floor
+    (``error_code``/``error_detail``).
     """
-    revision = (
-        db.execute(
-            text(
-                "SELECT id, artifact_id, status FROM library_intelligence_artifact_revisions "
-                "WHERE id = :revision_id"
-            ),
-            {"revision_id": revision_id},
-        )
-        .mappings()
-        .first()
-    )
-    if revision is None or revision["status"] != "building":
+    revision = revision_orm_or_none(db, revision_id=revision_id)
+    if revision is None or revision.status != "building":
         return
-    artifact_id = UUID(str(revision["artifact_id"]))
+    artifact_id = revision.artifact_id
     library_id, owner_id = _artifact_library_and_owner(db, artifact_id=artifact_id)
 
-    media_ids = resolve_library_media_ids(db, library_id=library_id)
-    # Build each unit inline so the reduce never reads a still-building unit on a
-    # fresh library. ensure_media_unit + run_media_unit_build are idempotent on the
-    # content fingerprint and each own their own commit, so this runs (and stays
-    # committed) BEFORE the revision-promote SERIALIZABLE tx is opened.
-    for media_id in media_ids:
-        ensure_media_unit(db, media_id=media_id)
-        if not isinstance(get_media_unit(db, media_id=media_id), MediaUnit):
-            await run_media_unit_build(db, media_id=media_id, llm=llm)
-    _emit_progress(db, revision_id=revision_id, message="Reading sources")
-
-    candidates = _gather_candidates(db, media_ids=media_ids)
-    if not candidates:
-        _fail_revision(db, revision_id=revision_id, reason="no_ready_units")
-        return
-    _emit_progress(db, revision_id=revision_id, message="Synthesizing the library overview")
-
-    request = _build_reduce_request(candidates)
-    settings = get_settings()
-    api_key = settings.anthropic_api_key or ""
     try:
-        result = await run_structured_synthesis(
-            llm=llm,
-            request=SynthesisRequest(
-                provider=LI_PROVIDER,
-                llm_request=request,
-                api_key=api_key,
-                timeout_s=LI_LLM_TIMEOUT_SECONDS,
-            ),
-            schema=_LiSynthesis,
+        resolved_key = resolve_api_key(db, owner_id, LI_PROVIDER, "auto")
+    except ApiError as exc:
+        _fail_revision(
+            db, revision_id=revision_id, error_code=exc.code.value, error_detail=exc.message
         )
-    except (LLMError, StructuredSynthesisError) as exc:
-        logger.warning(
-            "library_intelligence.reduce_failure",
-            revision_id=str(revision_id),
-            reason=type(exc).__name__,
+        return
+    except LLMError as exc:
+        _fail_revision(
+            db,
+            revision_id=revision_id,
+            error_code=LLM_ERROR_CODE_TO_API_ERROR_CODE[exc.error_code].value,
+            error_detail=str(exc)[:1000],
         )
-        _fail_revision(db, revision_id=revision_id, reason="llm_failure")
         return
 
-    grounded = _map_li_citations(result.value, candidates)
-    citations = _materialize_citations(db, owner_id=owner_id, grounded=grounded)
-    covered = _build_covered_targets(db, media_ids=media_ids)
-    _promote_built_revision(
-        db,
-        revision_id=revision_id,
-        artifact_id=artifact_id,
-        content_md=result.value.content_md,
-        covered_targets=covered,
-        citations=citations,
-    )
+    rate_limiter = get_rate_limiter()
+    try:
+        rate_limiter.acquire_inflight_slot(owner_id)
+    except ApiError as exc:
+        _fail_revision(
+            db, revision_id=revision_id, error_code=exc.code.value, error_detail=exc.message
+        )
+        return
+    budget_reserved = False
+    estimated_tokens = 0
+    try:
+        media_ids = resolve_library_media_ids(db, library_id=library_id)
+        # Build each unit inline so the reduce never reads a still-building unit on a
+        # fresh library. ensure_media_unit + run_media_unit_build are idempotent on the
+        # content fingerprint and each own their own commit, so this runs (and stays
+        # committed) BEFORE the revision-promote SERIALIZABLE tx is opened.
+        for media_id in media_ids:
+            ensure_media_unit(db, media_id=media_id)
+            if not isinstance(get_media_unit(db, media_id=media_id), MediaUnit):
+                await run_media_unit_build(db, media_id=media_id, llm=llm)
+        _emit_progress(db, revision_id=revision_id, message="Reading sources")
 
+        candidates = _gather_candidates(db, media_ids=media_ids)
+        if not candidates:
+            _fail_revision(
+                db,
+                revision_id=revision_id,
+                error_code="no_ready_units",
+                error_detail="no library media has a ready intelligence unit with claims",
+            )
+            return
+        _emit_progress(db, revision_id=revision_id, message="Synthesizing the library overview")
 
-def fail_artifact_generation_after_worker_exception(db: Session, *, revision_id: UUID) -> None:
-    """Set a nonterminal revision to ``failed`` after an unexpected worker exception."""
-    db.rollback()
-    revision = revision_orm_or_none(db, revision_id=revision_id)
-    if revision is None or revision.status in ("ready", "failed"):
+        request = _build_reduce_request(candidates)
+        if resolved_key.mode == "platform":
+            estimated_tokens = (
+                estimate_tokens("\n".join(turn.content for turn in request.messages))
+                + LI_MAX_OUTPUT_TOKENS
+            )
+            try:
+                rate_limiter.reserve_token_budget(owner_id, revision_id, estimated_tokens)
+                budget_reserved = True
+            except ApiError as exc:
+                _fail_revision(
+                    db,
+                    revision_id=revision_id,
+                    error_code=exc.code.value,
+                    error_detail=exc.message,
+                )
+                return
+
+        try:
+            result = await run_structured_synthesis(
+                llm=LedgeredLLM(
+                    db=db,
+                    owner=LlmCallOwner(kind="li_revision", id=revision_id),
+                    router=llm,
+                    llm_operation="li_reduce",
+                    key_mode_requested="auto",
+                    key_mode_used=resolved_key.mode,
+                ),
+                request=SynthesisRequest(
+                    provider=LI_PROVIDER,
+                    llm_request=request,
+                    api_key=resolved_key.api_key,
+                    timeout_s=LI_LLM_TIMEOUT_SECONDS,
+                ),
+                schema=_LiSynthesis,
+            )
+        except LLMError as exc:
+            error_code = LLM_ERROR_CODE_TO_API_ERROR_CODE[exc.error_code].value
+            logger.warning(
+                "library_intelligence.reduce_failure",
+                revision_id=str(revision_id),
+                error_code=error_code,
+            )
+            if resolved_key.mode == "byok" and error_code == ApiErrorCode.E_LLM_INVALID_KEY.value:
+                update_user_key_status(db, resolved_key.user_key_id, "invalid")
+            _fail_revision(
+                db, revision_id=revision_id, error_code=error_code, error_detail=str(exc)[:1000]
+            )
+            return
+        except StructuredSynthesisError as exc:
+            logger.warning(
+                "library_intelligence.reduce_failure",
+                revision_id=str(revision_id),
+                error_code=ApiErrorCode.E_LLM_BAD_REQUEST.value,
+            )
+            _fail_revision(
+                db,
+                revision_id=revision_id,
+                error_code=ApiErrorCode.E_LLM_BAD_REQUEST.value,
+                error_detail=str(exc)[:1000],
+            )
+            return
+
+        # Commit the per-attempt llm_calls rows now so they survive whatever the
+        # promote does (a later worker-boundary rollback must not erase them).
         db.commit()
-        return
-    run_kit.mark_terminal(
-        db,
-        stream=run_kit.library_intelligence_revision_stream(revision),
-        status="failed",
-        done_payload={"error": ApiErrorCode.E_INTERNAL.value},
-    )
-    db.commit()
+        grounded = _map_li_citations(result.value, candidates)
+        citations = _materialize_citations(db, owner_id=owner_id, grounded=grounded)
+        covered = _build_covered_targets(db, media_ids=media_ids)
+        _promote_built_revision(
+            db,
+            revision_id=revision_id,
+            artifact_id=artifact_id,
+            content_md=result.value.content_md,
+            covered_targets=covered,
+            citations=citations,
+            resolved_key=resolved_key,
+        )
+        if budget_reserved:
+            actual_tokens = usage_tokens(result.usage)["total_tokens"]
+            rate_limiter.commit_token_budget(
+                owner_id, revision_id, actual_tokens or estimated_tokens
+            )
+            budget_reserved = False
+    finally:
+        if budget_reserved:
+            rate_limiter.release_token_budget(owner_id, revision_id)
+        rate_limiter.release_inflight_slot(owner_id)
 
 
 # ---------- grounding map + reduce schema (pure, unit-testable) --------------
@@ -219,18 +293,24 @@ def _map_li_citations(
 ) -> list[_GroundedCitation]:
     """Map each citation's ``claim_index`` to a span, dropping ungrounded ones.
 
-    Out-of-range ``claim_index`` is dropped (AC-2: the model cannot cite a claim it
-    was not given). The model's emitted ``ordinal`` is kept (the prose ``[N]``
-    references it); a duplicate ordinal collision keeps the first and drops the
-    rest. Roles other than the three allowed map to ``context``.
+    The bounds check is :func:`ground_indices` (policy ``"drop"``; AC-2: the
+    model cannot cite a claim it was not given — ``global_index`` equals list
+    position by construction). The model's emitted ``ordinal`` is kept (the
+    prose ``[N]`` references it); a duplicate ordinal collision keeps the first
+    and drops the rest. Roles other than the three allowed map to ``context``.
     """
-    by_index = {c.global_index: c for c in candidates}
+    pairs = (
+        ground_indices(
+            synthesis.citations,
+            candidates,
+            index_of=lambda citation: citation.claim_index,
+            policy="drop",
+        )
+        or []
+    )
     seen_ordinals: set[int] = set()
     grounded: list[_GroundedCitation] = []
-    for citation in synthesis.citations:
-        candidate = by_index.get(citation.claim_index)
-        if candidate is None:
-            continue
+    for citation, candidate in pairs:
         if citation.ordinal in seen_ordinals:
             logger.warning(
                 "library_intelligence.duplicate_citation_ordinal", ordinal=citation.ordinal
@@ -363,6 +443,7 @@ def _promote_built_revision(
     content_md: str,
     covered_targets: list[dict[str, object]],
     citations: list[dict[str, object]],
+    resolved_key: ResolvedKey,
 ) -> None:
     """Atomically mark the revision ready (run_kit) and promote it to current.
 
@@ -370,77 +451,79 @@ def _promote_built_revision(
     the revision ORM, guard ``building``, ``mark_terminal(ready)`` FIRST (sets
     status + completed_at + emits ``done``), THEN write content/covered/promoted,
     (re)insert citations, and point the head at this revision (last-promote-wins).
+    BYOK key-status feedback rides the terminal write (chat precedent).
     """
-    for attempt in range(_SERIALIZABLE_RETRIES):
-        use_serializable_if_available(db)
-        try:
-            revision = revision_orm_or_none(db, revision_id=revision_id)
-            if revision is None or revision.status != "building":
-                db.rollback()
-                return
-            run_kit.mark_terminal(
-                db,
-                stream=run_kit.library_intelligence_revision_stream(revision),
-                status="ready",
-                done_payload={"revision_id": str(revision_id)},
-            )
-            db.execute(
-                text(
-                    """
-                    UPDATE library_intelligence_artifact_revisions
-                    SET content_md = :content_md,
-                        covered_targets = :covered_targets,
-                        promoted_at = now()
-                    WHERE id = :revision_id
-                    """
-                ).bindparams(bindparam("covered_targets", type_=JSONB)),
-                {
-                    "content_md": content_md,
-                    "covered_targets": covered_targets,
-                    "revision_id": revision_id,
-                },
-            )
-            db.execute(
-                text("DELETE FROM library_intelligence_citations WHERE revision_id = :revision_id"),
-                {"revision_id": revision_id},
-            )
-            for citation in citations:
-                db.execute(
-                    text(
-                        """
-                        INSERT INTO library_intelligence_citations (
-                            revision_id, ordinal, role, target_type, target_id, locator, snapshot
-                        )
-                        VALUES (
-                            :revision_id, :ordinal, :role, :target_type, :target_id,
-                            :locator, :snapshot
-                        )
-                        """
-                    ).bindparams(
-                        bindparam("locator", type_=JSONB),
-                        bindparam("snapshot", type_=JSONB),
-                    ),
-                    {"revision_id": revision_id, **citation},
-                )
-            db.execute(
-                text(
-                    "UPDATE library_intelligence_artifacts "
-                    "SET current_revision_id = :revision_id, updated_at = now() "
-                    "WHERE id = :artifact_id"
-                ),
-                {"revision_id": revision_id, "artifact_id": artifact_id},
-            )
-            db.commit()
-            return
-        except OperationalError as exc:
+
+    def op() -> None:
+        revision = revision_orm_or_none(db, revision_id=revision_id)
+        if revision is None or revision.status != "building":
             db.rollback()
-            if not is_serialization_failure(exc) or attempt == _SERIALIZABLE_RETRIES - 1:
-                raise
-    # justify-defect: the loop returns or raises on the final attempt.
-    raise AssertionError("_promote_built_revision retry loop exhausted")
+            return
+        run_kit.mark_terminal(
+            db,
+            stream=run_kit.library_intelligence_revision_stream(revision),
+            status="ready",
+            done_payload=LibraryIntelligenceDoneEventPayload(
+                status="ready", revision_id=revision_id
+            ).model_dump(mode="json"),
+        )
+        db.execute(
+            text(
+                """
+                UPDATE library_intelligence_artifact_revisions
+                SET content_md = :content_md,
+                    covered_targets = :covered_targets,
+                    promoted_at = now()
+                WHERE id = :revision_id
+                """
+            ).bindparams(bindparam("covered_targets", type_=JSONB)),
+            {
+                "content_md": content_md,
+                "covered_targets": covered_targets,
+                "revision_id": revision_id,
+            },
+        )
+        db.execute(
+            text("DELETE FROM library_intelligence_citations WHERE revision_id = :revision_id"),
+            {"revision_id": revision_id},
+        )
+        for citation in citations:
+            db.execute(
+                text(
+                    """
+                    INSERT INTO library_intelligence_citations (
+                        revision_id, ordinal, role, target_type, target_id, locator, snapshot
+                    )
+                    VALUES (
+                        :revision_id, :ordinal, :role, :target_type, :target_id,
+                        :locator, :snapshot
+                    )
+                    """
+                ).bindparams(
+                    bindparam("locator", type_=JSONB),
+                    bindparam("snapshot", type_=JSONB),
+                ),
+                {"revision_id": revision_id, **citation},
+            )
+        db.execute(
+            text(
+                "UPDATE library_intelligence_artifacts "
+                "SET current_revision_id = :revision_id, updated_at = now() "
+                "WHERE id = :artifact_id"
+            ),
+            {"revision_id": revision_id, "artifact_id": artifact_id},
+        )
+        if resolved_key.mode == "byok":
+            update_user_key_status(db, resolved_key.user_key_id, "valid")
+        db.commit()
+
+    retry_serializable(db, "_promote_built_revision", op)
 
 
-def _fail_revision(db: Session, *, revision_id: UUID, reason: str) -> None:
+def _fail_revision(
+    db: Session, *, revision_id: UUID, error_code: str, error_detail: str | None
+) -> None:
+    """Mark a nonterminal revision ``failed`` with the error floor and commit."""
     revision = revision_orm_or_none(db, revision_id=revision_id)
     if revision is None or revision.status in ("ready", "failed"):
         db.commit()
@@ -449,7 +532,11 @@ def _fail_revision(db: Session, *, revision_id: UUID, reason: str) -> None:
         db,
         stream=run_kit.library_intelligence_revision_stream(revision),
         status="failed",
-        done_payload={"error": reason},
+        done_payload=LibraryIntelligenceDoneEventPayload(
+            status="failed", error_code=error_code, revision_id=revision_id
+        ).model_dump(mode="json"),
+        error_code=error_code,
+        error_detail=error_detail,
     )
     db.commit()
 
@@ -475,23 +562,32 @@ def _emit_progress(db: Session, *, revision_id: UUID, message: str) -> None:
 # ---------- internal: prompt / schema ---------------------------------------
 
 
-_LI_SYSTEM_PROMPT = (
+# Prompt decomposition for the shared synthesis scaffold; the assembled bytes
+# are pinned (golden) in tests/test_structured_synthesis.py.
+_LI_PERSONA = (
     "You are a careful research assistant writing a whole-library synthesis from "
-    "per-document claims. Each claim is offered by integer index.\n\n"
-    "RULES.\n"
-    "1. Write content_md: faithful markdown synthesis prose covering an overview, "
+    "per-document claims. Each claim is offered by integer index."
+)
+_LI_DOMAIN_RULES = [
+    "Write content_md: faithful markdown synthesis prose covering an overview, "
     "key topics, key sources, a reading path, cross-source tensions, and open "
     "questions. Use prose, not rigid sections. Base every statement only on the "
-    "provided claims.\n"
-    "2. Place inline citation markers [N] in the prose where a claim supports the "
-    "statement, where N is the ordinal you assign in citations.\n"
-    "3. Write citations: for each [N], one entry {ordinal:N, claim_index:int, "
+    "provided claims.",
+    "Place inline citation markers [N] in the prose where a claim supports the "
+    "statement, where N is the ordinal you assign in citations.",
+    "Write citations: for each [N], one entry {ordinal:N, claim_index:int, "
     "role:'supports'|'contradicts'|'context'} where claim_index is the integer "
     "index of the single provided claim it cites. Never cite an index you were not "
-    "given.\n"
-    '4. Output strict JSON of the form: {"content_md": string, "citations": '
-    '[{"ordinal": int, "claim_index": int, "role": string}]}. No markdown '
-    "fences, no extra keys, no commentary outside the JSON."
+    "given.",
+]
+_LI_JSON_SHAPE = (
+    '{"content_md": string, "citations": [{"ordinal": int, "claim_index": int, "role": string}]}'
+)
+_LI_SYSTEM_PROMPT = build_synthesis_prompt(
+    persona=_LI_PERSONA,
+    preamble=None,
+    domain_rules=_LI_DOMAIN_RULES,
+    json_shape=_LI_JSON_SHAPE,
 )
 
 
@@ -500,16 +596,13 @@ def _build_reduce_request(candidates: list[_Candidate]) -> LLMRequest:
         f"[{c.global_index}] (media {c.media_id})\nsummary: {c.summary_md}\nclaim: {c.claim_text}"
         for c in candidates
     )
-    user_content = f"UNIT CLAIMS:\n{rendered}\n\nRespond with the strict JSON object as instructed."
-    return LLMRequest(
+    return build_synthesis_request(
+        system_prompt=_LI_SYSTEM_PROMPT,
+        candidates_header="UNIT CLAIMS",
+        rendered_candidates=rendered,
+        extra_user_block=None,
         model_name=LI_MODEL_NAME,
-        messages=[
-            Turn(role="system", content=_LI_SYSTEM_PROMPT, cache_ttl="5m"),
-            Turn(role="user", content=user_content, cache_ttl="none"),
-        ],
         max_tokens=LI_MAX_OUTPUT_TOKENS,
-        reasoning_effort="none",
-        prompt_cache_key=None,
     )
 
 

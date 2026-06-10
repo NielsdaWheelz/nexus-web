@@ -2,18 +2,11 @@ import { describe, expect, it } from "vitest";
 import { toChatSSEEvent } from "./events";
 
 describe("toChatSSEEvent", () => {
-  const highlightResult = {
-    type: "highlight",
-    id: "highlight-1",
-    result_type: "highlight",
-    source_id: "highlight-1",
-    title: "Source title",
-    source_label: "Source title",
-    snippet: "selected words",
-    deep_link: "/media/media-1#highlight-highlight-1",
-    citation_label: null,
-    context_ref: { type: "highlight", id: "highlight-1" },
-    evidence_span_id: null,
+  const citation = {
+    ordinal: 1,
+    role: "context",
+    target_ref: { type: "evidence_span", id: "span-1" },
+    media_id: "media-1",
     locator: {
       type: "web_text_offsets",
       media_id: "media-1",
@@ -21,86 +14,56 @@ describe("toChatSSEEvent", () => {
       start_offset: 10,
       end_offset: 24,
     },
-    media_id: "media-1",
-    media_kind: "web_article",
-    score: null,
-    selected: true,
-    color: "yellow",
-    exact: "selected words",
+    deep_link: "/media/media-1#evidence-span-1",
+    snapshot: {
+      title: "Source title",
+      excerpt: "selected words",
+      section_label: "Section",
+      result_type: "highlight",
+    },
   };
 
-  it("parses citation index events", () => {
+  it("parses citation index events carrying server-built CitationOut[]", () => {
     expect(
       toChatSSEEvent("citation_index", {
         assistant_message_id: "msg-1",
-        entries: [
-          {
-            n: 1,
-            retrieval_id: "retrieval-1",
-            tool_call_id: "tool-1",
-            ordinal: 0,
-          },
-        ],
+        citations: [citation],
       }),
     ).toEqual({
       type: "citation_index",
       data: {
         assistant_message_id: "msg-1",
-        entries: [
-          {
-            n: 1,
-            retrieval_id: "retrieval-1",
-            tool_call_id: "tool-1",
-            ordinal: 0,
-          },
-        ],
+        citations: [citation],
       },
     });
   });
 
-  it("parses citation index result payloads for live attached/read chips", () => {
+  it("parses a web_result citation (non-uuid target id, null media/locator)", () => {
+    const webCitation = {
+      ordinal: 2,
+      role: "context",
+      target_ref: { type: "web_result", id: "https://example.com/a" },
+      media_id: null,
+      locator: null,
+      deep_link: "https://example.com/a",
+      snapshot: { title: "Web result", excerpt: "A web snippet" },
+    };
     expect(
       toChatSSEEvent("citation_index", {
         assistant_message_id: "msg-1",
-        entries: [
-          {
-            n: 1,
-            retrieval_id: "retrieval-1",
-            tool_call_id: "tool-1",
-            ordinal: 0,
-            result: highlightResult,
-          },
-        ],
+        citations: [webCitation],
       }),
     ).toEqual({
       type: "citation_index",
-      data: {
-        assistant_message_id: "msg-1",
-        entries: [
-          {
-            n: 1,
-            retrieval_id: "retrieval-1",
-            tool_call_id: "tool-1",
-            ordinal: 0,
-            result: highlightResult,
-          },
-        ],
-      },
+      data: { assistant_message_id: "msg-1", citations: [webCitation] },
     });
   });
 
-  it("rejects malformed citation index entries", () => {
+  it("rejects malformed citations (bad role)", () => {
     expect(() =>
       toChatSSEEvent("citation_index", {
         assistant_message_id: "msg-1",
-        entries: [
-          {
-            n: 0,
-            retrieval_id: "retrieval-1",
-            tool_call_id: "tool-1",
-            ordinal: 0,
-          },
-        ],
+        citations: [{ ...citation, role: "nope" }],
       }),
     ).toThrow("Invalid SSE payload for citation_index");
   });
@@ -110,22 +73,15 @@ describe("toChatSSEEvent", () => {
       toChatSSEEvent("citation_index", {
         assistant_message_id: "msg-1",
         source_version: "old-source:v1",
-        entries: [],
+        citations: [],
       }),
     ).toThrow("Invalid SSE payload for citation_index");
 
+    // A CitationOut carrying an unexpected key is rejected (extra="forbid").
     expect(() =>
       toChatSSEEvent("citation_index", {
         assistant_message_id: "msg-1",
-        entries: [
-          {
-            n: 1,
-            retrieval_id: "retrieval-1",
-            tool_call_id: "tool-1",
-            ordinal: 0,
-            transcript_version_id: "transcript-version-1",
-          },
-        ],
+        citations: [{ ...citation, transcript_version_id: "tv-1" }],
       }),
     ).toThrow("Invalid SSE payload for citation_index");
   });

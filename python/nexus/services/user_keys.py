@@ -19,7 +19,6 @@ Security invariants:
 - encrypted_key, key_nonce, master_key_version never returned to clients
 """
 
-import time
 from datetime import UTC, datetime
 from typing import cast
 from uuid import UUID
@@ -43,7 +42,7 @@ from nexus.llm_catalog import (
 from nexus.logging import get_logger
 from nexus.schemas.keys import KeyProviderStateStatus, UserApiKeyOut
 from nexus.services.crypto import CryptoError, decrypt_api_key, encrypt_api_key
-from nexus.services.redact import safe_kv
+from nexus.services.llm_ledger import emit_llm_request_started
 
 logger = get_logger(__name__)
 
@@ -269,17 +268,15 @@ async def test_user_key(
         reasoning_effort="none",
     )
 
-    llm_start = time.monotonic()
-    llm_log_fields = safe_kv(
+    # The saved-key probe shares llm_ledger's llm.request.* emitter but writes no
+    # ledger row (no owner run to attribute the call to).
+    llm_log = emit_llm_request_started(
         provider=key.provider,
-        model_name=req.model_name,
-        reasoning_effort=req.reasoning_effort,
-        key_mode="byok",
+        request=req,
         streaming=False,
         llm_operation="key_test",
-        message_chars=sum(len(message.content) for message in req.messages),
+        key_mode="byok",
     )
-    logger.info("llm.request.started", **llm_log_fields)
     try:
         response = await router.generate(
             key.provider,
@@ -288,15 +285,9 @@ async def test_user_key(
             timeout_s=15,
         )
         if response.status == "incomplete":
-            logger.error(
-                "llm.request.failed",
-                **safe_kv(
-                    **llm_log_fields,
-                    outcome="error",
-                    error_class=ApiErrorCode.E_LLM_INCOMPLETE.value,
-                    latency_ms=int((time.monotonic() - llm_start) * 1000),
-                    provider_request_id=response.provider_request_id,
-                ),
+            llm_log.failed(
+                error_class=ApiErrorCode.E_LLM_INCOMPLETE.value,
+                provider_request_id=response.provider_request_id,
             )
             raise ApiError(
                 ApiErrorCode.E_LLM_INCOMPLETE,
@@ -304,15 +295,7 @@ async def test_user_key(
             )
     except LLMError as e:
         error_code = LLM_ERROR_CODE_TO_API_ERROR_CODE[e.error_code]
-        logger.error(
-            "llm.request.failed",
-            **safe_kv(
-                **llm_log_fields,
-                outcome="error",
-                error_class=error_code.value,
-                latency_ms=int((time.monotonic() - llm_start) * 1000),
-            ),
-        )
+        llm_log.failed(error_class=error_code.value)
         if e.error_code == LLMErrorCode.INVALID_KEY:
             key.status = "invalid"
             key.last_tested_at = datetime.now(UTC)
@@ -323,14 +306,7 @@ async def test_user_key(
     finally:
         api_key = ""
 
-    logger.info(
-        "llm.request.finished",
-        **safe_kv(
-            **llm_log_fields,
-            outcome="success",
-            latency_ms=int((time.monotonic() - llm_start) * 1000),
-        ),
-    )
+    llm_log.finished(provider_request_id=None, usage=None)
 
     key.status = "valid"
     key.last_tested_at = datetime.now(UTC)

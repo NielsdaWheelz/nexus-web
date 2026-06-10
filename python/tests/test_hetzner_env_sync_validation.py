@@ -13,7 +13,7 @@ _SYNC_ENV_SCRIPT = _REPO_ROOT / "deploy" / "hetzner" / "sync-env.sh"
 _WORKER_ENV_EXAMPLE = _REPO_ROOT / "deploy" / "env" / "env-prod-worker.example"
 _SAFE_WORKER_ALLOWED_JOB_KINDS = (
     "ingest_media_source,enrich_metadata,chat_run,"
-    "library_intelligence_artifact_generate,media_unit_build,"
+    "library_intelligence_artifact_generate,media_unit_build,page_reindex_job,"
     "podcast_sync_subscription_job,podcast_reindex_semantic_job,"
     "backfill_default_library_closure_job,oracle_reading_generate"
 )

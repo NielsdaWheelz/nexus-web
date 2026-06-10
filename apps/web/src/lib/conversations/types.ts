@@ -6,6 +6,7 @@ import type {
 } from "@/lib/api/sse/citations";
 import type { ChatToolStatus } from "@/lib/api/sse/events";
 import type { RetrievalLocator } from "@/lib/api/sse/locators";
+import type { CitationOut } from "./citationOut";
 
 export interface ConversationReference {
   id: string;
@@ -75,14 +76,6 @@ export interface MessageRetrieval {
   included_in_prompt?: boolean;
   citation_ordinal?: number | null;
   created_at?: string;
-}
-
-export interface CitationIndexEntry {
-  n: number;
-  retrieval_id: string;
-  tool_call_id: string;
-  ordinal: number;
-  result?: MessageRetrievalResultRef;
 }
 
 export type MessageRetrievalResultRef =
@@ -180,7 +173,7 @@ export interface ConversationMessage {
   branch_anchor?: BranchAnchor | null;
   tool_calls?: MessageToolCall[];
   retrievals?: MessageRetrieval[];
-  citation_index?: CitationIndexEntry[];
+  citations?: CitationOut[];
   status: "pending" | "complete" | "error" | "cancelled";
   error_code: string | null;
   can_retry_response: boolean;

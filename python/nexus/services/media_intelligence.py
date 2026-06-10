@@ -29,23 +29,31 @@ from uuid import UUID
 
 from llm_calling.errors import LLMError
 from llm_calling.router import LLMRouter
-from llm_calling.types import LLMRequest, Turn
+from llm_calling.types import LLMRequest
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import text
-from sqlalchemy.exc import OperationalError
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media
-from nexus.config import get_settings
-from nexus.db.errors import is_serialization_failure
-from nexus.db.session import use_serializable_if_available
-from nexus.errors import NotFoundError
+from nexus.db.models import MediaSummary
+from nexus.db.retries import retry_serializable
+from nexus.errors import LLM_ERROR_CODE_TO_API_ERROR_CODE, ApiError, ApiErrorCode, NotFoundError
 from nexus.jobs.queue import enqueue_unique_job
+from nexus.llm_catalog import require_catalog_model
 from nexus.logging import get_logger
 from nexus.schemas.media import MediaSummarizeOut, MediaUnitStatus
+from nexus.services.api_key_resolver import ResolvedKey, resolve_api_key, update_user_key_status
+from nexus.services.chat_run_usage import usage_tokens
+from nexus.services.llm_ledger import LedgeredLLM, LlmCallOwner
+from nexus.services.prompt_budget import estimate_tokens
+from nexus.services.rate_limit import get_rate_limiter
 from nexus.services.structured_synthesis import (
+    INDEX_GROUNDING_RULE,
     StructuredSynthesisError,
     SynthesisRequest,
+    build_synthesis_prompt,
+    build_synthesis_request,
+    ground_indices,
     run_structured_synthesis,
 )
 
@@ -60,7 +68,8 @@ MEDIA_UNIT_LLM_TIMEOUT_SECONDS = 45
 # with a warning rather than silently capped.
 MEDIA_UNIT_INPUT_CHAR_BUDGET = 60_000
 
-_SERIALIZABLE_RETRIES = 3
+# The pinned model must exist in MODEL_CATALOG (code/catalog mismatch is a defect).
+require_catalog_model(MEDIA_UNIT_PROVIDER, MEDIA_UNIT_MODEL_NAME)
 
 
 # ---------- public contract -------------------------------------------------
@@ -116,18 +125,13 @@ def ensure_media_unit(db: Session, *, media_id: UUID) -> MediaUnitRef:
     ``building`` at the new fingerprint, prior claims are cleared, and a deduped
     build job is enqueued.
     """
-    for attempt in range(_SERIALIZABLE_RETRIES):
-        use_serializable_if_available(db)
-        try:
-            ref = _ensure_media_unit_core(db, media_id=media_id)
-            db.commit()
-            return ref
-        except OperationalError as exc:
-            db.rollback()
-            if not is_serialization_failure(exc) or attempt == _SERIALIZABLE_RETRIES - 1:
-                raise
-    # justify-defect: the loop returns or raises on the final attempt.
-    raise AssertionError("ensure_media_unit retry loop exhausted")
+
+    def op() -> MediaUnitRef:
+        ref = _ensure_media_unit_core(db, media_id=media_id)
+        db.commit()
+        return ref
+
+    return retry_serializable(db, "ensure_media_unit", op)
 
 
 def ensure_media_unit_in_tx(db: Session, *, media_id: UUID) -> MediaUnitRef:
@@ -182,6 +186,15 @@ def delete_media_unit(db: Session, *, media_id: UUID) -> None:
     )
 
 
+def media_summary_orm_or_none(db: Session, *, media_id: UUID) -> MediaSummary | None:
+    """Load the unit head ORM by media id (the single home for head-ORM access)."""
+    return db.scalars(
+        select(MediaSummary)
+        .where(MediaSummary.media_id == media_id)
+        .execution_options(populate_existing=True)
+    ).first()
+
+
 def _ensure_media_unit_core(db: Session, *, media_id: UUID) -> MediaUnitRef:
     fingerprint = _compute_content_fingerprint(db, media_id=media_id)
     summary = (
@@ -214,6 +227,8 @@ def _ensure_media_unit_core(db: Session, *, media_id: UUID) -> MediaUnitRef:
                     summary_md = '',
                     model_name = :model_name,
                     status = 'building',
+                    error_code = NULL,
+                    error_detail = NULL,
                     updated_at = now()
                 WHERE id = :summary_id
                 """
@@ -397,85 +412,160 @@ async def run_media_unit_build(
 
     Replay-safe: an ``ok`` no-op when the head is missing, not ``building``, or
     when the recomputed fingerprint no longer matches the head (a fresher
-    dedupe_key job owns that version). Expected LLM failures and an empty
-    candidate set set the head ``failed`` without raising and return ``failed``
-    so the queue records a real failure; the worker boundary handles only
-    unexpected exceptions.
+    dedupe_key job owns that version). Expected failures — no candidates, no
+    resolvable key, rate-limit/budget rejections, LLM/synthesis errors — set the
+    head ``failed`` with the error floor (``error_code``/``error_detail``)
+    without raising and return ``failed`` so the queue records a real failure;
+    the worker boundary handles only unexpected exceptions.
+
+    The provider call is attributed to the media owner (``resolve_api_key``,
+    BYOK-first) and runs inside the rate-limit/budget envelope; each attempt is
+    ledgered as one ``llm_calls`` row (owner ``media_summary`` = the head id).
     """
-    summary = (
-        db.execute(
-            text("SELECT * FROM media_summaries WHERE media_id = :media_id"),
-            {"media_id": media_id},
-        )
-        .mappings()
-        .first()
-    )
-    if summary is None or summary["status"] != "building":
+    summary = media_summary_orm_or_none(db, media_id=media_id)
+    if summary is None or summary.status != "building":
         # A newer ensure/build replaced or terminated this head; nothing to do.
         return "ok"
-    summary_id = UUID(str(summary["id"]))
+    summary_id = summary.id
 
     current_fingerprint = _compute_content_fingerprint(db, media_id=media_id)
-    if current_fingerprint != summary["content_fingerprint"]:
+    if current_fingerprint != summary.content_fingerprint:
         # The content changed after this build was enqueued; the dedupe_key for
         # the new fingerprint enqueues a distinct job that will rebuild. No-op.
         return "ok"
 
-    candidates = _load_candidates(db, media_id=media_id)
-    if not candidates:
-        _fail_unit(db, summary_id=summary_id)
+    owner_row = db.execute(
+        text("SELECT created_by_user_id FROM media WHERE id = :media_id"),
+        {"media_id": media_id},
+    ).scalar_one()
+    if owner_row is None:
+        fail_media_unit(
+            db,
+            summary_id=summary_id,
+            error_code=ApiErrorCode.E_LLM_NO_KEY.value,
+            error_detail="media has no owning user to resolve an API key for",
+        )
         return "failed"
-
-    request = _build_llm_request(candidates)
-    settings = get_settings()
-    api_key = settings.anthropic_api_key or ""
+    owner_user_id = UUID(str(owner_row))
     try:
-        result = await run_structured_synthesis(
-            llm=llm,
-            request=SynthesisRequest(
-                provider=MEDIA_UNIT_PROVIDER,
-                llm_request=request,
-                api_key=api_key,
-                timeout_s=MEDIA_UNIT_LLM_TIMEOUT_SECONDS,
-            ),
-            schema=MediaUnitSynthesis,
+        resolved_key = resolve_api_key(db, owner_user_id, MEDIA_UNIT_PROVIDER, "auto")
+    except ApiError as exc:
+        fail_media_unit(
+            db, summary_id=summary_id, error_code=exc.code.value, error_detail=exc.message
         )
-    except (LLMError, StructuredSynthesisError) as exc:
-        logger.warning(
-            "media_unit_build.llm_failure",
-            media_id=str(media_id),
-            reason=type(exc).__name__,
+        return "failed"
+    except LLMError as exc:
+        fail_media_unit(
+            db,
+            summary_id=summary_id,
+            error_code=LLM_ERROR_CODE_TO_API_ERROR_CODE[exc.error_code].value,
+            error_detail=str(exc)[:1000],
         )
-        _fail_unit(db, summary_id=summary_id)
         return "failed"
 
-    grounded = _map_claims_to_spans(result.value, candidates)
-    _persist_unit(
-        db,
-        media_id=media_id,
-        summary_id=summary_id,
-        summary_md=result.value.summary_md,
-        expected_fingerprint=current_fingerprint,
-        grounded=grounded,
-    )
-    return "ok"
-
-
-def fail_media_unit_after_worker_exception(db: Session, *, media_id: UUID) -> None:
-    """Set a nonterminal unit head to ``failed`` after a worker exception."""
-    db.rollback()
-    summary = (
-        db.execute(
-            text("SELECT id, status FROM media_summaries WHERE media_id = :media_id"),
-            {"media_id": media_id},
+    rate_limiter = get_rate_limiter()
+    try:
+        rate_limiter.acquire_inflight_slot(owner_user_id)
+    except ApiError as exc:
+        fail_media_unit(
+            db, summary_id=summary_id, error_code=exc.code.value, error_detail=exc.message
         )
-        .mappings()
-        .first()
-    )
-    if summary is None or summary["status"] in ("ready", "failed"):
+        return "failed"
+    budget_reserved = False
+    estimated_tokens = 0
+    try:
+        candidates = _load_candidates(db, media_id=media_id)
+        if not candidates:
+            fail_media_unit(
+                db,
+                summary_id=summary_id,
+                error_code="no_candidates",
+                error_detail="media has no indexed content chunks with evidence spans",
+            )
+            return "failed"
+
+        request = _build_llm_request(candidates)
+        if resolved_key.mode == "platform":
+            estimated_tokens = (
+                estimate_tokens("\n".join(turn.content for turn in request.messages))
+                + MEDIA_UNIT_MAX_OUTPUT_TOKENS
+            )
+            try:
+                rate_limiter.reserve_token_budget(owner_user_id, summary_id, estimated_tokens)
+                budget_reserved = True
+            except ApiError as exc:
+                fail_media_unit(
+                    db, summary_id=summary_id, error_code=exc.code.value, error_detail=exc.message
+                )
+                return "failed"
+
+        try:
+            result = await run_structured_synthesis(
+                llm=LedgeredLLM(
+                    db=db,
+                    owner=LlmCallOwner(kind="media_summary", id=summary_id),
+                    router=llm,
+                    llm_operation="media_unit",
+                    key_mode_requested="auto",
+                    key_mode_used=resolved_key.mode,
+                ),
+                request=SynthesisRequest(
+                    provider=MEDIA_UNIT_PROVIDER,
+                    llm_request=request,
+                    api_key=resolved_key.api_key,
+                    timeout_s=MEDIA_UNIT_LLM_TIMEOUT_SECONDS,
+                ),
+                schema=MediaUnitSynthesis,
+            )
+        except LLMError as exc:
+            error_code = LLM_ERROR_CODE_TO_API_ERROR_CODE[exc.error_code].value
+            logger.warning(
+                "media_unit_build.llm_failure", media_id=str(media_id), error_code=error_code
+            )
+            if resolved_key.mode == "byok" and error_code == ApiErrorCode.E_LLM_INVALID_KEY.value:
+                update_user_key_status(db, resolved_key.user_key_id, "invalid")
+            fail_media_unit(
+                db, summary_id=summary_id, error_code=error_code, error_detail=str(exc)[:1000]
+            )
+            return "failed"
+        except StructuredSynthesisError as exc:
+            logger.warning(
+                "media_unit_build.llm_failure",
+                media_id=str(media_id),
+                error_code=ApiErrorCode.E_LLM_BAD_REQUEST.value,
+            )
+            fail_media_unit(
+                db,
+                summary_id=summary_id,
+                error_code=ApiErrorCode.E_LLM_BAD_REQUEST.value,
+                error_detail=str(exc)[:1000],
+            )
+            return "failed"
+
+        # Commit the per-attempt llm_calls rows now so they survive whatever the
+        # promote does (a later worker-boundary rollback must not erase them).
         db.commit()
-        return
-    _fail_unit(db, summary_id=UUID(str(summary["id"])))
+        grounded = _map_claims_to_spans(result.value, candidates)
+        _persist_unit(
+            db,
+            media_id=media_id,
+            summary_id=summary_id,
+            summary_md=result.value.summary_md,
+            expected_fingerprint=current_fingerprint,
+            grounded=grounded,
+            resolved_key=resolved_key,
+        )
+        if budget_reserved:
+            actual_tokens = usage_tokens(result.usage)["total_tokens"]
+            rate_limiter.commit_token_budget(
+                owner_user_id, summary_id, actual_tokens or estimated_tokens
+            )
+            budget_reserved = False
+        return "ok"
+    finally:
+        if budget_reserved:
+            rate_limiter.release_token_budget(owner_user_id, summary_id)
+        rate_limiter.release_inflight_slot(owner_user_id)
 
 
 # ---------- grounding map (pure, unit-testable) -----------------------------
@@ -487,16 +577,22 @@ def _map_claims_to_spans(
 ) -> list[tuple[str, UUID, int]]:
     """Map each claim's candidate_index to a span, dropping out-of-range claims.
 
-    Survivors keep model order and are reassigned ordinals 0..M. A claim whose
-    ``candidate_index`` is not a valid candidate is dropped (AC-2).
+    The bounds check is :func:`ground_indices` (policy ``"drop"``; AC-2: an
+    ungrounded claim never reaches persistence). Survivors keep model order and
+    are reassigned dense ordinals 0..M (caller-side concern).
     """
-    survivors: list[tuple[str, UUID]] = []
-    for claim in synthesis.claims:
-        if 0 <= claim.candidate_index < len(candidates):
-            survivors.append((claim.claim_text, candidates[claim.candidate_index].evidence_span_id))
+    survivors = (
+        ground_indices(
+            synthesis.claims,
+            candidates,
+            index_of=lambda claim: claim.candidate_index,
+            policy="drop",
+        )
+        or []
+    )
     return [
-        (claim_text, evidence_span_id, ordinal)
-        for ordinal, (claim_text, evidence_span_id) in enumerate(survivors)
+        (claim.claim_text, candidate.evidence_span_id, ordinal)
+        for ordinal, (claim, candidate) in enumerate(survivors)
     ]
 
 
@@ -608,83 +704,93 @@ def _persist_unit(
     summary_md: str,
     expected_fingerprint: str,
     grounded: list[tuple[str, UUID, int]],
+    resolved_key: ResolvedKey,
 ) -> None:
-    for attempt in range(_SERIALIZABLE_RETRIES):
-        use_serializable_if_available(db)
-        try:
-            # Gate the promote on the build's generation. A concurrent re-ingest
-            # commits a new fingerprint (and replaces evidence_spans) during the
-            # LLM window; under READ COMMITTED this UPDATE then matches 0 rows, so
-            # the superseded build bails before the FK-violating claim INSERTs and
-            # never clobbers the live 'building' head.
-            result = cast(
-                "Any",
-                db.execute(
-                    text(
-                        """
-                        UPDATE media_summaries
-                        SET summary_md = :summary_md,
-                            status = 'ready',
-                            updated_at = now()
-                        WHERE id = :summary_id
-                          AND status = 'building'
-                          AND content_fingerprint = :expected_fingerprint
-                        """
-                    ),
-                    {
-                        "summary_md": summary_md,
-                        "summary_id": summary_id,
-                        "expected_fingerprint": expected_fingerprint,
-                    },
-                ),
-            )
-            if result.rowcount == 0:
-                db.rollback()
-                return
+    def op() -> None:
+        # Gate the promote on the build's generation. A concurrent re-ingest
+        # commits a new fingerprint (and replaces evidence_spans) during the
+        # LLM window; under READ COMMITTED this UPDATE then matches 0 rows, so
+        # the superseded build bails before the FK-violating claim INSERTs and
+        # never clobbers the live 'building' head.
+        result = cast(
+            "Any",
             db.execute(
-                text("DELETE FROM media_claims WHERE summary_id = :summary_id"),
-                {"summary_id": summary_id},
-            )
-            for claim_text, evidence_span_id, ordinal in grounded:
-                db.execute(
-                    text(
-                        """
-                        INSERT INTO media_claims (
-                            media_id, summary_id, claim_text, evidence_span_id, ordinal
-                        )
-                        VALUES (
-                            :media_id, :summary_id, :claim_text, :evidence_span_id, :ordinal
-                        )
-                        """
-                    ),
-                    {
-                        "media_id": media_id,
-                        "summary_id": summary_id,
-                        "claim_text": claim_text,
-                        "evidence_span_id": evidence_span_id,
-                        "ordinal": ordinal,
-                    },
-                )
-            db.commit()
-            return
-        except OperationalError as exc:
+                text(
+                    """
+                    UPDATE media_summaries
+                    SET summary_md = :summary_md,
+                        status = 'ready',
+                        error_code = NULL,
+                        error_detail = NULL,
+                        updated_at = now()
+                    WHERE id = :summary_id
+                      AND status = 'building'
+                      AND content_fingerprint = :expected_fingerprint
+                    """
+                ),
+                {
+                    "summary_md": summary_md,
+                    "summary_id": summary_id,
+                    "expected_fingerprint": expected_fingerprint,
+                },
+            ),
+        )
+        if result.rowcount == 0:
             db.rollback()
-            if not is_serialization_failure(exc) or attempt == _SERIALIZABLE_RETRIES - 1:
-                raise
-    # justify-defect: the loop returns or raises on the final attempt.
-    raise AssertionError("_persist_unit retry loop exhausted")
+            return
+        db.execute(
+            text("DELETE FROM media_claims WHERE summary_id = :summary_id"),
+            {"summary_id": summary_id},
+        )
+        for claim_text, evidence_span_id, ordinal in grounded:
+            db.execute(
+                text(
+                    """
+                    INSERT INTO media_claims (
+                        media_id, summary_id, claim_text, evidence_span_id, ordinal
+                    )
+                    VALUES (
+                        :media_id, :summary_id, :claim_text, :evidence_span_id, :ordinal
+                    )
+                    """
+                ),
+                {
+                    "media_id": media_id,
+                    "summary_id": summary_id,
+                    "claim_text": claim_text,
+                    "evidence_span_id": evidence_span_id,
+                    "ordinal": ordinal,
+                },
+            )
+        # BYOK key-status feedback rides the terminal write (chat precedent).
+        if resolved_key.mode == "byok":
+            update_user_key_status(db, resolved_key.user_key_id, "valid")
+        db.commit()
+
+    retry_serializable(db, "_persist_unit", op)
 
 
-def _fail_unit(db: Session, *, summary_id: UUID) -> None:
+def fail_media_unit(
+    db: Session, *, summary_id: UUID, error_code: str, error_detail: str | None
+) -> None:
+    """Set the unit head ``failed`` with the error floor and commit.
+
+    The one failure writer for ``media_summaries`` (worker paths and the task
+    boundary both land here); ``error_detail`` is operator-facing, never
+    rendered.
+    """
     db.execute(
         text(
             """
             UPDATE media_summaries
-            SET status = 'failed', updated_at = now()
+            SET status = 'failed',
+                error_code = :error_code,
+                error_detail = :error_detail,
+                updated_at = now()
             WHERE id = :summary_id
             """
         ),
-        {"summary_id": summary_id},
+        {"summary_id": summary_id, "error_code": error_code, "error_detail": error_detail},
     )
     db.commit()
 
@@ -710,21 +816,28 @@ class MediaUnitSynthesis(BaseModel):
     claims: list[MediaUnitClaimOut]
 
 
-_MEDIA_UNIT_SYSTEM_PROMPT = (
+# Prompt decomposition for the shared synthesis scaffold; the assembled bytes
+# are pinned (golden) in tests/test_structured_synthesis.py.
+_MEDIA_UNIT_PERSONA = (
     "You are a careful research assistant building a reusable unit for one "
-    "document: a concise summary plus a set of atomic, grounded claims.\n\n"
-    "RULES.\n"
-    "1. Refer to candidate passages only by their integer index. Do not invent "
-    "passages, indices, sources, or quotations.\n"
-    "2. Write summary_md: a faithful markdown abstract of the document "
-    "(2-5 sentences), based only on the candidate passages.\n"
-    "3. Write claims: each is one atomic, self-contained factual statement the "
+    "document: a concise summary plus a set of atomic, grounded claims."
+)
+_MEDIA_UNIT_DOMAIN_RULES = [
+    INDEX_GROUNDING_RULE + " Do not invent passages, indices, sources, or quotations.",
+    "Write summary_md: a faithful markdown abstract of the document "
+    "(2-5 sentences), based only on the candidate passages.",
+    "Write claims: each is one atomic, self-contained factual statement the "
     "document makes, paired with the candidate_index of the single passage that "
-    "best supports it. Only emit a claim you can ground in a provided candidate.\n"
-    "4. Output strict JSON of the form: "
-    '{"summary_md": string, "claims": [{"claim_text": string, '
-    '"candidate_index": int}]}. No markdown fences, no extra keys, no commentary '
-    "outside the JSON."
+    "best supports it. Only emit a claim you can ground in a provided candidate.",
+]
+_MEDIA_UNIT_JSON_SHAPE = (
+    '{"summary_md": string, "claims": [{"claim_text": string, "candidate_index": int}]}'
+)
+_MEDIA_UNIT_SYSTEM_PROMPT = build_synthesis_prompt(
+    persona=_MEDIA_UNIT_PERSONA,
+    preamble=None,
+    domain_rules=_MEDIA_UNIT_DOMAIN_RULES,
+    json_shape=_MEDIA_UNIT_JSON_SHAPE,
 )
 
 
@@ -732,14 +845,11 @@ def _build_llm_request(candidates: list[_Candidate]) -> LLMRequest:
     rendered = "\n\n".join(
         f"[{index}] {candidate.text}" for index, candidate in enumerate(candidates)
     )
-    user_content = f"CANDIDATES:\n{rendered}\n\nRespond with the strict JSON object as instructed."
-    return LLMRequest(
+    return build_synthesis_request(
+        system_prompt=_MEDIA_UNIT_SYSTEM_PROMPT,
+        candidates_header="CANDIDATES",
+        rendered_candidates=rendered,
+        extra_user_block=None,
         model_name=MEDIA_UNIT_MODEL_NAME,
-        messages=[
-            Turn(role="system", content=_MEDIA_UNIT_SYSTEM_PROMPT, cache_ttl="5m"),
-            Turn(role="user", content=user_content, cache_ttl="none"),
-        ],
         max_tokens=MEDIA_UNIT_MAX_OUTPUT_TOKENS,
-        reasoning_effort="none",
-        prompt_cache_key=None,
     )

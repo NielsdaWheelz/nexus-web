@@ -267,6 +267,67 @@ def _make_pdf(db: Session, library_id: UUID, *, pages: list[str], title: str = "
     return media.id
 
 
+def _make_oracle_reading(
+    db: Session,
+    user_id: UUID,
+    *,
+    question: str = "Where does the path open?",
+    motto: str = "Audentes Fortuna Iuvat",
+    argument: str = "Of the lamp kept burning through the closed forest.",
+    interpretation: str = "I saw a road bending into shadow.",
+) -> UUID:
+    """Create one completed oracle reading + its three phase passages.
+
+    The loader reads question/motto/argument/passages/interpretation_text and
+    gates on ``user_id == viewer_id``; this raw insert is sufficient.
+    """
+    from sqlalchemy import text as sql_text
+
+    reading_id = db.execute(
+        sql_text(
+            """
+            INSERT INTO oracle_readings (
+                user_id, folio_number, folio_motto, argument_text, question_text,
+                status, interpretation_text, completed_at
+            )
+            VALUES (
+                :user_id, 1, :motto, :argument, :question, 'complete', :interpretation, now()
+            )
+            RETURNING id
+            """
+        ),
+        {
+            "user_id": user_id,
+            "motto": motto,
+            "argument": argument,
+            "question": question,
+            "interpretation": interpretation,
+        },
+    ).scalar_one()
+    for phase, snippet in (
+        ("descent", "the ground falls away"),
+        ("ordeal", "the soul wrestles at the threshold"),
+        ("ascent", "the breaking through into dawn"),
+    ):
+        db.execute(
+            sql_text(
+                """
+                INSERT INTO oracle_reading_passages (
+                    reading_id, phase, source_kind, exact_snippet, locator_label,
+                    attribution_text, marginalia_text
+                )
+                VALUES (
+                    :reading_id, :phase, 'public_domain', :snippet, :phase,
+                    'A canonical work.', 'A short marginalia note.'
+                )
+                """
+            ),
+            {"reading_id": reading_id, "phase": phase, "snippet": snippet},
+        )
+    db.commit()
+    return UUID(str(reading_id))
+
+
 # =============================================================================
 # Tests
 # =============================================================================
@@ -477,7 +538,7 @@ def test_li_artifact_resources_block_reflects_current_revision(
     )
     db_session.commit()
 
-    block, _meta, _citations = context_assembler._build_resources_block(
+    block, _meta, _citations, _revision_refs = context_assembler._build_resources_block(
         db_session, conversation_id=conversation_id, viewer_id=bootstrapped_user
     )
     assert block is not None
@@ -507,7 +568,7 @@ def test_li_artifact_resources_block_reflects_current_revision(
     )
     db_session.commit()
 
-    block2, _meta2, _citations2 = context_assembler._build_resources_block(
+    block2, _meta2, _citations2, _revision_refs2 = context_assembler._build_resources_block(
         db_session, conversation_id=conversation_id, viewer_id=bootstrapped_user
     )
     assert block2 is not None
@@ -536,12 +597,116 @@ def test_li_artifact_not_a_citable_attached_resource(db_session: Session, bootst
     )
     db_session.commit()
 
-    block, _meta, citations = context_assembler._build_resources_block(
+    block, _meta, citations, _revision_refs = context_assembler._build_resources_block(
         db_session, conversation_id=conversation_id, viewer_id=bootstrapped_user
     )
     assert block is not None
     assert citations == (), "The artifact must not materialize an attached citation"
     assert ' n="' not in block.text, "A non-citable resource must not be numbered"
+
+
+def test_li_artifact_revision_id_stamped_into_included_context_refs(
+    db_session: Session, bootstrapped_user: UUID
+):
+    """§6.6: a chat run over an LI artifact records the consumed revision id in the
+    assembly ledger's ``included_context_refs`` (queryable via JSONB containment)."""
+    from sqlalchemy import text as sql_text
+
+    from nexus.services import context_assembler
+    from nexus.services.conversation_references import insert_reference_if_absent
+
+    library_id = create_test_library(db_session, bootstrapped_user, "Stamped Library")
+    artifact_id = _make_li_artifact(
+        db_session, library_id, bootstrapped_user, content_md="Synthesis prose [1]."
+    )
+    revision_id = db_session.execute(
+        sql_text("SELECT current_revision_id FROM library_intelligence_artifacts WHERE id = :id"),
+        {"id": artifact_id},
+    ).scalar_one()
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    insert_reference_if_absent(
+        db_session, conversation_id, f"library_intelligence_artifact:{artifact_id}"
+    )
+    db_session.commit()
+
+    _block, _meta, _citations, revision_refs = context_assembler._build_resources_block(
+        db_session, conversation_id=conversation_id, viewer_id=bootstrapped_user
+    )
+    assert revision_refs == (
+        {
+            "type": "conversation_reference",
+            "resource_uri": f"library_intelligence_artifact:{artifact_id}",
+            "revision_id": str(revision_id),
+        },
+    ), f"the consumed revision id must be stamped, got {revision_refs}"
+
+
+def test_li_artifact_without_revision_stamps_nothing(db_session: Session, bootstrapped_user: UUID):
+    """A head with no promoted revision contributes no revision stamp."""
+    from nexus.services import context_assembler
+    from nexus.services.conversation_references import insert_reference_if_absent
+
+    library_id = create_test_library(db_session, bootstrapped_user, "Ungenerated Stamp Library")
+    artifact_id = _make_li_artifact(db_session, library_id, bootstrapped_user, content_md=None)
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    insert_reference_if_absent(
+        db_session, conversation_id, f"library_intelligence_artifact:{artifact_id}"
+    )
+    db_session.commit()
+
+    _block, _meta, _citations, revision_refs = context_assembler._build_resources_block(
+        db_session, conversation_id=conversation_id, viewer_id=bootstrapped_user
+    )
+    assert revision_refs == (), "no current revision -> no stamp"
+
+
+# =============================================================================
+# oracle_reading scheme
+# =============================================================================
+
+
+def test_resolve_oracle_reading_owner_inlines_full_reading(
+    db_session: Session, bootstrapped_user: UUID
+):
+    reading_id = _make_oracle_reading(
+        db_session,
+        bootstrapped_user,
+        question="Where does the path open?",
+        motto="Memento Mori",
+        argument="Of the road that answers after dread.",
+        interpretation="I stood at the threshold and the dawn opened.",
+    )
+
+    resolved = resolve(db_session, f"oracle_reading:{reading_id}", viewer_id=bootstrapped_user)
+
+    assert not resolved.missing, f"owner must resolve the reading; got {resolved}"
+    assert resolved.label == "Folio 1 — Memento Mori"
+    body = resolved.inline_body or ""
+    assert "Question: Where does the path open?" in body
+    assert "Motto: Memento Mori" in body
+    assert "Of the road that answers after dread." in body
+    assert "Interpretation:\nI stood at the threshold and the dawn opened." in body
+    assert "the soul wrestles at the threshold" in body, "passages must appear in the body"
+    assert "read_resource" in resolved.fetch_hint
+
+
+def test_resolve_oracle_reading_non_owner_returns_missing(
+    db_session: Session, bootstrapped_user: UUID
+):
+    other_user_id = uuid4()
+    ensure_user_and_default_library(db_session, other_user_id)
+    reading_id = _make_oracle_reading(db_session, other_user_id)
+
+    resolved = resolve(db_session, f"oracle_reading:{reading_id}", viewer_id=bootstrapped_user)
+
+    assert resolved.missing, "a non-owner must see another user's reading as missing"
+
+
+def test_resolve_oracle_reading_unknown_id_returns_missing(
+    db_session: Session, bootstrapped_user: UUID
+):
+    resolved = resolve(db_session, f"oracle_reading:{uuid4()}", viewer_id=bootstrapped_user)
+    assert resolved.missing, "unknown reading URI must resolve as missing"
 
 
 def test_resolve_span_inlines_body_under_threshold(db_session: Session, bootstrapped_user: UUID):

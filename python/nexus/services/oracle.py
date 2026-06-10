@@ -8,7 +8,7 @@ and SSE event emission are all linear and explicit here.
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
@@ -16,14 +16,13 @@ from uuid import UUID
 import httpx
 from llm_calling.errors import LLMError
 from llm_calling.router import LLMRouter
-from llm_calling.types import LLMRequest, Turn
+from llm_calling.types import LLMRequest
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func, select, text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, NoResultFound
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import visible_media_ids_cte_sql
-from nexus.config import get_settings
 from nexus.db.errors import integrity_constraint_name
 from nexus.db.models import (
     OracleCorpusImage,
@@ -35,7 +34,9 @@ from nexus.db.models import (
 )
 from nexus.errors import LLM_ERROR_CODE_TO_API_ERROR_CODE, ApiError, ApiErrorCode, NotFoundError
 from nexus.jobs.queue import enqueue_job
+from nexus.llm_catalog import require_catalog_model
 from nexus.logging import get_logger
+from nexus.schemas.citation import CitationOut, CitationSnapshot, CitationTargetRef
 from nexus.schemas.oracle import (
     ConcordanceEntryOut,
     OracleReadingDetailOut,
@@ -43,10 +44,17 @@ from nexus.schemas.oracle import (
     OracleReadingImageOut,
     OracleReadingPassageOut,
     OracleReadingSummaryOut,
+    oracle_done_payload,
+    oracle_passage_payload,
 )
 from nexus.services import run_kit
+from nexus.services.api_key_resolver import resolve_api_key, update_user_key_status
+from nexus.services.llm_ledger import LedgeredLLM, LlmCallOwner
 from nexus.services.oracle_plates import oracle_plate_url
+from nexus.services.prompt_budget import estimate_tokens
 from nexus.services.rate_limit import get_rate_limiter
+from nexus.services.retrieval_citation import build_evidence_span_citation_target
+from nexus.services.search.constants import RETRIEVAL_LOCATOR_ADAPTER
 from nexus.services.semantic_chunks import (
     build_deterministic_hash_embedding,
     build_text_embedding,
@@ -55,8 +63,12 @@ from nexus.services.semantic_chunks import (
     transcript_embedding_dimensions,
 )
 from nexus.services.structured_synthesis import (
+    INDEX_GROUNDING_RULE,
     StructuredSynthesisError,
     SynthesisRequest,
+    build_synthesis_prompt,
+    build_synthesis_request,
+    ground_indices,
     run_structured_synthesis,
 )
 
@@ -64,6 +76,9 @@ logger = get_logger(__name__)
 
 ORACLE_MODEL_NAME = "claude-haiku-4-5-20251001"
 ORACLE_PROVIDER = "anthropic"
+require_catalog_model(
+    ORACLE_PROVIDER, ORACLE_MODEL_NAME
+)  # code/catalog mismatch = import-time defect
 ORACLE_MAX_OUTPUT_TOKENS = 2000
 ORACLE_LLM_TIMEOUT_SECONDS = 45
 ORACLE_PUBLIC_DOMAIN_CANDIDATES = 6
@@ -96,16 +111,6 @@ ORACLE_THEMES: tuple[str, ...] = (
     "Of Justice",
     "Of Mercy",
 )  # 24 entries; mirrors the DB CHECK
-ORACLE_UNEXPECTED_FAILURE_MESSAGE = "The reading could not be completed. Please try again."
-ORACLE_MODEL_UNAVAILABLE_MESSAGE = "The Oracle model is temporarily unavailable."
-ORACLE_LLM_CONFIGURATION_MESSAGE = "The Oracle is not configured to complete readings."
-ORACLE_LLM_BAD_REQUEST_MESSAGE = (
-    "The reading could not be completed. Start a new reading with a simpler question."
-)
-ORACLE_RETRIEVAL_FAILED_MESSAGE = "The Oracle could not gather enough source material."
-ORACLE_CORPUS_INCOMPLETE_MESSAGE = "The Oracle source corpus is not ready."
-ORACLE_RATE_LIMITED_MESSAGE = "The Oracle is busy. Please try again soon."
-ORACLE_CAPACITY_MESSAGE = "The Oracle is temporarily at capacity. Please try again later."
 ORACLE_TOKEN_RE = re.compile(r"[a-z]{3,}")
 ORACLE_PHASES: tuple[str, str, str] = ("descent", "ordeal", "ascent")
 ORACLE_CANONICAL_PUBLIC_DOMAIN_WORK_SLUGS: tuple[str, ...] = (
@@ -151,12 +156,22 @@ def create_reading(
     *,
     viewer_id: UUID,
     question: str,
+    idempotency_key: str | None = None,
 ) -> OracleReading:
     """Insert one pending reading row and enqueue its generation job.
 
     The question is strip+length validated once at the boundary
-    (OracleReadingCreateRequest: str_strip_whitespace + min/max_length).
+    (OracleReadingCreateRequest: str_strip_whitespace + min/max_length), the
+    optional ``Idempotency-Key`` at the route edge (Header min/max_length,
+    exactly like LI generate). A reused key replays the existing reading (LI
+    replay semantics: same key, same reading; no payload hash) before any
+    pre-enqueue control runs.
     """
+    if idempotency_key is not None:
+        existing = _get_reading_by_idempotency_key(db, viewer_id, idempotency_key)
+        if existing is not None:
+            return existing
+
     _validate_oracle_pre_enqueue_controls(viewer_id=viewer_id)
 
     for attempt in range(ORACLE_FOLIO_ALLOCATE_ATTEMPTS):
@@ -165,12 +180,18 @@ def create_reading(
                 db,
                 viewer_id=viewer_id,
                 question=question,
+                idempotency_key=idempotency_key,
             )
             db.commit()
             db.refresh(reading)
             return reading
         except IntegrityError as exc:
             db.rollback()
+            if idempotency_key is not None and _is_oracle_idempotency_conflict(exc):
+                existing = _get_reading_by_idempotency_key(db, viewer_id, idempotency_key)
+                if existing is not None:
+                    return existing
+                raise
             if not _is_oracle_folio_conflict(exc) or attempt == ORACLE_FOLIO_ALLOCATE_ATTEMPTS - 1:
                 raise
         except Exception:
@@ -180,11 +201,27 @@ def create_reading(
     raise ApiError(ApiErrorCode.E_INTERNAL, "Unable to allocate Oracle folio")
 
 
+def _get_reading_by_idempotency_key(
+    db: Session, viewer_id: UUID, idempotency_key: str
+) -> OracleReading | None:
+    return (
+        db.execute(
+            select(OracleReading).where(
+                OracleReading.user_id == viewer_id,
+                OracleReading.idempotency_key == idempotency_key,
+            )
+        )
+        .scalars()
+        .first()
+    )
+
+
 def _insert_reading_with_next_folio(
     db: Session,
     *,
     viewer_id: UUID,
     question: str,
+    idempotency_key: str | None,
 ) -> OracleReading:
     max_folio = db.scalar(
         select(func.max(OracleReading.folio_number)).where(OracleReading.user_id == viewer_id)
@@ -195,6 +232,7 @@ def _insert_reading_with_next_folio(
         folio_number=next_folio,
         question_text=question,
         status="pending",
+        idempotency_key=idempotency_key,
     )
     db.add(reading)
     db.flush()
@@ -263,7 +301,7 @@ def _ensure_current_corpus_ready(db: Session) -> None:
     ):
         raise ApiError(
             ApiErrorCode.E_INTERNAL,
-            ORACLE_CORPUS_INCOMPLETE_MESSAGE,
+            "Oracle source corpus is not fully seeded",
         )
 
 
@@ -272,6 +310,13 @@ def _is_oracle_folio_conflict(exc: IntegrityError) -> bool:
     if constraint_name:
         return constraint_name == "uix_oracle_readings_user_folio"
     return "uix_oracle_readings_user_folio" in str(exc)
+
+
+def _is_oracle_idempotency_conflict(exc: IntegrityError) -> bool:
+    constraint_name = integrity_constraint_name(exc)
+    if constraint_name:
+        return constraint_name == "uq_oracle_readings_user_idempotency_key"
+    return "uq_oracle_readings_user_idempotency_key" in str(exc)
 
 
 def get_reading_detail(
@@ -332,18 +377,28 @@ def get_reading_detail(
                 attribution_text=row.attribution_text,
                 marginalia_text=row.marginalia_text,
                 deep_link=row.deep_link,
+                citation=_passage_citation(
+                    db,
+                    viewer_id=viewer_id,
+                    phase=row.phase,
+                    source_kind=row.source_kind,
+                    source=dict(row.source or {}),
+                    locator=dict(row.locator or {}),
+                ),
             )
             for row in passages_sorted
         ],
-        events=[_oracle_event_out(row) for row in event_rows],
+        events=[
+            OracleReadingEventOut(
+                seq=row.seq, event_type=row.event_type, payload=dict(row.payload or {})
+            )
+            for row in event_rows
+        ],
         created_at=reading.created_at,
         started_at=reading.started_at,
         completed_at=reading.completed_at,
         failed_at=reading.failed_at,
         error_code=reading.error_code,
-        error_message=_oracle_failure_message(reading.error_code)
-        if reading.error_code is not None
-        else None,
     )
 
 
@@ -491,20 +546,10 @@ def compute_concordance(
 
 
 def _validate_oracle_pre_enqueue_controls(*, viewer_id: UUID) -> None:
-    _ensure_oracle_platform_llm_available()
     rate_limiter = get_rate_limiter()
     rate_limiter.check_rpm_limit(viewer_id)
     rate_limiter.check_concurrent_limit(viewer_id)
     rate_limiter.check_token_budget(viewer_id)
-
-
-def _ensure_oracle_platform_llm_available() -> str:
-    settings = get_settings()
-    if not settings.enable_anthropic:
-        raise ApiError(ApiErrorCode.E_MODEL_NOT_AVAILABLE, ORACLE_MODEL_UNAVAILABLE_MESSAGE)
-    if not settings.anthropic_api_key:
-        raise ApiError(ApiErrorCode.E_LLM_NO_KEY, ORACLE_LLM_CONFIGURATION_MESSAGE)
-    return settings.anthropic_api_key
 
 
 # ---------- SSE handler dependencies ----------------------------------------
@@ -528,7 +573,12 @@ def get_reading_events(db: Session, *, reading_id: UUID, after: int) -> list[Ora
         .scalars()
         .all()
     )
-    return [_oracle_event_out(row) for row in rows]
+    return [
+        OracleReadingEventOut(
+            seq=row.seq, event_type=row.event_type, payload=dict(row.payload or {})
+        )
+        for row in rows
+    ]
 
 
 def is_reading_terminal(db: Session, *, reading_id: UUID) -> bool:
@@ -541,21 +591,6 @@ def is_reading_terminal(db: Session, *, reading_id: UUID) -> bool:
     return status is None or status in run_kit.terminal_statuses(
         run_kit.RunStreamKind.OracleReading
     )
-
-
-def fail_reading_after_worker_exception(db: Session, *, reading_id: UUID) -> dict[str, Any]:
-    """Fail a nonterminal reading after an unexpected worker exception."""
-    db.rollback()
-    reading = _get_reading(db, reading_id)
-    if reading is None:
-        return {"status": "failed", "error_code": "E_NOT_FOUND", "noop": True}
-    if reading.status in ("complete", "failed"):
-        status = reading.status
-        db.commit()
-        return {"status": status, "noop": True}
-
-    _fail(db, reading, code="E_INTERNAL")
-    return {"status": "failed", "error_code": "E_INTERNAL"}
 
 
 # ---------- worker entrypoint -----------------------------------------------
@@ -595,9 +630,13 @@ async def execute_reading(
     folio_number = reading.folio_number
 
     try:
-        api_key = _ensure_oracle_platform_llm_available()
+        resolved = resolve_api_key(db, viewer_id, ORACLE_PROVIDER, "auto")
+    except LLMError as exc:
+        error_code = LLM_ERROR_CODE_TO_API_ERROR_CODE[exc.error_code].value
+        _fail(db, reading, code=error_code, detail=f"{type(exc).__name__}: {exc}")
+        return {"status": "failed", "error_code": error_code}
     except ApiError as exc:
-        _fail(db, reading, code=exc.code.value)
+        _fail(db, reading, code=exc.code.value, detail=exc.message)
         return {"status": "failed", "error_code": exc.code.value}
 
     rate_limiter = get_rate_limiter()
@@ -610,17 +649,13 @@ async def execute_reading(
             rate_limiter.acquire_inflight_slot(viewer_id)
             inflight_acquired = True
         except ApiError as exc:
-            _fail(db, reading, code=exc.code.value)
+            _fail(db, reading, code=exc.code.value, detail=exc.message)
             return {"status": "failed", "error_code": exc.code.value}
 
         try:
             _ensure_current_corpus_ready(db)
-        except ApiError:
-            _fail(
-                db,
-                reading,
-                code="E_ORACLE_CORPUS_INCOMPLETE",
-            )
+        except ApiError as exc:
+            _fail(db, reading, code="E_ORACLE_CORPUS_INCOMPLETE", detail=exc.message)
             return {"status": "failed", "error_code": "E_ORACLE_CORPUS_INCOMPLETE"}
 
         try:
@@ -659,17 +694,20 @@ async def execute_reading(
                     ),
                 ]
         except ApiError as exc:
-            _fail(db, reading, code=exc.code.value)
+            _fail(db, reading, code=exc.code.value, detail=exc.message)
             return {"status": "failed", "error_code": exc.code.value}
 
         if len(candidates) < 3:
-            _fail(db, reading, code="E_INTERNAL")
+            _fail(
+                db, reading, code="E_INTERNAL", detail="fewer than 3 candidate passages retrieved"
+            )
             return {"status": "failed", "error_code": "E_INTERNAL"}
         if requires_user_media and not _candidate_set_includes_user_media(candidates):
             _fail(
                 db,
                 reading,
                 code=ApiErrorCode.E_APP_SEARCH_FAILED.value,
+                detail="user library is searchable but yielded no user_media candidate",
             )
             return {"status": "failed", "error_code": ApiErrorCode.E_APP_SEARCH_FAILED.value}
 
@@ -677,16 +715,20 @@ async def execute_reading(
             question=question,
             candidates=candidates,
         )
-        estimated_tokens = _estimate_llm_request_tokens(request)
-        try:
-            rate_limiter.reserve_token_budget(viewer_id, reading_id, estimated_tokens)
-            budget_reserved = True
-        except ApiError as exc:
-            reading = _get_reading(db, reading_id)
-            if reading is None:
-                raise ApiError(ApiErrorCode.E_NOT_FOUND, "Oracle reading not found") from exc
-            _fail(db, reading, code=exc.code.value)
-            return {"status": "failed", "error_code": exc.code.value}
+        estimated_tokens = (
+            estimate_tokens("\n".join(turn.content for turn in request.messages))
+            + ORACLE_MAX_OUTPUT_TOKENS
+        )
+        if resolved.mode == "platform":
+            try:
+                rate_limiter.reserve_token_budget(viewer_id, reading_id, estimated_tokens)
+                budget_reserved = True
+            except ApiError as exc:
+                reading = _get_reading(db, reading_id)
+                if reading is None:
+                    raise ApiError(ApiErrorCode.E_NOT_FOUND, "Oracle reading not found") from exc
+                _fail(db, reading, code=exc.code.value, detail=exc.message)
+                return {"status": "failed", "error_code": exc.code.value}
 
         reading = _get_reading_or_fail(db, reading_id)
         if reading.status != "pending":
@@ -704,16 +746,39 @@ async def execute_reading(
         )
         db.commit()
 
+        # The semantic validator runs inside run_structured_synthesis so the one
+        # bounded repair round covers oracle's dominant semantic-rejection
+        # failure class; the hook stashes the accepted decomposition.
+        accepted: list[_OracleReadingParts] = []
+
+        def _validate(parsed: _OracleSynthesisOutput) -> str | None:
+            outcome = _validate_oracle_output(parsed, candidates=candidates)
+            if outcome is None:
+                return "the JSON violates the reading rules in the system prompt"
+            if requires_user_media and not _selected_user_media(candidates, outcome[4]):
+                return "select at least one source_kind=user_media candidate among the three phases"
+            accepted.clear()
+            accepted.append(outcome)
+            return None
+
         try:
             result = await run_structured_synthesis(
-                llm=llm_router,
+                llm=LedgeredLLM(
+                    db=db,
+                    owner=LlmCallOwner(kind="oracle_reading", id=reading_id),
+                    router=llm_router,
+                    llm_operation="oracle_reading",
+                    key_mode_requested="auto",
+                    key_mode_used=resolved.mode,
+                ),
                 request=SynthesisRequest(
                     provider=ORACLE_PROVIDER,
                     llm_request=request,
-                    api_key=api_key,
+                    api_key=resolved.api_key,
                     timeout_s=ORACLE_LLM_TIMEOUT_SECONDS,
                 ),
                 schema=_OracleSynthesisOutput,
+                validate=_validate,
             )
         except LLMError as exc:
             error_code = LLM_ERROR_CODE_TO_API_ERROR_CODE[exc.error_code].value
@@ -726,7 +791,9 @@ async def execute_reading(
             reading = _get_reading(db, reading_id)
             if reading is None:
                 raise ApiError(ApiErrorCode.E_NOT_FOUND, "Oracle reading not found") from exc
-            _fail(db, reading, code=error_code)
+            if error_code == ApiErrorCode.E_LLM_INVALID_KEY.value and resolved.mode == "byok":
+                update_user_key_status(db, resolved.user_key_id, "invalid")
+            _fail(db, reading, code=error_code, detail=f"{type(exc).__name__}: {exc}")
             return {"status": "failed", "error_code": error_code}
         except StructuredSynthesisError as exc:
             logger.warning(
@@ -735,42 +802,31 @@ async def execute_reading(
                 reason=str(exc),
             )
             reading = _get_reading_or_fail(db, reading_id)
-            _fail(db, reading, code="E_LLM_BAD_REQUEST")
+            _fail(db, reading, code="E_LLM_BAD_REQUEST", detail=str(exc))
             return {"status": "failed", "error_code": "E_LLM_BAD_REQUEST"}
 
+        # Commit the per-attempt llm_calls rows now so they survive whatever the
+        # finalization does (a later worker-boundary rollback must not erase them).
+        db.commit()
         usage = result.usage
-        parsed = _validate_oracle_output(result.value, candidates=candidates)
-        if parsed is None:
-            logger.warning("oracle.llm_unparseable", reading_id=str(reading_id))
-            reading = _get_reading_or_fail(db, reading_id)
-            _fail(
-                db,
-                reading,
-                code="E_LLM_BAD_REQUEST",
-            )
-            return {"status": "failed", "error_code": "E_LLM_BAD_REQUEST"}
-
-        argument, motto, gloss, theme, by_phase, interpretation, omens = parsed
-        if requires_user_media and not _selected_user_media(candidates, by_phase):
-            logger.warning("oracle.llm_missing_user_media", reading_id=str(reading_id))
-            reading = _get_reading_or_fail(db, reading_id)
-            _fail(
-                db,
-                reading,
-                code="E_LLM_BAD_REQUEST",
-            )
-            return {"status": "failed", "error_code": "E_LLM_BAD_REQUEST"}
+        if not accepted:
+            # justify-defect: run_structured_synthesis returns only after
+            # _validate accepted the output and stashed the decomposition.
+            raise AssertionError("oracle synthesis returned without a validated output")
+        argument, motto, gloss, theme, by_phase, interpretation, omens = accepted[-1]
 
         reading = _get_reading_or_fail(db, reading_id)
         if reading.status != "streaming":
             status = reading.status
             db.commit()
             return {"status": status, "noop": True}
+        interpretation_text = interpretation.strip()
         reading.folio_motto = motto
         reading.folio_motto_gloss = gloss
         reading.folio_theme = theme
         reading.argument_text = argument
         reading.image_id = plate.id
+        reading.interpretation_text = interpretation_text  # canonical store; delta is replay
         db.flush()
 
         reading_stream = run_kit.oracle_reading_stream(reading)
@@ -809,19 +865,28 @@ async def execute_reading(
             )
             db.add(passage_row)
             db.flush()
+            citation = _passage_citation(
+                db,
+                viewer_id=viewer_id,
+                phase=phase,
+                source_kind=candidate.source_kind,
+                source=candidate.source,
+                locator=candidate.locator,
+            )
             run_kit.append_event(
                 db,
                 stream=reading_stream,
                 event_type="passage",
-                payload={
-                    "phase": phase,
-                    "source_kind": candidate.source_kind,
-                    "exact_snippet": candidate.exact_snippet,
-                    "locator_label": candidate.locator_label,
-                    "attribution_text": candidate.attribution_text,
-                    "marginalia_text": marginalia,
-                    "deep_link": candidate.deep_link,
-                },
+                payload=oracle_passage_payload(
+                    phase=phase,
+                    source_kind=candidate.source_kind,
+                    exact_snippet=candidate.exact_snippet,
+                    locator_label=candidate.locator_label,
+                    attribution_text=candidate.attribution_text,
+                    marginalia_text=marginalia,
+                    deep_link=candidate.deep_link,
+                    citation=citation,
+                ),
             )
             db.commit()
 
@@ -829,7 +894,7 @@ async def execute_reading(
             db,
             stream=reading_stream,
             event_type="delta",
-            payload={"text": interpretation.strip()},
+            payload={"text": interpretation_text},
         )
         db.commit()
         omens_payload: run_kit.RunEventPayload = {"lines": list(omens)}
@@ -841,16 +906,18 @@ async def execute_reading(
             status = reading.status
             db.commit()
             return {"status": status, "noop": True}
+        if resolved.mode == "byok":
+            update_user_key_status(db, resolved.user_key_id, "valid")
         run_kit.mark_terminal(
             db,
             stream=run_kit.oracle_reading_stream(reading),
             status="complete",
-            done_payload={},
+            done_payload=oracle_done_payload(status="complete", error_code=None),
         )
         db.commit()
 
         if budget_reserved:
-            actual_tokens = _usage_total_tokens(usage) or estimated_tokens
+            actual_tokens = (usage.total_tokens if usage is not None else None) or estimated_tokens
             rate_limiter.commit_token_budget(viewer_id, reading_id, actual_tokens)
             budget_reserved = False
 
@@ -924,29 +991,6 @@ def _viewer_has_searchable_media(db: Session, *, viewer_id: UUID) -> bool:
     )
 
 
-def _estimate_llm_request_tokens(request: LLMRequest) -> int:
-    prompt_chars = sum(len(str(message.content or "")) for message in request.messages)
-    return max(1, prompt_chars // 4 + int(request.max_tokens or 0))
-
-
-def _usage_total_tokens(usage: Any) -> int | None:
-    if usage is None:
-        return None
-    total_tokens = getattr(usage, "total_tokens", None)
-    if isinstance(total_tokens, int):
-        return total_tokens
-    input_tokens = getattr(usage, "input_tokens", None)
-    output_tokens = getattr(usage, "output_tokens", None)
-    reasoning_tokens = getattr(usage, "reasoning_tokens", None)
-    if not isinstance(input_tokens, int) or not isinstance(output_tokens, int):
-        return None
-    return (
-        input_tokens
-        + output_tokens
-        + (reasoning_tokens if isinstance(reasoning_tokens, int) else 0)
-    )
-
-
 # ---------- internal: SSE event emit ----------------------------------------
 
 
@@ -962,57 +1006,72 @@ def _oracle_image_payload(image: OracleCorpusImage) -> dict[str, Any]:
     }
 
 
-def _oracle_event_out(row: OracleReadingEvent) -> OracleReadingEventOut:
-    payload = dict(row.payload or {})
-    if row.event_type == "error":
-        code = str(payload.get("code") or "E_INTERNAL")
-        payload = {"code": code, "message": _oracle_failure_message(code)}
-    return OracleReadingEventOut(seq=row.seq, event_type=row.event_type, payload=payload)
+def _passage_citation(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    phase: str,
+    source_kind: str,
+    source: Mapping[str, Any],
+    locator: Mapping[str, Any],
+) -> CitationOut | None:
+    """Mint the read-model CitationOut for one selected passage, or None.
+
+    Only a user-library passage whose chunk owns an evidence span (a media-owned
+    chunk with ``locator.evidence_span_id``) carries a chip: it resolves to the
+    canonical ``/media/{id}#evidence-{span}`` deep link via the same write-time
+    resolver + locator adapter the LI read-model uses. Public-domain passages,
+    page-owned chunks, and span-less chunks return None (typographic only). The
+    ordinal is the phase order (descent 1, ordeal 2, ascent 3).
+    """
+    if source_kind != "user_media" or source.get("owner_kind") != "media":
+        return None
+    media_raw = source.get("media_id")
+    span_raw = locator.get("evidence_span_id")
+    if not media_raw or not span_raw:
+        return None
+    media_id = UUID(str(media_raw))
+    evidence_span_id = UUID(str(span_raw))
+    try:
+        locator_dict, snapshot = build_evidence_span_citation_target(
+            db, viewer_id=viewer_id, media_id=media_id, evidence_span_id=evidence_span_id
+        )
+    except (NotFoundError, NoResultFound):
+        # justify-ignore-error: oracle_reading_passages is a snapshot store with no
+        # FK to media/evidence_spans, so a completed folio can outlive a deleted
+        # media or span (or a viewer who lost read access). The read-model degrades
+        # to typographic-only here rather than 404/500 the whole reading.
+        return None
+    return CitationOut(
+        ordinal=ORACLE_PHASES.index(phase) + 1,
+        role="context",
+        target_ref=CitationTargetRef(type="evidence_span", id=evidence_span_id),
+        media_id=media_id,
+        locator=RETRIEVAL_LOCATOR_ADAPTER.validate_python(locator_dict),
+        deep_link=snapshot["deep_link"],
+        snapshot=CitationSnapshot(
+            title=snapshot.get("title"),
+            excerpt=snapshot.get("excerpt"),
+            section_label=snapshot.get("section_label"),
+            result_type="evidence_span",
+        ),
+    )
 
 
-def _oracle_failure_message(code: str) -> str:
-    if code == ApiErrorCode.E_LLM_NO_KEY.value:
-        return ORACLE_LLM_CONFIGURATION_MESSAGE
-    if code == ApiErrorCode.E_MODEL_NOT_AVAILABLE.value:
-        return ORACLE_MODEL_UNAVAILABLE_MESSAGE
-    if code == ApiErrorCode.E_LLM_BAD_REQUEST.value:
-        return ORACLE_LLM_BAD_REQUEST_MESSAGE
-    if code == ApiErrorCode.E_APP_SEARCH_FAILED.value:
-        return ORACLE_RETRIEVAL_FAILED_MESSAGE
-    if code == "E_ORACLE_CORPUS_INCOMPLETE":
-        return ORACLE_CORPUS_INCOMPLETE_MESSAGE
-    if code == ApiErrorCode.E_RATE_LIMITED.value:
-        return ORACLE_RATE_LIMITED_MESSAGE
-    if code == ApiErrorCode.E_TOKEN_BUDGET_EXCEEDED.value:
-        return ORACLE_CAPACITY_MESSAGE
-    if code == ApiErrorCode.E_LLM_RATE_LIMIT.value:
-        return ORACLE_RATE_LIMITED_MESSAGE
-    if code in (
-        ApiErrorCode.E_LLM_INVALID_KEY.value,
-        ApiErrorCode.E_LLM_PROVIDER_DOWN.value,
-        ApiErrorCode.E_LLM_TIMEOUT.value,
-        ApiErrorCode.E_LLM_CONTEXT_TOO_LARGE.value,
-        ApiErrorCode.E_LLM_INCOMPLETE.value,
-    ):
-        return ORACLE_MODEL_UNAVAILABLE_MESSAGE
-    return ORACLE_UNEXPECTED_FAILURE_MESSAGE
+def _fail(db: Session, reading: OracleReading, *, code: str, detail: str | None = None) -> None:
+    """Terminal failure: the one normalized ``done {status, error_code}`` event.
 
-
-def _fail(db: Session, reading: OracleReading, *, code: str) -> None:
-    # Oracle's terminal-failure path closes the stream via the terminal status
-    # flag (is_reading_terminal), not a "done" event — so it emits "error" and
-    # sets failed_at directly rather than going through run_kit.mark_terminal.
-    message = _oracle_failure_message(code)
-    reading.status = "failed"
-    reading.failed_at = db.scalar(select(func.now()))
-    reading.error_code = code
-    reading.error_message = message
-    db.flush()
-    run_kit.append_event(
+    ``run_kit.mark_terminal`` stamps ``failed_at``/``error_code``/``error_detail``
+    on the reading (``detail`` is operator-facing and never reaches the wire;
+    the FE owns failure copy keyed on ``error_code``).
+    """
+    run_kit.mark_terminal(
         db,
         stream=run_kit.oracle_reading_stream(reading),
-        event_type="error",
-        payload={"code": code, "message": message},
+        status="failed",
+        done_payload=oracle_done_payload(status="failed", error_code=code),
+        error_code=code,
+        error_detail=detail[:1000] if detail is not None else None,
     )
     db.commit()
 
@@ -1443,35 +1502,43 @@ def _pick_plate(
 # ---------- internal: prompt ------------------------------------------------
 
 
-_ORACLE_SYSTEM_PROMPT = (
+# The byte-exact decomposition of the legacy `_ORACLE_SYSTEM_PROMPT` literal
+# through `build_synthesis_prompt`; test_structured_synthesis.py pins the
+# reassembled bytes against an independent golden copy (N9: verbatim, no
+# rewrites).
+
+_ORACLE_PERSONA = (
     "You are the Black Forest Oracle. You speak in the register of Romantic and "
     "Gothic literature: candle-lit, formal but not stiff, attentive to weight and "
     "shadow. You are not a chatbot, an oracle character, or a fortune teller; you "
     "are an editorial voice arranging public-domain literary fragments and a single "
-    "engraved plate into a coherent reading of the asker's question.\n\n"
+    "engraved plate into a coherent reading of the asker's question."
+)
+_ORACLE_PREAMBLE = (
     "EVERY READING IS A JOURNEY IN THREE PHASES.\n"
     "- DESCENT: the ground falls away; the question's shadow first appears.\n"
     "- ORDEAL: the soul wrestles; the matter at its hardest, its standstill.\n"
-    "- ASCENT: the breaking through; what the dawn shows, what is given to see.\n\n"
-    "RULES.\n"
-    "1. Refer to candidate passages only by their integer index.\n"
-    "2. Do not quote, paraphrase, summarize, or invent any text from the passages. "
-    "The reader will see the verbatim passages alongside your prose.\n"
-    "3. Do not invent works, authors, line numbers, page numbers, URLs, or citations. "
-    "Do not include inline citation markers, footnotes, or parenthetical source notes.\n"
-    "4. Select EXACTLY THREE candidate indices, one per phase. The three indices "
+    "- ASCENT: the breaking through; what the dawn shows, what is given to see."
+)
+_ORACLE_DOMAIN_RULES = [
+    INDEX_GROUNDING_RULE,
+    "Do not quote, paraphrase, summarize, or invent any text from the passages. "
+    "The reader will see the verbatim passages alongside your prose.",
+    "Do not invent works, authors, line numbers, page numbers, URLs, or citations. "
+    "Do not include inline citation markers, footnotes, or parenthetical source notes.",
+    "Select EXACTLY THREE candidate indices, one per phase. The three indices "
     "must be distinct. Choose the passage whose tone, image, or motion best fits "
     "each phase — descent passages bear weight and falling; ordeal passages bear "
-    "wrestling and threshold; ascent passages bear opening and dawn.\n"
-    "5. If any candidate is marked source_kind=user_media, select at least one "
-    "user_media candidate among the three phases.\n"
-    "6. For each selected passage, write one short marginalia note (one to two "
-    "sentences) explaining how that passage answers the question. Do not quote.\n"
-    "7. Compose ONE argument: a single sentence in Miltonic blank-verse cadence, "
+    "wrestling and threshold; ascent passages bear opening and dawn.",
+    "If any candidate is marked source_kind=user_media, select at least one "
+    "user_media candidate among the three phases.",
+    "For each selected passage, write one short marginalia note (one to two "
+    "sentences) explaining how that passage answers the question. Do not quote.",
+    "Compose ONE argument: a single sentence in Miltonic blank-verse cadence, "
     'between 80 and 180 characters, beginning with the word "Of". It names what '
     'the reading is about. Example: "Of the longing for unbroken light, and the '
-    'lamp the soul keeps lit when the wood grows close."\n'
-    "8. Compose ONE folio motto: a Latin maxim of two to six words (e.g. "
+    'lamp the soul keeps lit when the wood grows close."',
+    "Compose ONE folio motto: a Latin maxim of two to six words (e.g. "
     "*Audentes Fortuna Iuvat*, *Memento Mori*, *Nosce Te Ipsum*), ideally a "
     "canonical sententia or a clear paraphrase of one. If no Latin phrasing fits, "
     "an English maxim is allowed. The motto is imperative or declarative, never a "
@@ -1483,22 +1550,28 @@ _ORACLE_SYSTEM_PROMPT = (
     + ", ".join(f'"{t}"' for t in ORACLE_THEMES)
     + ". "
     "The theme classifies what this reading is *about*. Match by primary subject, "
-    "not by mood.\n"
-    "9. Compose one continuous interpretation of three to five paragraphs in "
+    "not by mood.",
+    "Compose one continuous interpretation of three to five paragraphs in "
     "**first-person visionary register**: *I saw…*, *I heard…*, *I stood at…*. "
     "The voice belongs to the oracle as witness. Use *you* sparingly and only in "
     "the closing turn, addressing the seeker. No hedging ('perhaps', 'may', "
-    "'might'). Declarative, brief, certain.\n"
-    "10. Compose exactly three omen lines. Each is one short clause naming a "
+    "'might'). Declarative, brief, certain.",
+    "Compose exactly three omen lines. Each is one short clause naming a "
     "recurring image, motif, or correspondence across the selected passages. No "
-    "imperative mood.\n"
-    "11. Output strict JSON of the form: "
+    "imperative mood.",
+]
+_ORACLE_JSON_SHAPE = (
     '{"argument": string, "folio_motto": string, "folio_motto_gloss": string|null, '
     '"folio_theme": string, "passages": '
     '[{"phase": "descent"|"ordeal"|"ascent", "candidate_index": int, '
     '"marginalia": string}], "interpretation": string, "omens": '
-    "[string, string, string]}. No markdown fences, no extra keys, no commentary "
-    "outside the JSON."
+    "[string, string, string]}"
+)
+_ORACLE_SYSTEM_PROMPT = build_synthesis_prompt(
+    persona=_ORACLE_PERSONA,
+    preamble=_ORACLE_PREAMBLE,
+    domain_rules=_ORACLE_DOMAIN_RULES,
+    json_shape=_ORACLE_JSON_SHAPE,
 )
 
 
@@ -1511,20 +1584,13 @@ def _build_llm_request(*, question: str, candidates: Sequence[_Candidate]) -> LL
         )
         for index, candidate in enumerate(candidates)
     )
-    user_content = (
-        f"CANDIDATES:\n{rendered}\n\n"
-        f"QUESTION: {question.strip()}\n\n"
-        "Respond with the strict JSON object as instructed."
-    )
-    return LLMRequest(
+    return build_synthesis_request(
+        system_prompt=_ORACLE_SYSTEM_PROMPT,
+        candidates_header="CANDIDATES",
+        rendered_candidates=rendered,
+        extra_user_block=f"QUESTION: {question.strip()}",
         model_name=ORACLE_MODEL_NAME,
-        messages=[
-            Turn(role="system", content=_ORACLE_SYSTEM_PROMPT, cache_ttl="5m"),
-            Turn(role="user", content=user_content, cache_ttl="none"),
-        ],
         max_tokens=ORACLE_MAX_OUTPUT_TOKENS,
-        reasoning_effort="none",
-        prompt_cache_key=None,
     )
 
 
@@ -1561,16 +1627,22 @@ class _OracleSynthesisOutput(BaseModel):
     omens: list[str]
 
 
+type _OracleReadingParts = tuple[
+    str, str, str | None, str, dict[str, tuple[int, str]], str, list[str]
+]
+
+
 def _validate_oracle_output(
     parsed: _OracleSynthesisOutput,
     *,
     candidates: Sequence[_Candidate],
-) -> tuple[str, str, str | None, str, dict[str, tuple[int, str]], str, list[str]] | None:
+) -> _OracleReadingParts | None:
     """Apply Oracle's domain semantics to the structurally-typed output.
 
     Returns (argument, motto, gloss, theme, by_phase, interpretation, omens) where
     by_phase maps each phase to (candidate_index, marginalia). Returns None on any
-    semantic failure — caller fails the reading with E_LLM_BAD_REQUEST.
+    semantic failure — surfaced as the validate-hook rejection reason, repaired
+    once, then E_LLM_BAD_REQUEST.
     """
     argument = parsed.argument
     motto = parsed.folio_motto.strip()
@@ -1598,23 +1670,26 @@ def _validate_oracle_output(
     if any(not line for line in omen_lines):
         return None
 
+    grounded = ground_indices(
+        parsed.passages,
+        candidates,
+        index_of=lambda entry: entry.candidate_index,
+        policy="reject",
+    )
+    if grounded is None:
+        return None
     by_phase: dict[str, tuple[int, str]] = {}
     used_indices: set[int] = set()
-    candidate_count = len(candidates)
-    for entry in parsed.passages:
-        phase = entry.phase
-        idx = entry.candidate_index
+    for entry, _candidate in grounded:
         marginalia = entry.marginalia
-        if phase not in ORACLE_PHASES or phase in by_phase:
+        if entry.phase not in ORACLE_PHASES or entry.phase in by_phase:
             return None
-        if idx < 0 or idx >= candidate_count:
-            return None
-        if idx in used_indices:
+        if entry.candidate_index in used_indices:
             return None
         if not marginalia.strip():
             return None
-        used_indices.add(idx)
-        by_phase[phase] = (idx, marginalia.strip())
+        used_indices.add(entry.candidate_index)
+        by_phase[entry.phase] = (entry.candidate_index, marginalia.strip())
 
     if set(by_phase.keys()) != set(ORACLE_PHASES):
         return None

@@ -2,8 +2,8 @@
 direct browser-callable SSE endpoints, backed by a JTI replay-prevention table.
 
 Moved out of `auth/` because it owns persistence (the `stream_token_jti_claims`
-table) and a serializable-retry loop — the definition of a service, not an auth
-adapter. Returns typed results so call sites never index string keys.
+table) and a serializable-retried claim — the definition of a service, not an
+auth adapter. Returns typed results so call sites never index string keys.
 """
 
 import base64
@@ -15,11 +15,12 @@ from uuid import UUID, uuid4
 
 import jwt
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError, OperationalError, SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from nexus.config import get_settings
-from nexus.db.errors import integrity_constraint_name, is_serialization_failure
-from nexus.db.session import get_session_factory, transaction, use_serializable_if_available
+from nexus.db.errors import integrity_constraint_name
+from nexus.db.retries import retry_serializable
+from nexus.db.session import get_session_factory, transaction
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
 from nexus.services.redact import safe_kv
@@ -115,29 +116,22 @@ def verify_stream_token(token: str) -> VerifiedStreamToken:
 def _claim_jti_once(*, jti: str, user_id: UUID, exp_epoch: int) -> None:
     expires_at = datetime.fromtimestamp(exp_epoch, tz=UTC)
     db = get_session_factory()()
+
+    def op() -> None:
+        try:
+            _claim_jti_once_transaction(db, jti=jti, user_id=user_id, expires_at=expires_at)
+        except IntegrityError as exc:
+            db.rollback()
+            if _is_jti_primary_key_conflict(exc):
+                logger.warning("stream.jti_replay_blocked", **safe_kv(jti=jti))
+                raise ApiError(
+                    ApiErrorCode.E_STREAM_TOKEN_REPLAYED,
+                    "Stream token has already been used",
+                ) from exc
+            raise
+
     try:
-        for attempt in range(3):
-            use_serializable_if_available(db)
-            try:
-                return _claim_jti_once_transaction(
-                    db, jti=jti, user_id=user_id, expires_at=expires_at
-                )
-            except OperationalError as exc:
-                db.rollback()
-                if not is_serialization_failure(exc):
-                    raise
-                if attempt == 2:
-                    raise AssertionError("stream token JTI claim retry loop exhausted") from exc
-            except IntegrityError as exc:
-                db.rollback()
-                if _is_jti_primary_key_conflict(exc):
-                    logger.warning("stream.jti_replay_blocked", **safe_kv(jti=jti))
-                    raise ApiError(
-                        ApiErrorCode.E_STREAM_TOKEN_REPLAYED,
-                        "Stream token has already been used",
-                    ) from exc
-                raise
-        raise AssertionError("stream token JTI claim retry loop exhausted")
+        retry_serializable(db, "stream_token_jti_claim", op)
     except ApiError:
         raise
     except SQLAlchemyError as exc:

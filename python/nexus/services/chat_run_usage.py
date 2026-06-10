@@ -6,7 +6,7 @@ from llm_calling.types import LLMUsage
 
 
 def usage_tokens(usage: LLMUsage | None) -> dict[str, int | None]:
-    """Token breakdown keyed by MessageLLM column names.
+    """Token breakdown keyed by llm_calls token-column names.
 
     Cache fields default to 0 when usage is present; None when usage is None.
     Total falls back to input + output + reasoning when the provider omits it.

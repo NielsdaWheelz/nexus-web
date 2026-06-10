@@ -15,6 +15,7 @@ from nexus.services.conversations import (
     message_to_out,
     retryable_assistant_message_ids,
 )
+from nexus.services.retrieval_citation import build_citation_outs_for_message
 
 
 def build_chat_run_response(db: Session, viewer_id: UUID, run: ChatRun) -> ChatRunResponse:
@@ -37,6 +38,7 @@ def build_chat_run_response(db: Session, viewer_id: UUID, run: ChatRun) -> ChatR
     assistant_message_out = message_to_out(
         assistant_message,
         can_retry_response=assistant_message.id in retryable_message_ids,
+        citations=build_citation_outs_for_message(db, assistant_message_id=assistant_message.id),
     )
     return ChatRunResponse(
         run=ChatRunOut.model_validate(run),

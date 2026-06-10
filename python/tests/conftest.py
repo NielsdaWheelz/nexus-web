@@ -44,6 +44,7 @@ if str(_repo_root) not in sys.path:
     sys.path.insert(0, str(_repo_root))
 
 import pytest
+import structlog
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.orm import Session
@@ -121,6 +122,37 @@ def verify_schema_exists(engine: Engine) -> Generator[None, None, None]:
         )
 
     yield
+
+
+@pytest.fixture
+def log_sink() -> Generator[list[dict], None, None]:
+    """Capture structlog events into a list; structlog is restored afterwards.
+
+    ``llm_ledger`` binds its module-level logger at import (before this fixture
+    reconfigures), so the cached proxy would bypass the capture config. Rebind it
+    to a fresh, un-cached proxy for the test and restore the original on teardown.
+    """
+    import nexus.services.llm_ledger as llm_ledger
+
+    events: list[dict] = []
+    original_config = structlog.get_config()
+    original_ledger_logger = llm_ledger.logger
+
+    def capture_processor(logger, method_name, event_dict):
+        events.append(event_dict.copy())
+        raise structlog.DropEvent
+
+    structlog.configure(
+        processors=[capture_processor],
+        wrapper_class=structlog.stdlib.BoundLogger,
+        cache_logger_on_first_use=False,
+    )
+    llm_ledger.logger = structlog.get_logger("nexus.services.llm_ledger")
+
+    yield events
+
+    llm_ledger.logger = original_ledger_logger
+    structlog.configure(**original_config)
 
 
 @pytest.fixture

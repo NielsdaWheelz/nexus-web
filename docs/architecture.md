@@ -453,29 +453,50 @@ runs two loops:
   flips it to `running` with a lease, dispatches to the registered handler under a
   heartbeat thread, then commits a terminal/retry transition. Retries are bounded
   per-kind (`max_attempts`, `retry_delays_seconds`, `lease_seconds`); exhaustion
-  dead-letters the row (only `chat_run` has a dead-letter finalizer that writes an
-  errored assistant message).
+  dead-letters the row. Two kinds register a dead-letter finalizer: `chat_run`
+  writes an errored assistant message, and `page_reindex_job` marks the page's
+  content index `failed`.
 - **Scheduler loop**: enqueues periodic jobs into fixed time slots with
   deterministic dedupe keys, so exactly one job per slot survives across workers.
 
 The **registry** (`jobs/registry.py`) is the source of truth mapping job kind →
 handler + policy. Claim is atomic, so the worker scales horizontally even though a
-single instance is single-concurrency.
+single instance is single-concurrency. `get_task_contract_version()` fingerprints
+the registry's per-kind attempt/lease policy for `/health` deploy checks. The
+`WORKER_ALLOWED_JOB_KINDS` allowlist gates which kinds the production worker
+claims; `USER_FACING_JOB_KINDS ⊆ DEFAULT_WORKER_ALLOWED_JOB_KINDS` is asserted in
+`test_config.py` so a user-facing kind can never be stranded unallowlisted (the
+`page_reindex_job` incident class). See [modules/jobs.md](modules/jobs.md).
 
 Task catalog (each is a thin handler in `tasks/` that wraps a service):
 `ingest_media_source`, `enrich_metadata`, `chat_run`,
 `oracle_reading_generate`, `library_intelligence_artifact_generate`,
-`media_unit_build`, `podcast_sync_subscription_job`,
+`media_unit_build`, `page_reindex_job`, `podcast_sync_subscription_job`,
 `podcast_reindex_semantic_job`, `podcast_active_subscription_poll_job`
 (periodic), `reconcile_stale_ingest_media_job` (periodic),
 `sync_gutenberg_catalog_job` (periodic), `prune_background_jobs_job`
 (periodic), `purge_expired_auth_handoff_codes` (periodic),
 `backfill_default_library_closure_job`.
 
-> Gotcha: only `enrich_metadata` declares `failed_result_statuses`. Other ingest
-> tasks that *return* `{"status":"failed"}` still mark the **queue** row succeeded
-> — the failure is recorded on the `media` row, and recovery relies on the stale
-> reconciler + manual API retry, not queue-level retries.
+> Gotcha: only `enrich_metadata` and `media_unit_build` declare
+> `failed_result_statuses`. Other ingest tasks that *return* `{"status":"failed"}`
+> still mark the **queue** row succeeded — the failure is recorded on the domain
+> row, and recovery relies on the stale reconciler + manual API retry, not
+> queue-level retries.
+
+**Generation-run harness.** The five LLM generation kinds (`chat_run`,
+`oracle_reading_generate`, `library_intelligence_artifact_generate`,
+`media_unit_build`, `enrich_metadata`) run their bodies inside one shared worker
+envelope, `tasks/llm_task.py:run_llm_task` — the sole owner of the event loop,
+`httpx` client, and `LLMRouter` construction (including the fixture swap and the
+worker-exception boundary). Every provider call inside a job leaves one
+`llm_calls` ledger row via `llm_ledger.observed_generate`, on success and on
+failure, and `run_kit.mark_terminal` stamps `error_code`/`error_detail` on the
+run parent — so a failed run is always diagnosable. The worker installs the
+process-global rate limiter at startup so the first job of any kind has a working
+limiter. SERIALIZABLE retries everywhere (including the scheduler loop) go through
+the one helper `db/retries.py:retry_serializable`. See
+[modules/llms.md](modules/llms.md).
 
 ### 7.4 Auth, identity & bootstrap
 
@@ -488,7 +509,8 @@ Visibility is enforced by boolean predicates (`auth/permissions.py`) that take a
 explicit session and never leak existence (not-found == not-visible).
 
 Other identity surfaces:
-- **Stream tokens** (`auth/stream_token.py`): HS256, ~60s, single-use, for SSE.
+- **Stream tokens** (`services/stream_tokens.py`, route `api/routes/stream_tokens.py`):
+  HS256, ~60s, single-use, for SSE.
 - **Extension sessions** (`services/extension_sessions.py`): opaque
   `nx_ext_<...>` bearer; only its sha256 is stored; revocable.
 - **Android handoff codes** (`services/auth_handoff_codes.py`): single-use,

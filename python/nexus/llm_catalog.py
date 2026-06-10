@@ -83,7 +83,7 @@ MODEL_CATALOG: tuple[ModelCatalogEntry, ...] = (
         "claude-opus-4-7",
         "Opus 4.7",
         "sota",
-        ("none", "low", "medium", "high", "max"),
+        ("default", "none", "low", "medium", "high", "max"),
         1000000,
     ),
     ModelCatalogEntry(
@@ -91,7 +91,7 @@ MODEL_CATALOG: tuple[ModelCatalogEntry, ...] = (
         "claude-sonnet-4-6",
         "Sonnet 4.6",
         "sota",
-        ("none", "low", "medium", "high", "max"),
+        ("default", "none", "low", "medium", "high", "max"),
         1000000,
     ),
     ModelCatalogEntry(
@@ -99,7 +99,7 @@ MODEL_CATALOG: tuple[ModelCatalogEntry, ...] = (
         "claude-haiku-4-5-20251001",
         "Haiku 4.5",
         "light",
-        ("none", "low", "medium", "high"),
+        ("default", "none", "low", "medium", "high"),
         200000,
     ),
     ModelCatalogEntry(
@@ -107,7 +107,7 @@ MODEL_CATALOG: tuple[ModelCatalogEntry, ...] = (
         "gemini-3.1-pro-preview",
         "Gemini 3.1 Pro",
         "sota",
-        ("low", "high"),
+        ("default", "low", "high"),
         1048576,
     ),
     ModelCatalogEntry(
@@ -115,7 +115,7 @@ MODEL_CATALOG: tuple[ModelCatalogEntry, ...] = (
         "gemini-3-flash-preview",
         "Gemini 3 Flash",
         "light",
-        ("minimal", "low", "medium", "high"),
+        ("default", "minimal", "low", "medium", "high"),
         1048576,
     ),
     ModelCatalogEntry(
@@ -123,7 +123,7 @@ MODEL_CATALOG: tuple[ModelCatalogEntry, ...] = (
         "deepseek-v4-pro",
         "DeepSeek V4 Pro",
         "sota",
-        ("high",),
+        ("default", "high"),
         128000,
     ),
     ModelCatalogEntry(
@@ -131,7 +131,7 @@ MODEL_CATALOG: tuple[ModelCatalogEntry, ...] = (
         "deepseek-v4-flash",
         "DeepSeek V4 Flash",
         "light",
-        ("none", "high"),
+        ("default", "none", "high"),
         128000,
     ),
 )
@@ -167,6 +167,16 @@ def model_catalog_entry(provider: str, model_name: str) -> ModelCatalogEntry | N
     if provider not in VALID_PROVIDERS:
         return None
     return _MODEL_CATALOG_BY_KEY.get((cast(LLMProvider, provider), model_name))
+
+
+def require_catalog_model(provider: str, model_name: str) -> ModelCatalogEntry:
+    """The catalog entry for a surface's pinned model; absence is a defect."""
+    entry = model_catalog_entry(provider, model_name)
+    if entry is None:
+        # justify-defect: a surface pinned a provider/model pair that is not in
+        # MODEL_CATALOG — code/catalog mismatch, caught at import/test time.
+        raise AssertionError(f"{provider}/{model_name} is not in MODEL_CATALOG")
+    return entry
 
 
 def provider_sort_rank(provider: str) -> int:

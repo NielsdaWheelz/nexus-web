@@ -6,13 +6,13 @@ import base64
 import hashlib
 import json
 import re
-from collections.abc import Callable, Collection, Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, cast
 from uuid import UUID, uuid4
 
 from sqlalchemy import String, bindparam, func, or_, select, text
-from sqlalchemy.exc import IntegrityError, OperationalError
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import (
@@ -21,7 +21,7 @@ from nexus.auth.permissions import (
     visible_media_ids_cte_sql,
     visible_podcast_ids_cte_sql,
 )
-from nexus.db.errors import integrity_constraint_name, is_serialization_failure
+from nexus.db.errors import integrity_constraint_name
 from nexus.db.models import (
     Contributor,
     ContributorAlias,
@@ -30,7 +30,7 @@ from nexus.db.models import (
     ContributorIdentityEvent,
     ObjectLink,
 )
-from nexus.db.session import use_serializable_if_available
+from nexus.db.retries import retry_serializable
 from nexus.errors import ApiError, ApiErrorCode, ForbiddenError, NotFoundError
 from nexus.schemas.contributors import (
     ContributorAliasCreateRequest,
@@ -570,27 +570,9 @@ def _decode_directory_cursor(cursor: str, expected_kind: str) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Identity writes — curator-gated, each atomic under SERIALIZABLE with retry.
+# Identity writes — curator-gated, each atomic under SERIALIZABLE with retry
+# via retry_serializable (no explicit row locking, per concurrency.md).
 # ---------------------------------------------------------------------------
-
-
-def run_identity_write(
-    db: Session, fn: Callable[[], ContributorOut], *, retries: int = 3
-) -> ContributorOut:
-    """Run an identity mutation under SERIALIZABLE, retrying on serialization failure.
-
-    ``fn`` must reload its working rows and commit on each call so a retry sees fresh state.
-    Per concurrency.md there is no explicit row locking on top of SERIALIZABLE."""
-    for attempt in range(retries):
-        use_serializable_if_available(db)
-        try:
-            return fn()
-        except OperationalError as exc:
-            db.rollback()
-            if not is_serialization_failure(exc) or attempt == retries - 1:
-                raise
-    # justify-defect: the loop returns or raises on the final attempt; this is unreachable.
-    raise AssertionError("run_identity_write retry loop exhausted")
 
 
 def split_contributor(
@@ -685,7 +667,7 @@ def split_contributor(
         db.refresh(new_contributor)
         return _contributor_out(db, new_contributor)
 
-    return run_identity_write(db, _txn)
+    return retry_serializable(db, "run_identity_write", _txn)
 
 
 def tombstone_contributor(
@@ -724,7 +706,7 @@ def tombstone_contributor(
         db.refresh(contributor)
         return _contributor_out(db, contributor)
 
-    return run_identity_write(db, _txn)
+    return retry_serializable(db, "run_identity_write", _txn)
 
 
 def add_contributor_alias(
@@ -783,7 +765,7 @@ def add_contributor_alias(
         db.refresh(contributor)
         return _contributor_out(db, contributor)
 
-    return run_identity_write(db, _txn)
+    return retry_serializable(db, "run_identity_write", _txn)
 
 
 def delete_contributor_alias(
@@ -826,7 +808,7 @@ def delete_contributor_alias(
         db.refresh(contributor)
         return _contributor_out(db, contributor)
 
-    return run_identity_write(db, _txn)
+    return retry_serializable(db, "run_identity_write", _txn)
 
 
 def add_contributor_external_id(
@@ -884,7 +866,7 @@ def add_contributor_external_id(
         db.refresh(contributor)
         return _contributor_out(db, contributor)
 
-    return run_identity_write(db, _txn)
+    return retry_serializable(db, "run_identity_write", _txn)
 
 
 def delete_contributor_external_id(
@@ -927,7 +909,7 @@ def delete_contributor_external_id(
         db.refresh(contributor)
         return _contributor_out(db, contributor)
 
-    return run_identity_write(db, _txn)
+    return retry_serializable(db, "run_identity_write", _txn)
 
 
 def merge_contributor(
@@ -1080,7 +1062,7 @@ def merge_contributor(
         db.refresh(target)
         return _contributor_out(db, target)
 
-    return run_identity_write(db, _txn)
+    return retry_serializable(db, "run_identity_write", _txn)
 
 
 def _load_contributor_for_merge(db: Session, contributor_handle: str) -> Contributor:

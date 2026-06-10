@@ -7,11 +7,11 @@ import logging
 from uuid import UUID
 
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError, OperationalError
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from nexus.db.errors import is_serialization_failure
-from nexus.db.session import transaction, use_serializable_if_available
+from nexus.db.retries import retry_serializable
+from nexus.db.session import transaction
 
 logger = logging.getLogger(__name__)
 
@@ -26,13 +26,12 @@ def ensure_user_and_default_library(db: Session, user_id: UUID, email: str | Non
     through SERIALIZABLE retry or unique-constraint recovery.
     """
     for attempt in range(3):
-        use_serializable_if_available(db)
         try:
-            return _ensure_user_and_default_library_once(db, user_id, email)
-        except OperationalError as exc:
-            db.rollback()
-            if not is_serialization_failure(exc) or attempt == 2:
-                raise
+            return retry_serializable(
+                db,
+                "default_library_bootstrap",
+                lambda: _ensure_user_and_default_library_once(db, user_id, email),
+            )
         except IntegrityError:
             db.rollback()
             if attempt == 2:

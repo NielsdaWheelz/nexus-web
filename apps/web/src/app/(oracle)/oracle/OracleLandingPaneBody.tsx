@@ -10,6 +10,7 @@ import {
 } from "@/components/feedback/Feedback";
 import { apiFetch } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { createRandomId } from "@/lib/createRandomId";
 import OracleAlephGrid from "./OracleAlephGrid";
 import type { OracleCreateResponse } from "./types";
 import styles from "./oracle.module.css";
@@ -42,6 +43,7 @@ export default function OracleLandingPaneBody() {
       try {
         const body = await apiFetch<{ data: OracleCreateResponse }>("/api/oracle/readings", {
           method: "POST",
+          headers: { "Idempotency-Key": createRandomId("oracle-read") },
           body: JSON.stringify({ question: cleaned }),
         });
         router.push(`/oracle/${body.data.reading_id}`);

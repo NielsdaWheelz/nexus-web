@@ -2,8 +2,8 @@
 
 from uuid import UUID, uuid4
 
-import httpx
 import pytest
+from llm_calling.errors import LLMError, LLMErrorCode
 from llm_calling.types import LLMChunk, LLMRequest, LLMUsage, ToolCall
 from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
@@ -49,21 +49,41 @@ class _IncompleteChunk:
     incomplete_details = {"reason": "max_output_tokens"}
 
 
-class _UnreadStreamErrorRouter:
-    def __init__(self, status_code: int) -> None:
-        self.status_code = status_code
+class _ToolLoopRouter:
+    """Two-iteration fake: reasoning items + a tool call, then the final answer."""
+
+    def __init__(self) -> None:
+        self.requests: list[LLMRequest] = []
 
     async def generate_stream(self, provider, req, api_key, timeout_s):
-        request = httpx.Request("POST", "https://api.openai.com/v1/responses")
-        response = httpx.Response(self.status_code, request=request)
-        try:
-            response.raise_for_status()
-        except httpx.HTTPStatusError as status_error:
-            error = httpx.ResponseNotRead()
-            error.__context__ = status_error
-            raise error from status_error
-        raise AssertionError("Expected stream response to raise")
-        yield
+        self.requests.append(req)
+        if len(self.requests) == 1:
+            yield LLMChunk(provider_item={"type": "reasoning", "id": "rs_1"})
+            yield LLMChunk(tool_call=ToolCall(id="call-1", name="mystery_tool", arguments={}))
+            yield LLMChunk(provider_item={"type": "reasoning", "id": "rs_2"})
+            yield LLMChunk(
+                done=True,
+                usage=LLMUsage(input_tokens=10, output_tokens=5, total_tokens=15),
+                provider_request_id="resp_iter_1",
+            )
+            return
+        yield LLMChunk(delta_text="Final answer.")
+        yield LLMChunk(
+            done=True,
+            usage=LLMUsage(input_tokens=20, output_tokens=3, total_tokens=23),
+            provider_request_id="resp_iter_2",
+        )
+
+
+class _RaisingStreamRouter:
+    """Provider stream that raises before any terminal chunk."""
+
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+
+    async def generate_stream(self, provider, req, api_key, timeout_s):
+        raise self.error
+        yield  # pragma: no cover - makes this an async generator
 
 
 class _DocumentStackRouter:
@@ -310,31 +330,21 @@ async def test_default_reasoning_uses_reasoning_aware_output_budget(
     assert router.request is not None, "Expected chat run to call the LLM router"
     assert router.request.reasoning_effort == "default"
     assert router.request.max_tokens == 25000
+    # The usage ledger moved to llm_calls (written by llm_ledger at the call
+    # sites, wired in the harness slice); only the prompt assembly pin remains.
     with direct_db.session() as session:
         row = session.execute(
             text(
                 """
-                SELECT ml.input_tokens,
-                       ml.output_tokens,
-                       ml.cache_write_input_tokens,
-                       ml.cache_read_input_tokens,
-                       ml.provider_usage,
-                       cpa.prompt_block_manifest
-                FROM message_llm ml
-                JOIN chat_prompt_assemblies cpa
-                  ON cpa.assistant_message_id = ml.message_id
-                WHERE ml.message_id = :message_id
+                SELECT prompt_block_manifest
+                FROM chat_prompt_assemblies
+                WHERE assistant_message_id = :message_id
                 """
             ),
             {"message_id": UUID(data["assistant_message"]["id"])},
         ).first()
 
-    assert row is not None, "Expected LLM metadata and prompt assembly rows"
-    assert row.input_tokens == 10
-    assert row.output_tokens == 1
-    assert row.cache_write_input_tokens == 0
-    assert row.cache_read_input_tokens == 0
-    assert row.provider_usage["total_tokens"] == 11
+    assert row is not None, "Expected a prompt assembly row"
     assert "Summarize the current notes." not in str(row.prompt_block_manifest)
 
 
@@ -453,8 +463,8 @@ async def test_attached_highlight_public_run_persists_citation_index_and_reader_
     assert row.citation_ordinal == 1
     assert row.result_ref["result_type"] == "highlight"
     assert isinstance(citation_event, dict)
-    assert citation_event["entries"][0]["n"] == 1
-    assert citation_event["entries"][0]["result"]["result_type"] == "highlight"
+    assert citation_event["citations"][0]["ordinal"] == 1
+    assert citation_event["citations"][0]["snapshot"]["result_type"] == "highlight"
 
 
 @pytest.mark.integration
@@ -545,8 +555,8 @@ async def test_document_summary_trace_inspects_then_reads_map_pointer(
     assert retrieval_row[1] == 1
     assert retrieval_row[2]["result_type"] == "media"
     assert isinstance(citation_event, dict)
-    assert citation_event["entries"][0]["n"] == 1
-    assert citation_event["entries"][0]["result"]["result_type"] == "media"
+    assert citation_event["citations"][0]["ordinal"] == 1
+    assert citation_event["citations"][0]["snapshot"]["result_type"] == "media"
 
 
 @pytest.mark.integration
@@ -595,22 +605,10 @@ async def test_incomplete_llm_result_finalizes_error_not_success(
     )
 
 
-@pytest.mark.integration
-@pytest.mark.parametrize(
-    ("status_code", "expected_error_code"),
-    [
-        (401, "E_LLM_INVALID_KEY"),
-        (429, "E_LLM_RATE_LIMIT"),
-        (500, "E_LLM_PROVIDER_DOWN"),
-    ],
-)
-async def test_unread_stream_http_errors_keep_provider_error_classification(
-    auth_client,
-    direct_db: DirectSessionManager,
-    chat_runs_schema,
-    status_code: int,
-    expected_error_code: str,
-):
+def _create_run_for_executor(
+    auth_client, direct_db: DirectSessionManager, *, reasoning: str = "default"
+) -> UUID:
+    """Create a run via the API and register cleanups (incl. its llm_calls rows)."""
     user_id = create_test_user_id()
     auth_client.get("/me", headers=auth_headers(user_id))
     _seed_ai_plus_billing(direct_db, user_id)
@@ -619,29 +617,112 @@ async def test_unread_stream_http_errors_keep_provider_error_classification(
     conversation_id = _create_conversation(auth_client, user_id)
 
     response = _post_chat_run(
-        auth_client,
-        user_id,
-        model_id,
-        reasoning="default",
-        conversation_id=conversation_id,
+        auth_client, user_id, model_id, reasoning=reasoning, conversation_id=conversation_id
     )
     assert response.status_code == 200, f"Create failed: {response.text}"
-    data = response.json()["data"]
-    run_id = UUID(data["run"]["id"])
+    run_id = UUID(response.json()["data"]["run"]["id"])
     _register_run_cleanup(direct_db, conversation_id)
+    direct_db.register_cleanup("llm_calls", "owner_id", run_id)
+    return run_id
 
+
+def _fetch_run_error(direct_db: DirectSessionManager, run_id: UUID):
     with direct_db.session() as session:
-        result = await execute_chat_run(
-            session,
-            run_id=run_id,
-            llm_router=_UnreadStreamErrorRouter(status_code),
-        )
+        return session.execute(
+            text("SELECT error_code, error_detail FROM chat_runs WHERE id = :run_id"),
+            {"run_id": run_id},
+        ).one()
 
-    assert result == {"status": "error", "error_code": expected_error_code}
-    fetched = auth_client.get(f"/chat-runs/{run_id}", headers=auth_headers(user_id))
-    assert fetched.status_code == 200, (
-        f"Expected chat run fetch to succeed, got {fetched.status_code}: {fetched.text}"
+
+def _fetch_llm_calls(direct_db: DirectSessionManager, run_id: UUID):
+    with direct_db.session() as session:
+        return session.execute(
+            text(
+                """
+                SELECT call_seq, streaming, llm_operation, provider_request_id,
+                       key_mode_requested, key_mode_used, error_class, error_detail
+                FROM llm_calls
+                WHERE owner_kind = 'chat_run' AND owner_id = :run_id
+                ORDER BY call_seq ASC
+                """
+            ),
+            {"run_id": run_id},
+        ).fetchall()
+
+
+@pytest.mark.integration
+async def test_tool_loop_replays_provider_items_and_ledgers_each_iteration(
+    auth_client, direct_db: DirectSessionManager, chat_runs_schema
+):
+    run_id = _create_run_for_executor(auth_client, direct_db)
+
+    router = _ToolLoopRouter()
+    with direct_db.session() as session:
+        result = await execute_chat_run(session, run_id=run_id, llm_router=router)
+
+    assert result == {"status": "complete"}
+    assert len(router.requests) == 2
+
+    # S0: the captured provider items ride the assistant turn, in capture order,
+    # ahead of the tool-results turn on the continuation request.
+    assistant_turn, tool_turn = router.requests[1].messages[-2:]
+    assert assistant_turn.role == "assistant"
+    assert assistant_turn.provider_items == (
+        {"type": "reasoning", "id": "rs_1"},
+        {"type": "reasoning", "id": "rs_2"},
     )
-    fetched_data = fetched.json()["data"]
-    assert fetched_data["run"]["error_code"] == expected_error_code
-    assert fetched_data["assistant_message"]["error_code"] == expected_error_code
+    assert [tc.id for tc in assistant_turn.tool_calls] == ["call-1"]
+    assert tool_turn.role == "tool"
+
+    # AC-3: a run with N tool iterations leaves N llm_calls rows, call_seq 1..N.
+    rows = _fetch_llm_calls(direct_db, run_id)
+    assert [(row.call_seq, row.provider_request_id) for row in rows] == [
+        (1, "resp_iter_1"),
+        (2, "resp_iter_2"),
+    ]
+    assert all(row.streaming for row in rows)
+    assert all(row.llm_operation == "chat_send" for row in rows)
+    assert all(row.key_mode_requested == "auto" for row in rows)
+    assert all(row.key_mode_used == "platform" for row in rows)
+    assert all(row.error_class is None for row in rows)
+
+
+@pytest.mark.integration
+async def test_llm_error_stamps_run_error_code_and_detail(
+    auth_client, direct_db: DirectSessionManager, chat_runs_schema
+):
+    run_id = _create_run_for_executor(auth_client, direct_db)
+
+    router = _RaisingStreamRouter(LLMError(LLMErrorCode.RATE_LIMIT, "slow down", provider="openai"))
+    with direct_db.session() as session:
+        result = await execute_chat_run(session, run_id=run_id, llm_router=router)
+
+    assert result == {"status": "error", "error_code": "E_LLM_RATE_LIMIT"}
+    run_row = _fetch_run_error(direct_db, run_id)
+    assert run_row.error_code == "E_LLM_RATE_LIMIT"
+    assert run_row.error_detail == "LLMError: slow down"
+
+    (call_row,) = _fetch_llm_calls(direct_db, run_id)
+    assert call_row.error_class == "E_LLM_RATE_LIMIT"
+    assert call_row.error_detail == "LLMError: slow down"
+
+
+@pytest.mark.integration
+async def test_boundary_exception_finalizes_internal_with_detail_and_ledger_row(
+    auth_client, direct_db: DirectSessionManager, chat_runs_schema
+):
+    run_id = _create_run_for_executor(auth_client, direct_db)
+
+    router = _RaisingStreamRouter(RuntimeError("stream socket exploded"))
+    with direct_db.session() as session:
+        result = await execute_chat_run(session, run_id=run_id, llm_router=router)
+
+    assert result == {"status": "error", "error_code": "E_INTERNAL"}
+    run_row = _fetch_run_error(direct_db, run_id)
+    assert run_row.error_code == "E_INTERNAL"
+    assert run_row.error_detail == "RuntimeError: stream socket exploded"
+
+    # The stream wrapper ledgered the failed provider call before the boundary ran.
+    (call_row,) = _fetch_llm_calls(direct_db, run_id)
+    assert call_row.error_class == "RuntimeError"
+    assert call_row.error_detail == "RuntimeError: stream socket exploded"

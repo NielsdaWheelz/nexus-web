@@ -1,4 +1,4 @@
-"""Unit tests for periodic polling orchestration wiring."""
+"""Unit tests for worker entrypoint wiring and periodic polling orchestration."""
 
 import pytest
 
@@ -147,6 +147,23 @@ def test_worker_allows_only_explicit_maintenance_job_kinds(monkeypatch: pytest.M
     worker = create_worker()
     allowed_kinds = set(worker.allowed_kinds or ())
     assert allowed_kinds == {"ingest_media_source", "reconcile_stale_ingest_media_job"}
+
+
+def test_create_worker_installs_db_backed_rate_limiter():
+    """The first job of any kind on a fresh worker (e.g. oracle) needs a working
+    rate limiter, so startup must install it rather than individual task kinds."""
+    from apps.worker.main import create_worker
+
+    from nexus.services.rate_limit import RateLimiter, get_rate_limiter, set_rate_limiter
+
+    set_rate_limiter(RateLimiter(session_factory=None))  # fresh-process limiter state
+
+    create_worker()
+
+    assert get_rate_limiter().backend_available, (
+        "create_worker() must install a DB-backed rate limiter; without it the first "
+        "LLM job on a fresh worker fails E_RATE_LIMITER_UNAVAILABLE."
+    )
 
 
 def test_prune_background_jobs_handler_wiring(monkeypatch: pytest.MonkeyPatch):

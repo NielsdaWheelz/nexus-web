@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
 from copy import deepcopy
 from datetime import date, datetime
 from typing import Any, cast, get_args
@@ -11,10 +10,10 @@ from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import case, delete, func, select
-from sqlalchemy.exc import IntegrityError, OperationalError
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from nexus.db.errors import integrity_constraint_name, is_serialization_failure
+from nexus.db.errors import integrity_constraint_name
 from nexus.db.models import (
     NOTE_BLOCK_SIBLING_ORDER,
     DailyNotePage,
@@ -24,7 +23,7 @@ from nexus.db.models import (
     Page,
     PinnedObjectRef,
 )
-from nexus.db.session import use_serializable_if_available
+from nexus.db.retries import retry_serializable
 from nexus.errors import ApiError, ApiErrorCode, ConflictError, NotFoundError
 from nexus.schemas.notes import (
     NOTE_BLOCK_KINDS,
@@ -254,8 +253,10 @@ def patch_page_document(
     page_id: UUID,
     request: PatchPageDocumentRequest,
 ) -> PatchPageDocumentResponse:
-    return _with_serialization_retry(
-        db, "Note document", lambda: _patch_page_document_once(db, viewer_id, page_id, request)
+    return retry_serializable(
+        db,
+        "patch_page_document",
+        lambda: _patch_page_document_once(db, viewer_id, page_id, request),
     )
 
 
@@ -689,9 +690,9 @@ def update_note_block(
     block_id: UUID,
     request: UpdateNoteBlockRequest,
 ) -> NoteBlockOut:
-    return _with_serialization_retry(
+    return retry_serializable(
         db,
-        "Note block update",
+        "update_note_block",
         lambda: _update_note_block_once(db, viewer_id, block_id, request),
     )
 
@@ -870,9 +871,9 @@ def merge_note_block(db: Session, viewer_id: UUID, block_id: UUID) -> NoteBlockO
 
 
 def delete_note_block(db: Session, viewer_id: UUID, block_id: UUID) -> None:
-    _with_serialization_retry(
+    retry_serializable(
         db,
-        "Note block delete",
+        "delete_note_block",
         lambda: _delete_note_block_once(db, viewer_id, block_id),
     )
 
@@ -1118,45 +1119,28 @@ def _resolve_daily_page_with_retry(
     time_zone: str,
     commit: bool = True,
 ) -> tuple[Page, str]:
+    def op() -> tuple[Page, str]:
+        page, stored_time_zone = _resolve_daily_page_once(
+            db,
+            viewer_id,
+            local_date,
+            time_zone=time_zone,
+        )
+        if commit:
+            db.commit()
+            db.refresh(page)
+        return page, stored_time_zone
+
+    # Daily-unique conflicts (a concurrent caller created the page) reload outside the
+    # SERIALIZABLE retry; each reload finds the winner's row.
     for attempt in range(3):
-        use_serializable_if_available(db)
         try:
-            page, stored_time_zone = _resolve_daily_page_once(
-                db,
-                viewer_id,
-                local_date,
-                time_zone=time_zone,
-            )
-            if commit:
-                db.commit()
-                db.refresh(page)
-            return page, stored_time_zone
-        except OperationalError as exc:
-            db.rollback()
-            if not is_serialization_failure(exc):
-                raise
-            if attempt == 2:
-                raise AssertionError("Daily note retry loop exhausted") from exc
+            return retry_serializable(db, "resolve_daily_page", op)
         except IntegrityError as exc:
             db.rollback()
             if not _is_daily_unique_conflict(exc) or attempt == 2:
                 raise
     raise AssertionError("Daily note retry loop exhausted")
-
-
-def _with_serialization_retry[T](db: Session, label: str, op: Callable[[], T]) -> T:
-    """Run op() under SERIALIZABLE isolation, retrying up to 3 times on serialization failure."""
-    for attempt in range(3):
-        use_serializable_if_available(db)
-        try:
-            return op()
-        except OperationalError as exc:
-            db.rollback()
-            if not is_serialization_failure(exc):
-                raise
-            if attempt == 2:
-                raise AssertionError(f"{label} retry loop exhausted") from exc
-    raise AssertionError(f"{label} retry loop exhausted")
 
 
 def _is_daily_unique_conflict(exc: IntegrityError) -> bool:

@@ -248,52 +248,6 @@ class RateLimiter:
                 "Monthly AI token quota exceeded",
             )
 
-    def charge_token_budget(self, user_id: UUID, message_id: UUID, tokens: int) -> None:
-        """Charge non-stream requests idempotently."""
-        if not self.backend_available:
-            logger.warning("token_budget_charge_backend_unavailable")
-            return
-        if tokens <= 0:
-            return
-
-        with self._db_swallow(
-            "token_budget_charge_failed",
-            user_id=str(user_id),
-            message_id=str(message_id),
-            tokens=tokens,
-        ) as db:
-            usage_date = self._db_utc_date(db)
-            self._load_budget_totals_for_update(
-                db=db,
-                user_id=user_id,
-                usage_date=usage_date,
-            )
-            if not self._token_budget_charge_exists(db=db, message_id=message_id):
-                self._insert_token_budget_charge(
-                    db=db,
-                    message_id=message_id,
-                    user_id=user_id,
-                    usage_date=usage_date,
-                    charged_tokens=int(tokens),
-                )
-                db.execute(
-                    text(
-                        """
-                        UPDATE token_budget_daily_usage
-                        SET spent_tokens = spent_tokens + :tokens,
-                            updated_at = now()
-                        WHERE user_id = :user_id
-                          AND usage_date = :usage_date
-                        """
-                    ),
-                    {
-                        "tokens": tokens,
-                        "user_id": user_id,
-                        "usage_date": usage_date,
-                    },
-                )
-            db.commit()
-
     def reserve_token_budget(
         self,
         user_id: UUID,

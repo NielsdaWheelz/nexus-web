@@ -8,11 +8,15 @@ import {
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import MediaImage from "@/components/ui/MediaImage";
+import ReaderCitation from "@/components/ui/ReaderCitation";
 import { apiFetch } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { sseClientDirect } from "@/lib/api/sse-client";
-import { fetchStreamToken } from "@/lib/api/streamToken";
-import { isAbortError } from "@/lib/errors";
+import { useGenerationRun } from "@/lib/api/useGenerationRun";
+import type { CitationOut } from "@/lib/conversations/citationOut";
+import { toReaderCitationData } from "@/lib/conversations/citations";
+import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
+import { createRandomId } from "@/lib/createRandomId";
+import { dispatchReaderPulse } from "@/lib/reader/pulseEvent";
 import {
   parseOraclePlateImageSrc,
   requireOraclePlateImageSrc,
@@ -61,6 +65,9 @@ interface PassagePayload {
   attribution_text: string;
   marginalia_text: string;
   deep_link: string | null;
+  // A server-built CitationOut for user-media passages with an evidence span;
+  // null for public-domain / page-owned / span-less passages.
+  citation: CitationOut | null;
 }
 
 export interface ReadingDetail {
@@ -77,7 +84,6 @@ export interface ReadingDetail {
   events: { seq: number; event_type: string; payload: Record<string, unknown> }[];
   created_at: string;
   error_code: string | null;
-  error_message: string | null;
 }
 
 interface ReadingState {
@@ -93,7 +99,7 @@ interface ReadingState {
   passages: PassagePayload[];
   delta: string;
   omens: string[];
-  error: { code: string; message: string } | null;
+  errorCode: string | null;
   cursor: number;
 }
 
@@ -121,7 +127,7 @@ const initialState = (): ReadingState => ({
   passages: [],
   delta: "",
   omens: [],
-  error: null,
+  errorCode: null,
   cursor: 0,
 });
 
@@ -213,6 +219,11 @@ function parsePassagePayload(payload: Record<string, unknown>): PassagePayload |
     attribution_text: attributionText,
     marginalia_text: marginaliaText,
     deep_link: deepLink,
+    // The backend ships a well-formed CitationOut (or null); trust it at this
+    // SSE boundary the way the GET-fed LI pane trusts its citations array.
+    citation: isRecord(payload.citation)
+      ? (payload.citation as unknown as CitationOut)
+      : null,
   };
 }
 
@@ -231,13 +242,7 @@ function stateFromDetail(detail: ReadingDetail): ReadingState {
     passages: [...detail.passages].sort(
       (a, b) => PHASE_ORDER.indexOf(a.phase) - PHASE_ORDER.indexOf(b.phase),
     ),
-    error:
-      detail.error_code !== null
-        ? {
-            code: detail.error_code,
-            message: detail.error_message ?? "",
-          }
-        : null,
+    errorCode: detail.error_code,
   };
   for (const event of detail.events) {
     next = applyEvent(next, event);
@@ -289,31 +294,19 @@ function applyEvent(
         : [];
       return { ...state, cursor, omens: lines };
     }
-    case "error":
-      return {
-        ...state,
-        cursor,
-        status: "failed",
-        error: {
-          code: String(event.payload.code ?? "E_UNKNOWN"),
-          message: String(event.payload.message ?? ""),
-        },
-      };
-    case "done":
-      return {
-        ...state,
-        cursor,
-        status: state.error !== null ? "failed" : "complete",
-      };
+    case "done": {
+      if (event.payload.status === "failed") {
+        return {
+          ...state,
+          cursor,
+          status: "failed",
+          errorCode: stringPayloadValue(event.payload, "error_code") ?? "E_UNKNOWN",
+        };
+      }
+      return { ...state, cursor, status: "complete" };
+    }
     default:
       return { ...state, cursor };
-  }
-}
-
-class OracleStreamParseError extends Error {
-  constructor(message = "Invalid SSE payload for oracle reading") {
-    super(message);
-    this.name = "OracleStreamParseError";
   }
 }
 
@@ -324,72 +317,14 @@ function decodeOracleStreamEvent(
 ): OracleStreamEvent {
   const seq = Number(eventId);
   if (!Number.isSafeInteger(seq) || seq <= 0 || !isRecord(data)) {
-    throw new OracleStreamParseError();
+    // Prefix matches the shared SSE client's fatal-error allowlist.
+    throw new Error("Invalid SSE payload for oracle reading");
   }
   return {
     seq,
     event_type: type,
     payload: data,
   };
-}
-
-async function streamEventsWithReconnect(
-  readingId: string,
-  initialCursor: number,
-  onEvent: (event: OracleStreamEvent) => void,
-  signal: AbortSignal,
-): Promise<void> {
-  const firstToken = await fetchStreamToken();
-  if (signal.aborted) {
-    return;
-  }
-
-  let firstStreamToken: string | null = firstToken.token;
-  let nextEventId = "";
-
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    let abortStream: (() => void) | null = null;
-    function settle(callback: () => void) {
-      if (settled) return;
-      settled = true;
-      signal.removeEventListener("abort", handleAbort);
-      callback();
-    }
-    function handleAbort() {
-      abortStream?.();
-      settle(() => resolve());
-    }
-    abortStream = sseClientDirect<OracleStreamEvent>({
-      url: `${firstToken.stream_base_url}/stream/oracle-readings/${readingId}/events`,
-      streamToken: async () => {
-        if (firstStreamToken !== null) {
-          const token = firstStreamToken;
-          firstStreamToken = null;
-          return token;
-        }
-        return (await fetchStreamToken()).token;
-      },
-      decode: (type, data) => decodeOracleStreamEvent(type, data, nextEventId),
-      isTerminal: (event) =>
-        event.event_type === "done" || event.event_type === "error",
-      onEvent: (event) => {
-        nextEventId = "";
-        onEvent(event);
-      },
-      onError: (error) => settle(() => reject(error)),
-      onComplete: () => settle(() => resolve()),
-      onLastEventId: (eventId) => {
-        nextEventId = eventId;
-      },
-      signal,
-      lastEventId: initialCursor > 0 ? String(initialCursor) : undefined,
-      maxReconnects: ORACLE_RECONNECT_MAX_ATTEMPTS,
-    });
-    if (!settled) {
-      signal.addEventListener("abort", handleAbort, { once: true });
-    }
-  });
 }
 
 async function loadReadingDetail(
@@ -436,11 +371,14 @@ function FleuronBreak() {
   );
 }
 
-function oracleFailureFeedback(error: ReadingState["error"]): FeedbackContent {
+function oracleFailureFeedback(errorCode: string | null): FeedbackContent {
   let message: string;
-  switch (error?.code) {
-    case "E_LLM_NO_KEY":
-      message = "A model key is needed before the oracle can complete a reading.";
+  switch (errorCode) {
+    case "E_LLM_INVALID_KEY":
+      message = "Add or fix a model API key before the oracle can complete a reading.";
+      break;
+    case "E_BILLING_REQUIRED":
+      message = "Platform model access requires an AI tier — add an API key or upgrade.";
       break;
     case "E_LLM_BAD_REQUEST":
       message = "The reading could not be completed. Start a new reading with a simpler question.";
@@ -470,6 +408,7 @@ export default function OracleReadingPaneBody({
   );
   const [loadError, setLoadError] = useState<FeedbackContent | null>(null);
   const [retryError, setRetryError] = useState<FeedbackContent | null>(null);
+  const [chatError, setChatError] = useState<FeedbackContent | null>(null);
   const [retryingReading, setRetryingReading] = useState(false);
   const [retryNonce, setRetryNonce] = useState(0);
   const headlineRef = useStickyHeadline(state.folioMotto ?? null);
@@ -506,6 +445,7 @@ export default function OracleReadingPaneBody({
         "/api/oracle/readings",
         {
           method: "POST",
+          headers: { "Idempotency-Key": createRandomId("oracle-read") },
           body: JSON.stringify({ question }),
         },
       );
@@ -552,50 +492,62 @@ export default function OracleReadingPaneBody({
     setState(stateFromDetail(detailResource.data));
   }, [detailResource, readingId]);
 
+  const shouldStream =
+    streamSeed !== null &&
+    (streamSeed.status === "pending" || streamSeed.status === "streaming");
+
+  const { phase: streamPhase } = useGenerationRun<OracleStreamEvent>({
+    kind: "oracle-readings",
+    id: shouldStream ? readingId : null,
+    decode: decodeOracleStreamEvent,
+    isTerminal: (event) => event.event_type === "done",
+    onEvent: (event) => setState((current) => applyEvent(current, event)),
+    resume: shouldStream
+      ? { lastEventId: streamSeed.cursor > 0 ? String(streamSeed.cursor) : undefined }
+      : undefined,
+    reconnect: { max: ORACLE_RECONNECT_MAX_ATTEMPTS },
+  });
+
   useEffect(() => {
-    if (
-      streamSeed === null ||
-      (streamSeed.status !== "pending" && streamSeed.status !== "streaming")
-    ) {
-      return;
+    if (streamPhase === "failed") {
+      setLoadError({ severity: "error", title: STREAM_ERROR_MESSAGE });
     }
+  }, [streamPhase]);
 
-    const controller = new AbortController();
-    let cancelled = false;
+  const activateCitation = useCallback((target: ReaderSourceTarget) => {
+    if (target.kind !== "media") return;
+    dispatchReaderPulse({
+      mediaId: target.media_id,
+      evidenceSpanId: target.evidence_span_id ?? undefined,
+      locator: target.locator,
+      snippet: target.snippet,
+      highlightBehavior: target.highlight_behavior,
+      focusBehavior: target.focus_behavior,
+    });
+  }, []);
 
-    (async () => {
-      try {
-        if (cancelled || controller.signal.aborted) {
-          return;
-        }
-
-        await streamEventsWithReconnect(
-          readingId,
-          streamSeed.cursor,
-          (event) => {
-            if (cancelled) return;
-            setState((current) => applyEvent(current, event));
-          },
-          controller.signal,
-        );
-      } catch (error) {
-        if (cancelled) return;
-        if (!isAbortError(error)) {
-          if (handleUnauthenticatedApiError(error)) return;
-          setLoadError(
-            toFeedback(error, {
-              fallback: STREAM_ERROR_MESSAGE,
-            }),
-          );
-        }
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-      controller.abort();
-    };
-  }, [readingId, streamSeed]);
+  const openReadingChat = useCallback(async () => {
+    setChatError(null);
+    try {
+      const response = await apiFetch<{ data: { id: string } }>(
+        "/api/conversations",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            initial_references: [`oracle_reading:${readingId}`],
+          }),
+        },
+      );
+      router.push(`/conversations/${response.data.id}`);
+    } catch (error) {
+      if (handleUnauthenticatedApiError(error)) return;
+      setChatError(
+        toFeedback(error, {
+          fallback: "A conversation about this reading could not begin.",
+        }),
+      );
+    }
+  }, [readingId, router]);
 
   const showSkeletons =
     state.status === "pending" ||
@@ -681,6 +633,14 @@ export default function OracleReadingPaneBody({
                 <p className={styles.attribution}>
                   {passage.attribution_text}{" "}
                   <span className={styles.locator}>{passage.locator_label}</span>
+                  {passage.citation !== null && (
+                    <span className={styles.passageCitation}>
+                      <ReaderCitation
+                        {...toReaderCitationData(passage.citation)}
+                        onActivate={activateCitation}
+                      />
+                    </span>
+                  )}
                 </p>
                 <Sidenote>
                   <p>{passage.marginalia_text}</p>
@@ -740,10 +700,25 @@ export default function OracleReadingPaneBody({
           </>
         )}
 
-        {state.status === "failed" && state.error !== null && (
+        {state.status === "complete" && (
+          <div className={styles.readingActions}>
+            <button
+              type="button"
+              className={styles.chatAction}
+              onClick={openReadingChat}
+            >
+              Chat about this reading
+            </button>
+            {chatError !== null && (
+              <FeedbackNotice feedback={chatError} className={styles.oracleFeedback} />
+            )}
+          </div>
+        )}
+
+        {state.status === "failed" && (
           <section className={styles.errorPanel}>
             <FeedbackNotice
-              feedback={oracleFailureFeedback(state.error)}
+              feedback={oracleFailureFeedback(state.errorCode)}
               className={styles.oracleFeedback}
             />
             {retryError !== null && (

@@ -31,6 +31,7 @@ from tests.factories import (
     get_user_default_library,
 )
 from tests.helpers import auth_headers, create_test_user_id
+from tests.test_resource_resolver import _make_oracle_reading
 from tests.utils.db import DirectSessionManager
 
 pytestmark = pytest.mark.integration
@@ -59,6 +60,23 @@ def test_add_reference_returns_resolved_row_with_metadata(
     assert "Referenced Doc" in added.label, (
         f"Added row label should reflect resolver hydration; got {added.label}"
     )
+
+
+def test_add_reference_accepts_oracle_reading_scheme(db_session: Session, bootstrapped_user: UUID):
+    """S7: an oracle_reading: URI is admissible via the shared scheme validation
+    (conversation create routes initial_references through the same path)."""
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    reading_id = _make_oracle_reading(db_session, bootstrapped_user, motto="Nosce Te Ipsum")
+    uri = f"oracle_reading:{reading_id}"
+
+    added = add_reference(db_session, conversation_id, uri, viewer_id=bootstrapped_user)
+    db_session.commit()
+
+    assert added.resource_uri == uri
+    assert added.label == "Folio 1 — Nosce Te Ipsum", (
+        f"the resolved label should reflect the reading; got {added.label}"
+    )
+    assert not added.missing
 
 
 def test_add_reference_idempotent_on_unique_pair(db_session: Session, bootstrapped_user: UUID):

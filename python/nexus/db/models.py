@@ -1484,6 +1484,8 @@ class LibraryIntelligenceArtifactRevision(Base):
     content_md: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
     covered_targets: Mapped[list[dict[str, object]]] = mapped_column(JSONB, nullable=False)
     status: Mapped[str] = mapped_column(Text, nullable=False)
+    error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
     idempotency_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     promoted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
@@ -2475,6 +2477,8 @@ class MediaSummary(Base):
     summary_md: Mapped[str] = mapped_column(Text, nullable=False)
     model_name: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(Text, nullable=False)
+    error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -3259,6 +3263,72 @@ class Model(Base):
     )
 
 
+class LLMCall(Base):
+    """One provider LLM call in the polymorphic ledger (sole writer: llm_ledger)."""
+
+    __tablename__ = "llm_calls"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    owner_kind: Mapped[str] = mapped_column(Text, nullable=False)
+    owner_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    call_seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    provider: Mapped[str] = mapped_column(Text, nullable=False)
+    model_name: Mapped[str] = mapped_column(Text, nullable=False)
+    llm_operation: Mapped[str] = mapped_column(Text, nullable=False)
+    streaming: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    reasoning_effort: Mapped[str] = mapped_column(Text, nullable=False)
+    key_mode_requested: Mapped[str] = mapped_column(Text, nullable=False)
+    key_mode_used: Mapped[str] = mapped_column(Text, nullable=False)
+    input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    total_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    reasoning_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cache_write_input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cache_read_input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cached_input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    error_class: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    provider_request_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    provider_usage: Mapped[dict[str, object] | None] = mapped_column(
+        JSONB(none_as_null=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "owner_kind IN ('chat_run', 'oracle_reading', 'li_revision', "
+            "'media_summary', 'media_enrichment')",
+            name="ck_llm_calls_owner_kind",
+        ),
+        CheckConstraint("call_seq >= 1", name="ck_llm_calls_call_seq_positive"),
+        CheckConstraint(
+            "provider IN ('openai', 'anthropic', 'gemini', 'deepseek')",
+            name="ck_llm_calls_provider",
+        ),
+        CheckConstraint(
+            "input_tokens >= 0 AND output_tokens >= 0 AND total_tokens >= 0 "
+            "AND reasoning_tokens >= 0 AND cache_write_input_tokens >= 0 "
+            "AND cache_read_input_tokens >= 0 AND cached_input_tokens >= 0",
+            name="ck_llm_calls_token_counts_non_negative",
+        ),
+        CheckConstraint(
+            "provider_usage IS NULL OR jsonb_typeof(provider_usage) = 'object'",
+            name="ck_llm_calls_provider_usage_object",
+        ),
+        UniqueConstraint("owner_kind", "owner_id", "call_seq", name="uq_llm_calls_owner_call_seq"),
+        Index("ix_llm_calls_owner", "owner_kind", "owner_id"),
+    )
+
+
 class Message(Base):
     """Message model - a single message in a conversation."""
 
@@ -3369,12 +3439,6 @@ class Message(Base):
         foreign_keys=[branch_root_message_id],
         remote_side=[id],
     )
-    llm_metadata: Mapped["MessageLLM | None"] = relationship(
-        "MessageLLM",
-        back_populates="message",
-        uselist=False,
-        cascade="all, delete-orphan",
-    )
 
 
 class ConversationActivePath(Base):
@@ -3472,99 +3536,6 @@ class ConversationBranch(Base):
 
     conversation: Mapped["Conversation"] = relationship("Conversation")
     branch_user_message: Mapped["Message"] = relationship("Message")
-
-
-class MessageLLM(Base):
-    """MessageLLM model - LLM execution metadata for assistant messages."""
-
-    __tablename__ = "message_llm"
-
-    message_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("messages.id", ondelete="CASCADE"),
-        primary_key=True,
-    )
-    provider: Mapped[str] = mapped_column(Text, nullable=False)
-    model_name: Mapped[str] = mapped_column(Text, nullable=False)
-    input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    total_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    reasoning_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    cache_write_input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    cache_read_input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    cached_input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    key_mode_requested: Mapped[str] = mapped_column(Text, nullable=False)
-    key_mode_used: Mapped[str] = mapped_column(Text, nullable=False)
-    cost_usd_micros: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    error_class: Mapped[str | None] = mapped_column(Text, nullable=True)
-    provider_request_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    provider_usage: Mapped[dict[str, object] | None] = mapped_column(
-        JSONB(none_as_null=True), nullable=True
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        CheckConstraint(
-            "provider IN ('openai', 'anthropic', 'gemini', 'deepseek')",
-            name="ck_message_llm_provider",
-        ),
-        CheckConstraint(
-            "key_mode_requested IN ('auto', 'byok_only', 'platform_only')",
-            name="ck_message_llm_key_mode_requested",
-        ),
-        CheckConstraint(
-            "key_mode_used IN ('platform', 'byok')",
-            name="ck_message_llm_key_mode_used",
-        ),
-        CheckConstraint(
-            "total_tokens IS NULL OR total_tokens >= 0",
-            name="ck_message_llm_total_tokens",
-        ),
-        CheckConstraint(
-            "input_tokens IS NULL OR input_tokens >= 0",
-            name="ck_message_llm_input_tokens",
-        ),
-        CheckConstraint(
-            "output_tokens IS NULL OR output_tokens >= 0",
-            name="ck_message_llm_output_tokens",
-        ),
-        CheckConstraint(
-            "reasoning_tokens IS NULL OR reasoning_tokens >= 0",
-            name="ck_message_llm_reasoning_tokens",
-        ),
-        CheckConstraint(
-            "cache_write_input_tokens IS NULL OR cache_write_input_tokens >= 0",
-            name="ck_message_llm_cache_write_tokens",
-        ),
-        CheckConstraint(
-            "cache_read_input_tokens IS NULL OR cache_read_input_tokens >= 0",
-            name="ck_message_llm_cache_read_tokens",
-        ),
-        CheckConstraint(
-            "cached_input_tokens IS NULL OR cached_input_tokens >= 0",
-            name="ck_message_llm_cached_input_tokens",
-        ),
-        CheckConstraint(
-            "provider_usage IS NULL OR jsonb_typeof(provider_usage) = 'object'",
-            name="ck_message_llm_provider_usage_object",
-        ),
-        CheckConstraint(
-            "cost_usd_micros IS NULL OR cost_usd_micros >= 0",
-            name="ck_message_llm_cost",
-        ),
-        CheckConstraint(
-            "latency_ms IS NULL OR latency_ms >= 0",
-            name="ck_message_llm_latency",
-        ),
-    )
-
-    # Relationships
-    message: Mapped["Message"] = relationship("Message", back_populates="llm_metadata")
 
 
 class MessageToolCall(Base):
@@ -4058,6 +4029,7 @@ class ChatRun(Base):
     started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -5565,18 +5537,15 @@ class OracleReading(Base):
     argument_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     question_text: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'pending'"))
-    generator_model_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("models.id"),
-        nullable=True,
-    )
     image_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("oracle_corpus_images.id"),
         nullable=True,
     )
+    interpretation_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    idempotency_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
-    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     failed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
@@ -5625,6 +5594,13 @@ class OracleReading(Base):
             name="ck_oracle_readings_theme",
         ),
         UniqueConstraint("user_id", "folio_number", name="uix_oracle_readings_user_folio"),
+        Index(
+            "uq_oracle_readings_user_idempotency_key",
+            "user_id",
+            "idempotency_key",
+            unique=True,
+            postgresql_where=text("idempotency_key IS NOT NULL"),
+        ),
         Index("idx_oracle_readings_user_created", "user_id", text("created_at DESC")),
         Index("idx_oracle_readings_user_image", "user_id", "image_id"),
         Index("idx_oracle_readings_user_theme", "user_id", "folio_theme"),
@@ -5714,7 +5690,7 @@ class OracleReadingEvent(Base):
         CheckConstraint("seq >= 1", name="ck_oracle_reading_events_seq_positive"),
         CheckConstraint(
             "event_type IN ("
-            "'meta', 'bind', 'argument', 'plate', 'passage', 'delta', 'omens', 'error', 'done'"
+            "'meta', 'bind', 'argument', 'plate', 'passage', 'delta', 'omens', 'done'"
             ")",
             name="ck_oracle_reading_events_type",
         ),
