@@ -467,9 +467,15 @@ class TestRunMediaUnitBuild:
         ).scalar_one()
         db_session.commit()
 
+        owner_user_id = db_session.execute(
+            text("SELECT created_by_user_id FROM media WHERE id = :mid"),
+            {"mid": media_id},
+        ).scalar_one()
+
         _persist_unit(
             db_session,
             media_id=media_id,
+            owner_user_id=UUID(str(owner_user_id)),
             summary_id=ref.summary_id,
             summary_md="superseded summary",
             expected_fingerprint="a-different-generation-fingerprint",

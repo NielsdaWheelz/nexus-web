@@ -89,6 +89,7 @@ import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import Pill from "@/components/ui/Pill";
 import ActionMenu, { type ActionMenuOption } from "@/components/ui/ActionMenu";
 import LibraryMembershipPanel from "@/components/LibraryMembershipPanel";
+import NoteBacklinks from "@/components/notes/NoteBacklinks";
 import {
   usePaneParam,
   usePaneSearchParams,
@@ -4663,6 +4664,14 @@ export default function MediaPaneBody() {
               }}
             />
           )}
+        </div>
+      ),
+    });
+    surfaces.push({
+      id: "connections",
+      body: (
+        <div className={styles.connectionsSurfaceBody}>
+          <NoteBacklinks objectRef={{ objectType: "media", objectId: id }} />
         </div>
       ),
     });

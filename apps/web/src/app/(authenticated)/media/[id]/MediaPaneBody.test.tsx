@@ -502,6 +502,7 @@ describe("MediaPaneBody pane sizing", () => {
       expect(publication?.surfaces.map((surface) => surface.id)).toEqual([
         "reader-contents",
         "reader-doc-chat",
+        "connections",
       ]);
     });
   });

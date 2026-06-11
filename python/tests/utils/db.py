@@ -342,14 +342,19 @@ class DirectSessionManager:
                         text("DELETE FROM billing_entitlement_overrides WHERE user_id = :value"),
                         {"value": value},
                     )
-                    # resource_edges / resource_external_snapshots FK users.id with no
-                    # cascade (provenance graph: cleanup is explicit application code).
+                    # resource_edges / resource_external_snapshots /
+                    # synapse_suppressions FK users.id with no cascade (provenance
+                    # graph: cleanup is explicit application code).
                     session.execute(
                         text("DELETE FROM resource_edges WHERE user_id = :value"),
                         {"value": value},
                     )
                     session.execute(
                         text("DELETE FROM resource_external_snapshots WHERE user_id = :value"),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text("DELETE FROM synapse_suppressions WHERE user_id = :value"),
                         {"value": value},
                     )
                     session.execute(

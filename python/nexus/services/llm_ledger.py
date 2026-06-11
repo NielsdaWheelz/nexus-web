@@ -47,7 +47,14 @@ _ERROR_DETAIL_MAX_CHARS = 1000
 class LlmCallOwner:
     """The run parent a provider call is attributed to in the ledger."""
 
-    kind: Literal["chat_run", "oracle_reading", "li_revision", "media_summary", "media_enrichment"]
+    kind: Literal[
+        "chat_run",
+        "oracle_reading",
+        "li_revision",
+        "media_summary",
+        "media_enrichment",
+        "synapse_scan",
+    ]
     id: UUID
 
 

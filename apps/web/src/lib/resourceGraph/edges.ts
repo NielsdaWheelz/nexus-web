@@ -13,7 +13,8 @@ export type EdgeOrigin =
   | "system"
   | "note_body"
   | "highlight_note"
-  | "note_containment";
+  | "note_containment"
+  | "synapse";
 
 export interface EdgeOut {
   id: string;

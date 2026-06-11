@@ -769,7 +769,9 @@ def test_notes_pages_object_graph_old_note_structure_absent_in_production():
     object_graph_hits = _filtered(
         r"\bobject_graph_edges\b", _PY_ROOT, _WEB_ROOT, _SCRIPTS_ROOT, exclude=_FRONTEND_TEST
     )
-    assert not object_graph_hits, f"parallel object_graph_edges table referenced:\n{_fmt(object_graph_hits)}"
+    assert not object_graph_hits, (
+        f"parallel object_graph_edges table referenced:\n{_fmt(object_graph_hits)}"
+    )
 
     orm_hits = _filtered(
         r"\bNoteBlock\.(?:page_id|parent_block_id|order_key|collapsed)\b",
@@ -788,8 +790,7 @@ def test_notes_pages_object_graph_old_note_structure_absent_in_production():
         exclude=_FRONTEND_TEST,
     )
     assert not sql_hits, (
-        "runtime SQL references dropped note_blocks structure columns:\n"
-        f"{_fmt(sql_hits)}"
+        f"runtime SQL references dropped note_blocks structure columns:\n{_fmt(sql_hits)}"
     )
 
 
@@ -807,3 +808,17 @@ def test_public_resource_graph_edge_create_does_not_accept_order_keys():
     )[0]
     assert "source_order_key" not in create_block
     assert "target_order_key" not in create_block
+
+
+# =============================================================================
+# Synapse: one origin='synapse' edge writer (synapse spec AC9)
+# =============================================================================
+
+
+def test_synapse_origin_edges_constructed_only_in_synapse_service():
+    # The resonance engine is the sole writer of origin='synapse' edges; any
+    # other production construction site would bypass the replace-set +
+    # suppression semantics. (python/tests lives outside the scanned roots;
+    # the frontend only compares the origin, it never constructs it.)
+    hits = _excluding(_grep(r'origin="synapse"', _PY_ROOT, _SCRIPTS_ROOT), "services/synapse.py")
+    assert not hits, f'origin="synapse" written outside services/synapse.py:\n{_fmt(hits)}'

@@ -11213,3 +11213,245 @@ class TestMigration0148NotesPagesBackfill:
             assert collapsed_rows == [("note_block", first_block_id, child_block_id, True)]
         finally:
             reset_test_schema()
+
+
+# The scannable resource-graph schemes as of 0147. synapse_suppressions mirrors
+# these — NOT a verbatim mirror of resource_edges post-0148, which adds 'tag' as a
+# 17th scheme: synapse never proposes a connection to or from a tag, so the
+# dismissal memory deliberately omits it.
+RESOURCE_EDGE_SCHEMES = (
+    "media",
+    "library",
+    "evidence_span",
+    "content_chunk",
+    "highlight",
+    "page",
+    "note_block",
+    "fragment",
+    "conversation",
+    "message",
+    "oracle_reading",
+    "oracle_corpus_passage",
+    "library_intelligence_artifact",
+    "external_snapshot",
+    "contributor",
+    "podcast",
+)
+
+
+class TestMigration0149SynapseResonance:
+    """0149: 'synapse' origin + 'synapse_scan' ledger owner + the suppression memory."""
+
+    @pytest.fixture(scope="class")
+    def head_engine(self):
+        """A freshly head-migrated engine for this class (same rationale as 0145's)."""
+        reset_test_schema()
+        result = run_alembic_command("upgrade head")
+        if result.returncode != 0:
+            pytest.fail(f"Migration upgrade failed: {result.stderr}")
+        engine = create_engine(get_test_database_url())
+        yield engine
+        engine.dispose()
+        reset_test_schema()
+
+    def _constraint_def(self, session, table: str, conname: str) -> str:
+        return session.execute(
+            text(
+                """
+                SELECT pg_get_constraintdef(oid)
+                FROM pg_constraint
+                WHERE conrelid = CAST(:table AS regclass) AND conname = :conname
+                """
+            ),
+            {"table": table, "conname": conname},
+        ).scalar_one()
+
+    def test_0149_downgrade_restores_narrowed_vocabulary(self):
+        """0149 is additive and reversible: downgrade drops the suppression
+        table and restores the pre-synapse origin/owner CHECKs."""
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            assert run_alembic_command("upgrade head").returncode == 0
+            # 0149's down_revision is 0148 (the notes/pages cutover); 0148 is a
+            # hard cutover with no downgrade, so 0149 reverses exactly one step
+            # back to 0148's pre-synapse origin/owner vocabulary.
+            result = run_alembic_command("downgrade 0148")
+            assert result.returncode == 0, f"downgrade to 0148 failed: {result.stderr}"
+            with Session(engine) as session:
+                tables = {
+                    row[0]
+                    for row in session.execute(
+                        text(
+                            """
+                            SELECT table_name FROM information_schema.tables
+                            WHERE table_schema = 'public'
+                            """
+                        )
+                    ).fetchall()
+                }
+                origin_check = self._constraint_def(
+                    session, "resource_edges", "ck_resource_edges_origin"
+                )
+                owner_check = self._constraint_def(session, "llm_calls", "ck_llm_calls_owner_kind")
+            assert "synapse_suppressions" not in tables
+            assert "'synapse'" not in origin_check, origin_check
+            assert "'synapse_scan'" not in owner_check, owner_check
+        finally:
+            engine.dispose()
+            reset_test_schema()
+
+    def test_widened_vocabulary_checks_at_head(self, head_engine):
+        """ck_resource_edges_origin admits 'synapse'; ck_llm_calls_owner_kind
+        admits 'synapse_scan'; both keep every pre-0149 value."""
+        with Session(head_engine) as session:
+            origin_check = self._constraint_def(
+                session, "resource_edges", "ck_resource_edges_origin"
+            )
+            owner_check = self._constraint_def(session, "llm_calls", "ck_llm_calls_owner_kind")
+        for origin in ("user", "citation", "system", "note_body", "highlight_note", "synapse"):
+            assert f"'{origin}'" in origin_check, origin_check
+        for owner_kind in (
+            "chat_run",
+            "oracle_reading",
+            "li_revision",
+            "media_summary",
+            "media_enrichment",
+            "synapse_scan",
+        ):
+            assert f"'{owner_kind}'" in owner_check, owner_check
+
+    def test_synapse_suppressions_shape_at_head(self, head_engine):
+        """The dismissal memory exists with exact columns, five-column PK,
+        verbatim scheme CHECKs, and the reverse-direction index."""
+        with Session(head_engine) as session:
+            columns = {
+                row[0]: (row[1], row[2])
+                for row in session.execute(
+                    text(
+                        """
+                        SELECT column_name, data_type, is_nullable
+                        FROM information_schema.columns
+                        WHERE table_name = 'synapse_suppressions'
+                        """
+                    )
+                ).fetchall()
+            }
+            pk_def = session.execute(
+                text(
+                    """
+                    SELECT pg_get_constraintdef(oid)
+                    FROM pg_constraint
+                    WHERE conrelid = 'synapse_suppressions'::regclass AND contype = 'p'
+                    """
+                )
+            ).scalar_one()
+            source_check = self._constraint_def(
+                session, "synapse_suppressions", "ck_synapse_suppressions_source_scheme"
+            )
+            target_check = self._constraint_def(
+                session, "synapse_suppressions", "ck_synapse_suppressions_target_scheme"
+            )
+            indexes = {
+                row[0]: row[1]
+                for row in session.execute(
+                    text(
+                        """
+                        SELECT indexname, indexdef FROM pg_indexes
+                        WHERE tablename = 'synapse_suppressions'
+                        """
+                    )
+                ).fetchall()
+            }
+
+        assert columns == {
+            "user_id": ("uuid", "NO"),
+            "source_scheme": ("text", "NO"),
+            "source_id": ("uuid", "NO"),
+            "target_scheme": ("text", "NO"),
+            "target_id": ("uuid", "NO"),
+            "created_at": ("timestamp with time zone", "NO"),
+        }, columns
+        assert pk_def == (
+            "PRIMARY KEY (user_id, source_scheme, source_id, target_scheme, target_id)"
+        ), pk_def
+        for scheme in RESOURCE_EDGE_SCHEMES:
+            assert f"'{scheme}'" in source_check, source_check
+            assert f"'{scheme}'" in target_check, target_check
+        assert "ix_synapse_suppressions_user_target" in indexes, indexes
+        assert (
+            "(user_id, target_scheme, target_id)"
+            in (indexes["ix_synapse_suppressions_user_target"])
+        )
+
+    def test_suppression_constraints_enforced_at_head(self, head_engine):
+        """The scheme CHECKs and the pair PK reject bad rows; a widened-origin
+        edge and a synapse_scan ledger row insert cleanly."""
+        user_id = uuid4()
+        insert_sql = text(
+            """
+            INSERT INTO synapse_suppressions (
+                user_id, source_scheme, source_id, target_scheme, target_id
+            )
+            VALUES (:user_id, :source_scheme, :source_id, :target_scheme, :target_id)
+            """
+        )
+        params = {
+            "user_id": user_id,
+            "source_scheme": "highlight",
+            "source_id": uuid4(),
+            "target_scheme": "media",
+            "target_id": uuid4(),
+        }
+
+        with Session(head_engine) as session:
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.execute(insert_sql, params)
+            # The widened CHECKs accept the new vocabulary.
+            session.execute(
+                text(
+                    """
+                    INSERT INTO resource_edges (
+                        user_id, kind, origin, source_scheme, source_id,
+                        target_scheme, target_id, snapshot
+                    )
+                    VALUES (
+                        :user_id, 'supports', 'synapse', 'highlight', :source_id,
+                        'media', :target_id,
+                        CAST('{"title": "t", "excerpt": "why"}' AS jsonb)
+                    )
+                    """
+                ),
+                {"user_id": user_id, "source_id": uuid4(), "target_id": uuid4()},
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO llm_calls (
+                        owner_kind, owner_id, call_seq, provider, model_name,
+                        llm_operation, streaming, reasoning_effort,
+                        key_mode_requested, key_mode_used
+                    )
+                    VALUES (
+                        'synapse_scan', :owner_id, 1, 'anthropic', 'm',
+                        'synapse_scan', false, 'none', 'auto', 'platform'
+                    )
+                    """
+                ),
+                {"owner_id": uuid4()},
+            )
+            session.commit()
+
+        for override, expected_constraint in (
+            ({"source_scheme": "bogus"}, "ck_synapse_suppressions_source_scheme"),
+            ({"target_scheme": "bogus"}, "ck_synapse_suppressions_target_scheme"),
+            ({}, "synapse_suppressions_pkey"),  # exact re-dismissal is idempotent-by-PK
+        ):
+            with Session(head_engine) as session:
+                with pytest.raises(IntegrityError) as exc_info:
+                    session.execute(insert_sql, {**params, **override})
+                    session.commit()
+                session.rollback()
+            assert expected_constraint in str(exc_info.value), (
+                f"expected {expected_constraint} for override {override!r}, got: {exc_info.value}"
+            )

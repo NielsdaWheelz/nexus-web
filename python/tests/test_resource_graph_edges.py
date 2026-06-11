@@ -208,14 +208,22 @@ def test_create_edge_rejects_ordinal_without_snapshot(db_session: Session, boots
         create_edge(db_session, viewer_id=bootstrapped_user, input=bad)
 
 
-def test_create_edge_rejects_snapshot_without_ordinal(db_session: Session, bootstrapped_user: UUID):
+def test_create_edge_allows_snapshot_on_bare_edge(db_session: Session, bootstrapped_user: UUID):
+    """A bare edge MAY carry a snapshot (ck_resource_edges_citation_has_snapshot is
+    ``ordinal IS NULL OR snapshot IS NOT NULL``): the synapse rationale rides in
+    ``snapshot.excerpt`` on ordinal-less edges (synapse spec D2)."""
     source = _message_ref(db_session, bootstrapped_user)
     target = _media_ref(db_session, bootstrapped_user)
-    bad = EdgeCreate(
-        source=source, target=target, kind="context", origin="citation", snapshot=_SNAPSHOT
+    edge = create_edge(
+        db_session,
+        viewer_id=bootstrapped_user,
+        input=EdgeCreate(
+            source=source, target=target, kind="context", origin="synapse", snapshot=_SNAPSHOT
+        ),
     )
-    with pytest.raises(InvalidRequestError):
-        create_edge(db_session, viewer_id=bootstrapped_user, input=bad)
+    assert edge.ordinal is None and edge.snapshot == _SNAPSHOT, (
+        f"bare-edge snapshot must persist; got {edge}"
+    )
 
 
 def test_create_edge_rejects_non_positive_ordinal(db_session: Session, bootstrapped_user: UUID):

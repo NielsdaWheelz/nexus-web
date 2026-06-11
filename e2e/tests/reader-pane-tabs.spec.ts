@@ -28,11 +28,12 @@ test.describe("reader pane tabs (references cutover)", () => {
     const tablist = secondary.getByRole("tablist", { name: "Secondary surfaces" });
     const tabs = tablist.getByRole("tab");
 
-    await expect(tabs).toHaveCount(2);
+    await expect(tabs).toHaveCount(3);
     await expect(tabs.nth(0)).toHaveAccessibleName("Highlights");
     await expect(tabs.nth(1)).toHaveAccessibleName("Document chat");
+    await expect(tabs.nth(2)).toHaveAccessibleName("Connections");
 
-    for (let index = 0; index < 2; index += 1) {
+    for (let index = 0; index < 3; index += 1) {
       const text = (await tabs.nth(index).innerText()).trim();
       expect(text).toBe("");
     }

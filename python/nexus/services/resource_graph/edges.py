@@ -63,9 +63,7 @@ def create_edge(db: Session, *, viewer_id: UUID, input: EdgeCreate) -> EdgeOut:
             raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Edge already exists")
         if (
             input.origin == "note_containment"
-            and _existing_containment_target_id(
-                db, viewer_id=viewer_id, target=input.target
-            )
+            and _existing_containment_target_id(db, viewer_id=viewer_id, target=input.target)
             is not None
         ):
             raise InvalidRequestError(
@@ -303,10 +301,13 @@ def _validate_edge_input(db: Session, *, viewer_id: UUID, edge: EdgeCreate) -> N
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST, f"Invalid edge origin {edge.origin!r}"
         )
-    if (edge.ordinal is None) != (edge.snapshot is None):
+    # The exact twin of ck_resource_edges_citation_has_snapshot: a citation
+    # (ordinal set) must carry its display snapshot; a bare edge MAY carry one
+    # too (the synapse rationale rides in snapshot.excerpt, synapse spec D2).
+    if edge.ordinal is not None and edge.snapshot is None:
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST,
-            "Citation ordinal and snapshot must be set together",
+            "Citation ordinal requires a snapshot",
         )
     if edge.ordinal is not None and (
         edge.source_order_key is not None or edge.target_order_key is not None

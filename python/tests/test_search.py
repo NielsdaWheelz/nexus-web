@@ -1007,7 +1007,7 @@ class TestSearchScopes:
         rebuild_page_content_index(session, page_id=page_id, reason="test")
 
     def _link_note_block_to_media(
-        self, session, *, user_id: UUID, note_block_id: UUID, media_id: UUID
+        self, session, *, user_id: UUID, note_block_id: UUID, media_id: UUID, origin: str = "user"
     ) -> None:
         """resource_edges note_block -> media (the §4.6 note `media:` scope cell)."""
         session.execute(
@@ -1017,12 +1017,17 @@ class TestSearchScopes:
                     user_id, kind, origin, source_scheme, source_id, target_scheme, target_id
                 )
                 VALUES (
-                    :user_id, 'context', 'user', 'note_block', :note_block_id,
+                    :user_id, 'context', :origin, 'note_block', :note_block_id,
                     'media', :media_id
                 )
                 """
             ),
-            {"user_id": user_id, "note_block_id": note_block_id, "media_id": media_id},
+            {
+                "user_id": user_id,
+                "note_block_id": note_block_id,
+                "media_id": media_id,
+                "origin": origin,
+            },
         )
 
     def test_scope_media_filters_notes(self, auth_client, direct_db: DirectSessionManager):
@@ -1126,6 +1131,69 @@ class TestSearchScopes:
         assert response.status_code == 200, response.text
         ids = {r["id"] for r in response.json()["results"] if r["type"] == "note_block"}
         assert str(block_id) not in ids
+
+    def test_scope_media_ignores_synapse_origin_edges(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """media: scope admits via a user edge but never via a machine (synapse) guess."""
+        user_id = create_test_user_id()
+        direct_db.register_cleanup("users", "id", user_id)
+        direct_db.register_cleanup("libraries", "owner_user_id", user_id)
+        direct_db.register_cleanup("memberships", "user_id", user_id)
+        direct_db.register_cleanup("pages", "user_id", user_id)
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        user_page_id, user_block_id = uuid4(), uuid4()
+        synapse_page_id, synapse_block_id = uuid4(), uuid4()
+        with direct_db.session() as session:
+            scoped_media = create_searchable_media(session, user_id, title="Origin Scope Doc")
+            self._seed_scope_note_block(
+                session,
+                user_id=user_id,
+                page_id=user_page_id,
+                note_block_id=user_block_id,
+                page_title="User Edge Page",
+                body_text="originscopeprobe user-edge note content",
+            )
+            self._link_note_block_to_media(
+                session, user_id=user_id, note_block_id=user_block_id, media_id=scoped_media
+            )
+            self._seed_scope_note_block(
+                session,
+                user_id=user_id,
+                page_id=synapse_page_id,
+                note_block_id=synapse_block_id,
+                page_title="Synapse Edge Page",
+                body_text="originscopeprobe synapse-edge note content",
+            )
+            self._link_note_block_to_media(
+                session,
+                user_id=user_id,
+                note_block_id=synapse_block_id,
+                media_id=scoped_media,
+                origin="synapse",
+            )
+            session.commit()
+
+        for block_id in (user_block_id, synapse_block_id):
+            direct_db.register_cleanup("resource_edges", "source_id", block_id)
+            direct_db.register_cleanup("resource_edges", "target_id", block_id)
+        direct_db.register_cleanup("fragments", "media_id", scoped_media)
+        direct_db.register_cleanup("library_entries", "media_id", scoped_media)
+        direct_db.register_cleanup("media", "id", scoped_media)
+
+        response = auth_client.get(
+            f"/search?q=originscopeprobe&kinds=notes&scope=media:{scoped_media}",
+            headers=auth_headers(user_id),
+        )
+        assert response.status_code == 200, response.text
+        ids = {r["id"] for r in response.json()["results"] if r["type"] == "note_block"}
+        assert str(user_block_id) in ids, (
+            f"a user-origin edge must admit the note; got {response.json()['results']}"
+        )
+        assert str(synapse_block_id) not in ids, (
+            "a synapse-origin edge must not admit the note into media scope"
+        )
 
     def test_scope_media_filters_notes_via_highlight_anchor(
         self, auth_client, direct_db: DirectSessionManager

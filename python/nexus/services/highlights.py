@@ -397,6 +397,15 @@ def create_highlight_for_fragment(
         )
         db.add(fragment_anchor)
         db.flush()
+
+        from nexus.services import synapse
+
+        synapse.queue_synapse_scan(
+            db,
+            user_id=viewer_id,
+            ref=ResourceRef(scheme="highlight", id=highlight.id),
+            reason="highlight_create",
+        )
         db.commit()
     except IntegrityError as e:
         db.rollback()

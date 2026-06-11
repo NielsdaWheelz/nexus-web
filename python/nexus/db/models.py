@@ -489,7 +489,7 @@ class ResourceEdge(Base):
             """
             origin IN (
                 'user', 'citation', 'system', 'note_body', 'highlight_note',
-                'note_containment'
+                'note_containment', 'synapse'
             )
             """,
             name="ck_resource_edges_origin",
@@ -536,11 +536,14 @@ class ResourceEdge(Base):
             name="ck_resource_edges_snapshot_object",
         ),
         CheckConstraint(
-            "snapshot IS NULL OR ordinal IS NOT NULL",
+            # A citation edge carries its snapshot beside an ordinal; a synapse
+            # edge (origin='synapse') carries a bare-edge rationale snapshot with
+            # no ordinal (spec §13.3). Both are the snapshot's only writers.
+            "snapshot IS NULL OR ordinal IS NOT NULL OR origin = 'synapse'",
             name="ck_resource_edges_snapshot_has_ordinal",
         ),
         CheckConstraint(
-            "snapshot IS NULL OR origin = 'citation'",
+            "snapshot IS NULL OR origin IN ('citation', 'synapse')",
             name="ck_resource_edges_snapshot_origin",
         ),
         CheckConstraint(
@@ -608,9 +611,7 @@ class ResourceEdge(Base):
             "source_id",
             "source_order_key",
             unique=True,
-            postgresql_where=text(
-                "origin = 'note_containment' AND source_order_key IS NOT NULL"
-            ),
+            postgresql_where=text("origin = 'note_containment' AND source_order_key IS NOT NULL"),
         ),
         Index(
             "uq_resource_edges_containment_target_order",
@@ -619,9 +620,7 @@ class ResourceEdge(Base):
             "target_id",
             "target_order_key",
             unique=True,
-            postgresql_where=text(
-                "origin = 'note_containment' AND target_order_key IS NOT NULL"
-            ),
+            postgresql_where=text("origin = 'note_containment' AND target_order_key IS NOT NULL"),
         ),
         Index(
             "uq_resource_edges_containment_target_once",
@@ -717,6 +716,66 @@ class ResourceExternalSnapshot(Base):
         CheckConstraint(
             "jsonb_typeof(source_snapshot) = 'object'",
             name="ck_resource_external_snapshots_source_object",
+        ),
+    )
+
+
+class SynapseSuppression(Base):
+    """A dismissed synapse pair the resonance engine must never re-propose.
+
+    Stored as-dismissed; the miner checks both directions at read time
+    (service-level undirectedness). Endpoints are polymorphic refs like
+    ResourceEdge: no endpoint FKs; rows are permanent — harmless after
+    endpoint deletion (single-user scale).
+    """
+
+    __tablename__ = "synapse_suppressions"
+
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        primary_key=True,
+    )
+    source_scheme: Mapped[str] = mapped_column(Text, primary_key=True)
+    source_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    target_scheme: Mapped[str] = mapped_column(Text, primary_key=True)
+    target_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            """
+            source_scheme IN (
+                'media', 'library', 'evidence_span', 'content_chunk',
+                'highlight', 'page', 'note_block', 'fragment',
+                'conversation', 'message', 'oracle_reading',
+                'oracle_corpus_passage', 'library_intelligence_artifact',
+                'external_snapshot', 'contributor', 'podcast'
+            )
+            """,
+            name="ck_synapse_suppressions_source_scheme",
+        ),
+        CheckConstraint(
+            """
+            target_scheme IN (
+                'media', 'library', 'evidence_span', 'content_chunk',
+                'highlight', 'page', 'note_block', 'fragment',
+                'conversation', 'message', 'oracle_reading',
+                'oracle_corpus_passage', 'library_intelligence_artifact',
+                'external_snapshot', 'contributor', 'podcast'
+            )
+            """,
+            name="ck_synapse_suppressions_target_scheme",
+        ),
+        Index(
+            "ix_synapse_suppressions_user_target",
+            "user_id",
+            "target_scheme",
+            "target_id",
         ),
     )
 
@@ -3474,7 +3533,7 @@ class LLMCall(Base):
     __table_args__ = (
         CheckConstraint(
             "owner_kind IN ('chat_run', 'oracle_reading', 'li_revision', "
-            "'media_summary', 'media_enrichment')",
+            "'media_summary', 'media_enrichment', 'synapse_scan')",
             name="ck_llm_calls_owner_kind",
         ),
         CheckConstraint("call_seq >= 1", name="ck_llm_calls_call_seq_positive"),

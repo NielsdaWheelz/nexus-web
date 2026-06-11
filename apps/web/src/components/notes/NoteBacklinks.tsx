@@ -9,7 +9,7 @@ import {
   useState,
   type FormEvent,
 } from "react";
-import { Link, Paperclip, Trash2 } from "lucide-react";
+import { Link, Paperclip, Sparkles, Trash2, X } from "lucide-react";
 import {
   FeedbackNotice,
   toFeedback,
@@ -18,6 +18,7 @@ import {
 import ObjectRefAutocomplete from "@/components/notes/ObjectRefAutocomplete";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
+import Pill from "@/components/ui/Pill";
 import Select from "@/components/ui/Select";
 import { useResource } from "@/lib/api/useResource";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -40,11 +41,18 @@ import {
 } from "@/lib/resourceGraph/resourceRef";
 import { resourceIconForUri } from "@/lib/resources/resourceKind";
 import {
+  dismissSynapseEdge,
+  fetchSynapseScanStatus,
+  requestSynapseScan,
+} from "@/lib/synapse";
+import { useIntervalPoll } from "@/lib/useIntervalPoll";
+import {
   isObjectType,
   resolveObjectRefs,
   searchObjectRefs,
   type HydratedObjectRef,
   type ObjectRef,
+  type ObjectType,
 } from "@/lib/objectRefs";
 import styles from "./NoteBacklinks.module.css";
 
@@ -56,6 +64,33 @@ interface Connection {
   missing: boolean;
   kind: EdgeKind;
   origin: EdgeOut["origin"];
+  rationale: string | null;
+  createdAt: string;
+}
+
+/**
+ * Human assertions read as the record; synapse proposals trail them. Newest
+ * first within each group (ISO timestamps compare lexicographically).
+ */
+function compareConnections(a: Connection, b: Connection): number {
+  const aProposed = a.origin === "synapse" ? 1 : 0;
+  const bProposed = b.origin === "synapse" ? 1 : 0;
+  if (aProposed !== bProposed) return aProposed - bProposed;
+  return b.createdAt.localeCompare(a.createdAt);
+}
+
+/** Schemes the Synapse engine accepts as scan sources (spec §5). */
+const SYNAPSE_SCANNABLE_TYPES = new Set<ObjectType>([
+  "media",
+  "page",
+  "note_block",
+  "highlight",
+]);
+
+/** Synapse rationale rides in the edge snapshot's `excerpt` (spec §8). */
+function synapseRationale(edge: EdgeOut): string | null {
+  const excerpt = edge.snapshot?.excerpt;
+  return typeof excerpt === "string" && excerpt.length > 0 ? excerpt : null;
 }
 
 export default function NoteBacklinks({
@@ -84,30 +119,76 @@ export default function NoteBacklinks({
 
   const connections: Connection[] =
     edgesResource.status === "ready"
-      ? edgesResource.data.data.map((edge) =>
-          edge.source_ref === selfRef
-            ? {
-                edgeId: edge.id,
-                ref: edge.target_ref,
-                label: edge.target_label,
-                missing: edge.target_missing,
-                kind: edge.kind,
-                origin: edge.origin,
-              }
-            : {
-                edgeId: edge.id,
-                ref: edge.source_ref,
-                label: edge.source_label,
-                missing: edge.source_missing,
-                kind: edge.kind,
-                origin: edge.origin,
-              },
-        )
+      ? edgesResource.data.data
+          .map((edge) =>
+            edge.source_ref === selfRef
+              ? {
+                  edgeId: edge.id,
+                  ref: edge.target_ref,
+                  label: edge.target_label,
+                  missing: edge.target_missing,
+                  kind: edge.kind,
+                  origin: edge.origin,
+                  rationale: synapseRationale(edge),
+                  createdAt: edge.created_at,
+                }
+              : {
+                  edgeId: edge.id,
+                  ref: edge.source_ref,
+                  label: edge.source_label,
+                  missing: edge.source_missing,
+                  kind: edge.kind,
+                  origin: edge.origin,
+                  rationale: synapseRationale(edge),
+                  createdAt: edge.created_at,
+                },
+          )
+          .sort(compareConnections)
       : [];
 
   const reloadConnections = useCallback(() => {
     setRefreshTick((value) => value + 1);
   }, []);
+
+  const scannable = SYNAPSE_SCANNABLE_TYPES.has(objectRef.objectType);
+  const [scanVoice, setScanVoice] = useState<string | null>(null);
+  const scanBaselineRef = useRef<number | null>(null);
+  const connectionsCountRef = useRef(0);
+  if (edgesResource.status === "ready") {
+    connectionsCountRef.current = connections.length;
+  }
+
+  useEffect(() => {
+    scanBaselineRef.current = null;
+    setScanVoice(null);
+  }, [selfRef]);
+
+  const handleScanSettled = useCallback(() => {
+    // Snapshot the pre-reload count; the post-reload ready state reports the
+    // delta as the scan-voice line.
+    scanBaselineRef.current = connectionsCountRef.current;
+    reloadConnections();
+  }, [reloadConnections]);
+
+  const scan = useSynapseScan({
+    selfRef,
+    enabled: scannable,
+    onSettled: handleScanSettled,
+  });
+  const scanning = scan.phase !== "idle";
+
+  useEffect(() => {
+    if (edgesResource.status !== "ready" || scanBaselineRef.current === null) {
+      return;
+    }
+    const found = edgesResource.data.data.length - scanBaselineRef.current;
+    scanBaselineRef.current = null;
+    setScanVoice(
+      found > 0
+        ? `${found} new connection${found === 1 ? "" : "s"} found.`
+        : "No new connections found.",
+    );
+  }, [edgesResource]);
 
   const openConnection = useCallback(
     async (ref: string, openInNewPane: boolean) => {
@@ -130,12 +211,42 @@ export default function NoteBacklinks({
     <section className={styles.backlinks} aria-label="Connections">
       <div className={styles.header}>
         <h2 className={styles.title}>Connections</h2>
+        {scannable ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            iconOnly
+            loading={scanning}
+            aria-label="Find connections"
+            title="Find connections"
+            onClick={() => {
+              setScanVoice(null);
+              void scan.start();
+            }}
+          >
+            <Sparkles size={14} aria-hidden="true" />
+          </Button>
+        ) : null}
       </div>
+      {scan.feedback ? <FeedbackNotice feedback={scan.feedback} /> : null}
+      {scanning ? (
+        <p className={styles.scanVoice}>Scanning…</p>
+      ) : scanVoice ? (
+        <p className={styles.scanVoice}>{scanVoice}</p>
+      ) : null}
       <ConnectionComposer selfRef={selfRef} onChanged={reloadConnections} />
       {loading ? <FeedbackNotice severity="info" title="Loading connections..." /> : null}
       {!loading && error ? <FeedbackNotice feedback={error} /> : null}
       {!loading && !error && connections.length === 0 ? (
-        <FeedbackNotice severity="neutral" title="No connected objects yet." />
+        <FeedbackNotice
+          severity="neutral"
+          title={
+            scannable
+              ? "No connections yet. Scan to find resonant material, or link one manually."
+              : "No connected objects yet."
+          }
+        />
       ) : null}
       {connections.length > 0 ? (
         <div className={styles.list}>
@@ -156,12 +267,33 @@ export default function NoteBacklinks({
                   <span className={styles.connectionText}>
                     <span>{connection.label}</span>
                     <span className={styles.connectionMeta}>
+                      {connection.origin === "synapse" ? (
+                        <Pill
+                          tone="accent"
+                          className={styles.synapseMarker}
+                          role="img"
+                          aria-label="Synapse connection"
+                        >
+                          ✦
+                        </Pill>
+                      ) : null}
                       {connection.kind}
                     </span>
+                    {connection.origin === "synapse" && connection.rationale ? (
+                      <span className={styles.connectionMeta}>
+                        {connection.rationale}
+                      </span>
+                    ) : null}
                   </span>
                 </button>
                 {connection.origin === "user" ? (
                   <DeleteConnectionButton
+                    edgeId={connection.edgeId}
+                    label={connection.label}
+                    onChanged={reloadConnections}
+                  />
+                ) : connection.origin === "synapse" ? (
+                  <DismissConnectionButton
                     edgeId={connection.edgeId}
                     label={connection.label}
                     onChanged={reloadConnections}
@@ -434,4 +566,137 @@ function DeleteConnectionButton({
 
 function objectRefKey(object: HydratedObjectRef): string {
   return `${object.objectType}:${object.objectId}`;
+}
+
+function DismissConnectionButton({
+  edgeId,
+  label,
+  onChanged,
+}: {
+  edgeId: string;
+  label: string;
+  onChanged: () => void;
+}) {
+  const [dismissing, setDismissing] = useState(false);
+  const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
+
+  async function dismissConnection() {
+    setDismissing(true);
+    setFeedback(null);
+    try {
+      await dismissSynapseEdge(edgeId);
+      onChanged();
+    } catch (err) {
+      if (handleUnauthenticatedApiError(err)) return;
+      setFeedback(toFeedback(err, { fallback: "Connection could not be dismissed." }));
+    } finally {
+      setDismissing(false);
+    }
+  }
+
+  return (
+    <div className={styles.deleteWrap}>
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        iconOnly
+        loading={dismissing}
+        aria-label={`Dismiss connection to ${label}`}
+        title="Dismiss — won't be suggested again"
+        onClick={() => void dismissConnection()}
+      >
+        <X size={14} aria-hidden="true" />
+      </Button>
+      {feedback ? <FeedbackNotice feedback={feedback} /> : null}
+    </div>
+  );
+}
+
+const SYNAPSE_SCAN_POLL_MS = 2000;
+const SYNAPSE_SCAN_TIMEOUT_MS = 45_000;
+
+/**
+ * The manual-scan lifecycle for a scannable ref: request → bounded status poll
+ * → settle. `onSettled` fires once per finished scan — idle status reached,
+ * the request short-circuiting to idle, or the 45s deadline lapsing.
+ */
+function useSynapseScan({
+  selfRef,
+  enabled,
+  onSettled,
+}: {
+  selfRef: string;
+  enabled: boolean;
+  onSettled: () => void;
+}): {
+  phase: "idle" | "requesting" | "polling";
+  feedback: FeedbackContent | null;
+  start: () => Promise<void>;
+} {
+  const [phase, setPhase] = useState<"idle" | "requesting" | "polling">("idle");
+  const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
+  const deadlineRef = useRef(0);
+
+  // A tab switch unmounts the section mid-scan; one status read on mount
+  // resumes the poll (with a fresh deadline) when a scan is still in flight.
+  useEffect(() => {
+    if (!enabled) return;
+    let cancelled = false;
+    void fetchSynapseScanStatus(selfRef)
+      .then((status) => {
+        if (cancelled || status === "idle") return;
+        deadlineRef.current = Date.now() + SYNAPSE_SCAN_TIMEOUT_MS;
+        setPhase("polling");
+      })
+      .catch((err) => {
+        // Best-effort resume probe; a manual scan surfaces real errors.
+        if (!cancelled) handleUnauthenticatedApiError(err);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [enabled, selfRef]);
+
+  // justify-polling: scans run on the background worker with no SSE plane
+  // (synapse spec N5); the poll is user-initiated, 2s, and self-bounds at the
+  // 45s scan deadline.
+  useIntervalPoll({
+    enabled: phase === "polling",
+    pollIntervalMs: SYNAPSE_SCAN_POLL_MS,
+    onPoll: async () => {
+      try {
+        const status = await fetchSynapseScanStatus(selfRef);
+        if (status !== "idle" && Date.now() < deadlineRef.current) return;
+        setPhase("idle");
+        onSettled();
+      } catch (err) {
+        setPhase("idle");
+        if (handleUnauthenticatedApiError(err)) return;
+        setFeedback(toFeedback(err, { fallback: "Scan status could not be checked." }));
+      }
+    },
+  });
+
+  const start = useCallback(async () => {
+    setFeedback(null);
+    setPhase("requesting");
+    try {
+      const scan = await requestSynapseScan(selfRef);
+      if (scan.status === "idle") {
+        // Engine disabled or the scan already finished: nothing to poll.
+        setPhase("idle");
+        onSettled();
+        return;
+      }
+      deadlineRef.current = Date.now() + SYNAPSE_SCAN_TIMEOUT_MS;
+      setPhase("polling");
+    } catch (err) {
+      setPhase("idle");
+      if (handleUnauthenticatedApiError(err)) return;
+      setFeedback(toFeedback(err, { fallback: "Scan could not be started." }));
+    }
+  }, [onSettled, selfRef]);
+
+  return { phase, feedback, start };
 }

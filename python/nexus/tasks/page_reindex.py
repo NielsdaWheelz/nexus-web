@@ -3,10 +3,13 @@
 from dataclasses import asdict
 from uuid import UUID
 
+from nexus.db.models import Page
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiErrorCode
 from nexus.logging import get_logger
+from nexus.services import synapse
 from nexus.services.note_indexing import rebuild_page_content_index
+from nexus.services.resource_graph.refs import ResourceRef
 
 logger = get_logger(__name__)
 
@@ -40,6 +43,14 @@ def page_reindex_job(
     db = get_session_factory()()
     try:
         result = asdict(rebuild_page_content_index(db, page_id=page_uuid, reason=reason))
+        page = db.get(Page, page_uuid)
+        if page is not None:
+            synapse.queue_synapse_scan(
+                db,
+                user_id=page.user_id,
+                ref=ResourceRef(scheme="page", id=page_uuid),
+                reason="page_reindex",
+            )
         db.commit()
         logger.info(
             "page_reindex_task_completed",

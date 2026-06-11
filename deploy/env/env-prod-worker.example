@@ -2,7 +2,7 @@
 # Safe production default for small VPS Postgres: explicit user/domain jobs only.
 # Merged after env-prod-backend, so values here can override API defaults.
 
-WORKER_ALLOWED_JOB_KINDS=ingest_media_source,enrich_metadata,chat_run,library_intelligence_artifact_generate,media_unit_build,page_reindex_job,podcast_sync_subscription_job,podcast_reindex_semantic_job,backfill_default_library_closure_job,oracle_reading_generate
+WORKER_ALLOWED_JOB_KINDS=ingest_media_source,enrich_metadata,chat_run,library_intelligence_artifact_generate,media_unit_build,page_reindex_job,podcast_sync_subscription_job,podcast_reindex_semantic_job,backfill_default_library_closure_job,oracle_reading_generate,synapse_scan
 WORKER_POLL_INTERVAL_SECONDS=5
 WORKER_IDLE_BACKOFF_MAX_SECONDS=300
 WORKER_SCHEDULER_INTERVAL_SECONDS=300
@@ -10,6 +10,9 @@ WORKER_HEARTBEAT_INTERVAL_SECONDS=60
 WORKER_LEASE_SECONDS=300
 WORKER_DB_FAILURE_BACKOFF_SECONDS=60
 WORKER_DB_FAILURE_BACKOFF_MAX_SECONDS=900
+
+# Synapse resonance scans (synapse_scan jobs no-op when false).
+# SYNAPSE_ENABLED=true
 
 # 0 means disabled. For maintenance, add only the specific job kind needed to
 # WORKER_ALLOWED_JOB_KINDS and set only its schedule for a bounded operator window.

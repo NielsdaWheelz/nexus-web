@@ -47,6 +47,7 @@ from nexus.services.chat_run_usage import usage_tokens
 from nexus.services.llm_ledger import LedgeredLLM, LlmCallOwner
 from nexus.services.prompt_budget import estimate_tokens
 from nexus.services.rate_limit import get_rate_limiter
+from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.structured_synthesis import (
     INDEX_GROUNDING_RULE,
     StructuredSynthesisError,
@@ -549,6 +550,7 @@ async def run_media_unit_build(
         _persist_unit(
             db,
             media_id=media_id,
+            owner_user_id=owner_user_id,
             summary_id=summary_id,
             summary_md=result.value.summary_md,
             expected_fingerprint=current_fingerprint,
@@ -700,6 +702,7 @@ def _persist_unit(
     db: Session,
     *,
     media_id: UUID,
+    owner_user_id: UUID,
     summary_id: UUID,
     summary_md: str,
     expected_fingerprint: str,
@@ -738,6 +741,15 @@ def _persist_unit(
         if result.rowcount == 0:
             db.rollback()
             return
+
+        from nexus.services import synapse
+
+        synapse.queue_synapse_scan(
+            db,
+            user_id=owner_user_id,
+            ref=ResourceRef(scheme="media", id=media_id),
+            reason="media_unit_ready",
+        )
         db.execute(
             text("DELETE FROM media_claims WHERE summary_id = :summary_id"),
             {"summary_id": summary_id},

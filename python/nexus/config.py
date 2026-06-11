@@ -30,7 +30,7 @@ DEFAULT_WORKER_ALLOWED_JOB_KINDS = (
     "ingest_media_source,enrich_metadata,chat_run,"
     "library_intelligence_artifact_generate,media_unit_build,page_reindex_job,"
     "podcast_sync_subscription_job,podcast_reindex_semantic_job,"
-    "backfill_default_library_closure_job,oracle_reading_generate"
+    "backfill_default_library_closure_job,oracle_reading_generate,synapse_scan"
 )
 
 
@@ -378,6 +378,10 @@ class Settings(BaseSettings):
     metadata_enrichment_max_output_tokens: int = Field(
         default=1200, alias="METADATA_ENRICHMENT_MAX_OUTPUT_TOKENS"
     )
+
+    # Synapse resonance engine: SYNAPSE_ENABLED=false turns every scan trigger
+    # into a no-op (synapse spec G6).
+    synapse_enabled: bool = Field(default=True, alias="SYNAPSE_ENABLED")
 
     # Stream token auth.
     # HS256 signing key for short-lived stream tokens (base64-encoded 32+ bytes)

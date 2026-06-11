@@ -44,6 +44,7 @@ from nexus.api.routes.resource_graph import router as resource_graph_router
 from nexus.api.routes.search import router as search_router
 from nexus.api.routes.stream import router as stream_router
 from nexus.api.routes.stream_tokens import router as stream_tokens_router
+from nexus.api.routes.synapse import router as synapse_router
 from nexus.api.routes.telemetry import router as telemetry_router
 from nexus.api.routes.users import router as users_router
 from nexus.api.routes.vault import router as vault_router
@@ -79,6 +80,7 @@ def create_api_router() -> APIRouter:
     api_router.include_router(object_refs_router)
     api_router.include_router(pinned_objects_router)
     api_router.include_router(resource_graph_router)
+    api_router.include_router(synapse_router)
     api_router.include_router(highlights_router)
     api_router.include_router(billing_router)
     api_router.include_router(conversations_router)

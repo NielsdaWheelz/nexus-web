@@ -54,6 +54,7 @@ from nexus.services.pdf_quote_match_policy import (
     handle_unclassified_exception,
     match_result_to_persistence_fields,
 )
+from nexus.services.resource_graph.refs import ResourceRef
 
 logger = get_logger(__name__)
 
@@ -352,6 +353,15 @@ def create_pdf_highlight(
         db.add(quad)
 
     db.flush()
+
+    from nexus.services import synapse
+
+    synapse.queue_synapse_scan(
+        db,
+        user_id=viewer_id,
+        ref=ResourceRef(scheme="highlight", id=highlight.id),
+        reason="highlight_create",
+    )
     db.commit()
 
     db.refresh(highlight)

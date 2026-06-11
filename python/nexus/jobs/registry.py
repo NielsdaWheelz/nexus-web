@@ -50,6 +50,7 @@ USER_FACING_JOB_KINDS = (
     "podcast_reindex_semantic_job",
     "backfill_default_library_closure_job",
     "oracle_reading_generate",
+    "synapse_scan",
 )
 
 
@@ -222,6 +223,14 @@ def _build_default_registry() -> dict[str, JobDefinition]:
         "media_unit_build": JobDefinition(
             kind="media_unit_build",
             handler=_run_media_unit_build,
+            max_attempts=3,
+            retry_delays_seconds=(60, 300, 900),
+            lease_seconds=300,
+            failed_result_statuses=("failed",),
+        ),
+        "synapse_scan": JobDefinition(
+            kind="synapse_scan",
+            handler=_run_synapse_scan,
             max_attempts=3,
             retry_delays_seconds=(60, 300, 900),
             lease_seconds=300,
@@ -404,6 +413,16 @@ def _run_media_unit_build(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | 
     from nexus.tasks.media_unit_build import media_unit_build
 
     return media_unit_build(media_id=str(payload["media_id"]))
+
+
+def _run_synapse_scan(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    from nexus.tasks.synapse_scan import synapse_scan
+
+    return synapse_scan(
+        user_id=str(payload["user_id"]),
+        ref=str(payload["ref"]),
+        reason=str(payload.get("reason", "manual")),
+    )
 
 
 def _optional_str(value: Any) -> str | None:

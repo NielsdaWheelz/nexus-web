@@ -50,6 +50,12 @@ const PANE_SECONDARY_SURFACE_DEFINITIONS = [
     iconId: "list-tree",
   },
   {
+    id: "connections",
+    groupId: "reader-tools",
+    title: "Connections",
+    iconId: "link-2",
+  },
+  {
     id: "conversation-references",
     groupId: "conversation-context",
     title: "References",

@@ -117,9 +117,11 @@ ScopeFilter = tuple[str, dict[str, Any]] | ScopeUnsupported
 def _note_object_scope(scheme: str, object_id_sql: str) -> dict[str, str | ScopeUnsupported]:
     """resource_edges-based scope for a page/note_block keyed on (scheme, object_id_sql).
 
-    Media/library cells accept only user/body/highlight-note note relationships.
-    Conversation cells accept only bare context refs from the conversation to the
-    page/note block."""
+    Media/library cells accept only user/body/highlight-note note relationships
+    (the ``note_media_edge`` allowlist) — which by construction excludes both
+    machine-proposed ``synapse`` edges and structural ``note_containment`` edges,
+    so a machine guess never silently changes scoped retrieval. Conversation cells
+    accept only bare context refs from the conversation to the page/note block."""
     edge_match = (
         f"((e.source_scheme = '{scheme}' AND e.source_id = {object_id_sql}) "
         f"OR (e.target_scheme = '{scheme}' AND e.target_id = {object_id_sql}))"

@@ -102,8 +102,9 @@ writes, notes, and the LI generate/promote transactions.
 
 ## The LLM generation harness inside the worker
 
-The five LLM generation kinds (`chat_run`, `oracle_reading_generate`,
-`library_intelligence_artifact_generate`, `media_unit_build`, `enrich_metadata`)
+The six LLM generation kinds (`chat_run`, `oracle_reading_generate`,
+`library_intelligence_artifact_generate`, `media_unit_build`, `enrich_metadata`,
+`synapse_scan`)
 run their bodies inside the shared `run_llm_task` envelope ([llms.md](llms.md)),
 not a hand-rolled per-task event loop. The queue contract is unchanged: the
 harness runs inside the existing claim/lease/heartbeat/dead-letter machinery and

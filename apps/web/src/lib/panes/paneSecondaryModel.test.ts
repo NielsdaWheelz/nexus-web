@@ -38,6 +38,7 @@ describe("paneSecondaryModel", () => {
       "reader-highlights",
       "reader-doc-chat",
       "reader-contents",
+      "connections",
     ]);
     expect(getSecondarySurfaceIdsForGroup("conversation-context")).toEqual([
       "conversation-references",

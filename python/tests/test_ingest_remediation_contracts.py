@@ -25,6 +25,7 @@ def test_registry_job_kinds_match_task_catalog_contract():
         "purge_expired_auth_handoff_codes",
         "backfill_default_library_closure_job",
         "oracle_reading_generate",
+        "synapse_scan",
     }
     actual_kinds = set(get_default_registry().keys())
     assert actual_kinds == expected_kinds, (
