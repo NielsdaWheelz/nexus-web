@@ -4,11 +4,6 @@ import { apiFetch } from "@/lib/api/client";
 import { compareStableString } from "@/lib/display/format";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
 import type { PdfHighlightQuad } from "@/lib/highlights/pdfTypes";
-import {
-  createNoteBlock,
-  deleteNoteBlock,
-  updateNoteBlock,
-} from "@/lib/notes/api";
 
 export interface HighlightLinkedNoteBlock {
   note_block_id: string;
@@ -166,26 +161,34 @@ export async function saveHighlightNote(
   noteBlockId: string | null,
   createBlockId: string,
   bodyPmJson: Record<string, unknown>,
+  clientMutationId: string,
 ): Promise<HighlightLinkedNoteBlock> {
-  const noteBlock = noteBlockId
-    ? await updateNoteBlock(noteBlockId, {
-        bodyPmJson,
-      })
-    : await createNoteBlock({
-        id: createBlockId,
-        bodyPmJson,
-        linkedObject: { objectType: "highlight", objectId: highlightId },
-      });
-  return {
-    note_block_id: noteBlock.id,
-    body_pm_json: noteBlock.bodyPmJson,
-    body_markdown: noteBlock.bodyMarkdown,
-    body_text: noteBlock.bodyText,
-  };
+  const response = await apiFetch<{ data: HighlightLinkedNoteBlock }>(
+    `/api/highlights/${highlightId}/note`,
+    {
+      method: "PUT",
+      body: JSON.stringify({
+        note_block_id: noteBlockId ?? createBlockId,
+        client_mutation_id: clientMutationId,
+        body_pm_json: bodyPmJson,
+      }),
+    },
+  );
+  return response.data;
 }
 
-export async function deleteHighlightNote(noteBlockId: string): Promise<void> {
-  await deleteNoteBlock(noteBlockId);
+export async function deleteHighlightNote(
+  highlightId: string,
+  noteBlockId: string,
+  clientMutationId: string,
+): Promise<void> {
+  const params = new URLSearchParams({
+    note_block_id: noteBlockId,
+    client_mutation_id: clientMutationId,
+  });
+  await apiFetch(`/api/highlights/${highlightId}/note?${params.toString()}`, {
+    method: "DELETE",
+  });
 }
 
 export function patchHighlightLinkedNoteBlock<

@@ -72,6 +72,48 @@ describe("toReaderCitationData", () => {
     expect(data.href).toBe("https://example.com/source");
   });
 
+  it("builds a note reader target from note locators", () => {
+    expect(
+      toReaderCitationData(
+        mediaCitation({
+          target_ref: { type: "evidence_span", id: "span-note-1" },
+          media_id: null,
+          locator: {
+            type: "note_block_offsets",
+            page_id: "page-1",
+            block_id: "block-1",
+            start_offset: 3,
+            end_offset: 19,
+          },
+          deep_link: null,
+        }),
+      ),
+    ).toEqual({
+      index: 1,
+      color: "yellow",
+      preview: {
+        title: "Source title",
+        excerpt: "matched source text",
+        meta: ["Section", "fragment"],
+      },
+      href: "/notes/block-1",
+      target: {
+        kind: "note",
+        source: "message_retrieval",
+        page_id: "page-1",
+        block_id: "block-1",
+        start_offset: 3,
+        end_offset: 19,
+        snippet: "matched source text",
+        highlight_behavior: "pulse",
+        focus_behavior: "scroll_into_view",
+        label: "Source title",
+        href: "/notes/block-1",
+        evidence_id: "span-note-1",
+      },
+    });
+  });
+
   it("has a null target and href when neither a media reader nor a deep_link is present", () => {
     const data = toReaderCitationData(
       mediaCitation({

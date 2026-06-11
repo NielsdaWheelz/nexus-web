@@ -42,6 +42,7 @@ from nexus.services.oracle import (
     ORACLE_THEMES,
     _retrieve_user_content_chunks_by_embedding,
     _retrieve_user_library_passages,
+    _viewer_has_searchable_user_content,
     compute_concordance,
     create_reading,
     execute_reading,
@@ -1354,6 +1355,69 @@ def test_execute_reading_passage_event_carries_citation_for_user_media(
     assert by_phase["ordeal"]["citation"]["target_ref"]["type"] == "evidence_span"
     assert by_phase["descent"]["citation"] is None
     assert by_phase["ascent"]["citation"] is None
+
+
+def test_execute_reading_page_owned_note_passage_carries_note_citation_out(
+    db_session: Session,
+    oracle_schema,
+) -> None:
+    user_id = uuid4()
+    ensure_user_and_default_library(db_session, user_id)
+    page_id = uuid4()
+    note_block_id = uuid4()
+    _seed_ready_note(
+        db_session,
+        user_id=user_id,
+        page_id=page_id,
+        note_block_id=note_block_id,
+        page_title="Lantern Notebook",
+        body_text=_NOTE_BODY_TEXT,
+    )
+    _seed_oracle_corpus(db_session)
+    reading_id = _insert_pending_reading(
+        db_session,
+        user_id=user_id,
+        question=_NOTE_ORACLE_QUESTION,
+    )
+
+    result = asyncio.run(
+        execute_reading(db_session, reading_id=reading_id, llm_router=_SelectLibraryRouter())
+    )
+    assert result["status"] == "complete", f"expected reading to complete, got {result}"
+
+    detail = get_reading_detail(db_session, viewer_id=user_id, reading_id=reading_id)
+    by_phase = {passage.phase: passage for passage in detail.passages}
+    ordeal = by_phase["ordeal"]
+    assert ordeal.source_kind == "user_media"
+    assert ordeal.citation is not None, "page-owned note evidence must render a citation chip"
+    citation = ordeal.citation
+    assert citation.media_id is None
+    assert citation.locator is not None
+    assert citation.locator.type == "note_block_offsets"
+    assert str(citation.locator.page_id) == str(page_id)
+    assert str(citation.locator.block_id) == str(note_block_id)
+    assert citation.target_ref.type == "evidence_span"
+
+    events = (
+        db_session.execute(
+            text(
+                """
+                SELECT payload
+                FROM oracle_reading_events
+                WHERE reading_id = :reading_id AND event_type = 'passage'
+                ORDER BY seq
+                """
+            ),
+            {"reading_id": reading_id},
+        )
+        .scalars()
+        .all()
+    )
+    event_by_phase = {event["phase"]: event for event in events}
+    ordeal_event = event_by_phase["ordeal"]
+    assert ordeal_event["citation"]["media_id"] is None
+    assert ordeal_event["citation"]["locator"]["type"] == "note_block_offsets"
+    assert ordeal_event["citation"]["locator"]["block_id"] == str(note_block_id)
 
 
 def test_execute_reading_public_only_passages_have_no_citation(
@@ -3018,27 +3082,41 @@ def _seed_ready_note(
         text(
             """
             INSERT INTO note_blocks (
-                id, user_id, page_id, order_key, block_kind,
-                body_pm_json, body_markdown, body_text, collapsed
+                id, user_id, block_kind,
+                body_pm_json, body_markdown, body_text
             )
             VALUES (
-                :note_block_id, :user_id, :page_id, '0000000001', 'bullet',
+                :note_block_id, :user_id, 'bullet',
                 jsonb_build_object(
                     'type', 'paragraph',
                     'content', jsonb_build_array(
                         jsonb_build_object('type', 'text', 'text', CAST(:body_text AS text))
                     )
                 ),
-                :body_text, :body_text, false
+                :body_text, :body_text
             )
             """
         ),
         {
             "note_block_id": note_block_id,
             "user_id": user_id,
-            "page_id": page_id,
             "body_text": body_text,
         },
+    )
+    db.execute(
+        text(
+            """
+            INSERT INTO resource_edges (
+                user_id, kind, origin, source_scheme, source_id, target_scheme,
+                target_id, source_order_key
+            )
+            VALUES (
+                :user_id, 'context', 'note_containment', 'page', :page_id,
+                'note_block', :note_block_id, '0000000001'
+            )
+            """
+        ),
+        {"user_id": user_id, "page_id": page_id, "note_block_id": note_block_id},
     )
     db.flush()
     result = rebuild_page_content_index(db, page_id=page_id, reason="test")
@@ -3115,6 +3193,31 @@ def test_retrieve_user_library_passages_includes_page_owned_notes(
     )
     assert note_candidate.source_kind == "user_media", (
         f"note candidate should be offered as a user_media candidate, got {note_candidate.source_kind}"
+    )
+
+
+def test_viewer_has_searchable_user_content_counts_note_only_corpus(
+    db_session: Session,
+    oracle_schema,
+) -> None:
+    user_id = uuid4()
+    ensure_user_and_default_library(db_session, user_id)
+
+    assert not _viewer_has_searchable_user_content(db_session, viewer_id=user_id), (
+        "fresh users with no indexed media or notes should not require user-content retrieval"
+    )
+
+    _seed_ready_note(
+        db_session,
+        user_id=user_id,
+        page_id=uuid4(),
+        note_block_id=uuid4(),
+        page_title="Only Notes",
+        body_text=_NOTE_BODY_TEXT,
+    )
+
+    assert _viewer_has_searchable_user_content(db_session, viewer_id=user_id), (
+        "indexed page-owned notes alone should activate Oracle user-content retrieval"
     )
 
 

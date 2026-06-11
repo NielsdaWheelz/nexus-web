@@ -16,6 +16,7 @@ export type NoteEditorSessionStatus =
   | "dirty"
   | "saving"
   | "saved"
+  | "recovered"
   | "failed";
 
 export interface NoteEditorSaveContext {
@@ -33,14 +34,22 @@ interface UseNoteEditorSessionOptions {
 
 export interface NoteEditorSession {
   status: NoteEditorSessionStatus;
+  hasRecoveredDraft: boolean;
   scheduleSave(doc: ProseMirrorNode): void;
   flush(doc?: ProseMirrorNode): void;
+  recoverDraft(draft: StoredNoteEditorDraft): void;
+  retry(): void;
+  discardDraft(): void;
   reset(): void;
 }
 
 export interface StoredNoteEditorDraft {
+  version: 1;
   doc: ProseMirrorNode;
   metadata: unknown;
+  sequence: number;
+  clientMutationId: string;
+  updatedAt: string;
 }
 
 export function useNoteEditorSession({
@@ -50,6 +59,7 @@ export function useNoteEditorSession({
   onError,
 }: UseNoteEditorSessionOptions): NoteEditorSession {
   const [status, setStatus] = useState<NoteEditorSessionStatus>("clean");
+  const [hasRecoveredDraft, setHasRecoveredDraft] = useState(false);
   const resourceKeyRef = useRef(resourceKey);
   const saveRef = useRef(save);
   const draftMetadataRef = useRef(draftMetadata);
@@ -59,14 +69,18 @@ export function useNoteEditorSession({
   const localSequenceRef = useRef(0);
   const pendingDocRef = useRef<ProseMirrorNode | null>(null);
   const pendingSequenceRef = useRef(0);
+  const pendingClientMutationIdRef = useRef<string | null>(null);
   const queuedDocRef = useRef<ProseMirrorNode | null>(null);
   const queuedSequenceRef = useRef(0);
+  const queuedClientMutationIdRef = useRef<string | null>(null);
   const saveInFlightRef = useRef(false);
   const idleTimerRef = useRef<number | null>(null);
   const maxWaitTimerRef = useRef<number | null>(null);
-  const startSaveRef = useRef<(doc: ProseMirrorNode, sequence: number) => void>(
-    () => undefined
-  );
+  const startSaveRef = useRef<(
+    doc: ProseMirrorNode,
+    sequence: number,
+    clientMutationId: string
+  ) => void>(() => undefined);
   const flushRef = useRef<(doc?: ProseMirrorNode) => void>(() => undefined);
 
   useEffect(() => {
@@ -96,11 +110,22 @@ export function useNoteEditorSession({
     }
   }, []);
 
+  const setMountedRecoveredDraft = useCallback((nextValue: boolean) => {
+    if (mountedRef.current) {
+      setHasRecoveredDraft(nextValue);
+    }
+  }, []);
+
   const startSave = useCallback(
-    (doc: ProseMirrorNode, sequence: number) => {
+    (
+      doc: ProseMirrorNode,
+      sequence: number,
+      clientMutationId: string
+    ) => {
       if (saveInFlightRef.current) {
         queuedDocRef.current = doc;
         queuedSequenceRef.current = sequence;
+        queuedClientMutationIdRef.current = clientMutationId;
         return;
       }
 
@@ -109,8 +134,8 @@ export function useNoteEditorSession({
       const isStaleSave = () =>
         generationRef.current !== saveGeneration ||
         resourceKeyRef.current !== saveResourceKey;
-      const clientMutationId = createClientMutationId(saveResourceKey, sequence);
       saveInFlightRef.current = true;
+      setMountedRecoveredDraft(false);
       setMountedStatus("saving");
 
       void saveRef
@@ -130,6 +155,7 @@ export function useNoteEditorSession({
 
           if (isLatestSequence && !hasQueuedWork) {
             clearStoredNoteEditorDraft(saveResourceKey);
+            setMountedRecoveredDraft(false);
             setMountedStatus("saved");
             return;
           }
@@ -150,6 +176,14 @@ export function useNoteEditorSession({
           if (isLatestSequence && !hasQueuedWork) {
             pendingDocRef.current = doc;
             pendingSequenceRef.current = sequence;
+            pendingClientMutationIdRef.current = clientMutationId;
+            storeNoteEditorDraft(
+              saveResourceKey,
+              doc,
+              draftMetadataRef.current?.(),
+              sequence,
+              clientMutationId
+            );
             setMountedStatus("failed");
             onErrorRef.current?.(error);
             return;
@@ -165,14 +199,16 @@ export function useNoteEditorSession({
           saveInFlightRef.current = false;
           const queuedDoc = queuedDocRef.current;
           const queuedSequence = queuedSequenceRef.current;
+          const queuedClientMutationId = queuedClientMutationIdRef.current;
           queuedDocRef.current = null;
           queuedSequenceRef.current = 0;
-          if (queuedDoc) {
-            startSaveRef.current(queuedDoc, queuedSequence);
+          queuedClientMutationIdRef.current = null;
+          if (queuedDoc && queuedClientMutationId) {
+            startSaveRef.current(queuedDoc, queuedSequence, queuedClientMutationId);
           }
         });
     },
-    [setMountedStatus]
+    [setMountedRecoveredDraft, setMountedStatus]
   );
 
   useEffect(() => {
@@ -182,18 +218,30 @@ export function useNoteEditorSession({
   const flush = useCallback(
     (doc?: ProseMirrorNode) => {
       if (doc && pendingDocRef.current) {
+        const clientMutationId =
+          pendingClientMutationIdRef.current ??
+          createClientMutationId(resourceKeyRef.current, pendingSequenceRef.current);
         pendingDocRef.current = doc;
-        storeNoteEditorDraft(resourceKeyRef.current, doc, draftMetadataRef.current?.());
+        pendingClientMutationIdRef.current = clientMutationId;
+        storeNoteEditorDraft(
+          resourceKeyRef.current,
+          doc,
+          draftMetadataRef.current?.(),
+          pendingSequenceRef.current,
+          clientMutationId
+        );
       }
       clearTimers();
       const pendingDoc = pendingDocRef.current;
       const pendingSequence = pendingSequenceRef.current;
-      if (!pendingDoc) {
+      const pendingClientMutationId = pendingClientMutationIdRef.current;
+      if (!pendingDoc || !pendingClientMutationId) {
         return;
       }
       pendingDocRef.current = null;
       pendingSequenceRef.current = 0;
-      startSave(pendingDoc, pendingSequence);
+      pendingClientMutationIdRef.current = null;
+      startSave(pendingDoc, pendingSequence, pendingClientMutationId);
     },
     [clearTimers, startSave]
   );
@@ -205,10 +253,22 @@ export function useNoteEditorSession({
   const scheduleSave = useCallback(
     (doc: ProseMirrorNode) => {
       const nextSequence = localSequenceRef.current + 1;
+      const clientMutationId = createClientMutationId(
+        resourceKeyRef.current,
+        nextSequence
+      );
       localSequenceRef.current = nextSequence;
       pendingDocRef.current = doc;
       pendingSequenceRef.current = nextSequence;
-      storeNoteEditorDraft(resourceKeyRef.current, doc, draftMetadataRef.current?.());
+      pendingClientMutationIdRef.current = clientMutationId;
+      storeNoteEditorDraft(
+        resourceKeyRef.current,
+        doc,
+        draftMetadataRef.current?.(),
+        nextSequence,
+        clientMutationId
+      );
+      setMountedRecoveredDraft(false);
       setMountedStatus("dirty");
 
       if (idleTimerRef.current !== null) {
@@ -224,7 +284,48 @@ export function useNoteEditorSession({
         }, NOTE_AUTOSAVE_MAX_WAIT_MS);
       }
     },
-    [setMountedStatus]
+    [setMountedRecoveredDraft, setMountedStatus]
+  );
+
+  const recoverDraft = useCallback(
+    (draft: StoredNoteEditorDraft) => {
+      generationRef.current += 1;
+      clearTimers();
+      localSequenceRef.current = Math.max(localSequenceRef.current, draft.sequence);
+      pendingDocRef.current = draft.doc;
+      pendingSequenceRef.current = draft.sequence;
+      pendingClientMutationIdRef.current = draft.clientMutationId;
+      queuedDocRef.current = null;
+      queuedSequenceRef.current = 0;
+      queuedClientMutationIdRef.current = null;
+      saveInFlightRef.current = false;
+      setMountedRecoveredDraft(true);
+      setMountedStatus("recovered");
+    },
+    [clearTimers, setMountedRecoveredDraft, setMountedStatus]
+  );
+
+  const retry = useCallback(() => {
+    flushRef.current();
+  }, []);
+
+  const discardDraft = useCallback(
+    () => {
+      generationRef.current += 1;
+      localSequenceRef.current = 0;
+      pendingDocRef.current = null;
+      pendingSequenceRef.current = 0;
+      pendingClientMutationIdRef.current = null;
+      queuedDocRef.current = null;
+      queuedSequenceRef.current = 0;
+      queuedClientMutationIdRef.current = null;
+      saveInFlightRef.current = false;
+      clearTimers();
+      clearStoredNoteEditorDraft(resourceKeyRef.current);
+      setMountedRecoveredDraft(false);
+      setMountedStatus("clean");
+    },
+    [clearTimers, setMountedRecoveredDraft, setMountedStatus]
   );
 
   const reset = useCallback(
@@ -233,13 +334,16 @@ export function useNoteEditorSession({
       localSequenceRef.current = 0;
       pendingDocRef.current = null;
       pendingSequenceRef.current = 0;
+      pendingClientMutationIdRef.current = null;
       queuedDocRef.current = null;
       queuedSequenceRef.current = 0;
+      queuedClientMutationIdRef.current = null;
       saveInFlightRef.current = false;
       clearTimers();
+      setMountedRecoveredDraft(false);
       setMountedStatus("clean");
     },
-    [clearTimers, setMountedStatus]
+    [clearTimers, setMountedRecoveredDraft, setMountedStatus]
   );
 
   useEffect(() => {
@@ -271,7 +375,16 @@ export function useNoteEditorSession({
     };
   }, [clearTimers]);
 
-  return { status, scheduleSave, flush, reset };
+  return {
+    status,
+    hasRecoveredDraft,
+    scheduleSave,
+    flush,
+    recoverDraft,
+    retry,
+    discardDraft,
+    reset,
+  };
 }
 
 function createClientMutationId(resourceKey: string, sequence: number): string {
@@ -287,14 +400,35 @@ export function readStoredNoteEditorDraft(resourceKey: string): StoredNoteEditor
     return null;
   }
   try {
-    const draft = JSON.parse(raw) as { doc?: unknown; metadata?: unknown };
-    if (typeof draft !== "object" || draft === null || draft.doc === undefined) {
+    const draft = JSON.parse(raw) as {
+      version?: unknown;
+      doc?: unknown;
+      metadata?: unknown;
+      sequence?: unknown;
+      clientMutationId?: unknown;
+      updatedAt?: unknown;
+    };
+    if (
+      typeof draft !== "object" ||
+      draft === null ||
+      draft.version !== 1 ||
+      draft.doc === undefined ||
+      !isStoredDraftSequence(draft.sequence) ||
+      typeof draft.clientMutationId !== "string" ||
+      draft.clientMutationId.length === 0 ||
+      typeof draft.updatedAt !== "string" ||
+      draft.updatedAt.length === 0
+    ) {
       window.localStorage.removeItem(`${NOTE_DRAFT_STORAGE_PREFIX}${resourceKey}`);
       return null;
     }
     return {
+      version: 1,
       doc: ProseMirrorNode.fromJSON(outlineSchema, draft.doc),
       metadata: draft.metadata,
+      sequence: draft.sequence,
+      clientMutationId: draft.clientMutationId,
+      updatedAt: draft.updatedAt,
     };
   } catch {
     window.localStorage.removeItem(`${NOTE_DRAFT_STORAGE_PREFIX}${resourceKey}`);
@@ -305,7 +439,9 @@ export function readStoredNoteEditorDraft(resourceKey: string): StoredNoteEditor
 function storeNoteEditorDraft(
   resourceKey: string,
   doc: ProseMirrorNode,
-  metadata: unknown
+  metadata: unknown,
+  sequence: number,
+  clientMutationId: string
 ): void {
   if (typeof window === "undefined") {
     return;
@@ -313,11 +449,26 @@ function storeNoteEditorDraft(
   try {
     window.localStorage.setItem(
       `${NOTE_DRAFT_STORAGE_PREFIX}${resourceKey}`,
-      JSON.stringify({ doc: doc.toJSON(), metadata })
+      JSON.stringify({
+        version: 1,
+        doc: doc.toJSON(),
+        metadata,
+        sequence,
+        clientMutationId,
+        updatedAt: new Date().toISOString(),
+      })
     );
   } catch {
     // Storage can be unavailable or full; autosave still continues through the network path.
   }
+}
+
+function isStoredDraftSequence(value: unknown): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isSafeInteger(value) &&
+    value > 0
+  );
 }
 
 export function clearStoredNoteEditorDraft(resourceKey: string): void {

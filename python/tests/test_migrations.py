@@ -3963,26 +3963,48 @@ class TestS2HighlightsNotesConstraints:
             session.execute(
                 text("""
                     INSERT INTO note_blocks (
-                        id, user_id, page_id, order_key, block_kind,
-                        body_pm_json, body_markdown, body_text, collapsed
+                        id, user_id, block_kind,
+                        body_pm_json, body_markdown, body_text
                     )
                     VALUES
                         (
-                            :note_a_id, :user_id, :page_id, '0000000001', 'bullet',
+                            :note_a_id, :user_id, 'bullet',
                             jsonb_build_object('type', 'paragraph'),
-                            '', '', false
+                            '', ''
                         ),
                         (
-                            :note_b_id, :user_id, :page_id, '0000000002', 'bullet',
+                            :note_b_id, :user_id, 'bullet',
                             jsonb_build_object('type', 'paragraph'),
-                            '', '', false
+                            '', ''
                         )
                 """),
                 {
                     "note_a_id": note_a_id,
                     "note_b_id": note_b_id,
                     "user_id": user_id,
+                },
+            )
+            session.execute(
+                text("""
+                    INSERT INTO resource_edges (
+                        user_id, kind, origin, source_scheme, source_id,
+                        target_scheme, target_id, source_order_key
+                    )
+                    VALUES
+                        (
+                            :user_id, 'context', 'note_containment',
+                            'page', :page_id, 'note_block', :note_a_id, '0000000001'
+                        ),
+                        (
+                            :user_id, 'context', 'note_containment',
+                            'page', :page_id, 'note_block', :note_b_id, '0000000002'
+                        )
+                """),
+                {
+                    "user_id": user_id,
                     "page_id": page_id,
+                    "note_a_id": note_a_id,
+                    "note_b_id": note_b_id,
                 },
             )
             session.execute(
@@ -4026,9 +4048,24 @@ class TestS2HighlightsNotesConstraints:
 
             # Clean up
             session.execute(
-                text("DELETE FROM resource_edges WHERE source_id = :id"), {"id": highlight_id}
+                text(
+                    """
+                    DELETE FROM resource_edges
+                    WHERE source_id IN (:highlight_id, :page_id)
+                       OR target_id IN (:note_a_id, :note_b_id)
+                    """
+                ),
+                {
+                    "highlight_id": highlight_id,
+                    "page_id": page_id,
+                    "note_a_id": note_a_id,
+                    "note_b_id": note_b_id,
+                },
             )
-            session.execute(text("DELETE FROM note_blocks WHERE page_id = :id"), {"id": page_id})
+            session.execute(
+                text("DELETE FROM note_blocks WHERE id IN (:note_a_id, :note_b_id)"),
+                {"note_a_id": note_a_id, "note_b_id": note_b_id},
+            )
             session.execute(text("DELETE FROM pages WHERE id = :id"), {"id": page_id})
             session.execute(text("DELETE FROM highlights WHERE id = :id"), {"id": highlight_id})
             session.execute(text("DELETE FROM fragments WHERE id = :id"), {"id": fragment_id})
@@ -10456,3 +10493,723 @@ class TestMigration0146OracleDoneNormalization:
                 insert_reading(session, user_id=first_user, folio_number=4, idempotency_key="key-1")
             session.rollback()
         assert "uq_oracle_readings_user_idempotency_key" in str(exc_info.value)
+
+
+class TestMigration0148NotesPagesResourceGraphOrder:
+    """0148: ordered resource edges, tag resources, and note view state."""
+
+    @pytest.fixture(scope="class")
+    def head_engine(self):
+        reset_test_schema()
+        result = run_alembic_command("upgrade head")
+        if result.returncode != 0:
+            pytest.fail(f"Migration upgrade failed: {result.stderr}")
+        engine = create_engine(get_test_database_url())
+        yield engine
+        engine.dispose()
+        reset_test_schema()
+
+    def test_resource_edges_order_schema_at_head(self, head_engine):
+        with Session(head_engine) as session:
+            columns = {
+                row[0]
+                for row in session.execute(
+                    text(
+                        """
+                        SELECT column_name FROM information_schema.columns
+                        WHERE table_name = 'resource_edges'
+                        """
+                    )
+                ).fetchall()
+            }
+            assert {"source_order_key", "target_order_key"}.issubset(columns)
+
+            note_block_columns = {
+                row[0]
+                for row in session.execute(
+                    text(
+                        """
+                        SELECT column_name FROM information_schema.columns
+                        WHERE table_name = 'note_blocks'
+                        """
+                    )
+                ).fetchall()
+            }
+            assert {
+                "page_id",
+                "parent_block_id",
+                "order_key",
+                "collapsed",
+            }.isdisjoint(note_block_columns)
+
+            page_columns = {
+                row[0]
+                for row in session.execute(
+                    text(
+                        """
+                        SELECT column_name FROM information_schema.columns
+                        WHERE table_name = 'pages'
+                        """
+                    )
+                ).fetchall()
+            }
+            assert "document_version" in page_columns
+
+            page_document_mutation_columns = {
+                row[0]
+                for row in session.execute(
+                    text(
+                        """
+                        SELECT column_name FROM information_schema.columns
+                        WHERE table_name = 'page_document_mutations'
+                        """
+                    )
+                ).fetchall()
+            }
+            assert {
+                "id",
+                "user_id",
+                "page_id",
+                "client_mutation_id",
+                "request_hash",
+                "base_document_version",
+                "document_version",
+                "response_json",
+                "created_at",
+            }.issubset(page_document_mutation_columns)
+
+            indexes = {
+                row[0]
+                for row in session.execute(
+                    text(
+                        """
+                        SELECT indexname
+                        FROM pg_indexes
+                        WHERE tablename = 'resource_edges'
+                        """
+                    )
+                ).fetchall()
+            }
+            assert {
+                "uq_resource_edges_citation_ordinal",
+                "uq_resource_edges_context_pair",
+                "uq_resource_edges_containment_source_order",
+                "uq_resource_edges_containment_target_order",
+                "uq_resource_edges_containment_target_once",
+                "ix_resource_edges_user_source",
+                "ix_resource_edges_user_target",
+            }.issubset(indexes)
+
+            page_document_mutation_indexes = {
+                row[0]
+                for row in session.execute(
+                    text(
+                        """
+                        SELECT indexname
+                        FROM pg_indexes
+                        WHERE tablename = 'page_document_mutations'
+                        """
+                    )
+                ).fetchall()
+            }
+            assert "uix_page_document_mutations_client_id" in page_document_mutation_indexes
+
+            user_id = uuid4()
+            source_id = uuid4()
+            target_id = uuid4()
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            for origin in ("user", "note_body"):
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO resource_edges (
+                            user_id, kind, origin, source_scheme, source_id,
+                            target_scheme, target_id
+                        )
+                        VALUES (
+                            :user_id, 'context', :origin, 'page', :source_id,
+                            'media', :target_id
+                        )
+                        """
+                    ),
+                    {
+                        "user_id": user_id,
+                        "origin": origin,
+                        "source_id": source_id,
+                        "target_id": target_id,
+                    },
+                )
+            session.commit()
+
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO resource_edges (
+                            user_id, kind, origin, source_scheme, source_id,
+                            target_scheme, target_id
+                        )
+                        VALUES (
+                            :user_id, 'context', 'user', 'page', :source_id,
+                            'media', :target_id
+                        )
+                        """
+                    ),
+                    {"user_id": user_id, "source_id": source_id, "target_id": target_id},
+                )
+                session.flush()
+            session.rollback()
+        assert "uq_resource_edges_context_pair" in str(exc_info.value)
+
+    def test_containment_order_is_unique_per_parent_at_head(self, head_engine):
+        with Session(head_engine) as session:
+            user_id = uuid4()
+            page_id = uuid4()
+            first_block_id = uuid4()
+            second_block_id = uuid4()
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.execute(
+                text(
+                    """
+                    INSERT INTO resource_edges (
+                        user_id, kind, origin, source_scheme, source_id,
+                        target_scheme, target_id, source_order_key
+                    )
+                    VALUES (
+                        :user_id, 'context', 'note_containment', 'page', :page_id,
+                        'note_block', :first_block_id, '0000000001'
+                    )
+                    """
+                ),
+                {
+                    "user_id": user_id,
+                    "page_id": page_id,
+                    "first_block_id": first_block_id,
+                },
+            )
+            session.commit()
+
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO resource_edges (
+                            user_id, kind, origin, source_scheme, source_id,
+                            target_scheme, target_id, source_order_key
+                        )
+                        VALUES (
+                            :user_id, 'context', 'note_containment', 'page', :page_id,
+                            'note_block', :second_block_id, '0000000001'
+                        )
+                        """
+                    ),
+                    {
+                        "user_id": user_id,
+                        "page_id": page_id,
+                        "second_block_id": second_block_id,
+                    },
+                )
+                session.flush()
+            session.rollback()
+        assert "uq_resource_edges_containment_source_order" in str(exc_info.value)
+
+    def test_containment_target_is_single_occurrence_at_head(self, head_engine):
+        with Session(head_engine) as session:
+            user_id = uuid4()
+            first_page_id = uuid4()
+            second_page_id = uuid4()
+            block_id = uuid4()
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.execute(
+                text(
+                    """
+                    INSERT INTO resource_edges (
+                        user_id, kind, origin, source_scheme, source_id,
+                        target_scheme, target_id, source_order_key
+                    )
+                    VALUES (
+                        :user_id, 'context', 'note_containment', 'page', :page_id,
+                        'note_block', :block_id, '0000000001'
+                    )
+                    """
+                ),
+                {"user_id": user_id, "page_id": first_page_id, "block_id": block_id},
+            )
+            session.commit()
+
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO resource_edges (
+                            user_id, kind, origin, source_scheme, source_id,
+                            target_scheme, target_id, source_order_key
+                        )
+                        VALUES (
+                            :user_id, 'context', 'note_containment', 'page', :page_id,
+                            'note_block', :block_id, '0000000001'
+                        )
+                        """
+                    ),
+                    {"user_id": user_id, "page_id": second_page_id, "block_id": block_id},
+                )
+                session.flush()
+            session.rollback()
+        assert "uq_resource_edges_containment_target_once" in str(exc_info.value)
+
+    def test_tags_and_note_view_states_exist_at_head(self, head_engine):
+        with Session(head_engine) as session:
+            view_state_columns = {
+                row[0]
+                for row in session.execute(
+                    text(
+                        """
+                        SELECT column_name FROM information_schema.columns
+                        WHERE table_name = 'note_view_states'
+                        """
+                    )
+                ).fetchall()
+            }
+            assert {"id", "created_at", "updated_at"}.issubset(view_state_columns)
+
+            user_id = uuid4()
+            tag_id = uuid4()
+            page_id = uuid4()
+            block_id = uuid4()
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.execute(
+                text("INSERT INTO pages (id, user_id, title) VALUES (:id, :user_id, 'Page')"),
+                {"id": page_id, "user_id": user_id},
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO note_blocks (
+                        id, user_id, block_kind, body_pm_json, body_text
+                    )
+                    VALUES (
+                        :id, :user_id, 'bullet',
+                        '{"type":"paragraph"}'::jsonb, 'Block'
+                    )
+                    """
+                ),
+                {"id": block_id, "user_id": user_id},
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO resource_edges (
+                        user_id, kind, origin, source_scheme, source_id,
+                        target_scheme, target_id, source_order_key
+                    )
+                    VALUES (
+                        :user_id, 'context', 'note_containment', 'page', :page_id,
+                        'note_block', :block_id, '0000000001'
+                    )
+                    """
+                ),
+                {"user_id": user_id, "page_id": page_id, "block_id": block_id},
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO tags (id, user_id, name, slug)
+                    VALUES (:id, :user_id, 'Project', 'project')
+                    """
+                ),
+                {"id": tag_id, "user_id": user_id},
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO note_view_states (
+                        user_id, context_source_scheme, context_source_id,
+                        target_block_id, collapsed
+                    )
+                    VALUES (:user_id, 'page', :page_id, :block_id, true)
+                    """
+                ),
+                {"user_id": user_id, "page_id": page_id, "block_id": block_id},
+            )
+            session.commit()
+
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO tags (user_id, name, slug)
+                        VALUES (:user_id, 'Project Again', 'project')
+                        """
+                    ),
+                    {"user_id": user_id},
+                )
+                session.flush()
+            session.rollback()
+        assert "uix_tags_user_slug" in str(exc_info.value)
+
+
+class TestMigration0148NotesPagesBackfill:
+    """0148 backfills old note tree columns into graph containment edges."""
+
+    def _insert_0147_user_page_block(
+        self,
+        session: Session,
+        *,
+        user_id,
+        page_id,
+        block_id,
+        title: str = "Page",
+        parent_id=None,
+        order_key: str = "0000000001",
+        body: str = "Block",
+    ) -> None:
+        user_exists = session.execute(
+            text("SELECT 1 FROM users WHERE id = :id"),
+            {"id": user_id},
+        ).scalar_one_or_none()
+        if user_exists is None:
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+        page_exists = session.execute(
+            text("SELECT 1 FROM pages WHERE id = :id"),
+            {"id": page_id},
+        ).scalar_one_or_none()
+        if page_exists is None:
+            session.execute(
+                text("INSERT INTO pages (id, user_id, title) VALUES (:id, :user_id, :title)"),
+                {"id": page_id, "user_id": user_id, "title": title},
+            )
+        session.execute(
+            text(
+                """
+                INSERT INTO note_blocks (
+                    id, user_id, page_id, parent_block_id, order_key, body_pm_json, body_text
+                )
+                VALUES (
+                    :id, :user_id, :page_id, :parent_id, :order_key,
+                    '{"type":"paragraph"}'::jsonb, :body
+                )
+                """
+            ),
+            {
+                "id": block_id,
+                "user_id": user_id,
+                "page_id": page_id,
+                "parent_id": parent_id,
+                "order_key": order_key,
+                "body": body,
+            },
+        )
+
+    def _assert_0148_preflight_failure(self, expected_message: str) -> None:
+        result = run_alembic_command("upgrade head")
+        combined = f"{result.stdout}\n{result.stderr}"
+        assert result.returncode != 0
+        assert expected_message in combined
+
+    def test_rejects_note_block_owned_by_different_user_than_page(self):
+        reset_test_schema()
+        try:
+            result = run_alembic_command("upgrade 0147")
+            if result.returncode != 0:
+                pytest.fail(f"Migration upgrade to 0147 failed: {result.stderr}")
+
+            engine = create_engine(get_test_database_url())
+            page_user_id = uuid4()
+            block_user_id = uuid4()
+            page_id = uuid4()
+            block_id = uuid4()
+            with Session(engine) as session:
+                session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": page_user_id})
+                session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": block_user_id})
+                session.execute(
+                    text("INSERT INTO pages (id, user_id, title) VALUES (:id, :user_id, 'Page')"),
+                    {"id": page_id, "user_id": page_user_id},
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO note_blocks (
+                            id, user_id, page_id, order_key, body_pm_json, body_text
+                        )
+                        VALUES (
+                            :id, :user_id, :page_id, '0000000001',
+                            '{"type":"paragraph"}'::jsonb, 'Block'
+                        )
+                        """
+                    ),
+                    {"id": block_id, "user_id": block_user_id, "page_id": page_id},
+                )
+                session.commit()
+            engine.dispose()
+
+            result = run_alembic_command("upgrade head")
+            combined = f"{result.stdout}\n{result.stderr}"
+            assert result.returncode != 0
+            assert "note block page crosses user boundary" in combined
+        finally:
+            reset_test_schema()
+
+    def test_rejects_note_block_parent_owned_by_different_user(self):
+        reset_test_schema()
+        try:
+            result = run_alembic_command("upgrade 0147")
+            if result.returncode != 0:
+                pytest.fail(f"Migration upgrade to 0147 failed: {result.stderr}")
+
+            engine = create_engine(get_test_database_url())
+            child_user_id = uuid4()
+            parent_user_id = uuid4()
+            child_page_id = uuid4()
+            parent_page_id = uuid4()
+            child_block_id = uuid4()
+            parent_block_id = uuid4()
+            with Session(engine) as session:
+                self._insert_0147_user_page_block(
+                    session,
+                    user_id=parent_user_id,
+                    page_id=parent_page_id,
+                    block_id=parent_block_id,
+                    title="Parent page",
+                )
+                self._insert_0147_user_page_block(
+                    session,
+                    user_id=child_user_id,
+                    page_id=child_page_id,
+                    block_id=child_block_id,
+                    title="Child page",
+                    parent_id=parent_block_id,
+                )
+                session.commit()
+            engine.dispose()
+
+            self._assert_0148_preflight_failure("note block parent crosses user boundary")
+        finally:
+            reset_test_schema()
+
+    def test_rejects_note_block_parent_on_different_page(self):
+        reset_test_schema()
+        try:
+            result = run_alembic_command("upgrade 0147")
+            if result.returncode != 0:
+                pytest.fail(f"Migration upgrade to 0147 failed: {result.stderr}")
+
+            engine = create_engine(get_test_database_url())
+            user_id = uuid4()
+            child_page_id = uuid4()
+            parent_page_id = uuid4()
+            child_block_id = uuid4()
+            parent_block_id = uuid4()
+            with Session(engine) as session:
+                self._insert_0147_user_page_block(
+                    session,
+                    user_id=user_id,
+                    page_id=parent_page_id,
+                    block_id=parent_block_id,
+                    title="Parent page",
+                )
+                self._insert_0147_user_page_block(
+                    session,
+                    user_id=user_id,
+                    page_id=child_page_id,
+                    block_id=child_block_id,
+                    title="Child page",
+                    parent_id=parent_block_id,
+                )
+                session.commit()
+            engine.dispose()
+
+            self._assert_0148_preflight_failure("note block parent crosses page boundary")
+        finally:
+            reset_test_schema()
+
+    def test_rejects_note_block_self_parent(self):
+        reset_test_schema()
+        try:
+            result = run_alembic_command("upgrade 0147")
+            if result.returncode != 0:
+                pytest.fail(f"Migration upgrade to 0147 failed: {result.stderr}")
+
+            engine = create_engine(get_test_database_url())
+            user_id = uuid4()
+            page_id = uuid4()
+            block_id = uuid4()
+            with Session(engine) as session:
+                self._insert_0147_user_page_block(
+                    session,
+                    user_id=user_id,
+                    page_id=page_id,
+                    block_id=block_id,
+                )
+                session.execute(
+                    text("UPDATE note_blocks SET parent_block_id = :id WHERE id = :id"),
+                    {"id": block_id},
+                )
+                session.commit()
+            engine.dispose()
+
+            self._assert_0148_preflight_failure("note block cannot parent itself")
+        finally:
+            reset_test_schema()
+
+    def test_rejects_note_block_containment_cycle(self):
+        reset_test_schema()
+        try:
+            result = run_alembic_command("upgrade 0147")
+            if result.returncode != 0:
+                pytest.fail(f"Migration upgrade to 0147 failed: {result.stderr}")
+
+            engine = create_engine(get_test_database_url())
+            user_id = uuid4()
+            page_id = uuid4()
+            first_block_id = uuid4()
+            second_block_id = uuid4()
+            with Session(engine) as session:
+                self._insert_0147_user_page_block(
+                    session,
+                    user_id=user_id,
+                    page_id=page_id,
+                    block_id=first_block_id,
+                    order_key="0000000001",
+                )
+                self._insert_0147_user_page_block(
+                    session,
+                    user_id=user_id,
+                    page_id=page_id,
+                    block_id=second_block_id,
+                    order_key="0000000002",
+                )
+                session.execute(
+                    text(
+                        """
+                        UPDATE note_blocks
+                        SET parent_block_id = CASE
+                            WHEN id = :first_block_id THEN :second_block_id
+                            WHEN id = :second_block_id THEN :first_block_id
+                            ELSE parent_block_id
+                        END
+                        WHERE id IN (:first_block_id, :second_block_id)
+                        """
+                    ),
+                    {
+                        "first_block_id": first_block_id,
+                        "second_block_id": second_block_id,
+                    },
+                )
+                session.commit()
+            engine.dispose()
+
+            self._assert_0148_preflight_failure("note block containment cycle")
+        finally:
+            reset_test_schema()
+
+    def test_backfills_note_containment_and_collapsed_state(self):
+        reset_test_schema()
+        try:
+            result = run_alembic_command("upgrade 0147")
+            if result.returncode != 0:
+                pytest.fail(f"Migration upgrade to 0147 failed: {result.stderr}")
+
+            engine = create_engine(get_test_database_url())
+            user_id = uuid4()
+            page_id = uuid4()
+            first_block_id = uuid4()
+            second_block_id = uuid4()
+            child_block_id = uuid4()
+            with Session(engine) as session:
+                session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+                session.execute(
+                    text("INSERT INTO pages (id, user_id, title) VALUES (:id, :user_id, 'Page')"),
+                    {"id": page_id, "user_id": user_id},
+                )
+                for block_id, parent_id, order_key, collapsed, body, created_at in (
+                    (second_block_id, None, "same", False, "Second", "2026-01-01T00:00:02Z"),
+                    (first_block_id, None, "same", False, "First", "2026-01-01T00:00:01Z"),
+                    (
+                        child_block_id,
+                        first_block_id,
+                        "child",
+                        True,
+                        "Child",
+                        "2026-01-01T00:00:03Z",
+                    ),
+                ):
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO note_blocks (
+                                id, user_id, page_id, parent_block_id, order_key,
+                                body_pm_json, body_text, collapsed, created_at
+                            )
+                            VALUES (
+                                :id, :user_id, :page_id, :parent_id, :order_key,
+                                '{"type":"paragraph"}'::jsonb, :body, :collapsed, :created_at
+                            )
+                            """
+                        ),
+                        {
+                            "id": block_id,
+                            "user_id": user_id,
+                            "page_id": page_id,
+                            "parent_id": parent_id,
+                            "order_key": order_key,
+                            "collapsed": collapsed,
+                            "body": body,
+                            "created_at": created_at,
+                        },
+                    )
+                session.commit()
+            engine.dispose()
+
+            result = run_alembic_command("upgrade head")
+            if result.returncode != 0:
+                pytest.fail(f"Migration upgrade to head failed: {result.stderr}")
+
+            engine = create_engine(get_test_database_url())
+            with Session(engine) as session:
+                page_children = session.execute(
+                    text(
+                        """
+                        SELECT target_id, source_order_key
+                        FROM resource_edges
+                        WHERE user_id = :user_id
+                          AND origin = 'note_containment'
+                          AND source_scheme = 'page'
+                          AND source_id = :page_id
+                        ORDER BY source_order_key ASC
+                        """
+                    ),
+                    {"user_id": user_id, "page_id": page_id},
+                ).fetchall()
+                child_rows = session.execute(
+                    text(
+                        """
+                        SELECT target_id, source_order_key
+                        FROM resource_edges
+                        WHERE user_id = :user_id
+                          AND origin = 'note_containment'
+                          AND source_scheme = 'note_block'
+                          AND source_id = :first_block_id
+                        """
+                    ),
+                    {"user_id": user_id, "first_block_id": first_block_id},
+                ).fetchall()
+                collapsed_rows = session.execute(
+                    text(
+                        """
+                        SELECT context_source_scheme, context_source_id, target_block_id, collapsed
+                        FROM note_view_states
+                        WHERE user_id = :user_id
+                        """
+                    ),
+                    {"user_id": user_id},
+                ).fetchall()
+            engine.dispose()
+
+            assert [(row[0], row[1]) for row in page_children] == [
+                (first_block_id, "0000000001"),
+                (second_block_id, "0000000002"),
+            ]
+            assert [(row[0], row[1]) for row in child_rows] == [(child_block_id, "0000000001")]
+            assert collapsed_rows == [("note_block", first_block_id, child_block_id, True)]
+        finally:
+            reset_test_schema()

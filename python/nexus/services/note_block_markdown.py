@@ -4,47 +4,39 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from nexus.db.models import NOTE_BLOCK_SIBLING_ORDER, NoteBlock
+from nexus.db.models import NoteBlock
 
 
-def ordered_note_blocks_for_page(db: Session, page_id: UUID) -> list[NoteBlock]:
-    return list(
-        db.scalars(
-            select(NoteBlock)
-            .where(NoteBlock.page_id == page_id)
-            .order_by(
-                NoteBlock.parent_block_id.asc().nullsfirst(),
-                *NOTE_BLOCK_SIBLING_ORDER,
-            )
-        )
+def page_outline_markdown(db: Session, *, viewer_id: UUID, page_id: UUID) -> str:
+    from nexus.services.resource_graph import documents as graph_documents
+
+    document = graph_documents.load_page_document(db, user_id=viewer_id, page_id=page_id)
+    return _document_outline_markdown(document.roots)
+
+
+def note_block_outline_markdown(db: Session, *, viewer_id: UUID, block_id: UUID) -> str:
+    from nexus.services.resource_graph import documents as graph_documents
+
+    occurrence = graph_documents.find_block_occurrence(db, user_id=viewer_id, block_id=block_id)
+    document = graph_documents.load_page_document(
+        db, user_id=viewer_id, page_id=occurrence.page_id
     )
+    node = graph_documents.find_document_block(document, block_id)
+    return _document_outline_markdown([node]) if node is not None else ""
 
 
-def note_outline_markdown(
-    blocks: list[NoteBlock],
-    parent_id: UUID | None,
-    *,
-    root_block: NoteBlock | None = None,
-) -> str:
-    blocks_by_parent: dict[UUID | None, list[NoteBlock]] = {}
-    for block in blocks:
-        blocks_by_parent.setdefault(block.parent_block_id, []).append(block)
-
+def _document_outline_markdown(nodes: list[object]) -> str:
     lines: list[str] = []
 
-    def visit(block: NoteBlock, depth: int) -> None:
-        lines.append(note_block_markdown(block, depth))
-        for child in blocks_by_parent.get(block.id, []):
+    def visit(node: object, depth: int) -> None:
+        lines.append(note_block_markdown(node.block, depth))
+        for child in node.children:
             visit(child, depth + 1)
 
-    if root_block is not None:
-        visit(root_block, 0)
-    else:
-        for block in blocks_by_parent.get(parent_id, []):
-            visit(block, 0)
+    for node in nodes:
+        visit(node, 0)
 
     return "\n".join(lines).strip()
 

@@ -1,10 +1,16 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  deleteHighlightNote,
   patchHighlightLinkedNoteBlock,
   removeHighlightLinkedNoteBlock,
+  saveHighlightNote,
   upsertHighlightSorted,
   type Highlight,
 } from "./api";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 function highlight(
   id: string,
@@ -42,6 +48,53 @@ function highlight(
 }
 
 describe("media highlight note summary helpers", () => {
+  it("saves highlight notes through the highlight product route", async () => {
+    let requestBody: Record<string, unknown> | null = null;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = new URL(String(input), "http://localhost");
+      expect(url.pathname).toBe("/api/highlights/highlight-1/note");
+      expect(init?.method).toBe("PUT");
+      requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return new Response(
+        JSON.stringify({
+          data: {
+            note_block_id: "note-1",
+            body_pm_json: { type: "paragraph" },
+            body_markdown: "saved",
+            body_text: "saved",
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    });
+
+    const result = await saveHighlightNote(
+      "highlight-1",
+      null,
+      "note-1",
+      { type: "paragraph" },
+      "mutation-1",
+    );
+
+    expect(requestBody).toEqual({
+      note_block_id: "note-1",
+      client_mutation_id: "mutation-1",
+      body_pm_json: { type: "paragraph" },
+    });
+    expect(result.note_block_id).toBe("note-1");
+  });
+
+  it("deletes highlight notes through the highlight product route", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 204 }));
+
+    await deleteHighlightNote("highlight-1", "note-1", "mutation-1");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/highlights/highlight-1/note?note_block_id=note-1&client_mutation_id=mutation-1",
+      expect.objectContaining({ method: "DELETE" }),
+    );
+  });
+
   it("upserts a linked note block on the matching highlight only", () => {
     const original = [highlight("highlight-1", ["note-1"]), highlight("highlight-2")];
     const next = patchHighlightLinkedNoteBlock(original, "highlight-1", {

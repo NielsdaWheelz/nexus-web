@@ -189,6 +189,7 @@ function StableNoteKeyHarness({
     noteBlockId: string | null,
     createBlockId: string,
     bodyPmJson: Record<string, unknown>,
+    clientMutationId: string,
   ) => Promise<void>;
 }) {
   const contentRef = useRef<HTMLDivElement>(null);
@@ -241,8 +242,15 @@ function StableNoteKeyHarness({
             noteBlockId,
             createBlockId,
             bodyPmJson,
+            clientMutationId,
           ) => {
-            await onNoteSave(highlightId, noteBlockId, createBlockId, bodyPmJson);
+            await onNoteSave(
+              highlightId,
+              noteBlockId,
+              createBlockId,
+              bodyPmJson,
+              clientMutationId,
+            );
             const linkedNoteBlock = {
               note_block_id: createBlockId,
               body_pm_json: bodyPmJson,

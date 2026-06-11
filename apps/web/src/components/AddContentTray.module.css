@@ -145,8 +145,19 @@
   gap: var(--space-2);
 }
 
-.quickNoteTextarea {
+.quickNoteEditor {
   min-height: 120px;
+  padding: var(--space-2) 0;
+}
+
+.quickNoteEditor :global(.ProseMirror) {
+  min-height: 120px;
+  outline: none;
+}
+
+.quickNoteStatus {
+  color: var(--danger);
+  font-size: var(--text-xs);
 }
 
 .urlActions,

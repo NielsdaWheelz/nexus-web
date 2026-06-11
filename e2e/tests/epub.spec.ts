@@ -70,7 +70,7 @@ async function upsertHighlightNote(
   );
   expect(edgesResponse.ok()).toBeTruthy();
   const edgesPayload = (await edgesResponse.json()) as EdgesResponse;
-  const noteBlockIds = Array.from(
+  const [primaryNoteBlockId] = Array.from(
     new Set(
       edgesPayload.data
         .map((edge) => {
@@ -81,36 +81,15 @@ async function upsertHighlightNote(
     )
   );
 
-  if (noteBlockIds.length === 0) {
-    const response = await page.request.post("/api/notes/blocks", {
-      data: {
-        body_markdown: body,
-        linked_object: {
-          object_type: "highlight",
-          object_id: highlightId,
-        },
-      },
-      headers: stateChangingApiHeaders(),
-    });
-    expect(response.ok()).toBeTruthy();
-    return;
-  }
-
-  const [primaryNoteBlockId, ...duplicateNoteBlockIds] = noteBlockIds;
-  const updateResponse = await page.request.patch(`/api/notes/blocks/${primaryNoteBlockId}`, {
+  const updateResponse = await page.request.put(`/api/highlights/${highlightId}/note`, {
     data: {
+      note_block_id: primaryNoteBlockId ?? crypto.randomUUID(),
+      client_mutation_id: `e2e-epub-highlight-note-${crypto.randomUUID()}`,
       body_pm_json: paragraphPmJsonFromText(body),
     },
     headers: stateChangingApiHeaders(),
   });
   expect(updateResponse.ok()).toBeTruthy();
-
-  for (const noteBlockId of duplicateNoteBlockIds) {
-    const deleteResponse = await page.request.delete(`/api/notes/blocks/${noteBlockId}`, {
-      headers: stateChangingApiHeaders(),
-    });
-    expect(deleteResponse.ok()).toBeTruthy();
-  }
 }
 
 interface ReaderTextLocations {

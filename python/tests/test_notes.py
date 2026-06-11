@@ -3,34 +3,36 @@ from uuid import UUID, uuid4
 
 import pytest
 from pydantic import ValidationError
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 
 from nexus.db.models import (
     Conversation,
     DailyNotePage,
     NoteBlock,
+    NoteViewState,
     Page,
+    PageDocumentMutation,
     PinnedObjectRef,
+    ResourceEdge,
+    Tag,
 )
-from nexus.errors import ApiError, ApiErrorCode, NotFoundError
+from nexus.errors import ApiError, ApiErrorCode, ConflictError, NotFoundError
 from nexus.jobs.queue import claim_next_job, complete_job
 from nexus.schemas.notes import (
-    CreateNoteBlockRequest,
     CreatePageRequest,
-    LinkedObjectRequest,
-    MoveNoteBlockRequest,
     ObjectRef,
+    PageDocumentBlockRequest,
     PatchPageDocumentRequest,
     QuickCaptureRequest,
-    SplitNoteBlockRequest,
-    UpdateNoteBlockRequest,
     UpdatePageRequest,
 )
 from nexus.services import notes, object_refs
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.contributor_credits import replace_media_contributor_credits
+from nexus.services.highlight_notes import linked_note_blocks_for_highlights
 from nexus.services.note_indexing import rebuild_page_content_index
 from nexus.services.notes import markdown_from_pm_json, text_from_pm_json
+from nexus.services.resource_graph import documents as graph_documents
 from nexus.services.resource_graph.edges import create_edge, list_edges_for_ref
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_graph.schemas import EdgeCreate, EdgeOut
@@ -49,6 +51,13 @@ from tests.factories import (
     get_user_default_library,
 )
 from tests.helpers import auth_headers, create_test_user_id
+from tests.note_document_helpers import (
+    create_block_via_document,
+    delete_block_via_document,
+    move_block_via_document,
+    patch_document_via_command,
+    update_block_via_document,
+)
 from tests.utils.db import DirectSessionManager
 
 
@@ -108,6 +117,36 @@ def _note_body_targets(db, viewer_id, block_id: UUID) -> set[str]:
     return {edge.target.uri for edge in _note_body_edges(db, viewer_id, block_id)}
 
 
+def _paragraph_text(text_value: str) -> dict:
+    return {"type": "paragraph", "content": [{"type": "text", "text": text_value}]}
+
+
+def _document_block(block_id: UUID, text_value: str) -> dict:
+    return {
+        "id": str(block_id),
+        "block_kind": "bullet",
+        "body_pm_json": _paragraph_text(text_value),
+    }
+
+
+def _document_containment(
+    parent_scheme: str,
+    parent_id: UUID,
+    children: list[UUID],
+) -> dict:
+    return {
+        "parent": {"scheme": parent_scheme, "id": str(parent_id)},
+        "children": [
+            {
+                "block_id": str(block_id),
+                "source_order_key": f"{index + 1:010d}",
+                "collapsed": False,
+            }
+            for index, block_id in enumerate(children)
+        ],
+    }
+
+
 @pytest.mark.unit
 def test_note_projections_include_object_refs_and_marks():
     paragraph = {
@@ -142,7 +181,9 @@ def test_note_projections_include_object_refs_and_marks():
 def test_note_body_pm_json_rejects_non_prosemirror_shapes():
     object_id = "11111111-1111-4111-8111-111111111111"
 
-    valid = CreateNoteBlockRequest(
+    valid = PageDocumentBlockRequest(
+        id=uuid4(),
+        block_kind="bullet",
         body_pm_json={
             "type": "paragraph",
             "content": [
@@ -156,17 +197,19 @@ def test_note_body_pm_json_rejects_non_prosemirror_shapes():
                     },
                 },
             ],
-        }
+        },
     )
 
     assert valid.body_pm_json is not None
     assert valid.body_pm_json["type"] == "paragraph"
 
     with pytest.raises(ValidationError):
-        CreateNoteBlockRequest(body_pm_json={"content": []})
+        PageDocumentBlockRequest(id=uuid4(), block_kind="bullet", body_pm_json={"content": []})
 
     with pytest.raises(ValidationError):
-        UpdateNoteBlockRequest(
+        PageDocumentBlockRequest(
+            id=uuid4(),
+            block_kind="bullet",
             body_pm_json={
                 "type": "paragraph",
                 "content": [{"type": "unknown_node", "text": "bad"}],
@@ -181,24 +224,24 @@ def test_nested_note_create_move_and_delete_cleanup(db_session, bootstrapped_use
         bootstrapped_user,
         CreatePageRequest(title=f"Nested notes {uuid4()}"),
     )
-    parent = notes.create_note_block(
+    parent = create_block_via_document(
         db_session,
         bootstrapped_user,
-        CreateNoteBlockRequest(page_id=page.id, body_markdown="parent"),
+        dict(page_id=page.id, body_markdown="parent"),
     )
-    child_one = notes.create_note_block(
+    child_one = create_block_via_document(
         db_session,
         bootstrapped_user,
-        CreateNoteBlockRequest(
+        dict(
             page_id=page.id,
             parent_block_id=parent.id,
             body_markdown="child one",
         ),
     )
-    child_two = notes.create_note_block(
+    child_two = create_block_via_document(
         db_session,
         bootstrapped_user,
-        CreateNoteBlockRequest(
+        dict(
             page_id=page.id,
             parent_block_id=parent.id,
             after_block_id=child_one.id,
@@ -216,10 +259,10 @@ def test_nested_note_create_move_and_delete_cleanup(db_session, bootstrapped_use
         ),
     )
     db_session.commit()
-    child_zero = notes.create_note_block(
+    child_zero = create_block_via_document(
         db_session,
         bootstrapped_user,
-        CreateNoteBlockRequest(
+        dict(
             page_id=page.id,
             parent_block_id=parent.id,
             before_block_id=child_one.id,
@@ -234,24 +277,24 @@ def test_nested_note_create_move_and_delete_cleanup(db_session, bootstrapped_use
         "child two",
     ], f"Nested sibling order was not preserved: {fetched_parent.children}"
 
-    other_parent = notes.create_note_block(
+    other_parent = create_block_via_document(
         db_session,
         bootstrapped_user,
-        CreateNoteBlockRequest(page_id=page.id, body_markdown="other parent"),
+        dict(page_id=page.id, body_markdown="other parent"),
     )
-    moved = notes.move_note_block(
+    moved = move_block_via_document(
         db_session,
         bootstrapped_user,
         child_zero.id,
-        MoveNoteBlockRequest(parent_block_id=other_parent.id),
+        dict(parent_block_id=other_parent.id),
     )
     assert moved.parent_block_id == other_parent.id
 
     with pytest.raises(ApiError) as invalid_anchor:
-        notes.create_note_block(
+        create_block_via_document(
             db_session,
             bootstrapped_user,
-            CreateNoteBlockRequest(
+            dict(
                 page_id=page.id,
                 parent_block_id=other_parent.id,
                 before_block_id=child_one.id,
@@ -261,15 +304,15 @@ def test_nested_note_create_move_and_delete_cleanup(db_session, bootstrapped_use
     assert invalid_anchor.value.code == ApiErrorCode.E_INVALID_REQUEST
 
     with pytest.raises(ApiError) as invalid_move:
-        notes.move_note_block(
+        move_block_via_document(
             db_session,
             bootstrapped_user,
             parent.id,
-            MoveNoteBlockRequest(parent_block_id=child_two.id),
+            dict(parent_block_id=child_two.id),
         )
     assert invalid_move.value.code == ApiErrorCode.E_INVALID_REQUEST
 
-    notes.delete_note_block(
+    delete_block_via_document(
         db_session,
         bootstrapped_user,
         parent.id,
@@ -280,9 +323,20 @@ def test_nested_note_create_move_and_delete_cleanup(db_session, bootstrapped_use
     remaining = list_edges_for_ref(
         db_session, viewer_id=bootstrapped_user, ref=ResourceRef(scheme="page", id=page.id)
     )
-    assert remaining == [], (
-        f"Deleting a parent block should clean descendant edges, got {remaining}"
-    )
+    remaining_by_origin: dict[str, list[EdgeOut]] = {}
+    for edge in remaining:
+        remaining_by_origin.setdefault(edge.origin, []).append(edge)
+    assert remaining_by_origin.get("note_containment") == [
+        next(edge for edge in remaining if edge.target.id == other_parent.id)
+    ]
+    assert [
+        (edge.source.uri, edge.target.uri) for edge in remaining_by_origin["note_containment"]
+    ] == [(f"page:{page.id}", f"note_block:{other_parent.id}")]
+    assert {
+        origin: edges
+        for origin, edges in remaining_by_origin.items()
+        if origin != "note_containment"
+    } == {}, f"Deleting a parent block should clean descendant edges, got {remaining}"
 
 
 @pytest.mark.integration
@@ -295,72 +349,43 @@ def test_patch_page_document_applies_create_update_move_and_delete_atomically(
         bootstrapped_user,
         CreatePageRequest(title=f"Atomic document {uuid4()}"),
     )
-    first = notes.create_note_block(
+    first = create_block_via_document(
         db_session,
         bootstrapped_user,
-        CreateNoteBlockRequest(page_id=page.id, body_markdown="first"),
+        dict(page_id=page.id, body_markdown="first"),
     )
-    second = notes.create_note_block(
+    second = create_block_via_document(
         db_session,
         bootstrapped_user,
-        CreateNoteBlockRequest(page_id=page.id, after_block_id=first.id, body_markdown="second"),
+        dict(page_id=page.id, after_block_id=first.id, body_markdown="second"),
     )
-    child = notes.create_note_block(
+    child = create_block_via_document(
         db_session,
         bootstrapped_user,
-        CreateNoteBlockRequest(page_id=page.id, parent_block_id=first.id, body_markdown="child"),
+        dict(page_id=page.id, parent_block_id=first.id, body_markdown="child"),
     )
     created_id = uuid4()
-
-    result = notes.patch_page_document(
-        db_session,
-        bootstrapped_user,
-        page.id,
-        PatchPageDocumentRequest(
-            client_mutation_id="mutation-1",
-            blocks=[
-                {
-                    "id": first.id,
-                    "parent_block_id": None,
-                    "before_block_id": None,
-                    "after_block_id": None,
-                    "block_kind": "bullet",
-                    "body_pm_json": {
-                        "type": "paragraph",
-                        "content": [{"type": "text", "text": "first edited"}],
-                    },
-                    "collapsed": False,
-                },
-                {
-                    "id": created_id,
-                    "parent_block_id": first.id,
-                    "before_block_id": None,
-                    "after_block_id": None,
-                    "block_kind": "bullet",
-                    "body_pm_json": {
-                        "type": "paragraph",
-                        "content": [{"type": "text", "text": "new child"}],
-                    },
-                    "collapsed": False,
-                },
-                {
-                    "id": child.id,
-                    "parent_block_id": None,
-                    "before_block_id": None,
-                    "after_block_id": first.id,
-                    "block_kind": "bullet",
-                    "body_pm_json": {
-                        "type": "paragraph",
-                        "content": [{"type": "text", "text": "child"}],
-                    },
-                    "collapsed": False,
-                },
-            ],
-            deleted_blocks=[second.id],
-        ),
+    current_page = notes.get_page(db_session, bootstrapped_user, page.id)
+    request = PatchPageDocumentRequest(
+        client_mutation_id="mutation-1",
+        base_document_version=current_page.document_version,
+        blocks=[
+            _document_block(first.id, "first edited"),
+            _document_block(created_id, "new child"),
+            _document_block(child.id, "child"),
+        ],
+        containment=[
+            _document_containment("page", page.id, [first.id, child.id]),
+            _document_containment("note_block", first.id, [created_id]),
+        ],
+        deleted_block_ids=[second.id],
     )
 
+    result = notes.patch_page_document(db_session, bootstrapped_user, page.id, request)
+    replay = notes.patch_page_document(db_session, bootstrapped_user, page.id, request)
+
     assert result.client_mutation_id == "mutation-1"
+    assert replay.document_version == result.document_version
     assert [block.id for block in result.page.blocks] == [first.id, child.id]
     assert result.page.blocks[0].body_text == "first edited"
     assert [block.id for block in result.page.blocks[0].children] == [created_id]
@@ -370,7 +395,7 @@ def test_patch_page_document_applies_create_update_move_and_delete_atomically(
 
 
 @pytest.mark.integration
-def test_patch_page_document_overwrites_current_block_without_compare_tokens(
+def test_patch_page_document_rejects_stale_document_version(
     db_session,
     bootstrapped_user,
 ):
@@ -379,46 +404,85 @@ def test_patch_page_document_overwrites_current_block_without_compare_tokens(
         bootstrapped_user,
         CreatePageRequest(title=f"Stale document {uuid4()}"),
     )
-    block = notes.create_note_block(
+    block = create_block_via_document(
         db_session,
         bootstrapped_user,
-        CreateNoteBlockRequest(page_id=page.id, body_markdown="original"),
+        dict(page_id=page.id, body_markdown="original"),
     )
 
-    notes.update_note_block(
+    current_page = db_session.get(Page, page.id)
+    assert current_page is not None
+    db_session.refresh(current_page)
+    stale_version = current_page.document_version
+    update_block_via_document(
         db_session,
         bootstrapped_user,
         block.id,
-        UpdateNoteBlockRequest(
+        dict(
             body_pm_json={"type": "paragraph", "content": [{"type": "text", "text": "remote"}]},
         ),
     )
+    db_session.refresh(current_page)
+    latest_version = current_page.document_version
 
-    result = notes.patch_page_document(
+    with pytest.raises(ApiError) as stale:
+        notes.patch_page_document(
+            db_session,
+            bootstrapped_user,
+            page.id,
+            PatchPageDocumentRequest(
+                client_mutation_id="mutation-current",
+                base_document_version=stale_version,
+                blocks=[_document_block(block.id, "local")],
+                containment=[_document_containment("page", page.id, [block.id])],
+            ),
+        )
+
+    assert stale.value.code == ApiErrorCode.E_NOTE_CONFLICT
+    latest = stale.value.details["latestDocument"]
+    assert latest["documentVersion"] == latest_version
+    assert latest_version > stale_version
+    assert latest["page"]["blocks"][0]["bodyText"] == "remote"
+
+
+@pytest.mark.integration
+def test_patch_page_document_rejects_parent_outside_document_command(db_session, bootstrapped_user):
+    page = notes.create_page(
         db_session,
         bootstrapped_user,
-        page.id,
-        PatchPageDocumentRequest(
-            client_mutation_id="mutation-current",
-            blocks=[
-                {
-                    "id": block.id,
-                    "parent_block_id": None,
-                    "before_block_id": None,
-                    "after_block_id": None,
-                    "block_kind": "bullet",
-                    "body_pm_json": {
-                        "type": "paragraph",
-                        "content": [{"type": "text", "text": "local"}],
-                    },
-                    "collapsed": False,
-                }
-            ],
-        ),
+        CreatePageRequest(title=f"Strict anchors {uuid4()}"),
     )
+    first_parent = create_block_via_document(
+        db_session,
+        bootstrapped_user,
+        dict(page_id=page.id, body_markdown="first parent"),
+    )
+    second_parent = create_block_via_document(
+        db_session,
+        bootstrapped_user,
+        dict(page_id=page.id, body_markdown="second parent"),
+    )
+    child = create_block_via_document(
+        db_session,
+        bootstrapped_user,
+        dict(page_id=page.id, parent_block_id=first_parent.id, body_markdown="child"),
+    )
+    current_page = notes.get_page(db_session, bootstrapped_user, page.id)
 
-    assert result.page.blocks[0].body_text == "local"
-    assert db_session.get(NoteBlock, block.id).body_text == "local"
+    with pytest.raises(ApiError) as stale_anchor:
+        notes.patch_page_document(
+            db_session,
+            bootstrapped_user,
+            page.id,
+            PatchPageDocumentRequest(
+                client_mutation_id="mutation-stale-anchor",
+                base_document_version=current_page.document_version,
+                blocks=[_document_block(child.id, "child")],
+                containment=[_document_containment("note_block", second_parent.id, [child.id])],
+            ),
+        )
+
+    assert stale_anchor.value.code == ApiErrorCode.E_INVALID_REQUEST
 
 
 def test_patch_page_document_rejects_legacy_revision_tokens():
@@ -427,36 +491,40 @@ def test_patch_page_document_rejects_legacy_revision_tokens():
         PatchPageDocumentRequest.model_validate(
             {
                 "client_mutation_id": "mutation-legacy",
+                "base_document_version": 1,
                 "base_page_revision": 12,
                 "blocks": [],
-                "deleted_blocks": [],
+                "containment": [],
+                "deleted_block_ids": [],
             }
         )
     with pytest.raises(ValidationError):
         PatchPageDocumentRequest.model_validate(
             {
                 "client_mutation_id": "mutation-legacy",
+                "base_document_version": 1,
                 "blocks": [
                     {
                         "id": str(block_id),
-                        "parent_block_id": None,
-                        "before_block_id": None,
-                        "after_block_id": None,
                         "block_kind": "bullet",
                         "body_pm_json": {"type": "paragraph"},
-                        "collapsed": False,
                         "base_revision": 4,
                     }
                 ],
-                "deleted_blocks": [],
+                "containment": [
+                    _document_containment("page", uuid4(), [block_id]),
+                ],
+                "deleted_block_ids": [],
             }
         )
     with pytest.raises(ValidationError):
         PatchPageDocumentRequest.model_validate(
             {
                 "client_mutation_id": "mutation-legacy",
+                "base_document_version": 1,
                 "blocks": [],
-                "deleted_blocks": [{"id": str(block_id), "base_revision": 4}],
+                "containment": [],
+                "deleted_block_ids": [{"id": str(block_id), "base_revision": 4}],
             }
         )
 
@@ -471,36 +539,31 @@ def test_patch_page_document_applies_independent_current_block_edits(
         bootstrapped_user,
         CreatePageRequest(title=f"Mergeable document {uuid4()}"),
     )
-    first = notes.create_note_block(
+    first = create_block_via_document(
         db_session,
         bootstrapped_user,
-        CreateNoteBlockRequest(page_id=page.id, body_markdown="first"),
+        dict(page_id=page.id, body_markdown="first"),
     )
-    second = notes.create_note_block(
+    second = create_block_via_document(
         db_session,
         bootstrapped_user,
-        CreateNoteBlockRequest(page_id=page.id, after_block_id=first.id, body_markdown="second"),
+        dict(page_id=page.id, after_block_id=first.id, body_markdown="second"),
     )
+    current_page = notes.get_page(db_session, bootstrapped_user, page.id)
 
-    notes.patch_page_document(
+    first_result = notes.patch_page_document(
         db_session,
         bootstrapped_user,
         page.id,
         PatchPageDocumentRequest(
             client_mutation_id="mutation-first",
+            base_document_version=current_page.document_version,
             blocks=[
-                {
-                    "id": first.id,
-                    "parent_block_id": None,
-                    "before_block_id": None,
-                    "after_block_id": None,
-                    "block_kind": "bullet",
-                    "body_pm_json": {
-                        "type": "paragraph",
-                        "content": [{"type": "text", "text": "first local"}],
-                    },
-                    "collapsed": False,
-                }
+                _document_block(first.id, "first local"),
+                _document_block(second.id, "second"),
+            ],
+            containment=[
+                _document_containment("page", page.id, [first.id, second.id]),
             ],
         ),
     )
@@ -510,19 +573,13 @@ def test_patch_page_document_applies_independent_current_block_edits(
         page.id,
         PatchPageDocumentRequest(
             client_mutation_id="mutation-second",
+            base_document_version=first_result.document_version,
             blocks=[
-                {
-                    "id": second.id,
-                    "parent_block_id": None,
-                    "before_block_id": None,
-                    "after_block_id": first.id,
-                    "block_kind": "bullet",
-                    "body_pm_json": {
-                        "type": "paragraph",
-                        "content": [{"type": "text", "text": "second local"}],
-                    },
-                    "collapsed": False,
-                }
+                _document_block(first.id, "first local"),
+                _document_block(second.id, "second local"),
+            ],
+            containment=[
+                _document_containment("page", page.id, [first.id, second.id]),
             ],
         ),
     )
@@ -538,10 +595,10 @@ def test_object_ref_search_returns_visible_note_editor_targets(db_session, boots
         bootstrapped_user,
         CreatePageRequest(title=f"Evergreen notes {uuid4()}"),
     )
-    block = notes.create_note_block(
+    block = create_block_via_document(
         db_session,
         bootstrapped_user,
-        CreateNoteBlockRequest(page_id=page.id, body_markdown="Evergreen planning block"),
+        dict(page_id=page.id, body_markdown="Evergreen planning block"),
     )
     media_id = create_test_media_in_library(
         db_session,
@@ -649,11 +706,15 @@ def test_quick_capture_appends_to_daily_page_and_makes_it_indexable(
 ):
     local_date = date(2026, 5, 7)
 
-    block = notes.quick_capture_to_daily(
+    block = notes.quick_capture(
         db_session,
         bootstrapped_user,
-        local_date=local_date,
-        request=QuickCaptureRequest(body_markdown="Daily capture projection needle"),
+        request=QuickCaptureRequest(
+            id=uuid4(),
+            client_mutation_id="quick-capture-indexable",
+            local_date=local_date,
+            body_markdown="Daily capture projection needle",
+        ),
     )
     daily = notes.get_daily_note(db_session, bootstrapped_user, local_date)
 
@@ -691,16 +752,89 @@ def test_quick_capture_appends_to_daily_page_and_makes_it_indexable(
 
 
 @pytest.mark.integration
+def test_quick_capture_reuses_caller_block_id_on_retry(db_session, bootstrapped_user):
+    local_date = date(2026, 5, 8)
+    block_id = uuid4()
+
+    first = notes.quick_capture(
+        db_session,
+        bootstrapped_user,
+        request=QuickCaptureRequest(
+            id=block_id,
+            client_mutation_id="quick-capture-retry-1",
+            local_date=local_date,
+            body_markdown="first save",
+        ),
+    )
+    second = notes.quick_capture(
+        db_session,
+        bootstrapped_user,
+        request=QuickCaptureRequest(
+            id=block_id,
+            client_mutation_id="quick-capture-retry-2",
+            local_date=local_date,
+            body_markdown="second save",
+        ),
+    )
+    daily = notes.get_daily_note(db_session, bootstrapped_user, local_date)
+
+    assert first.id == second.id == block_id
+    assert [item.id for item in daily.page.blocks] == [block_id]
+    assert [item.body_text for item in daily.page.blocks] == ["second save"]
+    containment_count = db_session.scalar(
+        select(func.count())
+        .select_from(ResourceEdge)
+        .where(
+            ResourceEdge.user_id == bootstrapped_user,
+            ResourceEdge.origin == "note_containment",
+            ResourceEdge.target_scheme == "note_block",
+            ResourceEdge.target_id == block_id,
+        )
+    )
+    assert containment_count == 1
+
+
+@pytest.mark.integration
+def test_quick_capture_replays_same_client_mutation_id(db_session, bootstrapped_user):
+    local_date = date(2026, 5, 9)
+    block_id = uuid4()
+    request = QuickCaptureRequest(
+        id=block_id,
+        client_mutation_id="quick-capture-same-mutation-replay",
+        local_date=local_date,
+        body_markdown="same retry body",
+    )
+
+    first = notes.quick_capture(db_session, bootstrapped_user, request=request)
+    second = notes.quick_capture(db_session, bootstrapped_user, request=request)
+    daily = notes.get_daily_note(db_session, bootstrapped_user, local_date)
+
+    assert first.id == second.id == block_id
+    assert [item.id for item in daily.page.blocks] == [block_id]
+    assert [item.body_text for item in daily.page.blocks] == ["same retry body"]
+    mutation_count = db_session.scalar(
+        select(func.count())
+        .select_from(PageDocumentMutation)
+        .where(
+            PageDocumentMutation.user_id == bootstrapped_user,
+            PageDocumentMutation.page_id == daily.page.id,
+            PageDocumentMutation.client_mutation_id == request.client_mutation_id,
+        )
+    )
+    assert mutation_count == 1
+
+
+@pytest.mark.integration
 def test_pinned_object_refs_hydrate_and_order_navigation_items(db_session, bootstrapped_user):
     page = notes.create_page(
         db_session,
         bootstrapped_user,
         CreatePageRequest(title=f"Pinned page {uuid4()}"),
     )
-    block = notes.create_note_block(
+    block = create_block_via_document(
         db_session,
         bootstrapped_user,
-        CreateNoteBlockRequest(page_id=page.id, body_markdown="Pinned block"),
+        dict(page_id=page.id, body_markdown="Pinned block"),
     )
 
     page_pin = object_refs.pin_object_ref(
@@ -737,10 +871,10 @@ def test_deleting_pinned_page_removes_page_and_note_block_pins(db_session, boots
         bootstrapped_user,
         CreatePageRequest(title=f"Pinned deletion page {uuid4()}"),
     )
-    block = notes.create_note_block(
+    block = create_block_via_document(
         db_session,
         bootstrapped_user,
-        CreateNoteBlockRequest(page_id=page.id, body_markdown="Pinned child block"),
+        dict(page_id=page.id, body_markdown="Pinned child block"),
     )
     page_pin = object_refs.pin_object_ref(
         db_session,
@@ -754,12 +888,79 @@ def test_deleting_pinned_page_removes_page_and_note_block_pins(db_session, boots
             object_ref=ObjectRef(object_type="note_block", object_id=block.id)
         ),
     )
+    view_state = db_session.scalar(
+        select(NoteViewState).where(
+            NoteViewState.user_id == bootstrapped_user,
+            NoteViewState.context_source_scheme == "page",
+            NoteViewState.context_source_id == page.id,
+            NoteViewState.target_block_id == block.id,
+        )
+    )
+    assert view_state is not None
+    view_state.collapsed = True
+    mutation = PageDocumentMutation(
+        user_id=bootstrapped_user,
+        page_id=page.id,
+        client_mutation_id="test-delete-page",
+        request_hash="0" * 64,
+        base_document_version=1,
+        document_version=1,
+        response_json={"page": {"id": str(page.id)}},
+    )
+    db_session.add(mutation)
+    db_session.flush()
 
     notes.delete_page(db_session, bootstrapped_user, page.id)
 
     assert db_session.get(PinnedObjectRef, page_pin.id) is None
     assert db_session.get(PinnedObjectRef, block_pin.id) is None
+    assert db_session.get(NoteViewState, view_state.id) is None
+    assert db_session.get(PageDocumentMutation, mutation.id) is None
     assert object_refs.list_pinned_object_refs(db_session, bootstrapped_user) == []
+
+
+@pytest.mark.integration
+def test_delete_note_block_preserves_inbound_citation_edge(db_session, bootstrapped_user):
+    page = notes.create_page(
+        db_session,
+        bootstrapped_user,
+        CreatePageRequest(title=f"Cited block deletion page {uuid4()}"),
+    )
+    block = create_block_via_document(
+        db_session,
+        bootstrapped_user,
+        dict(page_id=page.id, body_markdown="Cited block body"),
+    )
+    _conversation_id, message_id = create_test_conversation_with_message(
+        db_session,
+        bootstrapped_user,
+    )
+    snapshot = {
+        "title": "Deleted note block",
+        "excerpt": "Cited block body",
+        "deep_link": f"/pages/{page.id}",
+    }
+    cited = ResourceEdge(
+        user_id=bootstrapped_user,
+        kind="context",
+        origin="citation",
+        source_scheme="message",
+        source_id=message_id,
+        target_scheme="note_block",
+        target_id=block.id,
+        ordinal=1,
+        snapshot=snapshot,
+    )
+    db_session.add(cited)
+    db_session.flush()
+
+    delete_block_via_document(db_session, bootstrapped_user, block.id)
+
+    surviving = db_session.get(ResourceEdge, cited.id)
+    assert db_session.get(NoteBlock, block.id) is None
+    assert surviving is not None
+    assert surviving.ordinal == 1
+    assert surviving.snapshot == snapshot
 
 
 @pytest.mark.integration
@@ -828,41 +1029,26 @@ def test_pinned_objects_api_filters_and_reorders_by_surface(
 
 
 @pytest.mark.integration
-def test_delete_note_block_api_rejects_legacy_revision_body(
-    auth_client, direct_db: DirectSessionManager
-):
+def test_note_block_mutation_routes_are_removed(auth_client, direct_db: DirectSessionManager):
     user_id = create_test_user_id()
     direct_db.register_cleanup("users", "id", user_id)
     direct_db.register_cleanup("libraries", "owner_user_id", user_id)
     direct_db.register_cleanup("memberships", "user_id", user_id)
-    direct_db.register_cleanup("pages", "user_id", user_id)
 
     headers = auth_headers(user_id)
     assert auth_client.get("/me", headers=headers).status_code == 200
-    page_response = auth_client.post(
-        "/notes/pages",
-        headers=headers,
-        json={"title": f"Delete body page {uuid4()}"},
-    )
-    assert page_response.status_code == 201, page_response.text
-    block_response = auth_client.post(
-        "/notes/blocks",
-        headers=headers,
-        json={
-            "page_id": page_response.json()["data"]["id"],
-            "body_markdown": "delete me",
-        },
-    )
-    assert block_response.status_code == 201, block_response.text
 
-    delete_response = auth_client.request(
-        "DELETE",
-        f"/notes/blocks/{block_response.json()['data']['id']}",
-        headers=headers,
-        json={"base_revision": 1},
-    )
+    block_id = uuid4()
 
-    assert delete_response.status_code == 422, delete_response.text
+    assert auth_client.post("/notes/blocks", headers=headers, json={}).status_code == 404
+    assert (
+        auth_client.patch(f"/notes/blocks/{block_id}", headers=headers, json={}).status_code == 405
+    )
+    assert auth_client.delete(f"/notes/blocks/{block_id}", headers=headers).status_code == 405
+    assert (
+        auth_client.post(f"/notes/blocks/{block_id}/move", headers=headers, json={}).status_code
+        == 404
+    )
 
 
 @pytest.mark.integration
@@ -933,6 +1119,101 @@ def test_object_ref_search_returns_contributors_and_content_chunks(
 
 
 @pytest.mark.integration
+def test_object_ref_search_and_hydration_support_page_owned_chunks_and_spans(
+    db_session,
+    bootstrapped_user,
+):
+    page = notes.create_page(
+        db_session,
+        bootstrapped_user,
+        CreatePageRequest(title=f"PageOwnedRefNeedle page {uuid4()}"),
+    )
+    block = create_block_via_document(
+        db_session,
+        bootstrapped_user,
+        dict(
+            page_id=page.id,
+            body_markdown="PageOwnedRefNeedle citable note body",
+        ),
+    )
+    rebuild_page_content_index(db_session, page_id=page.id, reason="test")
+
+    chunk_id, evidence_span_id = db_session.execute(
+        text(
+            """
+            SELECT id, primary_evidence_span_id
+            FROM content_chunks
+            WHERE owner_kind = 'page' AND owner_id = :page_id
+            ORDER BY chunk_idx ASC
+            LIMIT 1
+            """
+        ),
+        {"page_id": page.id},
+    ).one()
+    assert evidence_span_id is not None
+
+    chunk_ref = object_refs.hydrate_object_ref(
+        db_session,
+        bootstrapped_user,
+        ObjectRef(object_type="content_chunk", object_id=chunk_id),
+    )
+    span_ref = object_refs.hydrate_object_ref(
+        db_session,
+        bootstrapped_user,
+        ObjectRef(object_type="evidence_span", object_id=evidence_span_id),
+    )
+    assert chunk_ref.route == f"/notes/{block.id}"
+    assert span_ref.route == f"/notes/{block.id}"
+    assert "PageOwnedRefNeedle citable note body" in (chunk_ref.snippet or "")
+    assert "PageOwnedRefNeedle citable note body" in (span_ref.snippet or "")
+
+    chunk_results = object_refs.search_object_refs(
+        db_session,
+        bootstrapped_user,
+        "PageOwnedRefNeedle",
+        limit=10,
+        object_types={"content_chunk"},
+    )
+    span_results = object_refs.search_object_refs(
+        db_session,
+        bootstrapped_user,
+        "PageOwnedRefNeedle",
+        limit=10,
+        object_types={"evidence_span"},
+    )
+    assert [(ref.object_type, ref.object_id, ref.route) for ref in chunk_results] == [
+        ("content_chunk", chunk_id, f"/notes/{block.id}")
+    ]
+    assert [(ref.object_type, ref.object_id, ref.route) for ref in span_results] == [
+        ("evidence_span", evidence_span_id, f"/notes/{block.id}")
+    ]
+
+    other_user = create_test_user_id()
+    assert (
+        object_refs.search_object_refs(
+            db_session,
+            other_user,
+            "PageOwnedRefNeedle",
+            limit=10,
+            object_types={"content_chunk", "evidence_span"},
+        )
+        == []
+    )
+    with pytest.raises(NotFoundError):
+        object_refs.hydrate_object_ref(
+            db_session,
+            other_user,
+            ObjectRef(object_type="content_chunk", object_id=chunk_id),
+        )
+    with pytest.raises(NotFoundError):
+        object_refs.hydrate_object_ref(
+            db_session,
+            other_user,
+            ObjectRef(object_type="evidence_span", object_id=evidence_span_id),
+        )
+
+
+@pytest.mark.integration
 def test_shared_reader_can_attach_own_note_to_visible_highlight(db_session):
     author_id = create_test_user_id()
     reader_id = create_test_user_id()
@@ -952,12 +1233,12 @@ def test_shared_reader_can_attach_own_note_to_visible_highlight(db_session):
         exact="Shared quote",
     )
 
-    block = notes.create_note_block(
+    block = create_block_via_document(
         db_session,
         reader_id,
-        CreateNoteBlockRequest(
+        dict(
             body_markdown="Reader-owned note",
-            linked_object=LinkedObjectRequest(object_id=highlight_id),
+            linked_object=dict(object_id=highlight_id),
         ),
     )
 
@@ -971,8 +1252,122 @@ def test_shared_reader_can_attach_own_note_to_visible_highlight(db_session):
     assert [(edge.source.uri, edge.target.uri) for edge in edges] == [
         (f"highlight:{highlight_id}", f"note_block:{block.id}")
     ], f"Expected one reader-owned attachment edge, got {edges}"
-    linked = notes.linked_note_blocks_for_highlights(db_session, reader_id, [highlight_id])
+    linked = linked_note_blocks_for_highlights(db_session, reader_id, [highlight_id])
     assert [b.id for b in linked.get(highlight_id, [])] == [block.id]
+
+
+@pytest.mark.integration
+def test_note_body_hashtag_syncs_to_tag_resource_edge(db_session, bootstrapped_user):
+    page = notes.create_page(
+        db_session,
+        bootstrapped_user,
+        CreatePageRequest(title=f"Tag sync {uuid4()}"),
+    )
+    block = create_block_via_document(
+        db_session,
+        bootstrapped_user,
+        dict(
+            page_id=page.id,
+            body_pm_json=_paragraph_text("Ship #SOTA and #sota with #graph-grade"),
+        ),
+    )
+
+    tags = db_session.scalars(
+        select(Tag).where(Tag.user_id == bootstrapped_user).order_by(Tag.slug.asc())
+    ).all()
+    assert [(tag.name, tag.slug) for tag in tags] == [
+        ("graph-grade", "graph-grade"),
+        ("SOTA", "sota"),
+    ]
+    assert _note_body_targets(db_session, bootstrapped_user, block.id) == {
+        f"tag:{tag.id}" for tag in tags
+    }
+    hydrated = object_refs.hydrate_object_ref(
+        db_session,
+        bootstrapped_user,
+        ObjectRef(object_type="tag", object_id=tags[1].id),
+    )
+    assert hydrated.label == "#SOTA"
+    assert hydrated.route is None
+    tag_results = [
+        result
+        for result in object_refs.search_object_refs(db_session, bootstrapped_user, "#sot")
+        if result.object_type == "tag"
+    ]
+    assert [result.object_id for result in tag_results] == [tags[1].id]
+
+    update_block_via_document(
+        db_session,
+        bootstrapped_user,
+        block.id,
+        dict(body_pm_json=_paragraph_text("Keep #SOTA only")),
+    )
+
+    sota = db_session.scalar(
+        select(Tag).where(Tag.user_id == bootstrapped_user, Tag.slug == "sota")
+    )
+    assert sota is not None
+    assert _note_body_targets(db_session, bootstrapped_user, block.id) == {f"tag:{sota.id}"}
+
+
+@pytest.mark.integration
+def test_object_ref_search_type_filter_returns_tags_without_starvation(
+    db_session, bootstrapped_user
+):
+    for index in range(3):
+        notes.create_page(
+            db_session,
+            bootstrapped_user,
+            CreatePageRequest(title=f"SOTA page result {index}"),
+        )
+    page = notes.create_page(
+        db_session,
+        bootstrapped_user,
+        CreatePageRequest(title=f"Tagged search {uuid4()}"),
+    )
+    block = create_block_via_document(
+        db_session,
+        bootstrapped_user,
+        dict(page_id=page.id, body_pm_json=_paragraph_text("Ship #SOTA")),
+    )
+
+    unfiltered = object_refs.search_object_refs(db_session, bootstrapped_user, "sot", limit=1)
+    tag_filtered = object_refs.search_object_refs(
+        db_session,
+        bootstrapped_user,
+        "sot",
+        limit=1,
+        object_types={"tag"},
+    )
+
+    assert unfiltered[0].object_type == "page"
+    assert [(result.object_type, result.label) for result in tag_filtered] == [("tag", "#SOTA")]
+    assert _note_body_targets(db_session, bootstrapped_user, block.id) == {
+        f"tag:{tag_filtered[0].object_id}"
+    }
+
+
+@pytest.mark.integration
+def test_note_body_hashtag_sync_ignores_code_blocks(db_session, bootstrapped_user):
+    page = notes.create_page(
+        db_session,
+        bootstrapped_user,
+        CreatePageRequest(title=f"Code tag sync {uuid4()}"),
+    )
+    block = create_block_via_document(
+        db_session,
+        bootstrapped_user,
+        dict(
+            page_id=page.id,
+            body_pm_json={
+                "type": "code_block",
+                "content": [{"type": "text", "text": "echo #not-a-tag"}],
+            },
+        ),
+    )
+
+    assert db_session.scalars(select(Tag).where(Tag.user_id == bootstrapped_user)).all() == []
+    assert _note_body_targets(db_session, bootstrapped_user, block.id) == set()
 
 
 @pytest.mark.integration
@@ -980,8 +1375,8 @@ def test_body_sync_replace_sets_only_its_origin_scope(db_session, bootstrapped_u
     """Body save replace-sets exactly the (source, origin='note_body') rows (§5.7).
 
     A seeded user link and a highlight attachment on the same block survive every
-    body save, and a body ref whose bare pair already exists under the user
-    origin is not double-inserted.
+    body save, and a body ref whose endpoint pair already exists under the user
+    origin still records the body-derived fact under ``origin=note_body``.
     """
     page = notes.create_page(
         db_session,
@@ -1005,13 +1400,13 @@ def test_body_sync_replace_sets_only_its_origin_scope(db_session, bootstrapped_u
     )
     fragment_id = create_test_fragment(db_session, media_id, "Quote for the attachment edge")
     highlight_id = create_test_highlight(db_session, bootstrapped_user, fragment_id)
-    block = notes.create_note_block(
+    block = create_block_via_document(
         db_session,
         bootstrapped_user,
-        CreateNoteBlockRequest(
+        dict(
             page_id=page.id,
             body_pm_json=_paragraph_with_page_ref(first_target.id, "First target"),
-            linked_object=LinkedObjectRequest(object_id=highlight_id),
+            linked_object=dict(object_id=highlight_id),
         ),
     )
     block_ref = ResourceRef(scheme="note_block", id=block.id)
@@ -1031,27 +1426,34 @@ def test_body_sync_replace_sets_only_its_origin_scope(db_session, bootstrapped_u
     }
 
     # Re-save with the body now pointing at second_target: the note_body set is
-    # replaced, but the bare pair block→second_target already exists under the
-    # user origin, so the connection stays single (owned by the user edge).
-    notes.update_note_block(
+    # replaced and now coexists with the user's explicit link over the same pair.
+    update_block_via_document(
         db_session,
         bootstrapped_user,
         block.id,
-        UpdateNoteBlockRequest(
+        dict(
             body_pm_json=_paragraph_with_page_ref(second_target.id, "Second target"),
         ),
     )
 
-    assert _note_body_targets(db_session, bootstrapped_user, block.id) == set(), (
-        "the note_body insert must be skipped when the bare pair exists under origin=user"
-    )
+    assert _note_body_targets(db_session, bootstrapped_user, block.id) == {
+        f"page:{second_target.id}"
+    }
     survivors = list_edges_for_ref(db_session, viewer_id=bootstrapped_user, ref=block_ref)
-    by_origin = {edge.origin: edge for edge in survivors}
-    assert by_origin["user"].id == user_edge.id, f"user link must survive body sync: {survivors}"
-    assert by_origin["highlight_note"].source.uri == f"highlight:{highlight_id}", (
+    by_origin: dict[str, list[EdgeOut]] = {}
+    for edge in survivors:
+        by_origin.setdefault(edge.origin, []).append(edge)
+    assert [edge.id for edge in by_origin["user"]] == [user_edge.id], (
+        f"user link must survive body sync: {survivors}"
+    )
+    assert [edge.target.uri for edge in by_origin["note_body"]] == [f"page:{second_target.id}"]
+    assert by_origin["highlight_note"][0].source.uri == f"highlight:{highlight_id}", (
         f"highlight attachment must survive body sync: {survivors}"
     )
-    assert len(survivors) == 2, f"body sync must not leak extra edges: {survivors}"
+    assert [(edge.source.uri, edge.target.uri) for edge in by_origin["note_containment"]] == [
+        (f"page:{page.id}", f"note_block:{block.id}")
+    ]
+    assert len(survivors) == 4, f"body sync must not leak extra edges: {survivors}"
 
 
 @pytest.mark.integration
@@ -1070,20 +1472,27 @@ def test_highlight_note_attachment_round_trips_through_linked_note_blocks(
     fragment_id = create_test_fragment(db_session, media_id, "Quote for attachment round-trip")
     highlight_id = create_test_highlight(db_session, bootstrapped_user, fragment_id)
 
-    first = notes.set_highlight_note_body(db_session, bootstrapped_user, highlight_id, "first note")
-    assert first is not None
-    second = notes.create_note_block(
+    first = notes.set_highlight_note_body_pm_json(
         db_session,
         bootstrapped_user,
-        CreateNoteBlockRequest(
+        highlight_id=highlight_id,
+        block_id=uuid4(),
+        body_pm_json=_paragraph_text("first note"),
+        client_mutation_id=f"highlight-note-test-{uuid4()}",
+    )
+    assert first is not None
+    second = create_block_via_document(
+        db_session,
+        bootstrapped_user,
+        dict(
             body_markdown="second note",
-            linked_object=LinkedObjectRequest(object_id=highlight_id),
+            linked_object=dict(object_id=highlight_id),
         ),
     )
-    mention = notes.create_note_block(
+    mention = create_block_via_document(
         db_session,
         bootstrapped_user,
-        CreateNoteBlockRequest(
+        dict(
             body_pm_json={
                 "type": "paragraph",
                 "content": [
@@ -1101,7 +1510,7 @@ def test_highlight_note_attachment_round_trips_through_linked_note_blocks(
         ),
     )
 
-    linked = notes.linked_note_blocks_for_highlights(db_session, bootstrapped_user, [highlight_id])
+    linked = linked_note_blocks_for_highlights(db_session, bootstrapped_user, [highlight_id])
     assert [block.id for block in linked[highlight_id]] == [first.id, second.id], (
         f"attachments must round-trip in creation order, got {linked}"
     )
@@ -1111,7 +1520,64 @@ def test_highlight_note_attachment_round_trips_through_linked_note_blocks(
 
 
 @pytest.mark.integration
-def test_split_note_block_preserves_rich_pm_json(db_session, bootstrapped_user):
+def test_highlight_note_product_save_uses_document_mutation_ledger(
+    db_session,
+    bootstrapped_user,
+):
+    library_id = get_user_default_library(db_session, bootstrapped_user)
+    assert library_id is not None
+    media_id = create_test_media_in_library(
+        db_session, bootstrapped_user, library_id, title=f"Highlight note media {uuid4()}"
+    )
+    fragment_id = create_test_fragment(db_session, media_id, "Quote for product note")
+    highlight_id = create_test_highlight(db_session, bootstrapped_user, fragment_id)
+    block_id = uuid4()
+    mutation_id = "highlight-note-product-save"
+
+    saved = notes.set_highlight_note_body_pm_json(
+        db_session,
+        bootstrapped_user,
+        highlight_id=highlight_id,
+        block_id=block_id,
+        body_pm_json=_paragraph_text("first note"),
+        client_mutation_id=mutation_id,
+    )
+    replay = notes.set_highlight_note_body_pm_json(
+        db_session,
+        bootstrapped_user,
+        highlight_id=highlight_id,
+        block_id=block_id,
+        body_pm_json=_paragraph_text("first note"),
+        client_mutation_id=mutation_id,
+    )
+
+    assert replay.id == saved.id == block_id
+    linked = linked_note_blocks_for_highlights(db_session, bootstrapped_user, [highlight_id])
+    assert [block.id for block in linked[highlight_id]] == [block_id]
+
+    with pytest.raises(ConflictError) as excinfo:
+        notes.set_highlight_note_body_pm_json(
+            db_session,
+            bootstrapped_user,
+            highlight_id=highlight_id,
+            block_id=block_id,
+            body_pm_json=_paragraph_text("different note"),
+            client_mutation_id=mutation_id,
+        )
+    assert excinfo.value.code == ApiErrorCode.E_IDEMPOTENCY_KEY_REPLAY_MISMATCH
+
+    notes.delete_highlight_note(
+        db_session,
+        bootstrapped_user,
+        highlight_id=highlight_id,
+        note_block_id=block_id,
+        client_mutation_id="highlight-note-product-delete",
+    )
+    assert linked_note_blocks_for_highlights(db_session, bootstrapped_user, [highlight_id]) == {}
+
+
+@pytest.mark.integration
+def test_page_document_command_persists_split_result_and_syncs_refs(db_session, bootstrapped_user):
     page = notes.create_page(
         db_session,
         bootstrapped_user,
@@ -1122,10 +1588,10 @@ def test_split_note_block_preserves_rich_pm_json(db_session, bootstrapped_user):
         bootstrapped_user,
         CreatePageRequest(title=f"Split ref target {uuid4()}"),
     )
-    block = notes.create_note_block(
+    block = create_block_via_document(
         db_session,
         bootstrapped_user,
-        CreateNoteBlockRequest(
+        dict(
             page_id=page.id,
             body_pm_json={
                 "type": "paragraph",
@@ -1151,13 +1617,57 @@ def test_split_note_block_preserves_rich_pm_json(db_session, bootstrapped_user):
         ),
     )
 
-    new_block = notes.split_note_block(
+    new_block_id = uuid4()
+    patch_document_via_command(
         db_session,
         bootstrapped_user,
-        block.id,
-        SplitNoteBlockRequest(offset=len("Read docs")),
+        page_id=page.id,
+        blocks=[
+            {
+                "id": block.id,
+                "block_kind": "bullet",
+                "body_pm_json": {
+                    "type": "paragraph",
+                    "content": [
+                        {"type": "text", "text": "Read "},
+                        {
+                            "type": "text",
+                            "text": "docs",
+                            "marks": [{"type": "strong"}],
+                        },
+                    ],
+                },
+            },
+            {
+                "id": new_block_id,
+                "block_kind": "bullet",
+                "body_pm_json": {
+                    "type": "paragraph",
+                    "content": [
+                        {"type": "text", "text": " with "},
+                        {
+                            "type": "object_ref",
+                            "attrs": {
+                                "objectType": "page",
+                                "objectId": str(target_page.id),
+                                "label": "Source",
+                            },
+                        },
+                        {"type": "text", "text": " after"},
+                    ],
+                },
+            },
+        ],
+        containment_by_parent={
+            ResourceRef(scheme="page", id=page.id): [
+                {"block_id": block.id, "source_order_key": "0000000001", "collapsed": False},
+                {"block_id": new_block_id, "source_order_key": "0000000002", "collapsed": False},
+            ]
+        },
+        focus_block_id=new_block_id,
     )
     original = notes.get_note_block(db_session, bootstrapped_user, block.id)
+    new_block = notes.get_note_block(db_session, bootstrapped_user, new_block_id)
 
     assert original.body_text == "Read docs"
     assert original.body_pm_json["content"][1] == {
@@ -1183,7 +1693,7 @@ def test_split_note_block_preserves_rich_pm_json(db_session, bootstrapped_user):
 
 
 @pytest.mark.integration
-def test_merge_note_block_preserves_rich_pm_json(db_session, bootstrapped_user):
+def test_page_document_command_persists_merge_result_and_syncs_refs(db_session, bootstrapped_user):
     page = notes.create_page(
         db_session,
         bootstrapped_user,
@@ -1194,10 +1704,10 @@ def test_merge_note_block_preserves_rich_pm_json(db_session, bootstrapped_user):
         bootstrapped_user,
         CreatePageRequest(title=f"Merge ref target {uuid4()}"),
     )
-    first = notes.create_note_block(
+    first = create_block_via_document(
         db_session,
         bootstrapped_user,
-        CreateNoteBlockRequest(
+        dict(
             page_id=page.id,
             body_pm_json={
                 "type": "paragraph",
@@ -1208,10 +1718,10 @@ def test_merge_note_block_preserves_rich_pm_json(db_session, bootstrapped_user):
             },
         ),
     )
-    second = notes.create_note_block(
+    second = create_block_via_document(
         db_session,
         bootstrapped_user,
-        CreateNoteBlockRequest(
+        dict(
             page_id=page.id,
             after_block_id=first.id,
             body_pm_json={
@@ -1231,7 +1741,42 @@ def test_merge_note_block_preserves_rich_pm_json(db_session, bootstrapped_user):
         ),
     )
 
-    merged = notes.merge_note_block(db_session, bootstrapped_user, second.id)
+    patch_document_via_command(
+        db_session,
+        bootstrapped_user,
+        page_id=page.id,
+        blocks=[
+            {
+                "id": first.id,
+                "block_kind": "bullet",
+                "body_pm_json": {
+                    "type": "paragraph",
+                    "content": [
+                        {"type": "text", "text": "Alpha "},
+                        {"type": "text", "text": "one", "marks": [{"type": "em"}]},
+                        {"type": "hard_break"},
+                        {
+                            "type": "object_ref",
+                            "attrs": {
+                                "objectType": "page",
+                                "objectId": str(target_page.id),
+                                "label": "Source",
+                            },
+                        },
+                        {"type": "text", "text": " beta"},
+                    ],
+                },
+            }
+        ],
+        containment_by_parent={
+            ResourceRef(scheme="page", id=page.id): [
+                {"block_id": first.id, "source_order_key": "0000000001", "collapsed": False},
+            ],
+        },
+        deleted_block_ids=[second.id],
+        focus_block_id=first.id,
+    )
+    merged = notes.get_note_block(db_session, bootstrapped_user, first.id)
 
     assert merged.id == first.id
     assert merged.body_text == "Alpha one\nSource beta"
@@ -1255,6 +1800,130 @@ def test_merge_note_block_preserves_rich_pm_json(db_session, bootstrapped_user):
 
 
 @pytest.mark.integration
+def test_page_document_command_moves_children_without_order_collision(
+    db_session, bootstrapped_user
+):
+    page = notes.create_page(
+        db_session,
+        bootstrapped_user,
+        CreatePageRequest(title=f"Merge children note {uuid4()}"),
+    )
+    first = create_block_via_document(
+        db_session,
+        bootstrapped_user,
+        dict(page_id=page.id, body_markdown="First"),
+    )
+    second = create_block_via_document(
+        db_session,
+        bootstrapped_user,
+        dict(
+            page_id=page.id,
+            after_block_id=first.id,
+            body_markdown="Second",
+        ),
+    )
+    first_child = create_block_via_document(
+        db_session,
+        bootstrapped_user,
+        dict(
+            page_id=page.id,
+            parent_block_id=first.id,
+            body_markdown="First child",
+        ),
+    )
+    second_child = create_block_via_document(
+        db_session,
+        bootstrapped_user,
+        dict(
+            page_id=page.id,
+            parent_block_id=second.id,
+            body_markdown="Second child",
+        ),
+    )
+    target_view_state = db_session.scalar(
+        select(NoteViewState).where(
+            NoteViewState.user_id == bootstrapped_user,
+            NoteViewState.context_source_scheme == "page",
+            NoteViewState.context_source_id == page.id,
+            NoteViewState.target_block_id == second.id,
+        )
+    )
+    child_view_state = db_session.scalar(
+        select(NoteViewState).where(
+            NoteViewState.user_id == bootstrapped_user,
+            NoteViewState.context_source_scheme == "note_block",
+            NoteViewState.context_source_id == second.id,
+            NoteViewState.target_block_id == second_child.id,
+        )
+    )
+    assert target_view_state is not None
+    assert child_view_state is not None
+    target_view_state.collapsed = True
+    child_view_state.collapsed = True
+    db_session.flush()
+    target_view_state_id = target_view_state.id
+    child_view_state_id = child_view_state.id
+
+    patch_document_via_command(
+        db_session,
+        bootstrapped_user,
+        page_id=page.id,
+        blocks=[
+            {
+                "id": first.id,
+                "block_kind": "bullet",
+                "body_pm_json": first.body_pm_json,
+            },
+            {
+                "id": first_child.id,
+                "block_kind": "bullet",
+                "body_pm_json": first_child.body_pm_json,
+            },
+            {
+                "id": second_child.id,
+                "block_kind": "bullet",
+                "body_pm_json": second_child.body_pm_json,
+            },
+        ],
+        containment_by_parent={
+            ResourceRef(scheme="page", id=page.id): [
+                {"block_id": first.id, "source_order_key": "0000000001", "collapsed": False},
+            ],
+            ResourceRef(scheme="note_block", id=first.id): [
+                {
+                    "block_id": first_child.id,
+                    "source_order_key": "0000000001",
+                    "collapsed": False,
+                },
+                {
+                    "block_id": second_child.id,
+                    "source_order_key": "0000000002",
+                    "collapsed": False,
+                },
+            ],
+        },
+        deleted_block_ids=[second.id],
+        focus_block_id=first.id,
+    )
+    merged = notes.get_note_block(db_session, bootstrapped_user, first.id)
+    document = graph_documents.load_page_document(
+        db_session,
+        user_id=bootstrapped_user,
+        page_id=page.id,
+    )
+
+    assert merged.id == first.id
+    assert [root.block.id for root in document.roots] == [first.id]
+    assert [child.block.id for child in document.roots[0].children] == [
+        first_child.id,
+        second_child.id,
+    ]
+    assert db_session.get(NoteBlock, second.id) is None
+    assert db_session.get(NoteViewState, target_view_state_id) is None
+    assert db_session.get(NoteViewState, child_view_state_id) is None
+
+
+@pytest.mark.integration
 def test_update_note_block_syncs_inline_reference_links(db_session, bootstrapped_user):
     page = notes.create_page(
         db_session,
@@ -1271,10 +1940,10 @@ def test_update_note_block_syncs_inline_reference_links(db_session, bootstrapped
         bootstrapped_user,
         CreatePageRequest(title=f"Inline refs target B {uuid4()}"),
     )
-    block = notes.create_note_block(
+    block = create_block_via_document(
         db_session,
         bootstrapped_user,
-        CreateNoteBlockRequest(
+        dict(
             page_id=page.id,
             body_pm_json=_paragraph_with_page_ref(first_target.id, "First target"),
         ),
@@ -1284,11 +1953,11 @@ def test_update_note_block_syncs_inline_reference_links(db_session, bootstrapped
         f"page:{first_target.id}"
     }
 
-    notes.update_note_block(
+    update_block_via_document(
         db_session,
         bootstrapped_user,
         block.id,
-        UpdateNoteBlockRequest(
+        dict(
             body_pm_json=_paragraph_with_page_ref(second_target.id, "Second target"),
         ),
     )
@@ -1311,10 +1980,10 @@ def test_inline_reference_sync_dedups_repeated_refs_to_one_edge(db_session, boot
         CreatePageRequest(title=f"Inline duplicate refs target {uuid4()}"),
     )
 
-    block = notes.create_note_block(
+    block = create_block_via_document(
         db_session,
         bootstrapped_user,
-        CreateNoteBlockRequest(
+        dict(
             page_id=page.id,
             body_pm_json=_paragraph_with_duplicate_page_refs(target.id, "Repeated target"),
         ),
@@ -1340,10 +2009,10 @@ def test_object_embed_block_syncs_embed_link(db_session, bootstrapped_user):
         CreatePageRequest(title=f"Embed target {uuid4()}"),
     )
 
-    block = notes.create_note_block(
+    block = create_block_via_document(
         db_session,
         bootstrapped_user,
-        CreateNoteBlockRequest(
+        dict(
             page_id=page.id,
             block_kind="embed",
             body_pm_json={
@@ -1374,6 +2043,7 @@ def test_notes_validation_through_api(auth_client, direct_db: DirectSessionManag
     direct_db.register_cleanup("memberships", "user_id", user_id)
     direct_db.register_cleanup("pages", "user_id", user_id)
     direct_db.register_cleanup("note_blocks", "user_id", user_id)
+    direct_db.register_cleanup("note_view_states", "user_id", user_id)
 
     headers = auth_headers(user_id)
     me_response = auth_client.get("/me", headers=headers)
@@ -1387,34 +2057,68 @@ def test_notes_validation_through_api(auth_client, direct_db: DirectSessionManag
     assert page_response.status_code == 201, page_response.text
     page_id = page_response.json()["data"]["id"]
 
-    parent_response = auth_client.post(
-        "/notes/blocks",
+    parent_id = uuid4()
+    child_id = uuid4()
+    create_document = auth_client.patch(
+        f"/notes/pages/{page_id}/document",
         headers=headers,
-        json={"page_id": page_id, "body_markdown": "parent"},
+        json={
+            "client_mutation_id": "api-notes-create",
+            "base_document_version": page_response.json()["data"]["documentVersion"],
+            "blocks": [
+                _document_block(parent_id, "parent"),
+                _document_block(child_id, "child"),
+            ],
+            "containment": [
+                _document_containment("page", UUID(page_id), [parent_id]),
+                _document_containment("note_block", parent_id, [child_id]),
+            ],
+            "deleted_block_ids": [],
+        },
     )
-    assert parent_response.status_code == 201, parent_response.text
-    parent_id = parent_response.json()["data"]["id"]
+    assert create_document.status_code == 200, create_document.text
+    document_version = create_document.json()["data"]["documentVersion"]
 
-    child_response = auth_client.post(
-        "/notes/blocks",
+    invalid_pm_json = auth_client.patch(
+        f"/notes/pages/{page_id}/document",
         headers=headers,
-        json={"page_id": page_id, "parent_block_id": parent_id, "body_markdown": "child"},
-    )
-    assert child_response.status_code == 201, child_response.text
-    child_id = child_response.json()["data"]["id"]
-
-    invalid_pm_json = auth_client.post(
-        "/notes/blocks",
-        headers=headers,
-        json={"page_id": page_id, "body_pm_json": {"content": [{"text": "missing type"}]}},
+        json={
+            "client_mutation_id": "api-notes-invalid-pm",
+            "base_document_version": document_version,
+            "blocks": [
+                {
+                    "id": str(parent_id),
+                    "block_kind": "bullet",
+                    "body_pm_json": {"content": [{"text": "missing type"}]},
+                },
+                _document_block(child_id, "child"),
+            ],
+            "containment": [
+                _document_containment("page", UUID(page_id), [parent_id]),
+                _document_containment("note_block", parent_id, [child_id]),
+            ],
+            "deleted_block_ids": [],
+        },
     )
     assert invalid_pm_json.status_code == 400, invalid_pm_json.text
     assert invalid_pm_json.json()["error"]["code"] == ApiErrorCode.E_INVALID_REQUEST.value
 
-    invalid_move = auth_client.post(
-        f"/notes/blocks/{parent_id}/move",
+    invalid_move = auth_client.patch(
+        f"/notes/pages/{page_id}/document",
         headers=headers,
-        json={"parent_block_id": child_id},
+        json={
+            "client_mutation_id": "api-notes-invalid-cycle",
+            "base_document_version": document_version,
+            "blocks": [
+                _document_block(parent_id, "parent"),
+                _document_block(child_id, "child"),
+            ],
+            "containment": [
+                _document_containment("note_block", parent_id, [child_id]),
+                _document_containment("note_block", child_id, [parent_id]),
+            ],
+            "deleted_block_ids": [],
+        },
     )
     assert invalid_move.status_code == 400, invalid_move.text
     assert invalid_move.json()["error"]["code"] == ApiErrorCode.E_INVALID_REQUEST.value
@@ -1425,6 +2129,16 @@ def test_notes_validation_through_api(auth_client, direct_db: DirectSessionManag
     )
     assert invalid_object_ref_type.status_code == 400, invalid_object_ref_type.text
     assert invalid_object_ref_type.json()["error"]["code"] == ApiErrorCode.E_INVALID_REQUEST.value
+
+    invalid_object_ref_search_type = auth_client.get(
+        "/object-refs/search?q=sot&type=invalid_type",
+        headers=headers,
+    )
+    assert invalid_object_ref_search_type.status_code == 400, invalid_object_ref_search_type.text
+    assert (
+        invalid_object_ref_search_type.json()["error"]["code"]
+        == ApiErrorCode.E_INVALID_REQUEST.value
+    )
 
 
 def _page_content_index_row_counts(db_session, page_id) -> dict[str, int]:
@@ -1563,10 +2277,10 @@ def test_delete_page_nulls_note_citations_and_removes_all_owned_content_index_ro
         bootstrapped_user,
         CreatePageRequest(title=f"Citable note page {uuid4()}"),
     )
-    notes.create_note_block(
+    create_block_via_document(
         db_session,
         bootstrapped_user,
-        CreateNoteBlockRequest(
+        dict(
             page_id=page.id,
             body_markdown="Orphan-cleanup note needle for content indexing",
         ),
@@ -1638,18 +2352,18 @@ def test_delete_cited_note_block_then_reindex_removes_its_chunk_and_span(
         bootstrapped_user,
         CreatePageRequest(title=f"Block-delete note page {uuid4()}"),
     )
-    doomed = notes.create_note_block(
+    doomed = create_block_via_document(
         db_session,
         bootstrapped_user,
-        CreateNoteBlockRequest(
+        dict(
             page_id=page.id,
             body_markdown="Doomed block needle that will be deleted and reindexed away",
         ),
     )
-    survivor = notes.create_note_block(
+    survivor = create_block_via_document(
         db_session,
         bootstrapped_user,
-        CreateNoteBlockRequest(
+        dict(
             page_id=page.id,
             body_markdown="Surviving block needle that stays indexed after the delete",
         ),
@@ -1688,7 +2402,7 @@ def test_delete_cited_note_block_then_reindex_removes_its_chunk_and_span(
 
     # Delete only the cited block; the service enqueues a reindex but does not rebuild
     # inline, so the new (post-delete) index is produced by running the reindex.
-    notes.delete_note_block(db_session, bootstrapped_user, doomed.id)
+    delete_block_via_document(db_session, bootstrapped_user, doomed.id)
     rebuild_page_content_index(db_session, page_id=page.id, reason="test")
     db_session.commit()
 
@@ -1782,19 +2496,19 @@ def test_debounced_page_reindex_coalesces_in_flight_then_rearms_after_completion
         bootstrapped_user,
         CreatePageRequest(title=f"Debounce reindex page {uuid4()}"),
     )
-    block = notes.create_note_block(
+    block = create_block_via_document(
         db_session,
         bootstrapped_user,
-        CreateNoteBlockRequest(page_id=page.id, body_markdown="first body"),
+        dict(page_id=page.id, body_markdown="first body"),
     )
     db_session.commit()
 
     # First edit: enqueue_page_reindex runs and leaves exactly one in-flight job.
-    notes.update_note_block(
+    update_block_via_document(
         db_session,
         bootstrapped_user,
         block.id,
-        UpdateNoteBlockRequest(
+        dict(
             body_pm_json={
                 "type": "paragraph",
                 "content": [{"type": "text", "text": "edited once"}],
@@ -1811,11 +2525,11 @@ def test_debounced_page_reindex_coalesces_in_flight_then_rearms_after_completion
 
     # Second edit before the job drains: the in-flight job is reused, not duplicated, and
     # the IntegrityError from the partial unique index is swallowed (no error to caller).
-    notes.update_note_block(
+    update_block_via_document(
         db_session,
         bootstrapped_user,
         block.id,
-        UpdateNoteBlockRequest(
+        dict(
             body_pm_json={
                 "type": "paragraph",
                 "content": [{"type": "text", "text": "edited twice"}],
@@ -1860,11 +2574,11 @@ def test_debounced_page_reindex_coalesces_in_flight_then_rearms_after_completion
     )
 
     # Third edit after the job is terminal: the dedupe must RE-ARM and enqueue a fresh job.
-    notes.update_note_block(
+    update_block_via_document(
         db_session,
         bootstrapped_user,
         block.id,
-        UpdateNoteBlockRequest(
+        dict(
             body_pm_json={
                 "type": "paragraph",
                 "content": [{"type": "text", "text": "edited a third time"}],

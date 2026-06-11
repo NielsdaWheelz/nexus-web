@@ -18,6 +18,7 @@ OBJECT_TYPES = Literal[
     "fragment",
     "contributor",
     "evidence_span",
+    "tag",
 ]
 NOTE_BLOCK_KINDS = Literal["bullet", "heading", "todo", "quote", "code", "image", "embed"]
 
@@ -60,17 +61,32 @@ class HydratedObjectRef(ObjectRef):
 
 class NoteBlockOut(BaseModel):
     id: UUID
-    page_id: UUID = Field(serialization_alias="pageId")
-    parent_block_id: UUID | None = Field(None, serialization_alias="parentBlockId")
-    order_key: str = Field(serialization_alias="orderKey")
-    block_kind: NOTE_BLOCK_KINDS = Field(serialization_alias="blockKind")
-    body_pm_json: dict[str, Any] = Field(serialization_alias="bodyPmJson")
-    body_markdown: str = Field(serialization_alias="bodyMarkdown")
-    body_text: str = Field(serialization_alias="bodyText")
+    page_id: UUID = Field(validation_alias=AliasChoices("page_id", "pageId"), serialization_alias="pageId")
+    parent_block_id: UUID | None = Field(
+        None,
+        validation_alias=AliasChoices("parent_block_id", "parentBlockId"),
+        serialization_alias="parentBlockId",
+    )
+    order_key: str = Field(validation_alias=AliasChoices("order_key", "orderKey"), serialization_alias="orderKey")
+    block_kind: NOTE_BLOCK_KINDS = Field(
+        validation_alias=AliasChoices("block_kind", "blockKind"), serialization_alias="blockKind"
+    )
+    body_pm_json: dict[str, Any] = Field(
+        validation_alias=AliasChoices("body_pm_json", "bodyPmJson"), serialization_alias="bodyPmJson"
+    )
+    body_markdown: str = Field(
+        validation_alias=AliasChoices("body_markdown", "bodyMarkdown"),
+        serialization_alias="bodyMarkdown",
+    )
+    body_text: str = Field(validation_alias=AliasChoices("body_text", "bodyText"), serialization_alias="bodyText")
     collapsed: bool
     children: list["NoteBlockOut"] = Field(default_factory=list)
-    created_at: datetime = Field(serialization_alias="createdAt")
-    updated_at: datetime = Field(serialization_alias="updatedAt")
+    created_at: datetime = Field(
+        validation_alias=AliasChoices("created_at", "createdAt"), serialization_alias="createdAt"
+    )
+    updated_at: datetime = Field(
+        validation_alias=AliasChoices("updated_at", "updatedAt"), serialization_alias="updatedAt"
+    )
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
@@ -79,7 +95,13 @@ class NotePageSummaryOut(BaseModel):
     id: UUID
     title: str
     description: str | None = None
-    updated_at: datetime = Field(serialization_alias="updatedAt")
+    document_version: int = Field(
+        validation_alias=AliasChoices("document_version", "documentVersion"),
+        serialization_alias="documentVersion",
+    )
+    updated_at: datetime = Field(
+        validation_alias=AliasChoices("updated_at", "updatedAt"), serialization_alias="updatedAt"
+    )
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
@@ -89,8 +111,8 @@ class NotePageOut(NotePageSummaryOut):
 
 
 class DailyNotePageOut(BaseModel):
-    local_date: date = Field(serialization_alias="localDate")
-    time_zone: str = Field(serialization_alias="timeZone")
+    local_date: date = Field(validation_alias=AliasChoices("local_date", "localDate"), serialization_alias="localDate")
+    time_zone: str = Field(validation_alias=AliasChoices("time_zone", "timeZone"), serialization_alias="timeZone")
     page: NotePageOut
 
     model_config = ConfigDict(populate_by_name=True)
@@ -125,21 +147,6 @@ class _NoteBodyPmJsonValidated(BaseModel):
 
 class PageDocumentBlockRequest(_NoteBodyPmJsonValidated):
     id: UUID
-    parent_block_id: UUID | None = Field(
-        ...,
-        validation_alias=AliasChoices("parent_block_id", "parentBlockId"),
-        serialization_alias="parentBlockId",
-    )
-    before_block_id: UUID | None = Field(
-        ...,
-        validation_alias=AliasChoices("before_block_id", "beforeBlockId"),
-        serialization_alias="beforeBlockId",
-    )
-    after_block_id: UUID | None = Field(
-        ...,
-        validation_alias=AliasChoices("after_block_id", "afterBlockId"),
-        serialization_alias="afterBlockId",
-    )
     block_kind: NOTE_BLOCK_KINDS = Field(
         ...,
         validation_alias=AliasChoices("block_kind", "blockKind"),
@@ -150,15 +157,40 @@ class PageDocumentBlockRequest(_NoteBodyPmJsonValidated):
         validation_alias=AliasChoices("body_pm_json", "bodyPmJson"),
         serialization_alias="bodyPmJson",
     )
-    collapsed: bool
 
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
-    @model_validator(mode="after")
-    def validate_position(self) -> "PageDocumentBlockRequest":
-        if self.before_block_id is not None and self.after_block_id is not None:
-            raise ValueError("Specify only one of before_block_id or after_block_id")
-        return self
+
+class PageDocumentParentRef(BaseModel):
+    scheme: Literal["page", "note_block"]
+    id: UUID
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class PageDocumentChildRequest(BaseModel):
+    block_id: UUID = Field(
+        ...,
+        validation_alias=AliasChoices("block_id", "blockId"),
+        serialization_alias="blockId",
+    )
+    source_order_key: str = Field(
+        ...,
+        min_length=1,
+        max_length=64,
+        validation_alias=AliasChoices("source_order_key", "sourceOrderKey"),
+        serialization_alias="sourceOrderKey",
+    )
+    collapsed: bool = False
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+
+class PageDocumentContainmentRequest(BaseModel):
+    parent: PageDocumentParentRef
+    children: list[PageDocumentChildRequest]
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class PatchPageDocumentRequest(BaseModel):
@@ -169,23 +201,26 @@ class PatchPageDocumentRequest(BaseModel):
         validation_alias=AliasChoices("client_mutation_id", "clientMutationId"),
         serialization_alias="clientMutationId",
     )
+    base_document_version: int = Field(
+        ...,
+        ge=1,
+        validation_alias=AliasChoices("base_document_version", "baseDocumentVersion"),
+        serialization_alias="baseDocumentVersion",
+    )
+    title: str | None = Field(None, min_length=1, max_length=200)
     focus_block_id: UUID | None = Field(
         None,
         validation_alias=AliasChoices("focus_block_id", "focusBlockId"),
         serialization_alias="focusBlockId",
     )
-    top_level_parent_block_id: UUID | None = Field(
-        None,
-        validation_alias=AliasChoices("top_level_parent_block_id", "topLevelParentBlockId"),
-        serialization_alias="topLevelParentBlockId",
-    )
     blocks: list[PageDocumentBlockRequest] = Field(
         default_factory=list,
     )
-    deleted_blocks: list[UUID] = Field(
+    containment: list[PageDocumentContainmentRequest] = Field(default_factory=list)
+    deleted_block_ids: list[UUID] = Field(
         default_factory=list,
-        validation_alias=AliasChoices("deleted_blocks", "deletedBlocks"),
-        serialization_alias="deletedBlocks",
+        validation_alias=AliasChoices("deleted_block_ids", "deletedBlockIds"),
+        serialization_alias="deletedBlockIds",
     )
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
@@ -194,33 +229,62 @@ class PatchPageDocumentRequest(BaseModel):
         block_ids = [block.id for block in self.blocks]
         if len(block_ids) != len(set(block_ids)):
             raise ValueError("blocks contains duplicate block ids")
-        if len(self.deleted_blocks) != len(set(self.deleted_blocks)):
-            raise ValueError("deleted_blocks contains duplicate block ids")
+        if len(self.deleted_block_ids) != len(set(self.deleted_block_ids)):
+            raise ValueError("deleted_block_ids contains duplicate block ids")
         block_set = set(block_ids)
-        deleted_set = set(self.deleted_blocks)
+        deleted_set = set(self.deleted_block_ids)
         if block_set & deleted_set:
             raise ValueError("A block cannot be changed or created and deleted")
+        child_ids: list[UUID] = []
+        parent_refs: set[tuple[str, UUID]] = set()
+        for group in self.containment:
+            parent_ref = (group.parent.scheme, group.parent.id)
+            if parent_ref in parent_refs:
+                raise ValueError("containment contains duplicate parent refs")
+            parent_refs.add(parent_ref)
+            child_ids.extend(child.block_id for child in group.children)
+            order_keys = [child.source_order_key for child in group.children]
+            if len(order_keys) != len(set(order_keys)):
+                raise ValueError("containment siblings contain duplicate order keys")
+        if len(child_ids) != len(set(child_ids)):
+            raise ValueError("containment contains duplicate child blocks")
+        if set(child_ids) != block_set:
+            raise ValueError("containment children must exactly match blocks")
         return self
 
 
 class PatchPageDocumentResponse(BaseModel):
-    client_mutation_id: str = Field(serialization_alias="clientMutationId")
+    client_mutation_id: str = Field(
+        validation_alias=AliasChoices("client_mutation_id", "clientMutationId"),
+        serialization_alias="clientMutationId",
+    )
     page: NotePageOut
-    focused_block: NoteBlockOut | None = Field(None, serialization_alias="focusedBlock")
+    document_version: int = Field(
+        validation_alias=AliasChoices("document_version", "documentVersion"),
+        serialization_alias="documentVersion",
+    )
+    changed_block_ids: list[UUID] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("changed_block_ids", "changedBlockIds"),
+        serialization_alias="changedBlockIds",
+    )
+    changed_edge_ids: list[UUID] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("changed_edge_ids", "changedEdgeIds"),
+        serialization_alias="changedEdgeIds",
+    )
+    reindex_job_id: UUID | None = Field(
+        None,
+        validation_alias=AliasChoices("reindex_job_id", "reindexJobId"),
+        serialization_alias="reindexJobId",
+    )
+    focused_block: NoteBlockOut | None = Field(
+        None,
+        validation_alias=AliasChoices("focused_block", "focusedBlock"),
+        serialization_alias="focusedBlock",
+    )
 
     model_config = ConfigDict(populate_by_name=True)
-
-
-class LinkedObjectRequest(BaseModel):
-    """The quick-note composer's highlight attachment: the created block becomes
-    the highlight's note (``origin=highlight_note`` edge). Verbless (graph §5.7)."""
-
-    object_type: Literal["highlight"] = Field(
-        "highlight", validation_alias=AliasChoices("object_type", "objectType")
-    )
-    object_id: UUID = Field(validation_alias=AliasChoices("object_id", "objectId"))
-
-    model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
 
 def validate_note_body_pm_json(value: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -374,47 +438,24 @@ def _validate_pm_child_types(node_type: str, child_types: list[str], *, path: st
             raise ValueError(f"{path} may contain only nested outline_block nodes after paragraph")
 
 
-class CreateNoteBlockRequest(_NoteBodyPmJsonValidated):
-    id: UUID | None = None
-    page_id: UUID | None = None
-    parent_block_id: UUID | None = None
-    after_block_id: UUID | None = None
-    before_block_id: UUID | None = None
-    block_kind: NOTE_BLOCK_KINDS = "bullet"
-    body_pm_json: dict[str, Any] | None = None
-    body_markdown: str | None = None
-    linked_object: LinkedObjectRequest | None = None
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class UpdateNoteBlockRequest(_NoteBodyPmJsonValidated):
-    block_kind: NOTE_BLOCK_KINDS | None = None
-    body_pm_json: dict[str, Any] | None = None
-    collapsed: bool | None = None
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class MoveNoteBlockRequest(BaseModel):
-    parent_block_id: UUID | None = None
-    before_block_id: UUID | None = None
-    after_block_id: UUID | None = None
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class SplitNoteBlockRequest(BaseModel):
-    offset: int = Field(..., ge=0)
-
-    model_config = ConfigDict(extra="forbid")
-
-
 class QuickCaptureRequest(_NoteBodyPmJsonValidated):
+    id: UUID
+    client_mutation_id: str = Field(
+        ...,
+        min_length=1,
+        max_length=120,
+        validation_alias=AliasChoices("client_mutation_id", "clientMutationId"),
+        serialization_alias="clientMutationId",
+    )
+    local_date: date | None = Field(
+        None,
+        validation_alias=AliasChoices("local_date", "localDate"),
+        serialization_alias="localDate",
+    )
     body_pm_json: dict[str, Any] | None = None
     body_markdown: str | None = None
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     @model_validator(mode="after")
     def require_body(self) -> "QuickCaptureRequest":

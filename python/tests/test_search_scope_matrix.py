@@ -65,9 +65,10 @@ NOTE_OBJECT_EDGE_MATCH = {
     ),
 }
 
-# The conversation cells match conversation context edges: any kind/origin edge from
-# the conversation to the object (`context.is_context_ref` semantics, graph §2.5).
-# Compared whitespace-squashed so SQL reformatting cannot break the pin.
+# The conversation cells match bare conversation context edges from the conversation
+# to the object. Citation/containment rows must not make notes searchable inside an
+# unrelated chat scope. Compared whitespace-squashed so SQL reformatting cannot
+# break the pin.
 NOTE_OBJECT_CONTEXT_TARGET = {
     "page": "AND e.target_scheme = 'page' AND e.target_id = p.id",
     "note_block": (
@@ -129,17 +130,15 @@ def test_note_object_membership_cells_are_resource_edge_exists(
 
 @pytest.mark.parametrize("entity,target_match", NOTE_OBJECT_CONTEXT_TARGET.items())
 def test_note_object_conversation_cells_match_context_edges(entity: str, target_match: str) -> None:
-    # The conversation cell admits via a conversation context edge: source is the
-    # conversation, target is the page/note_block, any kind/origin (graph §2.5).
     result = scope_filter_sql("conversation", uuid4(), entity)
     assert not isinstance(result, ScopeUnsupported)
     sql = _squash(result[0])
     assert "EXISTS ( SELECT 1 FROM resource_edges e" in sql
     assert "e.source_scheme = 'conversation' AND e.source_id = :scope_id" in sql
     assert target_match in sql
-    assert "e.kind" not in sql and "e.origin" not in sql, (
-        "context admission is any-kind/any-origin (is_context_ref semantics)"
-    )
+    assert "e.kind = 'context'" in sql
+    assert "e.origin IN ('user', 'citation', 'system')" in sql
+    assert "e.ordinal IS NULL" in sql
 
 
 def test_highlight_conversation_cell_matches_context_edges() -> None:

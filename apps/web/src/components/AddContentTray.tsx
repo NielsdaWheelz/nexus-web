@@ -28,6 +28,7 @@ import OpmlImportPanel from "@/components/OpmlImportPanel";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { extractUrls } from "@/lib/extractUrls";
 import { createNotePage } from "@/lib/notes/api";
+import { setPendingNoteFocus } from "@/lib/notes/pendingNoteFocus";
 import {
   getFileUploadError,
   isFailedSourceIngest,
@@ -383,6 +384,7 @@ export default function AddContentTray() {
     try {
       const page = await createNotePage({ title: "Untitled" });
       setOpen(false);
+      setPendingNoteFocus({ pageId: page.id, target: "title" });
       requestOpenInAppPane(`/pages/${page.id}`, { titleHint: page.title });
     } catch (error: unknown) {
       if (handleUnauthenticatedApiError(error)) return;

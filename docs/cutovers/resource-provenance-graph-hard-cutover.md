@@ -1,12 +1,14 @@
 # Resource Provenance Graph - Hard Cutover
 
-Status: SPEC - not built
-Author: design synthesis, 2026-06-07. Rev 2: 2026-06-09 (13-agent survey + reviewer notes). Rev 3: 2026-06-09 — flat-table restructure: sidecars deleted, relation verbs killed, run telemetry and generated content evicted from the edge model. Rev 4: 2026-06-09 — column-justification pass: locators and `updated_at` dropped; `origin`/`ordinal`/`snapshot` pinned.
+Status: BUILT — resource provenance graph landed; Rev 5 notes/pages amendment implemented
+Author: design synthesis, 2026-06-07. Rev 2: 2026-06-09 (13-agent survey + reviewer notes). Rev 3: 2026-06-09 — flat-table restructure: sidecars deleted, relation verbs killed, run telemetry and generated content evicted from the edge model. Rev 4: 2026-06-09 — column-justification pass: locators and `updated_at` dropped; `origin`/`ordinal`/`snapshot` pinned. Rev 5: 2026-06-10 — notes/pages graph amendment: ordered adjacency keys, `note_containment`, and `tag`.
 Type: hard cutover - greenfield, one-user prototype, no production data migration, no fallbacks, no backward compatibility, no compatibility shims
 
 Rev 3 changes: one flat `resource_edges` table replaces the base-plus-sidecar design (§8); the six workspace relation verbs are deleted — a code census showed they are machine writer-discriminators plus dead values, not user vocabulary, and the real job moves to an `origin` column (§1, §2.5, §5.4); `kind` collapses to the three stances `context | supports | contradicts` and `role` dies (§5, §8.1); `message_retrievals` + `message_retrieval_candidate_ledgers` are **no longer dropped** — they are chat run telemetry, not connections, and stay in the chat domain (§2.3, N7); Oracle marginalia moves to an oracle-owned `oracle_reading_folios` domain table pointing at its citation edge (§5.3, §8.3); deletion rules collapse to two (§9.6). Carried from Rev 2: sequencing gate (§0.1), concordance equivalence contract (§5.3), coverage-is-not-an-edge (§5.6, N8), transaction discipline (§9.0), contributor-merge repoint (§9.6), gate proofs (§17.0).
 
 Rev 4 changes: column-justification pass — every column must name the thing that breaks without it (§8.1). **Dropped:** `source_locator`/`target_locator` (position lives in the target grain: the graph points at `evidence_span`/`content_chunk`/`highlight`/`note_block` objects, which carry their own anchoring; residual jump precision is the snapshot `deep_link`) and `updated_at` (edges are create/delete-only rows — nothing updates). **Kept with pinned justification:** `origin` (writer ownership: note-body replace-set scoping, highlight-note precision, delete guards, `reference_added`), `ordinal` (the `[N]` in stored prose — data, not metadata), `snapshot` (the evidence-outlives-target invariant; citations only). Dropping the ordinal/snapshot pair would not be flatter — it would move citations back into a second table.
+
+Rev 5 changes: `docs/cutovers/notes-pages-object-graph-hard-cutover.md` extends, rather than forks, this graph. Ordered document containment is a connection fact, so `source_order_key` and `target_order_key` live on `resource_edges`; they are adjacency-order keys, not citation locators. `origin=note_containment` is the sole writer for page/block containment edges. `scheme=tag` and the `tags` table add first-class tag resources. Bare-edge uniqueness is scoped by `(user_id, origin, source, target)` so a user edge, body-derived edge, highlight attachment, and containment edge can coexist over the same endpoints without clobbering each other.
 
 Precedents:
 - `docs/rules/cleanliness.md`: one owner per concern, collapse dangerous duplication, typed public contracts, no fallback lanes.
@@ -80,7 +82,8 @@ The SME question "what invariant owns this edge?" resolves to a sharper rule: **
 
 `resource_resolver.py` already owns `<scheme>:<uuid>`, presentation, missing behavior, and prompt-facing summaries. `resource_loaders.py` owns scheme-specific SQL and permissions. This is the correct foundation, but it is currently scoped to conversation references and prompt assembly.
 
-Current schemes (`resource_resolver.RESOURCE_URI_SCHEMES`, main as of 2026-06-09):
+Pre-cutover seed schemes (`resource_resolver.RESOURCE_URI_SCHEMES`, main as of
+2026-06-09, before the graph service became canonical):
 
 ```text
 media
@@ -144,7 +147,7 @@ G1. **One canonical resource identity.** Every persisted edge uses `ResourceRef`
 
 G2. **One graph owner.** All edge writes go through `services/resource_graph/*`.
 
-G3. **One flat table, honest flatness.** No sidecars and no null soup: run telemetry and generated content live in their domains; the residual edge payload (`kind`, `origin`, and the citation pair `ordinal`+`snapshot`) is constrained per kind so illegal states are unrepresentable. Position is never edge payload — the graph points at the positioned object (G1's granular schemes).
+G3. **One flat table, honest flatness.** No sidecars and no null soup: run telemetry and generated content live in their domains; the residual edge payload (`kind`, `origin`, ordered adjacency keys, and the citation pair `ordinal`+`snapshot`) is constrained per origin/kind so illegal states are unrepresentable. Locators are never edge payload — the graph points at the positioned object (G1's granular schemes). Ordered adjacency is edge payload only when the edge itself is the ordered containment relationship.
 
 G4. **Feature behavior preserved.** Chat replay, app-search scoping, `read_resource` admission, `reference_added`, citation chips, Oracle concordance, Oracle marginalia, note backlinks, highlight notes, and user link CRUD all survive with no compatibility layer.
 
@@ -335,6 +338,7 @@ library_intelligence_artifact
 external_snapshot
 contributor
 podcast
+tag
 ```
 
 Compatibility aliases are not kept. `span:` becomes `evidence_span:` and `chunk:` becomes `content_chunk:` in the final state. This is a hard cutover; all callers move. (`message_tool_call` from Rev 2 is dropped: tool calls no longer source edges — retrieval telemetry stays in its own table.)
@@ -359,6 +363,7 @@ ResourceScheme = Literal[
     "external_snapshot",
     "contributor",
     "podcast",
+    "tag",
 ]
 
 @dataclass(frozen=True, slots=True)
@@ -391,11 +396,13 @@ The one table.
 | `id` | uuid pk | |
 | `user_id` | uuid not null | single-user owner and cleanup scope |
 | `kind` | text not null | CHECK `context`, `supports`, `contradicts` — the full stance vocabulary, for every edge |
-| `origin` | text not null | CHECK `user`, `citation`, `system`, `note_body`, `highlight_note` — the writer that owns the row |
+| `origin` | text not null | CHECK `user`, `citation`, `system`, `note_body`, `highlight_note`, `note_containment` — the writer that owns the row |
 | `source_scheme` | text not null | `ResourceScheme` CHECK |
 | `source_id` | uuid not null | |
 | `target_scheme` | text not null | `ResourceScheme` CHECK |
 | `target_id` | uuid not null | |
+| `source_order_key` | text null | adjacency order of the target in the source list; only meaningful for ordered graph projections such as note containment |
+| `target_order_key` | text null | adjacency order of the source in the target list where the product exposes an ordered inbound projection |
 | `ordinal` | int null | citation render index; present ⇔ this edge renders as a citation chip |
 | `snapshot` | jsonb null | display snapshot: title/excerpt/section_label/deep_link/result_type only |
 | `created_at` | timestamptz not null default now() | |
@@ -406,19 +413,28 @@ Every column must name what breaks without it:
 |---|---|
 | `kind` | the product semantics — the user's three stances are the entire edge vocabulary |
 | `origin` | writer ownership: note-body sync cannot replace-set its rows without clobbering user links and the highlight attachment; `linked_note_blocks_for_highlights` cannot tell the attached note from a note whose body merely mentions the highlight; the route cannot restrict user deletes to user rows; `reference_added` cannot distinguish citation-materialized refs |
+| `source_order_key`/`target_order_key` | ordered graph projections need deterministic order without leaking parentage/order back onto note/page rows; containment order is a property of the edge's adjacency list |
 | `ordinal` | the `[N]` markers in stored assistant prose dangle — the number is data the text depends on; without it, citations need their own table again |
 | `snapshot` | the evidence invariant dies: delete any source and every past answer's citations blank out (migration 0093 removed cascades precisely to prevent this) |
 | `created_at` | cursor ordering for context/connection lists |
 
-Deliberately absent: **locators** (position is never edge payload — point at the positioned object: `evidence_span`, `content_chunk`, `highlight`, `note_block`; residual precision is the snapshot `deep_link`), **`updated_at`** (edges are immutable rows — create and delete only; "editing" a citation set is a replace-set), **`metadata`** (N6), **relation verbs** (§2.5).
+Deliberately absent: **locators** (reader/text position is never edge payload — point at the positioned object: `evidence_span`, `content_chunk`, `highlight`, `note_block`; residual precision is the snapshot `deep_link`), **`updated_at`** (edges are immutable rows — create and delete only; "editing" a citation set is a replace-set), **`metadata`** (N6), **relation verbs** (§2.5).
 
 Indexes and constraints:
 
-- `(user_id, source_scheme, source_id, created_at, id)` and `(user_id, target_scheme, target_id, created_at, id)` — the two halves of every connections/backlink/reverse-lookup query
-- partial unique `(source_scheme, source_id, ordinal)` where `ordinal is not null` — dense citation numbering per output
-- partial unique `(source_scheme, source_id, target_scheme, target_id)` where `ordinal is null` — context/link dedup (directed; undirected user dedup is the service's both-direction check, as today)
+- `(user_id, origin, source_scheme, source_id, source_order_key, id)` and `(user_id, origin, target_scheme, target_id, target_order_key, id)` — the two halves of every ordered adjacency, connections, backlink, and reverse-lookup query
+- partial unique `(user_id, source_scheme, source_id, ordinal)` where `ordinal is not null` — dense citation numbering per output
+- partial unique `(user_id, origin, source_scheme, source_id, target_scheme, target_id)` where `ordinal is null` — context/link dedup scoped to the writer origin (directed; undirected user dedup is the service's both-direction check, as today)
+- partial unique `(user_id, source_scheme, source_id, source_order_key)` where `origin = 'note_containment' and source_order_key is not null` — one child occurrence per parent-order slot
+- partial unique `(user_id, target_scheme, target_id, target_order_key)` where `origin = 'note_containment' and target_order_key is not null` — one inbound occurrence per target-order slot where used
+- partial unique `(user_id, target_scheme, target_id)` where `origin = 'note_containment'` — this cutover enforces one containment occurrence per block until transclusion carries occurrence edge ids through every projection
+- CHECK `source_order_key is null or char_length(source_order_key) between 1 and 64`
+- CHECK `target_order_key is null or char_length(target_order_key) between 1 and 64`
 - CHECK `ordinal >= 1`
 - CHECK `ordinal is null or snapshot is not null` — a citation must render after its target dies
+- CHECK `ordinal is null or origin = 'citation'`
+- CHECK `snapshot is null or (origin = 'citation' and ordinal is not null)`
+- CHECK citation rows carry no order keys; note-containment rows have valid containment endpoints and `source_order_key`; highlight-note rows are exactly `highlight -> note_block`
 - CHECK snapshot is a JSON object
 
 Notes:
@@ -888,7 +904,7 @@ AC18. No old route modules are registered.
 
 AC19. No compatibility views/triggers/functions exist for old tables.
 
-AC20. Illegal-state rejection is tested per kind/origin: ordinal without snapshot, unknown origin, stance values outside the three, duplicate ordinals per source, duplicate bare pairs.
+AC20. Illegal-state rejection is tested per kind/origin: ordinal without snapshot, unknown origin, stance values outside the three, duplicate ordinals per viewer/source, duplicate bare pairs per viewer/origin, and duplicate containment order slots.
 
 ### 17.3 Parity and invariants
 
@@ -970,7 +986,7 @@ Allowed mentions: this spec, drop migration, migration tests, changelog entries.
 ## 19. Risks
 
 R1. **Flat-table constraint sprawl.**
-Mitigation: the kind and origin vocabularies are CHECK-capped (3 and 5); every partial constraint is enumerated in §8.1 and tested by AC20. A new origin requires a migration and a sole writer (N9).
+Mitigation: the kind and origin vocabularies are CHECK-capped (3 and 6); every partial constraint is enumerated in §8.1 and tested by AC20. A new origin requires a migration and a sole writer (N9).
 
 R2. **Losing chat replay fidelity.**
 Mitigation: by construction — telemetry does not move. Only citation chips re-source to edges, covered by the P1 golden fixture.

@@ -10,11 +10,11 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import (
-    can_read_media,
     visible_conversation_ids_cte_sql,
     visible_media_ids_cte_sql,
     visible_podcast_ids_cte_sql,
 )
+from nexus.db.models import NoteBlock, Page
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.logging import get_logger
 from nexus.schemas.retrieval import retrieval_locator_json
@@ -28,6 +28,7 @@ from nexus.schemas.search import (
 from nexus.services import media_intelligence
 from nexus.services.contributors import resolve_canonical_contributor_ids
 from nexus.services.locator_resolver import locator_from_resolution, resolve_evidence_span
+from nexus.services.resource_graph import documents as graph_documents
 from nexus.services.search.constants import (
     CANDIDATES_PER_TYPE,
     MAX_LIMIT,
@@ -340,50 +341,64 @@ def get_search_result(
                     media_contributor_credits AS ({contributor_credits_rollup_cte_sql("media_id")})
                 SELECT
                     cc.id,
-                    cc.owner_id AS media_id,
+                    cc.owner_kind,
+                    cc.owner_id,
                     m.kind,
                     m.title,
                     m.published_date,
                     mcc.contributor_credits,
+                    p.title AS page_title,
+                    p.user_id AS page_user_id,
                     cc.chunk_text,
                     cc.source_kind,
                     cc.primary_evidence_span_id
                 FROM content_chunks cc
-                JOIN media m ON m.id = cc.owner_id AND cc.owner_kind = 'media'
-                JOIN visible_media vm ON vm.media_id = cc.owner_id
+                LEFT JOIN media m ON m.id = cc.owner_id AND cc.owner_kind = 'media'
+                LEFT JOIN visible_media vm ON vm.media_id = cc.owner_id
+                LEFT JOIN pages p ON p.id = cc.owner_id AND cc.owner_kind = 'page'
                 JOIN content_index_states mcis ON mcis.owner_kind = cc.owner_kind
                     AND mcis.owner_id = cc.owner_id
                     AND mcis.status = 'ready'
                 LEFT JOIN media_contributor_credits mcc ON mcc.media_id = m.id
                 WHERE cc.id = :id
+                  AND (vm.media_id IS NOT NULL OR p.user_id = :viewer_id)
                 """
             ),
             {"viewer_id": viewer_id, "id": chunk_id},
         ).first()
-        if row is None or row[8] is None:
+        if row is None or row[11] is None:
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
-        if evidence_span_ids and row[8] not in evidence_span_ids:
+        if evidence_span_ids and row[11] not in evidence_span_ids:
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
         resolution = resolve_evidence_span(
             db,
             viewer_id=viewer_id,
-            evidence_span_id=row[8],
+            evidence_span_id=row[11],
         )
         _require_resolved_evidence(resolution)
+        owner_kind = str(row[1])
+        source_kind = str(row[3] or "page") if owner_kind == "media" else "page"
+        source_title = str(row[4] if owner_kind == "media" else row[7])
         return _result_to_out(
             _RankedContentChunkResult(
                 id=row[0],
-                snippet=_truncate_snippet(str(row[6] or "")),
-                source_kind=str(row[7]),
-                evidence_span_ids=[row[8]],
+                snippet=_truncate_snippet(str(row[9] or "")),
+                source_kind=str(row[10]),
+                evidence_span_ids=[row[11]],
                 citation_label=str(resolution["citation_label"]),
                 locator=locator_from_resolution(
                     resolution,
-                    media_id=row[1],
-                    media_kind=str(row[2] or ""),
+                    media_id=row[2],
+                    media_kind=source_kind,
                 ),
                 resolver=dict(resolution["resolver"]),
-                source=_build_search_source(row[1], row[2], row[3], row[5], row[4]),
+                source=_build_search_source(
+                    row[2],
+                    source_kind,
+                    source_title,
+                    row[6] if owner_kind == "media" else None,
+                    row[5] if owner_kind == "media" else None,
+                ),
                 score=score,
             )
         )
@@ -483,40 +498,37 @@ def get_search_result(
 
     if result_type == "note_block":
         block_id = _uuid_from_search_id(result_id)
-        row = db.execute(
-            text(
-                """
-                SELECT nb.id, nb.page_id, p.title, nb.body_text
-                FROM note_blocks nb
-                JOIN pages p ON p.id = nb.page_id
-                WHERE nb.id = :id
-                  AND nb.user_id = :viewer_id
-                """
-            ),
-            {"viewer_id": viewer_id, "id": block_id},
-        ).first()
-        if row is None:
+        block = db.get(NoteBlock, block_id)
+        if block is None or block.user_id != viewer_id:
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
-        if not str(row[3] or ""):
+        if not str(block.body_text or ""):
+            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
+        occurrence = graph_documents.find_block_occurrence(
+            db,
+            user_id=viewer_id,
+            block_id=block_id,
+        )
+        page = db.get(Page, occurrence.page_id)
+        if page is None or page.user_id != viewer_id:
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
         return _result_to_out(
             _RankedNoteBlockResult(
-                id=row[0],
-                snippet=_truncate_snippet(str(row[3] or "")),
-                page_id=row[1],
-                page_title=row[2],
-                body_text=row[3],
+                id=block.id,
+                snippet=_truncate_snippet(str(block.body_text or "")),
+                page_id=page.id,
+                page_title=page.title,
+                body_text=block.body_text,
                 score=score,
                 locator=retrieval_locator_json(
                     {
                         "type": "note_block_offsets",
-                        "page_id": str(row[1]),
-                        "block_id": str(row[0]),
+                        "page_id": str(page.id),
+                        "block_id": str(block.id),
                         "start_offset": 0,
-                        "end_offset": len(str(row[3] or "")),
+                        "end_offset": len(str(block.body_text or "")),
                     }
                 )
-                if row[3]
+                if block.body_text
                 else None,
             )
         )
@@ -794,25 +806,33 @@ def get_search_result(
         row = db.execute(
             text(
                 f"""
-                WITH media_contributor_credits AS ({contributor_credits_rollup_cte_sql("media_id")})
+                WITH
+                    visible_media AS ({visible_media_ids_cte_sql()}),
+                    media_contributor_credits AS ({contributor_credits_rollup_cte_sql("media_id")})
                 SELECT
                     es.id,
-                    es.owner_id AS media_id,
+                    es.owner_kind,
+                    es.owner_id,
                     es.span_text,
                     es.citation_label,
                     m.kind,
                     m.title,
                     m.published_date,
-                    mcc.contributor_credits
+                    mcc.contributor_credits,
+                    p.title AS page_title,
+                    p.user_id AS page_user_id
                 FROM evidence_spans es
-                JOIN media m ON m.id = es.owner_id AND es.owner_kind = 'media'
+                LEFT JOIN media m ON m.id = es.owner_id AND es.owner_kind = 'media'
+                LEFT JOIN visible_media vm ON vm.media_id = es.owner_id
+                LEFT JOIN pages p ON p.id = es.owner_id AND es.owner_kind = 'page'
                 LEFT JOIN media_contributor_credits mcc ON mcc.media_id = m.id
                 WHERE es.id = :id
+                  AND (vm.media_id IS NOT NULL OR p.user_id = :viewer_id)
                 """
             ),
-            {"id": evidence_span_id},
+            {"viewer_id": viewer_id, "id": evidence_span_id},
         ).first()
-        if row is None or not can_read_media(db, viewer_id, row[1]):
+        if row is None:
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
         resolution = resolve_evidence_span(
             db,
@@ -820,17 +840,26 @@ def get_search_result(
             evidence_span_id=row[0],
         )
         _require_resolved_evidence(resolution)
+        owner_kind = str(row[1])
+        source_kind = str(row[5] or "page") if owner_kind == "media" else "page"
+        source_title = str(row[6] if owner_kind == "media" else row[9])
         return _result_to_out(
             _RankedEvidenceSpanResult(
                 id=row[0],
-                snippet=_truncate_snippet(str(row[2] or "")),
-                citation_label=str(row[3] or resolution.get("citation_label") or ""),
+                snippet=_truncate_snippet(str(row[3] or "")),
+                citation_label=str(row[4] or resolution.get("citation_label") or ""),
                 locator=locator_from_resolution(
                     resolution,
-                    media_id=row[1],
-                    media_kind=str(row[4]),
+                    media_id=row[2],
+                    media_kind=source_kind,
                 ),
-                source=_build_search_source(row[1], row[4], row[5], row[7], row[6]),
+                source=_build_search_source(
+                    row[2],
+                    source_kind,
+                    source_title,
+                    row[8] if owner_kind == "media" else None,
+                    row[7] if owner_kind == "media" else None,
+                ),
                 score=score,
             )
         )

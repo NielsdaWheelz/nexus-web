@@ -17,12 +17,15 @@ from uuid import UUID, uuid4
 import pytest
 
 from nexus.db.models import ResourceEdge
+from nexus.schemas.notes import CreatePageRequest
+from nexus.services import notes
 from tests.factories import (
     create_test_conversation,
     create_test_media_in_library,
     get_user_default_library,
 )
 from tests.helpers import auth_headers, create_test_user_id
+from tests.note_document_helpers import create_block_via_document
 from tests.utils.db import DirectSessionManager
 
 pytestmark = pytest.mark.integration
@@ -42,6 +45,8 @@ EDGE_KEYS = {
     "origin",
     "source_ref",
     "target_ref",
+    "source_order_key",
+    "target_order_key",
     "ordinal",
     "snapshot",
     "source_label",
@@ -300,6 +305,46 @@ def test_create_edge_accepts_stance_kind(auth_client, direct_db: DirectSessionMa
 
     assert response.status_code == 201, response.text
     assert response.json()["data"]["kind"] == "contradicts"
+
+
+def test_create_edge_accepts_page_and_note_media_attachments(
+    auth_client, direct_db: DirectSessionManager
+):
+    user_id = _bootstrap_user(auth_client, direct_db)
+    direct_db.register_cleanup("note_view_states", "user_id", user_id)
+    direct_db.register_cleanup("note_blocks", "user_id", user_id)
+    direct_db.register_cleanup("pages", "user_id", user_id)
+    media_id = _create_media(direct_db, user_id, title="Attached PDF")
+    with direct_db.session() as session:
+        page = notes.create_page(
+            session,
+            user_id,
+            CreatePageRequest(title="Attachment page"),
+        )
+        block = create_block_via_document(
+            session,
+            user_id,
+            dict(page_id=page.id, body_markdown="Attach here"),
+        )
+
+    headers = auth_headers(user_id)
+    page_response = auth_client.post(
+        "/resource-graph/edges",
+        headers=headers,
+        json={"source_ref": f"page:{page.id}", "target_ref": f"media:{media_id}"},
+    )
+    block_response = auth_client.post(
+        "/resource-graph/edges",
+        headers=headers,
+        json={"source_ref": f"note_block:{block.id}", "target_ref": f"media:{media_id}"},
+    )
+
+    assert page_response.status_code == 201, page_response.text
+    assert block_response.status_code == 201, block_response.text
+    assert page_response.json()["data"]["origin"] == "user"
+    assert block_response.json()["data"]["origin"] == "user"
+    assert page_response.json()["data"]["target_ref"] == f"media:{media_id}"
+    assert block_response.json()["data"]["target_ref"] == f"media:{media_id}"
 
 
 def test_create_edge_rejects_unknown_kind(auth_client, direct_db: DirectSessionManager):

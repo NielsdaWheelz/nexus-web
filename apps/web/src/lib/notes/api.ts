@@ -2,7 +2,6 @@ import { apiFetch } from "@/lib/api/client";
 import { noteBlockResource, notePagesResource } from "@/lib/api/resource";
 import { assertNoTopLevelLegacyArtifactIdentityKey } from "@/lib/currentArtifactIdentity";
 import { todayLocalDate } from "@/lib/localDate";
-import type { ObjectRef } from "@/lib/objectRefs";
 import { isRecord } from "@/lib/validation";
 
 export type NoteBlockKind =
@@ -43,6 +42,7 @@ export interface NotePageSummary {
   id: string;
   title: string;
   description: string | null;
+  documentVersion: number;
   updatedAt?: string;
 }
 
@@ -72,25 +72,43 @@ interface NotePageDocumentResponse {
 
 export interface SaveNotePageDocumentBlock {
   id: string;
-  parentBlockId: string | null;
-  beforeBlockId: string | null;
-  afterBlockId: string | null;
   blockKind: NoteBlockKind;
   bodyPmJson: Record<string, unknown>;
+}
+
+interface SaveNotePageDocumentParent {
+  scheme: "page" | "note_block";
+  id: string;
+}
+
+export interface SaveNotePageDocumentChild {
+  blockId: string;
+  sourceOrderKey: string;
   collapsed: boolean;
+}
+
+export interface SaveNotePageDocumentContainment {
+  parent: SaveNotePageDocumentParent;
+  children: SaveNotePageDocumentChild[];
 }
 
 export interface SaveNotePageDocumentInput {
   clientMutationId: string;
+  baseDocumentVersion: number;
+  title?: string | null;
   focusBlockId?: string | null;
-  topLevelParentBlockId?: string | null;
   blocks: SaveNotePageDocumentBlock[];
-  deletedBlocks: string[];
+  containment: SaveNotePageDocumentContainment[];
+  deletedBlockIds: string[];
 }
 
 export interface SaveNotePageDocumentResult {
   page: NotePage;
   clientMutationId: string;
+  documentVersion: number;
+  changedBlockIds: string[];
+  changedEdgeIds: string[];
+  reindexJobId: string | null;
 }
 
 function browserTimeZone(): string {
@@ -166,6 +184,10 @@ export function normalizePageSummary(raw: Record<string, unknown>): NotePageSumm
       typeof raw.description === "string" && raw.description.trim()
         ? raw.description
         : null,
+    documentVersion: requiredPositiveInteger(
+      raw.documentVersion ?? raw.document_version,
+      "document version"
+    ),
     updatedAt:
       typeof raw.updatedAt === "string"
         ? raw.updatedAt
@@ -191,6 +213,14 @@ function requiredString(value: unknown, label: string): string {
     throw new Error(`Notes API response is missing ${label}`);
   }
   return value;
+}
+
+function requiredPositiveInteger(value: unknown, label: string): number {
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    throw new Error(`Notes API response is missing ${label}`);
+  }
+  return parsed;
 }
 
 export async function fetchNotePages(): Promise<NotePageSummary[]> {
@@ -232,25 +262,39 @@ export async function fetchDailyNotePage(localDate = todayLocalDate()): Promise<
 }
 
 export async function quickCaptureDailyNote(input: {
-  bodyMarkdown: string;
+  blockId: string;
+  clientMutationId: string;
+  bodyMarkdown?: string;
+  bodyPmJson?: Record<string, unknown>;
   localDate?: string;
 }): Promise<NoteBlock> {
+  const body: Record<string, unknown> = {
+    id: input.blockId,
+    client_mutation_id: input.clientMutationId,
+  };
+  if (input.bodyMarkdown !== undefined) {
+    body.body_markdown = input.bodyMarkdown;
+  }
+  if (input.bodyPmJson !== undefined) {
+    body.body_pm_json = input.bodyPmJson;
+  }
+  if (input.localDate !== undefined) {
+    body.local_date = input.localDate;
+  }
   const response = await apiFetch<NoteBlockResponse>(
-    `/api/notes/daily/${input.localDate ?? todayLocalDate()}/quick-capture?${new URLSearchParams({
+    `/api/notes/quick-capture?${new URLSearchParams({
       time_zone: browserTimeZone(),
     }).toString()}`,
     {
       method: "POST",
-      body: JSON.stringify({
-        body_markdown: input.bodyMarkdown,
-      }),
+      body: JSON.stringify(body),
     }
   );
   return normalizeBlock(requiredRecord(response.data, "note block"));
 }
 
 export async function fetchNotePage(pageId: string): Promise<NotePage> {
-  const response = await apiFetch<NotePageResponse>(`/api/notes/pages/${pageId}`, {
+  const response = await apiFetch<NotePageResponse>(`/api/notes/pages/${pageId}/document`, {
     cache: "no-store",
   });
   return normalizePage(requiredRecord(response.data, "note page"));
@@ -277,18 +321,23 @@ export async function saveNotePageDocument(
       method: "PATCH",
       body: JSON.stringify({
         client_mutation_id: input.clientMutationId,
+        base_document_version: input.baseDocumentVersion,
+        title: input.title ?? null,
         focus_block_id: input.focusBlockId ?? null,
-        top_level_parent_block_id: input.topLevelParentBlockId ?? null,
         blocks: input.blocks.map((block) => ({
           id: block.id,
-          parent_block_id: block.parentBlockId,
-          before_block_id: block.beforeBlockId,
-          after_block_id: block.afterBlockId,
           block_kind: block.blockKind,
           body_pm_json: block.bodyPmJson,
-          collapsed: block.collapsed,
         })),
-        deleted_blocks: input.deletedBlocks,
+        containment: input.containment.map((group) => ({
+          parent: group.parent,
+          children: group.children.map((child) => ({
+            block_id: child.blockId,
+            source_order_key: child.sourceOrderKey,
+            collapsed: child.collapsed,
+          })),
+        })),
+        deleted_block_ids: input.deletedBlockIds,
       }),
     }
   );
@@ -296,6 +345,14 @@ export async function saveNotePageDocument(
   return {
     page: normalizePage(requiredRecord(data.page, "document page")),
     clientMutationId: requiredString(data.clientMutationId, "document client mutation id"),
+    documentVersion: requiredPositiveInteger(data.documentVersion, "document version"),
+    changedBlockIds: Array.isArray(data.changedBlockIds)
+      ? data.changedBlockIds.map((blockId) => String(blockId))
+      : [],
+    changedEdgeIds: Array.isArray(data.changedEdgeIds)
+      ? data.changedEdgeIds.map((edgeId) => String(edgeId))
+      : [],
+    reindexJobId: typeof data.reindexJobId === "string" ? data.reindexJobId : null,
   };
 }
 
@@ -305,61 +362,4 @@ export async function fetchNoteBlock(blockId: string): Promise<NoteBlock> {
     { cache: "no-store" },
   );
   return normalizeBlock(requiredRecord(response.data, "note block"));
-}
-
-export async function createNoteBlock(input: {
-  id?: string;
-  pageId?: string | null;
-  parentBlockId?: string | null;
-  afterBlockId?: string | null;
-  blockKind?: NoteBlockKind;
-  bodyPmJson?: Record<string, unknown>;
-  bodyMarkdown?: string;
-  /** A highlight to attach this block to (an `origin=highlight_note` edge). */
-  linkedObject?: ObjectRef;
-}): Promise<NoteBlock> {
-  const response = await apiFetch<NoteBlockResponse>("/api/notes/blocks", {
-    method: "POST",
-    body: JSON.stringify({
-      page_id: input.pageId ?? null,
-      id: input.id,
-      parent_block_id: input.parentBlockId ?? null,
-      after_block_id: input.afterBlockId ?? null,
-      block_kind: input.blockKind ?? "bullet",
-      body_pm_json: input.bodyPmJson ?? null,
-      body_markdown: input.bodyMarkdown,
-      linked_object: input.linkedObject
-        ? {
-            object_type: input.linkedObject.objectType,
-            object_id: input.linkedObject.objectId,
-          }
-        : null,
-    }),
-  });
-  return normalizeBlock(requiredRecord(response.data, "note block"));
-}
-
-export async function updateNoteBlock(
-  blockId: string,
-  updates: {
-    bodyPmJson?: Record<string, unknown>;
-    blockKind?: NoteBlockKind;
-    collapsed?: boolean;
-  }
-): Promise<NoteBlock> {
-  const response = await apiFetch<NoteBlockResponse>(`/api/notes/blocks/${blockId}`, {
-    method: "PATCH",
-    body: JSON.stringify({
-      body_pm_json: updates.bodyPmJson,
-      block_kind: updates.blockKind,
-      collapsed: updates.collapsed,
-    }),
-  });
-  return normalizeBlock(requiredRecord(response.data, "note block"));
-}
-
-export async function deleteNoteBlock(blockId: string): Promise<void> {
-  await apiFetch(`/api/notes/blocks/${blockId}`, {
-    method: "DELETE",
-  });
 }

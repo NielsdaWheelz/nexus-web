@@ -17,6 +17,7 @@ import {
   MessagesSquare,
   Sparkles,
   StickyNote,
+  Tag,
   TextQuote,
   User,
   type LucideIcon,
@@ -45,6 +46,7 @@ const RESOURCE_SCHEME_ICONS = {
   external_snapshot: Globe,
   contributor: User,
   podcast: Disc3,
+  tag: Tag,
 } satisfies Record<ResourceScheme, LucideIcon>;
 
 // Schemes that map to an openable object-ref type (`objectRefs.ts`). Schemes
@@ -62,6 +64,7 @@ const RESOURCE_SCHEME_OBJECT_TYPES: Partial<Record<ResourceScheme, ObjectType>> 
   message: "message",
   contributor: "contributor",
   podcast: "podcast",
+  tag: "tag",
 };
 
 export function resourceObjectTypeForScheme(scheme: ResourceScheme): ObjectType | null {

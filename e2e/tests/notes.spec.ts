@@ -52,6 +52,29 @@ interface HighlightsPayload {
   };
 }
 
+interface NotePageDocumentPayload {
+  data: {
+    id: string;
+    documentVersion: number;
+    blocks: NoteBlockPayload[];
+  };
+}
+
+interface NoteBlockPayload {
+  id: string;
+  bodyText: string;
+  children: NoteBlockPayload[];
+}
+
+interface ResourceGraphEdgesPayload {
+  data: Array<{
+    origin: string;
+    source_ref: string;
+    target_ref: string;
+    source_order_key: string | null;
+  }>;
+}
+
 function readSeededNonPdfMedia(): SeededNonPdfMedia {
   const seedPath = path.join(__dirname, "..", ".seed", "non-pdf-media.json");
   const parsed = JSON.parse(readFileSync(seedPath, "utf-8")) as SeededNonPdfMedia;
@@ -141,6 +164,24 @@ async function blockedExactsForFragment(
   return payload.data.highlights.map((highlight) => highlight.exact);
 }
 
+async function readNotePageDocument(page: Page, pageId: string) {
+  const response = await page.request.get(`/api/notes/pages/${pageId}/document`);
+  await expectOk(response, "Fetch note page document");
+  return ((await response.json()) as NotePageDocumentPayload).data;
+}
+
+async function readResourceGraphEdges(
+  page: Page,
+  ref: string,
+  origin = "note_containment"
+) {
+  const response = await page.request.get(
+    `/api/resource-graph/edges?ref=${encodeURIComponent(ref)}&origin=${origin}`
+  );
+  await expectOk(response, `Fetch ${origin} edges`);
+  return ((await response.json()) as ResourceGraphEdgesPayload).data;
+}
+
 /**
  * Resolves with the highlight created by the note verb (selection popover
  * "Add note" / the `n` chord), which POSTs to the fragment highlights
@@ -177,6 +218,118 @@ async function scrollHighlightIntoView(contentPane: Locator, highlightId: string
 }
 
 test.describe("notes cutover", () => {
+  test("persists page outline edits through the versioned graph document command", async ({
+    page,
+  }, testInfo) => {
+    test.slow();
+    const deviceId = workspaceE2eDeviceId(testInfo, "e2e-page-document");
+    const title = `E2E graph page ${Date.now()}`;
+    const rootText = `E2E graph root ${Date.now()}`;
+    const childText = `E2E graph child ${Date.now()}`;
+    let pageId: string | null = null;
+    let productError: unknown = null;
+
+    try {
+      const createResponse = await page.request.post("/api/notes/pages", {
+        data: { title },
+        headers: stateChangingApiHeaders(),
+      });
+      await expectOk(createResponse, "Create notes page");
+      const created = ((await createResponse.json()) as NotePageDocumentPayload).data;
+      pageId = created.id;
+
+      await gotoSinglePaneWorkspace(page, deviceId, `/pages/${pageId}`);
+      const activePane = activeWorkspacePane(page);
+      const outline = activePane.getByRole("textbox", { name: "Notes outline" });
+      await expect(outline).toBeVisible({ timeout: 15_000 });
+      await outline.click();
+      await page.keyboard.insertText(rootText);
+      await page.keyboard.press("Enter");
+      await page.keyboard.insertText(childText);
+      await page.keyboard.press("Tab");
+
+      const saveResponse = page.waitForResponse(
+        (response) =>
+          response.request().method() === "PATCH" &&
+          response.url().includes(`/api/notes/pages/${pageId}/document`) &&
+          response.ok(),
+        { timeout: 20_000 }
+      );
+      await activePane.getByRole("textbox", { name: "Page title" }).click();
+      await saveResponse;
+
+      await expect
+        .poll(
+          async () => {
+            if (!pageId) return false;
+            const document = await readNotePageDocument(page, pageId);
+            const root = document.blocks.find((block) => block.bodyText === rootText);
+            return (
+              document.documentVersion > created.documentVersion &&
+              root?.children.some((child) => child.bodyText === childText) === true
+            );
+          },
+          { timeout: 20_000 }
+        )
+        .toBe(true);
+
+      const document = await readNotePageDocument(page, pageId);
+      const rootBlock = document.blocks.find((block) => block.bodyText === rootText);
+      expect(rootBlock, "Expected persisted root block").toBeTruthy();
+      const childBlock = rootBlock?.children.find((block) => block.bodyText === childText);
+      expect(childBlock, "Expected persisted nested child block").toBeTruthy();
+      if (!rootBlock || !childBlock) throw new Error("Missing persisted outline blocks");
+
+      const pageEdges = await readResourceGraphEdges(page, `page:${pageId}`);
+      expect(pageEdges).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            origin: "note_containment",
+            source_ref: `page:${pageId}`,
+            target_ref: `note_block:${rootBlock.id}`,
+            source_order_key: "0000000001",
+          }),
+        ])
+      );
+
+      const rootEdges = await readResourceGraphEdges(page, `note_block:${rootBlock.id}`);
+      expect(rootEdges).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            origin: "note_containment",
+            source_ref: `note_block:${rootBlock.id}`,
+            target_ref: `note_block:${childBlock.id}`,
+            source_order_key: "0000000001",
+          }),
+        ])
+      );
+
+      await page.reload({ waitUntil: "domcontentloaded" });
+      const reloadedOutline = activeWorkspacePane(page).getByRole("textbox", {
+        name: "Notes outline",
+      });
+      await expect(reloadedOutline).toContainText(rootText, { timeout: 15_000 });
+      await expect(reloadedOutline).toContainText(childText, { timeout: 15_000 });
+    } catch (error) {
+      productError = error;
+      throw error;
+    } finally {
+      const cleanupErrors: unknown[] = [];
+      if (pageId) {
+        try {
+          await deleteE2eResource(
+            page.request,
+            `/api/notes/pages/${pageId}`,
+            `Notes page ${pageId}`
+          );
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+      }
+      throwE2eCleanupFailures("Page document graph command", productError, cleanupErrors);
+    }
+  });
+
   test("creates a linked highlight note, persists object refs, opens note blocks, and accepts note context", async ({
     page,
   }, testInfo) => {
@@ -216,7 +369,6 @@ test.describe("notes cutover", () => {
       await noteEditor.click();
       await page.keyboard.insertText(`${noteText} ${mediaRefText}`);
 
-      await expect(linkedRow.getByText("Saved")).toBeVisible({ timeout: 15_000 });
       await expect
         .poll(() => linkedNoteForHighlight(page, highlight.fragmentId, highlight.id), {
           timeout: 15_000,
@@ -236,9 +388,34 @@ test.describe("notes cutover", () => {
       await expect(notesOutline.locator(`[data-object-id="${seeded.media_id}"]`)).toHaveText(
         "Source media"
       );
-      await expect(
-        notePane.locator(`section[aria-label="Backlinks"] a[href="/media/${seeded.media_id}"]`)
-      ).toBeVisible({ timeout: 10_000 });
+      await expect
+        .poll(
+          async () => {
+            const edges = await readResourceGraphEdges(
+              page,
+              `note_block:${noteBlockId}`,
+              "note_body"
+            );
+            return edges.some(
+              (edge) =>
+                edge.source_ref === `note_block:${noteBlockId}` &&
+                edge.target_ref === `media:${seeded.media_id}`
+            );
+          },
+          { timeout: 10_000 }
+        )
+        .toBe(true);
+      await notePane
+        .getByTestId("pane-shell-chrome")
+        .getByRole("button", { name: "Options" })
+        .click();
+      await page.getByRole("menuitem", { name: "Show connections" }).click();
+      const connectionsPane = notePane.getByTestId("workspace-secondary-pane");
+      await expect(connectionsPane).toBeVisible({ timeout: 10_000 });
+      await expect(connectionsPane).toHaveAttribute("aria-label", "Connections");
+      await expect(connectionsPane).toContainText("E2E linked-items web article seed", {
+        timeout: 10_000,
+      });
 
       const conversationResponse = await page.request.post("/api/conversations", {
         data: { initial_references: [`note_block:${noteBlockId}`] },
@@ -285,12 +462,17 @@ test.describe("notes cutover", () => {
           cleanupErrors.push(error);
         }
       }
-      if (noteBlockId) {
+      if (noteBlockId && highlightId) {
         try {
+          const cleanupMutationId = `e2e-highlight-note-cleanup-${Date.now()}`;
+          const cleanupParams = new URLSearchParams({
+            note_block_id: noteBlockId,
+            client_mutation_id: cleanupMutationId,
+          });
           await deleteE2eResource(
             page.request,
-            `/api/notes/blocks/${noteBlockId}`,
-            `Note block ${noteBlockId}`,
+            `/api/highlights/${highlightId}/note?${cleanupParams.toString()}`,
+            `Highlight note ${noteBlockId}`,
           );
         } catch (error) {
           cleanupErrors.push(error);
@@ -360,8 +542,7 @@ test.describe("notes cutover", () => {
 
       await page.keyboard.insertText(noteText);
 
-      // AC-2: autosave reaches "Saved"; Esc closes without discarding.
-      await expect(composer.getByText("Saved")).toBeVisible({ timeout: 15_000 });
+      // AC-2: Esc closes without discarding; unmount flushes the canonical save path.
       await page.keyboard.press("Escape");
       await expect(composer).toBeHidden({ timeout: 5_000 });
 
@@ -422,12 +603,17 @@ test.describe("notes cutover", () => {
           cleanupErrors.push(error);
         }
       }
-      if (noteBlockId) {
+      if (noteBlockId && highlightId) {
         try {
+          const cleanupMutationId = `e2e-highlight-note-cleanup-${Date.now()}`;
+          const cleanupParams = new URLSearchParams({
+            note_block_id: noteBlockId,
+            client_mutation_id: cleanupMutationId,
+          });
           await deleteE2eResource(
             page.request,
-            `/api/notes/blocks/${noteBlockId}`,
-            `Note block ${noteBlockId}`,
+            `/api/highlights/${highlightId}/note?${cleanupParams.toString()}`,
+            `Highlight note ${noteBlockId}`,
           );
         } catch (error) {
           cleanupErrors.push(error);

@@ -21,10 +21,11 @@ import ConversationForksPanel from "@/components/chat/ConversationForksPanel";
 import ConversationReferencesSurface from "@/components/chat/ConversationReferencesSurface";
 import { useConversation } from "@/components/chat/useConversation";
 import { useConversationReferences } from "@/lib/conversations/useConversationReferences";
+import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
 import {
-  hrefForReaderTarget,
-  type ReaderSourceTarget,
-} from "@/lib/conversations/readerTarget";
+  hrefForReaderSourceTarget,
+  resourceRefForReaderSourceTarget,
+} from "@/lib/conversations/readerSourceActivation";
 import { conversationResourceOptions } from "@/lib/actions/resourceActions";
 import { chatDraftKeyFor } from "@/lib/conversations/chatDraftKey";
 import { resolveObjectRefs } from "@/lib/objectRefs";
@@ -181,23 +182,12 @@ export default function Conversation() {
 
   const handleReaderSourceActivate = useCallback(
     (target: ReaderSourceTarget, event?: React.MouseEvent) => {
-      const href =
-        target.kind === "note"
-          ? (target.href ?? `/notes/${target.block_id}`)
-          : (target.href ??
-            hrefForReaderTarget({
-              media_id: target.media_id,
-              evidence_span_id: target.evidence_span_id,
-              locator: target.locator,
-            }));
+      const href = hrefForReaderSourceTarget(target);
       if (event?.shiftKey) {
         openInNewPane?.(href);
         return;
       }
-      const currentRef =
-        target.kind === "note"
-          ? `note_block:${target.block_id}`
-          : `media:${target.media_id}`;
+      const currentRef = resourceRefForReaderSourceTarget(target);
       if (resourceRef === currentRef) return;
       router.push(href);
     },

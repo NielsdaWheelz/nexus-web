@@ -11,13 +11,3 @@ export async function GET(req: Request, { params }: { params: Params }) {
   const { blockId } = await params;
   return proxyToFastAPI(req, noteBlockResource.serverPath({ blockId }));
 }
-
-export async function PATCH(req: Request, { params }: { params: Params }) {
-  const { blockId } = await params;
-  return proxyToFastAPI(req, noteBlockResource.serverPath({ blockId }));
-}
-
-export async function DELETE(req: Request, { params }: { params: Params }) {
-  const { blockId } = await params;
-  return proxyToFastAPI(req, noteBlockResource.serverPath({ blockId }));
-}

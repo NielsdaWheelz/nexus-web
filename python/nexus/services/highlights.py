@@ -8,7 +8,6 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import (
     can_read_media,
-    highlight_library_intersection_exists,
     highlight_visibility_filter,
 )
 from nexus.db.models import (
@@ -32,7 +31,14 @@ from nexus.schemas.highlights import (
     UpdateHighlightRequest,
 )
 from nexus.services.capabilities import is_text_document_ready
-from nexus.services.notes import linked_note_blocks_for_highlights
+from nexus.services.highlight_access import (
+    get_highlight_for_author_write_or_404,
+    get_highlight_for_visible_read_or_404,
+)
+from nexus.services.highlight_access import (
+    require_typed_highlight_or_404 as _require_typed_highlight_or_404,
+)
+from nexus.services.highlight_notes import linked_note_blocks_for_highlights
 from nexus.services.resource_graph.cleanup import delete_edges_for_deleted_resource
 from nexus.services.resource_graph.context import batch_conversations_with_context_ref
 from nexus.services.resource_graph.refs import ResourceRef
@@ -142,50 +148,6 @@ def map_integrity_error(e: IntegrityError) -> ApiError:
     return ApiError(ApiErrorCode.E_INTERNAL, "Database constraint violation")
 
 
-def _require_typed_highlight_or_404(highlight: Highlight) -> None:
-    """Require a highlight to carry a canonical typed anchor row."""
-
-    if highlight.anchor_kind == "fragment_offsets":
-        if highlight.fragment_anchor is not None and highlight.anchor_media_id is not None:
-            return
-    elif highlight.anchor_kind == "pdf_page_geometry":
-        if highlight.pdf_anchor is not None and highlight.anchor_media_id is not None:
-            return
-    raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
-
-
-def get_highlight_for_visible_read_or_404(
-    db: Session, viewer_id: UUID, highlight_id: UUID
-) -> Highlight:
-    """Load highlight with relationships and enforce shared-reader visibility.
-
-    Visible iff viewer can read anchor media AND exists a library containing
-    that media where both viewer and highlight author are members.
-
-    Raises:
-        NotFoundError(E_MEDIA_NOT_FOUND): If highlight doesn't exist or not visible.
-    """
-    highlight = db.get(Highlight, highlight_id)
-    if highlight is None:
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
-    _require_typed_highlight_or_404(highlight)
-    media_id = highlight.anchor_media_id
-    if media_id is None or not can_read_media(db, viewer_id, media_id):
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
-    shares_library = db.scalar(
-        select(
-            highlight_library_intersection_exists(
-                viewer_user_id=viewer_id,
-                author_user_id_expr=highlight.user_id,
-                media_id=media_id,
-            )
-        )
-    )
-    if not shares_library:
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
-    return highlight
-
-
 def _require_fragment_highlight_or_404(highlight: Highlight) -> HighlightFragmentAnchor:
     """Require a highlight to be a canonical fragment highlight."""
 
@@ -202,26 +164,6 @@ def _require_pdf_highlight_or_404(highlight: Highlight):
     if highlight.anchor_kind != "pdf_page_geometry" or highlight.pdf_anchor is None:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
     return highlight.pdf_anchor
-
-
-def get_highlight_for_author_write_or_404(
-    db: Session, viewer_id: UUID, highlight_id: UUID
-) -> Highlight:
-    """Load highlight with relationships, enforce author-only write access.
-
-    Raises:
-        NotFoundError(E_MEDIA_NOT_FOUND): If highlight doesn't exist, not authored by viewer,
-            or media not readable.
-    """
-    highlight = db.get(Highlight, highlight_id)
-    if highlight is None or highlight.user_id != viewer_id:
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
-
-    _require_typed_highlight_or_404(highlight)
-    media_id = highlight.anchor_media_id
-    if media_id is None or not can_read_media(db, viewer_id, media_id):
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
-    return highlight
 
 
 def _require_media_readable_for_existing_highlight(db: Session, highlight: Highlight) -> None:

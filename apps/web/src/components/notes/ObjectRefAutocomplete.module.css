@@ -12,8 +12,15 @@
 
 .option {
   width: 100%;
+  border-radius: var(--radius-md);
   justify-content: stretch;
+  padding: var(--space-1) var(--space-2);
   text-align: left;
+  cursor: default;
+}
+
+.option[data-active="true"] {
+  background: var(--surface-3);
 }
 
 .optionRow {

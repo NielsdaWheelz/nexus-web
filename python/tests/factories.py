@@ -582,12 +582,23 @@ def create_test_highlight_note(
         page = Page(id=uuid4(), user_id=user_id, title="Notes")
         session.add(page)
         session.flush()
+    next_order = (
+        len(
+            session.scalars(
+                select(ResourceEdge.id).where(
+                    ResourceEdge.user_id == user_id,
+                    ResourceEdge.origin == "note_containment",
+                    ResourceEdge.source_scheme == "page",
+                    ResourceEdge.source_id == page.id,
+                )
+            ).all()
+        )
+        + 1
+    )
 
     note_block = NoteBlock(
         id=uuid4(),
         user_id=user_id,
-        page_id=page.id,
-        order_key="0000000001",
         block_kind="bullet",
         body_pm_json={
             "type": "paragraph",
@@ -595,10 +606,22 @@ def create_test_highlight_note(
         },
         body_markdown=body,
         body_text=body,
-        collapsed=False,
     )
     session.add(note_block)
     session.flush()
+    session.add(
+        ResourceEdge(
+            id=uuid4(),
+            user_id=user_id,
+            kind="context",
+            origin="note_containment",
+            source_scheme="page",
+            source_id=page.id,
+            target_scheme="note_block",
+            target_id=note_block.id,
+            source_order_key=f"{next_order:010d}",
+        )
+    )
     session.add(
         ResourceEdge(
             id=uuid4(),

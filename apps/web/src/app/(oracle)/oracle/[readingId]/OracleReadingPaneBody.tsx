@@ -15,8 +15,11 @@ import { useGenerationRun } from "@/lib/api/useGenerationRun";
 import type { CitationOut } from "@/lib/conversations/citationOut";
 import { toReaderCitationData } from "@/lib/conversations/citations";
 import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
+import {
+  dispatchReaderSourceActivation,
+  hrefForReaderSourceTarget,
+} from "@/lib/conversations/readerSourceActivation";
 import { createRandomId } from "@/lib/createRandomId";
-import { dispatchReaderPulse } from "@/lib/reader/pulseEvent";
 import {
   parseOraclePlateImageSrc,
   requireOraclePlateImageSrc,
@@ -514,17 +517,13 @@ export default function OracleReadingPaneBody({
     }
   }, [streamPhase]);
 
-  const activateCitation = useCallback((target: ReaderSourceTarget) => {
-    if (target.kind !== "media") return;
-    dispatchReaderPulse({
-      mediaId: target.media_id,
-      evidenceSpanId: target.evidence_span_id ?? undefined,
-      locator: target.locator,
-      snippet: target.snippet,
-      highlightBehavior: target.highlight_behavior,
-      focusBehavior: target.focus_behavior,
-    });
-  }, []);
+  const activateCitation = useCallback(
+    (target: ReaderSourceTarget) => {
+      dispatchReaderSourceActivation(target);
+      router.push(hrefForReaderSourceTarget(target));
+    },
+    [router],
+  );
 
   const openReadingChat = useCallback(async () => {
     setChatError(null);

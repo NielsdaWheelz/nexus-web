@@ -1,7 +1,7 @@
 /**
  * ResourceRef grammar — the ONE place the frontend parses/formats
  * `<scheme>:<uuid>` resource refs (spec §7, AC17). Mirrors the backend
- * `nexus/services/resource_graph/refs.py`: a closed 16-scheme set, strict
+ * `nexus/services/resource_graph/refs.py`: a closed scheme set, strict
  * canonical-lowercase-UUID parsing, and a typed failure instead of silent
  * coercion. The old `span:`/`chunk:` aliases are gone (hard rename to
  * `evidence_span:`/`content_chunk:`, D2).
@@ -26,6 +26,7 @@ export const RESOURCE_SCHEMES = [
   "external_snapshot",
   "contributor",
   "podcast",
+  "tag",
 ] as const;
 
 export type ResourceScheme = (typeof RESOURCE_SCHEMES)[number];

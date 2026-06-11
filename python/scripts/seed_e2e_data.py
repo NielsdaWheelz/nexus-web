@@ -28,7 +28,7 @@ from datetime import UTC, datetime
 from html import escape
 from io import BytesIO
 from pathlib import Path
-from uuid import UUID
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 import fitz
 import httpx
@@ -61,9 +61,10 @@ from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragmen
 from nexus.services.highlights import create_highlight_for_fragment
 from nexus.services.media_source_ingest import accept_url_source
 from nexus.services.note_indexing import rebuild_page_content_index
-from nexus.services.notes import set_highlight_note_body
+from nexus.services.notes import pm_doc_from_text, set_highlight_note_body_pm_json
 from nexus.services.pdf_indexing import index_pdf_evidence
 from nexus.services.pdf_ingest import PdfExtractionError
+from nexus.services.resource_graph import documents as graph_documents
 from nexus.services.resource_graph.cleanup import delete_edges_for_deleted_resource
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.transcript_segments import normalize_transcript_segments
@@ -817,6 +818,17 @@ def _index_seeded_fragment(db, *, media_id: UUID, fragment: Fragment, source_url
     )
 
 
+def _set_seed_highlight_note(db, user_id: UUID, highlight_id: UUID, body: str):
+    return set_highlight_note_body_pm_json(
+        db,
+        user_id,
+        highlight_id=highlight_id,
+        block_id=uuid5(NAMESPACE_URL, f"nexus:e2e:highlight-note:{highlight_id}"),
+        body_pm_json=pm_doc_from_text(body),
+        client_mutation_id=f"e2e-highlight-note-{highlight_id}",
+    )
+
+
 def _seed_non_pdf_linked_items_media(session_factory, user_id: UUID) -> None:
     """Seed deterministic web-article media with highlights for linked-items E2E."""
     canonical_text, html_sanitized, quote_exact, focus_exact = _build_non_pdf_fragment_payload()
@@ -888,21 +900,25 @@ def _seed_non_pdf_linked_items_media(session_factory, user_id: UUID) -> None:
             ),
         )
 
-        quote_note_block = set_highlight_note_body(
+        quote_note_block = _set_seed_highlight_note(
             db,
             user_id,
             quote_highlight.id,
             "Seeded note for non-PDF linked-items e2e.",
-            commit=False,
         )
-        set_highlight_note_body(
+        _set_seed_highlight_note(
             db,
             user_id,
             focus_highlight.id,
             "Seeded focus note for non-PDF linked-items e2e.",
-            commit=False,
         )
-        note_page_id = quote_note_block.page_id if quote_note_block else None
+        note_page_id = (
+            graph_documents.find_block_occurrence(
+                db, user_id=user_id, block_id=quote_note_block.id
+            ).page_id
+            if quote_note_block
+            else None
+        )
         if note_page_id is None:
             raise RuntimeError("Non-PDF seed note block was not created")
         # Note/page content indexing is async in production (enqueue_page_reindex
@@ -1404,21 +1420,25 @@ def _seed_reader_overview_ruler_media(session_factory, user_id: UUID) -> None:
                 color="blue",
             ),
         )
-        near_note_block = set_highlight_note_body(
+        near_note_block = _set_seed_highlight_note(
             db,
             user_id,
             near_highlight.id,
             "Seeded near note for reader overview-ruler e2e.",
-            commit=False,
         )
-        set_highlight_note_body(
+        _set_seed_highlight_note(
             db,
             user_id,
             far_highlight.id,
             "Seeded far note for reader overview-ruler e2e.",
-            commit=False,
         )
-        note_page_id = near_note_block.page_id if near_note_block else None
+        note_page_id = (
+            graph_documents.find_block_occurrence(
+                db, user_id=user_id, block_id=near_note_block.id
+            ).page_id
+            if near_note_block
+            else None
+        )
         if note_page_id is None:
             raise RuntimeError("Reader overview-ruler seed note block was not created")
         # These notes land on the same default page as the non-PDF seed and would

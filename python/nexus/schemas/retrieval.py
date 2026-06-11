@@ -639,10 +639,10 @@ _SOURCE_LOCATOR_TYPES = frozenset[RetrievalLocatorType](
     }
 )
 _LOCATOR_TYPES_BY_RESULT_TYPE: dict[LocatorBackedResultType, frozenset[RetrievalLocatorType]] = {
-    "content_chunk": _SOURCE_LOCATOR_TYPES,
+    "content_chunk": _SOURCE_LOCATOR_TYPES | frozenset({"note_block_offsets"}),
     "fragment": _SOURCE_LOCATOR_TYPES,
     "highlight": _SOURCE_LOCATOR_TYPES,
-    "evidence_span": _SOURCE_LOCATOR_TYPES,
+    "evidence_span": _SOURCE_LOCATOR_TYPES | frozenset({"note_block_offsets"}),
     "note_block": frozenset({"note_block_offsets"}),
     "message": frozenset({"message_offsets"}),
     "web_result": frozenset({"external_url"}),

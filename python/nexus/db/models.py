@@ -233,6 +233,7 @@ class Page(Base):
     )
     title: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    document_version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -246,6 +247,64 @@ class Page(Base):
 
     __table_args__ = (
         CheckConstraint("char_length(title) BETWEEN 1 AND 200", name="ck_pages_title_length"),
+        CheckConstraint("document_version >= 1", name="ck_pages_document_version_positive"),
+    )
+
+
+class PageDocumentMutation(Base):
+    """Idempotency ledger for versioned note document commands."""
+
+    __tablename__ = "page_document_mutations"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=False,
+    )
+    page_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("pages.id"),
+        nullable=False,
+    )
+    client_mutation_id: Mapped[str] = mapped_column(Text, nullable=False)
+    request_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    base_document_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    document_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    response_json: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "char_length(client_mutation_id) BETWEEN 1 AND 120",
+            name="ck_page_document_mutations_client_mutation_id_length",
+        ),
+        CheckConstraint(
+            "char_length(request_hash) = 64",
+            name="ck_page_document_mutations_request_hash_length",
+        ),
+        CheckConstraint(
+            "base_document_version >= 1",
+            name="ck_page_document_mutations_base_document_version_positive",
+        ),
+        CheckConstraint(
+            "document_version >= 1",
+            name="ck_page_document_mutations_document_version_positive",
+        ),
+        UniqueConstraint(
+            "user_id",
+            "page_id",
+            "client_mutation_id",
+            name="uix_page_document_mutations_client_id",
+        ),
     )
 
 
@@ -308,22 +367,10 @@ class NoteBlock(Base):
         ForeignKey("users.id"),
         nullable=False,
     )
-    page_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("pages.id"),
-        nullable=False,
-    )
-    parent_block_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("note_blocks.id"),
-        nullable=True,
-    )
-    order_key: Mapped[str] = mapped_column(Text, nullable=False)
     block_kind: Mapped[str] = mapped_column(Text, nullable=False, server_default="bullet")
     body_pm_json: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
     body_markdown: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
     body_text: Mapped[str] = mapped_column(Text, nullable=False)
-    collapsed: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -343,26 +390,56 @@ class NoteBlock(Base):
         CheckConstraint(
             "jsonb_typeof(body_pm_json) = 'object'", name="ck_note_blocks_pm_json_object"
         ),
-        CheckConstraint(
-            "char_length(order_key) BETWEEN 1 AND 64",
-            name="ck_note_blocks_order_key_length",
-        ),
     )
 
 
-# Canonical sibling render order within one parent: the order the reader shows blocks.
-# Single owner reused by the reader, search indexer, vault export, and markdown so
-# search/export order always equals render order.
-NOTE_BLOCK_SIBLING_ORDER = (
-    NoteBlock.order_key.asc(),
-    NoteBlock.created_at.asc(),
-    NoteBlock.id.asc(),
-)
+class NoteViewState(Base):
+    """User view state for one block occurrence in a page/block context."""
 
+    __tablename__ = "note_view_states"
 
-def note_block_sibling_sort_key(block: NoteBlock) -> tuple[str, datetime, UUID]:
-    """In-memory mirror of NOTE_BLOCK_SIBLING_ORDER for client-side sibling sorting."""
-    return (block.order_key, block.created_at, block.id)
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=False,
+    )
+    context_source_scheme: Mapped[str] = mapped_column(Text, nullable=False)
+    context_source_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    target_block_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("note_blocks.id"),
+        nullable=False,
+    )
+    collapsed: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "context_source_scheme IN ('page', 'note_block')",
+            name="ck_note_view_states_context_source_scheme",
+        ),
+        UniqueConstraint(
+            "user_id",
+            "context_source_scheme",
+            "context_source_id",
+            "target_block_id",
+            name="uix_note_view_states_occurrence",
+        ),
+    )
 
 
 class ResourceEdge(Base):
@@ -388,6 +465,8 @@ class ResourceEdge(Base):
     source_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     target_scheme: Mapped[str] = mapped_column(Text, nullable=False)
     target_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    source_order_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    target_order_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     ordinal: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # none_as_null: a bare edge's None snapshot must persist as SQL NULL, not the
     # JSON 'null' scalar, or it fails ck_resource_edges_snapshot_object (which
@@ -407,7 +486,12 @@ class ResourceEdge(Base):
             name="ck_resource_edges_kind",
         ),
         CheckConstraint(
-            "origin IN ('user', 'citation', 'system', 'note_body', 'highlight_note')",
+            """
+            origin IN (
+                'user', 'citation', 'system', 'note_body', 'highlight_note',
+                'note_containment'
+            )
+            """,
             name="ck_resource_edges_origin",
         ),
         CheckConstraint(
@@ -417,7 +501,7 @@ class ResourceEdge(Base):
                 'highlight', 'page', 'note_block', 'fragment',
                 'conversation', 'message', 'oracle_reading',
                 'oracle_corpus_passage', 'library_intelligence_artifact',
-                'external_snapshot', 'contributor', 'podcast'
+                'external_snapshot', 'contributor', 'podcast', 'tag'
             )
             """,
             name="ck_resource_edges_source_scheme",
@@ -429,10 +513,18 @@ class ResourceEdge(Base):
                 'highlight', 'page', 'note_block', 'fragment',
                 'conversation', 'message', 'oracle_reading',
                 'oracle_corpus_passage', 'library_intelligence_artifact',
-                'external_snapshot', 'contributor', 'podcast'
+                'external_snapshot', 'contributor', 'podcast', 'tag'
             )
             """,
             name="ck_resource_edges_target_scheme",
+        ),
+        CheckConstraint(
+            "source_order_key IS NULL OR char_length(source_order_key) BETWEEN 1 AND 64",
+            name="ck_resource_edges_source_order_key_length",
+        ),
+        CheckConstraint(
+            "target_order_key IS NULL OR char_length(target_order_key) BETWEEN 1 AND 64",
+            name="ck_resource_edges_target_order_key_length",
         ),
         CheckConstraint("ordinal >= 1", name="ck_resource_edges_ordinal_positive"),
         CheckConstraint(
@@ -443,8 +535,55 @@ class ResourceEdge(Base):
             "snapshot IS NULL OR jsonb_typeof(snapshot) = 'object'",
             name="ck_resource_edges_snapshot_object",
         ),
+        CheckConstraint(
+            "snapshot IS NULL OR ordinal IS NOT NULL",
+            name="ck_resource_edges_snapshot_has_ordinal",
+        ),
+        CheckConstraint(
+            "snapshot IS NULL OR origin = 'citation'",
+            name="ck_resource_edges_snapshot_origin",
+        ),
+        CheckConstraint(
+            "ordinal IS NULL OR origin = 'citation'",
+            name="ck_resource_edges_ordinal_origin",
+        ),
+        CheckConstraint(
+            "ordinal IS NULL OR (source_order_key IS NULL AND target_order_key IS NULL)",
+            name="ck_resource_edges_citation_no_order",
+        ),
+        CheckConstraint(
+            """
+            origin != 'note_containment'
+            OR (
+                kind = 'context'
+                AND source_scheme IN ('page', 'note_block')
+                AND target_scheme = 'note_block'
+                AND source_order_key IS NOT NULL
+                AND ordinal IS NULL
+                AND snapshot IS NULL
+                AND NOT (source_scheme = target_scheme AND source_id = target_id)
+            )
+            """,
+            name="ck_resource_edges_note_containment_shape",
+        ),
+        CheckConstraint(
+            """
+            origin != 'highlight_note'
+            OR (
+                kind = 'context'
+                AND source_scheme = 'highlight'
+                AND target_scheme = 'note_block'
+                AND source_order_key IS NULL
+                AND target_order_key IS NULL
+                AND ordinal IS NULL
+                AND snapshot IS NULL
+            )
+            """,
+            name="ck_resource_edges_highlight_note_shape",
+        ),
         Index(
             "uq_resource_edges_citation_ordinal",
+            "user_id",
             "source_scheme",
             "source_id",
             "ordinal",
@@ -453,6 +592,8 @@ class ResourceEdge(Base):
         ),
         Index(
             "uq_resource_edges_context_pair",
+            "user_id",
+            "origin",
             "source_scheme",
             "source_id",
             "target_scheme",
@@ -461,21 +602,88 @@ class ResourceEdge(Base):
             postgresql_where=text("ordinal IS NULL"),
         ),
         Index(
-            "ix_resource_edges_user_source",
+            "uq_resource_edges_containment_source_order",
             "user_id",
             "source_scheme",
             "source_id",
-            "created_at",
+            "source_order_key",
+            unique=True,
+            postgresql_where=text(
+                "origin = 'note_containment' AND source_order_key IS NOT NULL"
+            ),
+        ),
+        Index(
+            "uq_resource_edges_containment_target_order",
+            "user_id",
+            "target_scheme",
+            "target_id",
+            "target_order_key",
+            unique=True,
+            postgresql_where=text(
+                "origin = 'note_containment' AND target_order_key IS NOT NULL"
+            ),
+        ),
+        Index(
+            "uq_resource_edges_containment_target_once",
+            "user_id",
+            "target_scheme",
+            "target_id",
+            unique=True,
+            postgresql_where=text("origin = 'note_containment'"),
+        ),
+        Index(
+            "ix_resource_edges_user_source",
+            "user_id",
+            "origin",
+            "source_scheme",
+            "source_id",
+            "source_order_key",
             "id",
         ),
         Index(
             "ix_resource_edges_user_target",
             "user_id",
+            "origin",
             "target_scheme",
             "target_id",
-            "created_at",
+            "target_order_key",
             "id",
         ),
+    )
+
+
+class Tag(Base):
+    """User-owned tag resource."""
+
+    __tablename__ = "tags"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=False,
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    slug: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint("char_length(name) BETWEEN 1 AND 80", name="ck_tags_name_length"),
+        CheckConstraint("char_length(slug) BETWEEN 1 AND 100", name="ck_tags_slug_length"),
+        UniqueConstraint("user_id", "slug", name="uix_tags_user_slug"),
     )
 
 

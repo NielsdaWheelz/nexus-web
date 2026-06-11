@@ -52,9 +52,15 @@ export default function HighlightQuickNoteComposer({
     highlightId: string,
     noteBlockId: string | null,
     createBlockId: string,
-    bodyPmJson: Record<string, unknown>
+    bodyPmJson: Record<string, unknown>,
+    clientMutationId: string
   ) => Promise<HighlightLinkedNoteBlock>;
-  onDeleteNote: (noteBlockId: string, shouldApply: () => boolean) => Promise<void>;
+  onDeleteNote: (
+    highlightId: string,
+    noteBlockId: string,
+    clientMutationId: string,
+    shouldApply: () => boolean
+  ) => Promise<void>;
   onOpenLink: (href: string, options: { newPane: boolean }) => void;
 }) {
   const isMobile = useIsMobileViewport();
@@ -77,14 +83,28 @@ export default function HighlightQuickNoteComposer({
         editable
         onSave={
           session.kind === "pending-create"
-            ? async (_sessionId, noteBlockId, createBlockId, bodyPmJson) => {
+            ? async (_sessionId, noteBlockId, createBlockId, bodyPmJson, clientMutationId) => {
                 const resolved = await session.creation; // memoizes its own resolution
                 if (!resolved) throw new Error("Highlight was not created");
-                return onSaveNote(resolved.id, noteBlockId, createBlockId, bodyPmJson);
+                return onSaveNote(
+                  resolved.id,
+                  noteBlockId,
+                  createBlockId,
+                  bodyPmJson,
+                  clientMutationId
+                );
               }
             : onSaveNote
         }
-        onDelete={onDeleteNote}
+        onDelete={
+          session.kind === "pending-create"
+            ? async (_sessionId, noteBlockId, clientMutationId, shouldApply) => {
+                const resolved = await session.creation;
+                if (!resolved) throw new Error("Highlight was not created");
+                return onDeleteNote(resolved.id, noteBlockId, clientMutationId, shouldApply);
+              }
+            : onDeleteNote
+        }
         onOpenLink={onOpenLink}
       />
     );

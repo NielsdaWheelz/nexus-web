@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import type { Node as ProseMirrorNode } from "prosemirror-model";
 import {
   FeedbackNotice,
@@ -9,7 +9,10 @@ import {
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import NoteBacklinks from "@/components/notes/NoteBacklinks";
-import ProseMirrorOutlineEditor from "@/components/notes/ProseMirrorOutlineEditor";
+import NoteDraftRecovery from "@/components/notes/NoteDraftRecovery";
+import ProseMirrorOutlineEditor, {
+  type NotePulseEditorTarget,
+} from "@/components/notes/ProseMirrorOutlineEditor";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
 import {
@@ -18,6 +21,7 @@ import {
   usePaneRuntime,
   useSetPaneTitle,
 } from "@/lib/panes/paneRuntime";
+import { usePaneSecondary } from "@/components/workspace/PaneSecondary";
 import { createRandomId } from "@/lib/createRandomId";
 import { isObjectType, resolveObjectRefs } from "@/lib/objectRefs";
 import { pinObjectToNavbar } from "@/lib/pinnedObjects";
@@ -29,56 +33,36 @@ import {
 import { escapeAttrValue } from "@/lib/highlights/escapeAttrValue";
 import { consumePendingNoteActivation } from "@/lib/reader/pendingNoteActivation";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { isRecord } from "@/lib/validation";
-import { hasTopLevelLegacyArtifactIdentityKey } from "@/lib/currentArtifactIdentity";
+import { consumePendingNoteFocus } from "@/lib/notes/pendingNoteFocus";
 import {
   createEmptyOutlineDoc,
   noteBlocksToOutlineDoc,
-  outlineSchema,
 } from "@/lib/notes/prosemirror/schema";
 import {
   fetchNoteBlock,
   fetchNotePage,
-  updateNotePage,
   saveNotePageDocument,
-  isNoteBlockKind,
   type NoteBlock,
-  type NoteBlockKind,
   type NotePage,
 } from "@/lib/notes/api";
+import {
+  draftBlocksById,
+  deletedRootBlockIdsForPersistence,
+  flatBlockIds,
+  flatBlockParentIds,
+  pageDocumentBlocksFromDrafts,
+  pageDocumentContainmentFromDrafts,
+  pageDraftMetadataFromStorage,
+  planPageDocumentSave,
+  readDraftBlocksForPersistence,
+  type PersistedDraftBlock,
+} from "@/lib/notes/pageDocumentPersistence";
 import {
   clearStoredNoteEditorDraft,
   readStoredNoteEditorDraft,
   useNoteEditorSession,
-  type NoteEditorSessionStatus,
 } from "@/lib/notes/useNoteEditorSession";
 import styles from "../../notes/notes.module.css";
-
-interface PersistedDraftBlock {
-  id: string;
-  parentBlockId: string | null;
-  beforeBlockId: string | null;
-  afterBlockId: string | null;
-  blockKind: NoteBlockKind;
-  bodyPmJson: Record<string, unknown>;
-  collapsed: boolean;
-}
-
-interface PageDraftMetadata {
-  knownBlocks: PersistedDraftBlock[];
-  focusedRootParentBlockId: string | null;
-}
-
-const PAGE_DRAFT_METADATA_KEYS = new Set(["knownBlocks", "focusedRootParentBlockId"]);
-const PERSISTED_DRAFT_BLOCK_KEYS = new Set([
-  "id",
-  "parentBlockId",
-  "beforeBlockId",
-  "afterBlockId",
-  "blockKind",
-  "bodyPmJson",
-  "collapsed",
-]);
 
 interface LoadedNoteEditorResource {
   loadKey: string;
@@ -113,32 +97,65 @@ export default function PagePaneBody({
   const [page, setPage] = useState<NotePage | null>(null);
   const [titleDraft, setTitleDraft] = useState("");
   const [initialDoc, setInitialDoc] = useState<ProseMirrorNode | null>(null);
+  const [editorResetSerial, setEditorResetSerial] = useState(0);
+  const [bodyFocusRequest, setBodyFocusRequest] = useState(0);
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
+  const [notePulseTarget, setNotePulseTarget] = useState<NotePulseEditorTarget | null>(null);
   const saveScope = focusBlockId ? `block:${focusBlockId}` : `page:${pageId}`;
   const editorResourceKey = `${saveScope}:editor`;
+  const renderedEditorResourceKey = `${editorResourceKey}:reset:${editorResetSerial}`;
   const initialPageKey =
     initialPage && initialPage.id === pageId
-      ? `initial:${initialPage.id}:${initialPage.updatedAt ?? ""}`
+      ? `initial:${initialPage.id}:${initialPage.documentVersion}:${initialPage.updatedAt ?? ""}`
       : "server";
   const editorLoadKey = `${saveScope}:load:${initialPageKey}`;
   const knownBlockIdsRef = useRef<Set<string>>(new Set());
   const knownBlockParentIdsRef = useRef<Map<string, string | null>>(new Map());
   const knownBlockDraftsRef = useRef<Map<string, PersistedDraftBlock>>(new Map());
+  const fullPageBlocksRef = useRef<NoteBlock[]>(initialPage?.blocks ?? []);
+  const pageDocumentVersionRef = useRef(initialPage?.documentVersion ?? 1);
   const focusedRootParentBlockIdRef = useRef<string | null>(null);
   const currentSaveScopeRef = useRef(saveScope);
   const editorLoadKeyRef = useRef(editorLoadKey);
   const shellRef = useRef<HTMLDivElement | null>(null);
+  const notePulseIdRef = useRef(0);
+  const currentDocRef = useRef<ProseMirrorNode | null>(null);
+  const persistedTitleRef = useRef(initialPage?.title ?? "");
+  const titleDraftRef = useRef(titleDraft);
+  const titleInputRef = useRef<HTMLInputElement | null>(null);
+  titleDraftRef.current = titleDraft;
 
-  // Note-citation activation: scroll the cited block into view and pulse it,
-  // the notes analog of the reader's evidence pulse. The cited block's offset
-  // range ([startOffset, endOffset)) lives inside one `li[data-note-block-id]`;
-  // the editor may still be mounting when the pulse fires, so retry briefly.
-  const pulseNoteBlock = useCallback((blockId: string) => {
+  const setEditorDoc = useCallback((doc: ProseMirrorNode) => {
+    currentDocRef.current = doc;
+    setInitialDoc(doc);
+  }, []);
+
+  const setTitleDraftValue = useCallback((nextTitle: string) => {
+    titleDraftRef.current = nextTitle;
+    setTitleDraft(nextTitle);
+  }, []);
+
+  // Note-citation activation: scroll the cited block into view and pulse the
+  // exact cited offset range through the editor. The editor may still be
+  // mounting when the pulse fires, so block scroll retries briefly.
+  const pulseNoteBlock = useCallback((target: NotePulseTarget) => {
+    const pulseId = notePulseIdRef.current + 1;
+    notePulseIdRef.current = pulseId;
+    setNotePulseTarget({
+      blockId: target.blockId,
+      startOffset: target.startOffset,
+      endOffset: target.endOffset,
+      pulseId,
+    });
+    window.setTimeout(() => {
+      setNotePulseTarget((current) => (current?.pulseId === pulseId ? null : current));
+    }, NOTE_PULSE_DURATION_MS);
+
     let attempts = 0;
     const tryPulse = () => {
       const shell = shellRef.current;
       const block = shell?.querySelector<HTMLElement>(
-        `li[data-note-block-id="${escapeAttrValue(blockId)}"]`,
+        `li[data-note-block-id="${escapeAttrValue(target.blockId)}"]`,
       );
       if (!block) {
         if (attempts++ < NOTE_PULSE_MAX_ATTEMPTS) {
@@ -163,7 +180,7 @@ export default function PagePaneBody({
   const onNotePulse = useCallback(
     (target: NotePulseTarget) => {
       if (target.pageId !== pageId) return;
-      pulseNoteBlock(target.blockId);
+      pulseNoteBlock(target);
     },
     [pageId, pulseNoteBlock],
   );
@@ -181,11 +198,26 @@ export default function PagePaneBody({
     if (!editorReady) return;
     const pending = consumePendingNoteActivation(pageId);
     if (!pending) return;
-    pulseNoteBlock(pending.blockId);
+    pulseNoteBlock(pending);
   }, [editorReady, pageId, pulseNoteBlock]);
 
+  useEffect(() => {
+    if (!editorReady) return;
+    const pending = consumePendingNoteFocus(pageId);
+    if (!pending) return;
+    if (pending === "title") {
+      window.requestAnimationFrame(() => {
+        titleInputRef.current?.focus();
+        titleInputRef.current?.select();
+      });
+      return;
+    }
+    setBodyFocusRequest((current) => current + 1);
+  }, [editorReady, pageId]);
+
   const fallbackTitle = focusBlockId ? "Note" : "Page";
-  useSetPaneTitle(page ? page.title || fallbackTitle : feedback ? fallbackTitle : null);
+  const paneTitle = titleDraft.trim() || page?.title || fallbackTitle;
+  useSetPaneTitle(page ? paneTitle : feedback ? fallbackTitle : null);
 
   currentSaveScopeRef.current = saveScope;
   editorLoadKeyRef.current = editorLoadKey;
@@ -193,60 +225,85 @@ export default function PagePaneBody({
   const saveDoc = useCallback(
     async (doc: ProseMirrorNode, { clientMutationId }: { clientMutationId: string }) => {
       const scope = saveScope;
-      const knownBlockIds = new Set(knownBlockIdsRef.current);
-      const knownBlockDrafts = new Map(knownBlockDraftsRef.current);
-      const drafts = readDraftBlocksForPersistence(
-        doc,
-        focusBlockId ? focusedRootParentBlockIdRef.current : null
-      );
-      const nextIds = new Set(drafts.map((block) => block.id));
-      const deletedBlocks = deletedRootBlockIdsForPersistence(
-        knownBlockIds,
-        nextIds,
-        knownBlockParentIdsRef.current
-      );
-      const changedBlocks = drafts.filter((block) => {
-        if (!knownBlockIds.has(block.id)) {
-          return true;
-        }
-        const knownBlock = knownBlockDrafts.get(block.id);
-        if (!knownBlock) {
-          throw new Error("Known note block is missing draft metadata");
-        }
-        return draftBlockChanged(block, knownBlock);
-      });
+      const submittedTitle = normalizedPageTitle(titleDraftRef.current);
+      const plan = focusBlockId
+        ? (() => {
+            const editedDrafts = readDraftBlocksForPersistence(
+              doc,
+              focusedRootParentBlockIdRef.current
+            );
+            const editedIds = new Set(editedDrafts.map((block) => block.id));
+            const fullDrafts = readDraftBlocksForPersistence(
+              noteBlocksToOutlineDoc(fullPageBlocksRef.current)
+            );
+            const replacedIds = new Set(knownBlockIdsRef.current);
+            const drafts = [
+              ...fullDrafts.filter((block) => !replacedIds.has(block.id)),
+              ...editedDrafts,
+            ];
+            return {
+              blocks: pageDocumentBlocksFromDrafts(drafts),
+              containment: pageDocumentContainmentFromDrafts(drafts, pageId),
+              deletedBlockIds: deletedRootBlockIdsForPersistence(
+                replacedIds,
+                editedIds,
+                knownBlockParentIdsRef.current
+              ),
+              nextBlockIds: editedIds,
+              nextBlockParentIds: new Map(
+                editedDrafts.map((block) => [block.id, block.parentBlockId])
+              ),
+              nextBlockDrafts: draftBlocksById(editedDrafts),
+            };
+          })()
+        : planPageDocumentSave({
+            doc,
+            pageId,
+            rootParentBlockId: null,
+            knownBlockIds: new Set(knownBlockIdsRef.current),
+            knownBlockParentIds: knownBlockParentIdsRef.current,
+          });
 
       const result = await saveNotePageDocument(pageId, {
         clientMutationId,
+        baseDocumentVersion: pageDocumentVersionRef.current,
+        title: submittedTitle,
         focusBlockId: focusBlockId ?? null,
-        topLevelParentBlockId: focusBlockId ? focusedRootParentBlockIdRef.current : null,
-        blocks: changedBlocks,
-        deletedBlocks,
+        blocks: plan.blocks,
+        containment: plan.containment,
+        deletedBlockIds: plan.deletedBlockIds,
       });
 
       if (currentSaveScopeRef.current === scope) {
-        knownBlockIdsRef.current = nextIds;
-        knownBlockParentIdsRef.current = new Map(
-          drafts.map((block) => [block.id, block.parentBlockId])
-        );
-        knownBlockDraftsRef.current = draftBlocksById(drafts);
-        setPage((currentPage) =>
-          currentPage
-            ? {
-                ...currentPage,
-                updatedAt: result.page.updatedAt,
-              }
-            : result.page
-        );
+        const titleStillCurrent = normalizedPageTitle(titleDraftRef.current) === submittedTitle;
+        pageDocumentVersionRef.current = result.documentVersion;
+        fullPageBlocksRef.current = result.page.blocks;
+        persistedTitleRef.current = result.page.title;
+        knownBlockIdsRef.current = plan.nextBlockIds;
+        knownBlockParentIdsRef.current = plan.nextBlockParentIds;
+        knownBlockDraftsRef.current = plan.nextBlockDrafts;
+        if (titleStillCurrent) {
+          setTitleDraftValue(result.page.title);
+        }
+        const visiblePage = titleStillCurrent
+          ? result.page
+          : { ...result.page, title: titleDraftRef.current };
+        if (focusBlockId) {
+          const focusedBlock = findBlock(visiblePage.blocks, focusBlockId);
+          setPage(focusedBlock ? { ...visiblePage, blocks: [focusedBlock] } : visiblePage);
+        } else {
+          setPage(visiblePage);
+        }
       }
     },
-    [focusBlockId, pageId, saveScope]
+    [focusBlockId, pageId, saveScope, setTitleDraftValue]
   );
 
-  const draftMetadata = useCallback((): PageDraftMetadata | null => {
+  const draftMetadata = useCallback(() => {
     return {
       knownBlocks: Array.from(knownBlockDraftsRef.current.values()),
       focusedRootParentBlockId: focusedRootParentBlockIdRef.current,
+      titleDraft: titleDraftRef.current,
     };
   }, []);
 
@@ -260,8 +317,12 @@ export default function PagePaneBody({
   });
   const {
     status: saveStatus,
+    hasRecoveredDraft,
     scheduleSave: scheduleSessionSave,
     flush: flushSession,
+    recoverDraft: recoverSessionDraft,
+    retry: retrySession,
+    discardDraft: discardSessionDraft,
     reset: resetSession,
   } = session;
   const editorLoadResource = useResource<LoadedNoteEditorResource>({
@@ -287,11 +348,14 @@ export default function PagePaneBody({
 
       try {
         const loadedPage = loaded.page;
+        pageDocumentVersionRef.current = loadedPage.documentVersion;
+        fullPageBlocksRef.current = loadedPage.blocks;
+        persistedTitleRef.current = loadedPage.title;
         if (!loaded.focusedBlock) {
           setPage(loadedPage);
-          setTitleDraft(loadedPage.title);
+          setTitleDraftValue(loadedPage.title);
           focusedRootParentBlockIdRef.current = null;
-          knownBlockIdsRef.current = new Set(flatPageBlockIds(loadedPage));
+          knownBlockIdsRef.current = new Set(flatBlockIds(loadedPage.blocks));
           knownBlockParentIdsRef.current = flatBlockParentIds(loadedPage.blocks);
           const persistedDoc = loadedPage.blocks.length
             ? noteBlocksToOutlineDoc(loadedPage.blocks)
@@ -312,20 +376,22 @@ export default function PagePaneBody({
             );
             knownBlockDraftsRef.current = draftBlocksById(storedMetadata.knownBlocks);
             focusedRootParentBlockIdRef.current = storedMetadata.focusedRootParentBlockId;
-            setInitialDoc(storedDraft.doc);
-            scheduleSessionSave(storedDraft.doc);
+            setTitleDraftValue(storedMetadata.titleDraft);
+            setPage({ ...loadedPage, title: storedMetadata.titleDraft });
+            setEditorDoc(storedDraft.doc);
+            recoverSessionDraft(storedDraft);
             return;
           }
           if (storedDraft) {
             clearStoredNoteEditorDraft(loaded.saveScope);
           }
-          setInitialDoc(persistedDoc ?? createEmptyOutlineDoc(newBlockId()));
+          setEditorDoc(persistedDoc ?? createEmptyOutlineDoc(createRandomId()));
           return;
         }
 
         const block = loaded.focusedBlock;
         setPage({ ...loadedPage, blocks: [block] });
-        setTitleDraft(loadedPage.title);
+        setTitleDraftValue(loadedPage.title);
         focusedRootParentBlockIdRef.current = block.parentBlockId;
         knownBlockIdsRef.current = new Set(flatBlockIds([block]));
         knownBlockParentIdsRef.current = flatBlockParentIds([block]);
@@ -342,32 +408,82 @@ export default function PagePaneBody({
           );
           knownBlockDraftsRef.current = draftBlocksById(storedMetadata.knownBlocks);
           focusedRootParentBlockIdRef.current = storedMetadata.focusedRootParentBlockId;
-          setInitialDoc(storedDraft.doc);
-          scheduleSessionSave(storedDraft.doc);
+          setTitleDraftValue(storedMetadata.titleDraft);
+          setPage({ ...loadedPage, title: storedMetadata.titleDraft, blocks: [block] });
+          setEditorDoc(storedDraft.doc);
+          recoverSessionDraft(storedDraft);
           return;
         }
         if (storedDraft) {
           clearStoredNoteEditorDraft(loaded.saveScope);
         }
-        setInitialDoc(doc);
+        setEditorDoc(doc);
       } catch (error: unknown) {
         if (handleUnauthenticatedApiError(error)) return;
         setFeedback(toFeedback(error, { fallback: "Note could not be loaded." }));
       }
     },
-    [scheduleSessionSave]
+    [recoverSessionDraft, setEditorDoc, setTitleDraftValue]
   );
+
+  const resetEditorToPersistedDocument = useCallback(() => {
+    const fullBlocks = fullPageBlocksRef.current;
+    if (focusBlockId) {
+      const focusedBlock = findBlock(fullBlocks, focusBlockId);
+      const focusedBlocks = focusedBlock ? [focusedBlock] : [];
+      const nextDoc = focusedBlock
+        ? noteBlocksToOutlineDoc(focusedBlocks)
+        : createEmptyOutlineDoc(createRandomId());
+      focusedRootParentBlockIdRef.current = focusedBlock?.parentBlockId ?? null;
+      knownBlockIdsRef.current = new Set(flatBlockIds(focusedBlocks));
+      knownBlockParentIdsRef.current = flatBlockParentIds(focusedBlocks);
+      knownBlockDraftsRef.current = focusedBlock
+        ? draftBlocksById(readDraftBlocksForPersistence(nextDoc))
+        : new Map();
+      setPage((current) =>
+        current ? { ...current, title: persistedTitleRef.current, blocks: focusedBlocks } : current
+      );
+      setTitleDraftValue(persistedTitleRef.current);
+      setEditorDoc(nextDoc);
+      setEditorResetSerial((current) => current + 1);
+      return;
+    }
+
+    focusedRootParentBlockIdRef.current = null;
+    knownBlockIdsRef.current = new Set(flatBlockIds(fullBlocks));
+    knownBlockParentIdsRef.current = flatBlockParentIds(fullBlocks);
+    const nextDoc = fullBlocks.length
+      ? noteBlocksToOutlineDoc(fullBlocks)
+      : createEmptyOutlineDoc(createRandomId());
+    knownBlockDraftsRef.current = fullBlocks.length
+      ? draftBlocksById(readDraftBlocksForPersistence(nextDoc))
+      : new Map();
+    setTitleDraftValue(persistedTitleRef.current);
+    setPage((current) =>
+      current ? { ...current, title: persistedTitleRef.current, blocks: fullBlocks } : current
+    );
+    setEditorDoc(nextDoc);
+    setEditorResetSerial((current) => current + 1);
+  }, [focusBlockId, setEditorDoc, setTitleDraftValue]);
+
+  const discardRecoveredDraft = useCallback(() => {
+    discardSessionDraft();
+    setFeedback(null);
+    resetEditorToPersistedDocument();
+  }, [discardSessionDraft, resetEditorToPersistedDocument]);
 
   useEffect(() => {
     setFeedback(null);
     setPage(null);
-    setTitleDraft("");
+    setTitleDraftValue("");
+    currentDocRef.current = null;
     setInitialDoc(null);
+    setBodyFocusRequest(0);
     resetSession();
     return () => {
       flushSession();
     };
-  }, [editorLoadKey, flushSession, resetSession]);
+  }, [editorLoadKey, flushSession, resetSession, setTitleDraftValue]);
 
   useEffect(() => {
     if (editorLoadResource.status === "ready") {
@@ -380,21 +496,41 @@ export default function PagePaneBody({
     }
   }, [applyLoadedEditorResource, editorLoadResource]);
 
-  const saveTitle = useCallback(
-    async (title: string) => {
-      const trimmed = title.trim();
-      if (!page || !trimmed || trimmed === page.title) return;
-      try {
-        const updated = await updateNotePage(page.id, { title: trimmed });
-        setPage(updated);
-        setTitleDraft(updated.title);
-      } catch (error: unknown) {
-        if (handleUnauthenticatedApiError(error)) return;
-        setFeedback(toFeedback(error, { fallback: "Title could not be saved." }));
+  const onEditorDocChange = useCallback(
+    (doc: ProseMirrorNode) => {
+      currentDocRef.current = doc;
+      scheduleSessionSave(doc);
+    },
+    [scheduleSessionSave]
+  );
+
+  const onEditorBlurFlush = useCallback(
+    (doc: ProseMirrorNode) => {
+      currentDocRef.current = doc;
+      flushSession(doc);
+    },
+    [flushSession]
+  );
+
+  const onTitleChange = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) => {
+      const nextTitle = event.currentTarget.value;
+      setTitleDraftValue(nextTitle);
+      setPage((current) => (current ? { ...current, title: nextTitle } : current));
+      const doc = currentDocRef.current;
+      if (doc) {
+        scheduleSessionSave(doc);
       }
     },
-    [page]
+    [scheduleSessionSave, setTitleDraftValue]
   );
+
+  const flushTitle = useCallback(() => {
+    const doc = currentDocRef.current;
+    if (doc) {
+      flushSession(doc);
+    }
+  }, [flushSession]);
 
   const openBlock = useCallback(
     (blockId: string, openInNewPane: boolean) => {
@@ -425,6 +561,14 @@ export default function PagePaneBody({
     [openInNewPaneCommand, router]
   );
 
+  const openRoute = useCallback(
+    (href: string, openInNewPane: boolean) => {
+      if (openInNewPane) openInNewPaneCommand?.(href);
+      else router.push(href);
+    },
+    [openInNewPaneCommand, router]
+  );
+
   const pinCurrentObject = useCallback(async () => {
     try {
       if (focusBlockId) {
@@ -447,6 +591,13 @@ export default function PagePaneBody({
   const paneOptions = useMemo(
     () => [
       {
+        id: "show-note-connections",
+        label: "Show connections",
+        onSelect: () => {
+          paneRuntime?.requestSecondarySurface("notes-connections");
+        },
+      },
+      {
         id: focusBlockId ? "pin-current-note" : "pin-current-page",
         label: focusBlockId ? "Pin current note" : "Pin current page",
         onSelect: () => {
@@ -454,9 +605,31 @@ export default function PagePaneBody({
         },
       },
     ],
-    [focusBlockId, pinCurrentObject]
+    [focusBlockId, paneRuntime, pinCurrentObject]
   );
   usePaneChromeOverride({ options: paneOptions });
+
+  const backlinkObjectRef = useMemo(
+    () => ({
+      objectType: focusBlockId ? ("note_block" as const) : ("page" as const),
+      objectId: focusBlockId ?? pageId,
+    }),
+    [focusBlockId, pageId]
+  );
+  const secondaryDescriptor = useMemo(
+    () => ({
+      groupId: "notes-tools" as const,
+      defaultSurfaceId: "notes-connections" as const,
+      surfaces: [
+        {
+          id: "notes-connections" as const,
+          body: <NoteBacklinks objectRef={backlinkObjectRef} onOpenRoute={openRoute} />,
+        },
+      ],
+    }),
+    [backlinkObjectRef, openRoute]
+  );
+  usePaneSecondary(secondaryDescriptor);
 
   if (feedback && !initialDoc) return <FeedbackNotice {...feedback} />;
   if (!page || !initialDoc) return <PaneLoadingState />;
@@ -464,209 +637,48 @@ export default function PagePaneBody({
   return (
     <div className={styles.editorShell} ref={shellRef}>
       <input
+        ref={titleInputRef}
         className={styles.titleInput}
         value={titleDraft}
-        onChange={(event) => setTitleDraft(event.currentTarget.value)}
-        onBlur={(event) => void saveTitle(event.currentTarget.value)}
+        onChange={onTitleChange}
+        onBlur={flushTitle}
         aria-label="Page title"
       />
-      <div className={styles.editorMeta}>{saveLabelForStatus(saveStatus)}</div>
+      <NoteDraftRecovery
+        status={saveStatus}
+        hasRecoveredDraft={hasRecoveredDraft}
+        onRetry={retrySession}
+        onDiscard={discardRecoveredDraft}
+      />
       {feedback ? <FeedbackNotice {...feedback} /> : null}
       <ProseMirrorOutlineEditor
-        resourceKey={editorResourceKey}
+        resourceKey={renderedEditorResourceKey}
         initialDoc={initialDoc}
-        createBlockId={newBlockId}
-        onDocChange={scheduleSessionSave}
-        onBlurFlush={flushSession}
+        createBlockId={createRandomId}
+        onDocChange={onEditorDocChange}
+        onBlurFlush={onEditorBlurFlush}
         onOpenBlock={openBlock}
         onOpenObject={openObject}
+        notePulseTarget={notePulseTarget}
+        focusRequest={bodyFocusRequest}
+        onError={(error) => {
+          if (handleUnauthenticatedApiError(error)) return;
+          setFeedback(toFeedback(error, { fallback: "Attachment could not be added." }));
+        }}
       />
-      <div className={styles.backlinks}>
-        <NoteBacklinks
-          objectRef={{
-            objectType: focusBlockId ? "note_block" : "page",
-            objectId: focusBlockId ?? page.id,
-          }}
-        />
-      </div>
     </div>
   );
 }
 
-function newBlockId(): string {
-  return createRandomId();
-}
-
-function saveLabelForStatus(status: NoteEditorSessionStatus): string {
-  if (status === "dirty") return "Unsaved";
-  if (status === "saving") return "Saving...";
-  if (status === "failed") return "Save failed";
-  return "Saved";
-}
-
-function draftBlockKind(value: unknown): NoteBlockKind {
-  return isNoteBlockKind(value) ? value : "bullet";
-}
-
-function nodeJsonRecord(node: ProseMirrorNode): Record<string, unknown> {
-  const json = node.toJSON();
-  if (!isRecord(json)) {
-    throw new Error("ProseMirror node JSON must be an object");
-  }
-  return json;
-}
-
-export function readDraftBlocksForPersistence(
-  doc: ProseMirrorNode,
-  topLevelParentBlockId: string | null = null
-): PersistedDraftBlock[] {
-  const drafts: PersistedDraftBlock[] = [];
-
-  function readSiblings(parent: ProseMirrorNode, parentBlockId: string | null) {
-    const siblings: ProseMirrorNode[] = [];
-    parent.forEach((node) => {
-      if (node.type === outlineSchema.nodes.outline_block) siblings.push(node);
-    });
-    siblings.forEach((node, index) => {
-      const paragraph = node.child(0);
-      drafts.push({
-        id: String(node.attrs.id),
-        parentBlockId,
-        beforeBlockId:
-          index === 0 && siblings[index + 1] ? String(siblings[index + 1]!.attrs.id) : null,
-        afterBlockId: index > 0 ? String(siblings[index - 1]!.attrs.id) : null,
-        blockKind: draftBlockKind(node.attrs.kind),
-        bodyPmJson: nodeJsonRecord(paragraph),
-        collapsed: Boolean(node.attrs.collapsed),
-      });
-      readSiblings(node, String(node.attrs.id));
-    });
-  }
-
-  readSiblings(doc, topLevelParentBlockId);
-  return drafts;
-}
-
-export function deletedRootBlockIdsForPersistence(
-  knownBlockIds: Set<string>,
-  nextIds: Set<string>,
-  knownParentBlockIds: Map<string, string | null>
-): string[] {
-  const rootIds: string[] = [];
-  for (const blockId of knownBlockIds) {
-    if (nextIds.has(blockId)) continue;
-
-    let parentBlockId = knownParentBlockIds.get(blockId) ?? null;
-    let hasDeletedAncestor = false;
-    while (parentBlockId) {
-      if (knownBlockIds.has(parentBlockId) && !nextIds.has(parentBlockId)) {
-        hasDeletedAncestor = true;
-        break;
-      }
-      parentBlockId = knownParentBlockIds.get(parentBlockId) ?? null;
-    }
-
-    if (!hasDeletedAncestor) rootIds.push(blockId);
-  }
-  return rootIds;
-}
-
-function draftBlocksById(blocks: PersistedDraftBlock[]): Map<string, PersistedDraftBlock> {
-  return new Map(blocks.map((block) => [block.id, block]));
-}
-
-function draftBlockChanged(current: PersistedDraftBlock, previous: PersistedDraftBlock): boolean {
-  return (
-    current.parentBlockId !== previous.parentBlockId ||
-    current.beforeBlockId !== previous.beforeBlockId ||
-    current.afterBlockId !== previous.afterBlockId ||
-    current.blockKind !== previous.blockKind ||
-    current.collapsed !== previous.collapsed ||
-    JSON.stringify(current.bodyPmJson) !== JSON.stringify(previous.bodyPmJson)
-  );
-}
-
-export function pageDraftMetadataFromStorage(value: unknown): PageDraftMetadata | null {
-  if (
-    !isRecord(value) ||
-    !hasOnlyKeys(value, PAGE_DRAFT_METADATA_KEYS) ||
-    hasTopLevelLegacyArtifactIdentityKey(value)
-  ) {
-    return null;
-  }
-  if (
-    !Array.isArray(value.knownBlocks) ||
-    (value.focusedRootParentBlockId !== null &&
-      typeof value.focusedRootParentBlockId !== "string")
-  ) {
-    return null;
-  }
-
-  const knownBlocks: PersistedDraftBlock[] = [];
-  for (const block of value.knownBlocks) {
-    if (
-      !isRecord(block) ||
-      !hasOnlyKeys(block, PERSISTED_DRAFT_BLOCK_KEYS) ||
-      hasTopLevelLegacyArtifactIdentityKey(block) ||
-      typeof block.id !== "string" ||
-      (block.parentBlockId !== null && typeof block.parentBlockId !== "string") ||
-      (block.beforeBlockId !== null && typeof block.beforeBlockId !== "string") ||
-      (block.afterBlockId !== null && typeof block.afterBlockId !== "string") ||
-      !isNoteBlockKind(block.blockKind) ||
-      !isRecord(block.bodyPmJson) ||
-      typeof block.collapsed !== "boolean"
-    ) {
-      return null;
-    }
-    knownBlocks.push({
-      id: block.id,
-      parentBlockId: block.parentBlockId,
-      beforeBlockId: block.beforeBlockId,
-      afterBlockId: block.afterBlockId,
-      blockKind: block.blockKind,
-      bodyPmJson: block.bodyPmJson,
-      collapsed: block.collapsed,
-    });
-  }
-
-  return {
-    knownBlocks,
-    focusedRootParentBlockId: value.focusedRootParentBlockId,
-  };
-}
-
-function hasOnlyKeys(value: Record<string, unknown>, allowedKeys: Set<string>): boolean {
-  return Object.keys(value).every((key) => allowedKeys.has(key));
-}
-
-function flatPageBlockIds(page: NotePage): string[] {
-  return flatBlockIds(page.blocks);
-}
-
-interface BlockWithChildren {
-  id: string;
-  children: BlockWithChildren[];
-}
-
-function flatBlockIds(blocks: BlockWithChildren[]): string[] {
-  const ids: string[] = [];
+function findBlock(blocks: NoteBlock[], blockId: string): NoteBlock | null {
   for (const block of blocks) {
-    ids.push(block.id);
-    ids.push(...flatBlockIds(block.children));
+    if (block.id === blockId) return block;
+    const child = findBlock(block.children, blockId);
+    if (child) return child;
   }
-  return ids;
+  return null;
 }
 
-function flatBlockParentIds(blocks: BlockWithChildren[]): Map<string, string | null> {
-  const parentIds = new Map<string, string | null>();
-
-  function visit(children: BlockWithChildren[], parentBlockId: string | null) {
-    for (const block of children) {
-      parentIds.set(block.id, parentBlockId);
-      visit(block.children, block.id);
-    }
-  }
-
-  visit(blocks, null);
-  return parentIds;
+function normalizedPageTitle(title: string): string {
+  return title.trim() || "Untitled";
 }

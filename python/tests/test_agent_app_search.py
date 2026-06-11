@@ -254,10 +254,77 @@ def test_li_artifact_reference_dropped_from_default_scope_resolution(
     add_context_edge(db_session, conversation_id, f"library:{library_id}")
     db_session.commit()
 
-    resolved = _resolve_scope_uris(db_session, conversation_id=conversation_id, scopes=[])
+    resolved = _resolve_scope_uris(
+        db_session, viewer_id=bootstrapped_user, conversation_id=conversation_id, scopes=[]
+    )
 
     assert resolved == [f"library:{library_id}"], (
         f"Only the library scope should carry retrieval; got {resolved}"
+    )
+
+
+def test_default_scope_resolution_ignores_ordinal_citation_edges(
+    db_session: Session,
+    bootstrapped_user,
+) -> None:
+    from nexus.services.agent_tools.app_search import _resolve_scope_uris
+    from nexus.services.resource_graph.citations import record_citation
+    from nexus.services.resource_graph.refs import ResourceRef
+    from nexus.services.resource_graph.schemas import CitationSnapshot
+
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    library_id = create_test_library(db_session, bootstrapped_user, "Citation Scope Library")
+    media_id = create_searchable_media_in_library(
+        db_session, bootstrapped_user, library_id, title="Citation-only source"
+    )
+    record_citation(
+        db_session,
+        viewer_id=bootstrapped_user,
+        source=ResourceRef(scheme="conversation", id=conversation_id),
+        target=ResourceRef(scheme="media", id=media_id),
+        ordinal=1,
+        kind="context",
+        snapshot=CitationSnapshot(title="Citation-only source"),
+    )
+
+    resolved = _resolve_scope_uris(
+        db_session, viewer_id=bootstrapped_user, conversation_id=conversation_id, scopes=[]
+    )
+
+    assert resolved == [], (
+        f"Ordinal citation edges must not become app-search scopes; got {resolved}"
+    )
+    add_context_edge(db_session, conversation_id, f"media:{media_id}")
+
+    resolved_after_context = _resolve_scope_uris(
+        db_session, viewer_id=bootstrapped_user, conversation_id=conversation_id, scopes=[]
+    )
+    assert resolved_after_context == [f"media:{media_id}"], (
+        f"bare context refs should still define app-search scope; got {resolved_after_context}"
+    )
+
+
+def test_default_scope_resolution_uses_conversation_for_note_context(
+    db_session: Session,
+    bootstrapped_user,
+) -> None:
+    from nexus.services.agent_tools.app_search import _resolve_scope_uris
+
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    page_id = uuid4()
+    db_session.execute(
+        text("INSERT INTO pages (id, user_id, title) VALUES (:id, :user_id, 'Scoped page')"),
+        {"id": page_id, "user_id": bootstrapped_user},
+    )
+    add_context_edge(db_session, conversation_id, f"page:{page_id}")
+    db_session.commit()
+
+    resolved = _resolve_scope_uris(
+        db_session, viewer_id=bootstrapped_user, conversation_id=conversation_id, scopes=[]
+    )
+
+    assert resolved == [f"conversation:{conversation_id}"], (
+        f"page/note-only context must not fall back to global search; got {resolved}"
     )
 
 
@@ -963,27 +1030,41 @@ def test_scoped_app_search_with_only_indexed_notes_is_no_results(
             text(
                 """
                 INSERT INTO note_blocks (
-                    id, user_id, page_id, order_key, block_kind,
-                    body_pm_json, body_markdown, body_text, collapsed
+                    id, user_id, block_kind,
+                    body_pm_json, body_markdown, body_text
                 )
                 VALUES (
-                    :note_block_id, :user_id, :page_id, '0000000001', 'bullet',
+                    :note_block_id, :user_id, 'bullet',
                     jsonb_build_object(
                         'type', 'paragraph',
                         'content', jsonb_build_array(
                             jsonb_build_object('type', 'text', 'text', CAST(:body_text AS text))
                         )
                     ),
-                    :body_text, :body_text, false
+                    :body_text, :body_text
                 )
                 """
             ),
             {
                 "note_block_id": note_block_id,
                 "user_id": user_id,
-                "page_id": page_id,
                 "body_text": "scoped note body about gardening tools and trellises",
             },
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO resource_edges (
+                    user_id, kind, origin, source_scheme, source_id, target_scheme,
+                    target_id, source_order_key
+                )
+                VALUES (
+                    :user_id, 'context', 'note_containment', 'page', :page_id,
+                    'note_block', :note_block_id, '0000000001'
+                )
+                """
+            ),
+            {"user_id": user_id, "page_id": page_id, "note_block_id": note_block_id},
         )
         # Put the note in scope for media:{media_id} via a note_body edge note_block->media
         # (the note_block §4.6 scope cell matches a resource_edges row touching BOTH the
@@ -1103,27 +1184,41 @@ def test_scoped_app_search_with_no_indexed_media_or_notes_is_no_indexed_evidence
             text(
                 """
                 INSERT INTO note_blocks (
-                    id, user_id, page_id, order_key, block_kind,
-                    body_pm_json, body_markdown, body_text, collapsed
+                    id, user_id, block_kind,
+                    body_pm_json, body_markdown, body_text
                 )
                 VALUES (
-                    :note_block_id, :user_id, :page_id, '0000000001', 'bullet',
+                    :note_block_id, :user_id, 'bullet',
                     jsonb_build_object(
                         'type', 'paragraph',
                         'content', jsonb_build_array(
                             jsonb_build_object('type', 'text', 'text', CAST(:body_text AS text))
                         )
                     ),
-                    :body_text, :body_text, false
+                    :body_text, :body_text
                 )
                 """
             ),
             {
                 "note_block_id": note_block_id,
                 "user_id": user_id,
-                "page_id": page_id,
                 "body_text": "unlinked note body not in any media scope",
             },
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO resource_edges (
+                    user_id, kind, origin, source_scheme, source_id, target_scheme,
+                    target_id, source_order_key
+                )
+                VALUES (
+                    :user_id, 'context', 'note_containment', 'page', :page_id,
+                    'note_block', :note_block_id, '0000000001'
+                )
+                """
+            ),
+            {"user_id": user_id, "page_id": page_id, "note_block_id": note_block_id},
         )
         rebuild_page_content_index(session, page_id=page_id, reason="test")
         add_context_edge(session, conversation_id, f"media:{media_id}")

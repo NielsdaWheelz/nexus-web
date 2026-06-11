@@ -12,6 +12,7 @@ export const OBJECT_TYPES = [
   "fragment",
   "contributor",
   "evidence_span",
+  "tag",
 ] as const;
 
 export type ObjectType = (typeof OBJECT_TYPES)[number];
@@ -33,6 +34,11 @@ interface ObjectRefsResolveResponse {
   data: {
     objects: HydratedObjectRef[];
   };
+}
+
+export interface ObjectRefSearchOptions {
+  signal?: AbortSignal;
+  objectTypes?: ObjectType[];
 }
 
 function objectRefKey(ref: ObjectRef): string {
@@ -59,12 +65,15 @@ export async function resolveObjectRefs(refs: ObjectRef[]): Promise<HydratedObje
 export async function searchObjectRefs(
   query: string,
   limit = 8,
-  options: { signal?: AbortSignal } = {}
+  options: ObjectRefSearchOptions = {}
 ): Promise<HydratedObjectRef[]> {
   const params = new URLSearchParams({
     q: query,
     limit: String(limit),
   });
+  for (const objectType of options.objectTypes ?? []) {
+    params.append("type", objectType);
+  }
   const response = await apiFetch<ObjectRefsResolveResponse>(
     `/api/object-refs/search?${params.toString()}`,
     { cache: "no-store", signal: options.signal }

@@ -26,6 +26,7 @@ describe("resourceKind", () => {
     expect(resourceObjectTypeForScheme("media")).toBe("media");
     expect(resourceObjectTypeForScheme("evidence_span")).toBe("evidence_span");
     expect(resourceObjectTypeForScheme("content_chunk")).toBe("content_chunk");
+    expect(resourceObjectTypeForScheme("tag")).toBe("tag");
     expect(resourceObjectTypeForScheme("library")).toBeNull();
   });
 });

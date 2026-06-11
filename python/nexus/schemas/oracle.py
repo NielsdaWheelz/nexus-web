@@ -64,8 +64,8 @@ class OracleReadingSummaryOut(BaseModel):
 class OracleReadingPassageOut(BaseModel):
     """One persisted citation in a reading.
 
-    ``citation`` is the read-model CitationOut for user-library passages whose
-    chunk owns an evidence span (chip + ``/media/{id}#evidence-{span}`` jump);
+    ``citation`` is the read-model CitationOut for user-library passages with a
+    live shared reader/note locator (chip + media or note activation);
     public-domain and span-less passages carry ``None`` (typographic only).
     """
 

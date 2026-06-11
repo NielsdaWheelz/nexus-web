@@ -12,6 +12,7 @@ import { copyText } from "@/lib/ui/copyText";
 import { matchesKeyEvent } from "@/lib/keybindings";
 import { useKeybindings } from "@/lib/keybindingsProvider";
 import { createNotePage } from "@/lib/notes/api";
+import { setPendingNoteFocus } from "@/lib/notes/pendingNoteFocus";
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
 import { resolvePaneRoute } from "@/lib/panes/paneRouteTable";
 import { fetchSearchResultPage } from "@/lib/search/searchApi";
@@ -269,6 +270,7 @@ export function usePaletteController(): PaletteController {
       const actionId = target.actionId;
       if (actionId === "create-page") {
         const created = await createNotePage({ title: "Untitled" });
+        setPendingNoteFocus({ pageId: created.id, target: "title" });
         requestOpenInAppPane(`/pages/${created.id}`, { titleHint: created.title });
         return;
       }

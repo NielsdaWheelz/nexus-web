@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Node as ProseMirrorNode } from "prosemirror-model";
 import { toFeedback, useFeedback } from "@/components/feedback/Feedback";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -10,11 +10,12 @@ import {
   createOutlineDocFromBlock,
   firstOutlineBlockFromDoc,
 } from "@/lib/notes/prosemirror/schema";
+import { noteBodyHasContent } from "@/lib/notes/prosemirror/bodyContent";
 import {
   readStoredNoteEditorDraft,
   useNoteEditorSession,
-  type NoteEditorSessionStatus,
 } from "@/lib/notes/useNoteEditorSession";
+import NoteDraftRecovery from "@/components/notes/NoteDraftRecovery";
 import ProseMirrorOutlineEditor from "@/components/notes/ProseMirrorOutlineEditor";
 import type { HighlightLinkedNoteBlock } from "@/lib/highlights/api";
 import styles from "./HighlightNoteEditor.module.css";
@@ -35,9 +36,15 @@ export default function HighlightNoteEditor({
     highlightId: string,
     noteBlockId: string | null,
     createBlockId: string,
-    bodyPmJson: Record<string, unknown>
+    bodyPmJson: Record<string, unknown>,
+    clientMutationId: string
   ) => Promise<HighlightLinkedNoteBlock>;
-  onDelete: (noteBlockId: string, shouldApply: () => boolean) => Promise<void>;
+  onDelete: (
+    highlightId: string,
+    noteBlockId: string,
+    clientMutationId: string,
+    shouldApply: () => boolean
+  ) => Promise<void>;
   onLocalChange?: () => void;
   onOpenLink: (href: string, options: { newPane: boolean }) => void;
 }) {
@@ -46,7 +53,7 @@ export default function HighlightNoteEditor({
   const persistedBlockIdRef = useRef<string | null>(note?.note_block_id ?? null);
   const draftBlockRef = useRef({
     highlightId,
-    blockId: note?.note_block_id ?? newBlockId(),
+    blockId: note?.note_block_id ?? createRandomId(),
   });
 
   const noteBlockId = note?.note_block_id ?? null;
@@ -56,12 +63,15 @@ export default function HighlightNoteEditor({
   ) {
     draftBlockRef.current = {
       highlightId,
-      blockId: noteBlockId ?? newBlockId(),
+      blockId: noteBlockId ?? createRandomId(),
     };
   }
   const draftBlockId = draftBlockRef.current.blockId;
   const resourceKey = `highlight:${highlightId}:${draftBlockId}`;
+  const [editorResetSerial, setEditorResetSerial] = useState(0);
+  const editorResourceKey = `${resourceKey}:editor:${editorResetSerial}`;
   const currentResourceKeyRef = useRef(resourceKey);
+  const loadedResourceKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     currentResourceKeyRef.current = resourceKey;
@@ -77,31 +87,37 @@ export default function HighlightNoteEditor({
     }
   }, [draftBlockId, noteBlockId]);
 
-  const initialDoc = useMemo(
+  const persistedDoc = useMemo(
     () =>
-      readStoredNoteEditorDraft(resourceKey)?.doc ??
       createOutlineDocFromBlock({
         id: note?.note_block_id ?? draftBlockId,
         bodyPmJson: note?.body_pm_json ?? null,
         bodyText: note?.body_text ?? "",
       }),
-    [draftBlockId, note?.body_pm_json, note?.body_text, note?.note_block_id, resourceKey]
+    [draftBlockId, note?.body_pm_json, note?.body_text, note?.note_block_id]
+  );
+  const [initialDoc, setInitialDoc] = useState(
+    () => readStoredNoteEditorDraft(resourceKey)?.doc ?? persistedDoc
   );
 
   const saveDoc = useCallback(
-    async (nextDoc: ProseMirrorNode) => {
+    async (
+      nextDoc: ProseMirrorNode,
+      { clientMutationId }: { clientMutationId: string }
+    ) => {
       const saveResourceKey = resourceKey;
       const saveEditVersion = editVersionRef.current;
       const block = firstOutlineBlockFromDoc(nextDoc);
       if (!block) return;
 
       const persistedBlockId = persistedBlockIdRef.current;
-      if (highlightNoteBodyHasContent(block)) {
+      if (noteBodyHasContent(block)) {
         const savedBlock = await onSave(
           highlightId,
           persistedBlockId,
           block.id,
-          block.bodyPmJson
+          block.bodyPmJson,
+          clientMutationId
         );
         if (currentResourceKeyRef.current === saveResourceKey) {
           persistedBlockIdRef.current =
@@ -114,7 +130,7 @@ export default function HighlightNoteEditor({
         const shouldApply = () =>
           currentResourceKeyRef.current === saveResourceKey &&
           editVersionRef.current === saveEditVersion;
-        await onDelete(persistedBlockId, shouldApply);
+        await onDelete(highlightId, persistedBlockId, clientMutationId, shouldApply);
         if (shouldApply()) {
           persistedBlockIdRef.current = null;
         }
@@ -133,9 +149,29 @@ export default function HighlightNoteEditor({
   });
   const {
     status: saveStatus,
+    hasRecoveredDraft,
     scheduleSave: scheduleSessionSave,
     flush: flushSession,
+    recoverDraft: recoverSessionDraft,
+    retry: retrySession,
+    discardDraft: discardSessionDraft,
   } = session;
+
+  useEffect(() => {
+    if (loadedResourceKeyRef.current === resourceKey) {
+      return;
+    }
+    const isInitialLoad = loadedResourceKeyRef.current === null;
+    loadedResourceKeyRef.current = resourceKey;
+    const storedDraft = readStoredNoteEditorDraft(resourceKey);
+    setInitialDoc(storedDraft?.doc ?? persistedDoc);
+    if (!isInitialLoad) {
+      setEditorResetSerial((current) => current + 1);
+    }
+    if (storedDraft) {
+      recoverSessionDraft(storedDraft);
+    }
+  }, [persistedDoc, recoverSessionDraft, resourceKey]);
 
   const scheduleSave = useCallback(
     (nextDoc: ProseMirrorNode) => {
@@ -145,6 +181,12 @@ export default function HighlightNoteEditor({
     },
     [onLocalChange, scheduleSessionSave]
   );
+
+  const discardRecoveredDraft = useCallback(() => {
+    discardSessionDraft();
+    setInitialDoc(persistedDoc);
+    setEditorResetSerial((current) => current + 1);
+  }, [discardSessionDraft, persistedDoc]);
 
   const openBlock = useCallback(
     (blockId: string, openInNewPane: boolean) => {
@@ -175,57 +217,28 @@ export default function HighlightNoteEditor({
   return (
     <div className={styles.shell} data-editable={editable ? "true" : "false"}>
       <ProseMirrorOutlineEditor
-        resourceKey={resourceKey}
+        resourceKey={editorResourceKey}
         initialDoc={initialDoc}
         editable={editable}
         ariaLabel="Highlight note"
-        createBlockId={newBlockId}
+        createBlockId={createRandomId}
         singleBlock
         compact
         onDocChange={editable ? scheduleSave : undefined}
         onBlurFlush={flushSession}
         onOpenBlock={openBlock}
         onOpenObject={openObject}
+        onError={(error) => {
+          if (handleUnauthenticatedApiError(error)) return;
+          feedback.show(toFeedback(error, { fallback: "Attachment could not be added." }));
+        }}
       />
-      {saveLabelForStatus(saveStatus) ? (
-        <div className={styles.status}>{saveLabelForStatus(saveStatus)}</div>
-      ) : null}
+      <NoteDraftRecovery
+        status={saveStatus}
+        hasRecoveredDraft={hasRecoveredDraft}
+        onRetry={retrySession}
+        onDiscard={discardRecoveredDraft}
+      />
     </div>
   );
-}
-
-function newBlockId(): string {
-  return createRandomId();
-}
-
-function highlightNoteBodyHasContent(block: {
-  bodyText: string;
-  bodyPmJson: Record<string, unknown>;
-}) {
-  if (block.bodyText.trim()) {
-    return true;
-  }
-  return bodyPmJsonHasAtomContent(block.bodyPmJson);
-}
-
-function bodyPmJsonHasAtomContent(value: unknown): boolean {
-  if (typeof value !== "object" || value === null) {
-    return false;
-  }
-  const node = value as Record<string, unknown>;
-  if (node.type === "object_ref" || node.type === "image") {
-    return true;
-  }
-  if (!Array.isArray(node.content)) {
-    return false;
-  }
-  return node.content.some((child) => bodyPmJsonHasAtomContent(child));
-}
-
-function saveLabelForStatus(status: NoteEditorSessionStatus): string {
-  if (status === "dirty") return "Unsaved";
-  if (status === "saving") return "Saving...";
-  if (status === "saved") return "Saved";
-  if (status === "failed") return "Save failed";
-  return "";
 }

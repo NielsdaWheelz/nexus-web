@@ -104,11 +104,7 @@ function installShareFetch({
       });
     }
 
-    if (
-      url.pathname.startsWith("/api/notes/daily/") &&
-      url.pathname.endsWith("/quick-capture") &&
-      method === "POST"
-    ) {
+    if (url.pathname === "/api/notes/quick-capture" && method === "POST") {
       return jsonResponse({ data: noteBlock() }, 201);
     }
 
@@ -390,7 +386,9 @@ describe("ShareCapture", () => {
     renderShareCapture("plain note");
 
     await screen.findByText("Added to today");
-    expect(quickCaptureBodies(fetchMock)).toContainEqual({ body_markdown: "plain note" });
+    expect(quickCaptureBodies(fetchMock)).toContainEqual(
+      expect.objectContaining({ body_markdown: "plain note" }),
+    );
     expect(screen.queryByRole("combobox", { name: "Library destinations" })).toBeNull();
   });
 

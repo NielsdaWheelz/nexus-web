@@ -625,19 +625,12 @@ class _Candidate:
 def _surfaced_passage_citation(citation: CitationOut | None) -> CitationOut | None:
     """The CitationOut a passage shows as a chip, or None for a typographic passage.
 
-    Every phase writes a citation edge (§5.3), but only a user-library passage
-    grounded in an evidence span with a live in-reader jump renders a chip
-    (``OracleReadingPassageOut.citation``): the edge-built CitationOut must target
-    an ``evidence_span`` and resolve to a media reader (``media_id`` set). Public-
-    domain (``oracle_corpus_passage``) passages, span-less (``content_chunk``)
-    chunks, note-owned spans, and spans deleted after generation (F04) all resolve
-    without a media jump and stay typographic only (citation=None).
+    Every phase writes a citation edge (§5.3), but only a passage with a live
+    shared reader/note locator renders a chip (``OracleReadingPassageOut.citation``).
+    Public-domain passages, span-less chunks, and deleted evidence resolve without
+    a locator and stay typographic only (citation=None).
     """
-    if (
-        citation is not None
-        and citation.target_ref.type == "evidence_span"
-        and citation.media_id is not None
-    ):
+    if citation is not None and citation.locator is not None:
         return citation
     return None
 
@@ -700,10 +693,10 @@ async def execute_reading(
                 query_embedding_model=corpus_query_embedding_model,
                 query_embedding=corpus_query_embedding,
             )
-            requires_user_media = _viewer_has_searchable_media(db, viewer_id=viewer_id)
+            requires_user_content = _viewer_has_searchable_user_content(db, viewer_id=viewer_id)
             user_query_embedding_model = None
             user_query_embedding = None
-            if requires_user_media:
+            if requires_user_content:
                 user_query_embedding_model, user_query_embedding = _build_query_embedding_for_model(
                     question,
                     embedding_model=current_transcript_embedding_model(),
@@ -733,12 +726,12 @@ async def execute_reading(
                 db, reading, code="E_INTERNAL", detail="fewer than 3 candidate passages retrieved"
             )
             return {"status": "failed", "error_code": "E_INTERNAL"}
-        if requires_user_media and not _candidate_set_includes_user_media(candidates):
+        if requires_user_content and not _candidate_set_includes_user_media(candidates):
             _fail(
                 db,
                 reading,
                 code=ApiErrorCode.E_APP_SEARCH_FAILED.value,
-                detail="user library is searchable but yielded no user_media candidate",
+                detail="user content is searchable but yielded no user_media candidate",
             )
             return {"status": "failed", "error_code": ApiErrorCode.E_APP_SEARCH_FAILED.value}
 
@@ -786,7 +779,7 @@ async def execute_reading(
             outcome = _validate_oracle_output(parsed, candidates=candidates)
             if outcome is None:
                 return "the JSON violates the reading rules in the system prompt"
-            if requires_user_media and not _selected_user_media(candidates, outcome[4]):
+            if requires_user_content and not _selected_user_media(candidates, outcome[4]):
                 return "select at least one source_kind=user_media candidate among the three phases"
             accepted.clear()
             accepted.append(outcome)
@@ -1025,7 +1018,7 @@ def _selected_user_media(
     )
 
 
-def _viewer_has_searchable_media(db: Session, *, viewer_id: UUID) -> bool:
+def _viewer_has_searchable_user_content(db: Session, *, viewer_id: UUID) -> bool:
     return bool(
         db.execute(
             text(
@@ -1038,6 +1031,16 @@ def _viewer_has_searchable_media(db: Session, *, viewer_id: UUID) -> bool:
                         AND mcis.status = 'ready'
                     JOIN content_chunks cc ON cc.owner_kind = 'media' AND cc.owner_id = vm.media_id
                     WHERE btrim(cc.chunk_text) <> ''
+                    LIMIT 1
+                )
+                OR EXISTS (
+                    SELECT 1
+                    FROM pages p
+                    JOIN content_index_states pcis ON pcis.owner_kind = 'page' AND pcis.owner_id = p.id
+                        AND pcis.status = 'ready'
+                    JOIN content_chunks cc ON cc.owner_kind = 'page' AND cc.owner_id = p.id
+                    WHERE p.user_id = :viewer_id
+                      AND btrim(cc.chunk_text) <> ''
                     LIMIT 1
                 )
                 """
@@ -1322,9 +1325,9 @@ def _candidate_from_content_chunk_row(row: dict[str, Any], *, score: float) -> _
     )
     # A media-owned chunk that grounds to an evidence span carries the canonical
     # in-reader jump in its snapshot (the chip's clickable href, mirroring LI
-    # synthesis); the CitationOut lifts deep_link from this snapshot (G6). A
-    # span-less chunk or a page-owned (note) chunk has no media reader, so it
-    # stays typographic (deep_link None) and renders no chip.
+    # synthesis); the CitationOut lifts deep_link from this snapshot (G6).
+    # Page-owned note chunks resolve through CitationOut.locator instead of a
+    # media deep link. Span-less chunks stay typographic.
     deep_link = (
         f"/media/{row['media_id']}#evidence-{span_id}"
         if span_id is not None and str(row["owner_kind"]) == "media"

@@ -72,6 +72,30 @@
   min-height: 24px;
 }
 
+.editorView :global(.nexus-note-range-pulse) {
+  animation: noteRangePulse 1200ms var(--ease-glide) 0s 2;
+  background: var(--highlight-yellow);
+  border-radius: var(--radius-xs);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+@keyframes noteRangePulse {
+  0%,
+  100% {
+    background-color: var(--highlight-yellow);
+  }
+  50% {
+    background-color: color-mix(in srgb, var(--highlight-yellow) 24%, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .editorView :global(.nexus-note-range-pulse) {
+    animation: none;
+  }
+}
+
 .editorView :global(.note-object-ref) {
   background: color-mix(in srgb, currentColor 10%, transparent);
   border: 1px solid color-mix(in srgb, currentColor 18%, transparent);

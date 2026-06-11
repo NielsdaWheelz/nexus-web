@@ -253,20 +253,23 @@ class TestWebArticleHighlightE2E:
             assert suffix == expected_suffix, f"suffix mismatch for highlight {hl['id']}"
 
         # Step 6: Add a linked note
-        note_response = e2e_client.post(
-            "/notes/blocks",
+        note_response = e2e_client.put(
+            f"/highlights/{hl1_id}/note",
             json={
-                "body_markdown": "This is my highlight note for the E2E test.",
-                "linked_object": {
-                    "object_type": "highlight",
-                    "object_id": hl1_id,
+                "note_block_id": str(uuid4()),
+                "client_mutation_id": f"highlight-note-{uuid4()}",
+                "body_pm_json": {
+                    "type": "paragraph",
+                    "content": [
+                        {"type": "text", "text": "This is my highlight note for the E2E test."}
+                    ],
                 },
             },
             headers=auth_headers(user_id),
         )
-        assert note_response.status_code == 201
+        assert note_response.status_code == 200
         note = note_response.json()["data"]
-        assert note["bodyText"] == "This is my highlight note for the E2E test."
+        assert note["body_text"] == "This is my highlight note for the E2E test."
 
         # Step 7: Reload and verify no drift
         # Re-fetch highlights
@@ -288,7 +291,7 @@ class TestWebArticleHighlightE2E:
         assert reloaded_hl1["exact"] == hl1["exact"]
 
         # Verify linked note still present
-        assert reloaded_hl1["linked_note_blocks"][0]["note_block_id"] == note["id"]
+        assert reloaded_hl1["linked_note_blocks"][0]["note_block_id"] == note["note_block_id"]
         assert (
             reloaded_hl1["linked_note_blocks"][0]["body_text"]
             == "This is my highlight note for the E2E test."
@@ -445,19 +448,17 @@ class TestSharedHighlightVisibility:
         assert del_resp.json()["error"]["code"] == "E_MEDIA_NOT_FOUND"
 
         # User B can attach their own note to a readable highlight.
-        note_resp = e2e_client.post(
-            "/notes/blocks",
+        note_resp = e2e_client.put(
+            f"/highlights/{highlight_id}/note",
             json={
-                "body_markdown": "Nope",
-                "linked_object": {
-                    "object_type": "highlight",
-                    "object_id": highlight_id,
-                },
+                "note_block_id": str(uuid4()),
+                "client_mutation_id": f"highlight-note-{uuid4()}",
+                "body_pm_json": {"type": "paragraph", "content": [{"type": "text", "text": "Nope"}]},
             },
             headers=auth_headers(user_b),
         )
-        assert note_resp.status_code == 201
-        assert note_resp.json()["data"]["bodyText"] == "Nope"
+        assert note_resp.status_code == 200
+        assert note_resp.json()["data"]["body_text"] == "Nope"
 
     def test_non_member_cannot_list_or_get_highlights(
         self,

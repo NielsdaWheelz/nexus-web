@@ -19,7 +19,7 @@ interface CurrentBlock {
 }
 
 const OBJECT_REF_PATTERN =
-  /\[\[(page|note_block|media|highlight|conversation|message|podcast|content_chunk|contributor):([0-9a-fA-F-]{36})(?:\|([^\]]+))?\]\]/g;
+  /\[\[(page|note_block|media|highlight|conversation|message|podcast|content_chunk|fragment|contributor|evidence_span|tag):([0-9a-fA-F-]{36})(?:\|([^\]]+))?\]\]/g;
 
 function defaultCreateBlockId(): string {
   return createRandomId();

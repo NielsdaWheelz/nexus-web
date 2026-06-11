@@ -5,8 +5,8 @@ transaction and never commits, so conversation create, chat-run citation
 write-through, Oracle phase persistence, and the LI promote compose atomically.
 
 Dedup is explicit SELECT-then-write (database.md: no ``ON CONFLICT``): bare
-edges (``ordinal IS NULL``) are unique per directed endpoint pair, and
-``origin=user`` links additionally dedup both directions (undirected, §5.4).
+edges (``ordinal IS NULL``) are unique per viewer, origin, and directed endpoint
+pair. ``origin=user`` links additionally dedup both directions (undirected, §5.4).
 """
 
 from __future__ import annotations
@@ -38,14 +38,62 @@ def create_edge(db: Session, *, viewer_id: UUID, input: EdgeCreate) -> EdgeOut:
     """Validate and insert one edge; flush-only. Duplicates are rejected."""
     _validate_edge_input(db, viewer_id=viewer_id, edge=input)
     if input.ordinal is None:
-        if _existing_bare_pair_id(db, source=input.source, target=input.target) is not None:
+        if (
+            _existing_bare_pair_id(
+                db,
+                viewer_id=viewer_id,
+                source=input.source,
+                target=input.target,
+                origin=input.origin,
+            )
+            is not None
+        ):
             raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Edge already exists")
         if (
             input.origin == "user"
-            and _existing_bare_pair_id(db, source=input.target, target=input.source) is not None
+            and _existing_bare_pair_id(
+                db,
+                viewer_id=viewer_id,
+                source=input.target,
+                target=input.source,
+                origin="user",
+            )
+            is not None
         ):
             raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Edge already exists")
-    elif _existing_ordinal_id(db, source=input.source, ordinal=input.ordinal) is not None:
+        if (
+            input.origin == "note_containment"
+            and _existing_containment_target_id(
+                db, viewer_id=viewer_id, target=input.target
+            )
+            is not None
+        ):
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST,
+                "Note block already has a containment parent",
+            )
+        if (
+            input.origin == "note_containment"
+            and input.source_order_key is not None
+            and _existing_source_order_id(
+                db, viewer_id=viewer_id, source=input.source, order_key=input.source_order_key
+            )
+            is not None
+        ):
+            raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Containment order exists")
+        if (
+            input.origin == "note_containment"
+            and input.target_order_key is not None
+            and _existing_target_order_id(
+                db, viewer_id=viewer_id, target=input.target, order_key=input.target_order_key
+            )
+            is not None
+        ):
+            raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Containment order exists")
+    elif (
+        _existing_ordinal_id(db, viewer_id=viewer_id, source=input.source, ordinal=input.ordinal)
+        is not None
+    ):
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST,
             f"Citation ordinal {input.ordinal} already exists for {input.source.uri}",
@@ -114,10 +162,8 @@ def replace_edges_for_origin(
     """Replace the ``(source, origin)`` edge set; flush-only (note_body sync, citation sets).
 
     The scope is exactly ``(source, origin)``: other origins' edges on the same
-    source are never touched (§5.7). A new bare edge whose endpoint pair already
-    exists under another origin is skipped — the connection is already recorded
-    and owned elsewhere. A self-target member (a note body that refs its own
-    block) is dropped too: a resource does not relate to itself (§5.4), and a
+    source are never touched (§5.7). A self-target member (a note body that refs
+    its own block) is dropped: a resource does not relate to itself (§5.4), and a
     machine-extracted set must not raise on one.
     """
     members = [edge for edge in edges if edge.target != source]
@@ -148,8 +194,6 @@ def replace_edges_for_origin(
             if pair in seen_pairs:
                 continue
             seen_pairs.add(pair)
-            if _existing_bare_pair_id(db, source=source, target=edge.target) is not None:
-                continue
         else:
             if edge.ordinal in seen_ordinals:
                 raise InvalidRequestError(
@@ -212,7 +256,12 @@ def repoint_edges(
             db.flush()
             continue
         if row.ordinal is None and _bare_pair_collides(
-            db, source=new_source, target=new_target, origin=row.origin, exclude_id=row.id
+            db,
+            viewer_id=viewer_id,
+            source=new_source,
+            target=new_target,
+            origin=row.origin,
+            exclude_id=row.id,
         ):
             db.delete(row)
             db.flush()
@@ -259,8 +308,63 @@ def _validate_edge_input(db: Session, *, viewer_id: UUID, edge: EdgeCreate) -> N
             ApiErrorCode.E_INVALID_REQUEST,
             "Citation ordinal and snapshot must be set together",
         )
+    if edge.ordinal is not None and (
+        edge.source_order_key is not None or edge.target_order_key is not None
+    ):
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST, "Citation edges cannot carry order keys"
+        )
+    if edge.origin != "note_containment" and (
+        edge.source_order_key is not None or edge.target_order_key is not None
+    ):
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Order keys are only valid for note containment edges",
+        )
+    if edge.ordinal is not None and edge.origin != "citation":
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Only citation edges can carry ordinals",
+        )
     if edge.ordinal is not None and edge.ordinal < 1:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Citation ordinal must be >= 1")
+    for label, value in (
+        ("source_order_key", edge.source_order_key),
+        ("target_order_key", edge.target_order_key),
+    ):
+        if value is not None and not 1 <= len(value) <= 64:
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST, f"{label} must be 1-64 characters"
+            )
+    if edge.origin == "note_containment":
+        if edge.kind != "context":
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST, "Containment edges must use kind=context"
+            )
+        if edge.source.scheme not in ("page", "note_block") or edge.target.scheme != "note_block":
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST,
+                "Containment edges must connect page/note_block to note_block",
+            )
+        if edge.source_order_key is None:
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST, "Containment edges require source_order_key"
+            )
+        if edge.target_order_key is not None:
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST,
+                "Containment target order is reserved until multi-occurrence blocks ship",
+            )
+    if edge.origin == "highlight_note":
+        if edge.kind != "context":
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST, "Highlight note edges must use kind=context"
+            )
+        if edge.source.scheme != "highlight" or edge.target.scheme != "note_block":
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST,
+                "Highlight note edges must connect highlight to note_block",
+            )
     if edge.source == edge.target:
         # No edge relates a resource to itself (§5.4): a self-link/citation is
         # meaningless and would double-render the resource on both endpoints.
@@ -280,18 +384,71 @@ def _validate_edge_input(db: Session, *, viewer_id: UUID, edge: EdgeCreate) -> N
         assert_ref_visible(db, viewer_id=viewer_id, ref=edge.source)
 
 
-def _existing_bare_pair_id(db: Session, *, source: ResourceRef, target: ResourceRef) -> UUID | None:
+def _existing_bare_pair_id(
+    db: Session,
+    *,
+    viewer_id: UUID | None,
+    source: ResourceRef,
+    target: ResourceRef,
+    origin: str,
+) -> UUID | None:
+    query = select(ResourceEdge.id).where(
+        _source_is(source),
+        _target_is(target),
+        ResourceEdge.origin == origin,
+        ResourceEdge.ordinal.is_(None),
+    )
+    if viewer_id is not None:
+        query = query.where(ResourceEdge.user_id == viewer_id)
+    return db.execute(query).scalar_one_or_none()
+
+
+def _existing_source_order_id(
+    db: Session, *, viewer_id: UUID, source: ResourceRef, order_key: str
+) -> UUID | None:
     return db.execute(
         select(ResourceEdge.id).where(
+            ResourceEdge.user_id == viewer_id,
+            ResourceEdge.origin == "note_containment",
             _source_is(source),
+            ResourceEdge.source_order_key == order_key,
+        )
+    ).scalar_one_or_none()
+
+
+def _existing_target_order_id(
+    db: Session, *, viewer_id: UUID, target: ResourceRef, order_key: str
+) -> UUID | None:
+    return db.execute(
+        select(ResourceEdge.id).where(
+            ResourceEdge.user_id == viewer_id,
+            ResourceEdge.origin == "note_containment",
             _target_is(target),
-            ResourceEdge.ordinal.is_(None),
+            ResourceEdge.target_order_key == order_key,
+        )
+    ).scalar_one_or_none()
+
+
+def _existing_containment_target_id(
+    db: Session, *, viewer_id: UUID, target: ResourceRef
+) -> UUID | None:
+    return db.execute(
+        select(ResourceEdge.id).where(
+            ResourceEdge.user_id == viewer_id,
+            ResourceEdge.origin == "note_containment",
+            _target_is(target),
         )
     ).scalar_one_or_none()
 
 
 def _bare_pair_collides(
-    db: Session, *, source: ResourceRef, target: ResourceRef, origin: str, exclude_id: UUID
+    db: Session,
+    *,
+    viewer_id: UUID,
+    source: ResourceRef,
+    target: ResourceRef,
+    origin: str,
+    exclude_id: UUID,
 ) -> bool:
     """Would a bare ``source->target`` row duplicate one already stored (≠ ``exclude_id``)?
 
@@ -299,18 +456,26 @@ def _bare_pair_collides(
     ``create_edge``'s both-direction check so a repoint cannot leave a symmetric
     user-link duplicate.
     """
-    directed = _existing_bare_pair_id(db, source=source, target=target)
+    directed = _existing_bare_pair_id(
+        db, viewer_id=viewer_id, source=source, target=target, origin=origin
+    )
     if directed is not None and directed != exclude_id:
         return True
     if origin != "user":
         return False
-    reverse = _existing_bare_pair_id(db, source=target, target=source)
+    reverse = _existing_bare_pair_id(
+        db, viewer_id=viewer_id, source=target, target=source, origin=origin
+    )
     return reverse is not None and reverse != exclude_id
 
 
-def _existing_ordinal_id(db: Session, *, source: ResourceRef, ordinal: int) -> UUID | None:
+def _existing_ordinal_id(
+    db: Session, *, viewer_id: UUID, source: ResourceRef, ordinal: int
+) -> UUID | None:
     return db.execute(
-        select(ResourceEdge.id).where(_source_is(source), ResourceEdge.ordinal == ordinal)
+        select(ResourceEdge.id).where(
+            ResourceEdge.user_id == viewer_id, _source_is(source), ResourceEdge.ordinal == ordinal
+        )
     ).scalar_one_or_none()
 
 
@@ -323,6 +488,8 @@ def _row_from_input(viewer_id: UUID, edge: EdgeCreate) -> ResourceEdge:
         source_id=edge.source.id,
         target_scheme=edge.target.scheme,
         target_id=edge.target.id,
+        source_order_key=edge.source_order_key,
+        target_order_key=edge.target_order_key,
         ordinal=edge.ordinal,
         snapshot=snapshot_to_jsonb(edge.snapshot) if edge.snapshot is not None else None,
     )
@@ -335,6 +502,8 @@ def _edge_out(row: ResourceEdge) -> EdgeOut:
         target=ResourceRef(scheme=cast("ResourceScheme", row.target_scheme), id=row.target_id),
         kind=cast("EdgeKind", row.kind),
         origin=cast("EdgeOrigin", row.origin),
+        source_order_key=row.source_order_key,
+        target_order_key=row.target_order_key,
         ordinal=row.ordinal,
         snapshot=snapshot_from_jsonb(row.snapshot) if row.snapshot is not None else None,
         created_at=row.created_at,

@@ -58,10 +58,13 @@ interface ReaderHighlightsSurfaceProps {
     highlightId: string,
     noteBlockId: string | null,
     createBlockId: string,
-    bodyPmJson: Record<string, unknown>
+    bodyPmJson: Record<string, unknown>,
+    clientMutationId: string
   ) => Promise<HighlightLinkedNoteBlock>;
   onNoteDelete: (
+    highlightId: string,
     noteBlockId: string,
+    clientMutationId: string,
     shouldApply: () => boolean
   ) => Promise<void>;
   onOpenConversation: (conversationId: string, title: string) => void;
@@ -485,6 +488,7 @@ export default function ReaderHighlightsSurface({
       noteBlockId: string | null,
       createBlockId: string,
       bodyPmJson: Record<string, unknown>,
+      clientMutationId: string,
     ) => {
       if (!noteBlockId) {
         noteEditorKeysByBlockIdRef.current.set(
@@ -492,7 +496,13 @@ export default function ReaderHighlightsSurface({
           getDraftNoteEditorKey(highlightId),
         );
       }
-      return onNoteSave(highlightId, noteBlockId, createBlockId, bodyPmJson);
+      return onNoteSave(
+        highlightId,
+        noteBlockId,
+        createBlockId,
+        bodyPmJson,
+        clientMutationId,
+      );
     },
     [getDraftNoteEditorKey, onNoteSave],
   );

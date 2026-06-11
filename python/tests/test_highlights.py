@@ -120,14 +120,17 @@ def create_linked_highlight_note(
     highlight_id: str,
     body: str,
 ):
-    return client.post(
-        "/notes/blocks",
+    body_pm_json = (
+        {"type": "paragraph", "content": [{"type": "text", "text": body}]}
+        if body
+        else {"type": "paragraph"}
+    )
+    return client.put(
+        f"/highlights/{highlight_id}/note",
         json={
-            "body_markdown": body,
-            "linked_object": {
-                "object_type": "highlight",
-                "object_id": highlight_id,
-            },
+            "note_block_id": str(uuid4()),
+            "client_mutation_id": f"highlight-note-{uuid4()}",
+            "body_pm_json": body_pm_json,
         },
         headers=auth_headers(user_id),
     )
@@ -289,6 +292,7 @@ class TestListHighlights:
 
         direct_db.register_cleanup("pages", "user_id", user_id)
         direct_db.register_cleanup("note_blocks", "user_id", user_id)
+        direct_db.register_cleanup("note_view_states", "user_id", user_id)
         direct_db.register_cleanup("resource_edges", "user_id", user_id)
         register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
@@ -524,6 +528,7 @@ class TestDeleteHighlight:
 
         direct_db.register_cleanup("pages", "user_id", user_id)
         direct_db.register_cleanup("note_blocks", "user_id", user_id)
+        direct_db.register_cleanup("note_view_states", "user_id", user_id)
         direct_db.register_cleanup("resource_edges", "user_id", user_id)
         register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
@@ -839,13 +844,15 @@ class TestLinkedHighlightNotes:
         create_note_resp = create_linked_highlight_note(
             auth_client, user_id, highlight_id, "First note"
         )
-        assert create_note_resp.status_code == 201
+        assert create_note_resp.status_code == 200
         note = create_note_resp.json()["data"]
-        assert note["bodyText"] == "First note"
+        assert note["body_text"] == "First note"
 
-        update_note_resp = auth_client.patch(
-            f"/notes/blocks/{note['id']}",
+        update_note_resp = auth_client.put(
+            f"/highlights/{highlight_id}/note",
             json={
+                "note_block_id": note["note_block_id"],
+                "client_mutation_id": f"highlight-note-{uuid4()}",
                 "body_pm_json": {
                     "type": "paragraph",
                     "content": [{"type": "text", "text": "Updated note"}],
@@ -854,11 +861,14 @@ class TestLinkedHighlightNotes:
             headers=auth_headers(user_id),
         )
         assert update_note_resp.status_code == 200
-        assert update_note_resp.json()["data"]["bodyText"] == "Updated note"
+        assert update_note_resp.json()["data"]["body_text"] == "Updated note"
 
-        delete_note_resp = auth_client.request(
-            "DELETE",
-            f"/notes/blocks/{note['id']}",
+        delete_note_resp = auth_client.delete(
+            f"/highlights/{highlight_id}/note",
+            params={
+                "note_block_id": note["note_block_id"],
+                "client_mutation_id": f"highlight-note-{uuid4()}",
+            },
             headers=auth_headers(user_id),
         )
         assert delete_note_resp.status_code == 204
@@ -890,8 +900,8 @@ class TestLinkedHighlightNotes:
         direct_db.register_cleanup("resource_edges", "user_id", user_id)
 
         note_resp = create_linked_highlight_note(auth_client, user_id, highlight_id, "")
-        assert note_resp.status_code == 201
-        assert note_resp.json()["data"]["bodyText"] == ""
+        assert note_resp.status_code == 200
+        assert note_resp.json()["data"]["body_text"] == ""
 
 
 # =============================================================================
@@ -1491,6 +1501,7 @@ class TestHighlightSharedRead:
 
         direct_db.register_cleanup("pages", "user_id", user_b)
         direct_db.register_cleanup("note_blocks", "user_id", user_b)
+        direct_db.register_cleanup("note_view_states", "user_id", user_b)
         direct_db.register_cleanup("resource_edges", "user_id", user_b)
         register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("library_entries", "library_id", lib_id)
@@ -1513,8 +1524,8 @@ class TestHighlightSharedRead:
             hl_id,
             "My note about a shared highlight",
         )
-        assert note_resp.status_code == 201
-        assert note_resp.json()["data"]["bodyText"] == "My note about a shared highlight"
+        assert note_resp.status_code == 200
+        assert note_resp.json()["data"]["body_text"] == "My note about a shared highlight"
 
     def test_highlight_out_includes_author_fields(
         self, auth_client, direct_db: DirectSessionManager

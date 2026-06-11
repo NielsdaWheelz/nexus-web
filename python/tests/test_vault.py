@@ -17,7 +17,12 @@ from nexus.db.models import (
     ProcessingStatus,
     ResourceEdge,
 )
-from nexus.services.notes import set_highlight_note_body
+from nexus.services.notes import set_highlight_note_body_pm_json
+from nexus.services.resource_graph.documents import (
+    DocumentBlock,
+    find_block_occurrence,
+    load_page_document,
+)
 from nexus.services.vault import export_vault, sync_vault
 from tests.factories import (
     add_media_to_library,
@@ -176,17 +181,28 @@ def test_vault_projects_multiple_highlight_notes_with_markers(
     )
     second_note = NoteBlock(
         user_id=bootstrapped_user,
-        page_id=first_note.page_id,
-        parent_block_id=None,
-        order_key="0000000002",
         block_kind="bullet",
         body_pm_json={"type": "paragraph", "content": [{"type": "text", "text": "Second note"}]},
         body_markdown="Second note",
         body_text="Second note",
-        collapsed=False,
     )
     db_session.add(second_note)
     db_session.flush()
+    first_occurrence = find_block_occurrence(
+        db_session, user_id=bootstrapped_user, block_id=first_note.id
+    )
+    db_session.add(
+        ResourceEdge(
+            user_id=bootstrapped_user,
+            kind="context",
+            origin="note_containment",
+            source_scheme="page",
+            source_id=first_occurrence.page_id,
+            target_scheme="note_block",
+            target_id=second_note.id,
+            source_order_key="0000000002",
+        )
+    )
     db_session.add(
         ResourceEdge(
             user_id=bootstrapped_user,
@@ -453,8 +469,14 @@ def _seed_article_highlight(
             end_offset=end,
         )
     )
-    set_highlight_note_body(session, user_id, highlight.id, "Original note", commit=False)
-    session.commit()
+    set_highlight_note_body_pm_json(
+        session,
+        user_id,
+        highlight_id=highlight.id,
+        block_id=uuid4(),
+        body_pm_json={"type": "paragraph", "content": [{"type": "text", "text": "Original note"}]},
+        client_mutation_id=f"vault-seed-highlight-note-{uuid4()}",
+    )
     return media.id, fragment.id, highlight.id
 
 
@@ -493,10 +515,27 @@ def _highlight_note_body(session: Session, highlight_id: UUID) -> str | None:
 
 
 def _page_body(session: Session, page_id: UUID) -> str:
-    blocks = (
-        session.query(NoteBlock)
-        .filter(NoteBlock.page_id == page_id)
-        .order_by(NoteBlock.order_key.asc())
-        .all()
-    )
-    return "\n\n".join(block.body_text for block in blocks)
+    page = session.get(Page, page_id)
+    assert page is not None
+    document = load_page_document(session, user_id=page.user_id, page_id=page_id)
+    return "\n\n".join(_find_body(document.roots, block_id) for block_id in document.block_ids)
+
+
+def _find_body(nodes: list[DocumentBlock], block_id: UUID) -> str:
+    for node in nodes:
+        if node.block.id == block_id:
+            return node.block.body_text
+        found = _maybe_find_body(node.children, block_id)
+        if found is not None:
+            return found
+    raise AssertionError(f"Missing block {block_id}")
+
+
+def _maybe_find_body(nodes: list[DocumentBlock], block_id: UUID) -> str | None:
+    for node in nodes:
+        if node.block.id == block_id:
+            return node.block.body_text
+        found = _maybe_find_body(node.children, block_id)
+        if found is not None:
+            return found
+    return None

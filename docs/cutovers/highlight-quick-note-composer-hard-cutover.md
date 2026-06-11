@@ -14,9 +14,11 @@ component, `HighlightQuickNoteComposer`, that hosts the **existing**
 skins: a `FloatingActionSurface` popover anchored at the selection on desktop, and
 a `MobileSheet` with a quote header on mobile. The same composer is reachable from
 the existing-highlight click popover ("Add note"/"Edit note" action) and from a
-reader-local `n` chord while a selection is active. Zero backend changes: notes
-remain `note_block`s linked via `object_links` `note_about`, written through the
-canonical `saveHighlightNote` → `set_highlight_note_body` path, and therefore
+reader-local `n` chord while a selection is active. The current backend path is
+the highlight-shaped product route `PUT/DELETE /api/highlights/{highlightId}/note`:
+notes remain `note_block`s attached to highlights with
+`resource_edges(origin='highlight_note')`, written through
+`set_highlight_note_body_pm_json` / `delete_highlight_note`, and therefore
 indexed, searchable, and chat-citeable like any note.
 
 As part of the cutover, the four duplicated create-then-quote wrappers in
@@ -114,8 +116,8 @@ existing-highlight ─────┘            │ set QuickNoteSession
                                                        │
                                                        ▼
                                        saveHighlightNote (lib/highlights/api.ts)
-                                       POST/PATCH /api/notes/blocks
-                                       → set_highlight_note_body (canonical)
+                                       /api/highlights/{highlightId}/note
+                                       → set_highlight_note_body_pm_json / delete_highlight_note
 ```
 
 State lives in `MediaPaneBody` (the pane owns all highlight surfaces; no route, no

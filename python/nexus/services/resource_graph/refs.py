@@ -29,6 +29,7 @@ ResourceScheme = Literal[
     "external_snapshot",
     "contributor",
     "podcast",
+    "tag",
 ]
 
 RESOURCE_SCHEMES: tuple[ResourceScheme, ...] = (
@@ -48,6 +49,7 @@ RESOURCE_SCHEMES: tuple[ResourceScheme, ...] = (
     "external_snapshot",
     "contributor",
     "podcast",
+    "tag",
 )
 
 # The only schemes app_search may scope to (§5.1); `library` is a scope but is

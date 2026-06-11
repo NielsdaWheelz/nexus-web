@@ -7,6 +7,8 @@ import OracleReadingPaneBody, { type ReadingDetail } from "./OracleReadingPaneBo
 
 const streamMocks = vi.hoisted(() => ({
   fetchStreamToken: vi.fn(),
+  routerPush: vi.fn(),
+  routerReplace: vi.fn(),
   sseClientDirect: vi.fn(() => vi.fn()),
 }));
 
@@ -15,8 +17,8 @@ vi.mock("next/navigation", () => ({
   default: {},
   usePathname: () => "/oracle/reading-1",
   useRouter: () => ({
-    push: vi.fn(),
-    replace: vi.fn(),
+    push: streamMocks.routerPush,
+    replace: streamMocks.routerReplace,
   }),
 }));
 
@@ -37,6 +39,8 @@ describe("OracleReadingPaneBody", () => {
     });
     streamMocks.sseClientDirect.mockReset();
     streamMocks.sseClientDirect.mockReturnValue(vi.fn());
+    streamMocks.routerPush.mockReset();
+    streamMocks.routerReplace.mockReset();
   });
 
   afterEach(() => {
@@ -320,20 +324,20 @@ describe("OracleReadingPaneBody", () => {
                   locator_label: "p. 12",
                   attribution_text: "From your library",
                   marginalia_text: "A note in the margin.",
-                  deep_link: "/media/media-1#evidence-span-1",
+                  deep_link: "/media/media-1#fragment-fragment-1",
                   citation: {
                     ordinal: 1,
                     role: "context",
                     target_ref: { type: "evidence_span", id: "span-1" },
                     media_id: "media-1",
                     locator: {
-                      type: "pdf_page_geometry",
+                      type: "web_text_offsets",
                       media_id: "media-1",
-                      page_number: 12,
-                      quads: [],
-                      exact: "A line from the user's own library.",
+                      fragment_id: "fragment-1",
+                      start_offset: 0,
+                      end_offset: 35,
                     },
-                    deep_link: "/media/media-1#evidence-span-1",
+                    deep_link: "/media/media-1#fragment-fragment-1",
                     snapshot: {
                       title: "A User Document",
                       excerpt: "A line from the user's own library.",
@@ -354,7 +358,67 @@ describe("OracleReadingPaneBody", () => {
 
     const chip = await screen.findByRole("link", { name: "Open citation 1" });
     expect(chip).toBeInTheDocument();
-    expect(chip).toHaveAttribute("href", "/media/media-1#evidence-span-1");
+    expect(chip).toHaveAttribute("href", "/media/media-1#fragment-fragment-1");
+    chip.addEventListener("click", (event) => event.preventDefault(), { once: true });
+    await userEvent.click(chip);
+    expect(streamMocks.routerPush).toHaveBeenCalledWith("/media/media-1#fragment-fragment-1");
+  });
+
+  it("renders and opens a note citation chip for page-owned evidence", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (path: string) => {
+        if (path === "/api/oracle/readings/reading-1") {
+          return jsonResponse({
+            data: readingDetail({
+              id: "reading-1",
+              question: "Where is the note evidence?",
+              folioNumber: 1,
+              passages: [
+                {
+                  phase: "descent",
+                  source_kind: "user_media",
+                  exact_snippet: "A line from the user's notes.",
+                  locator_label: "Lantern Notebook",
+                  attribution_text: "From your notes",
+                  marginalia_text: "A note in the margin.",
+                  deep_link: null,
+                  citation: {
+                    ordinal: 1,
+                    role: "context",
+                    target_ref: { type: "evidence_span", id: "span-1" },
+                    media_id: null,
+                    locator: {
+                      type: "note_block_offsets",
+                      page_id: "page-1",
+                      block_id: "block-1",
+                      start_offset: 0,
+                      end_offset: 31,
+                    },
+                    deep_link: null,
+                    snapshot: {
+                      title: "Lantern Notebook",
+                      excerpt: "A line from the user's notes.",
+                      section_label: "Lantern Notebook",
+                      result_type: "evidence_span",
+                    },
+                  },
+                },
+              ],
+            }),
+          });
+        }
+        throw new Error(`Unexpected fetch path: ${path}`);
+      }),
+    );
+
+    render(<OracleReadingPaneBody readingId="reading-1" />);
+
+    const chip = await screen.findByRole("link", { name: "Open citation 1" });
+    expect(chip).toHaveAttribute("href", "/notes/block-1");
+    chip.addEventListener("click", (event) => event.preventDefault(), { once: true });
+    await userEvent.click(chip);
+    expect(streamMocks.routerPush).toHaveBeenCalledWith("/notes/block-1");
   });
 
   it("shows chat-open failure copy when starting a conversation fails", async () => {

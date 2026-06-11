@@ -87,6 +87,8 @@ def _scheme_is_handled(scheme: ResourceScheme) -> bool:
         return True
     if scheme == "podcast":
         return True
+    if scheme == "tag":
+        return True
     assert_never(scheme)
 
 

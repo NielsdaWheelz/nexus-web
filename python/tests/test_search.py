@@ -952,26 +952,56 @@ class TestSearchScopes:
             text(
                 """
                 INSERT INTO note_blocks (
-                    id, user_id, page_id, order_key, block_kind,
-                    body_pm_json, body_markdown, body_text, collapsed
+                    id, user_id, block_kind,
+                    body_pm_json, body_markdown, body_text
                 )
                 VALUES (
-                    :note_block_id, :user_id, :page_id, '0000000001', 'bullet',
+                    :note_block_id, :user_id, 'bullet',
                     jsonb_build_object(
                         'type', 'paragraph',
                         'content', jsonb_build_array(
                             jsonb_build_object('type', 'text', 'text', CAST(:body_text AS text))
                         )
                     ),
-                    :body_text, :body_text, false
+                    :body_text, :body_text
                 )
                 """
             ),
             {
                 "note_block_id": note_block_id,
                 "user_id": user_id,
-                "page_id": page_id,
                 "body_text": body_text,
+            },
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO resource_edges (
+                    user_id,
+                    kind,
+                    origin,
+                    source_scheme,
+                    source_id,
+                    target_scheme,
+                    target_id,
+                    source_order_key
+                )
+                VALUES (
+                    :user_id,
+                    'context',
+                    'note_containment',
+                    'page',
+                    :page_id,
+                    'note_block',
+                    :note_block_id,
+                    '0000000001'
+                )
+                """
+            ),
+            {
+                "user_id": user_id,
+                "page_id": page_id,
+                "note_block_id": note_block_id,
             },
         )
         rebuild_page_content_index(session, page_id=page_id, reason="test")
@@ -1043,6 +1073,59 @@ class TestSearchScopes:
         ids = {r["id"] for r in response.json()["results"] if r["type"] == "note_block"}
         assert str(in_block_id) in ids, f"expected in-scope note; got {response.json()['results']}"
         assert str(out_block_id) not in ids
+
+    def test_scope_media_ignores_note_citation_edges(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        direct_db.register_cleanup("users", "id", user_id)
+        direct_db.register_cleanup("libraries", "owner_user_id", user_id)
+        direct_db.register_cleanup("memberships", "user_id", user_id)
+        direct_db.register_cleanup("pages", "user_id", user_id)
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        page_id, block_id = uuid4(), uuid4()
+        with direct_db.session() as session:
+            scoped_media = create_searchable_media(session, user_id, title="Citation Scope Media")
+            self._seed_scope_note_block(
+                session,
+                user_id=user_id,
+                page_id=page_id,
+                note_block_id=block_id,
+                page_title="Citation Edge Page",
+                body_text="citationedgescopeprobe note content",
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO resource_edges (
+                        user_id, kind, origin, source_scheme, source_id, target_scheme,
+                        target_id, ordinal, snapshot
+                    )
+                    VALUES (
+                        :user_id, 'context', 'citation', 'note_block', :note_block_id,
+                        'media', :media_id, 1, '{}'::jsonb
+                    )
+                    """
+                ),
+                {"user_id": user_id, "note_block_id": block_id, "media_id": scoped_media},
+            )
+            session.commit()
+
+        direct_db.register_cleanup("resource_edges", "source_id", block_id)
+        direct_db.register_cleanup("resource_edges", "target_id", block_id)
+        direct_db.register_cleanup("fragments", "media_id", scoped_media)
+        direct_db.register_cleanup("library_entries", "media_id", scoped_media)
+        direct_db.register_cleanup("media", "id", scoped_media)
+
+        response = auth_client.get(
+            f"/search?q=citationedgescopeprobe&kinds=notes&scope=media:{scoped_media}",
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 200, response.text
+        ids = {r["id"] for r in response.json()["results"] if r["type"] == "note_block"}
+        assert str(block_id) not in ids
 
     def test_scope_media_filters_notes_via_highlight_anchor(
         self, auth_client, direct_db: DirectSessionManager
@@ -1154,9 +1237,9 @@ class TestSearchScopes:
     def test_scope_conversation_filters_notes(self, auth_client, direct_db: DirectSessionManager):
         """conversation: scope admits a note via a conversation context edge (graph §2.5).
 
-        Any kind/origin edge whose source is the conversation and whose target is
-        the note_block admits it (`context.is_context_ref` semantics). An edge
-        between the note and one of the conversation's MESSAGES does not."""
+        Only a user context edge whose source is the conversation and whose
+        target is the note_block admits it. An edge between the note and one of
+        the conversation's messages does not."""
         user_id = create_test_user_id()
         direct_db.register_cleanup("users", "id", user_id)
         direct_db.register_cleanup("libraries", "owner_user_id", user_id)
@@ -1236,6 +1319,57 @@ class TestSearchScopes:
         ids = {r["id"] for r in response.json()["results"] if r["type"] == "note_block"}
         assert str(in_block_id) in ids, f"expected in-scope note; got {response.json()['results']}"
         assert str(out_block_id) not in ids
+
+    def test_scope_conversation_ignores_note_citation_edges(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        direct_db.register_cleanup("users", "id", user_id)
+        direct_db.register_cleanup("libraries", "owner_user_id", user_id)
+        direct_db.register_cleanup("memberships", "user_id", user_id)
+        direct_db.register_cleanup("pages", "user_id", user_id)
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        page_id, block_id = uuid4(), uuid4()
+        with direct_db.session() as session:
+            conv_id = create_test_conversation(session, user_id)
+            self._seed_scope_note_block(
+                session,
+                user_id=user_id,
+                page_id=page_id,
+                note_block_id=block_id,
+                page_title="Conversation Citation Page",
+                body_text="conversationcitationprobe note content",
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO resource_edges (
+                        user_id, kind, origin, source_scheme, source_id, target_scheme,
+                        target_id, ordinal, snapshot
+                    )
+                    VALUES (
+                        :user_id, 'context', 'citation', 'conversation', :conversation_id,
+                        'note_block', :note_block_id, 1, '{}'::jsonb
+                    )
+                    """
+                ),
+                {"user_id": user_id, "conversation_id": conv_id, "note_block_id": block_id},
+            )
+            session.commit()
+
+        direct_db.register_cleanup("resource_edges", "source_id", conv_id)
+        direct_db.register_cleanup("resource_edges", "target_id", block_id)
+        direct_db.register_cleanup("conversations", "id", conv_id)
+
+        response = auth_client.get(
+            f"/search?q=conversationcitationprobe&kinds=notes&scope=conversation:{conv_id}",
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 200, response.text
+        ids = {r["id"] for r in response.json()["results"] if r["type"] == "note_block"}
+        assert str(block_id) not in ids
 
 
 # =============================================================================
@@ -2303,26 +2437,56 @@ class TestSearchResultFormat:
             text(
                 """
                 INSERT INTO note_blocks (
-                    id, user_id, page_id, order_key, block_kind,
-                    body_pm_json, body_markdown, body_text, collapsed
+                    id, user_id, block_kind,
+                    body_pm_json, body_markdown, body_text
                 )
                 VALUES (
-                    :note_block_id, :user_id, :page_id, '0000000001', 'bullet',
+                    :note_block_id, :user_id, 'bullet',
                     jsonb_build_object(
                         'type', 'paragraph',
                         'content', jsonb_build_array(
                             jsonb_build_object('type', 'text', 'text', CAST(:body_text AS text))
                         )
                     ),
-                    :body_text, :body_text, false
+                    :body_text, :body_text
                 )
                 """
             ),
             {
                 "note_block_id": note_block_id,
                 "user_id": user_id,
-                "page_id": page_id,
                 "body_text": body_text,
+            },
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO resource_edges (
+                    user_id,
+                    kind,
+                    origin,
+                    source_scheme,
+                    source_id,
+                    target_scheme,
+                    target_id,
+                    source_order_key
+                )
+                VALUES (
+                    :user_id,
+                    'context',
+                    'note_containment',
+                    'page',
+                    :page_id,
+                    'note_block',
+                    :note_block_id,
+                    '0000000001'
+                )
+                """
+            ),
+            {
+                "user_id": user_id,
+                "page_id": page_id,
+                "note_block_id": note_block_id,
             },
         )
         rebuild_page_content_index(session, page_id=page_id, reason="test")
@@ -3859,20 +4023,15 @@ class TestSearchTranscriptNavigation:
                     INSERT INTO note_blocks (
                         id,
                         user_id,
-                        page_id,
-                        order_key,
                         block_kind,
                         body_pm_json,
                         body_markdown,
                         body_text,
-                        collapsed,
                         created_at
                     )
                     VALUES (
                         :note_block_id,
                         :user_id,
-                        :page_id,
-                        '0000000001',
                         'bullet',
                         jsonb_build_object(
                             'type',
@@ -3889,7 +4048,6 @@ class TestSearchTranscriptNavigation:
                         ),
                         'anchor remap needle body text',
                         'anchor remap needle body text',
-                        false,
                         :now_ts
                     )
                     """
@@ -3897,7 +4055,40 @@ class TestSearchTranscriptNavigation:
                 {
                     "note_block_id": note_block_id,
                     "user_id": user_id,
+                    "now_ts": now_ts,
+                },
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO resource_edges (
+                        user_id,
+                        kind,
+                        origin,
+                        source_scheme,
+                        source_id,
+                        target_scheme,
+                        target_id,
+                        source_order_key,
+                        created_at
+                    )
+                    VALUES (
+                        :user_id,
+                        'context',
+                        'note_containment',
+                        'page',
+                        :page_id,
+                        'note_block',
+                        :note_block_id,
+                        '0000000001',
+                        :now_ts
+                    )
+                    """
+                ),
+                {
+                    "user_id": user_id,
                     "page_id": page_id,
+                    "note_block_id": note_block_id,
                     "now_ts": now_ts,
                 },
             )

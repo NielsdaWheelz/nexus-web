@@ -54,12 +54,14 @@ function locatorMatchesSearchType(
 ): boolean {
   if (
     type === "content_chunk" ||
-    type === "fragment" ||
-    type === "highlight" ||
     type === "evidence_span"
   ) {
-    return isMediaRetrievalLocator(locator);
+    return (
+      isMediaRetrievalLocator(locator) || locator.type === "note_block_offsets"
+    );
   }
+  if (type === "fragment" || type === "highlight")
+    return isMediaRetrievalLocator(locator);
   if (type === "note_block") return locator.type === "note_block_offsets";
   if (type === "message") return locator.type === "message_offsets";
   if (type === "web_result") return locator.type === "external_url";

@@ -42,7 +42,8 @@ function saveNoteMock() {
       _highlightId: string,
       noteBlockId: string | null,
       createBlockId: string,
-      bodyPmJson: Record<string, unknown>
+      bodyPmJson: Record<string, unknown>,
+      _clientMutationId: string
     ) => ({
       note_block_id: noteBlockId ?? createBlockId,
       body_pm_json: bodyPmJson,
@@ -132,7 +133,8 @@ describe("HighlightQuickNoteComposer", () => {
         "highlight-real",
         null,
         draftBlockId,
-        paragraphFromText("hello").toJSON()
+        paragraphFromText("hello").toJSON(),
+        expect.any(String)
       );
 
       // The editor key is the opaque session id and must never change mid-session.
@@ -180,7 +182,13 @@ describe("HighlightQuickNoteComposer", () => {
       await user.keyboard("more");
 
       await waitFor(() => expect(onSaveNote).toHaveBeenCalledTimes(1), { timeout: 3000 });
-      expect(onSaveNote).toHaveBeenCalledWith("highlight-9", "note-1", "note-1", expect.anything());
+      expect(onSaveNote).toHaveBeenCalledWith(
+        "highlight-9",
+        "note-1",
+        "note-1",
+        expect.anything(),
+        expect.any(String)
+      );
     });
 
     it("Escape closes the composer and the pending edit still saves", async () => {
@@ -202,7 +210,8 @@ describe("HighlightQuickNoteComposer", () => {
         "highlight-9",
         null,
         draftBlockId,
-        paragraphFromText("bye").toJSON()
+        paragraphFromText("bye").toJSON(),
+        expect.any(String)
       );
     });
 

@@ -1,8 +1,8 @@
 # Notes & Pages Evidence Unification — Hard Cutover
 
-**Status:** Spec — **Rev 2** (review-driven; corrects the "composes automatically" claim, scopes the owner-rename blast radius, tightens note-evidence/locator/frontend, and fixes hygiene). Not built.
+**Status:** Implemented — **Rev 3** (landed through the owner-polymorphic content-index pipeline; subsequent notes/pages object-graph work keeps this contract and writes page bodies through graph-backed document commands).
 **Author altitude:** SME / staff.
-**Migration:** `0141`.
+**Migration:** `0143`.
 **Supersedes / deletes:** the entire `object_search_*` substrate (tables, service, retriever, scope filter, constants) introduced by `0077_notes_daily_pins_object_search.py` and never finished (the document-embedding writer was never built — see [[project_notes_pages_semantic_search_unbuilt]]).
 **Cutover discipline:** hard. No back-compat, no dual-write, no fallback, no shim, no legacy branch. Old path is deleted in the same change that lands the new one.
 
@@ -13,7 +13,7 @@
 The product has **two parallel content-indexing substrates** that do the same job — chunk text, embed it, store vectors, expose hybrid (lexical ∪ semantic) retrieval, resolve a hit back to a citeable, jump-to-source locator. One is mature; the other is a half-built scaffold.
 
 ### 1.1 Substrate A — the canonical content/evidence pipeline (mature)
-`content_blocks → content_chunks → content_chunk_parts → content_embeddings`, plus `evidence_spans`, gated by `media_content_index_states`. Owner = `media_id` (FK → `media`). It backs:
+`content_blocks → content_chunks → content_chunk_parts → content_embeddings`, plus `evidence_spans`, now gated by `content_index_states(owner_kind, owner_id)`. Before the cutover the owner was `media_id`; after it, media and page owners share the same pipeline. It backs:
 - hybrid search over documents (`search/retrievers/library_content.py:_search_content_chunks`),
 - chat/oracle/library-intelligence RAG citations (`evidence_spans` → `message_retrievals` → `[N]` render),
 - jump-to-source deep links via `locator_resolver.resolve_evidence_span`.
@@ -56,7 +56,7 @@ Non-promises are in §13.
 `content_blocks`, `content_chunks`, `evidence_spans`, and the (renamed) `content_index_states` are keyed on `(owner_kind text, owner_id uuid)` where `owner_kind ∈ {'media','page'}`. `content_chunk_parts` and `content_embeddings` are keyed via `chunk_id` (unchanged). `media_id` columns are dropped — the FK was already non-cascading (no `ON DELETE` clause ⇒ default `NO ACTION`) and cleanup is already explicit (`docs/rules/database.md`: no `ON DELETE CASCADE`, explicit app cleanup), so a polymorphic owner with app-level cleanup is the idiomatic generalization, not a regression. The owner column is **not** a FK (a single column cannot FK two parent tables); integrity is held by the same explicit-cleanup discipline the codebase already uses for `media_id` (§3.6 enumerates every consumer; AC-4 tests orphan-freedom).
 
 A page is a **document**; its `note_block`s are **blocks**:
-- one `content_block` per `note_block`, ordered by the page's block tree (`parent_block_id` NULLS-first, `order_key`, `id`), DFS-flattened, with accumulated offsets;
+- one `content_block` per `note_block`, ordered by the page's graph document (`resource_graph.documents.load_page_document`) and its `origin='note_containment'` `source_order_key`, DFS-flattened, with accumulated offsets;
 - `source_kind='note'`, block `locator/selector` kind `'note_text'` carrying `{note_block_id, page_id, start_offset, end_offset, text_quote}`;
 - the existing 420-token chunker (`CHUNK_MAX_TOKENS`/`CHUNK_OVERLAP_TOKENS`) coalesces adjacent blocks into `content_chunks`; each chunk gets a `primary_evidence_span_id` and one `content_embedding`;
 - `evidence_spans.resolver_kind='note'`.
@@ -116,11 +116,11 @@ Dropping `media_id` and renaming `media_content_index_states → content_index_s
 | `services/library_intelligence.py` (`_load_inventory`, `:242`) | counts `cc` per `le.media_id` | owner join, **media-only** (notes excluded, §7) |
 | `services/object_refs.py` (`:323`) | `hydrate_object_ref` content_chunk search `JOIN cc.media_id` | owner join; media-only |
 | `services/reader_navigation.py` (`:51`) | `mcis.media_id` ready-probe + `content_blocks.media_id` heading nav | owner join; media-only (web_article) |
-| `services/resource_loaders.py` | span/chunk/page/note_block body loaders | confirm owner-independent; page/note_block already load from notes tables |
+| `services/resource_graph/resolve.py` | span/chunk/page/note_block body loaders and graph visibility | owner-aware; media and page-owned evidence resolve through one graph hydration owner |
 | `services/metadata_enrichment.py`, `services/vault.py` | chunk/state refs | owner-aware |
 | `tasks/reconcile_stale_ingest_media.py` | reconciler reads `mcis` | owner join; media-only |
 
-`read_resource`/`resource_resolver.py` already resolves `page`/`note_block` schemes directly from the notes tables (`resource_resolver.py:220-222`), independent of `object_search` — **unaffected** by the cutover (confirm: no `object_search` import).
+`read_resource` composes with `resource_graph.resolve`: page, note_block, page-owned `evidence_span`, and page-owned `content_chunk` refs resolve through the same graph hydration owner, independent of the deleted `object_search` substrate.
 
 ---
 
@@ -182,13 +182,13 @@ Public retrieval locator (already defined — `NoteBlockOffsetsLocator`): `{ "ty
 - `IndexableBlock.media_id` → `IndexableBlock.owner: IndexOwner`.
 - Rename + reparameterize: `rebuild_media_content_index` → `rebuild_content_index(db, *, owner: IndexOwner, source_kind, blocks, reason)`; `delete_media_content_index` → `delete_content_index(db, *, owner)`; `deactivate_media_content_index` → `deactivate_content_index(db, *, owner, reason)`; `_set_index_state(db, *, owner, status, …)`.
 - Concurrency: **do not introduce a new `SELECT … FOR UPDATE`** for pages — `docs/rules/concurrency.md:12` forbids row locks on top of SERIALIZABLE, and per-page single-writer is already guaranteed by the job's dedupe key + lease (one in-flight `page_reindex_job` per page). The existing media `SELECT … FOR UPDATE` (`content_indexing.py:120`) is pre-existing and preserved for the `owner.kind=='media'` path only; the `'page'` path relies on job serialization. If a future non-job caller needs it, use the repo's identity-write pattern (SERIALIZABLE + retry, per the authors-directory `run_identity_write`), not `FOR UPDATE`.
-- All INSERT/DELETE SQL: `media_id` → `owner_kind, owner_id`. `delete_content_index` joins (`object_links` cleanup, `message_retrievals.evidence_span_id` null-out, chunk/embedding/part cascade) rewritten against `(owner_kind, owner_id)`.
+- All INSERT/DELETE SQL: `media_id` → `owner_kind, owner_id`. `delete_content_index` joins (`message_retrievals.evidence_span_id` null-out, chunk/embedding/part cascade) rewritten against `(owner_kind, owner_id)`; graph edge cleanup is owned by `resource_graph.cleanup`.
 - `_resolver_kind('note') -> 'note'`. Add a `note_text` branch to the block locator/selector validator (offset/text-length invariants identical to `web_text`).
 - Model renames: `MediaContentIndexState` → `ContentIndexState`; drop `Media.content_chunks` relationship.
 
 ### 5.2 `note_indexing.py` (new) — the note source adapter
 Parallel to `web_article_indexing.py`/`pdf_indexing.py`:
-- `build_page_indexable_blocks(db, page) -> list[IndexableBlock]`: produce blocks in **the same document order the user sees** — the recursive DFS used by the reader (`notes._child_tree` → `notes._siblings`, ordering each sibling level by `(order_key ASC, created_at ASC, id ASC)`), **not** the flat `(parent_block_id NULLS FIRST, order_key, id)` sort the old `object_search.project_page` used. Reuse/extract the existing `_siblings` ordering so search order == render order. One `IndexableBlock` per block: `owner=IndexOwner('page', page.id)`, `source_kind='note'`, `canonical_text=block.body_text` (already stored), contiguous `source_start/end_offset` (the validator at `content_indexing.py:1069` requires contiguous ordered blocks), `heading_path` = ancestor block-text path (replaces `object_search._ancestor_text`), `note_text` locator/selector. Skip empty-body blocks (no `canonical_text`); a page with no text → state `no_text`.
+- `build_page_indexable_blocks(db, page) -> list[IndexableBlock]`: produce blocks in **the same document order the user sees** by traversing `resource_graph.documents.load_page_document`, whose containment edges are ordered by `source_order_key`; do not read old `note_blocks.parent_block_id`/`order_key` columns. One `IndexableBlock` per block: `owner=IndexOwner('page', page.id)`, `source_kind='note'`, `canonical_text=block.body_text` (already stored), contiguous `source_start/end_offset` (the validator at `content_indexing.py:1069` requires contiguous ordered blocks), `heading_path` = ancestor block-text path (replaces `object_search._ancestor_text`), `note_text` locator/selector. Skip empty-body blocks (no `canonical_text`); a page with no text → state `no_text`.
 - `rebuild_page_content_index(db, *, page_id, reason)`: build blocks → `rebuild_content_index(owner=('page',page_id), source_kind='note', …)`. Empty page → state `no_text`.
 - `enqueue_page_reindex(db, *, page_id, reason)`: mark state `pending` + `enqueue_job(kind="page_reindex_job", payload={page_id, reason}, dedupe_key=f"page_reindex:{page_id}")`. **This single call replaces every `object_search.project_page`/`project_note_block` site.**
 
@@ -197,13 +197,14 @@ Parallel to `web_article_indexing.py`/`pdf_indexing.py`:
 - Registry: `"page_reindex_job": JobDefinition(kind=…, handler=_run_page_reindex, max_attempts=3, retry_delays_seconds=(60,300,900), lease_seconds=900)`. External-API budget per `retries.md`.
 
 ### 5.4 `notes.py` (and callers) — rewire all mutations
-**Authoritative discovery:** the rewrite must cover **every** call site of `object_search.project_page` / `object_search.project_note_block` / `object_search.delete_document` (grep is the source of truth — there are ~28 across `notes.py`, not the dozen the first pass listed). Confirmed sites the first pass **missed**, which must be included:
-- `set_highlight_note_body` (`notes.py:984`) — the **highlight-note** path (a highlight's note *is* a `note_block`); creates/updates/deletes a block and projects. Called from the highlight sidecar **and** `vault.py:411` (vault import, `commit=False`).
-- `set_note_block_markdown_body_without_commit` (`notes.py:740`) — markdown body setter used by highlight-note and import flows.
-- plus the page/block CRUD set: `create_page`, `update_page`, `patch_page_document`(+`_patch_page_document_once`), `create_note_block`, `_update_note_block_once`, `move_note_block`, `split_note_block`, `merge_note_block`, `_delete_note_block_once`, `delete_page`, `quick_capture_to_daily`, `_resolve_daily_page_once`.
+**Authoritative discovery:** the rewrite covers **every** former call site of `object_search.project_page` / `object_search.project_note_block` / `object_search.delete_document` (grep is the source of truth). Current write owners are:
+- `create_page`, `update_page`, `patch_page_document`(+`_patch_page_document_once`), `quick_capture`, `set_highlight_note_body_pm_json`, `delete_highlight_note`, `delete_page`, and `_resolve_daily_page_once`.
+- Highlight notes use `set_highlight_note_body_pm_json` / `delete_highlight_note`; the old `set_highlight_note_body` and `set_note_block_markdown_body_without_commit` helpers are deleted.
+- Vault/import flows now submit versioned page-document commands rather than mutating note bodies directly.
+- Public block mutation commands have been removed; page/block edits persist through the versioned page-document command path.
 
 Rewrite rule (uniform):
-- Any create/update/reorder/move/split/merge of a page or its blocks (including highlight-note create/update) → `enqueue_page_reindex(db, page_id=<owning page>, reason=…)` once per affected page, before the existing commit. Block-level mutations enqueue the **owning page** (a page is the index unit). `commit=False` callers (e.g. `set_highlight_note_body` from vault) enqueue without committing — the caller's commit flushes the `pending` state + job row atomically.
+- Any create/update/reorder/move/split/merge of a page or its blocks (including highlight-note create/update) -> `enqueue_page_reindex(db, page_id=<owning page>, reason=...)` once per affected page, before the existing commit. Block-level mutations enqueue the **owning page** (a page is the index unit). Import/vault callers compose the same page-document command path so the caller's transaction flushes the `pending` state + job row atomically.
 - `delete_page` → `delete_content_index(db, owner=IndexOwner('page', page_id))` inline (no reindex). Block/highlight-note deletes inside a surviving page → `enqueue_page_reindex`. All `delete_document` calls are removed.
 - `_daily_terms`/`_ancestor_text`/`_join_search_text` move out of the deleted `object_search.py`: daily terms → the `_search_pages` retriever (join `daily_note_pages`); ancestor text → `IndexableBlock.heading_path` in `build_page_indexable_blocks`.
 
@@ -219,9 +220,9 @@ Rewrite rule (uniform):
 ### 5.6 Scope matrix (`search/scope.py`) — finally single-owner
 Add `page` and `note_block` cells to `_SCOPE_MATRIX`, porting the semantics of the deleted `object_search._scope_filter_sql` but expressed against the unified tables / owner:
 - `all`: no filter.
-- `library:` — note's owning page linked (via `object_links`) to a `library_entries.media_id` in scope, or note `note_about` a highlight whose `anchor_media_id` is in scope.
-- `media:` — page/note `object_links` to the scoped `media`, or `note_about` highlight on that media.
-- `conversation:` — page/note `object_links` (`relation_type='used_as_context'`) to a message in the scoped conversation.
+- `library:` — note's block/page connected by allowed `resource_edges` origins to a `library_entries.media_id` in scope, or a `highlight_note` edge whose highlight anchors to media in scope.
+- `media:` — page/note connected to the scoped `media` by allowed `resource_edges` origins, or attached to a highlight on that media.
+- `conversation:` — only bare `origin in ('user','citation','system')`, `kind='context'`, `ordinal is null` conversation context refs define app-search scope; ordinal citation edges do not widen the search scope.
 
 **Sequencing (hard prerequisite):** today `_SCOPE_MATRIX` (`scope.py:117`) has **no** `page`/`note_block` cells and the scope behavior lives only in `object_search._scope_filter_sql` (`:340`). The matrix cells **and their ported regression tests (AC-6) must land and pass in S3 before** `object_search._scope_filter_sql` is deleted in S5 — never a window where note scope is unowned. Then delete `object_search._scope_filter_sql` and `OBJECT_SEARCH_MIN_SEMANTIC_SIMILARITY`.
 
@@ -261,9 +262,9 @@ Each evidence/RAG consumer is hand-rolled and media-shaped; none "composes autom
 - **Chat RAG (`agent_tools/app_search.py`, planned via `chat_runs.py:1294`):** **INCLUDE notes (D8).** Today `chat_runs` hard-codes `planned_types=["content_chunk"]` and `app_search` runs three media-shaped SQL blocks (`:427` empty-probe, `:956` context render, plus `_search_content_chunks`) joining `cc.media_id`/`mcis.media_id`/`es.media_id`. Required: (a) the `app_search` content-chunk SQL becomes owner-aware and, for the user's own knowledge, unions media-owned **and** page-owned chunks (gated by `pages.user_id`); (b) `_render_content_chunk_context` resolves note chunks via the `'note'` resolver; (c) the empty-probe `_scoped_content_chunk_empty_status` covers note owners. This is the core "AI cites your notes" capability — its own slice (S4) with AC-5.
 - **Oracle (`oracle.py:_retrieve_user_content_chunks_by_embedding`, `used_semantic_media`):** **INCLUDE notes (D8), but as a discrete, separately-gated slice.** Oracle already retrieves *user* content chunks by embedding for a reading; the user's notes are legitimately personal oracle material. Work: generalize its own `content_chunks JOIN visible_media` to union page-owned chunks; the `used_semantic_media` dedup (keyed on `media_id`) must dedup on `(owner_kind, owner_id)`. If descoped, say so loudly — it is **not** automatic. (Default: include.)
 - **Library Intelligence (`library_intelligence.py:_load_inventory`, `:242`):** **EXCLUDE notes** — LI summarizes *library media* coverage; notes are not library entries. Its SQL still consumes `content_chunks` and must be migrated for the owner rename (it joins via `le.media_id`, so it stays media-scoped after adding `owner_kind='media'`). Functionally unchanged, mechanically migrated.
-- **`read_resource` / `resource_resolver` / `resource_loaders`:** **unaffected** — they already resolve `page`/`note_block` directly from the notes tables (`resource_resolver.py:220-222`), not from `object_search`. Confirm no `object_search` import remains.
+- **`read_resource` / `resource_graph.resolve`:** **composes with the graph** — page, note_block, media-owned evidence, and page-owned evidence all resolve through the same `ResourceRef` hydration layer, not through `object_search`.
 - **`object_refs.hydrate_object_ref` (`:323`):** owner-rename only; media-scoped (drives the global-search palette). Notes are surfaced via the dedicated note retriever, not here.
-- **Highlights & `object_links`:** unchanged. `note_about` edges (highlight ↔ note_block) still power scope filters and the note highlight excerpt; `object_links` referencing note `content_chunk`s are cleaned by `delete_content_index`. Note: highlight-notes are `note_block`s (§5.4) and become searchable/citeable like any note.
+- **Highlights & graph edges:** `origin='highlight_note'` edges (highlight → note_block) power scope filters and the note highlight excerpt; `origin='note_body'` edges capture inline note resource refs. Note: highlight-notes are `note_block`s (§5.4) and become searchable/citeable like any note.
 - **Default-library / permissions:** documents keep `visible_media_ids_cte_sql`; notes use owner gating (`pages.user_id`). No note sharing (single-user; §13).
 - **`media_deletion`:** `delete_media_content_index(media_id=…)` → `delete_content_index(owner=IndexOwner('media', media_id))`.
 
@@ -307,14 +308,14 @@ Each evidence/RAG consumer is hand-rolled and media-shaped; none "composes autom
 - AC-7 Media search/RAG/Oracle/LI behaviour is byte-for-byte unchanged across S0 (snapshot tests over `app_search`, `oracle._retrieve_user_content_chunks_by_embedding`, `object_refs`, `reader_navigation`, `library_intelligence`).
 - AC-8 Rapid successive note edits coalesce to a single effective reindex (dedupe key); no embed call on the request thread (asserted: save latency excludes provider call).
 - AC-9 Oracle includes a relevant user note among its candidates (D8); `used_semantic_media`→owner dedup does not drop a note when a media of the same id space exists.
-- AC-10 A page that matches only via block body no longer returns a `page` result but **does** return the matching `note_block` result (D5 behavior change); page title/description/daily-date still return the `page`. Highlight-notes (`set_highlight_note_body`) are searchable and citeable.
+- AC-10 A page that matches only via block body no longer returns a `page` result but **does** return the matching `note_block` result (D5 behavior change); page title/description/daily-date still return the `page`. Highlight notes written through `set_highlight_note_body_pm_json` are searchable and citeable.
 
 ---
 
 ## 11. Non-goals
 
 - N1 Sharing/collaboration of notes; multi-user visibility. Notes stay owner-gated.
-- N2 Building the full `resource-provenance-graph` (`ResourceRef`/`resource_edges`). We adopt its owner shape only.
+- N2 Creating another graph. Evidence unification composes with the existing `ResourceRef`/`resource_edges` graph; it does not introduce a parallel graph or link table.
 - N3 Incremental/partial re-embed or `content_hash` dirty-skipping. Rebuild-on-change per current-only discipline.
 - N4 Highlighting/annotation *on* notes; PDF-style geometry for notes.
 - N5 A periodic notes reconciler. The one-time backfill + per-edit enqueue suffices at single-user scale (flag for later if drift appears).
@@ -342,7 +343,7 @@ Each evidence/RAG consumer is hand-rolled and media-shaped; none "composes autom
 
 - **R1 — S0 media regression.** Wide `media_id`→owner rename. Mitigate: S0 is behavior-preserving; snapshot tests for media search/RAG (AC-7); land S0 alone first.
 - **R2 — Orphaned index rows (no FK).** Mitigate: `delete_content_index` on every page/block delete (AC-4); negative test for orphans; backfill is idempotent.
-- **R3 — Scope-port fidelity.** The `object_links`-based note scope SQL is intricate. Mitigate: port the exact predicates; AC-6 ports existing object_search scope fixtures verbatim.
+- **R3 — Scope-port fidelity.** The graph-backed note scope SQL is intricate. Mitigate: explicit `kind`/`origin` allowlists; AC-6 ports the former object_search scope fixtures and adds citation-edge exclusion cases.
 - **R4 — Index-lag UX.** A just-saved note isn't instantly searchable. Mitigate: small pages + worker latency = seconds; documented as uniform model; out-of-scope optimization is an inline lexical fast-path (rejected to avoid a second path).
 - **R5 — Backfill volume.** Single user ⇒ trivial. Dedupe-keyed enqueue; worker drains.
 

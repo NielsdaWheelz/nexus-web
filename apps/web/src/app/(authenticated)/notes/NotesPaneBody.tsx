@@ -10,6 +10,7 @@ import { notePagesResource, type NoResourceParams } from "@/lib/api/resource";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { usePaneRouter, useSetPaneTitle } from "@/lib/panes/paneRuntime";
 import { createNotePage, fetchNotePages, type NotePageSummary } from "@/lib/notes/api";
+import { setPendingNoteFocus } from "@/lib/notes/pendingNoteFocus";
 import { useResource } from "@/lib/api/useResource";
 import styles from "./notes.module.css";
 
@@ -40,7 +41,8 @@ export default function NotesPaneBody() {
   }, [pagesResource]);
 
   const createPage = useCallback(async () => {
-    const nextTitle = title.trim() || "Untitled";
+    const trimmedTitle = title.trim();
+    const nextTitle = trimmedTitle || "Untitled";
     try {
       const page = await createNotePage({ title: nextTitle });
       setPages((current) => [
@@ -48,11 +50,13 @@ export default function NotesPaneBody() {
           id: page.id,
           title: page.title,
           description: page.description,
+          documentVersion: page.documentVersion,
           updatedAt: page.updatedAt,
         },
         ...current,
       ]);
       setTitle("");
+      setPendingNoteFocus({ pageId: page.id, target: trimmedTitle ? "body" : "title" });
       router.push(`/pages/${page.id}`);
     } catch (error: unknown) {
       if (handleUnauthenticatedApiError(error)) return;

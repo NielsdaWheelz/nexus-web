@@ -1,6 +1,6 @@
 """Universal object-ref routes."""
 
-from typing import Annotated
+from typing import Annotated, get_args
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
@@ -11,7 +11,7 @@ from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.responses import success_response
-from nexus.schemas.notes import ObjectRef
+from nexus.schemas.notes import OBJECT_TYPES, ObjectRef
 from nexus.services.object_refs import (
     hydrate_object_ref,
     search_object_refs,
@@ -50,8 +50,22 @@ def search_object_ref_targets(
     db: Annotated[Session, Depends(get_db)],
     q: str = Query(..., min_length=1, max_length=200),
     limit: int = Query(default=8, ge=1, le=20),
+    types: Annotated[list[str] | None, Query(alias="type")] = None,
 ) -> dict:
-    objects = search_object_refs(db, viewer.user_id, q, limit=limit)
+    object_types = _parse_object_ref_search_types(types)
+    objects = search_object_refs(db, viewer.user_id, q, limit=limit, object_types=object_types)
     return success_response(
         {"objects": [item.model_dump(mode="json", by_alias=True) for item in objects]}
     )
+
+
+def _parse_object_ref_search_types(types: list[str] | None) -> set[OBJECT_TYPES] | None:
+    if not types:
+        return None
+    allowed = set(get_args(OBJECT_TYPES))
+    parsed: set[OBJECT_TYPES] = set()
+    for value in types:
+        if value not in allowed:
+            raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "type is invalid")
+        parsed.add(value)
+    return parsed

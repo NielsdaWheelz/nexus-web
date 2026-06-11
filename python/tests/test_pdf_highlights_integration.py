@@ -956,19 +956,20 @@ class TestGenericPdfHighlightCoverage:
         )
         h_id = create_resp.json()["data"]["id"]
 
-        note_resp = auth_client.post(
-            "/notes/blocks",
+        note_id = str(uuid4())
+        note_resp = auth_client.put(
+            f"/highlights/{h_id}/note",
             json={
-                "body_markdown": "My note",
-                "linked_object": {
-                    "object_type": "highlight",
-                    "object_id": h_id,
+                "note_block_id": note_id,
+                "client_mutation_id": f"highlight-note-{uuid4()}",
+                "body_pm_json": {
+                    "type": "paragraph",
+                    "content": [{"type": "text", "text": "My note"}],
                 },
             },
             headers=auth_headers(user_id),
         )
-        assert note_resp.status_code == 201
-        note_id = note_resp.json()["data"]["id"]
+        assert note_resp.status_code == 200
 
         get_resp = auth_client.get(f"/highlights/{h_id}", headers=auth_headers(user_id))
         assert get_resp.status_code == 200
@@ -978,7 +979,11 @@ class TestGenericPdfHighlightCoverage:
         assert "revision" not in linked_notes[0]
 
         del_note = auth_client.delete(
-            f"/notes/blocks/{note_id}",
+            f"/highlights/{h_id}/note",
+            params={
+                "note_block_id": note_id,
+                "client_mutation_id": f"highlight-note-{uuid4()}",
+            },
             headers=auth_headers(user_id),
         )
         assert del_note.status_code == 204

@@ -425,9 +425,14 @@ function isSearchCitationLocator(
     case "conversation":
       return locator === null;
     case "content_chunk":
+    case "evidence_span":
+      return (
+        isRetrievalLocator(locator) &&
+        (isMediaRetrievalLocator(locator) ||
+          locator.type === "note_block_offsets")
+      );
     case "fragment":
     case "highlight":
-    case "evidence_span":
       return isRetrievalLocator(locator) && isMediaRetrievalLocator(locator);
     case "note_block":
       return (

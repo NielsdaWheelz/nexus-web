@@ -38,9 +38,11 @@ export default function ShareCapture({
   const [pickerBusy, setPickerBusy] = useState(false);
   const [attempt, setAttempt] = useState(0);
   // Capture fires once per attempt. The guard survives React's mount-effect
-  // double-invoke, which would otherwise post a second daily-note bullet
-  // (quickCaptureDailyNote is not idempotent, unlike from-url).
+  // double-invoke; the caller block id also makes transport retries converge on
+  // the same daily-note block.
   const capturedAttempt = useRef<number | null>(null);
+  const quickCaptureBlockId = useRef(createRandomId("share-note"));
+  const quickCaptureMutationId = useRef(createRandomId("share-note-mutation"));
   const urlIdempotencyKeys = useRef<Map<string, string>>(new Map());
   const [selectedLibraryIds, setSelectedLibraryIds] = useState<string[]>([]);
 
@@ -53,7 +55,11 @@ export default function ShareCapture({
 
     void (async () => {
       try {
-        await quickCaptureDailyNote({ bodyMarkdown: trimmed });
+        await quickCaptureDailyNote({
+          blockId: quickCaptureBlockId.current,
+          clientMutationId: quickCaptureMutationId.current,
+          bodyMarkdown: trimmed,
+        });
         setResults([
           {
             label: trimmed,

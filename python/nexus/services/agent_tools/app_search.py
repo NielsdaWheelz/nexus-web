@@ -186,6 +186,7 @@ def execute_app_search(
             raise InvalidScopeError(forced_error)
         resolved_scopes = _resolve_scope_uris(
             db,
+            viewer_id=viewer_id,
             conversation_id=conversation_id,
             scopes=scopes,
         )
@@ -308,6 +309,7 @@ def execute_app_search(
 def _resolve_scope_uris(
     db: Session,
     *,
+    viewer_id: UUID,
     conversation_id: UUID,
     scopes: Sequence[str],
 ) -> list[str]:
@@ -318,10 +320,19 @@ def _resolve_scope_uris(
     conversation; raises InvalidScopeError otherwise.
     """
     scope_uris = [
-        ref.uri for ref in search_scope_refs_for_conversation(db, conversation_id=conversation_id)
+        ref.uri
+        for ref in search_scope_refs_for_conversation(
+            db, viewer_id=viewer_id, conversation_id=conversation_id
+        )
     ]
 
     if not scopes:
+        if _conversation_has_note_scope_refs(
+            db,
+            viewer_id=viewer_id,
+            conversation_id=conversation_id,
+        ):
+            scope_uris.append(f"conversation:{conversation_id}")
         return scope_uris
 
     allowed = set(scope_uris)
@@ -341,6 +352,36 @@ def _resolve_scope_uris(
         seen.add(uri)
         resolved.append(uri)
     return resolved
+
+
+def _conversation_has_note_scope_refs(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    conversation_id: UUID,
+) -> bool:
+    return (
+        db.execute(
+            text(
+                """
+                SELECT 1
+                FROM resource_edges e
+                JOIN conversations c ON c.id = e.source_id
+                WHERE e.source_scheme = 'conversation'
+                  AND e.source_id = :conversation_id
+                  AND e.target_scheme IN ('page', 'note_block')
+                  AND e.kind = 'context'
+                  AND e.origin IN ('user', 'citation', 'system')
+                  AND e.user_id = :viewer_id
+                  AND e.ordinal IS NULL
+                  AND c.owner_user_id = :viewer_id
+                LIMIT 1
+                """
+            ),
+            {"viewer_id": viewer_id, "conversation_id": conversation_id},
+        ).scalar_one_or_none()
+        is not None
+    )
 
 
 # Result types whose evidence lives in content_chunks (media-owned or page-owned), so a
@@ -856,15 +897,21 @@ def _render_page_block(db: Session, viewer_id: UUID, page_id: UUID) -> str | Non
 
 def _render_note_block_block(db: Session, viewer_id: UUID, block_id: UUID) -> str | None:
     row = db.execute(
-        text("SELECT user_id, body_text, page_id FROM note_blocks WHERE id = :block_id"),
+        text("SELECT user_id, body_text FROM note_blocks WHERE id = :block_id"),
         {"block_id": block_id},
     ).fetchone()
     if row is None or row[0] != viewer_id:
         return None
+    from nexus.services.resource_graph import documents as graph_documents
+
+    try:
+        occurrence = graph_documents.find_block_occurrence(db, user_id=viewer_id, block_id=block_id)
+    except NotFoundError:
+        return None
     lines = [
         '<app_search_result type="note_block">',
         f"<content>{xml_escape(row[1] or '')}</content>",
-        f"<page_id>{row[2]}</page_id>",
+        f"<page_id>{occurrence.page_id}</page_id>",
         "</app_search_result>",
     ]
     return "\n".join(lines)

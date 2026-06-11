@@ -1,10 +1,12 @@
 """Highlight schemas."""
 
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from nexus.schemas.notes import validate_note_body_pm_json
 
 HIGHLIGHT_COLORS = Literal["yellow", "green", "blue", "pink", "purple"]
 
@@ -208,3 +210,35 @@ class UpdateHighlightRequest(BaseModel):
             raise ValueError("exact is required for pdf_page_geometry anchor updates")
 
         return self
+
+
+class SetHighlightNoteRequest(BaseModel):
+    """Product-level highlight note save payload."""
+
+    note_block_id: UUID = Field(
+        ...,
+        validation_alias=AliasChoices("note_block_id", "noteBlockId", "id"),
+        serialization_alias="noteBlockId",
+    )
+    client_mutation_id: str = Field(
+        ...,
+        min_length=1,
+        max_length=120,
+        validation_alias=AliasChoices("client_mutation_id", "clientMutationId"),
+        serialization_alias="clientMutationId",
+    )
+    body_pm_json: dict[str, Any] = Field(
+        ...,
+        validation_alias=AliasChoices("body_pm_json", "bodyPmJson"),
+        serialization_alias="bodyPmJson",
+    )
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    @field_validator("body_pm_json")
+    @classmethod
+    def validate_body_pm_json(cls, value: dict[str, Any]) -> dict[str, Any]:
+        validated = validate_note_body_pm_json(value)
+        if validated is None:
+            raise ValueError("body_pm_json is required")
+        return validated

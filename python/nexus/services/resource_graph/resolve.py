@@ -29,11 +29,13 @@ from nexus.auth.permissions import (
     visible_podcast_ids_cte_sql,
 )
 from nexus.errors import ApiErrorCode, NotFoundError
+from nexus.schemas.retrieval import retrieval_locator_json
 from nexus.services import library_entries
+from nexus.services.highlight_notes import linked_note_blocks_for_highlights
 from nexus.services.locator_resolver import locator_from_resolution, resolve_evidence_span
 from nexus.services.media_document_map import load_media_document_summary
-from nexus.services.notes import linked_note_blocks_for_highlights
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
+from nexus.services.resource_graph.structure import find_block_occurrence
 
 INLINE_THRESHOLD_CHARS = 1500
 
@@ -178,6 +180,8 @@ def load_resource_batch(
             loaded = _load_contributor(db, items)
         elif scheme == "podcast":
             loaded = _load_podcast(db, items, viewer_id=viewer_id)
+        elif scheme == "tag":
+            loaded = _load_tag(db, items, viewer_id=viewer_id)
         else:
             assert_never(scheme)
         for entry in loaded:
@@ -221,25 +225,16 @@ def reader_target_for_citation_target(
     not the edge (D11), so it is recomputed here from the target's own anchoring using
     the single locator owner (``locator_resolver``), exactly as search and LI synthesis do.
 
-    Returns ``(None, None)`` for targets with no media reader (note-block-owned spans,
-    ``note_block``/``external_snapshot``/``oracle_corpus_passage`` chips, or a vanished
-    target — citation edges outlive their targets, N4); the chip then renders link-only
-    via its snapshot ``deep_link``.
+    Page-owned evidence returns ``(None, note_block_offsets)``. The frontend citation
+    adapter treats that locator as a note activation target, not a media jump.
     """
     if target.scheme == "media":
         return target.id, None
+    if target.scheme == "note_block":
+        return None, _note_block_locator_for_block(db, viewer_id=viewer_id, block_id=target.id)
     if target.scheme == "content_chunk":
-        chunk_media_id = parent_media_id_for_read_pointer(
-            db, scheme="content_chunk", resource_id=target.id
-        )
-        return chunk_media_id, None
+        return _reader_target_for_content_chunk(db, viewer_id=viewer_id, chunk_id=target.id)
     if target.scheme != "evidence_span":
-        return None, None
-    # Media-owned spans only: a page-owned (note) span resolves to a note locator whose
-    # parent is a page, not media, which the media jump path cannot render — fall back to
-    # the snapshot deep_link instead of leaking a page id as a media id.
-    media_id = parent_media_id_for_read_pointer(db, scheme="evidence_span", resource_id=target.id)
-    if media_id is None:
         return None, None
     try:
         resolution = resolve_evidence_span(db, viewer_id=viewer_id, evidence_span_id=target.id)
@@ -247,11 +242,117 @@ def reader_target_for_citation_target(
         # justify-ignore-error: the cited span was deleted or is no longer visible; the
         # cited edge outlives it (N4), so the chip renders from its stored snapshot.
         return None, None
+    resolver = resolution.get("resolver")
+    if isinstance(resolver, dict) and resolver.get("kind") == "note":
+        return None, locator_from_resolution(
+            resolution,
+            media_id=UUID(str(resolution["media_id"])),
+            media_kind="note",
+        )
+    media_id = parent_media_id_for_read_pointer(db, scheme="evidence_span", resource_id=target.id)
+    if media_id is None:
+        return None, None
     media_kind = db.scalar(text("SELECT kind FROM media WHERE id = :id"), {"id": media_id})
     locator = locator_from_resolution(
         resolution, media_id=media_id, media_kind=str(media_kind or "")
     )
     return media_id, locator
+
+
+def _reader_target_for_content_chunk(
+    db: Session, *, viewer_id: UUID, chunk_id: UUID
+) -> tuple[UUID | None, dict[str, object] | None]:
+    row = (
+        db.execute(
+            text(
+                """
+                SELECT owner_kind, owner_id, primary_evidence_span_id, summary_locator
+                FROM content_chunks
+                WHERE id = :chunk_id
+                """
+            ),
+            {"chunk_id": chunk_id},
+        )
+        .mappings()
+        .first()
+    )
+    if row is None:
+        return None, None
+    owner_kind = str(row["owner_kind"])
+    if owner_kind == "media":
+        return row["owner_id"], None
+    if owner_kind != "page" or not _page_visible(db, viewer_id=viewer_id, page_id=row["owner_id"]):
+        return None, None
+    span_id = row["primary_evidence_span_id"]
+    if span_id is not None:
+        try:
+            resolution = resolve_evidence_span(db, viewer_id=viewer_id, evidence_span_id=span_id)
+        except NotFoundError:
+            return None, None
+        return None, locator_from_resolution(
+            resolution,
+            media_id=UUID(str(row["owner_id"])),
+            media_kind="note",
+        )
+    return None, _note_locator_from_summary_locator(row["summary_locator"])
+
+
+def _note_block_locator_for_block(
+    db: Session, *, viewer_id: UUID, block_id: UUID
+) -> dict[str, object] | None:
+    try:
+        occurrence = find_block_occurrence(
+            db,
+            user_id=viewer_id,
+            block_id=block_id,
+        )
+    except NotFoundError:
+        return None
+    body = occurrence.block.body_text or ""
+    if not body:
+        return None
+    return retrieval_locator_json(
+        {
+            "type": "note_block_offsets",
+            "page_id": str(occurrence.page_id),
+            "block_id": str(block_id),
+            "start_offset": 0,
+            "end_offset": len(body),
+        }
+    )
+
+
+def _note_locator_from_summary_locator(raw: object) -> dict[str, object] | None:
+    locator = raw if isinstance(raw, dict) else {}
+    note_block_id = locator.get("note_block_id")
+    page_id = locator.get("page_id")
+    start_offset = locator.get("start_offset")
+    end_offset = locator.get("end_offset")
+    if (
+        not isinstance(note_block_id, str)
+        or not isinstance(page_id, str)
+        or not isinstance(start_offset, int)
+        or not isinstance(end_offset, int)
+    ):
+        return None
+    return retrieval_locator_json(
+        {
+            "type": "note_block_offsets",
+            "page_id": page_id,
+            "block_id": note_block_id,
+            "start_offset": start_offset,
+            "end_offset": end_offset,
+        }
+    )
+
+
+def _page_visible(db: Session, *, viewer_id: UUID, page_id: UUID) -> bool:
+    return bool(
+        db.scalar(
+            text("SELECT EXISTS (SELECT 1 FROM pages WHERE id = :page_id AND user_id = :viewer_id)"),
+            {"page_id": page_id, "viewer_id": viewer_id},
+        )
+    )
 
 
 def _load_media(db: Session, items: list[ResourceRef], *, viewer_id: UUID) -> list[LoadedResource]:
@@ -374,9 +475,17 @@ def _load_evidence_span(
     rows = db.execute(
         text(
             """
-            SELECT es.id, es.owner_id AS media_id, es.span_text, es.citation_label, m.title
+            SELECT es.id,
+                   es.owner_kind,
+                   es.owner_id,
+                   es.span_text,
+                   es.citation_label,
+                   m.title AS media_title,
+                   p.title AS page_title,
+                   p.user_id AS page_user_id
             FROM evidence_spans es
-            JOIN media m ON m.id = es.owner_id AND es.owner_kind = 'media'
+            LEFT JOIN media m ON m.id = es.owner_id AND es.owner_kind = 'media'
+            LEFT JOIN pages p ON p.id = es.owner_id AND es.owner_kind = 'page'
             WHERE es.id = ANY(:ids)
             """
         ),
@@ -386,16 +495,30 @@ def _load_evidence_span(
     out: list[LoadedResource] = []
     for ref in items:
         row = by_id.get(ref.id)
-        if row is None or not can_read_media(db, viewer_id, row[1]):
+        if row is None:
+            out.append(_missing(ref.uri, "evidence_span"))
+            continue
+        owner_kind = str(row[1])
+        if owner_kind == "media":
+            if not can_read_media(db, viewer_id, row[2]):
+                out.append(_missing(ref.uri, "evidence_span"))
+                continue
+            title = str(row[5])
+        elif owner_kind == "page":
+            if row[7] != viewer_id:
+                out.append(_missing(ref.uri, "evidence_span"))
+                continue
+            title = str(row[6])
+        else:
             out.append(_missing(ref.uri, "evidence_span"))
             continue
         out.append(
             LoadedResource(
                 uri=ref.uri,
                 scheme="evidence_span",
-                body=str(row[2] or ""),
-                title=str(row[4]),
-                citation_label=str(row[3] or ""),
+                body=str(row[3] or ""),
+                title=title,
+                citation_label=str(row[4] or ""),
             )
         )
     return out
@@ -408,9 +531,16 @@ def _load_content_chunk(
     rows = db.execute(
         text(
             """
-            SELECT cc.id, cc.owner_id AS media_id, cc.chunk_text, m.title
+            SELECT cc.id,
+                   cc.owner_kind,
+                   cc.owner_id,
+                   cc.chunk_text,
+                   m.title AS media_title,
+                   p.title AS page_title,
+                   p.user_id AS page_user_id
             FROM content_chunks cc
-            JOIN media m ON m.id = cc.owner_id AND cc.owner_kind = 'media'
+            LEFT JOIN media m ON m.id = cc.owner_id AND cc.owner_kind = 'media'
+            LEFT JOIN pages p ON p.id = cc.owner_id AND cc.owner_kind = 'page'
             WHERE cc.id = ANY(:ids)
             """
         ),
@@ -420,12 +550,26 @@ def _load_content_chunk(
     out: list[LoadedResource] = []
     for ref in items:
         row = by_id.get(ref.id)
-        if row is None or not can_read_media(db, viewer_id, row[1]):
+        if row is None:
+            out.append(_missing(ref.uri, "content_chunk"))
+            continue
+        owner_kind = str(row[1])
+        if owner_kind == "media":
+            if not can_read_media(db, viewer_id, row[2]):
+                out.append(_missing(ref.uri, "content_chunk"))
+                continue
+            title = str(row[4])
+        elif owner_kind == "page":
+            if row[6] != viewer_id:
+                out.append(_missing(ref.uri, "content_chunk"))
+                continue
+            title = str(row[5])
+        else:
             out.append(_missing(ref.uri, "content_chunk"))
             continue
         out.append(
             LoadedResource(
-                uri=ref.uri, scheme="content_chunk", body=str(row[2] or ""), title=str(row[3])
+                uri=ref.uri, scheme="content_chunk", body=str(row[3] or ""), title=title
             )
         )
     return out
@@ -517,6 +661,23 @@ def _load_note_block(
             out.append(_missing(ref.uri, "note_block"))
             continue
         out.append(LoadedResource(uri=ref.uri, scheme="note_block", body=str(row[2] or "")))
+    return out
+
+
+def _load_tag(db: Session, items: list[ResourceRef], *, viewer_id: UUID) -> list[LoadedResource]:
+    ids = [ref.id for ref in items]
+    rows = db.execute(
+        text("SELECT id, user_id, name FROM tags WHERE id = ANY(:ids)"),
+        {"ids": ids},
+    ).fetchall()
+    by_id = {row[0]: row for row in rows}
+    out: list[LoadedResource] = []
+    for ref in items:
+        row = by_id.get(ref.id)
+        if row is None or row[1] != viewer_id:
+            out.append(_missing(ref.uri, "tag"))
+            continue
+        out.append(LoadedResource(uri=ref.uri, scheme="tag", title=f"#{row[2]}"))
     return out
 
 
@@ -971,6 +1132,14 @@ def _present(loaded: LoadedResource) -> ResolvedResource:
             uri=loaded.uri,
             label=loaded.title or "",
             summary=_first_line(loaded.body or ""),
+            inline_body=None,
+            fetch_hint="",
+        )
+    if scheme == "tag":
+        return ResolvedResource(
+            uri=loaded.uri,
+            label=loaded.title or "",
+            summary="",
             inline_body=None,
             fetch_hint="",
         )

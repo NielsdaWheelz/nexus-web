@@ -3,9 +3,8 @@
 Admission and search-scope semantics live here, in code, not in schema:
 
 - the context surface lists/removes ``kind=context`` edges (§5.1);
-- admission (``is_context_ref``) and the reverse lookup accept ANY edge from
-  the conversation — a user stance link admits exactly like an attached
-  resource (§5.4's deliberate delta);
+- admission (``is_context_ref``) and the reverse lookup accept conversation
+  context edges; search-scope discovery narrows to bare context refs;
 - ``app_search`` may scope only to ``media:``/``library:`` targets.
 
 Mutators are flush-only (§9.0); committing wrappers belong to the routes.
@@ -276,14 +275,22 @@ def batch_conversations_with_context_ref(
     return result
 
 
-def search_scope_refs_for_conversation(db: Session, *, conversation_id: UUID) -> list[ResourceRef]:
+def search_scope_refs_for_conversation(
+    db: Session, *, viewer_id: UUID, conversation_id: UUID
+) -> list[ResourceRef]:
     """The conversation's ``media:``/``library:`` edge targets, first-attached order."""
     rows = db.execute(
         select(ResourceEdge.target_scheme, ResourceEdge.target_id)
+        .join(Conversation, Conversation.id == ResourceEdge.source_id)
         .where(
             ResourceEdge.source_scheme == "conversation",
             ResourceEdge.source_id == conversation_id,
             ResourceEdge.target_scheme.in_(SEARCH_SCOPE_SCHEMES),
+            ResourceEdge.kind == "context",
+            ResourceEdge.origin.in_(("user", "citation", "system")),
+            ResourceEdge.user_id == viewer_id,
+            ResourceEdge.ordinal.is_(None),
+            Conversation.owner_user_id == viewer_id,
         )
         .order_by(ResourceEdge.created_at.asc(), ResourceEdge.id.asc())
     ).all()

@@ -94,10 +94,9 @@ def authorize_scope(
 # `scope_filter_sql(scope, entity)` returns an AND-clause fragment + params to splice
 # into the entity's retriever WHERE, ("", {}) for the unscoped `all`, or the
 # UNSUPPORTED sentinel (the cell yields no results — the retriever returns []).
-# Connection-derived cells read `resource_edges` (provenance-graph cutover §11.9):
-# page/note_block media/library cells match edges at either endpoint, and the
-# conversation cells for page/note_block/highlight match conversation context
-# edges — any edge from the conversation, `context.is_context_ref` semantics.
+# Connection-derived cells read `resource_edges` with explicit origin/kind
+# allowlists. Containment, citations, and other graph-owned rows must not make
+# a note searchable inside an unrelated media/library/conversation scope.
 # =============================================================================
 
 
@@ -118,15 +117,19 @@ ScopeFilter = tuple[str, dict[str, Any]] | ScopeUnsupported
 def _note_object_scope(scheme: str, object_id_sql: str) -> dict[str, str | ScopeUnsupported]:
     """resource_edges-based scope for a page/note_block keyed on (scheme, object_id_sql).
 
-    Edges are matched at either endpoint (connections are undirected reads); the
-    media/library cells also honor an edge to a highlight anchored on the scoped
-    media, as the old link-based cells did. The conversation cell matches
-    conversation context edges — any kind/origin edge from the conversation to
-    the page/note_block (``context.is_context_ref`` semantics, spec §2.5)."""
+    Media/library cells accept only user/body/highlight-note note relationships.
+    Conversation cells accept only bare context refs from the conversation to the
+    page/note block."""
     edge_match = (
         f"((e.source_scheme = '{scheme}' AND e.source_id = {object_id_sql}) "
         f"OR (e.target_scheme = '{scheme}' AND e.target_id = {object_id_sql}))"
     )
+    note_media_edge = """
+                  AND e.kind = 'context'
+                  AND e.origin IN ('user', 'note_body', 'highlight_note')
+                  AND e.user_id = :viewer_id
+                  AND e.ordinal IS NULL
+    """
     return {
         "media": f"""
             AND EXISTS (
@@ -135,6 +138,7 @@ def _note_object_scope(scheme: str, object_id_sql: str) -> dict[str, str | Scope
                   ON ((e.source_scheme = 'highlight' AND h.id = e.source_id)
                    OR (e.target_scheme = 'highlight' AND h.id = e.target_id))
                 WHERE {edge_match}
+                  {note_media_edge}
                   AND ((e.source_scheme = 'media' AND e.source_id = :scope_id)
                     OR (e.target_scheme = 'media' AND e.target_id = :scope_id)
                     OR h.anchor_media_id = :scope_id)
@@ -152,6 +156,7 @@ def _note_object_scope(scheme: str, object_id_sql: str) -> dict[str, str | Scope
                    OR (e.target_scheme = 'media' AND le.media_id = e.target_id)
                    OR le.media_id = h.anchor_media_id)
                 WHERE {edge_match}
+                  {note_media_edge}
             )
         """,
         "conversation": f"""
@@ -161,6 +166,10 @@ def _note_object_scope(scheme: str, object_id_sql: str) -> dict[str, str | Scope
                   AND e.source_id = :scope_id
                   AND e.target_scheme = '{scheme}'
                   AND e.target_id = {object_id_sql}
+                  AND e.kind = 'context'
+                  AND e.origin IN ('user', 'citation', 'system')
+                  AND e.user_id = :viewer_id
+                  AND e.ordinal IS NULL
             )
         """,
     }
@@ -269,6 +278,10 @@ _SCOPE_MATRIX: dict[str, dict[str, str | ScopeUnsupported]] = {
                   AND e.source_id = :scope_id
                   AND e.target_scheme = 'highlight'
                   AND e.target_id = h.id
+                  AND e.kind = 'context'
+                  AND e.origin IN ('user', 'citation', 'system')
+                  AND e.user_id = :viewer_id
+                  AND e.ordinal IS NULL
             )
         """,
     },

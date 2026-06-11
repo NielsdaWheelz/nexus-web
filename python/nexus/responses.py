@@ -59,7 +59,10 @@ def ok_page(
 
 
 def error_response(
-    code: ApiErrorCode, message: str, request_id: str | None = None
+    code: ApiErrorCode,
+    message: str,
+    request_id: str | None = None,
+    details: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Create an error response envelope.
 
@@ -76,6 +79,8 @@ def error_response(
         request_id = get_request_id()
 
     error = {"code": code.value, "message": message}
+    if details is not None:
+        error["details"] = details
     if request_id:
         error["request_id"] = request_id
 
@@ -96,7 +101,7 @@ async def api_error_handler(request: Request, exc: Exception) -> JSONResponse:
     )
     return JSONResponse(
         status_code=exc.status_code,
-        content=error_response(exc.code, exc.message),
+        content=error_response(exc.code, exc.message, details=exc.details),
     )
 
 

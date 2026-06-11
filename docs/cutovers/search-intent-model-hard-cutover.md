@@ -287,7 +287,7 @@ Orchestration: `effective_kinds` → `kinds.result_types_for(...)` → dispatch 
 
 ### 5.5 Hybrid retrieval invariant
 
-Delete the `semantic` parameter from the service, route, and `app_search`; delete the `search.py:768–779` conditional. `embedding.build_query_embedding(db, text)` is called **once** iff `text` is non-empty and `effective_kinds` includes a semantic-capable type (`content_chunk` via Documents, `page`/`note_block` via Notes), **independent of filters**. `content_chunk` keeps its hybrid pipeline (ANN ∪ lexical, 0.50 floor, `CONTENT_CHUNK_*`); `page`/`note_block` keep `object_search.search_objects(...)` with the embedding always supplied when text is present. Embedding-provider-unavailable → lexical-only, **typed and logged** (operational resilience, not a legacy shim).
+Delete the `semantic` parameter from the service, route, and `app_search`; delete the `search.py:768–779` conditional. `embedding.build_query_embedding(db, text)` is called **once** iff `text` is non-empty and `effective_kinds` includes a semantic-capable type (`content_chunk` via Documents, `note_block` via Notes), **independent of filters**. `content_chunk` keeps its hybrid pipeline (ANN union lexical, 0.50 floor, `CONTENT_CHUNK_*`); `note_block` uses the same page-owned `content_chunks`/`content_embeddings` pipeline; `page` remains title/description/daily-date lexical only. Embedding-provider-unavailable → lexical-only, **typed and logged** (operational resilience, not a legacy shim).
 
 ### 5.6 Multi-scope executor (`search/batch.py`)
 

@@ -2,9 +2,13 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import LibraryIntelligencePane from "@/app/(authenticated)/libraries/[id]/LibraryIntelligencePane";
+import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
+import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import type { LiStreamEvent } from "@/lib/api/sse/libraryIntelligenceEvents";
 import {
+  NOTE_PULSE_HIGHLIGHT,
   READER_PULSE_HIGHLIGHT,
+  type NotePulseTarget,
   type ReaderPulseTarget,
 } from "@/lib/reader/pulseEvent";
 
@@ -88,6 +92,22 @@ const CITATION = {
   snapshot: { title: "Source title", excerpt: "the cited words" },
 };
 
+const NOTE_CITATION = {
+  ordinal: 1,
+  role: "context",
+  target_ref: { type: "evidence_span", id: "span-1" },
+  media_id: null,
+  locator: {
+    type: "note_block_offsets",
+    page_id: "page-1",
+    block_id: "block-1",
+    start_offset: 0,
+    end_offset: 10,
+  },
+  deep_link: null,
+  snapshot: { title: "Notebook", excerpt: "the noted words" },
+};
+
 function artifact(
   overrides: Partial<{
     artifact_id: string | null;
@@ -146,8 +166,30 @@ function stubFetch(artifactBody: ReturnType<typeof artifact>) {
 }
 
 function renderPane(onOpenChat = vi.fn()) {
-  render(<LibraryIntelligencePane libraryId={LIBRARY_ID} onOpenChat={onOpenChat} />);
-  return { onOpenChat };
+  const href = `/libraries/${LIBRARY_ID}`;
+  const identity = resolvePaneRouteIdentity(href);
+  const onNavigatePane = vi.fn();
+  const onOpenInNewPane = vi.fn();
+  render(
+    <PaneRuntimeProvider
+      paneId="pane-library"
+      href={href}
+      routeId={identity.routeId}
+      resourceRef={identity.resourceRef}
+      resourceKey={identity.resourceKey}
+      pathParams={{ id: LIBRARY_ID }}
+      canGoBack={false}
+      canGoForward={false}
+      onNavigatePane={onNavigatePane}
+      onReplacePane={vi.fn()}
+      onOpenInNewPane={onOpenInNewPane}
+      onGoBackPane={vi.fn()}
+      onGoForwardPane={vi.fn()}
+    >
+      <LibraryIntelligencePane libraryId={LIBRARY_ID} onOpenChat={onOpenChat} />
+    </PaneRuntimeProvider>,
+  );
+  return { onNavigatePane, onOpenChat, onOpenInNewPane };
 }
 
 describe("LibraryIntelligencePane", () => {
@@ -233,6 +275,39 @@ describe("LibraryIntelligencePane", () => {
       expect(pulses[0]?.mediaId).toBe(MEDIA_ID);
     } finally {
       window.removeEventListener(READER_PULSE_HIGHLIGHT, listener);
+    }
+  });
+
+  it("opens note citations and dispatches a pending-compatible note pulse", async () => {
+    const user = userEvent.setup();
+    const pulses: NotePulseTarget[] = [];
+    const listener = (event: Event) => {
+      if (event instanceof CustomEvent) {
+        pulses.push(event.detail as NotePulseTarget);
+      }
+    };
+    window.addEventListener(NOTE_PULSE_HIGHLIGHT, listener);
+    try {
+      stubFetch(artifact({ status: "current", citations: [NOTE_CITATION] }));
+      const { onNavigatePane } = renderPane();
+      const citation = await screen.findByRole("link", {
+        name: "Open citation 1",
+      });
+      await user.click(citation);
+      await waitFor(() => expect(pulses).toHaveLength(1));
+      expect(pulses[0]).toMatchObject({
+        pageId: "page-1",
+        blockId: "block-1",
+        startOffset: 0,
+        endOffset: 10,
+      });
+      expect(onNavigatePane).toHaveBeenCalledWith(
+        "pane-library",
+        "/notes/block-1",
+        undefined,
+      );
+    } finally {
+      window.removeEventListener(NOTE_PULSE_HIGHLIGHT, listener);
     }
   });
 

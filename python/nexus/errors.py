@@ -4,6 +4,7 @@ All API errors are defined here with their corresponding HTTP status codes.
 """
 
 from enum import Enum
+from typing import Any
 
 from llm_calling.errors import LLMErrorCode
 
@@ -327,10 +328,12 @@ class ApiError(Exception):
         message: str,
         *,
         retry_after_seconds: int | None = None,
+        details: dict[str, Any] | None = None,
     ):
         self.code = code
         self.message = message
         self.retry_after_seconds = retry_after_seconds
+        self.details = details
         self.status_code = ERROR_CODE_TO_STATUS.get(code, 500)
         super().__init__(message)
 
@@ -356,8 +359,10 @@ class ConflictError(ApiError):
         self,
         code: ApiErrorCode = ApiErrorCode.E_INVITE_NOT_PENDING,
         message: str = "Conflict",
+        *,
+        details: dict[str, Any] | None = None,
     ):
-        super().__init__(code, message)
+        super().__init__(code, message, details=details)
 
 
 class InvalidRequestError(ApiError):

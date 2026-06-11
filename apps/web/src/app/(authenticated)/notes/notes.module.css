@@ -91,7 +91,6 @@
 }
 
 .editorMeta {
-  min-height: 18px;
   color: var(--ink-muted);
   font-size: var(--text-xs);
 }
@@ -101,11 +100,6 @@
   flex-wrap: wrap;
   gap: var(--space-2);
   margin-top: var(--space-2);
-}
-
-.backlinks {
-  border-top: 1px solid var(--edge-subtle);
-  padding-top: var(--space-3);
 }
 
 /*

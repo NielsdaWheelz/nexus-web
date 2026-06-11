@@ -60,6 +60,8 @@ class EdgeOut(ResourceGraphModel):
     origin: EdgeOrigin
     source_ref: str
     target_ref: str
+    source_order_key: str | None = None
+    target_order_key: str | None = None
     ordinal: int | None = None
     snapshot: dict[str, Any] | None = None
     source_label: str

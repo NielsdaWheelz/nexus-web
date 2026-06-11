@@ -5,12 +5,11 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from nexus.db.errors import integrity_constraint_name
-from nexus.db.models import NoteBlock, Page, note_block_sibling_sort_key
+from nexus.db.models import Page
 from nexus.jobs.queue import enqueue_job
 from nexus.services.content_indexing import (
     ContentIndexResult,
@@ -27,7 +26,8 @@ def build_page_indexable_blocks(db: Session, page: Page) -> list[IndexableBlock]
     owner = IndexOwner("page", page.id)
     blocks: list[IndexableBlock] = []
     source_offset = 0
-    for note_block, heading_path in _blocks_in_render_order(db, page.id):
+    for node, heading_path in _blocks_in_render_order(db, page):
+        note_block = node.block
         body = note_block.body_text or ""
         if not body.strip():
             continue
@@ -100,22 +100,20 @@ def enqueue_page_reindex(db: Session, *, page_id: UUID, reason: str) -> None:
             raise
 
 
-def _blocks_in_render_order(db: Session, page_id: UUID) -> list[tuple[NoteBlock, tuple[str, ...]]]:
-    """Every note_block of the page in DFS render order, each paired with its ancestor
-    heading_path. Sibling order is the canonical NOTE_BLOCK_SIBLING_ORDER (render order)."""
-    by_parent: dict[UUID | None, list[NoteBlock]] = {}
-    for block in db.scalars(select(NoteBlock).where(NoteBlock.page_id == page_id)):
-        by_parent.setdefault(block.parent_block_id, []).append(block)
-    for siblings in by_parent.values():
-        siblings.sort(key=note_block_sibling_sort_key)
+def _blocks_in_render_order(
+    db: Session, page: Page
+) -> list[tuple[object, tuple[str, ...]]]:
+    """Every note_block of the page in graph DFS order with ancestor heading_path."""
+    from nexus.services.resource_graph import documents as graph_documents
 
-    ordered: list[tuple[NoteBlock, tuple[str, ...]]] = []
+    document = graph_documents.load_page_document(db, user_id=page.user_id, page_id=page.id)
+    ordered: list[tuple[object, tuple[str, ...]]] = []
 
-    def walk(parent_id: UUID | None, heading_path: tuple[str, ...]) -> None:
-        for block in by_parent.get(parent_id, []):
-            ordered.append((block, heading_path))
-            body = block.body_text or ""
-            walk(block.id, (*heading_path, body) if body.strip() else heading_path)
+    def walk(nodes: list[object], heading_path: tuple[str, ...]) -> None:
+        for node in nodes:
+            ordered.append((node, heading_path))
+            body = node.block.body_text or ""
+            walk(node.children, (*heading_path, body) if body.strip() else heading_path)
 
-    walk(None, ())
+    walk(document.roots, ())
     return ordered

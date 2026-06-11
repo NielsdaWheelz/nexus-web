@@ -20,7 +20,7 @@ from nexus.services.resource_graph.refs import ResourceRef
 # new value lands in exactly one place; it still requires a migration and the
 # sole writer to widen the ``resource_edges`` CHECK (N9).
 EdgeKind = Literal["context", "supports", "contradicts"]
-EdgeOrigin = Literal["user", "citation", "system", "note_body", "highlight_note"]
+EdgeOrigin = Literal["user", "citation", "system", "note_body", "highlight_note", "note_containment"]
 
 EDGE_KINDS: tuple[EdgeKind, ...] = get_args(EdgeKind)
 EDGE_ORIGINS: tuple[EdgeOrigin, ...] = get_args(EdgeOrigin)
@@ -67,6 +67,8 @@ class EdgeCreate:
     target: ResourceRef
     kind: EdgeKind
     origin: EdgeOrigin
+    source_order_key: str | None = None
+    target_order_key: str | None = None
     ordinal: int | None = None
     snapshot: CitationSnapshot | None = None
 
@@ -78,6 +80,8 @@ class EdgeOut:
     target: ResourceRef
     kind: EdgeKind
     origin: EdgeOrigin
+    source_order_key: str | None
+    target_order_key: str | None
     ordinal: int | None
     snapshot: CitationSnapshot | None
     created_at: datetime

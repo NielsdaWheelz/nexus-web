@@ -35,15 +35,14 @@ describe("notes api", () => {
               id: "page-today",
               title: "May 6, 2026",
               description: null,
+              documentVersion: 1,
               blocks: [],
             },
           },
         });
       }
-      if (
-        url.pathname === "/api/notes/daily/2026-05-06/quick-capture" &&
-        init?.method === "POST"
-      ) {
+      if (url.pathname === "/api/notes/quick-capture" && init?.method === "POST") {
+        const body = JSON.parse(String(init.body)) as Record<string, unknown>;
         return jsonResponse({
           data: {
             id: "block-1",
@@ -51,7 +50,7 @@ describe("notes api", () => {
             parent_block_id: null,
             order_key: "a",
             block_kind: "bullet",
-            body_pm_json: { type: "paragraph" },
+            body_pm_json: body.body_pm_json ?? { type: "paragraph" },
             body_markdown: "capture",
             body_text: "capture",
             collapsed: false,
@@ -66,14 +65,46 @@ describe("notes api", () => {
       id: "page-today",
     });
     await expect(
-      quickCaptureDailyNote({ localDate: "2026-05-06", bodyMarkdown: "capture" })
+      quickCaptureDailyNote({
+        localDate: "2026-05-06",
+        blockId: "block-client-1",
+        clientMutationId: "mutation-client-1",
+        bodyMarkdown: "capture",
+      })
     ).resolves.toMatchObject({ id: "block-1", bodyText: "capture" });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      expect.stringContaining("/api/notes/daily/2026-05-06/quick-capture?"),
+      expect.stringContaining("/api/notes/quick-capture?"),
       expect.objectContaining({
         method: "POST",
-        body: JSON.stringify({ body_markdown: "capture" }),
+        body: JSON.stringify({
+          id: "block-client-1",
+          client_mutation_id: "mutation-client-1",
+          body_markdown: "capture",
+          local_date: "2026-05-06",
+        }),
+      })
+    );
+
+    await expect(
+      quickCaptureDailyNote({
+        localDate: "2026-05-06",
+        blockId: "block-client-2",
+        clientMutationId: "mutation-client-2",
+        bodyPmJson: { type: "paragraph", content: [{ type: "text", text: "capture" }] },
+      })
+    ).resolves.toMatchObject({ id: "block-1", bodyText: "capture" });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("/api/notes/quick-capture?"),
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          id: "block-client-2",
+          client_mutation_id: "mutation-client-2",
+          body_pm_json: { type: "paragraph", content: [{ type: "text", text: "capture" }] },
+          local_date: "2026-05-06",
+        }),
       })
     );
   });
@@ -88,10 +119,15 @@ describe("notes api", () => {
       return jsonResponse({
         data: {
           clientMutationId: "mutation-1",
+          documentVersion: 2,
+          changedBlockIds: ["block-1"],
+          changedEdgeIds: ["edge-1"],
+          reindexJobId: null,
           page: {
             id: "page-1",
             title: "Page",
             description: null,
+            documentVersion: 2,
             blocks: [
               {
                 id: "block-1",
@@ -113,40 +149,58 @@ describe("notes api", () => {
 
     const result = await saveNotePageDocument("page-1", {
       clientMutationId: "mutation-1",
+      baseDocumentVersion: 1,
       focusBlockId: null,
-      topLevelParentBlockId: null,
       blocks: [
         {
           id: "block-1",
-          parentBlockId: null,
-          beforeBlockId: null,
-          afterBlockId: null,
           blockKind: "bullet",
           bodyPmJson: { type: "paragraph" },
-          collapsed: false,
         },
       ],
-      deletedBlocks: ["block-2"],
+      containment: [
+        {
+          parent: { scheme: "page", id: "page-1" },
+          children: [
+            {
+              blockId: "block-1",
+              sourceOrderKey: "0000000001",
+              collapsed: false,
+            },
+          ],
+        },
+      ],
+      deletedBlockIds: ["block-2"],
     });
 
     expect(requestBody).toEqual({
       client_mutation_id: "mutation-1",
+      base_document_version: 1,
+      title: null,
       focus_block_id: null,
-      top_level_parent_block_id: null,
       blocks: [
         {
           id: "block-1",
-          parent_block_id: null,
-          before_block_id: null,
-          after_block_id: null,
           block_kind: "bullet",
           body_pm_json: { type: "paragraph" },
-          collapsed: false,
         },
       ],
-      deleted_blocks: ["block-2"],
+      containment: [
+        {
+          parent: { scheme: "page", id: "page-1" },
+          children: [
+            {
+              block_id: "block-1",
+              source_order_key: "0000000001",
+              collapsed: false,
+            },
+          ],
+        },
+      ],
+      deleted_block_ids: ["block-2"],
     });
     expect(result.page.blocks[0]?.id).toBe("block-1");
+    expect(result.documentVersion).toBe(2);
   });
 
   it("rejects legacy revision fields in note responses", async () => {
@@ -154,10 +208,12 @@ describe("notes api", () => {
       jsonResponse({
         data: {
           clientMutationId: "mutation-1",
+          documentVersion: 1,
           page: {
             id: "page-1",
             title: "Page",
             description: null,
+            documentVersion: 1,
             revision: 7,
             blocks: [],
           },
@@ -168,10 +224,11 @@ describe("notes api", () => {
     await expect(
       saveNotePageDocument("page-1", {
         clientMutationId: "mutation-1",
+        baseDocumentVersion: 1,
         focusBlockId: null,
-        topLevelParentBlockId: null,
         blocks: [],
-        deletedBlocks: [],
+        containment: [],
+        deletedBlockIds: [],
       }),
     ).rejects.toThrow("note page includes legacy artifact identity");
   });

@@ -3072,12 +3072,14 @@ export default function MediaPaneBody() {
       noteBlockId: string | null,
       createBlockId: string,
       bodyPmJson: Record<string, unknown>,
+      clientMutationId: string,
     ) => {
       const linkedNoteBlock = await saveHighlightNote(
         highlightId,
         noteBlockId,
         createBlockId,
         bodyPmJson,
+        clientMutationId,
       );
       applyToAllHighlightSlots((list) =>
         patchHighlightLinkedNoteBlock(list, highlightId, linkedNoteBlock),
@@ -3089,10 +3091,12 @@ export default function MediaPaneBody() {
 
   const handleNoteDelete = useCallback(
     async (
+      highlightId: string,
       noteBlockId: string,
+      clientMutationId: string,
       shouldApply: () => boolean,
     ) => {
-      await deleteHighlightNote(noteBlockId);
+      await deleteHighlightNote(highlightId, noteBlockId, clientMutationId);
       if (shouldApply()) {
         applyToAllHighlightSlots((list) =>
           removeHighlightLinkedNoteBlock(list, noteBlockId),
@@ -5029,6 +5033,7 @@ export default function MediaPaneBody() {
 
       {!isPdf &&
         selection &&
+        !quickNote &&
         !focusState.editingBounds &&
         contentRef.current && (
           <SelectionPopover

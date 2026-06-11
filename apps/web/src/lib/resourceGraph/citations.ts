@@ -15,11 +15,31 @@ import {
 } from "@/lib/conversations/readerCitation";
 import {
   hrefForReaderTarget,
+  hrefForNoteTarget,
   type ReaderSourceTarget,
 } from "@/lib/conversations/readerTarget";
 
 function readerTargetForCitation(c: CitationOut): ReaderSourceTarget | null {
-  if (!c.media_id || !isRetrievalLocator(c.locator)) {
+  if (!isRetrievalLocator(c.locator)) {
+    return null;
+  }
+  if (c.locator.type === "note_block_offsets") {
+    return {
+      kind: "note",
+      source: "message_retrieval",
+      page_id: c.locator.page_id,
+      block_id: c.locator.block_id,
+      start_offset: c.locator.start_offset,
+      end_offset: c.locator.end_offset,
+      snippet: c.snapshot?.excerpt ?? null,
+      highlight_behavior: "pulse",
+      focus_behavior: "scroll_into_view",
+      label: c.snapshot?.title ?? undefined,
+      href: c.deep_link ?? hrefForNoteTarget({ block_id: c.locator.block_id }),
+      evidence_id: c.target_ref.id,
+    };
+  }
+  if (!c.media_id) {
     return null;
   }
   const evidence_span_id =
@@ -45,8 +65,9 @@ function readerTargetForCitation(c: CitationOut): ReaderSourceTarget | null {
 }
 
 export function toReaderCitationData(c: CitationOut): ReaderCitationData {
+  const target = readerTargetForCitation(c);
   const evidence_span_id =
-    c.target_ref.type === "evidence_span" ? c.target_ref.id : null;
+    c.target_ref.type === "evidence_span" && c.media_id ? c.target_ref.id : null;
   return {
     index: c.ordinal,
     color: readerCitationColorForIndex(c.ordinal),
@@ -57,8 +78,9 @@ export function toReaderCitationData(c: CitationOut): ReaderCitationData {
         (v): v is string => Boolean(v),
       ),
     },
-    target: readerTargetForCitation(c),
+    target,
     href:
+      target?.href ??
       c.deep_link ??
       (c.media_id
         ? hrefForReaderTarget({

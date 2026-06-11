@@ -587,17 +587,20 @@ Responsibilities after cutover:
 - emit response shapes without revision/base-revision fields,
 - reject transport payloads that attempt to use revision tokens.
 
-#### Object search owner
+#### Notes/content-index owner
 
-Owner remains:
+The former `object_search.py` owner was removed by
+`docs/cutovers/notes-pages-evidence-unification-hard-cutover.md`. Current note
+search/evidence ownership is:
 
-- `python/nexus/services/object_search.py`
+- `python/nexus/services/note_indexing.py`
+- `python/nexus/services/content_indexing.py`
 
 Responsibilities after cutover:
 
-- rebuild the current object-search projection,
-- key documents by object identity rather than content hash,
-- remove index-version identity from document and embedding rows.
+- rebuild current page-owned note content into the polymorphic content index,
+- key indexed documents by `(owner_kind, owner_id)` rather than content hash,
+- keep note search/evidence current through page reindex jobs.
 
 #### Prompt assembly owner
 
@@ -1217,7 +1220,8 @@ Anything else is unfinished.
 - `python/nexus/services/agent_tools/web_search.py`
 - `python/nexus/services/notes.py`
 - `python/nexus/services/highlights.py`
-- `python/nexus/services/object_search.py`
+- `python/nexus/services/note_indexing.py`
+- `python/nexus/services/content_indexing.py`
 - `python/nexus/services/image_proxy.py`
 - `python/nexus/services/image_validation.py`
 - `python/nexus/services/library_intelligence.py`

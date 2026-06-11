@@ -3,11 +3,13 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useMemo,
+  useRef,
   useState,
   type FormEvent,
 } from "react";
-import { Link, Trash2 } from "lucide-react";
+import { Link, Paperclip, Trash2 } from "lucide-react";
 import {
   FeedbackNotice,
   toFeedback,
@@ -21,9 +23,14 @@ import { useResource } from "@/lib/api/useResource";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { isAbortError } from "@/lib/errors";
 import {
+  getFileUploadError,
+  isFailedSourceIngest,
+  uploadIngestFile,
+} from "@/lib/media/ingestionClient";
+import {
   createUserEdge,
   deleteUserEdge,
-  edgesForRefPath,
+  listEdgesForRef,
   type EdgeKind,
   type EdgeOut,
 } from "@/lib/resourceGraph/edges";
@@ -51,7 +58,13 @@ interface Connection {
   origin: EdgeOut["origin"];
 }
 
-export default function NoteBacklinks({ objectRef }: { objectRef: ObjectRef }) {
+export default function NoteBacklinks({
+  objectRef,
+  onOpenRoute,
+}: {
+  objectRef: ObjectRef;
+  onOpenRoute?: (href: string, openInNewPane: boolean) => void;
+}) {
   const [refreshTick, setRefreshTick] = useState(0);
   const selfRef = formatResourceRef({
     scheme: objectRef.objectType,
@@ -59,7 +72,7 @@ export default function NoteBacklinks({ objectRef }: { objectRef: ObjectRef }) {
   });
   const edgesResource = useResource<{ data: EdgeOut[] }>({
     cacheKey: `${selfRef}:${refreshTick}`,
-    path: () => edgesForRefPath(selfRef),
+    load: async (signal) => ({ data: await listEdgesForRef(selfRef, { signal }) }),
   });
   const loading = edgesResource.status === "loading";
   const error: FeedbackContent | null =
@@ -96,19 +109,22 @@ export default function NoteBacklinks({ objectRef }: { objectRef: ObjectRef }) {
     setRefreshTick((value) => value + 1);
   }, []);
 
-  const openConnection = useCallback(async (ref: string) => {
-    const parsed = parseResourceRef(ref);
-    if (!parsed || !isObjectType(parsed.scheme)) return;
-    try {
-      const [resolved] = await resolveObjectRefs([
-        { objectType: parsed.scheme, objectId: parsed.id },
-      ]);
-      if (resolved?.route) window.location.assign(resolved.route);
-    } catch (err) {
-      if (handleUnauthenticatedApiError(err)) return;
-      console.error("Failed to open connection:", err);
-    }
-  }, []);
+  const openConnection = useCallback(
+    async (ref: string, openInNewPane: boolean) => {
+      const parsed = parseResourceRef(ref);
+      if (!parsed || !isObjectType(parsed.scheme)) return;
+      try {
+        const [resolved] = await resolveObjectRefs([
+          { objectType: parsed.scheme, objectId: parsed.id },
+        ]);
+        if (resolved?.route) onOpenRoute?.(resolved.route, openInNewPane);
+      } catch (err) {
+        if (handleUnauthenticatedApiError(err)) return;
+        console.error("Failed to open connection:", err);
+      }
+    },
+    [onOpenRoute]
+  );
 
   return (
     <section className={styles.backlinks} aria-label="Connections">
@@ -134,7 +150,7 @@ export default function NoteBacklinks({ objectRef }: { objectRef: ObjectRef }) {
                   type="button"
                   className={styles.linkButton}
                   disabled={connection.missing}
-                  onClick={() => void openConnection(connection.ref)}
+                  onClick={(event) => void openConnection(connection.ref, event.shiftKey)}
                 >
                   <Icon size={14} aria-hidden="true" />
                   <span className={styles.connectionText}>
@@ -167,18 +183,23 @@ function ConnectionComposer({
   selfRef: string;
   onChanged: () => void;
 }) {
+  const autocompleteId = useId();
   const [query, setQuery] = useState("");
   const [kind, setKind] = useState<EdgeKind>("context");
   const [selected, setSelected] = useState<HydratedObjectRef | null>(null);
   const [results, setResults] = useState<HydratedObjectRef[]>([]);
+  const [activeResultKey, setActiveResultKey] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [attaching, setAttaching] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const trimmedQuery = query.trim();
   const rawRef = useMemo(() => parseResourceRef(trimmedQuery), [trimmedQuery]);
 
   useEffect(() => {
     if (trimmedQuery.length < 2 || rawRef !== null || selected !== null) {
       setResults([]);
+      setActiveResultKey(null);
       return;
     }
     const controller = new AbortController();
@@ -190,6 +211,7 @@ function ConnectionComposer({
         .catch((err) => {
           if (isAbortError(err) || controller.signal.aborted) return;
           setResults([]);
+          setActiveResultKey(null);
         });
     }, 150);
     return () => {
@@ -197,6 +219,10 @@ function ConnectionComposer({
       window.clearTimeout(searchTimer);
     };
   }, [rawRef, selected, trimmedQuery]);
+
+  useEffect(() => {
+    setActiveResultKey(results[0] ? objectRefKey(results[0]) : null);
+  }, [results]);
 
   const targetRef = selected
     ? formatResourceRef({
@@ -239,8 +265,54 @@ function ConnectionComposer({
     }
   }
 
+  async function attachFiles(files: File[]) {
+    if (files.length === 0) {
+      return;
+    }
+    setFeedback(null);
+    setAttaching(true);
+    try {
+      for (const file of files) {
+        const uploadError = getFileUploadError(file);
+        if (uploadError) {
+          throw new Error(uploadError);
+        }
+        const result = await uploadIngestFile({ file, libraryIds: [] });
+        if (isFailedSourceIngest(result)) {
+          throw new Error("Attachment could not be uploaded.");
+        }
+        await createUserEdge({
+          sourceRef: selfRef,
+          targetRef: `media:${result.mediaId}`,
+          kind: "context",
+        });
+      }
+      onChanged();
+    } catch (err) {
+      if (handleUnauthenticatedApiError(err)) return;
+      setFeedback(toFeedback(err, { fallback: "Attachment could not be added." }));
+    } finally {
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+      setAttaching(false);
+    }
+  }
+
   return (
-    <form className={styles.composer} onSubmit={(event) => void submitConnection(event)}>
+    <form
+      className={styles.composer}
+      onSubmit={(event) => void submitConnection(event)}
+      onDragOver={(event) => {
+        if (event.dataTransfer.types.includes("Files")) event.preventDefault();
+      }}
+      onDrop={(event) => {
+        const files = Array.from(event.dataTransfer.files);
+        if (files.length === 0) return;
+        event.preventDefault();
+        void attachFiles(files);
+      }}
+    >
       <div className={styles.composerControls}>
         <div className={styles.searchWrap}>
           <Input
@@ -256,11 +328,16 @@ function ConnectionComposer({
           />
           <div className={styles.autocomplete}>
             <ObjectRefAutocomplete
+              id={autocompleteId}
               objects={results}
+              activeObjectKey={activeResultKey}
+              optionIdForObject={(object) => `${autocompleteId}-option-${objectRefKey(object)}`}
+              onActiveChange={setActiveResultKey}
               onPick={(object) => {
                 setSelected(object);
                 setQuery(object.label);
                 setResults([]);
+                setActiveResultKey(null);
                 setFeedback(null);
               }}
             />
@@ -285,6 +362,26 @@ function ConnectionComposer({
         >
           Connect
         </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          leadingIcon={<Paperclip size={14} />}
+          loading={attaching}
+          onClick={() => fileInputRef.current?.click()}
+        >
+          Attach
+        </Button>
+        <input
+          ref={fileInputRef}
+          className={styles.fileInput}
+          type="file"
+          multiple
+          accept="application/pdf,application/epub+zip,.pdf,.epub"
+          aria-label="Attach files"
+          tabIndex={-1}
+          onChange={(event) => void attachFiles(Array.from(event.currentTarget.files ?? []))}
+        />
       </div>
       {feedback ? <FeedbackNotice feedback={feedback} /> : null}
     </form>
@@ -333,4 +430,8 @@ function DeleteConnectionButton({
       {feedback ? <FeedbackNotice feedback={feedback} /> : null}
     </div>
   );
+}
+
+function objectRefKey(object: HydratedObjectRef): string {
+  return `${object.objectType}:${object.objectId}`;
 }

@@ -1,7 +1,13 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { userEvent } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import AddContentTray from "@/components/AddContentTray";
 import { OPEN_ADD_CONTENT_EVENT } from "@/components/addContentEvents";
+import {
+  createOutlineDocFromBlock,
+  paragraphFromText,
+} from "@/lib/notes/prosemirror/schema";
+import type { StoredNoteEditorDraft } from "@/lib/notes/useNoteEditorSession";
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -38,6 +44,40 @@ function dispatchPaste(target: EventTarget, text: string) {
   target.dispatchEvent(event);
 }
 
+function parseJsonBody(init: RequestInit | undefined): Record<string, unknown> {
+  if (typeof init?.body !== "string") {
+    throw new Error("Expected JSON request body");
+  }
+  return JSON.parse(init.body) as Record<string, unknown>;
+}
+
+function quickCaptureBodies(fetchMock: {
+  mock: { calls: Array<[RequestInfo | URL, RequestInit?]> };
+}) {
+  return fetchMock.mock.calls
+    .filter(([input, init]) => {
+      const url = new URL(String(input), "http://localhost");
+      return url.pathname.endsWith("/quick-capture") && init?.method === "POST";
+    })
+    .map(([, init]) => parseJsonBody(init));
+}
+
+function storeNoteDraft(
+  resourceKey: string,
+  draft: Omit<StoredNoteEditorDraft, "version" | "doc" | "updatedAt"> & {
+    doc: unknown;
+  }
+): void {
+  window.localStorage.setItem(
+    `nexus.noteDraft:${resourceKey}`,
+    JSON.stringify({
+      version: 1,
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      ...draft,
+    })
+  );
+}
+
 describe("AddContentTray", () => {
   // The mobile sheet pushes/pops a synthetic history entry (useHistoryDismiss);
   // real history.back() is async and would race close-then-reopen flows. Model
@@ -45,6 +85,7 @@ describe("AddContentTray", () => {
   let fakeState: unknown = null;
 
   beforeEach(() => {
+    window.localStorage.clear();
     document.body.style.overflow = "";
     fakeState = null;
     vi.spyOn(history, "pushState").mockImplementation((state) => {
@@ -82,6 +123,7 @@ describe("AddContentTray", () => {
             id: "page-new",
             title: "Untitled",
             description: null,
+            document_version: 1,
             blocks: [],
           },
         });
@@ -119,6 +161,7 @@ describe("AddContentTray", () => {
 
   afterEach(() => {
     document.body.style.overflow = "";
+    window.localStorage.clear();
     vi.restoreAllMocks();
   });
 
@@ -264,6 +307,8 @@ describe("AddContentTray", () => {
   });
 
   it("creates pages and quick-captures to today from the tray", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.mocked(globalThis.fetch);
     render(<AddContentTray />);
 
     openTray();
@@ -276,12 +321,56 @@ describe("AddContentTray", () => {
     });
 
     openTray("quick-note");
-    fireEvent.change(await screen.findByLabelText("Quick note to today"), {
-      target: { value: "captured text" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Add note" }));
+    const editor = await screen.findByRole("textbox", { name: "Quick note to today" });
+    await user.click(editor);
+    await user.keyboard("captured text");
+    fireEvent.blur(editor);
 
-    expect(await screen.findByText("Added to today.")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(quickCaptureBodies(fetchMock)).toContainEqual(expect.objectContaining({
+        body_pm_json: {
+          type: "paragraph",
+          content: [{ type: "text", text: "captured text" }],
+        },
+      }));
+    });
+    expect(screen.queryByText("Added to today.")).not.toBeInTheDocument();
+  });
+
+  it("recovers a quick-note draft and saves it with the stored identity on request", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.mocked(globalThis.fetch);
+    const draftDoc = createOutlineDocFromBlock({
+      id: "recovered-quick-block",
+      bodyPmJson: paragraphFromText("offline quick note").toJSON() as Record<string, unknown>,
+      bodyText: "offline quick note",
+    });
+    storeNoteDraft("quick-note:daily", {
+      doc: draftDoc.toJSON(),
+      metadata: null,
+      sequence: 6,
+      clientMutationId: "quick-note-recovered-cmid",
+    });
+
+    render(<AddContentTray />);
+
+    openTray("quick-note");
+    const editor = await screen.findByRole("textbox", { name: "Quick note to today" });
+    expect(editor).toHaveTextContent("offline quick note");
+    expect(await screen.findByText("Recovered unsaved changes")).toBeInTheDocument();
+    expect(quickCaptureBodies(fetchMock)).toHaveLength(0);
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(quickCaptureBodies(fetchMock)).toContainEqual(
+        expect.objectContaining({
+          id: "recovered-quick-block",
+          client_mutation_id: "quick-note-recovered-cmid",
+          body_pm_json: paragraphFromText("offline quick note").toJSON(),
+        })
+      );
+    });
   });
 
   describe("library multi-select wiring", () => {

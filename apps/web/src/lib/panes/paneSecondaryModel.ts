@@ -19,6 +19,10 @@ const PANE_SECONDARY_GROUP_BASE = {
     title: "Library tools",
     width: { defaultWidthPx: 420, minWidthPx: 320, maxWidthPx: 760 },
   },
+  "notes-tools": {
+    title: "Note tools",
+    width: { defaultWidthPx: 360, minWidthPx: 280, maxWidthPx: 680 },
+  },
 } as const satisfies Record<
   string,
   { title: string; width: WorkspaceSecondaryWidthPolicy }
@@ -62,6 +66,12 @@ const PANE_SECONDARY_SURFACE_DEFINITIONS = [
     groupId: "library-tools",
     title: "Intelligence",
     iconId: "bar-chart-3",
+  },
+  {
+    id: "notes-connections",
+    groupId: "notes-tools",
+    title: "Connections",
+    iconId: "link-2",
   },
 ] as const satisfies readonly {
   id: string;

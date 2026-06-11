@@ -166,6 +166,17 @@ def test_claim_event_values_absent_in_production():
 
 
 # =============================================================================
+# Notes/page hard cutover: no service-level block command surface
+# =============================================================================
+
+
+def test_notes_service_block_command_surface_absent_in_production():
+    pattern = r"\b(create_note_block|update_note_block|move_note_block|split_note_block|merge_note_block|delete_note_block|CreateNoteBlockRequest|UpdateNoteBlockRequest|MoveNoteBlockRequest|SplitNoteBlockRequest|LinkedObjectRequest)\b"
+    hits = _filtered(pattern, _PY_ROOT, _WEB_ROOT, exclude=_FRONTEND_TEST)
+    assert not hits, f"legacy notes block command surface present:\n{_fmt(hits)}"
+
+
+# =============================================================================
 # library-chat surface must be ABSENT (one allowed negative-test assertion)
 # =============================================================================
 
@@ -744,3 +755,55 @@ def test_dropped_provenance_graph_modules_absent(rel_path: str):
         f"{rel_path} must be deleted in the provenance-graph cutover "
         "(its concern moved to services/resource_graph/* + the graph routes)"
     )
+
+
+# =============================================================================
+# Notes/pages object-graph cutover — storage/order belongs to resource_edges
+# =============================================================================
+
+
+def test_notes_pages_object_graph_old_note_structure_absent_in_production():
+    # The editor DTO may still project parent/order fields, and content_blocks has a
+    # legitimate parent_block_id. This gate targets only the old physical NoteBlock
+    # fields and note_blocks table columns that 0148 drops.
+    object_graph_hits = _filtered(
+        r"\bobject_graph_edges\b", _PY_ROOT, _WEB_ROOT, _SCRIPTS_ROOT, exclude=_FRONTEND_TEST
+    )
+    assert not object_graph_hits, f"parallel object_graph_edges table referenced:\n{_fmt(object_graph_hits)}"
+
+    orm_hits = _filtered(
+        r"\bNoteBlock\.(?:page_id|parent_block_id|order_key|collapsed)\b",
+        _PY_ROOT,
+        _WEB_ROOT,
+        _SCRIPTS_ROOT,
+        exclude=_FRONTEND_TEST,
+    )
+    assert not orm_hits, f"old NoteBlock structure fields referenced:\n{_fmt(orm_hits)}"
+
+    sql_hits = _filtered(
+        r"\bnote_blocks\b[^\n]*(?:\bpage_id\b|\bparent_block_id\b|\border_key\b|\bcollapsed\b)|(?:\bpage_id\b|\bparent_block_id\b|\border_key\b|\bcollapsed\b)[^\n]*\bnote_blocks\b",
+        _PY_ROOT,
+        _WEB_ROOT,
+        _SCRIPTS_ROOT,
+        exclude=_FRONTEND_TEST,
+    )
+    assert not sql_hits, (
+        "runtime SQL references dropped note_blocks structure columns:\n"
+        f"{_fmt(sql_hits)}"
+    )
+
+
+def test_public_resource_graph_edge_create_does_not_accept_order_keys():
+    # Ordered containment is written by resource_graph.documents, not by the generic
+    # public edge API/client.
+    schema_src = (_PY_ROOT / "schemas" / "resource_graph.py").read_text(encoding="utf-8")
+    request_block = schema_src.split("class CreateEdgeRequest", 1)[1].split("\n\nclass ", 1)[0]
+    assert "source_order_key" not in request_block
+    assert "target_order_key" not in request_block
+
+    client_src = (_WEB_ROOT / "lib" / "resourceGraph" / "edges.ts").read_text(encoding="utf-8")
+    create_block = client_src.split("export async function createUserEdge", 1)[1].split(
+        "export async function deleteUserEdge", 1
+    )[0]
+    assert "source_order_key" not in create_block
+    assert "target_order_key" not in create_block

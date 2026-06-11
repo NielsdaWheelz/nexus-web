@@ -32,7 +32,9 @@ from nexus.db.models import (
     Podcast,
     PodcastSubscription,
     ProcessingStatus,
+    ResourceEdge,
     ResourceExternalSnapshot,
+    Tag,
 )
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.contributor_credits import replace_media_contributor_credits
@@ -130,15 +132,25 @@ def _make_note_block(db: Session, user_id: UUID, *, body: str = "Note body.") ->
     block = NoteBlock(
         id=uuid4(),
         user_id=user_id,
-        page_id=page_id,
-        order_key="0000000001",
         block_kind="bullet",
         body_pm_json={"type": "paragraph", "content": [{"type": "text", "text": body}]},
         body_markdown=body,
         body_text=body,
-        collapsed=False,
     )
     db.add(block)
+    db.flush()
+    db.add(
+        ResourceEdge(
+            user_id=user_id,
+            kind="context",
+            origin="note_containment",
+            source_scheme="page",
+            source_id=page_id,
+            target_scheme="note_block",
+            target_id=block.id,
+            source_order_key="0000000001",
+        )
+    )
     db.commit()
     return block.id
 
@@ -699,7 +711,7 @@ def test_resolve_highlight_returns_enriched_quote(db_session: Session, bootstrap
 
 
 def test_resolve_highlight_includes_linked_note(db_session: Session, bootstrapped_user: UUID):
-    from nexus.services.notes import set_highlight_note_body
+    from nexus.services.notes import set_highlight_note_body_pm_json
 
     library_id = get_user_default_library(db_session, bootstrapped_user)
     assert library_id is not None
@@ -708,7 +720,17 @@ def test_resolve_highlight_includes_linked_note(db_session: Session, bootstrappe
     )
     _make_span(db_session, media_id, text="Background span text for highlight.")
     highlight_id = _make_highlight_with_anchor(db_session, bootstrapped_user, media_id)
-    set_highlight_note_body(db_session, bootstrapped_user, highlight_id, "my annotation")
+    set_highlight_note_body_pm_json(
+        db_session,
+        bootstrapped_user,
+        highlight_id=highlight_id,
+        block_id=uuid4(),
+        body_pm_json={
+            "type": "paragraph",
+            "content": [{"type": "text", "text": "my annotation"}],
+        },
+        client_mutation_id=f"highlight-note-resolve-{uuid4()}",
+    )
 
     resolved = _resolve(db_session, f"highlight:{highlight_id}", viewer_id=bootstrapped_user)
 
@@ -758,6 +780,30 @@ def test_resolve_note_block_non_owner_returns_missing(db_session: Session, boots
     resolved = _resolve(db_session, f"note_block:{block_id}", viewer_id=bootstrapped_user)
 
     assert resolved.missing, "Non-owner must see note_block as missing"
+
+
+def test_resolve_tag_owner_returns_hash_label(db_session: Session, bootstrapped_user: UUID):
+    tag = Tag(id=uuid4(), user_id=bootstrapped_user, name="SOTA", slug="sota")
+    db_session.add(tag)
+    db_session.commit()
+
+    resolved = _resolve(db_session, f"tag:{tag.id}", viewer_id=bootstrapped_user)
+
+    assert not resolved.missing
+    assert resolved.label == "#SOTA"
+    assert resolved.inline_body is None
+
+
+def test_resolve_tag_non_owner_returns_missing(db_session: Session, bootstrapped_user: UUID):
+    other_user_id = uuid4()
+    ensure_user_and_default_library(db_session, other_user_id)
+    tag = Tag(id=uuid4(), user_id=other_user_id, name="Private", slug="private")
+    db_session.add(tag)
+    db_session.commit()
+
+    resolved = _resolve(db_session, f"tag:{tag.id}", viewer_id=bootstrapped_user)
+
+    assert resolved.missing
 
 
 def test_resolve_conversation_owner_returns_summary_no_inline(

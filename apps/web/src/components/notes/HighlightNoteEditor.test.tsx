@@ -1,12 +1,20 @@
 import { act } from "react";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
-import { paragraphFromText } from "@/lib/notes/prosemirror/schema";
+import {
+  createOutlineDocFromBlock,
+  paragraphFromText,
+} from "@/lib/notes/prosemirror/schema";
+import type { StoredNoteEditorDraft } from "@/lib/notes/useNoteEditorSession";
 import HighlightNoteEditor from "./HighlightNoteEditor";
 
 describe("HighlightNoteEditor persistence", () => {
+  afterEach(() => {
+    window.localStorage.clear();
+  });
+
   it("flushes the latest pending note doc on unmount while a save is in flight", async () => {
     const user = userEvent.setup();
     const firstSave = deferred();
@@ -57,7 +65,8 @@ describe("HighlightNoteEditor persistence", () => {
       "highlight-1",
       "note-1",
       "note-1",
-      paragraphFromText("first").toJSON()
+      paragraphFromText("first").toJSON(),
+      expect.any(String)
     );
 
     await user.keyboard("second");
@@ -76,7 +85,8 @@ describe("HighlightNoteEditor persistence", () => {
       "highlight-1",
       "note-1",
       "note-1",
-      paragraphFromText("firstsecond").toJSON()
+      paragraphFromText("firstsecond").toJSON(),
+      expect.any(String)
     );
   });
 
@@ -127,7 +137,8 @@ describe("HighlightNoteEditor persistence", () => {
       "highlight-1",
       null,
       draftBlockId,
-      paragraphFromText("first").toJSON()
+      paragraphFromText("first").toJSON(),
+      expect.any(String)
     );
 
     await user.keyboard("second");
@@ -146,7 +157,8 @@ describe("HighlightNoteEditor persistence", () => {
       "highlight-1",
       draftBlockId,
       draftBlockId,
-      paragraphFromText("firstsecond").toJSON()
+      paragraphFromText("firstsecond").toJSON(),
+      expect.any(String)
     );
   });
 
@@ -218,7 +230,70 @@ describe("HighlightNoteEditor persistence", () => {
       "highlight-1",
       draftBlockId,
       draftBlockId,
-      paragraphFromText("firstsecond").toJSON()
+      paragraphFromText("firstsecond").toJSON(),
+      expect.any(String)
+    );
+  });
+
+  it("recovers a stored draft visibly and waits for explicit save", async () => {
+    const user = userEvent.setup();
+    const draftDoc = createOutlineDocFromBlock({
+      id: "note-1",
+      bodyPmJson: paragraphFromText("offline highlight note").toJSON() as Record<string, unknown>,
+      bodyText: "offline highlight note",
+    });
+    storeNoteDraft("highlight:highlight-1:note-1", {
+      doc: draftDoc.toJSON(),
+      metadata: null,
+      sequence: 4,
+      clientMutationId: "highlight-recovered-cmid",
+    });
+    const onSave = vi.fn(
+      async (
+        _highlightId: string,
+        _noteBlockId: string | null,
+        createBlockId: string,
+        bodyPmJson: Record<string, unknown>
+      ) => ({
+        note_block_id: createBlockId,
+        body_pm_json: bodyPmJson,
+        body_text: "offline highlight note",
+      })
+    );
+
+    render(
+      <FeedbackProvider>
+        <HighlightNoteEditor
+          highlightId="highlight-1"
+          note={{
+            note_block_id: "note-1",
+            body_pm_json: paragraphFromText("server note").toJSON() as Record<string, unknown>,
+            body_text: "server note",
+          }}
+          editable
+          onSave={onSave}
+          onDelete={vi.fn(async () => undefined)}
+          onOpenLink={() => {}}
+        />
+      </FeedbackProvider>
+    );
+
+    const editor = await screen.findByRole("textbox", { name: "Highlight note" });
+    expect(editor).toHaveTextContent("offline highlight note");
+    expect(await screen.findByText("Recovered unsaved changes")).toBeInTheDocument();
+    expect(onSave).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(onSave).toHaveBeenCalledTimes(1);
+    }, { timeout: 3000 });
+    expect(onSave).toHaveBeenCalledWith(
+      "highlight-1",
+      "note-1",
+      "note-1",
+      paragraphFromText("offline highlight note").toJSON(),
+      "highlight-recovered-cmid"
     );
   });
 });
@@ -241,4 +316,20 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
     resolve = next;
   });
   return { promise, resolve };
+}
+
+function storeNoteDraft(
+  resourceKey: string,
+  draft: Omit<StoredNoteEditorDraft, "version" | "doc" | "updatedAt"> & {
+    doc: unknown;
+  }
+): void {
+  window.localStorage.setItem(
+    `nexus.noteDraft:${resourceKey}`,
+    JSON.stringify({
+      version: 1,
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      ...draft,
+    })
+  );
 }

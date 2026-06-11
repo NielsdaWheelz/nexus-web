@@ -14,6 +14,8 @@ function edge(overrides: Partial<EdgeOut>): EdgeOut {
     origin: "note_body",
     source_ref: `note_block:${BLOCK_A}`,
     target_ref: "page:33333333-3333-4333-8333-333333333333",
+    source_order_key: null,
+    target_order_key: null,
     ordinal: null,
     snapshot: null,
     source_label: "This block",
@@ -256,6 +258,103 @@ describe("NoteBacklinks", () => {
       }),
     );
     expect(await screen.findByText("Linked media")).toBeInTheDocument();
+  });
+
+  it("uploads files as explicit media attachment connections", async () => {
+    const user = userEvent.setup();
+    const mediaId = "55555555-5555-4555-8555-555555555555";
+    const edgeBody: unknown[] = [];
+    let loadedAttachment = false;
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (path.includes("/api/resource-graph/edges?")) {
+          return Response.json({
+            data: loadedAttachment
+              ? [
+                  edge({
+                    id: "edge-attachment",
+                    origin: "user",
+                    source_ref: `note_block:${BLOCK_A}`,
+                    target_ref: `media:${mediaId}`,
+                    target_label: "paper.pdf",
+                  }),
+                ]
+              : [],
+          });
+        }
+        if (path === "/api/media/upload/init") {
+          return Response.json({
+            data: {
+              media_id: mediaId,
+              source_attempt_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+              source_type: "upload",
+              source_attempt_status: "pending",
+              idempotency_outcome: "created",
+              processing_status: "pending",
+              ingest_enqueued: false,
+              upload_url: "https://uploads.example/paper.pdf",
+              expires_at: "2026-01-01T00:00:00Z",
+            },
+          });
+        }
+        if (path === "https://uploads.example/paper.pdf" && init?.method === "PUT") {
+          return new Response(null, { status: 200 });
+        }
+        if (path === `/api/media/${mediaId}/ingest`) {
+          return Response.json({
+            data: {
+              media_id: mediaId,
+              source_attempt_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+              source_type: "upload",
+              source_attempt_status: "queued",
+              idempotency_outcome: "created",
+              duplicate: false,
+              processing_status: "pending",
+              ingest_enqueued: true,
+            },
+          });
+        }
+        if (path === "/api/resource-graph/edges" && init?.method === "POST") {
+          edgeBody.push(JSON.parse(String(init.body)));
+          loadedAttachment = true;
+          return Response.json({
+            data: edge({
+              id: "edge-attachment",
+              origin: "user",
+              source_ref: `note_block:${BLOCK_A}`,
+              target_ref: `media:${mediaId}`,
+              target_label: "paper.pdf",
+            }),
+          });
+        }
+        return Response.json({ data: {} }, { status: 404 });
+      }),
+    );
+
+    render(
+      <NoteBacklinks objectRef={{ objectType: "note_block", objectId: BLOCK_A }} />,
+    );
+
+    expect(await screen.findByText("No connected objects yet.")).toBeInTheDocument();
+
+    await user.upload(
+      screen.getByLabelText("Attach files"),
+      new File(["%PDF-1.7"], "paper.pdf", { type: "application/pdf" }),
+    );
+
+    await waitFor(() => {
+      expect(edgeBody).toEqual([
+        {
+          source_ref: `note_block:${BLOCK_A}`,
+          target_ref: `media:${mediaId}`,
+          kind: "context",
+        },
+      ]);
+    });
+    expect(await screen.findByText("paper.pdf")).toBeInTheDocument();
   });
 
   it("deletes user-created connections but not graph-owned ones", async () => {

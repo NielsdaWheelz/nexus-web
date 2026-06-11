@@ -6,25 +6,16 @@ export async function deleteE2eResource(
   path: string,
   label: string,
 ) {
-  const response = path.startsWith("/api/notes/blocks/")
-    ? await deleteNoteBlockResource(request, path)
-    : await request.delete(path, {
-        timeout: 5_000,
-        headers: stateChangingApiHeaders(),
-      });
+  const response = await request.delete(path, {
+    timeout: 5_000,
+    headers: stateChangingApiHeaders(),
+  });
   if (response.ok() || response.status() === 404) {
     return;
   }
   throw new Error(
     `${label} cleanup failed: ${response.status()} ${response.statusText()} ${await response.text()}`,
   );
-}
-
-async function deleteNoteBlockResource(request: APIRequestContext, path: string) {
-  return request.delete(path, {
-    timeout: 5_000,
-    headers: stateChangingApiHeaders(),
-  });
 }
 
 export function throwE2eCleanupFailures(

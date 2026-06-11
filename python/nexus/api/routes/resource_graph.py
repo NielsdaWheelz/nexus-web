@@ -67,6 +67,8 @@ def _edge_outs(db: Session, viewer_id: UUID, edge_rows: list) -> list[EdgeOut]:
                 origin=edge.origin,
                 source_ref=edge.source.uri,
                 target_ref=edge.target.uri,
+                source_order_key=edge.source_order_key,
+                target_order_key=edge.target_order_key,
                 ordinal=edge.ordinal,
                 snapshot=snapshot_to_jsonb(edge.snapshot) if edge.snapshot else None,
                 source_label=source_resolved.label,

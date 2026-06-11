@@ -16,8 +16,12 @@ import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoun
 import type { CitationOut } from "@/lib/conversations/citationOut";
 import { toReaderCitationData } from "@/lib/conversations/citations";
 import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
-import { dispatchNotePulse, dispatchReaderPulse } from "@/lib/reader/pulseEvent";
+import {
+  dispatchReaderSourceActivation,
+  hrefForReaderSourceTarget,
+} from "@/lib/conversations/readerSourceActivation";
 import { formatDisplayDate } from "@/lib/display/format";
+import { usePaneRouter, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import { useLibraryIntelligenceStream } from "@/components/library/useLibraryIntelligenceStream";
 import styles from "./page.module.css";
@@ -60,6 +64,9 @@ export default function LibraryIntelligencePane({
   onOpenChat: (artifactId: string) => void;
 }) {
   const display = useRenderEnvironment();
+  const router = usePaneRouter();
+  const paneRuntime = usePaneRuntime();
+  const openInNewPane = paneRuntime?.openInNewPane;
   const [reloadNonce, setReloadNonce] = useState(0);
   const [error, setError] = useState<FeedbackContent | null>(null);
 
@@ -118,29 +125,16 @@ export default function LibraryIntelligencePane({
   );
 
   const activate = useCallback(
-    (target: ReaderSourceTarget, _event?: React.MouseEvent) => {
-      if (target.kind === "note") {
-        dispatchNotePulse({
-          pageId: target.page_id,
-          blockId: target.block_id,
-          startOffset: target.start_offset,
-          endOffset: target.end_offset,
-          snippet: target.snippet,
-          highlightBehavior: target.highlight_behavior,
-          focusBehavior: target.focus_behavior,
-        });
+    (target: ReaderSourceTarget, event?: React.MouseEvent) => {
+      dispatchReaderSourceActivation(target);
+      const href = hrefForReaderSourceTarget(target);
+      if (event?.shiftKey) {
+        openInNewPane?.(href, target.label);
         return;
       }
-      dispatchReaderPulse({
-        mediaId: target.media_id,
-        evidenceSpanId: target.evidence_span_id ?? undefined,
-        locator: target.locator,
-        snippet: target.snippet,
-        highlightBehavior: target.highlight_behavior,
-        focusBehavior: target.focus_behavior,
-      });
+      router.push(href);
     },
-    [],
+    [openInNewPane, router],
   );
 
   const handleGenerate = useCallback(() => {

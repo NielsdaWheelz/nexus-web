@@ -1,12 +1,6 @@
 /**
- * Read-side shapes + URL for the `/resource-graph/edges` connections surface
- * (spec §10.2). The edge shape mirrors the backend `EdgeOut`
- * (`nexus/schemas/resource_graph.py`); refs travel as `<scheme>:<uuid>` strings.
- *
- * The only frontend consumer is the read-only Connections panel
- * (`NoteBacklinks`), so this module owns just the GET read-model and its URL.
- * The POST/DELETE/resolve endpoints exist on the backend (AC10 + P4) but have
- * no frontend client yet.
+ * Resource graph API shapes. Mirrors `nexus/schemas/resource_graph.py`; refs
+ * travel as `<scheme>:<uuid>` strings.
  */
 
 import type { ApiPath } from "@/lib/api/client";
@@ -18,7 +12,8 @@ export type EdgeOrigin =
   | "citation"
   | "system"
   | "note_body"
-  | "highlight_note";
+  | "highlight_note"
+  | "note_containment";
 
 export interface EdgeOut {
   id: string;
@@ -26,6 +21,8 @@ export interface EdgeOut {
   origin: EdgeOrigin;
   source_ref: string;
   target_ref: string;
+  source_order_key: string | null;
+  target_order_key: string | null;
   ordinal: number | null;
   snapshot: Record<string, unknown> | null;
   source_label: string;
@@ -39,13 +36,30 @@ interface EdgeResponse {
   data: EdgeOut;
 }
 
-/**
- * The GET URL for every edge touching `ref` on either endpoint (backlinks,
- * cited-by, refs). One source of truth for the read path; `ref` is a
- * pre-formatted `<scheme>:<uuid>` string (see `formatResourceRef`).
- */
-export function edgesForRefPath(ref: string): ApiPath {
-  return `/api/resource-graph/edges?ref=${encodeURIComponent(ref)}` as ApiPath;
+interface EdgesResponse {
+  data: EdgeOut[];
+}
+
+interface ResolveResponse {
+  data: ResolvedResourceOut[];
+}
+
+export interface ResolvedResourceOut {
+  ref: string;
+  label: string;
+  summary: string;
+  missing: boolean;
+}
+
+export async function listEdgesForRef(
+  ref: string,
+  options: { signal?: AbortSignal } = {},
+): Promise<EdgeOut[]> {
+  const path = `/api/resource-graph/edges?ref=${encodeURIComponent(ref)}` as ApiPath;
+  const response = options.signal
+    ? await apiFetch<EdgesResponse>(path, { signal: options.signal })
+    : await apiFetch<EdgesResponse>(path);
+  return response.data;
 }
 
 export async function createUserEdge(input: {
@@ -68,4 +82,15 @@ export async function deleteUserEdge(edgeId: string): Promise<void> {
   await apiFetch(`/api/resource-graph/edges/${edgeId}` as ApiPath, {
     method: "DELETE",
   });
+}
+
+export async function resolveResourceRefs(refs: string[]): Promise<ResolvedResourceOut[]> {
+  if (refs.length === 0) {
+    return [];
+  }
+  const response = await apiFetch<ResolveResponse>("/api/resource-graph/resolve", {
+    method: "POST",
+    body: JSON.stringify({ refs }),
+  });
+  return response.data;
 }

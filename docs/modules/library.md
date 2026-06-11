@@ -53,8 +53,8 @@ Every INSERT/UPDATE/DELETE on `library_entries` goes through
   read the table under an explicit allowlist: `auth/permissions.py`,
   `services/search.py`, `services/contributors.py`,
   `services/agent_tools/app_search.py`, `services/object_refs.py`,
-  `services/object_search.py`, and `services/library_intelligence.py`. Visibility
-  itself remains the boolean predicates in `auth/permissions.py`;
+  `services/note_indexing.py`, and `services/library_intelligence.py`.
+  Visibility itself remains the boolean predicates in `auth/permissions.py`;
   `services/highlights.py` reuses `permissions.highlight_library_intersection_exists`
   rather than re-implementing the intersection.
 
