@@ -30,24 +30,6 @@ def _grant_unlimited_ai(session, user_id):
     )
 
 
-def _insert_message(session, *, user_id, message_id):
-    conversation_id = uuid4()
-    session.execute(
-        text("INSERT INTO conversations (id, owner_user_id) VALUES (:id, :user_id)"),
-        {"id": conversation_id, "user_id": user_id},
-    )
-    session.execute(
-        text(
-            """
-            INSERT INTO messages (id, conversation_id, seq, role, content, status)
-            VALUES (:id, :conversation_id, 1, 'user', 'ok', 'complete')
-            """
-        ),
-        {"id": message_id, "conversation_id": conversation_id},
-    )
-    return conversation_id
-
-
 def test_unlimited_token_grant_skips_monthly_cap_but_records_reservation(
     engine,
     direct_db: DirectSessionManager,
@@ -85,16 +67,12 @@ def test_token_budget_commit_is_idempotent(engine, direct_db: DirectSessionManag
     user_id = uuid4()
     reservation_id = uuid4()
     direct_db.register_cleanup("users", "id", user_id)
-    conversation_id = None
     direct_db.register_cleanup("billing_entitlement_overrides", "user_id", user_id)
     direct_db.register_cleanup("billing_entitlement_override_events", "user_id", user_id)
 
     with direct_db.session() as session:
         _grant_unlimited_ai(session, user_id)
-        conversation_id = _insert_message(session, user_id=user_id, message_id=reservation_id)
         session.commit()
-    direct_db.register_cleanup("conversations", "id", conversation_id)
-    direct_db.register_cleanup("messages", "conversation_id", conversation_id)
     direct_db.register_cleanup("token_budget_charges", "user_id", user_id)
     direct_db.register_cleanup("token_budget_daily_usage", "user_id", user_id)
     direct_db.register_cleanup("token_budget_reservations", "user_id", user_id)
@@ -110,7 +88,7 @@ def test_token_budget_commit_is_idempotent(engine, direct_db: DirectSessionManag
                 """
                 SELECT usage.spent_tokens,
                        usage.reserved_tokens,
-                       COUNT(charges.message_id)
+                       COUNT(charges.reservation_id)
                 FROM token_budget_daily_usage usage
                 LEFT JOIN token_budget_charges charges ON charges.user_id = usage.user_id
                 WHERE usage.user_id = :user_id

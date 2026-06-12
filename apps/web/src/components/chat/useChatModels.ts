@@ -16,9 +16,10 @@ import type { ConversationModel } from "@/lib/conversations/types";
 import { useResource } from "@/lib/api/useResource";
 
 type ReasoningMode = ChatRunCreateRequest["reasoning"];
+type KeyMode = NonNullable<ChatRunCreateRequest["key_mode"]>;
 
-const PROVIDER_ORDER = ["openai", "anthropic", "gemini", "deepseek"] as const;
-const DEFAULT_REASONING: ReasoningMode = "default";
+const INITIAL_REASONING: ReasoningMode = "default";
+const INITIAL_KEY_MODE: KeyMode = "auto";
 
 export const REASONING_LABELS = {
   default: "Default",
@@ -30,28 +31,64 @@ export const REASONING_LABELS = {
   max: "Max",
 } satisfies Record<ReasoningMode, string>;
 
+export const KEY_MODE_LABELS = {
+  auto: "Auto",
+  byok_only: "Your keys",
+  platform_only: "Nexus AI",
+} satisfies Record<KeyMode, string>;
+
 export function isReasoningMode(value: unknown): value is ReasoningMode {
   return typeof value === "string" && value in REASONING_LABELS;
 }
 
 let cachedModels: ConversationModel[] | null = null;
 let modelLoadPromise: Promise<ConversationModel[]> | null = null;
+let modelCacheEpoch = 0;
+const modelCacheListeners = new Set<() => void>();
+
+export function __resetChatModelsCacheForTests(): void {
+  cachedModels = null;
+  modelLoadPromise = null;
+  modelCacheEpoch = 0;
+  modelCacheListeners.clear();
+}
+
+export function invalidateChatModelsCache(): void {
+  cachedModels = null;
+  modelLoadPromise = null;
+  modelCacheEpoch += 1;
+  for (const listener of modelCacheListeners) {
+    listener();
+  }
+}
 
 function loadComposerModels(): Promise<ConversationModel[]> {
   if (cachedModels) {
     return Promise.resolve(cachedModels);
   }
   if (!modelLoadPromise) {
+    const requestEpoch = modelCacheEpoch;
     modelLoadPromise = apiFetch<{ data: ConversationModel[] }>("/api/models")
       .then((response) => {
-        cachedModels = response.data;
+        if (requestEpoch === modelCacheEpoch) {
+          cachedModels = response.data;
+        }
         return response.data;
       });
   }
   return modelLoadPromise;
 }
 
-export function getModelSourceLabel(model: ConversationModel): string {
+export function getModelSourceLabel(
+  model: ConversationModel,
+  keyMode: KeyMode
+): string {
+  if (keyMode === "byok_only") {
+    return "Your key";
+  }
+  if (keyMode === "platform_only") {
+    return "Nexus AI";
+  }
   if (model.available_via === "byok") {
     return "Your key";
   }
@@ -61,36 +98,36 @@ export function getModelSourceLabel(model: ConversationModel): string {
   return "Nexus AI";
 }
 
-function isAvailableViaUserKey(model: ConversationModel): boolean {
-  return model.available_via === "byok" || model.available_via === "both";
+function isAvailableForKeyMode(model: ConversationModel, keyMode: KeyMode): boolean {
+  return model.available_key_modes.includes(keyMode);
 }
 
-function firstModelForProviderOrder(
+function serverDefaultModel(
   models: ConversationModel[]
 ): ConversationModel | undefined {
-  for (const provider of PROVIDER_ORDER) {
-    const lightModel = models.find(
-      (item) => item.provider === provider && item.model_tier === "light"
-    );
-    if (lightModel) return lightModel;
+  return models.find((model) => model.is_default);
+}
 
-    const firstProviderModel = models.find((item) => item.provider === provider);
-    if (firstProviderModel) return firstProviderModel;
-  }
-  return models[0];
+function modelForProviderSelection(
+  models: ConversationModel[]
+): ConversationModel | undefined {
+  return serverDefaultModel(models);
 }
 
 function reasoningOptionsForModel(
   model: ConversationModel | undefined
 ): ReasoningMode[] {
-  if (!model) return [];
-  const options: ReasoningMode[] = [DEFAULT_REASONING];
-  for (const mode of model.reasoning_modes) {
-    if (!options.includes(mode)) {
-      options.push(mode);
-    }
+  return model?.reasoning_modes ?? [];
+}
+
+function defaultReasoningForModel(
+  model: ConversationModel
+): ReasoningMode {
+  const firstMode = model.reasoning_modes[0];
+  if (!firstMode) {
+    throw new Error(`Model ${model.id} has no reasoning modes`);
   }
-  return options;
+  return firstMode;
 }
 
 export interface UseChatModels {
@@ -99,31 +136,41 @@ export interface UseChatModels {
   selectedProvider: string;
   selectedModelId: string;
   selectedReasoning: ReasoningMode;
+  selectedKeyMode: KeyMode;
   providerOptions: string[];
   reasoningOptions: ReasoningMode[];
+  keyModeOptions: KeyMode[];
   modelSummary: string;
   setProvider: (provider: string) => void;
   setModel: (modelId: string) => void;
   setReasoning: (mode: ReasoningMode) => void;
+  setKeyMode: (mode: KeyMode) => void;
 }
 
-export function useChatModels({
-  onlyUseMyKeys,
-}: {
-  onlyUseMyKeys: boolean;
-}): UseChatModels {
+export function useChatModels(): UseChatModels {
+  const [cacheEpoch, setCacheEpoch] = useState(modelCacheEpoch);
   const [models, setModels] = useState<ConversationModel[]>(
     () => cachedModels ?? []
   );
   const [selectedProvider, setSelectedProvider] = useState<string>("");
   const [selectedModelId, setSelectedModelId] = useState<string>("");
   const [selectedReasoning, setSelectedReasoning] =
-    useState<ReasoningMode>(DEFAULT_REASONING);
+    useState<ReasoningMode>(INITIAL_REASONING);
+  const [selectedKeyMode, setSelectedKeyMode] =
+    useState<KeyMode>(INITIAL_KEY_MODE);
 
   const modelsResource = useResource<ConversationModel[]>({
-    cacheKey: cachedModels ? null : "chat-composer-models",
+    cacheKey: cachedModels ? null : `chat-composer-models:${cacheEpoch}`,
     load: () => loadComposerModels(),
   });
+
+  useEffect(() => {
+    const onInvalidated = () => setCacheEpoch(modelCacheEpoch);
+    modelCacheListeners.add(onInvalidated);
+    return () => {
+      modelCacheListeners.delete(onInvalidated);
+    };
+  }, []);
 
   useEffect(() => {
     if (modelsResource.status === "ready") {
@@ -135,27 +182,77 @@ export function useChatModels({
     }
   }, [modelsResource]);
 
+  const keyModeOptions = useMemo(() => {
+    const modes = new Set<KeyMode>();
+    for (const model of models) {
+      for (const mode of model.available_key_modes) {
+        modes.add(mode);
+      }
+    }
+    return (["auto", "byok_only", "platform_only"] as const).filter((mode) =>
+      modes.has(mode)
+    );
+  }, [models]);
+
   const availableModels = useMemo(
-    () => (onlyUseMyKeys ? models.filter(isAvailableViaUserKey) : models),
-    [models, onlyUseMyKeys]
+    () => models.filter((model) => isAvailableForKeyMode(model, selectedKeyMode)),
+    [models, selectedKeyMode]
   );
 
   useEffect(() => {
-    const selected = availableModels.find((model) => model.id === selectedModelId);
-    if (selected && selected.provider === selectedProvider) return;
+    if (models.length > 0 && !keyModeOptions.includes(selectedKeyMode)) {
+      const firstKeyMode = keyModeOptions[0];
+      if (!firstKeyMode) {
+        throw new Error("Model catalog response did not include any key modes");
+      }
+      setSelectedKeyMode(firstKeyMode);
+      return;
+    }
 
-    const firstModel = firstModelForProviderOrder(availableModels);
-    setSelectedProvider(firstModel?.provider ?? "");
-    setSelectedModelId(firstModel?.id ?? "");
-    setSelectedReasoning(DEFAULT_REASONING);
-  }, [availableModels, selectedModelId, selectedProvider]);
+    const selected = availableModels.find((model) => model.id === selectedModelId);
+    if (selected && selected.provider === selectedProvider) {
+      if (!selected.reasoning_modes.includes(selectedReasoning)) {
+        setSelectedReasoning(defaultReasoningForModel(selected));
+      }
+      return;
+    }
+
+    if (selectedProvider) {
+      const providerModels = availableModels.filter(
+        (model) => model.provider === selectedProvider
+      );
+      if (providerModels.length > 0) {
+        const nextProviderDefault = serverDefaultModel(providerModels);
+        setSelectedModelId(nextProviderDefault?.id ?? "");
+        if (nextProviderDefault) {
+          setSelectedReasoning(defaultReasoningForModel(nextProviderDefault));
+        }
+        return;
+      }
+    }
+
+    const nextDefault = serverDefaultModel(availableModels);
+    setSelectedProvider(nextDefault?.provider ?? "");
+    setSelectedModelId(nextDefault?.id ?? "");
+    if (nextDefault) {
+      setSelectedReasoning(defaultReasoningForModel(nextDefault));
+    }
+  }, [
+    availableModels,
+    keyModeOptions,
+    models.length,
+    selectedKeyMode,
+    selectedModelId,
+    selectedProvider,
+    selectedReasoning,
+  ]);
 
   const selectedModel = availableModels.find(
     (model) => model.id === selectedModelId
   );
   const reasoningOptions = reasoningOptionsForModel(selectedModel);
-  const providerOptions = PROVIDER_ORDER.filter((provider) =>
-    availableModels.some((model) => model.provider === provider)
+  const providerOptions = Array.from(
+    new Set(availableModels.map((model) => model.provider))
   );
   const modelSummary = selectedModel
     ? `${selectedModel.model_display_name} / ${REASONING_LABELS[selectedReasoning]}`
@@ -168,9 +265,11 @@ export function useChatModels({
       const providerModels = availableModels.filter(
         (model) => model.provider === provider
       );
-      const nextModel = providerModels[0];
+      const nextModel = modelForProviderSelection(providerModels);
       setSelectedModelId(nextModel?.id ?? "");
-      setSelectedReasoning(DEFAULT_REASONING);
+      if (nextModel) {
+        setSelectedReasoning(defaultReasoningForModel(nextModel));
+      }
     },
     [availableModels]
   );
@@ -181,19 +280,65 @@ export function useChatModels({
 
       const model = availableModels.find((item) => item.id === modelId);
       if (!model) {
-        setSelectedReasoning(DEFAULT_REASONING);
+        setSelectedProvider("");
         return;
       }
       setSelectedProvider(model.provider);
 
-      if (
-        selectedReasoning !== DEFAULT_REASONING &&
-        !model.reasoning_modes.includes(selectedReasoning)
-      ) {
-        setSelectedReasoning(DEFAULT_REASONING);
+      if (!model.reasoning_modes.includes(selectedReasoning)) {
+        setSelectedReasoning(defaultReasoningForModel(model));
       }
     },
     [availableModels, selectedReasoning]
+  );
+
+  const setKeyMode = useCallback(
+    (mode: KeyMode) => {
+      const nextAvailableModels = models.filter((model) =>
+        isAvailableForKeyMode(model, mode)
+      );
+      const currentModel = nextAvailableModels.find(
+        (model) => model.id === selectedModelId
+      );
+
+      setSelectedKeyMode(mode);
+
+      if (currentModel && currentModel.provider === selectedProvider) {
+        if (!currentModel.reasoning_modes.includes(selectedReasoning)) {
+          setSelectedReasoning(defaultReasoningForModel(currentModel));
+        }
+        return;
+      }
+
+      if (selectedProvider) {
+        const providerModels = nextAvailableModels.filter(
+          (model) => model.provider === selectedProvider
+        );
+        const nextProviderDefault = serverDefaultModel(providerModels);
+        if (nextProviderDefault) {
+          setSelectedModelId(nextProviderDefault.id);
+          setSelectedReasoning(defaultReasoningForModel(nextProviderDefault));
+          return;
+        }
+      }
+
+      const nextDefault = serverDefaultModel(nextAvailableModels);
+      setSelectedProvider(nextDefault?.provider ?? "");
+      setSelectedModelId(nextDefault?.id ?? "");
+      if (nextDefault) {
+        setSelectedReasoning(defaultReasoningForModel(nextDefault));
+      }
+    },
+    [models, selectedModelId, selectedProvider, selectedReasoning]
+  );
+
+  const setReasoning = useCallback(
+    (mode: ReasoningMode) => {
+      if (selectedModel?.reasoning_modes.includes(mode)) {
+        setSelectedReasoning(mode);
+      }
+    },
+    [selectedModel]
   );
 
   return {
@@ -202,11 +347,14 @@ export function useChatModels({
     selectedProvider,
     selectedModelId,
     selectedReasoning,
+    selectedKeyMode,
     providerOptions,
     reasoningOptions,
+    keyModeOptions,
     modelSummary,
     setProvider,
     setModel,
-    setReasoning: setSelectedReasoning,
+    setReasoning,
+    setKeyMode,
   };
 }

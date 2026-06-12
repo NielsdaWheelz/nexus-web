@@ -100,9 +100,7 @@ def enqueue_page_reindex(db: Session, *, page_id: UUID, reason: str) -> None:
             raise
 
 
-def _blocks_in_render_order(
-    db: Session, page: Page
-) -> list[tuple[object, tuple[str, ...]]]:
+def _blocks_in_render_order(db: Session, page: Page) -> list[tuple[object, tuple[str, ...]]]:
     """Every note_block of the page in graph DFS order with ancestor heading_path."""
     from nexus.services.resource_graph import documents as graph_documents
 

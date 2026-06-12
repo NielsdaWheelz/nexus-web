@@ -103,12 +103,46 @@ def test_llm_request_is_derived_from_structured_turns():
     request = build_llm_request_from_plan(
         plan=plan,
         provider="openai",
-        model_name="gpt-test",
+        model_name="gpt-5.5",
         max_tokens=100,
         reasoning_effort="none",
     )
 
     assert request.messages[0].content == "Follow up"
+    assert request.prompt_cache_key is None
+
+
+def test_llm_request_preserves_cache_intent_for_provider_runtime_lowering():
+    system = make_prompt_block(
+        block_id="system",
+        role="system",
+        lane="system",
+        text=render_system_prompt_block(),
+        cache_policy={"type": "ephemeral", "ttl_seconds": 300},
+        privacy_scope="global",
+    )
+    current = make_prompt_block(
+        block_id="current",
+        role="user",
+        lane="current_user",
+        text="Follow up",
+    )
+    plan = build_prompt_plan(
+        stable_blocks=[system],
+        dynamic_system_blocks=[],
+        history_blocks=[],
+        current_user_block=current,
+    )
+
+    request = build_llm_request_from_plan(
+        plan=plan,
+        provider="openai",
+        model_name="gpt-5.5",
+        max_tokens=100,
+        reasoning_effort="default",
+    )
+
+    assert request.messages[0].cache_ttl == "5m"
     assert request.prompt_cache_key is None
 
 

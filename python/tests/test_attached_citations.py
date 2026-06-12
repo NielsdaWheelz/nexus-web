@@ -178,7 +178,7 @@ def _make_chat_run(db: Session, conversation_id: UUID, user_id: UUID) -> ChatRun
         assistant_message_id=assistant_message_id,
         owner_user_id=user_id,
         model_id=model_id,
-        key_mode="byok",
+        key_mode="byok_only",
         status="queued",
         idempotency_key=idempotency_key,
         payload_hash=f"{idempotency_key}-payload",

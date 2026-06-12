@@ -272,6 +272,10 @@ class TestBrowseProviderConfiguration:
         with pytest.raises(ValidationError, match="YOUTUBE_TRANSCRIPT_TIMEOUT_SECONDS"):
             _make_settings(YOUTUBE_TRANSCRIPT_TIMEOUT_SECONDS=0)
 
+    def test_youtube_transcript_proxy_retries_must_be_non_negative(self):
+        with pytest.raises(ValidationError, match="YOUTUBE_TRANSCRIPT_PROXY_RETRIES_WHEN_BLOCKED"):
+            _make_settings(YOUTUBE_TRANSCRIPT_PROXY_RETRIES_WHEN_BLOCKED=-1)
+
     def test_x_api_timeout_must_be_positive(self):
         with pytest.raises(ValidationError, match="X_API_TIMEOUT_SECONDS"):
             _make_settings(X_API_TIMEOUT_SECONDS=0)

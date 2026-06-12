@@ -8,7 +8,31 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
-from nexus.llm_catalog import ModelAvailableVia, ModelTier, ReasoningMode
+from nexus.llm_catalog import (
+    LLMKeyMode,
+    LLMProvider,
+    ModelAvailableVia,
+    ModelTier,
+    PromptCacheMode,
+    PromptCacheTTL,
+    ReasoningMode,
+)
+
+
+class PromptCacheCapabilityOut(BaseModel):
+    mode: PromptCacheMode
+    supported: bool
+    key_required: bool
+    ttl_options: list[PromptCacheTTL]
+
+
+class ModelCapabilitiesOut(BaseModel):
+    prompt_cache: PromptCacheCapabilityOut
+    streaming: bool
+    tool_calling: bool
+    structured_output: bool
+    structured_output_streaming: bool
+    reasoning_continuation: bool
 
 
 class ModelOut(BaseModel):
@@ -19,7 +43,7 @@ class ModelOut(BaseModel):
     """
 
     id: UUID
-    provider: str
+    provider: LLMProvider
     provider_display_name: str
     model_name: str
     model_display_name: str
@@ -27,5 +51,10 @@ class ModelOut(BaseModel):
     reasoning_modes: list[ReasoningMode]
     max_context_tokens: int
     available_via: ModelAvailableVia
+    provider_rank: int
+    model_rank: int
+    is_default: bool
+    available_key_modes: list[LLMKeyMode]
+    capabilities: ModelCapabilitiesOut
 
     model_config = ConfigDict(from_attributes=True)

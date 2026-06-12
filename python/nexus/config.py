@@ -188,6 +188,16 @@ class Settings(BaseSettings):
         default=30.0,
         alias="YOUTUBE_TRANSCRIPT_TIMEOUT_SECONDS",
     )
+    youtube_transcript_proxy_url: str | None = Field(
+        default=None,
+        alias="YOUTUBE_TRANSCRIPT_PROXY_URL",
+        exclude=True,
+        repr=False,
+    )
+    youtube_transcript_proxy_retries_when_blocked: int = Field(
+        default=0,
+        alias="YOUTUBE_TRANSCRIPT_PROXY_RETRIES_WHEN_BLOCKED",
+    )
     deepgram_api_key: str | None = Field(default=None, alias="DEEPGRAM_API_KEY")
     deepgram_base_url: str = Field(default="https://api.deepgram.com", alias="DEEPGRAM_BASE_URL")
     deepgram_model: str = Field(default="nova-3", alias="DEEPGRAM_MODEL")
@@ -329,7 +339,9 @@ class Settings(BaseSettings):
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
     anthropic_api_key: str | None = Field(default=None, alias="ANTHROPIC_API_KEY")
     gemini_api_key: str | None = Field(default=None, alias="GEMINI_API_KEY")
-    deepseek_api_key: str | None = Field(default=None, alias="DEEPSEEK_API_KEY")
+    openrouter_api_key: str | None = Field(default=None, alias="OPENROUTER_API_KEY")
+    cloudflare_ai_api_token: str | None = Field(default=None, alias="CLOUDFLARE_AI_API_TOKEN")
+    cloudflare_ai_account_id: str | None = Field(default=None, alias="CLOUDFLARE_AI_ACCOUNT_ID")
 
     # Public web search provider settings.
     # Brave is the first production web-search provider. If no API key is
@@ -356,14 +368,12 @@ class Settings(BaseSettings):
     enable_openai: bool = Field(default=True, alias="ENABLE_OPENAI")
     enable_anthropic: bool = Field(default=True, alias="ENABLE_ANTHROPIC")
     enable_gemini: bool = Field(default=True, alias="ENABLE_GEMINI")
-    enable_deepseek: bool = Field(default=True, alias="ENABLE_DEEPSEEK")
+    enable_openrouter: bool = Field(default=True, alias="ENABLE_OPENROUTER")
+    enable_cloudflare: bool = Field(default=True, alias="ENABLE_CLOUDFLARE")
 
     # Rate limiting settings.
     rate_limit_rpm: int = Field(default=20, alias="RATE_LIMIT_RPM")  # Requests per minute
     rate_limit_concurrent: int = Field(default=3, alias="RATE_LIMIT_CONCURRENT")  # Max concurrent
-
-    # LLM runtime settings.
-    llm_timeout_seconds: float = Field(default=45.0, alias="LLM_TIMEOUT_SECONDS")
 
     # Transcript semantic embedding settings
     transcript_embedding_model_openai: str = Field(
@@ -381,16 +391,13 @@ class Settings(BaseSettings):
 
     # Metadata enrichment settings
     metadata_enrichment_enabled: bool = Field(default=True, alias="METADATA_ENRICHMENT_ENABLED")
-    # Defaults are the catalog "light" tier per provider; select_enrichment_providers
-    # asserts catalog membership via require_catalog_model at task use.
-    metadata_enrichment_model_openai: str = Field(
-        default="gpt-5.4-mini", alias="METADATA_ENRICHMENT_MODEL_OPENAI"
+    metadata_enrichment_provider: Literal["openai", "anthropic", "gemini"] = Field(
+        default="openai", alias="METADATA_ENRICHMENT_PROVIDER"
     )
-    metadata_enrichment_model_anthropic: str = Field(
-        default="claude-haiku-4-5-20251001", alias="METADATA_ENRICHMENT_MODEL_ANTHROPIC"
-    )
-    metadata_enrichment_model_gemini: str = Field(
-        default="gemini-3-flash-preview", alias="METADATA_ENRICHMENT_MODEL_GEMINI"
+    # The default is a catalog "light" tier model; select_enrichment_model asserts
+    # catalog membership for the configured provider at task use.
+    metadata_enrichment_model: str = Field(
+        default="gpt-5.4-mini", alias="METADATA_ENRICHMENT_MODEL"
     )
     metadata_enrichment_max_content_chars: int = Field(
         default=2000, alias="METADATA_ENRICHMENT_MAX_CONTENT_CHARS"
@@ -595,6 +602,8 @@ class Settings(BaseSettings):
             raise ValueError("PODCAST_TRANSCRIPTION_TIMEOUT_SECONDS must be > 0.")
         if self.youtube_transcript_timeout_seconds <= 0:
             raise ValueError("YOUTUBE_TRANSCRIPT_TIMEOUT_SECONDS must be > 0.")
+        if self.youtube_transcript_proxy_retries_when_blocked < 0:
+            raise ValueError("YOUTUBE_TRANSCRIPT_PROXY_RETRIES_WHEN_BLOCKED must be >= 0.")
         if self.x_api_timeout_seconds <= 0:
             raise ValueError("X_API_TIMEOUT_SECONDS must be > 0.")
         if self.x_api_author_thread_max_posts < 1:

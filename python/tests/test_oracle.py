@@ -13,8 +13,8 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
-from llm_calling.errors import LLMError, LLMErrorCode
-from llm_calling.types import LLMResponse, LLMUsage
+from provider_runtime.errors import ModelCallError, ModelCallErrorCode
+from provider_runtime.types import ModelResponse, TokenUsage
 from sqlalchemy import inspect, select, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
@@ -403,7 +403,7 @@ class _SelectLibraryRouter:
     def __init__(self) -> None:
         self.indices: dict[int, str] = {}
 
-    async def generate(self, _provider, request, _api_key, *, timeout_s):
+    async def generate(self, request, *, key, timeout_s):
         self.indices = _candidate_indices(request)
         user_indices = [
             idx for idx, source_kind in self.indices.items() if source_kind == "user_media"
@@ -413,7 +413,7 @@ class _SelectLibraryRouter:
         ]
         assert user_indices, "expected at least one indexed user-library candidate"
         assert len(public_indices) >= 2, f"expected two public candidates, got {self.indices}"
-        return LLMResponse(
+        return ModelResponse(
             text=_reading_json(
                 descent=public_indices[0],
                 ordeal=user_indices[0],
@@ -430,9 +430,9 @@ class _UnexpectedRouter:
     def __init__(self) -> None:
         self.called = False
 
-    async def generate(self, _provider, request, _api_key, *, timeout_s):
+    async def generate(self, request, *, key, timeout_s):
         self.called = True
-        return LLMResponse(
+        return ModelResponse(
             text=_reading_json(descent=0, ordeal=1, ascent=2),
             usage=None,
             provider_request_id=None,
@@ -498,7 +498,7 @@ class _ObservingRouter:
         self.events_seen_during_generate: list[str] = []
         self.image_id_seen_during_generate: UUID | None = None
 
-    async def generate(self, _provider, request, _api_key, *, timeout_s):
+    async def generate(self, request, *, key, timeout_s):
         with self.direct_db.session() as observer:
             self.events_seen_during_generate = list(
                 observer.execute(
@@ -528,7 +528,7 @@ class _ObservingRouter:
             idx for idx, source_kind in indices.items() if source_kind == "public_domain"
         ]
         assert len(public_indices) >= 3, f"expected three public candidates, got {indices}"
-        return LLMResponse(
+        return ModelResponse(
             text=_reading_json(
                 descent=public_indices[0],
                 ordeal=public_indices[1],
@@ -542,13 +542,13 @@ class _ObservingRouter:
 
 
 class _PublicOnlyRouter:
-    async def generate(self, _provider, request, _api_key, *, timeout_s):
+    async def generate(self, request, *, key, timeout_s):
         indices = _candidate_indices(request)
         public_indices = [
             idx for idx, source_kind in indices.items() if source_kind == "public_domain"
         ]
         assert len(public_indices) >= 3, f"expected three public candidates, got {indices}"
-        return LLMResponse(
+        return ModelResponse(
             text=_reading_json(
                 descent=public_indices[0],
                 ordeal=public_indices[1],
@@ -562,11 +562,11 @@ class _PublicOnlyRouter:
 
 
 class _ProviderErrorRouter:
-    def __init__(self, error_code: LLMErrorCode = LLMErrorCode.BAD_REQUEST) -> None:
+    def __init__(self, error_code: ModelCallErrorCode = ModelCallErrorCode.BAD_REQUEST) -> None:
         self.error_code = error_code
 
-    async def generate(self, _provider, request, _api_key, *, timeout_s):
-        raise LLMError(
+    async def generate(self, request, *, key, timeout_s):
+        raise ModelCallError(
             self.error_code,
             "raw anthropic invalid_request_error provider detail",
             provider="anthropic",
@@ -577,13 +577,13 @@ class _InvalidOmensRouter:
     def __init__(self, omens: list[object]) -> None:
         self.omens = omens
 
-    async def generate(self, _provider, request, _api_key, *, timeout_s):
+    async def generate(self, request, *, key, timeout_s):
         indices = _candidate_indices(request)
         public_indices = [
             idx for idx, source_kind in indices.items() if source_kind == "public_domain"
         ]
         assert len(public_indices) >= 3, f"expected three public candidates, got {indices}"
-        return LLMResponse(
+        return ModelResponse(
             text=_reading_json(
                 descent=public_indices[0],
                 ordeal=public_indices[1],
@@ -602,7 +602,7 @@ class _InvalidCitationOutputRouter:
         self.interpretation = interpretation
         self.marginalia = marginalia
 
-    async def generate(self, _provider, request, _api_key, *, timeout_s):
+    async def generate(self, request, *, key, timeout_s):
         indices = _candidate_indices(request)
         public_indices = [
             idx for idx, source_kind in indices.items() if source_kind == "public_domain"
@@ -623,7 +623,7 @@ class _InvalidCitationOutputRouter:
             )
         if self.marginalia is not None:
             payload["passages"][0]["marginalia"] = self.marginalia
-        return LLMResponse(
+        return ModelResponse(
             text=json.dumps(payload),
             usage=None,
             provider_request_id=None,
@@ -636,7 +636,7 @@ class _InvalidJsonShapeRouter:
     def __init__(self, variant: str) -> None:
         self.variant = variant
 
-    async def generate(self, _provider, request, _api_key, *, timeout_s):
+    async def generate(self, request, *, key, timeout_s):
         indices = _candidate_indices(request)
         public_indices = [
             idx for idx, source_kind in indices.items() if source_kind == "public_domain"
@@ -665,7 +665,7 @@ class _InvalidJsonShapeRouter:
             text_value = json.dumps(payload)
         else:
             raise AssertionError(f"unknown invalid JSON shape variant: {self.variant}")
-        return LLMResponse(
+        return ModelResponse(
             text=text_value,
             usage=None,
             provider_request_id=None,
@@ -681,7 +681,7 @@ class _SemanticRepairRouter:
     def __init__(self) -> None:
         self.requests: list = []
 
-    async def generate(self, _provider, request, _api_key, *, timeout_s):
+    async def generate(self, request, *, key, timeout_s):
         self.requests.append(request)
         indices = _candidate_indices(request)
         public_indices = [
@@ -693,14 +693,14 @@ class _SemanticRepairRouter:
             if len(self.requests) == 1
             else None
         )
-        return LLMResponse(
+        return ModelResponse(
             text=_reading_json(
                 descent=public_indices[0],
                 ordeal=public_indices[1],
                 ascent=public_indices[2],
                 omens=omens,
             ),
-            usage=LLMUsage(input_tokens=10, output_tokens=5, total_tokens=15),
+            usage=TokenUsage(input_tokens=10, output_tokens=5, total_tokens=15),
             provider_request_id=None,
             status=None,
             incomplete_details=None,
@@ -1512,8 +1512,9 @@ def test_execute_reading_repairs_semantic_rejection_once_and_ledgers_both_attemp
     oracle_rate_limiter: _RecordingRateLimiter,
 ) -> None:
     """AC-11: a semantic rejection triggers the ONE bounded repair round; the
-    reading completes on attempt 2, llm_calls carries one row per attempt, and
-    the budget commit uses usage summed across attempts."""
+    reading completes on application attempt 2, llm_calls carries one row per
+    application generate call, and the budget commit uses usage summed across
+    attempts."""
     user_id = uuid4()
     db_session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
     corpus_id, _work_ids, _image_id = _seed_oracle_corpus(db_session)
@@ -2262,19 +2263,19 @@ def test_execute_reading_provider_failure_uses_feedback_safe_error_message(
 @pytest.mark.parametrize(
     ("llm_error_code", "api_error_code"),
     [
-        (LLMErrorCode.INVALID_KEY, "E_LLM_INVALID_KEY"),
-        (LLMErrorCode.RATE_LIMIT, "E_LLM_RATE_LIMIT"),
-        (LLMErrorCode.CONTEXT_TOO_LARGE, "E_LLM_CONTEXT_TOO_LARGE"),
-        (LLMErrorCode.TIMEOUT, "E_LLM_TIMEOUT"),
-        (LLMErrorCode.PROVIDER_DOWN, "E_LLM_PROVIDER_DOWN"),
-        (LLMErrorCode.BAD_REQUEST, "E_LLM_BAD_REQUEST"),
-        (LLMErrorCode.MODEL_NOT_AVAILABLE, "E_MODEL_NOT_AVAILABLE"),
+        (ModelCallErrorCode.INVALID_KEY, "E_LLM_INVALID_KEY"),
+        (ModelCallErrorCode.RATE_LIMIT, "E_LLM_RATE_LIMIT"),
+        (ModelCallErrorCode.CONTEXT_TOO_LARGE, "E_LLM_CONTEXT_TOO_LARGE"),
+        (ModelCallErrorCode.TIMEOUT, "E_LLM_TIMEOUT"),
+        (ModelCallErrorCode.PROVIDER_DOWN, "E_LLM_PROVIDER_DOWN"),
+        (ModelCallErrorCode.BAD_REQUEST, "E_LLM_BAD_REQUEST"),
+        (ModelCallErrorCode.MODEL_NOT_AVAILABLE, "E_MODEL_NOT_AVAILABLE"),
     ],
 )
 def test_execute_reading_maps_provider_error_codes_explicitly(
     db_session: Session,
     oracle_schema,
-    llm_error_code: LLMErrorCode,
+    llm_error_code: ModelCallErrorCode,
     api_error_code: str,
 ) -> None:
     user_id = uuid4()
@@ -2671,7 +2672,7 @@ def test_execute_reading_rejects_out_of_list_theme(
     )
 
     class _BadThemeRouter:
-        async def generate(self, _provider, request, _api_key, *, timeout_s):
+        async def generate(self, request, *, key, timeout_s):
             indices = _candidate_indices(request)
             public_indices = [
                 idx for idx, source_kind in indices.items() if source_kind == "public_domain"
@@ -2684,9 +2685,9 @@ def test_execute_reading_rejects_out_of_list_theme(
                     folio_theme="Of Mischief",
                 )
             )
-            from llm_calling.types import LLMResponse
+            from provider_runtime.types import ModelResponse
 
-            return LLMResponse(
+            return ModelResponse(
                 text=json.dumps(payload),
                 usage=None,
                 provider_request_id=None,

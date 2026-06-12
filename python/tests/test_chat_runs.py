@@ -2,6 +2,7 @@
 
 import json
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
@@ -10,7 +11,10 @@ from sqlalchemy.engine import Engine
 
 from nexus.config import clear_settings_cache
 from nexus.db.models import ChatRun, ResourceEdge, ResourceExternalSnapshot
+from nexus.errors import ApiError, ApiErrorCode
+from nexus.schemas.conversation import NoBranchAnchorRequest
 from nexus.services.billing_entitlements import grant_entitlement_override
+from nexus.services.chat_run_validation import validate_pre_phase
 from nexus.services.chat_runs import (
     _app_search_scopes_from_tool_args,
     _citation_target_ref,
@@ -929,6 +933,97 @@ class TestChatRunCreate:
 
 class TestChatRunRequestSchema:
     """Pydantic-level contracts on POST /chat-runs."""
+
+    def test_catalog_drift_defects_instead_of_hiding_model(self, monkeypatch: pytest.MonkeyPatch):
+        """Enabled DB rows outside the curated catalog are operator defects."""
+        monkeypatch.setattr(
+            "nexus.services.chat_run_validation.get_model_by_id",
+            lambda _db, _model_id: SimpleNamespace(
+                provider="openai",
+                model_name="uncataloged-model",
+                is_available=True,
+            ),
+        )
+
+        with pytest.raises(AssertionError, match="uncataloged-model"):
+            validate_pre_phase(
+                db=object(),  # type: ignore[arg-type]
+                viewer_id=uuid4(),
+                conversation_id=uuid4(),
+                parent_message_id=None,
+                branch_anchor=NoBranchAnchorRequest(),
+                reader_selection=None,
+                content="hello",
+                model_id=uuid4(),
+                reasoning="none",
+                key_mode="auto",
+                use_platform_key=True,
+            )
+
+    def test_non_chat_capable_catalog_model_is_rejected_before_enqueue(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setattr(
+            "nexus.services.chat_run_validation.get_model_by_id",
+            lambda _db, _model_id: SimpleNamespace(
+                provider="cloudflare",
+                model_name="@cf/openai/gpt-oss-20b",
+                is_available=True,
+            ),
+        )
+
+        with pytest.raises(ApiError) as exc_info:
+            validate_pre_phase(
+                db=object(),  # type: ignore[arg-type]
+                viewer_id=uuid4(),
+                conversation_id=uuid4(),
+                parent_message_id=None,
+                branch_anchor=NoBranchAnchorRequest(),
+                reader_selection=None,
+                content="hello",
+                model_id=uuid4(),
+                reasoning="none",
+                key_mode="auto",
+                use_platform_key=True,
+            )
+
+        assert exc_info.value.code == ApiErrorCode.E_MODEL_NOT_AVAILABLE
+
+    @pytest.mark.parametrize("field", ["reasoning", "key_mode"])
+    def test_chat_run_request_requires_provider_policy_fields(
+        self, auth_client, chat_runs_schema, field: str
+    ):
+        """Reasoning and key mode are explicit post-cutover request fields."""
+        user_id = create_test_user_id()
+        payload = _create_run_payload(uuid4(), conversation_id=str(uuid4()))
+        payload.pop(field)
+
+        response = auth_client.post(
+            "/chat-runs",
+            headers={**auth_headers(user_id), "Idempotency-Key": f"chat-run-missing-{field}"},
+            json=payload,
+        )
+
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
+
+    def test_chat_run_request_rejects_unknown_key_mode(self, auth_client, chat_runs_schema):
+        """The request body owns key-mode validation before service-layer routing."""
+        user_id = create_test_user_id()
+        payload = _create_run_payload(
+            uuid4(),
+            conversation_id=str(uuid4()),
+            key_mode="byok",
+        )
+
+        response = auth_client.post(
+            "/chat-runs",
+            headers={**auth_headers(user_id), "Idempotency-Key": "chat-run-rejects-key-mode"},
+            json=payload,
+        )
+
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
 
     def test_chat_run_request_rejects_web_search_field(
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema

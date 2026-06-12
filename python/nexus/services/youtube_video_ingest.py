@@ -219,11 +219,19 @@ def fetch_youtube_metadata(provider_video_id: str) -> dict[str, str] | None:
             timeout=15,
         )
         response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        logger.warning(
+            "youtube_metadata_fetch_failed",
+            provider_video_id=provider_video_id,
+            error_type=type(exc).__name__,
+            status_code=exc.response.status_code,
+        )
+        return None
     except Exception as exc:
         logger.warning(
             "youtube_metadata_fetch_failed",
             provider_video_id=provider_video_id,
-            error=str(exc),
+            error_type=type(exc).__name__,
         )
         return None
 

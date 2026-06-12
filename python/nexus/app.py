@@ -32,7 +32,7 @@ Actual execution order per request:
 
 LLM client lifecycle:
 - httpx.AsyncClient is created at startup, stored in app.state
-- LLMRouter wraps the shared client for connection pooling
+- ModelRuntime wraps the shared client for connection pooling
 - Client is closed gracefully at shutdown
 """
 
@@ -45,7 +45,7 @@ import httpx
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from llm_calling.router import LLMRouter
+from provider_runtime import ModelRuntime
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.requests import ClientDisconnect
 from web_search_tool.brave import BraveSearchProvider
@@ -163,7 +163,7 @@ async def lifespan(app: FastAPI):
 
     Lifecycle behavior:
     - Creates shared httpx.AsyncClient for connection pooling
-    - Initializes LLMRouter with feature flags
+    - Initializes ModelRuntime with feature flags
     - Cleans up on shutdown
     """
     settings = get_settings()
@@ -174,12 +174,14 @@ async def lifespan(app: FastAPI):
         limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
     )
 
-    app.state.llm_router = LLMRouter(
+    app.state.llm_router = ModelRuntime(
         app.state.httpx_client,
         enable_openai=settings.enable_openai,
         enable_anthropic=settings.enable_anthropic,
         enable_gemini=settings.enable_gemini,
-        enable_deepseek=settings.enable_deepseek,
+        enable_openrouter=settings.enable_openrouter,
+        enable_cloudflare=settings.enable_cloudflare,
+        cloudflare_account_id=settings.cloudflare_ai_account_id,
     )
     app.state.web_search_provider = (
         BraveSearchProvider(
@@ -197,6 +199,8 @@ async def lifespan(app: FastAPI):
         enable_openai=settings.enable_openai,
         enable_anthropic=settings.enable_anthropic,
         enable_gemini=settings.enable_gemini,
+        enable_openrouter=settings.enable_openrouter,
+        enable_cloudflare=settings.enable_cloudflare,
         web_search_provider="brave" if settings.brave_search_api_key else None,
     )
 

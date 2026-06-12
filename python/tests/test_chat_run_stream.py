@@ -10,7 +10,7 @@ import jwt
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from llm_calling.types import LLMChunk, LLMUsage
+from provider_runtime.types import ModelChunk, TokenUsage
 from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
 
@@ -169,17 +169,17 @@ class _StreamingAnswerRouter:
     def __init__(self, *deltas: str) -> None:
         self.deltas = deltas
 
-    async def generate_stream(self, _provider, _req, _api_key, *, timeout_s):
+    async def stream(self, _req, *, key, timeout_s):
         for delta in self.deltas:
-            yield LLMChunk(delta_text=delta, done=False)
-        yield LLMChunk(
+            yield ModelChunk(delta_text=delta, done=False)
+        yield ModelChunk(
             delta_text="",
             done=True,
-            usage=LLMUsage(input_tokens=10, output_tokens=20, total_tokens=30),
+            usage=TokenUsage(input_tokens=10, output_tokens=20, total_tokens=30),
             provider_request_id="resp_source_backed_test",
         )
 
-    async def generate(self, _provider, request, _api_key, *, timeout_s):
+    async def generate(self, request, *, key, timeout_s):
         answer = "".join(self.deltas)
         first = self.deltas[0].rstrip()
         second_start = len(first) + 1

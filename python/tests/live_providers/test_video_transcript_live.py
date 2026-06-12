@@ -69,6 +69,16 @@ def test_live_youtube_transcript_ingest_indexes_real_video_evidence(
         pytest.fail("live provider gate must run with NEXUS_ENV=local, staging, or prod")
     if not settings.enable_openai or not os.environ.get("OPENAI_API_KEY"):
         pytest.fail("OPENAI_API_KEY and ENABLE_OPENAI=true are required for live video ingest")
+    if (
+        not settings.youtube_data_api_key
+        or settings.youtube_data_api_key == "test-youtube-data-key"
+    ):
+        pytest.fail("YOUTUBE_DATA_API_KEY must be a real live provider key")
+    if not settings.youtube_transcript_proxy_url:
+        pytest.skip(
+            "YOUTUBE_TRANSCRIPT_PROXY_URL is not configured; YouTube transcript "
+            "egress is an optional live proof and runtime ingest still fails closed."
+        )
 
     user_id = create_test_user_id()
     headers = auth_headers(user_id)
@@ -98,7 +108,7 @@ def test_live_youtube_transcript_ingest_indexes_real_video_evidence(
         tmp_path,
         "live-youtube-micrograd-trace.json",
         {
-            "source_url": "https://www.youtube.com/watch?v=VMj-3S1tku0",
+            "source_kind": "youtube_video",
             "media": media_trace,
             "evidence": evidence_trace,
             "search": search_trace,

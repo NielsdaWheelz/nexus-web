@@ -172,13 +172,13 @@ def test_mark_terminal_stamps_error_pair_on_li_revision(db_session):
         status="failed",
         done_payload={"error": "llm_failure"},
         error_code="E_LLM_TIMEOUT",
-        error_detail="LLMError: took too long",
+        error_detail="ModelCallError: took too long",
     )
 
     assert (revision.status, revision.error_code, revision.error_detail) == (
         "failed",
         "E_LLM_TIMEOUT",
-        "LLMError: took too long",
+        "ModelCallError: took too long",
     )
     assert revision.completed_at is not None
 

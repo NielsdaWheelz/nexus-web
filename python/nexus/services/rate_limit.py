@@ -432,11 +432,11 @@ class RateLimiter:
                     },
                 )
 
-            existing_charge = self._token_budget_charge_exists(db=db, message_id=reservation_id)
+            existing_charge = self._token_budget_charge_exists(db=db, reservation_id=reservation_id)
             if not existing_charge:
                 self._insert_token_budget_charge(
                     db=db,
-                    message_id=reservation_id,
+                    reservation_id=reservation_id,
                     user_id=user_id,
                     usage_date=usage_date,
                     charged_tokens=normalized_tokens,
@@ -705,17 +705,17 @@ class RateLimiter:
         ).scalar_one()
         return int(expired_total)
 
-    def _token_budget_charge_exists(self, *, db: Session, message_id: UUID) -> bool:
+    def _token_budget_charge_exists(self, *, db: Session, reservation_id: UUID) -> bool:
         row = db.execute(
             text(
                 """
                 SELECT 1
                 FROM token_budget_charges
-                WHERE message_id = :message_id
+                WHERE reservation_id = :reservation_id
                 FOR UPDATE
                 """
             ),
-            {"message_id": message_id},
+            {"reservation_id": reservation_id},
         ).first()
         return row is not None
 
@@ -723,7 +723,7 @@ class RateLimiter:
         self,
         *,
         db: Session,
-        message_id: UUID,
+        reservation_id: UUID,
         user_id: UUID,
         usage_date: date,
         charged_tokens: int,
@@ -732,13 +732,13 @@ class RateLimiter:
             text(
                 """
                 INSERT INTO token_budget_charges (
-                    message_id,
+                    reservation_id,
                     user_id,
                     usage_date,
                     charged_tokens
                 )
                 VALUES (
-                    :message_id,
+                    :reservation_id,
                     :user_id,
                     :usage_date,
                     :charged_tokens
@@ -746,7 +746,7 @@ class RateLimiter:
                 """
             ),
             {
-                "message_id": message_id,
+                "reservation_id": reservation_id,
                 "user_id": user_id,
                 "usage_date": usage_date,
                 "charged_tokens": charged_tokens,

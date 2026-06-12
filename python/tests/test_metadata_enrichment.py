@@ -10,9 +10,10 @@ from nexus.llm_catalog import require_catalog_model
 from nexus.services.metadata_enrichment import (
     MetadataEnrichmentOutput,
     build_enrichment_prompt,
+    build_metadata_enrichment_call,
     merge_enrichment,
     metadata_structured_output_spec,
-    select_enrichment_providers,
+    select_enrichment_model,
     validate_structured_enrichment,
 )
 
@@ -20,50 +21,58 @@ pytestmark = pytest.mark.unit
 
 
 def test_default_enrichment_models_are_catalog_valid_light_tier():
-    """Pins the config defaults to honest cheap-tier MODEL_CATALOG entries (AC-5)."""
+    """Pins the config default to an honest cheap-tier MODEL_CATALOG entry."""
     defaults = Settings.model_fields
-    for provider, field in [
-        ("openai", "metadata_enrichment_model_openai"),
-        ("anthropic", "metadata_enrichment_model_anthropic"),
-        ("gemini", "metadata_enrichment_model_gemini"),
-    ]:
-        entry = require_catalog_model(provider, defaults[field].default)
-        assert entry.model_tier == "light", (
-            f"enrichment default for {provider} must be the cheap tier, got {entry}"
-        )
+    provider = defaults["metadata_enrichment_provider"].default
+    model_name = defaults["metadata_enrichment_model"].default
+    entry = require_catalog_model(provider, model_name)
+    assert entry.model_tier == "light", (
+        f"enrichment default for {provider} must be the cheap tier, got {entry}"
+    )
 
 
-def test_select_enrichment_providers_rejects_non_catalog_model():
+def test_select_enrichment_model_rejects_non_catalog_model():
     """A drifted env override fails loudly at task use, not at the provider."""
     settings = SimpleNamespace(
         metadata_enrichment_enabled=True,
+        metadata_enrichment_provider="openai",
+        metadata_enrichment_model="gpt-4o-mini",
         enable_openai=True,
         enable_anthropic=False,
         enable_gemini=False,
-        metadata_enrichment_model_openai="gpt-4o-mini",
-        metadata_enrichment_model_anthropic="claude-haiku-4-5-20251001",
-        metadata_enrichment_model_gemini="gemini-3-flash-preview",
     )
 
     with pytest.raises(AssertionError, match="not in MODEL_CATALOG"):
-        select_enrichment_providers(settings)  # type: ignore[arg-type]
+        select_enrichment_model(settings)  # type: ignore[arg-type]
 
 
-def test_select_enrichment_providers_returns_enabled_pairs_without_keys():
+def test_select_enrichment_model_returns_configured_enabled_pair_without_keys():
     settings = SimpleNamespace(
         metadata_enrichment_enabled=True,
+        metadata_enrichment_provider="anthropic",
+        metadata_enrichment_model="claude-haiku-4-5-20251001",
         enable_openai=True,
         enable_anthropic=True,
         enable_gemini=False,
-        metadata_enrichment_model_openai="gpt-5.4-mini",
-        metadata_enrichment_model_anthropic="claude-haiku-4-5-20251001",
-        metadata_enrichment_model_gemini="gemini-3-flash-preview",
     )
 
-    assert select_enrichment_providers(settings) == [  # type: ignore[arg-type]
-        ("openai", "gpt-5.4-mini"),
-        ("anthropic", "claude-haiku-4-5-20251001"),
-    ]
+    assert select_enrichment_model(settings) == (  # type: ignore[arg-type]
+        "anthropic",
+        "claude-haiku-4-5-20251001",
+    )
+
+
+def test_select_enrichment_model_returns_none_when_configured_provider_disabled():
+    settings = SimpleNamespace(
+        metadata_enrichment_enabled=True,
+        metadata_enrichment_provider="anthropic",
+        metadata_enrichment_model="claude-haiku-4-5-20251001",
+        enable_openai=True,
+        enable_anthropic=False,
+        enable_gemini=True,
+    )
+
+    assert select_enrichment_model(settings) is None  # type: ignore[arg-type]
 
 
 def test_structured_metadata_output_accepts_required_nullable_fields():
@@ -222,6 +231,34 @@ def test_structured_output_spec_requires_all_nullable_fields():
         "published_date",
         "language",
     ]
+
+
+def test_build_metadata_enrichment_call_pins_provider_runtime_contract():
+    call = build_metadata_enrichment_call(
+        provider="anthropic",
+        model="claude-haiku-4-5-20251001",
+        prompt="Extract metadata.",
+        max_output_tokens=512,
+    )
+
+    assert call.model.provider == "anthropic"
+    assert call.model.model == "claude-haiku-4-5-20251001"
+    assert call.messages[0].content == "Extract metadata."
+    assert call.max_output_tokens == 512
+    assert call.temperature == 0.0
+    assert call.reasoning.effort == "none"
+    assert call.structured_output == metadata_structured_output_spec()
+
+
+def test_build_metadata_enrichment_call_uses_catalog_valid_structured_output_reasoning():
+    call = build_metadata_enrichment_call(
+        provider="gemini",
+        model="gemini-3-flash-preview",
+        prompt="Extract metadata.",
+        max_output_tokens=512,
+    )
+
+    assert call.reasoning.effort == "default"
 
 
 def test_build_enrichment_prompt_always_requests_all_fields():

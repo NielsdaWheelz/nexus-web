@@ -1461,6 +1461,7 @@ class TestMigrationUpgradeDowngrade:
                     assert "ck_chat_run_events_event_type" in str(exc_info.value)
         finally:
             reset_test_schema()
+
             engine.dispose()
 
     def test_0070_rejects_annotations_without_valid_owned_highlights(self):
@@ -10170,6 +10171,7 @@ class TestMigration0145LlmCallLedgerAndErrorFloor:
                 assert call["owner_id"] == run_id
                 assert call["call_seq"] == 1
                 assert call["provider"] == "anthropic"
+                assert call["provider_route"] == "anthropic"
                 assert call["model_name"] == "claude-test"
                 assert call["llm_operation"] == "chat_send"
                 assert call["streaming"] is True
@@ -10194,6 +10196,28 @@ class TestMigration0145LlmCallLedgerAndErrorFloor:
                 assert call["error_detail"] is None
                 assert call["provider_request_id"] == "req_abc"
                 assert call["provider_usage"] == {"total_tokens": 18}
+                assert call["cost_status"] == "missing_pricing"
+                assert call["total_cost_usd_micros"] is None
+                assert call["pricing_snapshot"] == {
+                    "pricing_source": "provider_runtime.catalog.DEFAULT_CATALOG",
+                    "provider": "anthropic",
+                    "model": "claude-test",
+                    "route": "anthropic",
+                    "cache_write_ttl": None,
+                    "pricing": {
+                        "input_per_million": None,
+                        "output_per_million": None,
+                        "cached_input_per_million": None,
+                        "cache_write_per_million_by_ttl": {},
+                        "reasoning_per_million": None,
+                        "reasoning_billing_mode": "unknown",
+                        "applies_up_to_input_tokens": None,
+                        "source_url": None,
+                        "verified_at": None,
+                        "currency": "USD",
+                        "unit": "per_million_tokens",
+                    },
+                }
                 assert call["created_at"] == datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC), (
                     f"history timestamps must be preserved, got {call['created_at']}"
                 )
@@ -10244,14 +10268,16 @@ class TestMigration0145LlmCallLedgerAndErrorFloor:
         insert_sql = text(
             """
             INSERT INTO llm_calls (
-                owner_kind, owner_id, call_seq, provider, model_name,
+                owner_kind, owner_id, call_seq, provider, provider_route, model_name,
                 llm_operation, streaming, reasoning_effort,
-                key_mode_requested, key_mode_used, input_tokens, provider_usage
+                key_mode_requested, key_mode_used, input_tokens, provider_usage,
+                total_cost_usd_micros, cost_status, pricing_snapshot
             )
             VALUES (
-                :owner_kind, :owner_id, :call_seq, :provider, 'm',
+                :owner_kind, :owner_id, :call_seq, :provider, :provider_route, 'm',
                 'chat_send', true, 'none', 'auto', 'platform', :input_tokens,
-                CAST(:provider_usage AS jsonb)
+                CAST(:provider_usage AS jsonb), :total_cost_usd_micros, :cost_status,
+                CAST(:pricing_snapshot AS jsonb)
             )
             """
         )
@@ -10262,16 +10288,24 @@ class TestMigration0145LlmCallLedgerAndErrorFloor:
                 "owner_id": owner_id,
                 "call_seq": 1,
                 "provider": "openai",
+                "provider_route": "openai",
                 "input_tokens": None,
                 "provider_usage": None,
+                "total_cost_usd_micros": None,
+                "cost_status": "missing_usage",
+                "pricing_snapshot": "{}",
             }
 
         negative_cases = [
             ({"owner_kind": "bogus"}, "ck_llm_calls_owner_kind"),
             ({"call_seq": 0}, "ck_llm_calls_call_seq_positive"),
             ({"provider": "mistral"}, "ck_llm_calls_provider"),
+            ({"provider_route": "mistral"}, "ck_llm_calls_provider_route"),
             ({"input_tokens": -1}, "ck_llm_calls_token_counts_non_negative"),
             ({"provider_usage": "[1]"}, "ck_llm_calls_provider_usage_object"),
+            ({"total_cost_usd_micros": -1}, "ck_llm_calls_total_cost_non_negative"),
+            ({"cost_status": "bogus"}, "ck_llm_calls_cost_status"),
+            ({"pricing_snapshot": "[1]"}, "ck_llm_calls_pricing_snapshot_object"),
         ]
         for override, expected_constraint in negative_cases:
             params = good_params()
@@ -10291,6 +10325,59 @@ class TestMigration0145LlmCallLedgerAndErrorFloor:
                 session.execute(insert_sql, good_params())
             session.rollback()
         assert "uq_llm_calls_owner_call_seq" in str(exc_info.value)
+
+        with Session(head_engine) as session:
+            bad_attempt_rows = [
+                (
+                    """
+                    INSERT INTO llm_calls (
+                        owner_kind, owner_id, call_seq, provider, provider_route, model_name,
+                        llm_operation, streaming, reasoning_effort,
+                        key_mode_requested, key_mode_used, cost_status, attempt_count, retry_count
+                    )
+                    VALUES (
+                        'chat_run', :owner_id, 1, 'openai', 'openai', 'm',
+                        'chat_send', true, 'none', 'auto', 'platform', 'missing_usage', 1, 1
+                    )
+                    """,
+                    "ck_llm_calls_attempt_counts",
+                ),
+                (
+                    """
+                    INSERT INTO llm_calls (
+                        owner_kind, owner_id, call_seq, provider, provider_route, model_name,
+                        llm_operation, streaming, reasoning_effort,
+                        key_mode_requested, key_mode_used, cost_status, terminal_attempt_status
+                    )
+                    VALUES (
+                        'chat_run', :owner_id, 1, 'openai', 'openai', 'm',
+                        'chat_send', true, 'none', 'auto', 'platform', 'missing_usage', 'unknown'
+                    )
+                    """,
+                    "ck_llm_calls_terminal_attempt_status",
+                ),
+                (
+                    """
+                    INSERT INTO llm_calls (
+                        owner_kind, owner_id, call_seq, provider, provider_route, model_name,
+                        llm_operation, streaming, reasoning_effort,
+                        key_mode_requested, key_mode_used, cost_status, provider_attempts
+                    )
+                    VALUES (
+                        'chat_run', :owner_id, 1, 'openai', 'openai', 'm',
+                        'chat_send', true, 'none', 'auto', 'platform', 'missing_usage',
+                        '{}'::jsonb
+                    )
+                    """,
+                    "ck_llm_calls_provider_attempts_array",
+                ),
+            ]
+            for sql, expected_constraint in bad_attempt_rows:
+                with pytest.raises(IntegrityError) as exc_info:
+                    session.execute(text(sql), {"owner_id": uuid4()})
+                    session.commit()
+                session.rollback()
+                assert expected_constraint in str(exc_info.value)
 
     def test_error_floor_columns_exist_at_head(self, head_engine):
         """Every run parent gained its operator-facing failure columns."""
@@ -10846,6 +10933,383 @@ class TestMigration0148NotesPagesResourceGraphOrder:
                 session.flush()
             session.rollback()
         assert "uix_tags_user_slug" in str(exc_info.value)
+
+
+class TestMigration0151LlmProviderRuntimeCatalog:
+    """0151: provider-runtime provider set replaces DeepSeek with OpenRouter/Cloudflare."""
+
+    @pytest.fixture(scope="class")
+    def head_engine(self):
+        reset_test_schema()
+        result = run_alembic_command("upgrade head")
+        if result.returncode != 0:
+            pytest.fail(f"Migration upgrade failed: {result.stderr}")
+        engine = create_engine(get_test_database_url())
+        yield engine
+        engine.dispose()
+        reset_test_schema()
+
+    def test_provider_constraints_and_seed_rows_at_head(self, head_engine):
+        expected_seed_rows = {
+            ("anthropic", "claude-opus-4-8"),
+            ("openrouter", "moonshotai/kimi-k2.6"),
+            ("openrouter", "openai/gpt-5.5"),
+            ("openrouter", "openai/gpt-5.4-mini"),
+            ("cloudflare", "@cf/openai/gpt-oss-20b"),
+        }
+
+        user_id = uuid4()
+        with Session(head_engine) as session:
+            seed_rows = {
+                tuple(row)
+                for row in session.execute(
+                    text(
+                        """
+                        SELECT provider, model_name
+                        FROM models
+                        WHERE provider IN ('openrouter', 'cloudflare')
+                           OR (
+                               provider = 'anthropic'
+                               AND model_name IN ('claude-opus-4-7', 'claude-opus-4-8')
+                           )
+                        """
+                    )
+                ).fetchall()
+            }
+            assert expected_seed_rows.issubset(seed_rows), (
+                f"0151 model seed rows missing: {sorted(expected_seed_rows - seed_rows)}"
+            )
+            assert ("anthropic", "claude-opus-4-7") not in seed_rows
+
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            for provider in ("openrouter", "cloudflare"):
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO models (id, provider, model_name, max_context_tokens)
+                        VALUES (:id, :provider, :model_name, 8192)
+                        """
+                    ),
+                    {
+                        "id": uuid4(),
+                        "provider": provider,
+                        "model_name": f"constraint-test-{provider}-{uuid4()}",
+                    },
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO llm_calls (
+                            owner_kind, owner_id, call_seq, provider, provider_route, model_name,
+                            llm_operation, streaming, reasoning_effort,
+                            key_mode_requested, key_mode_used, cost_status
+                        )
+                        VALUES (
+                            'chat_run', :owner_id, 1, :provider, :provider, :model_name,
+                            'chat_send', false, 'default', 'auto', 'platform', 'missing_usage'
+                        )
+                        """
+                    ),
+                    {
+                        "owner_id": uuid4(),
+                        "provider": provider,
+                        "model_name": f"constraint-test-{provider}",
+                    },
+                )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO user_api_keys (
+                        id, user_id, provider, encrypted_key, key_nonce, key_fingerprint
+                    )
+                    VALUES (:id, :user_id, 'openrouter', :key, :nonce, :fingerprint)
+                    """
+                ),
+                {
+                    "id": uuid4(),
+                    "user_id": user_id,
+                    "key": b"encrypted-key",
+                    "nonce": b"x" * 24,
+                    "fingerprint": "fp-openrouter",
+                },
+            )
+            session.commit()
+
+        negative_cases = [
+            (
+                """
+                INSERT INTO models (id, provider, model_name, max_context_tokens)
+                VALUES (:id, 'deepseek', :model_name, 8192)
+                """,
+                {"id": uuid4(), "model_name": f"removed-provider-{uuid4()}"},
+                "ck_models_provider",
+            ),
+            (
+                """
+                INSERT INTO user_api_keys (
+                    id, user_id, provider, encrypted_key, key_nonce, key_fingerprint
+                )
+                VALUES (:id, :user_id, 'deepseek', :key, :nonce, :fingerprint)
+                """,
+                {
+                    "id": uuid4(),
+                    "user_id": user_id,
+                    "key": b"encrypted-key",
+                    "nonce": b"x" * 24,
+                    "fingerprint": f"removed-provider-{uuid4()}",
+                },
+                "ck_user_api_keys_provider",
+            ),
+            (
+                """
+                INSERT INTO user_api_keys (
+                    id, user_id, provider, encrypted_key, key_nonce, key_fingerprint
+                )
+                VALUES (:id, :user_id, 'cloudflare', :key, :nonce, :fingerprint)
+                """,
+                {
+                    "id": uuid4(),
+                    "user_id": user_id,
+                    "key": b"encrypted-key",
+                    "nonce": b"x" * 24,
+                    "fingerprint": f"cloudflare-byok-disabled-{uuid4()}",
+                },
+                "ck_user_api_keys_provider",
+            ),
+            (
+                """
+                INSERT INTO user_api_keys (
+                    id, user_id, provider, encrypted_key, key_nonce, key_fingerprint
+                )
+                VALUES (:id, :user_id, 'cloudflare', :key, :nonce, :fingerprint)
+                """,
+                {
+                    "id": uuid4(),
+                    "user_id": user_id,
+                    "key": b"encrypted-key",
+                    "nonce": b"x" * 24,
+                    "fingerprint": f"platform-only-{uuid4()}",
+                },
+                "ck_user_api_keys_provider",
+            ),
+            (
+                """
+                INSERT INTO llm_calls (
+                    owner_kind, owner_id, call_seq, provider, provider_route, model_name,
+                    llm_operation, streaming, reasoning_effort,
+                    key_mode_requested, key_mode_used, cost_status
+                )
+                VALUES (
+                    'chat_run', :owner_id, 1, 'deepseek', 'openai', 'removed-model',
+                    'chat_send', false, 'default', 'auto', 'platform', 'missing_usage'
+                )
+                """,
+                {"owner_id": uuid4()},
+                "ck_llm_calls_provider",
+            ),
+        ]
+        for sql, params, expected_constraint in negative_cases:
+            with Session(head_engine) as session:
+                with pytest.raises(IntegrityError) as exc_info:
+                    session.execute(text(sql), params)
+                    session.commit()
+                session.rollback()
+            assert expected_constraint in str(exc_info.value), (
+                f"expected {expected_constraint}, got: {exc_info.value}"
+            )
+
+    def test_0151_deletes_deepseek_dependents_before_provider_removal(self):
+        reset_test_schema()
+        try:
+            result = run_alembic_command("upgrade 0150")
+            assert result.returncode == 0, f"upgrade to 0150 failed: {result.stderr}"
+
+            engine = create_engine(get_test_database_url())
+            deepseek_model_id = uuid4()
+            deepseek_model_name = f"deepseek-cutover-{deepseek_model_id}"
+            user_id = uuid4()
+            conversation_id = uuid4()
+            user_message_id = uuid4()
+            assistant_message_id = uuid4()
+            run_id = uuid4()
+            prompt_assembly_id = uuid4()
+            event_id = uuid4()
+            llm_owner_id = uuid4()
+            key_id = uuid4()
+            try:
+                with Session(engine) as session:
+                    session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO models (
+                                id, provider, model_name, max_context_tokens, is_available
+                            )
+                            VALUES (:id, 'deepseek', :model_name, 64000, true)
+                            """
+                        ),
+                        {"id": deepseek_model_id, "model_name": deepseek_model_name},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO conversations (id, owner_user_id, sharing, next_seq)
+                            VALUES (:id, :owner_user_id, 'private', 3)
+                            """
+                        ),
+                        {"id": conversation_id, "owner_user_id": user_id},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO messages (id, conversation_id, seq, role, content, status)
+                            VALUES (:id, :conversation_id, 1, 'user', 'deepseek seed', 'complete')
+                            """
+                        ),
+                        {"id": user_message_id, "conversation_id": conversation_id},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO messages (
+                                id, conversation_id, seq, role, content, status, parent_message_id
+                            )
+                            VALUES (
+                                :id, :conversation_id, 2, 'assistant', 'deepseek reply',
+                                'complete', :parent_message_id
+                            )
+                            """
+                        ),
+                        {
+                            "id": assistant_message_id,
+                            "conversation_id": conversation_id,
+                            "parent_message_id": user_message_id,
+                        },
+                    )
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO chat_runs (
+                                id, owner_user_id, conversation_id, user_message_id,
+                                assistant_message_id, idempotency_key, payload_hash,
+                                status, model_id, reasoning, key_mode
+                            )
+                            VALUES (
+                                :id, :owner_user_id, :conversation_id, :user_message_id,
+                                :assistant_message_id, :idempotency_key, 'hash',
+                                'complete', :model_id, 'none', 'auto'
+                            )
+                            """
+                        ),
+                        {
+                            "id": run_id,
+                            "owner_user_id": user_id,
+                            "conversation_id": conversation_id,
+                            "user_message_id": user_message_id,
+                            "assistant_message_id": assistant_message_id,
+                            "idempotency_key": f"deepseek-{run_id}",
+                            "model_id": deepseek_model_id,
+                        },
+                    )
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO chat_prompt_assemblies (
+                                id, chat_run_id, conversation_id, assistant_message_id,
+                                model_id, cacheable_input_tokens_estimate,
+                                max_context_tokens, reserved_output_tokens,
+                                reserved_reasoning_tokens, input_budget_tokens,
+                                estimated_input_tokens
+                            )
+                            VALUES (
+                                :id, :chat_run_id, :conversation_id, :assistant_message_id,
+                                :model_id, 0, 64000, 1, 1, 100, 10
+                            )
+                            """
+                        ),
+                        {
+                            "id": prompt_assembly_id,
+                            "chat_run_id": run_id,
+                            "conversation_id": conversation_id,
+                            "assistant_message_id": assistant_message_id,
+                            "model_id": deepseek_model_id,
+                        },
+                    )
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO chat_run_events (id, run_id, seq, event_type, payload)
+                            VALUES (:id, :run_id, 1, 'done', '{}'::jsonb)
+                            """
+                        ),
+                        {"id": event_id, "run_id": run_id},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO llm_calls (
+                                owner_kind, owner_id, call_seq, provider, model_name,
+                                llm_operation, streaming, reasoning_effort,
+                                key_mode_requested, key_mode_used
+                            )
+                            VALUES (
+                                'chat_run', :owner_id, 1, 'deepseek', :model_name,
+                                'chat_send', false, 'none', 'auto', 'platform'
+                            )
+                            """
+                        ),
+                        {"owner_id": llm_owner_id, "model_name": deepseek_model_name},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO user_api_keys (
+                                id, user_id, provider, encrypted_key, key_nonce, key_fingerprint
+                            )
+                            VALUES (:id, :user_id, 'deepseek', :key, :nonce, :fingerprint)
+                            """
+                        ),
+                        {
+                            "id": key_id,
+                            "user_id": user_id,
+                            "key": b"encrypted-key",
+                            "nonce": b"x" * 24,
+                            "fingerprint": "seek",
+                        },
+                    )
+                    session.commit()
+            finally:
+                engine.dispose()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+
+            engine = create_engine(get_test_database_url())
+            try:
+                with Session(engine) as session:
+                    counts = session.execute(
+                        text(
+                            """
+                            SELECT
+                                (SELECT count(*) FROM chat_prompt_assemblies WHERE id = :assembly_id),
+                                (SELECT count(*) FROM chat_run_events WHERE id = :event_id),
+                                (SELECT count(*) FROM chat_runs WHERE id = :run_id),
+                                (SELECT count(*) FROM llm_calls WHERE provider = 'deepseek'),
+                                (SELECT count(*) FROM user_api_keys WHERE provider = 'deepseek'),
+                                (SELECT count(*) FROM models WHERE provider = 'deepseek')
+                            """
+                        ),
+                        {
+                            "assembly_id": prompt_assembly_id,
+                            "event_id": event_id,
+                            "run_id": run_id,
+                        },
+                    ).one()
+                    assert tuple(counts) == (0, 0, 0, 0, 0, 0)
+            finally:
+                engine.dispose()
+        finally:
+            reset_test_schema()
 
 
 class TestMigration0148NotesPagesBackfill:
@@ -11431,13 +11895,13 @@ class TestMigration0149SynapseResonance:
                 text(
                     """
                     INSERT INTO llm_calls (
-                        owner_kind, owner_id, call_seq, provider, model_name,
+                        owner_kind, owner_id, call_seq, provider, provider_route, model_name,
                         llm_operation, streaming, reasoning_effort,
-                        key_mode_requested, key_mode_used
+                        key_mode_requested, key_mode_used, cost_status
                     )
                     VALUES (
-                        'synapse_scan', :owner_id, 1, 'anthropic', 'm',
-                        'synapse_scan', false, 'none', 'auto', 'platform'
+                        'synapse_scan', :owner_id, 1, 'anthropic', 'anthropic', 'm',
+                        'synapse_scan', false, 'none', 'auto', 'platform', 'missing_usage'
                     )
                     """
                 ),
@@ -11458,3 +11922,310 @@ class TestMigration0149SynapseResonance:
             assert expected_constraint in str(exc_info.value), (
                 f"expected {expected_constraint} for override {override!r}, got: {exc_info.value}"
             )
+
+
+class TestMigration0153ChatRunPolicyConstraints:
+    """0153: chat_runs persists explicit reasoning and key-mode vocabularies."""
+
+    @pytest.fixture(scope="class")
+    def head_engine(self):
+        reset_test_schema()
+        result = run_alembic_command("upgrade head")
+        if result.returncode != 0:
+            pytest.fail(f"Migration upgrade failed: {result.stderr}")
+        engine = create_engine(get_test_database_url())
+        yield engine
+        engine.dispose()
+        reset_test_schema()
+
+    def test_chat_run_policy_constraints_enforced_at_head(self, head_engine):
+        user_id = uuid4()
+        conversation_id = uuid4()
+        user_message_id = uuid4()
+        assistant_message_id = uuid4()
+        with Session(head_engine) as session:
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            model_id = session.execute(
+                text(
+                    """
+                    SELECT id
+                    FROM models
+                    WHERE provider = 'openai'
+                      AND model_name = 'gpt-5.4-mini'
+                    """
+                )
+            ).scalar_one()
+            session.execute(
+                text(
+                    """
+                    INSERT INTO conversations (id, owner_user_id, sharing, next_seq)
+                    VALUES (:id, :owner_user_id, 'private', 3)
+                    """
+                ),
+                {"id": conversation_id, "owner_user_id": user_id},
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO messages (id, conversation_id, seq, role, content, status)
+                    VALUES (:id, :conversation_id, 1, 'user', 'hello', 'complete')
+                    """
+                ),
+                {"id": user_message_id, "conversation_id": conversation_id},
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO messages (
+                        id, conversation_id, seq, role, content, status, parent_message_id
+                    )
+                    VALUES (
+                        :id, :conversation_id, 2, 'assistant', 'hi', 'complete',
+                        :parent_message_id
+                    )
+                    """
+                ),
+                {
+                    "id": assistant_message_id,
+                    "conversation_id": conversation_id,
+                    "parent_message_id": user_message_id,
+                },
+            )
+            session.commit()
+
+        negative_cases = [
+            ("legacy-reasoning", "turbo", "auto", "ck_chat_runs_reasoning"),
+            ("legacy-key-mode", "none", "byok", "ck_chat_runs_key_mode"),
+        ]
+        for idempotency_key, reasoning, key_mode, expected_constraint in negative_cases:
+            with Session(head_engine) as session:
+                with pytest.raises(IntegrityError) as exc_info:
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO chat_runs (
+                                owner_user_id, conversation_id, user_message_id,
+                                assistant_message_id, idempotency_key, payload_hash, status,
+                                model_id, reasoning, key_mode
+                            )
+                            VALUES (
+                                :owner_user_id, :conversation_id, :user_message_id,
+                                :assistant_message_id, :idempotency_key, 'hash', 'queued',
+                                :model_id, :reasoning, :key_mode
+                            )
+                            """
+                        ),
+                        {
+                            "owner_user_id": user_id,
+                            "conversation_id": conversation_id,
+                            "user_message_id": user_message_id,
+                            "assistant_message_id": assistant_message_id,
+                            "idempotency_key": idempotency_key,
+                            "model_id": model_id,
+                            "reasoning": reasoning,
+                            "key_mode": key_mode,
+                        },
+                    )
+                    session.commit()
+                session.rollback()
+            assert expected_constraint in str(exc_info.value)
+
+    def test_0153_canonicalizes_legacy_chat_run_key_modes(self):
+        reset_test_schema()
+        try:
+            result = run_alembic_command("upgrade 0152")
+            assert result.returncode == 0, f"upgrade to 0152 failed: {result.stderr}"
+
+            engine = create_engine(get_test_database_url())
+            user_id = uuid4()
+            conversation_id = uuid4()
+            user_message_id = uuid4()
+            assistant_message_id = uuid4()
+            try:
+                with Session(engine) as session:
+                    session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+                    model_id = session.execute(
+                        text(
+                            """
+                            SELECT id
+                            FROM models
+                            WHERE provider = 'openai'
+                              AND model_name = 'gpt-5.4-mini'
+                            """
+                        )
+                    ).scalar_one()
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO conversations (id, owner_user_id, sharing, next_seq)
+                            VALUES (:id, :owner_user_id, 'private', 3)
+                            """
+                        ),
+                        {"id": conversation_id, "owner_user_id": user_id},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO messages (id, conversation_id, seq, role, content, status)
+                            VALUES (:id, :conversation_id, 1, 'user', 'hello', 'complete')
+                            """
+                        ),
+                        {"id": user_message_id, "conversation_id": conversation_id},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO messages (
+                                id, conversation_id, seq, role, content, status, parent_message_id
+                            )
+                            VALUES (
+                                :id, :conversation_id, 2, 'assistant', 'hi', 'complete',
+                                :parent_message_id
+                            )
+                            """
+                        ),
+                        {
+                            "id": assistant_message_id,
+                            "conversation_id": conversation_id,
+                            "parent_message_id": user_message_id,
+                        },
+                    )
+                    for key_mode in ("byok", "platform"):
+                        session.execute(
+                            text(
+                                """
+                                INSERT INTO chat_runs (
+                                    id, owner_user_id, conversation_id, user_message_id,
+                                    assistant_message_id, idempotency_key, payload_hash, status,
+                                    model_id, reasoning, key_mode
+                                )
+                                VALUES (
+                                    :id, :owner_user_id, :conversation_id, :user_message_id,
+                                    :assistant_message_id, :idempotency_key, 'hash', 'queued',
+                                    :model_id, 'none', :key_mode
+                                )
+                                """
+                            ),
+                            {
+                                "id": uuid4(),
+                                "owner_user_id": user_id,
+                                "conversation_id": conversation_id,
+                                "user_message_id": user_message_id,
+                                "assistant_message_id": assistant_message_id,
+                                "idempotency_key": f"legacy-{key_mode}",
+                                "model_id": model_id,
+                                "key_mode": key_mode,
+                            },
+                        )
+                    session.commit()
+            finally:
+                engine.dispose()
+
+            result = run_alembic_command("upgrade 0153")
+            assert result.returncode == 0, f"upgrade to 0153 failed: {result.stderr}"
+
+            engine = create_engine(get_test_database_url())
+            try:
+                with Session(engine) as session:
+                    rows = {
+                        tuple(row)
+                        for row in session.execute(
+                            text(
+                                """
+                                SELECT idempotency_key, key_mode
+                                FROM chat_runs
+                                WHERE idempotency_key LIKE 'legacy-%'
+                                """
+                            )
+                        ).fetchall()
+                    }
+            finally:
+                engine.dispose()
+            assert rows == {
+                ("legacy-byok", "byok_only"),
+                ("legacy-platform", "platform_only"),
+            }
+        finally:
+            reset_test_schema()
+
+
+class TestMigration0154TokenBudgetChargesPolymorphic:
+    """0154: token budget charge idempotency is keyed by reservation id."""
+
+    def test_0154_renames_message_id_and_removes_message_fk(self):
+        reset_test_schema()
+        try:
+            result = run_alembic_command("upgrade 0153")
+            assert result.returncode == 0, f"upgrade to 0153 failed: {result.stderr}"
+
+            engine = create_engine(get_test_database_url())
+            try:
+                with Session(engine) as session:
+                    before_columns = set(
+                        session.execute(
+                            text(
+                                """
+                                SELECT column_name
+                                FROM information_schema.columns
+                                WHERE table_name = 'token_budget_charges'
+                                """
+                            )
+                        ).scalars()
+                    )
+                    before_fks = set(
+                        session.execute(
+                            text(
+                                """
+                                SELECT conname
+                                FROM pg_constraint
+                                WHERE conrelid = 'token_budget_charges'::regclass
+                                  AND contype = 'f'
+                                """
+                            )
+                        ).scalars()
+                    )
+            finally:
+                engine.dispose()
+
+            assert "message_id" in before_columns
+            assert "reservation_id" not in before_columns
+            assert "token_budget_charges_message_id_fkey" in before_fks
+
+            result = run_alembic_command("upgrade 0154")
+            assert result.returncode == 0, f"upgrade to 0154 failed: {result.stderr}"
+
+            engine = create_engine(get_test_database_url())
+            try:
+                with Session(engine) as session:
+                    after_columns = set(
+                        session.execute(
+                            text(
+                                """
+                                SELECT column_name
+                                FROM information_schema.columns
+                                WHERE table_name = 'token_budget_charges'
+                                """
+                            )
+                        ).scalars()
+                    )
+                    after_fks = set(
+                        session.execute(
+                            text(
+                                """
+                                SELECT conname
+                                FROM pg_constraint
+                                WHERE conrelid = 'token_budget_charges'::regclass
+                                  AND contype = 'f'
+                                """
+                            )
+                        ).scalars()
+                    )
+            finally:
+                engine.dispose()
+
+            assert "reservation_id" in after_columns
+            assert "message_id" not in after_columns
+            assert "token_budget_charges_message_id_fkey" not in after_fks
+            assert "token_budget_charges_user_id_fkey" in after_fks
+        finally:
+            reset_test_schema()

@@ -7,7 +7,7 @@ import json
 from uuid import UUID, uuid4
 
 import pytest
-from llm_calling.types import LLMResponse
+from provider_runtime.types import ModelResponse
 from pydantic import ValidationError
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
@@ -242,7 +242,7 @@ def _done_payload(db: Session, *, revision_id: UUID) -> dict:
 
 
 class _ReduceRouter:
-    """Fake LLMRouter returning a fixed reduce synthesis."""
+    """Fake ModelRuntime returning a fixed reduce synthesis."""
 
     def __init__(self, *, content_md: str, citations: list[tuple[int, int, str]]) -> None:
         self._payload = {
@@ -254,9 +254,9 @@ class _ReduceRouter:
         }
         self.calls = 0
 
-    async def generate(self, _provider, _request, _api_key, *, timeout_s):
+    async def generate(self, _request, *, key, timeout_s):
         self.calls += 1
-        return LLMResponse(
+        return ModelResponse(
             text=json.dumps(self._payload),
             usage=None,
             provider_request_id=None,
@@ -266,8 +266,8 @@ class _ReduceRouter:
 
 
 class _BadRouter:
-    async def generate(self, _provider, _request, _api_key, *, timeout_s):
-        return LLMResponse(
+    async def generate(self, _request, *, key, timeout_s):
+        return ModelResponse(
             text="not json",
             usage=None,
             provider_request_id=None,
@@ -289,10 +289,10 @@ class _RepairingReduceRouter:
         }
         self.calls = 0
 
-    async def generate(self, _provider, _request, _api_key, *, timeout_s):
+    async def generate(self, _request, *, key, timeout_s):
         self.calls += 1
         text_out = "not json" if self.calls == 1 else json.dumps(self._payload)
-        return LLMResponse(
+        return ModelResponse(
             text=text_out,
             usage=None,
             provider_request_id=None,
@@ -322,8 +322,8 @@ class _UnitRouter:
             ],
         }
 
-    async def generate(self, _provider, _request, _api_key, *, timeout_s):
-        return LLMResponse(
+    async def generate(self, _request, *, key, timeout_s):
+        return ModelResponse(
             text=json.dumps(self._payload),
             usage=None,
             provider_request_id=None,
@@ -363,10 +363,10 @@ class _UnitThenReduceRouter:
             ],
         }
 
-    async def generate(self, _provider, request, _api_key, *, timeout_s):
+    async def generate(self, request, *, key, timeout_s):
         user_text = "".join(turn.content for turn in request.messages if turn.role == "user")
         payload = self._reduce_payload if "UNIT CLAIMS:" in user_text else self._unit_payload
-        return LLMResponse(
+        return ModelResponse(
             text=json.dumps(payload),
             usage=None,
             provider_request_id=None,

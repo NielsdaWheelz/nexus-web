@@ -8,7 +8,7 @@ from typing import Any, Literal, cast
 from uuid import UUID
 from xml.sax.saxutils import escape as xml_escape
 
-from llm_calling.types import LLMRequest, Turn
+from provider_runtime.types import ModelCall, ModelMessage
 from sqlalchemy import bindparam, select, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
@@ -25,6 +25,7 @@ from nexus.db.models import (
     Model,
 )
 from nexus.errors import ApiErrorCode, NotFoundError
+from nexus.llm_catalog import model_max_context_tokens
 from nexus.schemas.conversation import ReaderContextHint, ReaderSelectionRequest
 from nexus.services.chat_prompt import (
     PromptPlan,
@@ -62,7 +63,7 @@ CACHE_POLICY_5M: Mapping[str, object] = {"type": "ephemeral", "ttl_seconds": 300
 @dataclass(frozen=True)
 class HistoryUnit:
     key: str
-    turns: tuple[Turn, ...]
+    turns: tuple[ModelMessage, ...]
     message_ids: tuple[UUID, ...]
     first_seq: int
     last_seq: int
@@ -86,9 +87,9 @@ class AssemblyLedger:
 
 @dataclass(frozen=True)
 class ContextAssembly:
-    llm_request: LLMRequest
+    llm_request: ModelCall
     prompt_plan: PromptPlan
-    history: tuple[Turn, ...]
+    history: tuple[ModelMessage, ...]
     context_blocks: tuple[str, ...]
     context_types: frozenset[str]
     tool_call_events: tuple[Mapping[str, object], ...]
@@ -141,7 +142,7 @@ def assemble_chat_context(
         lane="system",
         text=render_system_prompt_block(),
         cache_policy=CACHE_POLICY_5M,
-        required_provider_capability="prompt_cache",
+        privacy_scope="global",
     )
     mandatory_blocks: list[tuple[str, PromptBlock, Mapping[str, object]]] = []
 
@@ -213,10 +214,12 @@ def assemble_chat_context(
         text=user_message.content,
         source_refs=[{"type": "message", "id": str(user_message.id)}],
     )
+    max_context_tokens = model_max_context_tokens(model.provider, model.model_name)
     budget = build_prompt_budget(
-        max_context_tokens=model.max_context_tokens,
+        max_context_tokens=max_context_tokens,
         max_output_tokens=max_output_tokens,
         provider=model.provider,
+        model_name=model.model_name,
         reasoning=run.reasoning,
     )
     budget_items: list[BudgetItem] = [
@@ -705,8 +708,8 @@ def load_recent_history_units(
                 HistoryUnit(
                     key=f"history_pair:{row[1]}:{next_row[1]}",
                     turns=(
-                        Turn(role="user", content=row[3]),
-                        Turn(role="assistant", content=next_row[3]),
+                        ModelMessage(role="user", content=row[3]),
+                        ModelMessage(role="assistant", content=next_row[3]),
                     ),
                     message_ids=(row[0], next_row[0]),
                     first_seq=row[1],
@@ -718,7 +721,7 @@ def load_recent_history_units(
         units.append(
             HistoryUnit(
                 key=f"history_single:{row[1]}",
-                turns=(Turn(role=row[2], content=row[3]),),
+                turns=(ModelMessage(role=row[2], content=row[3]),),
                 message_ids=(row[0],),
                 first_seq=row[1],
                 last_seq=row[1],
@@ -845,8 +848,8 @@ def _history_blocks(
     return tuple(blocks)
 
 
-def _history_turns_from_units(units: Sequence[HistoryUnit]) -> list[Turn]:
-    turns: list[Turn] = []
+def _history_turns_from_units(units: Sequence[HistoryUnit]) -> list[ModelMessage]:
+    turns: list[ModelMessage] = []
     for unit in sorted(units, key=lambda candidate: candidate.first_seq):
         turns.extend(unit.turns)
     return turns
@@ -864,7 +867,7 @@ def _build_ledger(
     return AssemblyLedger(
         cacheable_input_tokens_estimate=prompt_plan.cacheable_input_tokens_estimate,
         prompt_block_manifest=prompt_plan.manifest(),
-        max_context_tokens=model.max_context_tokens,
+        max_context_tokens=selection.budget.max_context_tokens,
         reserved_output_tokens=selection.budget.reserved_output_tokens,
         reserved_reasoning_tokens=selection.budget.reserved_reasoning_tokens,
         input_budget_tokens=selection.budget.input_budget_tokens,

@@ -15,9 +15,9 @@ from typing import Any
 from uuid import UUID
 
 import httpx
-from llm_calling.errors import LLMError
-from llm_calling.router import LLMRouter
-from llm_calling.types import LLMRequest
+from provider_runtime import ModelRuntime
+from provider_runtime.errors import ModelCallError
+from provider_runtime.types import ModelCall
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
@@ -33,7 +33,13 @@ from nexus.db.models import (
     OracleReadingEvent,
     OracleReadingFolio,
 )
-from nexus.errors import LLM_ERROR_CODE_TO_API_ERROR_CODE, ApiError, ApiErrorCode, NotFoundError
+from nexus.errors import (
+    ApiError,
+    ApiErrorCode,
+    NotFoundError,
+    api_error_code_for_model_call,
+    exception_error_detail,
+)
 from nexus.jobs.queue import enqueue_job
 from nexus.llm_catalog import require_catalog_model
 from nexus.logging import get_logger
@@ -639,7 +645,7 @@ async def execute_reading(
     db: Session,
     *,
     reading_id: UUID,
-    llm_router: LLMRouter,
+    llm_router: ModelRuntime,
 ) -> dict[str, Any]:
     """Worker job body: pick plate, retrieve passages, call LLM, persist, stream."""
     reading = _get_reading_or_fail(db, reading_id)
@@ -655,9 +661,9 @@ async def execute_reading(
 
     try:
         resolved = resolve_api_key(db, viewer_id, ORACLE_PROVIDER, "auto")
-    except LLMError as exc:
-        error_code = LLM_ERROR_CODE_TO_API_ERROR_CODE[exc.error_code].value
-        _fail(db, reading, code=error_code, detail=f"{type(exc).__name__}: {exc}")
+    except ModelCallError as exc:
+        error_code = api_error_code_for_model_call(exc.error_code).value
+        _fail(db, reading, code=error_code, detail=exception_error_detail(exc))
         return {"status": "failed", "error_code": error_code}
     except ApiError as exc:
         _fail(db, reading, code=exc.code.value, detail=exc.message)
@@ -804,8 +810,8 @@ async def execute_reading(
                 schema=_OracleSynthesisOutput,
                 validate=_validate,
             )
-        except LLMError as exc:
-            error_code = LLM_ERROR_CODE_TO_API_ERROR_CODE[exc.error_code].value
+        except ModelCallError as exc:
+            error_code = api_error_code_for_model_call(exc.error_code).value
             logger.warning(
                 "oracle.llm_error",
                 reading_id=str(reading_id),
@@ -817,7 +823,7 @@ async def execute_reading(
                 raise ApiError(ApiErrorCode.E_NOT_FOUND, "Oracle reading not found") from exc
             if error_code == ApiErrorCode.E_LLM_INVALID_KEY.value and resolved.mode == "byok":
                 update_user_key_status(db, resolved.user_key_id, "invalid")
-            _fail(db, reading, code=error_code, detail=f"{type(exc).__name__}: {exc}")
+            _fail(db, reading, code=error_code, detail=exception_error_detail(exc))
             return {"status": "failed", "error_code": error_code}
         except StructuredSynthesisError as exc:
             logger.warning(
@@ -1479,7 +1485,7 @@ _ORACLE_SYSTEM_PROMPT = build_synthesis_prompt(
 )
 
 
-def _build_llm_request(*, question: str, candidates: Sequence[_Candidate]) -> LLMRequest:
+def _build_llm_request(*, question: str, candidates: Sequence[_Candidate]) -> ModelCall:
     rendered = "\n\n".join(
         (
             f"[{index}] source_kind={candidate.source_kind} tags={candidate.tags!r}\n"
@@ -1489,6 +1495,7 @@ def _build_llm_request(*, question: str, candidates: Sequence[_Candidate]) -> LL
         for index, candidate in enumerate(candidates)
     )
     return build_synthesis_request(
+        provider=ORACLE_PROVIDER,
         system_prompt=_ORACLE_SYSTEM_PROMPT,
         candidates_header="CANDIDATES",
         rendered_candidates=rendered,

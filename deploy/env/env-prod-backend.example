@@ -33,17 +33,23 @@ PODCASTS_ENABLED=false
 # Required by staging/prod config for browse providers.
 YOUTUBE_DATA_API_KEY=<youtube-data-api-key>
 YOUTUBE_TRANSCRIPT_TIMEOUT_SECONDS=30
+# Required if YouTube blocks transcript scraping from the backend host.
+YOUTUBE_TRANSCRIPT_PROXY_URL=<youtube-transcript-proxy-url>
+YOUTUBE_TRANSCRIPT_PROXY_RETRIES_WHEN_BLOCKED=3
 
 # Official X API bearer token for archival public X/Twitter thread ingestion.
 X_API_BEARER_TOKEN=<x-api-bearer-token>
 X_API_TIMEOUT_SECONDS=10
 X_API_AUTHOR_THREAD_MAX_POSTS=1000
 
-# Optional platform provider keys. BYOK can still be used where supported.
+# Optional platform provider keys. BYOK can still be used where supported;
+# Cloudflare is platform-only and requires both token + account id.
 # OPENAI_API_KEY=
 # ANTHROPIC_API_KEY=
 # GEMINI_API_KEY=
-# DEEPSEEK_API_KEY=
+# OPENROUTER_API_KEY=
+# CLOUDFLARE_AI_API_TOKEN=
+# CLOUDFLARE_AI_ACCOUNT_ID=
 # BRAVE_SEARCH_API_KEY=
 
 # Stripe, required only if BILLING_ENABLED=true.

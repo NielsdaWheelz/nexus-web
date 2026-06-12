@@ -10,12 +10,12 @@ Security contract:
 """
 
 from datetime import datetime
-from typing import Literal
+from typing import Literal, cast
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from nexus.llm_catalog import VALID_PROVIDERS, LLMProvider
+from nexus.llm_catalog import VALID_KEY_PROVIDERS, LLMKeyProvider
 
 # Valid key statuses - must match DB constraint
 KeyStatus = Literal["untested", "valid", "invalid", "revoked"]
@@ -58,9 +58,9 @@ class UserApiKeyCreate(BaseModel):
     (user_id, provider) pair, it is overwritten.
     """
 
-    provider: LLMProvider = Field(
+    provider: LLMKeyProvider = Field(
         ...,
-        description="LLM provider (openai, anthropic, gemini, deepseek)",
+        description="BYOK provider (openai, anthropic, gemini, openrouter)",
     )
     api_key: str = Field(
         ...,
@@ -70,12 +70,12 @@ class UserApiKeyCreate(BaseModel):
 
     @field_validator("provider")
     @classmethod
-    def validate_provider(cls, v: str) -> str:
+    def validate_provider(cls, v: str) -> LLMKeyProvider:
         """Ensure provider is valid and lowercase."""
         v_lower = v.lower()
-        if v_lower not in VALID_PROVIDERS:
-            raise ValueError(f"Provider must be one of: {', '.join(sorted(VALID_PROVIDERS))}")
-        return v_lower
+        if v_lower not in VALID_KEY_PROVIDERS:
+            raise ValueError(f"Provider must be one of: {', '.join(sorted(VALID_KEY_PROVIDERS))}")
+        return cast(LLMKeyProvider, v_lower)
 
     @field_validator("api_key")
     @classmethod

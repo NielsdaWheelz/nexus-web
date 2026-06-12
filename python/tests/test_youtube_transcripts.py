@@ -6,9 +6,11 @@ import sys
 import types
 from dataclasses import dataclass
 
+import httpx
 import pytest
 
 from nexus.config import get_settings
+from nexus.services import youtube_video_ingest
 from nexus.services.youtube_transcripts import fetch_youtube_transcript
 
 pytestmark = pytest.mark.unit
@@ -138,6 +140,32 @@ class TestYoutubeTranscriptBoundary:
             f"expected configured YouTube transcript timeout, got {captured}"
         )
 
+    def test_provider_uses_configured_proxy_without_exposing_value(self, monkeypatch):
+        proxy_url = "http://user:secret@example-proxy.test:8080"
+        monkeypatch.setenv("YOUTUBE_TRANSCRIPT_PROXY_URL", proxy_url)
+        monkeypatch.setenv("YOUTUBE_TRANSCRIPT_PROXY_RETRIES_WHEN_BLOCKED", "3")
+        get_settings.cache_clear()
+        captured: dict[str, object] = {}
+
+        def _capture_init(*_args, proxy_config=None, **_kwargs):
+            captured["proxy_config"] = proxy_config
+
+        def _ok_fetch(_video_id: str):
+            return [_FakeFetchedTranscriptSnippet(start=0.5, duration=1.0, text="first")]
+
+        try:
+            _install_fake_provider(monkeypatch, _ok_fetch, _capture_init)
+            result = fetch_youtube_transcript("dQw4w9WgXcQ")
+        finally:
+            get_settings.cache_clear()
+
+        assert result["status"] == "completed", result
+        proxy_config = captured["proxy_config"]
+        assert proxy_config is not None
+        assert proxy_config.to_requests_dict() == {"http": proxy_url, "https": proxy_url}
+        assert proxy_config.prevent_keeping_connections_alive is True
+        assert proxy_config.retries_when_blocked == 3
+
     @pytest.mark.parametrize(
         "error_class_name",
         [
@@ -197,3 +225,47 @@ class TestYoutubeTranscriptBoundary:
         assert [segment["t_start_ms"] for segment in result["segments"]] == [500, 2000], (
             "expected transcript segments to be sorted by t_start_ms ascending"
         )
+
+    def test_metadata_http_error_log_does_not_include_api_key(self, monkeypatch):
+        secret = "secret-youtube-data-key"
+        monkeypatch.setenv("YOUTUBE_DATA_API_KEY", secret)
+        get_settings.cache_clear()
+        events: list[tuple[str, dict[str, object]]] = []
+
+        class CapturingLogger:
+            def warning(self, event: str, **fields: object) -> None:
+                events.append((event, fields))
+
+        def _raise_http_status_error(*_args, **_kwargs):
+            request = httpx.Request(
+                "GET",
+                f"https://www.googleapis.com/youtube/v3/videos?key={secret}&part=snippet",
+            )
+            response = httpx.Response(403, request=request)
+            raise httpx.HTTPStatusError(
+                "Client error containing provider URL",
+                request=request,
+                response=response,
+            )
+
+        monkeypatch.setattr(youtube_video_ingest, "logger", CapturingLogger())
+        monkeypatch.setattr(youtube_video_ingest.httpx, "get", _raise_http_status_error)
+
+        try:
+            assert youtube_video_ingest.fetch_youtube_metadata("video-id") is None
+        finally:
+            get_settings.cache_clear()
+
+        assert events == [
+            (
+                "youtube_metadata_fetch_failed",
+                {
+                    "provider_video_id": "video-id",
+                    "error_type": "HTTPStatusError",
+                    "status_code": 403,
+                },
+            )
+        ]
+        serialized = repr(events)
+        assert secret not in serialized
+        assert "key=" not in serialized

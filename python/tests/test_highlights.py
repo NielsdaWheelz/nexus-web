@@ -310,8 +310,8 @@ class TestListHighlights:
         highlight_id = create_resp.json()["data"]["id"]
 
         note_resp = create_linked_highlight_note(auth_client, user_id, highlight_id, "My note")
-        assert note_resp.status_code == 201
-        note_id = note_resp.json()["data"]["id"]
+        assert note_resp.status_code == 200
+        note_id = note_resp.json()["data"]["note_block_id"]
 
         # List highlights
         list_resp = auth_client.get(
@@ -546,7 +546,7 @@ class TestDeleteHighlight:
         highlight_id = create_resp.json()["data"]["id"]
 
         note_resp = create_linked_highlight_note(auth_client, user_id, highlight_id, "My note")
-        assert note_resp.status_code == 201
+        assert note_resp.status_code == 200
 
         # Delete highlight
         delete_resp = auth_client.delete(
@@ -2124,8 +2124,8 @@ class TestListMediaHighlights:
         highlight_id = create_resp.json()["data"]["id"]
 
         note_resp = create_linked_highlight_note(auth_client, user_id, highlight_id, "My note")
-        assert note_resp.status_code == 201
-        note_id = note_resp.json()["data"]["id"]
+        assert note_resp.status_code == 200
+        note_id = note_resp.json()["data"]["note_block_id"]
 
         conversation_id = uuid4()
         with direct_db.session() as session:

@@ -5,11 +5,11 @@ from __future__ import annotations
 from uuid import UUID
 
 import httpx
-from llm_calling.router import LLMRouter
+from provider_runtime import ModelRuntime
 from sqlalchemy.orm import Session
 
 from nexus.db.models import LibraryIntelligenceArtifactRevision
-from nexus.errors import ApiErrorCode
+from nexus.errors import ApiErrorCode, exception_error_detail
 from nexus.schemas.library_intelligence import LibraryIntelligenceDoneEventPayload
 from nexus.services import run_kit
 from nexus.services.library_intelligence import revision_orm_or_none
@@ -22,7 +22,7 @@ _SPEC = LlmTaskSpec(label="library_intelligence", http_timeout_s=120.0)
 def library_intelligence_artifact_generate(revision_id: str) -> dict:
     revision_uuid = UUID(revision_id)
 
-    async def _handler(db: Session, router: LLMRouter, _client: httpx.AsyncClient) -> dict:
+    async def _handler(db: Session, router: ModelRuntime, _client: httpx.AsyncClient) -> dict:
         await run_artifact_generation(db, revision_id=revision_uuid, llm=router)
         return {"status": "ok", "revision_id": revision_id}
 
@@ -49,7 +49,7 @@ def _fail_revision_after_worker_exception(
                 revision_id=revision_id,
             ).model_dump(mode="json"),
             error_code=ApiErrorCode.E_INTERNAL.value,
-            error_detail=f"{type(exc).__name__}: {exc}"[:1000],
+            error_detail=exception_error_detail(exc),
         )
 
     run_kit.fail_run_after_worker_exception(

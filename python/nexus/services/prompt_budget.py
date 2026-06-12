@@ -9,6 +9,7 @@ from math import ceil
 from typing import Literal
 
 from nexus.errors import ApiErrorCode
+from nexus.llm_catalog import model_reasoning_reserve_tokens
 
 BudgetLane = Literal[
     "system",
@@ -40,15 +41,6 @@ LANE_ORDER: tuple[BudgetLane, ...] = (
     "recent_history",
     "current_user",
 )
-
-REASONING_TOKEN_RESERVE = {
-    "none": 0,
-    "default": 2048,
-    "low": 1024,
-    "medium": 4096,
-    "high": 8192,
-    "max": 16384,
-}
 
 
 class ContextBudgetError(ValueError):
@@ -208,14 +200,10 @@ def estimate_block_tokens(blocks: Sequence[PromptBlock]) -> int:
     return sum(block.estimated_tokens for block in blocks)
 
 
-def estimate_reasoning_reserve(provider: str, reasoning: str) -> int:
-    """Reserve hidden reasoning budget for reasoning-capable providers."""
+def estimate_reasoning_reserve(provider: str, model_name: str, reasoning: str) -> int:
+    """Reserve hidden reasoning budget from the shared provider-runtime catalog."""
 
-    if provider != "openai":
-        return 0
-    if reasoning not in REASONING_TOKEN_RESERVE:
-        raise ValueError(f"Unknown OpenAI reasoning mode: {reasoning}")
-    return REASONING_TOKEN_RESERVE[reasoning]
+    return model_reasoning_reserve_tokens(provider, model_name, reasoning)
 
 
 def build_prompt_budget(
@@ -223,12 +211,16 @@ def build_prompt_budget(
     max_context_tokens: int,
     max_output_tokens: int,
     provider: str,
+    model_name: str,
     reasoning: str,
 ) -> PromptBudget:
     """Compute the model input budget after output and reasoning reserves."""
 
     reserved_output_tokens = max(0, max_output_tokens)
-    reserved_reasoning_tokens = max(0, estimate_reasoning_reserve(provider, reasoning))
+    reserved_reasoning_tokens = max(
+        0,
+        estimate_reasoning_reserve(provider, model_name, reasoning),
+    )
     input_budget_tokens = max_context_tokens - reserved_output_tokens - reserved_reasoning_tokens
     if input_budget_tokens <= 0:
         raise ContextBudgetError(

@@ -5,7 +5,22 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal, Protocol, cast
 
-type LLMProvider = Literal["openai", "anthropic", "gemini", "deepseek"]
+from provider_runtime import (
+    DEFAULT_CATALOG,
+    ModelCapability,
+    ModelRef,
+    ReasoningEffort,
+)
+from provider_runtime import (
+    PromptCacheMode as RuntimePromptCacheMode,
+)
+from provider_runtime import (
+    PromptCacheTTL as RuntimePromptCacheTTL,
+)
+
+type LLMProvider = Literal["openai", "anthropic", "gemini", "openrouter", "cloudflare"]
+type LLMKeyProvider = Literal["openai", "anthropic", "gemini", "openrouter"]
+type LLMKeyMode = Literal["auto", "byok_only", "platform_only"]
 type ModelTier = Literal["sota", "light"]
 type ReasoningMode = Literal[
     "default",
@@ -17,40 +32,47 @@ type ReasoningMode = Literal[
     "max",
 ]
 type ModelAvailableVia = Literal["byok", "platform", "both"]
+type PromptCacheMode = RuntimePromptCacheMode
+type PromptCacheTTL = RuntimePromptCacheTTL
 
-PROVIDER_ORDER: tuple[LLMProvider, ...] = ("openai", "anthropic", "gemini", "deepseek")
+PROVIDER_ORDER: tuple[LLMProvider, ...] = (
+    "openai",
+    "anthropic",
+    "gemini",
+    "openrouter",
+    "cloudflare",
+)
+KEY_PROVIDER_ORDER: tuple[LLMKeyProvider, ...] = (
+    "openai",
+    "anthropic",
+    "gemini",
+    "openrouter",
+)
 VALID_PROVIDERS: frozenset[str] = frozenset(PROVIDER_ORDER)
+VALID_KEY_PROVIDERS: frozenset[str] = frozenset(KEY_PROVIDER_ORDER)
+LLM_KEY_MODES: tuple[LLMKeyMode, ...] = ("auto", "byok_only", "platform_only")
+VALID_KEY_MODES: frozenset[str] = frozenset(LLM_KEY_MODES)
 PROVIDER_DISPLAY_NAMES: dict[LLMProvider, str] = {
     "openai": "OpenAI",
     "anthropic": "Anthropic",
     "gemini": "Google",
-    "deepseek": "DeepSeek",
+    "openrouter": "OpenRouter",
+    "cloudflare": "Cloudflare",
 }
-KEY_TEST_MODELS: dict[LLMProvider, str] = {
-    "openai": "gpt-5.4-mini",
-    "anthropic": "claude-haiku-4-5-20251001",
-    "gemini": "gemini-3-flash-preview",
-    "deepseek": "deepseek-v4-flash",
-}
-OPENAI_REASONING_MODES: tuple[ReasoningMode, ...] = (
-    "default",
-    "none",
-    "low",
-    "medium",
-    "high",
-    "max",
-)
 
 
 class LLMProviderConfig(Protocol):
     enable_openai: bool
     enable_anthropic: bool
     enable_gemini: bool
-    enable_deepseek: bool
+    enable_openrouter: bool
+    enable_cloudflare: bool
     openai_api_key: str | None
     anthropic_api_key: str | None
     gemini_api_key: str | None
-    deepseek_api_key: str | None
+    openrouter_api_key: str | None
+    cloudflare_ai_api_token: str | None
+    cloudflare_ai_account_id: str | None
     real_media_provider_fixtures: bool
 
 
@@ -60,80 +82,43 @@ class ModelCatalogEntry:
     model_name: str
     model_display_name: str
     model_tier: ModelTier
-    reasoning_modes: tuple[ReasoningMode, ...]
-    max_context_tokens: int
 
     @property
     def provider_display_name(self) -> str:
         return PROVIDER_DISPLAY_NAMES[self.provider]
 
+    @property
+    def reasoning_modes(self) -> tuple[ReasoningMode, ...]:
+        return cast(
+            tuple[ReasoningMode, ...],
+            require_model_capabilities(
+                self.provider,
+                self.model_name,
+            ).reasoning_modes,
+        )
+
+    @property
+    def max_context_tokens(self) -> int:
+        context_tokens = require_model_capabilities(
+            self.provider, self.model_name
+        ).max_context_tokens
+        if context_tokens is None:
+            raise AssertionError(f"{self.provider}/{self.model_name} lacks max_context_tokens")
+        return context_tokens
+
 
 MODEL_CATALOG: tuple[ModelCatalogEntry, ...] = (
-    ModelCatalogEntry("openai", "gpt-5.5", "GPT-5.5", "sota", OPENAI_REASONING_MODES, 400000),
-    ModelCatalogEntry(
-        "openai",
-        "gpt-5.4-mini",
-        "GPT-5.4 Mini",
-        "light",
-        OPENAI_REASONING_MODES,
-        400000,
-    ),
-    ModelCatalogEntry(
-        "anthropic",
-        "claude-opus-4-7",
-        "Opus 4.7",
-        "sota",
-        ("default", "none", "low", "medium", "high", "max"),
-        1000000,
-    ),
-    ModelCatalogEntry(
-        "anthropic",
-        "claude-sonnet-4-6",
-        "Sonnet 4.6",
-        "sota",
-        ("default", "none", "low", "medium", "high", "max"),
-        1000000,
-    ),
-    ModelCatalogEntry(
-        "anthropic",
-        "claude-haiku-4-5-20251001",
-        "Haiku 4.5",
-        "light",
-        ("default", "none", "low", "medium", "high"),
-        200000,
-    ),
-    ModelCatalogEntry(
-        "gemini",
-        "gemini-3.1-pro-preview",
-        "Gemini 3.1 Pro",
-        "sota",
-        ("default", "low", "high"),
-        1048576,
-    ),
-    ModelCatalogEntry(
-        "gemini",
-        "gemini-3-flash-preview",
-        "Gemini 3 Flash",
-        "light",
-        ("default", "minimal", "low", "medium", "high"),
-        1048576,
-    ),
-    ModelCatalogEntry(
-        "deepseek",
-        "deepseek-v4-pro",
-        "DeepSeek V4 Pro",
-        "sota",
-        ("default", "high"),
-        128000,
-    ),
-    ModelCatalogEntry(
-        "deepseek",
-        "deepseek-v4-flash",
-        "DeepSeek V4 Flash",
-        "light",
-        ("default", "none", "high"),
-        128000,
-    ),
+    ModelCatalogEntry("openai", "gpt-5.5", "GPT-5.5", "sota"),
+    ModelCatalogEntry("openai", "gpt-5.4-mini", "GPT-5.4 Mini", "light"),
+    ModelCatalogEntry("anthropic", "claude-opus-4-8", "Opus 4.8", "sota"),
+    ModelCatalogEntry("anthropic", "claude-sonnet-4-6", "Sonnet 4.6", "sota"),
+    ModelCatalogEntry("anthropic", "claude-haiku-4-5-20251001", "Haiku 4.5", "light"),
+    ModelCatalogEntry("gemini", "gemini-3.1-pro-preview", "Gemini 3.1 Pro", "sota"),
+    ModelCatalogEntry("gemini", "gemini-3-flash-preview", "Gemini 3 Flash", "light"),
+    ModelCatalogEntry("openrouter", "moonshotai/kimi-k2.6", "Kimi K2.6 via OpenRouter", "sota"),
+    ModelCatalogEntry("openrouter", "openai/gpt-5.5", "GPT-5.5 via OpenRouter", "sota"),
+    ModelCatalogEntry("openrouter", "openai/gpt-5.4-mini", "GPT-5.4 Mini via OpenRouter", "light"),
+    ModelCatalogEntry("cloudflare", "@cf/openai/gpt-oss-20b", "GPT-OSS 20B", "light"),
 )
 
 _MODEL_CATALOG_BY_KEY = {(entry.provider, entry.model_name): entry for entry in MODEL_CATALOG}
@@ -141,13 +126,15 @@ _PROVIDER_ENABLE_ATTRS: dict[LLMProvider, str] = {
     "openai": "enable_openai",
     "anthropic": "enable_anthropic",
     "gemini": "enable_gemini",
-    "deepseek": "enable_deepseek",
+    "openrouter": "enable_openrouter",
+    "cloudflare": "enable_cloudflare",
 }
 _PROVIDER_KEY_ATTRS: dict[LLMProvider, str] = {
     "openai": "openai_api_key",
     "anthropic": "anthropic_api_key",
     "gemini": "gemini_api_key",
-    "deepseek": "deepseek_api_key",
+    "openrouter": "openrouter_api_key",
+    "cloudflare": "cloudflare_ai_api_token",
 }
 
 
@@ -157,16 +144,33 @@ def provider_display_name(provider: str) -> str | None:
     return PROVIDER_DISPLAY_NAMES[cast(LLMProvider, provider)]
 
 
-def key_test_model(provider: str) -> str | None:
-    if provider not in VALID_PROVIDERS:
-        return None
-    return KEY_TEST_MODELS[cast(LLMProvider, provider)]
-
-
 def model_catalog_entry(provider: str, model_name: str) -> ModelCatalogEntry | None:
     if provider not in VALID_PROVIDERS:
         return None
     return _MODEL_CATALOG_BY_KEY.get((cast(LLMProvider, provider), model_name))
+
+
+def model_max_context_tokens(provider: str, model_name: str) -> int:
+    """Shared catalog context window for runtime budgeting."""
+
+    return require_catalog_model(provider, model_name).max_context_tokens
+
+
+def model_reasoning_reserve_tokens(provider: str, model_name: str, reasoning: str) -> int:
+    """Shared catalog reserve for hidden/provider-side reasoning budget."""
+
+    capabilities = require_model_capabilities(provider, model_name)
+    if reasoning not in capabilities.reasoning_modes:
+        raise ValueError(f"Unknown reasoning mode for {provider}/{model_name}: {reasoning}")
+    return capabilities.reasoning_reserve_tokens.get(cast(ReasoningEffort, reasoning), 0)
+
+
+def model_capabilities(provider: str, model_name: str) -> ModelCapability | None:
+    if provider not in VALID_PROVIDERS:
+        return None
+    return DEFAULT_CATALOG.capabilities(
+        ModelRef(provider=cast(LLMProvider, provider), model=model_name)
+    )
 
 
 def require_catalog_model(provider: str, model_name: str) -> ModelCatalogEntry:
@@ -179,6 +183,19 @@ def require_catalog_model(provider: str, model_name: str) -> ModelCatalogEntry:
     return entry
 
 
+def require_model_capabilities(provider: str, model_name: str) -> ModelCapability:
+    capabilities = model_capabilities(provider, model_name)
+    if capabilities is None:
+        # justify-defect: provider/model capabilities are shared runtime catalog truth.
+        raise AssertionError(f"{provider}/{model_name} is not in MODEL_CATALOG")
+    return capabilities
+
+
+def chat_surface_capable(provider: str, model_name: str) -> bool:
+    capabilities = require_model_capabilities(provider, model_name)
+    return capabilities.generation and capabilities.streaming and capabilities.tool_calling
+
+
 def provider_sort_rank(provider: str) -> int:
     if provider not in VALID_PROVIDERS:
         return 999
@@ -189,6 +206,12 @@ def enabled_provider_names(settings: LLMProviderConfig) -> tuple[LLMProvider, ..
     return tuple(provider for provider in PROVIDER_ORDER if is_provider_enabled(provider, settings))
 
 
+def enabled_key_provider_names(settings: LLMProviderConfig) -> tuple[LLMKeyProvider, ...]:
+    return tuple(
+        provider for provider in KEY_PROVIDER_ORDER if is_provider_enabled(provider, settings)
+    )
+
+
 def is_provider_enabled(provider: str, settings: LLMProviderConfig) -> bool:
     if provider not in VALID_PROVIDERS:
         return False
@@ -197,6 +220,8 @@ def is_provider_enabled(provider: str, settings: LLMProviderConfig) -> bool:
 
 def configured_platform_key(provider: str, settings: LLMProviderConfig) -> str | None:
     if provider not in VALID_PROVIDERS:
+        return None
+    if provider == "cloudflare" and not settings.cloudflare_ai_account_id:
         return None
     return getattr(settings, _PROVIDER_KEY_ATTRS[cast(LLMProvider, provider)])
 

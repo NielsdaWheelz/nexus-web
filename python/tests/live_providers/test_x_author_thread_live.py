@@ -139,7 +139,7 @@ def test_live_x_author_thread_ingest_indexes_real_provider_thread(auth_client, d
         tmp_path,
         "live-x-author-thread-trace.json",
         {
-            "source_url": source_url,
+            "source_kind": "x_author_thread",
             "media": media_trace,
             "fragment": fragment_trace,
             "evidence": evidence_trace,
@@ -148,8 +148,7 @@ def test_live_x_author_thread_ingest_indexes_real_provider_thread(auth_client, d
                 "provider": provider_event["provider"],
                 "capability": provider_event["capability"],
                 "status": provider_event["status"],
-                "target_ref": provider_event["target_ref"],
-                "metadata": provider_event["metadata"],
+                "metadata": {"post_count": provider_event["metadata"]["post_count"]},
             },
         },
     )

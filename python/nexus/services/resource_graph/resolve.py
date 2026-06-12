@@ -349,7 +349,9 @@ def _note_locator_from_summary_locator(raw: object) -> dict[str, object] | None:
 def _page_visible(db: Session, *, viewer_id: UUID, page_id: UUID) -> bool:
     return bool(
         db.scalar(
-            text("SELECT EXISTS (SELECT 1 FROM pages WHERE id = :page_id AND user_id = :viewer_id)"),
+            text(
+                "SELECT EXISTS (SELECT 1 FROM pages WHERE id = :page_id AND user_id = :viewer_id)"
+            ),
             {"page_id": page_id, "viewer_id": viewer_id},
         )
     )
@@ -568,9 +570,7 @@ def _load_content_chunk(
             out.append(_missing(ref.uri, "content_chunk"))
             continue
         out.append(
-            LoadedResource(
-                uri=ref.uri, scheme="content_chunk", body=str(row[3] or ""), title=title
-            )
+            LoadedResource(uri=ref.uri, scheme="content_chunk", body=str(row[3] or ""), title=title)
         )
     return out
 

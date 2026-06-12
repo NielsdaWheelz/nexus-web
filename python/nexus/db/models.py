@@ -3444,7 +3444,8 @@ class LLMProvider(str, PyEnum):
     openai = "openai"
     anthropic = "anthropic"
     gemini = "gemini"
-    deepseek = "deepseek"
+    openrouter = "openrouter"
+    cloudflare = "cloudflare"
 
 
 class KeyModeRequested(str, PyEnum):
@@ -3678,7 +3679,7 @@ class Model(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "provider IN ('openai', 'anthropic', 'gemini', 'deepseek')",
+            "provider IN ('openai', 'anthropic', 'gemini', 'openrouter', 'cloudflare')",
             name="ck_models_provider",
         ),
         CheckConstraint(
@@ -3703,6 +3704,7 @@ class LLMCall(Base):
     owner_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     call_seq: Mapped[int] = mapped_column(Integer, nullable=False)
     provider: Mapped[str] = mapped_column(Text, nullable=False)
+    provider_route: Mapped[str] = mapped_column(Text, nullable=False)
     model_name: Mapped[str] = mapped_column(Text, nullable=False)
     llm_operation: Mapped[str] = mapped_column(Text, nullable=False)
     streaming: Mapped[bool] = mapped_column(Boolean, nullable=False)
@@ -3720,6 +3722,24 @@ class LLMCall(Base):
     error_class: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
     provider_request_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    input_cost_usd_micros: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    output_cost_usd_micros: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    cache_write_cost_usd_micros: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    cache_read_cost_usd_micros: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    reasoning_cost_usd_micros: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    total_cost_usd_micros: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    cost_status: Mapped[str] = mapped_column(Text, nullable=False)
+    pricing_snapshot: Mapped[dict[str, object] | None] = mapped_column(
+        JSONB(none_as_null=True), nullable=True
+    )
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1"))
+    retry_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    terminal_attempt_status: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'success'")
+    )
+    provider_attempts: Mapped[list[dict[str, object]] | None] = mapped_column(
+        JSONB(none_as_null=True), nullable=True
+    )
     provider_usage: Mapped[dict[str, object] | None] = mapped_column(
         JSONB(none_as_null=True), nullable=True
     )
@@ -3737,8 +3757,12 @@ class LLMCall(Base):
         ),
         CheckConstraint("call_seq >= 1", name="ck_llm_calls_call_seq_positive"),
         CheckConstraint(
-            "provider IN ('openai', 'anthropic', 'gemini', 'deepseek')",
+            "provider IN ('openai', 'anthropic', 'gemini', 'openrouter', 'cloudflare')",
             name="ck_llm_calls_provider",
+        ),
+        CheckConstraint(
+            "provider_route IN ('openai', 'anthropic', 'gemini', 'openrouter', 'cloudflare')",
+            name="ck_llm_calls_provider_route",
         ),
         CheckConstraint(
             "input_tokens >= 0 AND output_tokens >= 0 AND total_tokens >= 0 "
@@ -3749,6 +3773,50 @@ class LLMCall(Base):
         CheckConstraint(
             "provider_usage IS NULL OR jsonb_typeof(provider_usage) = 'object'",
             name="ck_llm_calls_provider_usage_object",
+        ),
+        CheckConstraint(
+            "attempt_count >= 1 AND retry_count >= 0 AND retry_count <= attempt_count - 1",
+            name="ck_llm_calls_attempt_counts",
+        ),
+        CheckConstraint(
+            "terminal_attempt_status IN ('success', 'retryable_error', 'terminal_error', 'abandoned')",
+            name="ck_llm_calls_terminal_attempt_status",
+        ),
+        CheckConstraint(
+            "provider_attempts IS NULL OR jsonb_typeof(provider_attempts) = 'array'",
+            name="ck_llm_calls_provider_attempts_array",
+        ),
+        CheckConstraint(
+            "cost_status IN ('estimated', 'missing_pricing', 'missing_usage', 'not_token_priced')",
+            name="ck_llm_calls_cost_status",
+        ),
+        CheckConstraint(
+            "input_cost_usd_micros IS NULL OR input_cost_usd_micros >= 0",
+            name="ck_llm_calls_input_cost_non_negative",
+        ),
+        CheckConstraint(
+            "output_cost_usd_micros IS NULL OR output_cost_usd_micros >= 0",
+            name="ck_llm_calls_output_cost_non_negative",
+        ),
+        CheckConstraint(
+            "cache_write_cost_usd_micros IS NULL OR cache_write_cost_usd_micros >= 0",
+            name="ck_llm_calls_cache_write_cost_non_negative",
+        ),
+        CheckConstraint(
+            "cache_read_cost_usd_micros IS NULL OR cache_read_cost_usd_micros >= 0",
+            name="ck_llm_calls_cache_read_cost_non_negative",
+        ),
+        CheckConstraint(
+            "reasoning_cost_usd_micros IS NULL OR reasoning_cost_usd_micros >= 0",
+            name="ck_llm_calls_reasoning_cost_non_negative",
+        ),
+        CheckConstraint(
+            "total_cost_usd_micros IS NULL OR total_cost_usd_micros >= 0",
+            name="ck_llm_calls_total_cost_non_negative",
+        ),
+        CheckConstraint(
+            "pricing_snapshot IS NULL OR jsonb_typeof(pricing_snapshot) = 'object'",
+            name="ck_llm_calls_pricing_snapshot_object",
         ),
         UniqueConstraint("owner_kind", "owner_id", "call_seq", name="uq_llm_calls_owner_call_seq"),
         Index("ix_llm_calls_owner", "owner_kind", "owner_id"),
@@ -4475,6 +4543,14 @@ class ChatRun(Base):
             "length(idempotency_key) >= 1 AND length(idempotency_key) <= 128",
             name="ck_chat_runs_idempotency_key_length",
         ),
+        CheckConstraint(
+            "reasoning IN ('default', 'none', 'minimal', 'low', 'medium', 'high', 'max')",
+            name="ck_chat_runs_reasoning",
+        ),
+        CheckConstraint(
+            "key_mode IN ('auto', 'byok_only', 'platform_only')",
+            name="ck_chat_runs_key_mode",
+        ),
         UniqueConstraint(
             "owner_user_id",
             "idempotency_key",
@@ -4704,7 +4780,7 @@ class UserApiKey(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "provider IN ('openai', 'anthropic', 'gemini', 'deepseek')",
+            "provider IN ('openai', 'anthropic', 'gemini', 'openrouter')",
             name="ck_user_api_keys_provider",
         ),
         CheckConstraint(

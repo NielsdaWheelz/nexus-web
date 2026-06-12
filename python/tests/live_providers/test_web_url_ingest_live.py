@@ -157,7 +157,7 @@ def test_live_web_url_ingest_indexes_real_article_evidence(auth_client, direct_d
         tmp_path,
         "live-web-url-nasa-trace.json",
         {
-            "source_url": "https://science.nasa.gov/solar-system/moon/theres-water-on-the-moon/",
+            "source_kind": "web_url",
             "media": media_trace,
             "initial_worker_result": initial_result,
             "initial_evidence": initial_evidence_trace,

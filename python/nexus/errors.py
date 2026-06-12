@@ -6,7 +6,9 @@ All API errors are defined here with their corresponding HTTP status codes.
 from enum import Enum
 from typing import Any
 
-from llm_calling.errors import LLMErrorCode
+from provider_runtime.errors import ModelCallError, ModelCallErrorCode
+
+_ERROR_DETAIL_MAX_CHARS = 1000
 
 
 class ApiErrorCode(str, Enum):
@@ -303,16 +305,41 @@ ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
 }
 
 
-LLM_ERROR_CODE_TO_API_ERROR_CODE: dict[LLMErrorCode, ApiErrorCode] = {
-    LLMErrorCode.INVALID_KEY: ApiErrorCode.E_LLM_INVALID_KEY,
-    LLMErrorCode.RATE_LIMIT: ApiErrorCode.E_LLM_RATE_LIMIT,
-    LLMErrorCode.CONTEXT_TOO_LARGE: ApiErrorCode.E_LLM_CONTEXT_TOO_LARGE,
-    LLMErrorCode.TIMEOUT: ApiErrorCode.E_LLM_TIMEOUT,
-    LLMErrorCode.PROVIDER_DOWN: ApiErrorCode.E_LLM_PROVIDER_DOWN,
-    LLMErrorCode.BAD_REQUEST: ApiErrorCode.E_LLM_BAD_REQUEST,
-    LLMErrorCode.MODEL_NOT_AVAILABLE: ApiErrorCode.E_MODEL_NOT_AVAILABLE,
-    LLMErrorCode.QUOTA_EXCEEDED: ApiErrorCode.E_LLM_QUOTA_EXCEEDED,
+LLM_ERROR_CODE_TO_API_ERROR_CODE: dict[ModelCallErrorCode, ApiErrorCode] = {
+    ModelCallErrorCode.INVALID_KEY: ApiErrorCode.E_LLM_INVALID_KEY,
+    ModelCallErrorCode.RATE_LIMIT: ApiErrorCode.E_LLM_RATE_LIMIT,
+    ModelCallErrorCode.CONTEXT_TOO_LARGE: ApiErrorCode.E_LLM_CONTEXT_TOO_LARGE,
+    ModelCallErrorCode.TIMEOUT: ApiErrorCode.E_LLM_TIMEOUT,
+    ModelCallErrorCode.PROVIDER_DOWN: ApiErrorCode.E_LLM_PROVIDER_DOWN,
+    ModelCallErrorCode.BAD_REQUEST: ApiErrorCode.E_LLM_BAD_REQUEST,
+    ModelCallErrorCode.MODEL_NOT_AVAILABLE: ApiErrorCode.E_MODEL_NOT_AVAILABLE,
+    ModelCallErrorCode.QUOTA_EXCEEDED: ApiErrorCode.E_LLM_QUOTA_EXCEEDED,
+    ModelCallErrorCode.TOOL_ARGUMENTS_INVALID: ApiErrorCode.E_LLM_BAD_REQUEST,
 }
+
+
+def api_error_code_for_model_call(error_code: ModelCallErrorCode) -> ApiErrorCode:
+    """Map provider-runtime errors defensively when shared/runtime versions drift."""
+    return LLM_ERROR_CODE_TO_API_ERROR_CODE.get(error_code, ApiErrorCode.E_LLM_PROVIDER_DOWN)
+
+
+def exception_error_detail(
+    exc: BaseException,
+    *,
+    provider_request_id: str | None = None,
+    max_chars: int = _ERROR_DETAIL_MAX_CHARS,
+) -> str:
+    """Operator-facing terminal detail with provider request id when available."""
+    request_id = provider_request_id
+    if request_id is None and isinstance(exc, ModelCallError):
+        request_id = exc.provider_request_id
+    detail = f"{type(exc).__name__}: {exc}"
+    if request_id is None:
+        return detail[:max_chars]
+    suffix = f" (provider_request_id={request_id})"
+    if max_chars <= len(suffix):
+        return suffix[:max_chars]
+    return f"{detail[: max_chars - len(suffix)]}{suffix}"
 
 
 class ApiError(Exception):

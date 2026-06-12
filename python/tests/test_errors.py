@@ -8,11 +8,12 @@ Verifies:
 """
 
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from llm_calling.errors import LLMErrorCode
+from provider_runtime.errors import ModelCallErrorCode
 from starlette.requests import ClientDisconnect
 
 from nexus.app import validate_json_request_body
@@ -24,6 +25,7 @@ from nexus.errors import (
     ForbiddenError,
     InvalidRequestError,
     NotFoundError,
+    api_error_code_for_model_call,
 )
 from nexus.responses import (
     error_response,
@@ -133,15 +135,11 @@ class TestErrorCodeToStatus:
 
 
 class TestLlmErrorCodeMap:
-    """Tests for the LLMErrorCode -> ApiErrorCode table."""
+    """Tests for the ModelCallErrorCode -> ApiErrorCode table."""
 
     def test_every_llm_error_code_is_mapped(self):
-        """Consumers index the map directly; an unmapped provider code is a KeyError.
-
-        This also forces the nexus-side mapping the moment llm-calling grows a
-        code (e.g. QUOTA_EXCEEDED -> E_LLM_QUOTA_EXCEEDED, spec §1.1).
-        """
-        for code in LLMErrorCode:
+        """Force Nexus to classify new provider-runtime error codes deliberately."""
+        for code in ModelCallErrorCode:
             assert code in LLM_ERROR_CODE_TO_API_ERROR_CODE, f"Missing mapping for {code}"
 
     def test_mapped_codes_are_llm_api_error_codes(self):
@@ -149,6 +147,12 @@ class TestLlmErrorCodeMap:
             assert api_code.value.startswith(("E_LLM_", "E_MODEL_")), (
                 f"{llm_code} maps to non-LLM ApiErrorCode {api_code}"
             )
+
+    def test_unknown_model_call_error_falls_back_to_provider_down(self):
+        assert (
+            api_error_code_for_model_call(cast(ModelCallErrorCode, "FUTURE_PROVIDER_RUNTIME_CODE"))
+            == ApiErrorCode.E_LLM_PROVIDER_DOWN
+        )
 
 
 class TestApiErrorClass:

@@ -5,10 +5,11 @@ from __future__ import annotations
 from uuid import UUID
 
 import httpx
-from llm_calling.router import LLMRouter
+from provider_runtime import ModelRuntime
 from sqlalchemy.orm import Session
 
 from nexus.db.models import OracleReading
+from nexus.errors import exception_error_detail
 from nexus.logging import get_logger
 from nexus.schemas.oracle import oracle_done_payload
 from nexus.services import run_kit
@@ -24,7 +25,7 @@ def oracle_reading_generate(reading_id: str) -> dict:
     reading_uuid = UUID(reading_id)
     logger.info("oracle_reading_started", reading_id=reading_id)
 
-    async def _handler(db: Session, router: LLMRouter, _client: httpx.AsyncClient) -> dict:
+    async def _handler(db: Session, router: ModelRuntime, _client: httpx.AsyncClient) -> dict:
         return await execute_reading(db, reading_id=reading_uuid, llm_router=router)
 
     def _on_worker_exception(db: Session, exc: Exception) -> dict:
@@ -41,7 +42,7 @@ def oracle_reading_generate(reading_id: str) -> dict:
                 status="failed",
                 done_payload=oracle_done_payload(status="failed", error_code="E_INTERNAL"),
                 error_code="E_INTERNAL",
-                error_detail=f"{type(exc).__name__}: {exc}"[:1000],
+                error_detail=exception_error_detail(exc),
             ),
         )
         if reading is None:

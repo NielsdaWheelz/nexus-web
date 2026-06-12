@@ -14,12 +14,12 @@ import { ChevronDown, X } from "lucide-react";
 import Button from "@/components/ui/Button";
 import MobileSheet from "@/components/ui/MobileSheet";
 import Select from "@/components/ui/Select";
-import Toggle from "@/components/ui/Toggle";
 import { useDismissOnOutsideOrEscape } from "@/lib/ui/useDismissOnOutsideOrEscape";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import {
   getModelSourceLabel,
   isReasoningMode,
+  KEY_MODE_LABELS,
   REASONING_LABELS,
   type UseChatModels,
 } from "./useChatModels";
@@ -29,8 +29,6 @@ interface ModelSettingsPopoverProps {
   open: boolean;
   setOpen: (open: boolean) => void;
   models: UseChatModels;
-  onlyUseMyKeys: boolean;
-  setOnlyUseMyKeys: (next: boolean) => void;
   disabled: boolean;
   buttonRef: RefObject<HTMLButtonElement | null>;
 }
@@ -39,8 +37,6 @@ export default function ModelSettingsPopover({
   open,
   setOpen,
   models,
-  onlyUseMyKeys,
-  setOnlyUseMyKeys,
   disabled,
   buttonRef,
 }: ModelSettingsPopoverProps) {
@@ -65,12 +61,15 @@ export default function ModelSettingsPopover({
     selectedProvider,
     selectedModelId,
     selectedReasoning,
+    selectedKeyMode,
     providerOptions,
     reasoningOptions,
+    keyModeOptions,
     modelSummary,
     setProvider,
     setModel,
     setReasoning,
+    setKeyMode,
   } = models;
 
   const settingsContent = (
@@ -132,7 +131,7 @@ export default function ModelSettingsPopover({
             .map((model) => (
               <option key={model.id} value={model.id}>
                 {model.model_display_name} ({model.model_tier}) -{" "}
-                {getModelSourceLabel(model)}
+                {getModelSourceLabel(model, selectedKeyMode)}
               </option>
             ))}
         </Select>
@@ -159,15 +158,29 @@ export default function ModelSettingsPopover({
         </Select>
       </label>
 
-      <Toggle
-        checked={onlyUseMyKeys}
-        onCheckedChange={(next) => {
-          setOnlyUseMyKeys(next);
-          closeOnDesktop();
-        }}
-        disabled={disabled}
-        label="Use my keys only"
-      />
+      <label className={styles.settingsField}>
+        <span className={styles.settingsLabel}>Key mode</span>
+        <Select
+          value={selectedKeyMode}
+          onChange={(e) => {
+            const mode = e.target.value;
+            if (mode in KEY_MODE_LABELS) {
+              setKeyMode(mode as keyof typeof KEY_MODE_LABELS);
+            }
+            closeOnDesktop();
+          }}
+          disabled={disabled || keyModeOptions.length === 0}
+        >
+          {keyModeOptions.length === 0 && (
+            <option value="">No key modes available</option>
+          )}
+          {keyModeOptions.map((mode) => (
+            <option key={mode} value={mode}>
+              {KEY_MODE_LABELS[mode]}
+            </option>
+          ))}
+        </Select>
+      </label>
     </>
   );
 

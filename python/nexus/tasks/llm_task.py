@@ -1,4 +1,4 @@
-"""The one worker envelope for LLM-calling jobs.
+"""The one worker envelope for LLM provider jobs.
 
 ``run_llm_task`` owns the mechanics every LLM task body used to hand-copy: one
 DB session, one fresh event loop, one ``httpx.AsyncClient`` (per-kind timeout
@@ -18,13 +18,13 @@ from dataclasses import dataclass
 from typing import cast
 
 import httpx
-from llm_calling.router import LLMRouter
+from provider_runtime import ModelRuntime
 from sqlalchemy.orm import Session
 
 from nexus.config import get_settings
 from nexus.db.session import get_session_factory
 from nexus.logging import get_logger
-from nexus.services.real_media_fixture_llm import RealMediaFixtureLLMRouter
+from nexus.services.real_media_fixture_llm import RealMediaFixtureModelRuntime
 
 logger = get_logger(__name__)
 
@@ -40,7 +40,7 @@ class LlmTaskSpec:
 
 def run_llm_task[R](
     spec: LlmTaskSpec,
-    handler: Callable[[Session, LLMRouter, httpx.AsyncClient], Awaitable[R]],
+    handler: Callable[[Session, ModelRuntime, httpx.AsyncClient], Awaitable[R]],
     *,
     on_worker_exception: Callable[[Session, Exception], R] | None = None,
 ) -> R:
@@ -64,25 +64,28 @@ def run_llm_task[R](
         ) as client:
             if settings.real_media_provider_fixtures:
                 # Fixture runs must never reach real providers, whatever the kind.
-                # The fixture router mirrors LLMRouter's call surface (pinned by
+                # The fixture router mirrors ModelRuntime's call surface (pinned by
                 # test_real_media_fixture_llm.py); the cast keeps handlers typed
                 # against the real router.
                 router = cast(
-                    LLMRouter,
-                    RealMediaFixtureLLMRouter(
+                    ModelRuntime,
+                    RealMediaFixtureModelRuntime(
                         enable_openai=settings.enable_openai,
                         enable_anthropic=settings.enable_anthropic,
                         enable_gemini=settings.enable_gemini,
-                        enable_deepseek=settings.enable_deepseek,
+                        enable_openrouter=settings.enable_openrouter,
+                        enable_cloudflare=settings.enable_cloudflare,
                     ),
                 )
             else:
-                router = LLMRouter(
+                router = ModelRuntime(
                     client,
                     enable_openai=settings.enable_openai,
                     enable_anthropic=settings.enable_anthropic,
                     enable_gemini=settings.enable_gemini,
-                    enable_deepseek=settings.enable_deepseek,
+                    enable_openrouter=settings.enable_openrouter,
+                    enable_cloudflare=settings.enable_cloudflare,
+                    cloudflare_account_id=settings.cloudflare_ai_account_id,
                 )
             return await handler(db, router, client)
 

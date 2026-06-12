@@ -10,7 +10,7 @@ site fails here until mirrored. ``ground_indices`` enforces THE grounding
 invariant, and ``run_structured_synthesis`` makes one ``llm.generate`` call
 plus at most ONE bounded repair round (parse/schema failure or semantic
 ``validate`` rejection) with usage summed across attempts. Provider-call errors
-(``LLMError``) propagate unchanged and are never repaired. The fake routers
+(``ModelCallError``) propagate unchanged and are never repaired. The fake routers
 stand in for the external LLM provider boundary (the only mock allowed here).
 """
 
@@ -18,8 +18,15 @@ import json
 from dataclasses import replace
 
 import pytest
-from llm_calling.errors import LLMError, LLMErrorCode
-from llm_calling.types import LLMRequest, LLMResponse, LLMUsage, Turn
+from provider_runtime.errors import ModelCallError, ModelCallErrorCode
+from provider_runtime.types import (
+    ModelCall,
+    ModelMessage,
+    ModelRef,
+    ModelResponse,
+    ReasoningConfig,
+    TokenUsage,
+)
 from pydantic import BaseModel, ConfigDict
 
 from nexus.services.library_intelligence_reduce import _LI_SYSTEM_PROMPT
@@ -48,11 +55,11 @@ class _Output(BaseModel):
 class _FakeRouter:
     """Returns the same canned response for every ``generate`` call."""
 
-    def __init__(self, response: LLMResponse) -> None:
+    def __init__(self, response: ModelResponse) -> None:
         self.response = response
         self.calls = 0
 
-    async def generate(self, _provider, _request, _api_key, *, timeout_s):
+    async def generate(self, _request, *, key, timeout_s):
         self.calls += 1
         return self.response
 
@@ -60,14 +67,14 @@ class _FakeRouter:
 class _ScriptedRouter:
     """Plays scripted responses (or raises scripted errors) in order, capturing requests."""
 
-    def __init__(self, script: list[LLMResponse | LLMError]) -> None:
+    def __init__(self, script: list[ModelResponse | ModelCallError]) -> None:
         self.script = list(script)
-        self.requests: list[LLMRequest] = []
+        self.requests: list[ModelCall] = []
 
-    async def generate(self, _provider, request, _api_key, *, timeout_s):
+    async def generate(self, request, *, key, timeout_s):
         self.requests.append(request)
         item = self.script.pop(0)
-        if isinstance(item, LLMError):
+        if isinstance(item, ModelCallError):
             raise item
         return item
 
@@ -75,11 +82,11 @@ class _ScriptedRouter:
 class _RaisingRouter:
     """Raises a provider error for every ``generate`` call."""
 
-    def __init__(self, error: LLMError) -> None:
+    def __init__(self, error: ModelCallError) -> None:
         self.error = error
         self.calls = 0
 
-    async def generate(self, _provider, _request, _api_key, *, timeout_s):
+    async def generate(self, _request, *, key, timeout_s):
         self.calls += 1
         raise self.error
 
@@ -87,25 +94,26 @@ class _RaisingRouter:
 def _request() -> SynthesisRequest:
     return SynthesisRequest(
         provider="anthropic",
-        llm_request=LLMRequest(
-            model_name="test-model",
-            messages=[Turn(role="user", content="hi")],
-            max_tokens=128,
+        llm_request=ModelCall(
+            model=ModelRef(provider="anthropic", model="claude-haiku-4-5-20251001"),
+            messages=[ModelMessage(role="user", content="hi")],
+            max_output_tokens=128,
+            reasoning=ReasoningConfig(effort="none"),
         ),
         api_key="sk-test",
         timeout_s=30,
     )
 
 
-def _response(text: str, *, usage: LLMUsage | None = None, request_id: str | None = None):
-    return LLMResponse(text=text, usage=usage, provider_request_id=request_id)
+def _response(text: str, *, usage: TokenUsage | None = None, request_id: str | None = None):
+    return ModelResponse(text=text, usage=usage, provider_request_id=request_id)
 
 
-def _repair_turns(raw: str, reason: str) -> list[Turn]:
+def _repair_turns(raw: str, reason: str) -> list[ModelMessage]:
     """The exact two turns the repair round appends (pinned copy)."""
     return [
-        Turn(role="assistant", content=raw),
-        Turn(
+        ModelMessage(role="assistant", content=raw),
+        ModelMessage(
             role="user",
             content=(
                 f"Your previous response was invalid: {reason}. "
@@ -404,6 +412,7 @@ def test_request_golden_reproduction_oracle():
     question = "  What stirs beneath the still water?  "
 
     request = build_synthesis_request(
+        provider="anthropic",
         system_prompt=_ORACLE_EXPECTED_PROMPT,
         candidates_header="CANDIDATES",
         rendered_candidates=rendered,
@@ -412,11 +421,11 @@ def test_request_golden_reproduction_oracle():
         max_tokens=2000,
     )
 
-    assert request == LLMRequest(
-        model_name="claude-haiku-4-5-20251001",
+    assert request == ModelCall(
+        model=ModelRef(provider="anthropic", model="claude-haiku-4-5-20251001"),
         messages=[
-            Turn(role="system", content=_ORACLE_EXPECTED_PROMPT, cache_ttl="5m"),
-            Turn(
+            ModelMessage(role="system", content=_ORACLE_EXPECTED_PROMPT, cache_ttl="5m"),
+            ModelMessage(
                 role="user",
                 content=(
                     f"CANDIDATES:\n{rendered}\n\n"
@@ -426,9 +435,8 @@ def test_request_golden_reproduction_oracle():
                 cache_ttl="none",
             ),
         ],
-        max_tokens=2000,
-        reasoning_effort="none",
-        prompt_cache_key=None,
+        max_output_tokens=2000,
+        reasoning=ReasoningConfig(effort="none"),
     )
 
 
@@ -443,6 +451,7 @@ def test_request_golden_reproduction_li_reduce():
     )
 
     request = build_synthesis_request(
+        provider="anthropic",
         system_prompt=_LI_EXPECTED_PROMPT,
         candidates_header="UNIT CLAIMS",
         rendered_candidates=rendered,
@@ -451,11 +460,11 @@ def test_request_golden_reproduction_li_reduce():
         max_tokens=4000,
     )
 
-    assert request == LLMRequest(
-        model_name="claude-sonnet-4-6",
+    assert request == ModelCall(
+        model=ModelRef(provider="anthropic", model="claude-sonnet-4-6"),
         messages=[
-            Turn(role="system", content=_LI_EXPECTED_PROMPT, cache_ttl="5m"),
-            Turn(
+            ModelMessage(role="system", content=_LI_EXPECTED_PROMPT, cache_ttl="5m"),
+            ModelMessage(
                 role="user",
                 content=(
                     f"UNIT CLAIMS:\n{rendered}\n\n"
@@ -464,9 +473,8 @@ def test_request_golden_reproduction_li_reduce():
                 cache_ttl="none",
             ),
         ],
-        max_tokens=4000,
-        reasoning_effort="none",
-        prompt_cache_key=None,
+        max_output_tokens=4000,
+        reasoning=ReasoningConfig(effort="none"),
     )
 
 
@@ -475,6 +483,7 @@ def test_request_golden_reproduction_media_unit():
     rendered = "\n\n".join(f"[{index}] {text}" for index, text in enumerate(texts))
 
     request = build_synthesis_request(
+        provider="anthropic",
         system_prompt=_MEDIA_UNIT_EXPECTED_PROMPT,
         candidates_header="CANDIDATES",
         rendered_candidates=rendered,
@@ -483,11 +492,11 @@ def test_request_golden_reproduction_media_unit():
         max_tokens=2000,
     )
 
-    assert request == LLMRequest(
-        model_name="claude-haiku-4-5-20251001",
+    assert request == ModelCall(
+        model=ModelRef(provider="anthropic", model="claude-haiku-4-5-20251001"),
         messages=[
-            Turn(role="system", content=_MEDIA_UNIT_EXPECTED_PROMPT, cache_ttl="5m"),
-            Turn(
+            ModelMessage(role="system", content=_MEDIA_UNIT_EXPECTED_PROMPT, cache_ttl="5m"),
+            ModelMessage(
                 role="user",
                 content=(
                     f"CANDIDATES:\n{rendered}\n\nRespond with the strict JSON object as instructed."
@@ -495,9 +504,8 @@ def test_request_golden_reproduction_media_unit():
                 cache_ttl="none",
             ),
         ],
-        max_tokens=2000,
-        reasoning_effort="none",
-        prompt_cache_key=None,
+        max_output_tokens=2000,
+        reasoning=ReasoningConfig(effort="none"),
     )
 
 
@@ -543,7 +551,7 @@ def test_ground_indices_uses_index_of_accessor():
 
 
 async def test_valid_json_validates_into_schema_and_surfaces_usage():
-    usage = LLMUsage(input_tokens=10, output_tokens=5, total_tokens=15)
+    usage = TokenUsage(input_tokens=10, output_tokens=5, total_tokens=15)
     router = _FakeRouter(
         _response(
             json.dumps({"title": "Folio", "count": 3}),
@@ -619,14 +627,14 @@ async def test_extra_keys_raise_typed_error_under_forbid():
 
 async def test_provider_error_propagates_unchanged_without_repair():
     # The provider-call failure must NOT be wrapped — callers (Oracle) map each
-    # LLMErrorCode to a distinct domain error code — and must not be repaired.
-    error = LLMError(LLMErrorCode.PROVIDER_DOWN, "boom", provider="anthropic")
+    # ModelCallErrorCode to a distinct domain error code — and must not be repaired.
+    error = ModelCallError(ModelCallErrorCode.PROVIDER_DOWN, "boom", provider="anthropic")
     router = _RaisingRouter(error)
 
-    with pytest.raises(LLMError) as excinfo:
+    with pytest.raises(ModelCallError) as excinfo:
         await run_structured_synthesis(llm=router, request=_request(), schema=_Output)
 
-    assert excinfo.value.error_code is LLMErrorCode.PROVIDER_DOWN
+    assert excinfo.value.error_code is ModelCallErrorCode.PROVIDER_DOWN
     assert router.calls == 1, "provider errors are never repaired"
 
 
@@ -635,8 +643,8 @@ async def test_provider_error_propagates_unchanged_without_repair():
 
 async def test_parse_failure_repairs_once_with_appended_turns_and_summed_usage():
     bad = "{not valid json,,,}"
-    first_usage = LLMUsage(input_tokens=10, output_tokens=5, total_tokens=15)
-    second_usage = LLMUsage(
+    first_usage = TokenUsage(input_tokens=10, output_tokens=5, total_tokens=15)
+    second_usage = TokenUsage(
         input_tokens=20, output_tokens=7, total_tokens=27, cache_read_input_tokens=9
     )
     router = _ScriptedRouter(
@@ -659,7 +667,7 @@ async def test_parse_failure_repairs_once_with_appended_turns_and_summed_usage()
         ],
     )
     assert result.value == _Output(title="Folio", count=3)
-    assert result.usage == LLMUsage(
+    assert result.usage == TokenUsage(
         input_tokens=30, output_tokens=12, total_tokens=42, cache_read_input_tokens=9
     )
 
@@ -709,18 +717,18 @@ async def test_second_validate_rejection_raises_the_reason():
 
 
 async def test_provider_error_on_the_repair_attempt_propagates_unchanged():
-    error = LLMError(LLMErrorCode.PROVIDER_DOWN, "boom", provider="anthropic")
+    error = ModelCallError(ModelCallErrorCode.PROVIDER_DOWN, "boom", provider="anthropic")
     router = _ScriptedRouter([_response("not json at all"), error])
 
-    with pytest.raises(LLMError) as excinfo:
+    with pytest.raises(ModelCallError) as excinfo:
         await run_structured_synthesis(llm=router, request=_request(), schema=_Output)
 
-    assert excinfo.value.error_code is LLMErrorCode.PROVIDER_DOWN
+    assert excinfo.value.error_code is ModelCallErrorCode.PROVIDER_DOWN
     assert len(router.requests) == 2
 
 
 async def test_repair_usage_sum_tolerates_a_missing_attempt_usage():
-    second_usage = LLMUsage(input_tokens=8, output_tokens=2, total_tokens=10)
+    second_usage = TokenUsage(input_tokens=8, output_tokens=2, total_tokens=10)
     router = _ScriptedRouter(
         [
             _response("not json at all"),  # usage=None

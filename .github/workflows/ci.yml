@@ -60,6 +60,48 @@ jobs:
       - name: Run static checks
         run: PATH="$(go env GOPATH)/bin:$PATH" make check
 
+  test-provider-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: static-checks
+    env:
+      LLM_CALLING_DIR: llm-calling
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Resolve provider-runtime revision
+        id: provider-runtime
+        run: |
+          rev="$(sed -n 's/^provider-runtime.*rev = "\([0-9a-f]*\)".*/\1/p' python/pyproject.toml)"
+          if [ -z "$rev" ]; then
+            echo "::error title=Missing provider-runtime pin::python/pyproject.toml does not pin provider-runtime by git rev."
+            exit 1
+          fi
+          echo "rev=$rev" >> "$GITHUB_OUTPUT"
+
+      - name: Check out provider-runtime
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          repository: NielsdaWheelz/llm-calling
+          ref: ${{ steps.provider-runtime.outputs.rev }}
+          path: llm-calling
+          persist-credentials: false
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: llm-calling/uv.lock
+
+      - name: Test pinned provider-runtime
+        run: make test-provider-runtime
+
   audit:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -480,13 +522,41 @@ jobs:
     needs: test-real-media
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      CLOUDFLARE_AI_API_TOKEN: ${{ secrets.CLOUDFLARE_AI_API_TOKEN }}
+      CLOUDFLARE_AI_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_AI_ACCOUNT_ID }}
       PODCAST_INDEX_API_KEY: ${{ secrets.PODCAST_INDEX_API_KEY }}
       PODCAST_INDEX_API_SECRET: ${{ secrets.PODCAST_INDEX_API_SECRET }}
       DEEPGRAM_API_KEY: ${{ secrets.DEEPGRAM_API_KEY }}
+      YOUTUBE_DATA_API_KEY: ${{ secrets.YOUTUBE_DATA_API_KEY }}
+      X_API_BEARER_TOKEN: ${{ secrets.X_API_BEARER_TOKEN }}
+      X_LIVE_TEST_POST_URL: ${{ secrets.X_LIVE_TEST_POST_URL }}
+      X_LIVE_TEST_EXPECTED_TEXT: ${{ secrets.X_LIVE_TEST_EXPECTED_TEXT }}
+      LLM_CALLING_DIR: llm-calling
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
+          persist-credentials: false
+
+      - name: Resolve provider-runtime revision
+        id: provider-runtime
+        run: |
+          rev="$(sed -n 's/^provider-runtime.*rev = "\([0-9a-f]*\)".*/\1/p' python/pyproject.toml)"
+          if [ -z "$rev" ]; then
+            echo "::error title=Missing provider-runtime pin::python/pyproject.toml does not pin provider-runtime by git rev."
+            exit 1
+          fi
+          echo "rev=$rev" >> "$GITHUB_OUTPUT"
+
+      - name: Check out provider-runtime
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          repository: NielsdaWheelz/llm-calling
+          ref: ${{ steps.provider-runtime.outputs.rev }}
+          path: llm-calling
           persist-credentials: false
 
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
@@ -520,19 +590,48 @@ jobs:
       - name: Install node ingest dependencies
         run: cd node/ingest && bun ci
 
-      - name: Skip live-provider gate when provider secrets are not configured
-        if: ${{ env.OPENAI_API_KEY == '' || env.PODCAST_INDEX_API_KEY == '' || env.PODCAST_INDEX_API_SECRET == '' || env.DEEPGRAM_API_KEY == '' }}
+      - name: Check live-provider secrets
+        id: live-provider-secrets
         run: |
-          echo "Skipping live-provider gate because one or more provider secrets are not configured."
-          echo "Required secrets: OPENAI_API_KEY, PODCAST_INDEX_API_KEY, PODCAST_INDEX_API_SECRET, DEEPGRAM_API_KEY."
+          missing=()
+          for name in \
+            OPENAI_API_KEY \
+            ANTHROPIC_API_KEY \
+            GEMINI_API_KEY \
+            OPENROUTER_API_KEY \
+            CLOUDFLARE_AI_API_TOKEN \
+            CLOUDFLARE_AI_ACCOUNT_ID \
+            PODCAST_INDEX_API_KEY \
+            PODCAST_INDEX_API_SECRET \
+            DEEPGRAM_API_KEY \
+            YOUTUBE_DATA_API_KEY \
+            X_API_BEARER_TOKEN \
+            X_LIVE_TEST_POST_URL \
+            X_LIVE_TEST_EXPECTED_TEXT
+          do
+            if [ -z "${!name}" ]; then
+              missing+=("$name")
+            fi
+          done
+          if [ "${#missing[@]}" -ne 0 ]; then
+            missing_names="$(IFS=,; echo "${missing[*]}")"
+            {
+              echo "live_ready=false"
+              echo "missing_count=${#missing[@]}"
+              echo "missing_names=$missing_names"
+            } >> "$GITHUB_OUTPUT"
+            echo "::notice title=Live-provider gate not run::Missing required repository secrets: $missing_names. This CI run is not live-provider proof."
+            exit 0
+          fi
+          echo "live_ready=true" >> "$GITHUB_OUTPUT"
 
       - name: Test live-provider gate
-        if: ${{ env.OPENAI_API_KEY != '' && env.PODCAST_INDEX_API_KEY != '' && env.PODCAST_INDEX_API_SECRET != '' && env.DEEPGRAM_API_KEY != '' }}
+        if: steps.live-provider-secrets.outputs.live_ready == 'true'
         run: make test-live-providers
 
       - name: Upload live-provider traces
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: failure()
+        if: failure() && steps.live-provider-secrets.outputs.live_ready == 'true'
         with:
           name: live-provider-traces
           path: test-results/live-providers/

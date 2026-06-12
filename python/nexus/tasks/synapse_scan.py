@@ -5,7 +5,7 @@ from __future__ import annotations
 from uuid import UUID
 
 import httpx
-from llm_calling.router import LLMRouter
+from provider_runtime import ModelRuntime
 from sqlalchemy.orm import Session
 
 from nexus.services.resource_graph.refs import assert_resource_ref
@@ -19,7 +19,7 @@ def synapse_scan(user_id: str, ref: str, reason: str) -> dict:
     user_uuid = UUID(user_id)
     parsed_ref = assert_resource_ref(ref)
 
-    async def _handler(db: Session, router: LLMRouter, _client: httpx.AsyncClient) -> dict:
+    async def _handler(db: Session, router: ModelRuntime, _client: httpx.AsyncClient) -> dict:
         status = await run_synapse_scan(db, user_id=user_uuid, ref=parsed_ref, llm=router)
         # "trigger", not "reason": the worker failure protocol reads
         # result["reason"] as the error message for failed statuses.

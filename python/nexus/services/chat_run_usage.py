@@ -1,11 +1,11 @@
-"""LLMUsage data-transforms for chat-run persistence and log events."""
+"""TokenUsage data-transforms for chat-run persistence and log events."""
 
 from __future__ import annotations
 
-from llm_calling.types import LLMUsage
+from provider_runtime.types import TokenUsage
 
 
-def usage_tokens(usage: LLMUsage | None) -> dict[str, int | None]:
+def usage_tokens(usage: TokenUsage | None) -> dict[str, int | None]:
     """Token breakdown keyed by llm_calls token-column names.
 
     Cache fields default to 0 when usage is present; None when usage is None.
@@ -30,13 +30,13 @@ def usage_tokens(usage: LLMUsage | None) -> dict[str, int | None]:
         "output_tokens": output_t,
         "total_tokens": total_t,
         "reasoning_tokens": reasoning_t,
-        "cache_write_input_tokens": _int("cache_write_input_tokens") or cache_default,
+        "cache_write_input_tokens": _int("cache_creation_input_tokens") or cache_default,
         "cache_read_input_tokens": _int("cache_read_input_tokens") or cache_default,
-        "cached_input_tokens": _int("cached_input_tokens") or cache_default,
+        "cached_input_tokens": _int("cached_tokens") or cache_default,
     }
 
 
-def usage_log_fields(usage: LLMUsage | None) -> dict[str, int | None]:
+def usage_log_fields(usage: TokenUsage | None) -> dict[str, int | None]:
     """Token breakdown for log events (uses `tokens_*` keys for the basic counts)."""
     tokens = usage_tokens(usage)
     return {
@@ -50,7 +50,7 @@ def usage_log_fields(usage: LLMUsage | None) -> dict[str, int | None]:
     }
 
 
-def usage_provider_json(usage: LLMUsage | None) -> dict[str, object] | None:
+def usage_provider_json(usage: TokenUsage | None) -> dict[str, object] | None:
     if usage is None:
         return None
     provider_usage = getattr(usage, "provider_usage", None)

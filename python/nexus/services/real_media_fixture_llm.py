@@ -4,23 +4,26 @@ import json
 import re
 from collections.abc import AsyncIterator
 
-from llm_calling.types import LLMChunk, LLMRequest, LLMResponse, LLMUsage, ToolCall
+from provider_runtime import ProviderApiKey
+from provider_runtime.types import ModelCall, ModelChunk, ModelResponse, TokenUsage, ToolCall
 
 
-class RealMediaFixtureLLMRouter:
+class RealMediaFixtureModelRuntime:
     def __init__(
         self,
         *,
         enable_openai: bool = True,
         enable_anthropic: bool = True,
         enable_gemini: bool = True,
-        enable_deepseek: bool = True,
+        enable_openrouter: bool = True,
+        enable_cloudflare: bool = True,
     ) -> None:
         self._enabled = {
             "openai": enable_openai,
             "anthropic": enable_anthropic,
             "gemini": enable_gemini,
-            "deepseek": enable_deepseek,
+            "openrouter": enable_openrouter,
+            "cloudflare": enable_cloudflare,
         }
 
     def is_provider_available(self, provider: str) -> bool:
@@ -28,30 +31,30 @@ class RealMediaFixtureLLMRouter:
 
     async def generate(
         self,
-        provider: str,
-        req: LLMRequest,
-        api_key: str,
+        req: ModelCall,
         *,
-        timeout_s: int,
-    ) -> LLMResponse:
+        key: ProviderApiKey,
+        timeout_s: float,
+    ) -> ModelResponse:
+        _ = key
         text = _synthesis_response(req) or REAL_MEDIA_FIXTURE_RESPONSE
-        return LLMResponse(
+        return ModelResponse(
             text=text,
             usage=_usage_for(req, text),
             provider_request_id="real-media-fixture",
             status="completed",
         )
 
-    async def generate_stream(
+    async def stream(
         self,
-        provider: str,
-        req: LLMRequest,
-        api_key: str,
+        req: ModelCall,
         *,
-        timeout_s: int,
-    ) -> AsyncIterator[LLMChunk]:
+        key: ProviderApiKey,
+        timeout_s: float,
+    ) -> AsyncIterator[ModelChunk]:
+        _ = key
         if _should_request_app_search(req):
-            yield LLMChunk(
+            yield ModelChunk(
                 tool_call=ToolCall(
                     id="real-media-fixture-app-search",
                     name=APP_SEARCH_TOOL_NAME,
@@ -59,7 +62,7 @@ class RealMediaFixtureLLMRouter:
                 ),
                 done=False,
             )
-            yield LLMChunk(
+            yield ModelChunk(
                 delta_text="",
                 done=True,
                 usage=_usage_for(req, ""),
@@ -73,8 +76,8 @@ class RealMediaFixtureLLMRouter:
             if _has_citable_tool_result(req)
             else REAL_MEDIA_FIXTURE_RESPONSE
         )
-        yield LLMChunk(delta_text=response, done=False)
-        yield LLMChunk(
+        yield ModelChunk(delta_text=response, done=False)
+        yield ModelChunk(
             delta_text="",
             done=True,
             usage=_usage_for(req, response),
@@ -168,7 +171,7 @@ _SYNTHESIS_MARKERS: tuple[tuple[str, str], ...] = (
 )
 
 
-def _synthesis_response(req: LLMRequest) -> str | None:
+def _synthesis_response(req: ModelCall) -> str | None:
     system = next((turn.content for turn in req.messages if turn.role == "system"), "")
     for marker, response in _SYNTHESIS_MARKERS:
         if marker in system:
@@ -176,7 +179,7 @@ def _synthesis_response(req: LLMRequest) -> str | None:
     return None
 
 
-def _should_request_app_search(req: LLMRequest) -> bool:
+def _should_request_app_search(req: ModelCall) -> bool:
     return (
         not _has_tool_result(req)
         and any(tool.name == APP_SEARCH_TOOL_NAME for tool in req.tools)
@@ -184,11 +187,11 @@ def _should_request_app_search(req: LLMRequest) -> bool:
     )
 
 
-def _has_tool_result(req: LLMRequest) -> bool:
+def _has_tool_result(req: ModelCall) -> bool:
     return any(turn.role == "tool" and turn.tool_results for turn in req.messages)
 
 
-def _has_citable_tool_result(req: LLMRequest) -> bool:
+def _has_citable_tool_result(req: ModelCall) -> bool:
     for turn in req.messages:
         if turn.role != "tool":
             continue
@@ -219,7 +222,7 @@ def _tool_output_has_numbered_result(output: str) -> bool:
     return False
 
 
-def _latest_user_query(req: LLMRequest) -> str:
+def _latest_user_query(req: ModelCall) -> str:
     for turn in reversed(req.messages):
         if turn.role == "user" and turn.content.strip():
             content = turn.content.strip()
@@ -230,10 +233,10 @@ def _latest_user_query(req: LLMRequest) -> str:
     return "attached evidence"
 
 
-def _usage_for(req: LLMRequest, response: str) -> LLMUsage:
+def _usage_for(req: ModelCall, response: str) -> TokenUsage:
     input_tokens = max(1, sum(len(turn.content) for turn in req.messages) // 4)
     output_tokens = max(1, len(response) // 4)
-    return LLMUsage(
+    return TokenUsage(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         total_tokens=input_tokens + output_tokens,

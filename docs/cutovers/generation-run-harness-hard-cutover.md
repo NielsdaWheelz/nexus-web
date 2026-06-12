@@ -1,10 +1,19 @@
 # Generation-Run Harness — One LLM Substrate for Chat / Oracle / Library Intelligence (Hard Cutover)
 
-Status: SPEC — **Rev 1** (not built)
+Status: HISTORICAL SPEC — **Rev 1**, provider-client sections superseded by
+`llm-provider-runtime-hard-cutover.md`
 Author: design synthesis, 2026-06-09
-Type: hard cutover — no legacy paths, no fallbacks, no backward compatibility, no compat shims. Two repos move in lockstep: this repo + `llm-calling` (git dep, owner-controlled).
+Type: hard cutover — no legacy paths, no fallbacks, no backward compatibility, no compat shims. The current provider-client package is `provider_runtime`, sourced from the owner-controlled `llm-calling` repo and consumed by immutable git revision.
 Migrations: **0145** (`llm_calls` ledger + run-terminal error floor + oracle `interpretation_text` + drops) and **0146** (oracle event-vocabulary normalization).
 Precedents: `library-intelligence-ai-native-consolidation-hard-cutover.md` (run_kit/structured_synthesis extractions; "consolidate by invariant, not table shape" §20.2; render-contract citation unification); `0143` polymorphic `(owner_kind, owner_id)`; `0142` DELETE-then-tighten event CHECK; `search-intent-model-hard-cutover.md` (route-edge 400s, negative gates); `notes-pages-evidence-unification-hard-cutover.md` (substrate rename discipline).
+
+Provider-client note: this document is retained as incident evidence and the
+original harness design only. Do not implement new provider-client behavior from
+§1.1, §5.1, or the old rollout slices below. The current provider/model/runtime
+source of truth is `docs/cutovers/llm-provider-runtime-hard-cutover.md` plus
+`docs/modules/llms.md`; the active provider set is OpenAI, Anthropic, Gemini,
+OpenRouter, and Cloudflare. DeepSeek references below describe the
+pre-provider-runtime incident context and are not an active compatibility path.
 
 > Triggering incident: prod chat run `fa896d46` (2026-06-07, gpt-5.5 + `reasoning=max`) died `E_INTERNAL` at the post-tool continuation request. Diagnosis proved the bug class is **all-provider** (reasoning artifacts are never captured/replayed across tool turns), surfaced a second prod bug (`page_reindex_job` absent from the worker allowlist), and found the traceback unrecoverable (deploy destroyed container logs; no error detail persisted; no usage ledger row written). This cutover fixes the incident class and finishes the consolidation the LI cutover started: one harness in the rings around the already-shared spine.
 
@@ -12,7 +21,7 @@ Precedents: `library-intelligence-ai-native-consolidation-hard-cutover.md` (run_
 
 ## 0. One-paragraph north star
 
-Every LLM generation in Nexus runs on **one harness**: one worker task envelope (event loop + httpx + router + fixture swap + boundary), one model/key spine (`MODEL_CATALOG` + `resolve_api_key` for **all five** call sites), one rate-limit/budget envelope, one **`llm_calls` ledger row per provider call** on every terminal path, one `llm.request.*` telemetry emitter, one structured-synthesis scaffold (shared RULES/candidates/grounding kernel + one bounded repair round), one SERIALIZABLE-retry helper, and one terminal contract (`run_kit.mark_terminal` stamps `error_code` + `error_detail` on every run parent and emits one normalized `done {status, error_code}` grammar). The transport plane converges the same way: every browser stream lives under **`/stream/*`** served by one generic cursor route + one snapshot route, `is_stream_path` collapses to a prefix check, and the frontend consumes all four streams through one extended `sseClientDirect` + one `useGenerationRun` hook (chat keeps its multi-run layer **on top**, not beside). Citations finish their render-contract unification: the backend becomes the **sole producer of `CitationOut`** for chat (new `build_citation_outs_for_message`), oracle's user-library passages join the same contract (chip + deep link), `web_search` stops being a rogue `message_retrievals` writer, oracle readings become chattable via an `oracle_reading:` reference scheme, and chat runs record the LI artifact `revision_id` they consumed. `llm-calling` itself is fixed so reasoning/thinking survive tool continuations on **all four providers**. Domain finalization stays per-feature (chat writes messages, oracle writes folios, LI promotes revisions) — the harness owns only what is genuinely identical.
+Every LLM generation in Nexus runs on **one harness**: one worker task envelope (event loop + httpx + router + fixture swap + boundary), one model/key spine (`MODEL_CATALOG` + `resolve_api_key` for **all five** call sites), one rate-limit/budget envelope, one **`llm_calls` ledger row per provider call** on every terminal path, one `llm.request.*` telemetry emitter, one structured-synthesis scaffold (shared RULES/candidates/grounding kernel + one bounded repair round), one SERIALIZABLE-retry helper, and one terminal contract (`run_kit.mark_terminal` stamps `error_code` + `error_detail` on every run parent and emits one normalized `done {status, error_code}` grammar). The transport plane converges the same way: every browser stream lives under **`/stream/*`** served by one generic cursor route + one snapshot route, `is_stream_path` collapses to a prefix check, and the frontend consumes all four streams through one extended `sseClientDirect` + one `useGenerationRun` hook (chat keeps its multi-run layer **on top**, not beside). Citations finish their render-contract unification: the backend becomes the **sole producer of `CitationOut`** for chat (new `build_citation_outs_for_message`), oracle's user-library passages join the same contract (chip + deep link), `web_search` stops being a rogue `message_retrievals` writer, oracle readings become chattable via an `oracle_reading:` reference scheme, and chat runs record the LI artifact `revision_id` they consumed. `provider_runtime` handles reasoning/thinking continuity for the current provider set. Domain finalization stays per-feature (chat writes messages, oracle writes folios, LI promotes revisions) — the harness owns only what is genuinely identical.
 
 ---
 
@@ -20,7 +29,10 @@ Every LLM generation in Nexus runs on **one harness**: one worker task envelope 
 
 ### 1.1 The incident is a provider-client class bug, not one bug
 
-`llm_calling` (pinned `python/pyproject.toml:55`, rev `6b44ca72`) discards every reasoning artifact a provider emits and replays none, so any reasoning-enabled run that makes a tool call dies (or corrupts) at the continuation request:
+The retired `llm_calling` integration (historically pinned at rev `6b44ca72`)
+discarded every reasoning artifact a provider emitted and replayed none, so any
+reasoning-enabled run that made a tool call died (or corrupted) at the
+continuation request:
 
 | Provider | Emits | Captured today | Replay requirement | Result today |
 |---|---|---|---|---|
@@ -66,7 +78,7 @@ Five LLM call sites — chat (`services/chat_runs.py`), oracle (`services/oracle
 - Oracle's product semantics (folios plural, no head, no auto-retry, single structured call, citation-marker prose ban).
 - LI's head/revision/promote model, staleness, inline unit build.
 - Media ingest pipeline; `tail_snapshot_stream` snapshot semantics.
-- `metadata_enrichment`'s provider-native `StructuredOutputSpec` + multi-provider failover transport (different contract; it adopts only the harness envelope, key spine, ledger, and catalog-valid models).
+- `metadata_enrichment`'s provider-native `StructuredOutputSpec` + configured provider/model selection (different contract; it adopts only the harness envelope, key spine, ledger, and catalog-valid model).
 
 ---
 
@@ -108,7 +120,11 @@ Five LLM call sites — chat (`services/chat_runs.py`), oracle (`services/oracle
 
 ## 5. Architecture — final state
 
-### 5.1 `llm-calling` (external repo; one minor version, pinned rev bump)
+### 5.1 Historical provider-client notes (superseded by `provider_runtime`)
+
+The API sketch in this subsection is not the active target API. It documents the
+old provider-client bug class that led to the `provider_runtime` extraction.
+Implement against `docs/cutovers/llm-provider-runtime-hard-cutover.md` instead.
 
 Types (`types.py`) grow three opaque carriers — **provider-shaped, never interpreted by nexus**:
 
@@ -128,7 +144,7 @@ Per-provider serialization/capture:
 
 Nexus consumption delta is exactly one site: the chat tool loop collects `chunk.provider_item` per iteration and builds `Turn(role="assistant", content=iter_text, tool_calls=…, provider_items=tuple(items))` at `chat_runs.py:1263-1269`. History turns (flat text) and the four non-streaming call sites need nothing.
 
-Catalog fix: every `MODEL_CATALOG` entry's `reasoning_modes` includes `"default"` (semantics: provider default; llm-calling already maps `"default"` → omit for all providers).
+Catalog fix: every `MODEL_CATALOG` entry's `reasoning_modes` includes `"default"` (semantics: provider default; the old client already mapped `"default"` → omit for all providers).
 
 ### 5.2 The harness (backend)
 
@@ -145,7 +161,7 @@ def run_llm_task[R](spec: LlmTaskSpec, handler: Callable[[Session, LLMRouter], A
                     *, on_worker_exception: Callable[[Session, Exception], R] | None = None) -> R
 ```
 
-Owns: session + fresh event loop + `httpx.AsyncClient` + router construction **including the fixture swap for every kind** (`RealMediaFixtureLLMRouter` under `settings.real_media_provider_fixtures` — today chat-only); the `justify-ignore-error` boundary calling `on_worker_exception`; `finally: loop.close(); db.close()`. The rate limiter is installed **once at worker startup** (`apps/worker/main.py`, same constructor as `apps/api/app.py:204-211`) — deletes the chat-task install and fixes the fresh-worker oracle `E_RATE_LIMITER_UNAVAILABLE` landmine. enrich_metadata's per-attempt loop+client collapses into one loop/client for the whole failover.
+Owns: session + fresh event loop + `httpx.AsyncClient` + router construction **including the fixture swap for every kind** (`RealMediaFixtureLLMRouter` under `settings.real_media_provider_fixtures` — today chat-only); the `justify-ignore-error` boundary calling `on_worker_exception`; `finally: loop.close(); db.close()`. The rate limiter is installed **once at worker startup** (`apps/worker/main.py`, same constructor as `apps/api/app.py:204-211`) — deletes the chat-task install and fixes the fresh-worker oracle `E_RATE_LIMITER_UNAVAILABLE` landmine. enrich_metadata uses the shared loop/client/envelope for its single configured provider/model call.
 
 **Model/key spine.** Each surface keeps its model constant, now contract-checked: `llm_catalog.require_catalog_model(provider, model_name)` raises a defect at import/test time; enrichment defaults move to catalog-valid `KEY_TEST_MODELS`-tier names. All key resolution goes through `resolve_api_key(db, user_id, provider, key_mode)`: chat keeps request `key_mode`; oracle/LI/unit/enrich use `"auto"` attributed to the owning user (oracle `reading.user_id`, LI `artifact owner`, unit `media owner`, enrich `media owner`) — BYOK keys now serve background surfaces, entitlement gating applies uniformly, and `update_user_key_status` feedback flows from every surface's terminal write. Oracle's `_ensure_oracle_platform_llm_available` and the raw `settings.anthropic_api_key or ""` reads are deleted.
 
@@ -272,8 +288,8 @@ llm_calls (
   id uuid PK default gen_random_uuid(),
   owner_kind text NOT NULL CHECK (owner_kind IN ('chat_run','oracle_reading','li_revision','media_summary','media_enrichment')),
   owner_id uuid NOT NULL,
-  call_seq int NOT NULL CHECK (call_seq >= 1),            -- per-owner provider-call ordinal (tool iterations, repair attempts, failover attempts)
-  provider text NOT NULL CHECK (provider IN ('openai','anthropic','gemini','deepseek')),
+  call_seq int NOT NULL CHECK (call_seq >= 1),            -- per-owner provider-call ordinal (tool iterations, repair attempts)
+  provider text NOT NULL CHECK (provider IN ('openai','anthropic','gemini','openrouter','cloudflare')),
   model_name text NOT NULL,
   llm_operation text NOT NULL,                            -- 'chat_send','oracle_reading','li_reduce','media_unit','metadata_enrichment'
   streaming boolean NOT NULL,
@@ -347,7 +363,7 @@ BFF: no new routes; the header already forwards (`proxy.ts:629-631`).
 
 **0146_oracle_done_normalization.py** — DELETE `oracle_reading_events` rows with `event_type='error'` (0142 pattern; prod has 0 readings, dev/test DBs may have rows), then replace `ck_oracle_reading_events_type` with the 8-type list (`meta,bind,argument,plate,passage,delta,omens,done`).
 
-Deploy order: bump `llm-calling` rev (pyproject + uv.lock) → migrations → backend deploy → frontend deploys on push. Worker env: update `WORKER_ALLOWED_JOB_KINDS` in `deploy/env/env-prod-worker` before `sync-env.sh` (it dies on mismatch with the new SAFE literal). One-time VPS step: journald drop-in + `systemctl restart systemd-journald` + `docker compose up -d --force-recreate` (logging driver applies on recreate).
+Deploy order: bump the `provider-runtime` git rev (pyproject + uv.lock) → migrations → backend deploy → frontend deploys on push. Worker env: update `WORKER_ALLOWED_JOB_KINDS` in `deploy/env/env-prod-worker` before `sync-env.sh` (it dies on mismatch with the new SAFE literal). One-time VPS step: journald drop-in + `systemctl restart systemd-journald` + `docker compose up -d --force-recreate` (logging driver applies on recreate).
 
 ---
 
@@ -385,7 +401,7 @@ Deploy order: bump `llm-calling` rev (pyproject + uv.lock) → migrations → ba
 | `_estimate_llm_request_tokens`, `_usage_total_tokens`, `chat_runs.py:1126` estimator | `prompt_budget.estimate_tokens` + `chat_run_usage.usage_tokens` |
 | 9 SERIALIZABLE retry loops | `retry_serializable` |
 | 3 synthesis prompt scaffolds + 3 request builders + 3 grounding maps' bounds checks | `build_synthesis_prompt/request` + `ground_indices` |
-| `_unread_stream_api_error_code` + call site | llm-calling router catch widening |
+| `_unread_stream_api_error_code` + call site | provider-runtime error classification |
 | `RateLimiter.charge_token_budget` (dead) | — |
 | 4-arm `is_stream_path` | prefix check |
 | 3 near-identical stream handlers' bodies | `make_cursor_stream_response` + kind table |
@@ -398,7 +414,7 @@ Deploy order: bump `llm-calling` rev (pyproject + uv.lock) → migrations → ba
 
 ## 12. Slices (ordered; each independently reviewable)
 
-- **S0 — llm-calling reasoning continuity.** External repo: `provider_items`/`provider_metadata`/`provider_item` types; per-provider capture/replay (§5.1); gemini thought-skip + signature echo + real call ids; router catch widening. Nexus: rev bump, chat-loop capture (chat_runs.py:1263-1269), `"default"` added to every catalog entry's reasoning_modes, delete `_unread_stream_api_error_code`, add `QUOTA_EXCEEDED` mapping. Gated live-provider matrix test (each enabled provider × {default, max-or-highest} × forced tool call → continuation completes).
+- **S0 — provider-runtime reasoning continuity.** External repo: opaque `ProviderArtifact` capture/replay; per-provider lowering/adapters; Gemini thought-skip + signature echo; provider-runtime error classification. Nexus: rev bump, chat-loop capture, `"default"` available from shared catalog capability truth, delete `_unread_stream_api_error_code`, add `QUOTA_EXCEEDED` mapping. Gated live-provider matrix test (each enabled provider × {default, max-or-highest} × forced tool call → continuation completes).
 - **S1 — prod floor.** `page_reindex_job` into the six allowlist sites + `USER_FACING_JOB_KINDS ⊆ allowlist` guard test; journald logging (compose anchor + cloud-init + deployment.md + one-time VPS step); worker-startup rate-limiter install (fixes the oracle landmine independently of S3).
 - **S2 — ledger + error floor.** Migration 0145; `run_kit.mark_terminal(error_code, error_detail)`; `llm_ledger` (`llm_calls` writer + `observed_llm_call`); chat finalize/dead-letter/boundary paths write detail + ledger rows; oracle/LI/unit/enrich terminal writes adopt the floor (no behavioral change yet beyond persistence).
 - **S3 — worker harness + key/budget spine.** `run_llm_task` + five task rewrites; `require_catalog_model`; `resolve_api_key` everywhere + per-kind budget envelope + one estimator; enrichment models → catalog-valid; fixture router for all kinds; `retry_serializable` adoption (all nine sites); delete the trio via the shared fail helper; delete `charge_token_budget`.
@@ -406,7 +422,7 @@ Deploy order: bump `llm-calling` rev (pyproject + uv.lock) → migrations → ba
 - **S5 — stream plane.** Path renames + prefix predicate + generic cursor factory + viewer-threaded reads; oracle done-normalization (migration 0146, `_fail` via `mark_terminal`, FE terminal/`done` parsing); LI done payload `{status, error_code, revision_id}`; delete oracle dead `stream` payload; oracle + LI idempotency-key header.
 - **S6 — FE client.** `sseClientDirect` extensions; `useGenerationRun`; migrate chat/oracle/LI/media; guard-kit unification; delete the per-surface plumbing (§11).
 - **S7 — citations.** Type widening; `build_citation_outs_for_message` (+batched) + `MessageOut.citations` + reshaped `citation_index`; FE dual-source deletion; web_search fold; oracle passage CitationOut + chips; `oracle_reading:` scheme + loader + `interpretation_text` + chat-about-reading action; revision_id stamp.
-- **S8 — docs + gates.** Fill `docs/modules/llms.md` (llm-calling contract, catalog, BYOK, ledger, harness), `docs/modules/jobs.md`, `docs/modules/byok.md`; fix architecture.md §7.3 catalog/dead-letter/`failed_result_statuses` staleness + `:491` module path + add the harness section; deployment.md ledger/log recipes; wire all §14 gates into CI.
+- **S8 — docs + gates.** Fill `docs/modules/llms.md` (provider-runtime contract, catalog, BYOK, ledger, harness), `docs/modules/jobs.md`, `docs/modules/byok.md`; fix architecture.md §7.3 catalog/dead-letter/`failed_result_statuses` staleness + `:491` module path + add the harness section; deployment.md ledger/log recipes; wire all §14 gates into CI.
 
 ---
 
@@ -429,7 +445,7 @@ Deploy order: bump `llm-calling` rev (pyproject + uv.lock) → migrations → ba
 
 - No `message_llm` outside migrations; no `MessageLLM` symbol.
 - No `asyncio.new_event_loop|run_until_complete` under `python/nexus/tasks/` except `llm_task.py`.
-- No `settings.anthropic_api_key|settings.openai_api_key|settings.gemini_api_key|settings.deepseek_api_key` outside `llm_catalog.py`/`api_key_resolver.py`/config.
+- No `settings.(anthropic|openai|gemini|openrouter)_api_key|settings.cloudflare_ai_api_token` outside `llm_catalog.py`/`api_key_resolver.py`/config.
 - No `_SERIALIZABLE_RETRIES|for attempt in range` + `is_serialization_failure` outside `db/retries.py`.
 - No `"No markdown fences, no extra keys"`/`"Respond with the strict JSON object"` literals outside `structured_synthesis.py`.
 - No `_oracle_failure_message|_oracle_event_out|ORACLE_LLM_CONFIGURATION_MESSAGE` symbols; no `'error'` in the oracle event CHECK or writers.
@@ -451,7 +467,7 @@ Deploy order: bump `llm-calling` rev (pyproject + uv.lock) → migrations → ba
 
 ## 16. Key decisions (log)
 
-1. **Fix reasoning continuity in `llm-calling` with opaque provider items**, not nexus-side request surgery or `previous_response_id` statefulness — stateless replay + `store:false` keeps the client provider-symmetric and nexus provider-blind.
+1. **Fix reasoning continuity in `provider_runtime` with opaque provider artifacts**, not nexus-side request surgery or `previous_response_id` statefulness — stateless replay keeps the client provider-symmetric and nexus provider-blind.
 2. **The bug class is all-provider** — scope S0 to all four providers (anthropic/gemini verified same-class), not the OpenAI incident alone.
 3. **`"default"` reasoning becomes universally valid** (catalog change) rather than FE filtering — "default = provider default" is the honest contract.
 4. **Generalize `message_llm` → polymorphic `llm_calls`** (0143 owner pattern), one row **per provider call** — fixes last-write-wins usage, gives LI/unit/enrich a home, has zero readers to break; historical rows migrate via the assistant-message join.
@@ -467,13 +483,13 @@ Deploy order: bump `llm-calling` rev (pyproject + uv.lock) → migrations → ba
 14. **`oracle_reading:` scheme + `interpretation_text` column** — readings become chattable through the existing reference machinery; the interpretation gets a canonical column (events are replay, not store).
 15. **revision_id stamps into `included_context_refs`** (new element shape) — no migration, insert-once free via `persist_prompt_assembly`; a dedicated table only if "which chats read revision X" ever needs an index.
 16. **journald is the only retention-correct driver** (json-file and local both die with the container); host persistence made explicit in cloud-init + a one-time step.
-17. **metadata enrichment keeps its provider-native `StructuredOutputSpec` + failover transport** — different contract (provider-parsed JSON, multi-provider loop); it adopts only envelope/keys/ledger/catalog.
+17. **metadata enrichment keeps its provider-native `StructuredOutputSpec` + configured provider/model contract** — different contract (provider-parsed JSON); it adopts only envelope/keys/ledger/catalog.
 18. **Estimator unification on `prompt_budget.estimate_tokens`** for reservations (over-estimating formula, full prompt text) — deletes three `//4` variants; char *budgets* (LI/unit truncation) are domain constants and stay.
 
 ## 17. Risks & open questions
 
-- **R1 — `xhigh` validity per model.** The `max → xhigh` mapping may not be accepted by every OpenAI/anthropic model tier; the live matrix (AC-1) is the gate, with per-model effort clamping in `llm-calling` as the fallback.
-- **R2 — two-repo lockstep.** S0 spans `llm-calling` + nexus; the pin (`pyproject` rev + `uv.lock`) must move in the same PR as the chat-loop capture, or the live matrix fails. Mitigation: land llm-calling first (additive fields are backward-compatible for old nexus), then nexus.
+- **R1 — provider reasoning levels per model.** The shared catalog must expose only accepted reasoning levels per model; the live matrix (AC-1) is the gate, and an unsupported mapping is a catalog defect.
+- **R2 — two-repo lockstep.** S0 spans `provider_runtime` + nexus; the pin (`pyproject` rev + `uv.lock`) must move in the same PR as the chat-loop capture, or the live matrix fails.
 - **R3 — repair-round wall-clock vs leases.** Worst case oracle 45×2s + retrieval inside a 300s lease (bumped), LI 90×2s + inline unit builds inside 900s — heartbeats cover, but a pathological unit backlog + repair could approach the lease; the reduce already heartbeats via the worker thread. Watch `llm_calls.latency_ms`.
 - **R4 — anthropic thinking + tool loop interplay.** Anthropic forbids structured_output with thinking (anthropic.py:239-247) — irrelevant for synthesis (`reasoning_effort="none"`), but chat with thinking + forced tool_choice needs the live matrix to confirm replay ordering constraints ("thinking blocks lead the assistant turn") hold for parallel tool_use blocks.
 - **R5 — `/stream/*` middleware bypass widening.** Any unrouted `/stream/foo` now skips Supabase auth and 404s unauthenticated (no data exposure; behavior change). One test pins it.
@@ -483,7 +499,7 @@ Deploy order: bump `llm-calling` rev (pyproject + uv.lock) → migrations → ba
 
 ## 18. Test plan
 
-- **Unit (llm-calling, in its repo):** per-provider request-body golden tests for replay ordering (reasoning item before fc; thinking blocks lead; thoughtSignature echoed; deepseek strips); stream-parse tests yielding `provider_item` chunks; router classification table incl. ProtocolError/StreamError/TypeError.
+- **Unit (provider-runtime, in its repo):** per-provider request-body golden tests for replay ordering (reasoning item before tool call; thinking blocks lead; thoughtSignature echoed); stream-parse tests yielding opaque provider artifacts; runtime classification table incl. ProtocolError/StreamError/TypeError.
 - **BE unit/integration (nexus):** harness envelope (fixture swap per kind, boundary writes detail+ledger, rate-limiter present); `resolve_api_key` adoption per surface incl. entitlement failure paths; `llm_calls` row matrix (AC-3) with fake routers; `ground_indices` policy table; repair-round (parse fail → 2 calls; semantic fail via `validate` → 2 calls; success → 1 call — replaces the `calls == 1` pin at `test_structured_synthesis.py:84` semantics); `mark_terminal` error stamping per parent incl. oracle CHECK; allowlist guard test; migration tests for 0145/0146 (ledger move count == old `message_llm` count; oracle error rows deleted; CHECK tightened).
 - **Stream:** route-table tests for all four kinds (auth, cursor resume, terminal close, gone semantics) replacing per-path literals in `test_chat_run_stream.py`; oracle failure → single `done {status:"failed"}` (flips `test_oracle.py:1098,1157` from `["error"]` to `["done"]`); prefix-predicate test incl. the unrouted-`/stream/foo` pin.
 - **FE (vitest browser project):** extended `sseClientDirect` (initialToken, onReconnect, clean-EOF reconnect, HTTP policy, backoff override); `useGenerationRun` per kind with the real decoders; chat reconcile-via-onReconnect replay-skip; oracle done-payload parsing; LI revision-id-from-event; citations render from `message.citations` (chat) and `passage.citation` (oracle) through the real `MarkdownMessage`; palette/pane suites green (no internal vi.mock beyond the preserved `useChatRunTail` seam).

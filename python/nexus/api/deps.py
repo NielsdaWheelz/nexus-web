@@ -3,7 +3,7 @@
 from uuid import UUID
 
 from fastapi import Request
-from llm_calling.router import LLMRouter
+from provider_runtime import ModelRuntime
 
 from nexus.auth.bearer import parse_bearer_token
 from nexus.errors import ApiError, ApiErrorCode
@@ -27,17 +27,17 @@ def get_stream_viewer(request: Request) -> UUID:
     return verified.user_id
 
 
-def get_llm_router(request: Request) -> LLMRouter:
+def get_llm_router(request: Request) -> ModelRuntime:
     """Get the shared LLM router from app state.
 
     App lifecycle contract:
-    - LLMRouter is initialized at app startup with shared httpx.AsyncClient
+    - ModelRuntime is initialized at app startup with shared httpx.AsyncClient
     - Provides connection pooling and proper cleanup
 
     Args:
         request: The incoming request (provides access to app.state)
 
     Returns:
-        The shared LLMRouter instance.
+        The shared ModelRuntime instance.
     """
     return request.app.state.llm_router

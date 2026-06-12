@@ -36,6 +36,23 @@ export interface ConversationModel {
   >;
   max_context_tokens: number;
   available_via: "byok" | "platform" | "both";
+  provider_rank: number;
+  model_rank: number;
+  is_default: boolean;
+  available_key_modes: Array<"auto" | "byok_only" | "platform_only">;
+  capabilities: {
+    prompt_cache: {
+      mode: "none" | "turn_ttl" | "keyed_ttl";
+      supported: boolean;
+      key_required: boolean;
+      ttl_options: Array<"5m" | "1h">;
+    };
+    streaming: boolean;
+    tool_calling: boolean;
+    structured_output: boolean;
+    structured_output_streaming: boolean;
+    reasoning_continuation: boolean;
+  };
 }
 
 export interface MessageRetrieval {

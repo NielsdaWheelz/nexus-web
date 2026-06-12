@@ -1,7 +1,15 @@
 from uuid import uuid4
 
 import pytest
-from llm_calling.types import LLMRequest, ToolResult, ToolSpec, Turn
+from provider_runtime import ProviderApiKey
+from provider_runtime.types import (
+    ModelCall,
+    ModelMessage,
+    ModelRef,
+    ReasoningConfig,
+    ToolResult,
+    ToolSpec,
+)
 from pydantic import BaseModel
 
 from nexus.services.library_intelligence_reduce import (
@@ -32,21 +40,23 @@ from nexus.services.real_media_fixture_llm import (
     APP_SEARCH_TOOL_NAME,
     REAL_MEDIA_FIXTURE_RESPONSE,
     REAL_MEDIA_FIXTURE_RESPONSE_WITH_CITATION,
-    RealMediaFixtureLLMRouter,
+    RealMediaFixtureModelRuntime,
 )
+from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.structured_synthesis import (
     SynthesisRequest,
     run_structured_synthesis,
 )
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
+_FIXTURE_KEY = ProviderApiKey("real-media-fixture", source="test")
 
 
-def _request(*turns: Turn) -> LLMRequest:
-    return LLMRequest(
-        model_name="gpt-5.4-mini",
+def _request(*turns: ModelMessage) -> ModelCall:
+    return ModelCall(
+        model=ModelRef(provider="openai", model="gpt-5.4-mini"),
         messages=list(turns),
-        max_tokens=1024,
+        max_output_tokens=1024,
         tools=(
             ToolSpec(
                 name=APP_SEARCH_TOOL_NAME,
@@ -57,14 +67,13 @@ def _request(*turns: Turn) -> LLMRequest:
     )
 
 
-async def _chunks(req: LLMRequest):
-    router = RealMediaFixtureLLMRouter()
+async def _chunks(req: ModelCall):
+    router = RealMediaFixtureModelRuntime()
     return [
         chunk
-        async for chunk in router.generate_stream(
-            "openai",
+        async for chunk in router.stream(
             req,
-            "real-media-fixture",
+            key=_FIXTURE_KEY,
             timeout_s=45,
         )
     ]
@@ -73,7 +82,7 @@ async def _chunks(req: LLMRequest):
 async def test_real_media_fixture_llm_uses_app_search_before_answering() -> None:
     chunks = await _chunks(
         _request(
-            Turn(
+            ModelMessage(
                 role="user",
                 content="What does this source say about SOFIA? Use the attached evidence.",
             ),
@@ -89,8 +98,8 @@ async def test_real_media_fixture_llm_uses_app_search_before_answering() -> None
 async def test_real_media_fixture_llm_cites_tool_result() -> None:
     chunks = await _chunks(
         _request(
-            Turn(role="user", content="What does this source say about SOFIA?"),
-            Turn(
+            ModelMessage(role="user", content="What does this source say about SOFIA?"),
+            ModelMessage(
                 role="tool",
                 tool_results=(
                     ToolResult(
@@ -109,8 +118,8 @@ async def test_real_media_fixture_llm_cites_tool_result() -> None:
 async def test_real_media_fixture_llm_does_not_cite_empty_tool_result() -> None:
     chunks = await _chunks(
         _request(
-            Turn(role="user", content="What does this source say about SOFIA?"),
-            Turn(
+            ModelMessage(role="user", content="What does this source say about SOFIA?"),
+            ModelMessage(
                 role="tool",
                 tool_results=(
                     ToolResult(
@@ -129,14 +138,14 @@ async def test_real_media_fixture_llm_does_not_cite_empty_tool_result() -> None:
 async def _synthesize[T: BaseModel](system_prompt: str, schema: type[T]) -> T:
     """Run the fixture router's canned text through the real synthesis validation."""
     result = await run_structured_synthesis(
-        llm=RealMediaFixtureLLMRouter(),
+        llm=RealMediaFixtureModelRuntime(),
         request=SynthesisRequest(
             provider="anthropic",
-            llm_request=LLMRequest(
-                model_name="claude-haiku-4-5-20251001",
+            llm_request=ModelCall(
+                model=ModelRef(provider="anthropic", model="claude-haiku-4-5-20251001"),
                 messages=[
-                    Turn(role="system", content=system_prompt, cache_ttl="5m"),
-                    Turn(
+                    ModelMessage(role="system", content=system_prompt, cache_ttl="5m"),
+                    ModelMessage(
                         role="user",
                         content=(
                             "CANDIDATES:\n[0] alpha\n\n"
@@ -144,7 +153,8 @@ async def _synthesize[T: BaseModel](system_prompt: str, schema: type[T]) -> T:
                         ),
                     ),
                 ],
-                max_tokens=2048,
+                max_output_tokens=2048,
+                reasoning=ReasoningConfig(effort="none"),
             ),
             api_key="real-media-fixture",
             timeout_s=45,
@@ -165,8 +175,8 @@ async def test_real_media_fixture_llm_oracle_synthesis_passes_real_validator() -
             locator_label="Inferno",
             attribution_text="Dante Alighieri",
             deep_link=None,
-            locator={},
-            source={},
+            title="Inferno",
+            target=ResourceRef(scheme="oracle_corpus_passage", id=uuid4()),
             tags=[],
             score=1.0,
         )
@@ -213,12 +223,11 @@ async def test_real_media_fixture_llm_media_unit_synthesis_grounds() -> None:
 
 
 async def test_real_media_fixture_llm_generate_without_marker_keeps_chat_response() -> None:
-    router = RealMediaFixtureLLMRouter()
+    router = RealMediaFixtureModelRuntime()
 
     response = await router.generate(
-        "openai",
-        _request(Turn(role="user", content="What does this source say about SOFIA?")),
-        "real-media-fixture",
+        _request(ModelMessage(role="user", content="What does this source say about SOFIA?")),
+        key=_FIXTURE_KEY,
         timeout_s=45,
     )
 
@@ -228,8 +237,8 @@ async def test_real_media_fixture_llm_generate_without_marker_keeps_chat_respons
 async def test_real_media_fixture_llm_does_not_cite_tool_error() -> None:
     chunks = await _chunks(
         _request(
-            Turn(role="user", content="What does this source say about SOFIA?"),
-            Turn(
+            ModelMessage(role="user", content="What does this source say about SOFIA?"),
+            ModelMessage(
                 role="tool",
                 tool_results=(
                     ToolResult(

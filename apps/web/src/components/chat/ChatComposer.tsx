@@ -100,7 +100,6 @@ export default function ChatComposer({
 }: ChatComposerProps) {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [onlyUseMyKeys, setOnlyUseMyKeys] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const settingsButtonRef = useRef<HTMLButtonElement>(null);
@@ -112,8 +111,11 @@ export default function ChatComposer({
     conversationId,
     initialContent,
   });
-  const models = useChatModels({ onlyUseMyKeys });
-  const { selectedModelId, selectedProvider, selectedReasoning } = models;
+  const models = useChatModels();
+  const { selectedModel, selectedProvider, selectedReasoning, selectedKeyMode } = models;
+  const modelSelectionReady =
+    selectedModel?.available_key_modes.includes(selectedKeyMode) === true &&
+    selectedModel.reasoning_modes.includes(selectedReasoning);
 
   useEffect(() => {
     if (!autoFocus) return;
@@ -130,7 +132,7 @@ export default function ChatComposer({
 
   const handleSend = useCallback(async () => {
     const trimmed = content.trim();
-    if (!trimmed || sending || disabledReason || !selectedModelId) return;
+    if (!trimmed || sending || disabledReason || !modelSelectionReady || !selectedModel) return;
 
     setSending(true);
     setError(null);
@@ -150,9 +152,9 @@ export default function ChatComposer({
       const body = buildChatRunBody({
         conversationId: targetConversationId,
         content: trimmed,
-        modelId: selectedModelId,
+        modelId: selectedModel.id,
         reasoning: selectedReasoning,
-        onlyUseMyKeys,
+        keyMode: selectedKeyMode,
         branchDraft,
         parentMessageId,
         readerContext,
@@ -181,9 +183,10 @@ export default function ChatComposer({
   }, [
     content,
     sending,
-    selectedModelId,
+    selectedModel,
     selectedReasoning,
-    onlyUseMyKeys,
+    selectedKeyMode,
+    modelSelectionReady,
     conversationId,
     onResolveConversation,
     readerContext,
@@ -271,8 +274,6 @@ export default function ChatComposer({
             open={settingsOpen}
             setOpen={setSettingsOpen}
             models={models}
-            onlyUseMyKeys={onlyUseMyKeys}
-            setOnlyUseMyKeys={setOnlyUseMyKeys}
             disabled={composerDisabled}
             buttonRef={settingsButtonRef}
           />
@@ -295,7 +296,7 @@ export default function ChatComposer({
               sendDisabled ||
               !content.trim() ||
               !selectedProvider ||
-              !selectedModelId
+              !modelSelectionReady
             }
           >
             {branchDraft ? sendLabel : <ArrowUp size={18} aria-hidden="true" />}

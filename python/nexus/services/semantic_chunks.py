@@ -2,27 +2,27 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import math
 import re
-import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import httpx
+from provider_runtime import ModelRuntime, ProviderApiKey
+from provider_runtime.errors import ModelCallError, ModelCallErrorCode
+from provider_runtime.types import EmbeddingCall, ModelRef, RetryPolicy
 
 from nexus.config import Environment, get_settings
 from nexus.errors import ApiError, ApiErrorCode
+from nexus.llm_catalog import configured_platform_key, is_provider_enabled
 from nexus.logging import get_logger
-from nexus.retry_after import parse_retry_after_seconds
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
-_OPENAI_EMBEDDINGS_URL = "https://api.openai.com/v1/embeddings"
-_EMBEDDING_PROVIDER_RETRYABLE_STATUS_CODES = {408, 429, 500, 502, 503, 504, 520}
 # Embeddings are an external third-party API: retries.md gives these a budget
 # longer than infrastructure retries, kept well under the 300s worker lease.
 _EMBEDDING_PROVIDER_MAX_ATTEMPTS = 5
-_EMBEDDING_PROVIDER_BACKOFF_SECONDS = (2.0, 8.0, 20.0, 30.0)
-_EMBEDDING_PROVIDER_RETRY_AFTER_CAP_SECONDS = 30.0
 logger = get_logger(__name__)
 
 
@@ -98,65 +98,29 @@ def build_deterministic_hash_embedding(text: str, *, dimensions: int) -> list[fl
     return [component / norm for component in vector]
 
 
-def _embedding_provider_error(status_code: int) -> ApiErrorCode:
-    if status_code in {401, 403}:
+def _embedding_provider_error(error_code: ModelCallErrorCode) -> ApiErrorCode:
+    if error_code == ModelCallErrorCode.INVALID_KEY:
         return ApiErrorCode.E_LLM_INVALID_KEY
-    if status_code == 429:
+    if error_code == ModelCallErrorCode.RATE_LIMIT:
         return ApiErrorCode.E_LLM_RATE_LIMIT
-    if status_code in {408, 504}:
+    if error_code == ModelCallErrorCode.TIMEOUT:
         return ApiErrorCode.E_LLM_TIMEOUT
-    if status_code == 404:
+    if error_code == ModelCallErrorCode.MODEL_NOT_AVAILABLE:
         return ApiErrorCode.E_MODEL_NOT_AVAILABLE
-    if status_code >= 500:
-        return ApiErrorCode.E_LLM_PROVIDER_DOWN
-    if 400 <= status_code < 500:
+    if error_code == ModelCallErrorCode.QUOTA_EXCEEDED:
+        return ApiErrorCode.E_LLM_QUOTA_EXCEEDED
+    if error_code in {ModelCallErrorCode.BAD_REQUEST, ModelCallErrorCode.CONTEXT_TOO_LARGE}:
         return ApiErrorCode.E_LLM_BAD_REQUEST
     return ApiErrorCode.E_LLM_PROVIDER_DOWN
 
 
-def _embedding_provider_retry_delay_seconds(
-    attempt_index: int, response: httpx.Response | None = None
-) -> float:
-    if response is not None and response.status_code == 429:
-        retry_after_seconds = parse_retry_after_seconds(
-            response.headers.get("Retry-After"),
-            cap_seconds=_EMBEDDING_PROVIDER_RETRY_AFTER_CAP_SECONDS,
-        )
-        if retry_after_seconds is not None:
-            return retry_after_seconds
-    return _EMBEDDING_PROVIDER_BACKOFF_SECONDS[
-        min(attempt_index, len(_EMBEDDING_PROVIDER_BACKOFF_SECONDS) - 1)
-    ]
-
-
-def _parse_embedding_response_data(
-    body: Any, *, dimensions: int, expected_count: int
+def _validate_embedding_vectors(
+    vectors: list[list[float]], *, dimensions: int, expected_count: int
 ) -> list[list[float]]:
     try:
-        if not isinstance(body, dict):
-            raise ValueError("Embedding provider response must be an object")
-        data = body.get("data")
-        if not isinstance(data, list):
-            raise ValueError("Embedding provider response missing data list")
-        vectors_by_index: dict[int, list[float]] = {}
-        for item in data:
-            if not isinstance(item, dict):
-                raise ValueError("Embedding provider data item must be an object")
-            index = item.get("index")
-            if (
-                not isinstance(index, int)
-                or isinstance(index, bool)
-                or index < 0
-                or index >= expected_count
-                or index in vectors_by_index
-            ):
-                raise ValueError("Embedding provider returned invalid indexes")
-            vectors_by_index[index] = _normalize_and_validate_vector(
-                item.get("embedding"), dimensions=dimensions
-            )
-        if set(vectors_by_index) != set(range(expected_count)):
+        if len(vectors) != expected_count:
             raise ValueError("Embedding provider returned incomplete indexes")
-        return [vectors_by_index[index] for index in range(expected_count)]
+        return [_normalize_and_validate_vector(vector, dimensions=dimensions) for vector in vectors]
     except (TypeError, ValueError) as exc:
         raise ApiError(
             ApiErrorCode.E_LLM_PROVIDER_DOWN,
@@ -164,134 +128,94 @@ def _parse_embedding_response_data(
         ) from exc
 
 
-def _embed_with_openai(texts: list[str], *, dimensions: int) -> list[list[float]]:
+def _api_error_from_embedding_error(exc: ModelCallError) -> ApiError:
+    api_code = _embedding_provider_error(exc.error_code)
+    message = (
+        "Embedding provider returned an invalid response."
+        if _is_invalid_embedding_response_error(exc)
+        else "Embedding provider request failed."
+    )
+    return ApiError(api_code, message)
+
+
+def _is_invalid_embedding_response_error(exc: ModelCallError) -> bool:
+    return (
+        _embedding_provider_error(exc.error_code) == ApiErrorCode.E_LLM_PROVIDER_DOWN
+        and "embedding" in exc.message.lower()
+        and "response" in exc.message.lower()
+    )
+
+
+async def _embed_with_openai_async(texts: list[str], *, dimensions: int) -> list[list[float]]:
     settings = get_settings()
-    api_key = settings.openai_api_key
-    if not settings.enable_openai:
+    if not is_provider_enabled("openai", settings):
         raise ApiError(
             ApiErrorCode.E_MODEL_NOT_AVAILABLE,
             "OpenAI embeddings are disabled.",
         )
+    api_key = configured_platform_key("openai", settings)
     if not api_key:
         raise ApiError(
             ApiErrorCode.E_LLM_NO_KEY,
             "OPENAI_API_KEY is required for transcript semantic embeddings.",
         )
 
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-
     vectors: list[list[float]] = []
-    for start in range(0, len(texts), 64):
-        batch = texts[start : start + 64]
-        for attempt_index in range(_EMBEDDING_PROVIDER_MAX_ATTEMPTS):
+    async with httpx.AsyncClient() as client:
+        runtime = ModelRuntime(
+            client,
+            enable_openai=settings.enable_openai,
+            enable_anthropic=False,
+            enable_gemini=False,
+            enable_openrouter=False,
+            enable_cloudflare=False,
+        )
+        for start in range(0, len(texts), 64):
+            batch = texts[start : start + 64]
+            call = EmbeddingCall(
+                model=ModelRef(provider="openai", model=settings.transcript_embedding_model_openai),
+                inputs=batch,
+                dimensions=dimensions,
+                retry=RetryPolicy(
+                    max_attempts=_EMBEDDING_PROVIDER_MAX_ATTEMPTS,
+                    initial_delay_s=2.0,
+                    max_delay_s=30.0,
+                ),
+            )
             try:
-                response = httpx.post(
-                    _OPENAI_EMBEDDINGS_URL,
-                    headers=headers,
-                    json={
-                        "model": settings.transcript_embedding_model_openai,
-                        "input": batch,
-                        "dimensions": dimensions,
-                    },
-                    timeout=httpx.Timeout(
-                        settings.transcript_embedding_timeout_seconds, connect=10.0
-                    ),
+                response = await runtime.embed(
+                    call,
+                    key=ProviderApiKey(api_key, source="platform"),
+                    timeout_s=int(settings.transcript_embedding_timeout_seconds),
                 )
-            except httpx.TimeoutException as exc:
-                if attempt_index < _EMBEDDING_PROVIDER_MAX_ATTEMPTS - 1:
-                    delay_seconds = _embedding_provider_retry_delay_seconds(attempt_index)
-                    logger.warning(
-                        "embedding_provider_retryable_transport_error",
-                        error_code=ApiErrorCode.E_LLM_TIMEOUT.value,
-                        attempt=attempt_index + 1,
-                        max_attempts=_EMBEDDING_PROVIDER_MAX_ATTEMPTS,
-                        retry_delay_seconds=delay_seconds,
+                vectors.extend(
+                    _validate_embedding_vectors(
+                        response.embeddings,
+                        dimensions=dimensions,
+                        expected_count=len(batch),
                     )
-                    time.sleep(delay_seconds)
-                    continue
-                raise ApiError(
-                    ApiErrorCode.E_LLM_TIMEOUT,
-                    "Embedding provider request timed out.",
-                ) from exc
-            except httpx.RequestError as exc:
-                if attempt_index < _EMBEDDING_PROVIDER_MAX_ATTEMPTS - 1:
-                    delay_seconds = _embedding_provider_retry_delay_seconds(attempt_index)
-                    logger.warning(
-                        "embedding_provider_retryable_transport_error",
-                        error_code=ApiErrorCode.E_LLM_PROVIDER_DOWN.value,
-                        attempt=attempt_index + 1,
-                        max_attempts=_EMBEDDING_PROVIDER_MAX_ATTEMPTS,
-                        retry_delay_seconds=delay_seconds,
-                    )
-                    time.sleep(delay_seconds)
-                    continue
-                raise ApiError(
-                    ApiErrorCode.E_LLM_PROVIDER_DOWN,
-                    "Embedding provider request failed.",
-                ) from exc
-            try:
-                response.raise_for_status()
-            except httpx.HTTPStatusError as exc:
-                error_code = _embedding_provider_error(response.status_code)
-                # OpenAI returns 429 both for transient rate limits and for a
-                # permanently exhausted billing quota; only the former is retryable.
-                quota_exhausted = False
-                if response.status_code == 429:
-                    try:
-                        error_kind = (response.json().get("error") or {}).get("type")
-                    except (ValueError, AttributeError):
-                        # justify-ignore-error: an unparseable 429 body only means we
-                        # cannot confirm quota exhaustion; fall through as a rate limit.
-                        error_kind = None
-                    if error_kind == "insufficient_quota":
-                        quota_exhausted = True
-                        error_code = ApiErrorCode.E_LLM_QUOTA_EXCEEDED
-                if (
-                    response.status_code in _EMBEDDING_PROVIDER_RETRYABLE_STATUS_CODES
-                    and not quota_exhausted
-                    and attempt_index < _EMBEDDING_PROVIDER_MAX_ATTEMPTS - 1
-                ):
-                    delay_seconds = _embedding_provider_retry_delay_seconds(
-                        attempt_index,
-                        response,
-                    )
-                    logger.warning(
-                        "embedding_provider_retryable_http_error",
-                        status_code=response.status_code,
-                        error_code=error_code.value,
-                        attempt=attempt_index + 1,
-                        max_attempts=_EMBEDDING_PROVIDER_MAX_ATTEMPTS,
-                        retry_delay_seconds=delay_seconds,
-                    )
-                    time.sleep(delay_seconds)
-                    continue
+                )
+            except ModelCallError as exc:
+                api_code = _embedding_provider_error(exc.error_code)
                 logger.warning(
                     "embedding_provider_request_failed",
-                    status_code=response.status_code,
-                    error_code=error_code.value,
-                    response_chars=len(response.text),
+                    error_code=api_code.value,
                 )
-                raise ApiError(
-                    error_code,
-                    "Embedding provider request failed.",
-                ) from exc
-            try:
-                body = response.json()
-            except ValueError as exc:
-                raise ApiError(
-                    ApiErrorCode.E_LLM_PROVIDER_DOWN,
-                    "Embedding provider returned invalid JSON.",
-                ) from exc
-            vectors.extend(
-                _parse_embedding_response_data(
-                    body, dimensions=dimensions, expected_count=len(batch)
-                )
-            )
-            break
+                raise _api_error_from_embedding_error(exc) from exc
     return vectors
+
+
+def _embed_with_openai(texts: list[str], *, dimensions: int) -> list[list[float]]:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(_embed_with_openai_async(texts, dimensions=dimensions))
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(
+            lambda: asyncio.run(_embed_with_openai_async(texts, dimensions=dimensions))
+        )
+        return future.result()
 
 
 def build_text_embeddings(texts: list[str]) -> tuple[str, list[list[float]]]:

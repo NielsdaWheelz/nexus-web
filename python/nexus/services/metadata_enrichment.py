@@ -12,20 +12,38 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
-from llm_calling.types import StructuredOutputSpec
+from provider_runtime.types import (
+    ModelCall,
+    ModelMessage,
+    ModelRef,
+    ProviderName,
+    ReasoningConfig,
+    ReasoningEffort,
+    StructuredOutputSpec,
+)
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.config import Settings, get_settings
 from nexus.db.models import Media
-from nexus.llm_catalog import require_catalog_model
+from nexus.llm_catalog import require_catalog_model, require_model_capabilities
 from nexus.logging import get_logger
 from nexus.services.contributor_credits import replace_machine_derived_media_author_credits
 
 logger = get_logger(__name__)
+
+_METADATA_REASONING_PREFERENCE: tuple[ReasoningEffort, ...] = (
+    "none",
+    "default",
+    "minimal",
+    "low",
+    "medium",
+    "high",
+    "max",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -136,6 +154,41 @@ def metadata_structured_output_spec() -> StructuredOutputSpec:
             },
         },
     )
+
+
+def build_metadata_enrichment_call(
+    *,
+    provider: str,
+    model: str,
+    prompt: str,
+    max_output_tokens: int,
+) -> ModelCall:
+    """Return the canonical provider-runtime request for metadata enrichment."""
+    return ModelCall(
+        model=ModelRef(provider=cast(ProviderName, provider), model=model),
+        messages=[ModelMessage(role="user", content=prompt)],
+        max_output_tokens=max_output_tokens,
+        temperature=0.0,
+        reasoning=ReasoningConfig(
+            effort=_metadata_structured_output_reasoning_effort(provider, model)
+        ),
+        structured_output=metadata_structured_output_spec(),
+    )
+
+
+def _metadata_structured_output_reasoning_effort(
+    provider: str,
+    model: str,
+) -> ReasoningEffort:
+    """Pick the lowest-cost catalog-valid reasoning mode for provider-native JSON."""
+    capabilities = require_model_capabilities(provider, model)
+    if not capabilities.structured_output:
+        raise AssertionError(f"{provider}/{model} does not support structured output")
+    allowed_modes = capabilities.structured_output_reasoning_modes or capabilities.reasoning_modes
+    for effort in _METADATA_REASONING_PREFERENCE:
+        if effort in allowed_modes:
+            return effort
+    raise AssertionError(f"{provider}/{model} has no usable structured-output reasoning mode")
 
 
 # ---------------------------------------------------------------------------
@@ -526,25 +579,26 @@ def merge_enrichment(
 # ---------------------------------------------------------------------------
 
 
-def select_enrichment_providers(
+def select_enrichment_model(
     settings: Settings,
-) -> list[tuple[str, str]]:
-    """Return enabled (provider, model) pairs in reliability-first failover order.
+) -> tuple[str, str] | None:
+    """Return the single configured metadata-enrichment provider/model.
 
-    Key availability is resolved per attempt via ``resolve_api_key``; each model
+    Key availability is resolved by ``resolve_api_key`` in the task. The model
     setting is asserted catalog-valid here, at task use.
     """
     if not settings.metadata_enrichment_enabled:
-        return []
+        return None
 
-    candidates = [
-        ("openai", settings.metadata_enrichment_model_openai, settings.enable_openai),
-        ("anthropic", settings.metadata_enrichment_model_anthropic, settings.enable_anthropic),
-        ("gemini", settings.metadata_enrichment_model_gemini, settings.enable_gemini),
-    ]
-
-    return [
-        (provider, require_catalog_model(provider, model).model_name)
-        for provider, model, enabled in candidates
-        if enabled
-    ]
+    provider = settings.metadata_enrichment_provider
+    enabled = {
+        "openai": settings.enable_openai,
+        "anthropic": settings.enable_anthropic,
+        "gemini": settings.enable_gemini,
+    }[provider]
+    if not enabled:
+        return None
+    return (
+        provider,
+        require_catalog_model(provider, settings.metadata_enrichment_model).model_name,
+    )

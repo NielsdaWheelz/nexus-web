@@ -18,9 +18,11 @@ import pytest
 from sqlalchemy import text
 
 from nexus.config import clear_settings_cache
+from nexus.errors import ApiError, ApiErrorCode
 from nexus.services.api_key_resolver import resolve_api_key
 from nexus.services.billing_entitlements import grant_entitlement_override
 from nexus.services.crypto import MASTER_KEY_SIZE, _get_master_key
+from nexus.services.models import list_available_models
 from tests.factories import seed_test_models
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
@@ -45,11 +47,14 @@ def setup_test_master_key(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("CLOUDFLARE_AI_API_TOKEN", raising=False)
+    monkeypatch.delenv("CLOUDFLARE_AI_ACCOUNT_ID", raising=False)
     monkeypatch.delenv("ENABLE_OPENAI", raising=False)
     monkeypatch.delenv("ENABLE_ANTHROPIC", raising=False)
     monkeypatch.delenv("ENABLE_GEMINI", raising=False)
-    monkeypatch.delenv("ENABLE_DEEPSEEK", raising=False)
+    monkeypatch.delenv("ENABLE_OPENROUTER", raising=False)
+    monkeypatch.delenv("ENABLE_CLOUDFLARE", raising=False)
     clear_settings_cache()
 
     yield
@@ -94,6 +99,9 @@ class TestModelFiltering:
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+        monkeypatch.delenv("CLOUDFLARE_AI_API_TOKEN", raising=False)
+        monkeypatch.delenv("CLOUDFLARE_AI_ACCOUNT_ID", raising=False)
         clear_settings_cache()
 
         # Seed models
@@ -120,7 +128,9 @@ class TestModelFiltering:
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-        monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+        monkeypatch.delenv("CLOUDFLARE_AI_API_TOKEN", raising=False)
+        monkeypatch.delenv("CLOUDFLARE_AI_ACCOUNT_ID", raising=False)
         clear_settings_cache()
 
         with direct_db.session() as session:
@@ -137,7 +147,7 @@ class TestModelFiltering:
             "openai",
             "anthropic",
             "gemini",
-            "deepseek",
+            "openrouter",
         }
         assert {m["available_via"] for m in data} == {"platform"}
 
@@ -162,6 +172,13 @@ class TestModelFiltering:
         assert resolved.mode == "platform"
         assert resolved.api_key == "real-media-fixture"
 
+    def test_resolve_api_key_rejects_unknown_key_mode(self, direct_db: DirectSessionManager):
+        """Unknown key modes must not silently fall back to auto routing."""
+        with direct_db.session() as session, pytest.raises(ApiError) as exc_info:
+            resolve_api_key(session, create_test_user_id(), "openai", "byok")
+
+        assert exc_info.value.code == ApiErrorCode.E_INVALID_REQUEST
+
     def test_platform_key_enables_provider_models(
         self, auth_client, direct_db: DirectSessionManager, monkeypatch
     ):
@@ -172,6 +189,9 @@ class TestModelFiltering:
         monkeypatch.setenv("OPENAI_API_KEY", "sk-platform-key-openai")
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+        monkeypatch.delenv("CLOUDFLARE_AI_API_TOKEN", raising=False)
+        monkeypatch.delenv("CLOUDFLARE_AI_ACCOUNT_ID", raising=False)
         clear_settings_cache()
 
         # Seed models
@@ -193,6 +213,34 @@ class TestModelFiltering:
         assert {m["model_name"] for m in data} == {"gpt-5.5", "gpt-5.4-mini"}
         assert {m["available_via"] for m in data} == {"platform"}
 
+    def test_db_catalog_drift_defects_instead_of_hiding_model(
+        self, auth_client, direct_db: DirectSessionManager, monkeypatch
+    ):
+        """A DB model row missing from the shared catalog is an operator defect."""
+        user_id = create_test_user_id()
+
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-platform-key-openai")
+        clear_settings_cache()
+
+        with direct_db.session() as session:
+            seed_test_models(session)
+            session.execute(
+                text(
+                    """
+                    INSERT INTO models (id, provider, model_name, max_context_tokens, is_available)
+                    VALUES (gen_random_uuid(), 'openai', 'uncataloged-model', 8192, true)
+                    """
+                )
+            )
+            session.commit()
+
+        auth_client.get("/me", headers=auth_headers(user_id))
+        _seed_ai_plus_billing(direct_db, user_id)
+
+        with direct_db.session() as session:
+            with pytest.raises(AssertionError, match="uncataloged-model"):
+                list_available_models(session, user_id)
+
     def test_disabled_provider_hides_models_even_with_platform_key(
         self, auth_client, direct_db: DirectSessionManager, monkeypatch
     ):
@@ -213,14 +261,14 @@ class TestModelFiltering:
         assert response.status_code == 200
         assert response.json()["data"] == []
 
-    def test_deepseek_platform_key_enables_deepseek_models(
+    def test_openrouter_platform_key_enables_openrouter_models(
         self, auth_client, direct_db: DirectSessionManager, monkeypatch
     ):
-        """DeepSeek platform key + enabled flag → DeepSeek models appear."""
+        """OpenRouter platform key + enabled flag → OpenRouter models appear."""
         user_id = create_test_user_id()
 
-        monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-platform-key-deepseek")
-        monkeypatch.setenv("ENABLE_DEEPSEEK", "true")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-v1-platform-key-openrouter")
+        monkeypatch.setenv("ENABLE_OPENROUTER", "true")
         clear_settings_cache()
 
         with direct_db.session() as session:
@@ -233,12 +281,55 @@ class TestModelFiltering:
         assert response.status_code == 200
         data = response.json()["data"]
         providers = {m["provider"] for m in data}
-        assert providers == {"deepseek"}
+        assert providers == {"openrouter"}
         assert {m["model_name"] for m in data} == {
-            "deepseek-v4-pro",
-            "deepseek-v4-flash",
+            "moonshotai/kimi-k2.6",
+            "openai/gpt-5.5",
+            "openai/gpt-5.4-mini",
         }
         assert {m["available_via"] for m in data} == {"platform"}
+
+    def test_cloudflare_is_not_exposed_until_chat_capabilities_are_live(
+        self, auth_client, direct_db: DirectSessionManager, monkeypatch
+    ):
+        """Cloudflare platform credentials do not expose non-streaming/non-tool chat rows."""
+        user_id = create_test_user_id()
+
+        monkeypatch.setenv("CLOUDFLARE_AI_API_TOKEN", "cf-platform-token")
+        monkeypatch.setenv("CLOUDFLARE_AI_ACCOUNT_ID", "cf-account-id")
+        monkeypatch.setenv("ENABLE_CLOUDFLARE", "true")
+        clear_settings_cache()
+
+        with direct_db.session() as session:
+            seed_test_models(session)
+
+        auth_client.get("/me", headers=auth_headers(user_id))
+        _seed_ai_plus_billing(direct_db, user_id)
+        response = auth_client.get("/models", headers=auth_headers(user_id))
+
+        assert response.status_code == 200
+        assert response.json()["data"] == []
+
+    def test_cloudflare_token_without_account_id_does_not_enable_models(
+        self, auth_client, direct_db: DirectSessionManager, monkeypatch
+    ):
+        """Cloudflare platform availability requires both token and account id."""
+        user_id = create_test_user_id()
+
+        monkeypatch.setenv("CLOUDFLARE_AI_API_TOKEN", "cf-platform-token")
+        monkeypatch.delenv("CLOUDFLARE_AI_ACCOUNT_ID", raising=False)
+        monkeypatch.setenv("ENABLE_CLOUDFLARE", "true")
+        clear_settings_cache()
+
+        with direct_db.session() as session:
+            seed_test_models(session)
+
+        auth_client.get("/me", headers=auth_headers(user_id))
+        _seed_ai_plus_billing(direct_db, user_id)
+        response = auth_client.get("/models", headers=auth_headers(user_id))
+
+        assert response.status_code == 200
+        assert response.json()["data"] == []
 
     def test_byok_untested_enables_provider_models(
         self, auth_client, direct_db: DirectSessionManager, monkeypatch
@@ -250,6 +341,9 @@ class TestModelFiltering:
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+        monkeypatch.delenv("CLOUDFLARE_AI_API_TOKEN", raising=False)
+        monkeypatch.delenv("CLOUDFLARE_AI_ACCOUNT_ID", raising=False)
         clear_settings_cache()
 
         # Seed models
@@ -284,6 +378,9 @@ class TestModelFiltering:
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+        monkeypatch.delenv("CLOUDFLARE_AI_API_TOKEN", raising=False)
+        monkeypatch.delenv("CLOUDFLARE_AI_ACCOUNT_ID", raising=False)
         clear_settings_cache()
 
         # Seed models
@@ -318,6 +415,58 @@ class TestModelFiltering:
         assert providers == {"gemini"}
         assert {m["available_via"] for m in data} == {"byok"}
 
+    def test_models_endpoint_marks_server_defaults_for_each_key_mode(
+        self, auth_client, direct_db: DirectSessionManager, monkeypatch
+    ):
+        """The server owns defaults for auto/platform/BYOK filtered model views."""
+        user_id = create_test_user_id()
+
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-platform-key-openai")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-v1-platform-key-openrouter")
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+        monkeypatch.delenv("CLOUDFLARE_AI_API_TOKEN", raising=False)
+        monkeypatch.delenv("CLOUDFLARE_AI_ACCOUNT_ID", raising=False)
+        clear_settings_cache()
+
+        with direct_db.session() as session:
+            seed_test_models(session)
+
+        auth_client.get("/me", headers=auth_headers(user_id))
+        _seed_ai_plus_billing(direct_db, user_id)
+        auth_client.post(
+            "/keys",
+            json={"provider": "anthropic", "api_key": "sk-ant-test-key-1234567890abcdef"},
+            headers=auth_headers(user_id),
+        )
+
+        response = auth_client.get("/models", headers=auth_headers(user_id))
+
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert any(
+            model["is_default"] and "platform_only" in model["available_key_modes"]
+            for model in data
+        )
+        auto_defaults = [
+            model["provider"]
+            for model in data
+            if model["is_default"] and "auto" in model["available_key_modes"]
+        ]
+        assert auto_defaults == ["openai", "anthropic", "openrouter"]
+        platform_defaults = [
+            model["provider"]
+            for model in data
+            if model["is_default"] and "platform_only" in model["available_key_modes"]
+        ]
+        assert platform_defaults == ["openai", "openrouter"]
+        byok_defaults = [
+            model
+            for model in data
+            if model["is_default"] and "byok_only" in model["available_key_modes"]
+        ]
+        assert [model["provider"] for model in byok_defaults] == ["anthropic"]
+
     def test_byok_invalid_does_not_enable_models(
         self, auth_client, direct_db: DirectSessionManager, monkeypatch
     ):
@@ -328,6 +477,9 @@ class TestModelFiltering:
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+        monkeypatch.delenv("CLOUDFLARE_AI_API_TOKEN", raising=False)
+        monkeypatch.delenv("CLOUDFLARE_AI_ACCOUNT_ID", raising=False)
         clear_settings_cache()
 
         # Seed models
@@ -366,6 +518,9 @@ class TestModelFiltering:
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+        monkeypatch.delenv("CLOUDFLARE_AI_API_TOKEN", raising=False)
+        monkeypatch.delenv("CLOUDFLARE_AI_ACCOUNT_ID", raising=False)
         clear_settings_cache()
 
         with direct_db.session() as session:
@@ -408,6 +563,9 @@ class TestModelFiltering:
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+        monkeypatch.delenv("CLOUDFLARE_AI_API_TOKEN", raising=False)
+        monkeypatch.delenv("CLOUDFLARE_AI_ACCOUNT_ID", raising=False)
         clear_settings_cache()
 
         with direct_db.session() as session:
@@ -454,6 +612,9 @@ class TestModelFiltering:
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+        monkeypatch.delenv("CLOUDFLARE_AI_API_TOKEN", raising=False)
+        monkeypatch.delenv("CLOUDFLARE_AI_ACCOUNT_ID", raising=False)
         clear_settings_cache()
 
         # Seed models
@@ -486,6 +647,9 @@ class TestModelFiltering:
         monkeypatch.setenv("OPENAI_API_KEY", "sk-platform-key-openai")
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+        monkeypatch.delenv("CLOUDFLARE_AI_API_TOKEN", raising=False)
+        monkeypatch.delenv("CLOUDFLARE_AI_ACCOUNT_ID", raising=False)
         clear_settings_cache()
 
         # Seed models
@@ -580,8 +744,54 @@ class TestModelResponseFormat:
         assert "reasoning_modes" in model
         assert "max_context_tokens" in model
         assert "available_via" in model
+        assert "provider_rank" in model
+        assert "model_rank" in model
+        assert "is_default" in model
+        assert "available_key_modes" in model
+        assert "capabilities" in model
         assert model["reasoning_modes"][0] == "default"
         assert "none" in model["reasoning_modes"]
+        assert data[0]["is_default"] is True
+        assert data[0]["model_tier"] == "light"
+        assert "auto" in data[0]["available_key_modes"]
+        assert data[0]["capabilities"]["prompt_cache"]["mode"] in {
+            "keyed_ttl",
+            "turn_ttl",
+            "none",
+        }
+
+    def test_model_response_context_window_comes_from_shared_catalog(
+        self, auth_client, direct_db: DirectSessionManager, monkeypatch
+    ):
+        """DB rows own availability/id; capability values come from provider_runtime."""
+        user_id = create_test_user_id()
+
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-platform-key-openai")
+        clear_settings_cache()
+
+        with direct_db.session() as session:
+            seed_test_models(session)
+            session.execute(
+                text(
+                    """
+                    UPDATE models
+                    SET max_context_tokens = 1
+                    WHERE provider = 'openai' AND model_name = 'gpt-5.4-mini'
+                    """
+                )
+            )
+            session.commit()
+
+        auth_client.get("/me", headers=auth_headers(user_id))
+        _seed_ai_plus_billing(direct_db, user_id)
+
+        response = auth_client.get("/models", headers=auth_headers(user_id))
+
+        assert response.status_code == 200
+        light_model = next(
+            item for item in response.json()["data"] if item["model_name"] == "gpt-5.4-mini"
+        )
+        assert light_model["max_context_tokens"] == 400000
 
 
 # =============================================================================

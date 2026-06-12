@@ -25,21 +25,27 @@ entry point for obtaining a provider key, and the only place a generation surfac
 reads a platform key from. No surface reads `settings.<provider>_api_key`
 directly — those reads live only in `llm_catalog.py` (which exposes platform keys
 through `platform_key_for_provider`) and the resolver itself (AC-5). The
-generation embedding path (`semantic_chunks._embed_with_openai`) is a separate
-substrate with its own provider key and is not part of this spine.
+transcript embedding path (`semantic_chunks._embed_with_openai`) calls
+`provider_runtime.embed()` with the OpenAI platform key and is not part of this
+generation key spine.
 
 `key_mode` is one of:
 
-- **`auto`** — try the user's BYOK key first, fall back to the platform key.
+- **`auto`** — use the user's BYOK key when one is present and usable; otherwise
+  use the platform key when the user is entitled to it.
 - **`byok_only`** — use only the user's key; raise if absent.
 - **`platform_only`** — use only the platform key; raise if the entitlement is
   missing.
+
+Cloudflare is platform-only in this cutover. It remains a runtime/model
+provider, but `/keys` does not accept Cloudflare BYOK rows until the credential
+contract includes both token and account id.
 
 The resolver returns a `ResolvedKey` carrying the key, the mode actually used
 (`platform` or `byok`), and the BYOK key id when one was used (so a terminal
 write can flow `update_user_key_status` feedback back). A disabled provider raises
 `E_MODEL_NOT_AVAILABLE`; a missing platform entitlement raises
-`E_BILLING_REQUIRED`; no key at all raises an `LLMError(INVALID_KEY)`.
+`E_BILLING_REQUIRED`; no key at all raises a `ModelCallError(INVALID_KEY)`.
 
 ## Uniform application across surfaces (including background)
 
@@ -66,18 +72,20 @@ is the gate the resolver checks before handing back a platform key. The monthly
 **platform-token budget** is enforced by the Postgres-backed
 `RateLimiter` (`rate_limit.py`) through a reserve → commit/release pattern, and is
 applied to every platform-mode generation, including background ones: a surface
-calls `acquire_inflight_slot`, `reserve_token_budget(owner, run, estimate)`
-before the call, then `commit_token_budget(owner, run, actual)` (or
-`release_token_budget` on failure) after. Token estimates flow from the one
-estimator, `prompt_budget.estimate_tokens`. BYOK-mode calls do not consume the
-platform budget.
+calls `acquire_inflight_slot`, `reserve_token_budget(owner, reservation_id,
+estimate)` before the call, then `commit_token_budget(owner, reservation_id,
+actual)` (or `release_token_budget` on failure) after. The reservation id is the
+surface's idempotency key for that generation owner; it is not chat-message
+specific. Token estimates flow from the one estimator,
+`prompt_budget.estimate_tokens`. BYOK-mode calls do not consume the platform
+budget.
 
 ## The BYOK key probe (`user_keys.test_user_key`)
 
-`test_user_key(db, user_id, key_id, router)` validates a saved BYOK key by making
-a minimal outbound provider call (the cheapest model per provider, from
-`KEY_TEST_MODELS` in [llms.md](llms.md)) and updates the key's status
-(`valid`/`invalid`). The plaintext key is decrypted only for the outbound call
-and is never logged or returned. The probe emits the shared `llm.request.*`
-telemetry but, unlike a generation surface, does **not** write an `llm_calls`
-ledger row — it is a key health check, not billable generation.
+`test_user_key(db, user_id, key_id, router)` validates a saved BYOK key through
+`provider_runtime.build_key_probe_call()` / `ModelRuntime.probe_key()`, using
+the shared catalog's key-probe model for that provider, and updates the key's
+status (`valid`/`invalid`). The plaintext key is decrypted only for the outbound
+call and is never logged or returned. The probe emits the shared
+`llm.request.*` telemetry but, unlike a generation surface, does **not** write
+an `llm_calls` ledger row — it is a key health check, not billable generation.

@@ -511,7 +511,7 @@ Command semantics:
 - `make test`: non-E2E automated tests, including backend integration and frontend browser-mode component tests
 - `make test-e2e`: explicit default real-stack Playwright run (used before merge and in CI)
 - `make test-real-media`: deterministic real-media backend and Playwright acceptance gate with fixture-backed external providers
-- `make test-live-providers`: live external-provider backend gate, including real OpenAI embeddings
+- `make test-live-providers`: live external-provider backend gate, including the shared OpenAI/Anthropic/Gemini/OpenRouter/Cloudflare generation matrix, OpenAI embeddings/transcription, and real Podcast Index/Deepgram/YouTube/X edges
 - `make verify`: check + build + non-E2E tests for routine development
 - `make verify-full`: verify + real-media + live-provider + E2E
 - `make test-android`: instrumentation tests; requires a connected Android device or emulator

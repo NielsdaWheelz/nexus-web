@@ -14,16 +14,17 @@ from datetime import UTC, datetime
 from typing import Any, Protocol, cast
 from uuid import UUID
 
-from llm_calling.errors import LLMError
-from llm_calling.router import LLMRouter
-from llm_calling.types import (
-    LLMChunk,
-    LLMRequest,
-    LLMUsage,
-    ProviderItem,
+from provider_runtime import ModelRuntime
+from provider_runtime.errors import ModelCallError
+from provider_runtime.types import (
+    ModelCall,
+    ModelChunk,
+    ModelMessage,
+    ProviderApiKey,
+    ProviderArtifact,
+    TokenUsage,
     ToolResult,
     ToolSpec,
-    Turn,
 )
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
@@ -40,12 +41,14 @@ from nexus.db.models import (
     ResourceExternalSnapshot,
 )
 from nexus.errors import (
-    LLM_ERROR_CODE_TO_API_ERROR_CODE,
     ApiError,
     ApiErrorCode,
     NotFoundError,
+    api_error_code_for_model_call,
+    exception_error_detail,
 )
 from nexus.jobs.queue import enqueue_job
+from nexus.llm_catalog import model_max_context_tokens, model_reasoning_reserve_tokens
 from nexus.logging import get_logger, set_flow_id
 from nexus.schemas.conversation import (
     CHAT_RUN_STATUS_FILTER,
@@ -203,21 +206,26 @@ def _app_search_scopes_from_tool_args(args: Mapping[str, Any]) -> tuple[list[str
     return scopes, None
 
 
-class ChatRunLLMRouter(Protocol):
-    def generate_stream(
+class ChatRunModelRuntime(Protocol):
+    def stream(
         self,
-        provider: str,
-        req: LLMRequest,
-        api_key: str,
+        call: ModelCall,
         *,
-        timeout_s: int,
-    ) -> AsyncIterator[LLMChunk]: ...
+        key: ProviderApiKey,
+        timeout_s: float,
+    ) -> AsyncIterator[ModelChunk]: ...
 
 
 def _max_output_tokens_for_reasoning(model: Model, reasoning: str) -> int:
-    if model.provider == "openai" and reasoning in {"default", "low", "medium", "high", "max"}:
-        return min(REASONING_OUTPUT_TOKENS, model.max_context_tokens)
-    return min(DEFAULT_OUTPUT_TOKENS, model.max_context_tokens)
+    max_context_tokens = model_max_context_tokens(model.provider, model.model_name)
+    reasoning_reserve = model_reasoning_reserve_tokens(
+        model.provider,
+        model.model_name,
+        reasoning,
+    )
+    if reasoning_reserve > 0:
+        return min(REASONING_OUTPUT_TOKENS, max_context_tokens)
+    return min(DEFAULT_OUTPUT_TOKENS, max_context_tokens)
 
 
 def _record_tool_citations(
@@ -830,7 +838,7 @@ def create_chat_run(
         if exc.code != ApiErrorCode.E_MODEL_NOT_AVAILABLE:
             raise
         use_platform_key = False
-    except LLMError:
+    except ModelCallError:
         # justify-ignore-error: BYOK probe may fail when the user has no key
         # yet; treat as "no platform key in use" and continue pre-validation.
         use_platform_key = False
@@ -1150,7 +1158,7 @@ async def execute_chat_run(
     db: Session,
     *,
     run_id: UUID,
-    llm_router: ChatRunLLMRouter,
+    llm_router: ChatRunModelRuntime,
     web_search_provider: WebSearchProvider | None = None,
     reader_context: ReaderContextHint | None = None,
     reader_selection: ReaderSelectionRequest | None = None,
@@ -1178,7 +1186,7 @@ async def execute_chat_run(
                 db,
                 run_id=run_id,
                 error_code=exc.code.value,
-                error_detail=f"{type(exc).__name__}: {exc}"[:1000],
+                error_detail=exception_error_detail(exc),
                 assistant_content=ERROR_CODE_TO_MESSAGE.get(exc.code.value, exc.message),
             )
             return {"status": "error", "error_code": exc.code.value}
@@ -1192,7 +1200,7 @@ async def execute_chat_run(
                 db,
                 run_id=run_id,
                 error_code=ApiErrorCode.E_INTERNAL.value,
-                error_detail=f"{type(exc).__name__}: {exc}"[:1000],
+                error_detail=exception_error_detail(exc),
             )
             return {"status": "error", "error_code": ApiErrorCode.E_INTERNAL.value}
         except Exception:
@@ -1206,7 +1214,7 @@ async def _execute_chat_run(
     db: Session,
     *,
     run_id: UUID,
-    llm_router: ChatRunLLMRouter,
+    llm_router: ChatRunModelRuntime,
     web_search_provider: WebSearchProvider | None = None,
     reader_context: ReaderContextHint | None = None,
     reader_selection: ReaderSelectionRequest | None = None,
@@ -1240,13 +1248,22 @@ async def _execute_chat_run(
 
     try:
         resolved_key = resolve_api_key(db, run.owner_user_id, model.provider, run.key_mode)
-    except LLMError as exc:
-        error_code = LLM_ERROR_CODE_TO_API_ERROR_CODE[exc.error_code].value
+    except ApiError as exc:
+        finalize_error(
+            db,
+            run_id=run.id,
+            error_code=exc.code.value,
+            error_detail=exception_error_detail(exc),
+            assistant_content=ERROR_CODE_TO_MESSAGE.get(exc.code.value, exc.message),
+        )
+        return {"status": "error", "error_code": exc.code.value}
+    except ModelCallError as exc:
+        error_code = api_error_code_for_model_call(exc.error_code).value
         finalize_error(
             db,
             run_id=run.id,
             error_code=error_code,
-            error_detail=f"{type(exc).__name__}: {exc}"[:1000],
+            error_detail=exception_error_detail(exc),
             assistant_content=ERROR_CODE_TO_MESSAGE["E_LLM_INVALID_KEY"],
         )
         return {"status": "error", "error_code": error_code}
@@ -1299,7 +1316,7 @@ async def _execute_chat_run(
                 db,
                 run_id=run.id,
                 error_code=error_code,
-                error_detail=f"{type(exc).__name__}: {exc}"[:1000],
+                error_detail=exception_error_detail(exc),
                 resolved_key=resolved_key,
             )
             return {"status": "error", "error_code": error_code}
@@ -1308,16 +1325,17 @@ async def _execute_chat_run(
         if resolved_key.mode == "platform":
             est_tokens = (
                 estimate_tokens("\n".join(turn.content for turn in llm_request.messages))
-                + llm_request.max_tokens
+                + llm_request.max_output_tokens
             )
             rate_limiter.reserve_token_budget(
                 run.owner_user_id, run.assistant_message_id, est_tokens
             )
             budget_reserved = True
-        turns: list[Turn] = list(llm_request.messages)
+        turns: list[ModelMessage] = list(llm_request.messages)
         full_content = ""
-        usage: LLMUsage | None = None
+        usage: TokenUsage | None = None
         provider_request_id: str | None = None
+        actual_budget_tokens = 0
         incomplete_reason: str | None = None
         terminal_seen = False
         locally_truncated = False
@@ -1327,17 +1345,17 @@ async def _execute_chat_run(
         try:
             for _iteration in range(MAX_TOOL_ITERATIONS):
                 pending_tool_calls: list[Any] = []
-                provider_items: list[ProviderItem] = []
+                provider_artifacts: list[ProviderArtifact] = []
                 iter_text = ""
                 iter_terminal = False
                 iter_request = dataclasses.replace(llm_request, messages=turns)
-                async for chunk in observed_generate_stream(
+                stream = observed_generate_stream(
                     db,
                     owner=call_owner,
                     # The ledger is typed against the nominal router; chat's seam
-                    # stays the structural ChatRunLLMRouter (test fakes), same
+                    # stays the structural ChatRunModelRuntime (test fakes), same
                     # cast precedent as llm_task's fixture swap.
-                    llm=cast(LLMRouter, llm_router),
+                    llm=cast(ModelRuntime, llm_router),
                     provider=model.provider,
                     request=iter_request,
                     api_key=resolved_key.api_key,
@@ -1345,47 +1363,67 @@ async def _execute_chat_run(
                     llm_operation="chat_send",
                     key_mode_requested=run.key_mode,
                     key_mode_used=resolved_key.mode,
-                ):
-                    if chunk.done:
-                        iter_terminal = True
-                        terminal_seen = True
-                        usage = chunk.usage
-                        provider_request_id = chunk.provider_request_id
-                        if chunk.status == "incomplete":
-                            incomplete_reason = "unknown"
-                            if chunk.incomplete_details is not None:
-                                reason = chunk.incomplete_details.get("reason")
-                                incomplete_reason = reason if isinstance(reason, str) else "unknown"
-                        break
-                    if chunk.delta_text:
-                        delta = chunk.delta_text
-                        if len(full_content) + len(delta) > MAX_ASSISTANT_CONTENT_LENGTH:
-                            remaining = MAX_ASSISTANT_CONTENT_LENGTH - len(full_content)
-                            delta = delta[: max(remaining, 0)] + TRUNCATION_NOTICE
-                        if delta:
-                            full_content += delta
-                            iter_text += delta
-                            append_and_commit(db, run.id, "delta", {"delta": delta})
-                        if len(full_content) >= MAX_ASSISTANT_CONTENT_LENGTH:
-                            locally_truncated = True
+                )
+                try:
+                    async for chunk in stream:
+                        if chunk.done:
+                            iter_terminal = True
+                            terminal_seen = True
+                            usage = chunk.usage
+                            provider_request_id = chunk.provider_request_id
+                            terminal_tokens = usage_tokens(chunk.usage)["total_tokens"]
+                            if terminal_tokens is not None:
+                                actual_budget_tokens += terminal_tokens
+                            if chunk.status == "incomplete":
+                                incomplete_reason = "unknown"
+                                if chunk.incomplete_details is not None:
+                                    reason = chunk.incomplete_details.get("reason")
+                                    incomplete_reason = (
+                                        reason if isinstance(reason, str) else "unknown"
+                                    )
                             break
-                    if chunk.tool_call is not None:
-                        pending_tool_calls.append(chunk.tool_call)
-                    if chunk.provider_item is not None:
-                        provider_items.append(chunk.provider_item)
-                    if is_cancel_requested(db, run.id):
-                        finalize_cancelled(db, run, resolved_key)
-                        return {"status": "cancelled"}
+                        if chunk.delta_text:
+                            delta = chunk.delta_text
+                            if len(full_content) + len(delta) > MAX_ASSISTANT_CONTENT_LENGTH:
+                                remaining = MAX_ASSISTANT_CONTENT_LENGTH - len(full_content)
+                                delta = delta[: max(remaining, 0)] + TRUNCATION_NOTICE
+                            if delta:
+                                full_content += delta
+                                iter_text += delta
+                                append_and_commit(db, run.id, "delta", {"delta": delta})
+                            if len(full_content) >= MAX_ASSISTANT_CONTENT_LENGTH:
+                                locally_truncated = True
+                                stream.record_abandoned(
+                                    error_class=ApiErrorCode.E_LLM_INTERRUPTED.value,
+                                    error_detail=(
+                                        "stream abandoned after local assistant content limit"
+                                    ),
+                                )
+                                break
+                        if chunk.tool_call is not None:
+                            pending_tool_calls.append(chunk.tool_call)
+                        if chunk.provider_artifact is not None:
+                            provider_artifacts.append(chunk.provider_artifact)
+                        if is_cancel_requested(db, run.id):
+                            stream.record_abandoned(
+                                error_class=ApiErrorCode.E_CANCELLED.value,
+                                error_detail="chat run cancelled during provider stream",
+                            )
+                            await stream.aclose()
+                            finalize_cancelled(db, run, resolved_key)
+                            return {"status": "cancelled"}
+                finally:
+                    await stream.aclose()
                 if locally_truncated or not pending_tool_calls:
                     break
                 if not iter_terminal:
                     break
                 turns.append(
-                    Turn(
+                    ModelMessage(
                         role="assistant",
                         content=iter_text,
                         tool_calls=tuple(pending_tool_calls),
-                        provider_items=tuple(provider_items),
+                        provider_artifacts=tuple(provider_artifacts),
                     )
                 )
                 tool_results: list[ToolResult] = []
@@ -1546,23 +1584,22 @@ async def _execute_chat_run(
                             )
                         )
                 db.commit()
-                turns.append(Turn(role="tool", tool_results=tuple(tool_results)))
+                turns.append(ModelMessage(role="tool", tool_results=tuple(tool_results)))
             else:
                 logger.warning(
                     "chat_run.max_tool_iterations_exceeded",
                     run_id=str(run.id),
                     iterations=MAX_TOOL_ITERATIONS,
                 )
-        except LLMError as llm_error:
-            error_code = LLM_ERROR_CODE_TO_API_ERROR_CODE[llm_error.error_code].value
-            error_detail = f"{type(llm_error).__name__}: {llm_error}"[:1000]
-            if provider_request_id is not None:
-                error_detail = f"{error_detail} (provider_request_id={provider_request_id})"
+        except ModelCallError as llm_error:
+            error_code = api_error_code_for_model_call(llm_error.error_code).value
             finalize_error(
                 db,
                 run_id=run.id,
                 error_code=error_code,
-                error_detail=error_detail,
+                error_detail=exception_error_detail(
+                    llm_error, provider_request_id=provider_request_id
+                ),
                 resolved_key=resolved_key,
             )
             return {"status": "error", "error_code": error_code}
@@ -1572,6 +1609,17 @@ async def _execute_chat_run(
                 db,
                 run_id=run.id,
                 error_code=ApiErrorCode.E_LLM_INTERRUPTED.value,
+                resolved_key=resolved_key,
+            )
+            return {"status": "error", "error_code": ApiErrorCode.E_LLM_INTERRUPTED.value}
+
+        if locally_truncated:
+            finalize_error(
+                db,
+                run_id=run.id,
+                error_code=ApiErrorCode.E_LLM_INTERRUPTED.value,
+                error_detail="stream abandoned after local assistant content limit",
+                assistant_content=full_content,
                 resolved_key=resolved_key,
             )
             return {"status": "error", "error_code": ApiErrorCode.E_LLM_INTERRUPTED.value}
@@ -1610,7 +1658,7 @@ async def _execute_chat_run(
         )
         db.commit()
         if resolved_key.mode == "platform":
-            actual_tokens = usage_tokens(usage)["total_tokens"]
+            actual_tokens = actual_budget_tokens or usage_tokens(usage)["total_tokens"]
             assert actual_tokens is not None
             rate_limiter.commit_token_budget(
                 run.owner_user_id, run.assistant_message_id, actual_tokens

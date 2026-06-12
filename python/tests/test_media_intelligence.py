@@ -7,7 +7,7 @@ import json
 from uuid import UUID, uuid4
 
 import pytest
-from llm_calling.types import LLMResponse
+from provider_runtime.types import ModelResponse
 from pydantic import ValidationError
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
@@ -177,7 +177,7 @@ def _llm_call_rows(db: Session, *, owner_kind: str, owner_id: UUID) -> list[LLMC
 
 
 class _UnitRouter:
-    """Fake LLMRouter returning a fixed unit synthesis (the external boundary)."""
+    """Fake ModelRuntime returning a fixed unit synthesis (the external boundary)."""
 
     def __init__(self, *, summary_md: str, claims: list[tuple[str, int]]) -> None:
         self._payload = {
@@ -188,9 +188,9 @@ class _UnitRouter:
         }
         self.calls = 0
 
-    async def generate(self, _provider, _request, _api_key, *, timeout_s):
+    async def generate(self, _request, *, key, timeout_s):
         self.calls += 1
-        return LLMResponse(
+        return ModelResponse(
             text=json.dumps(self._payload),
             usage=None,
             provider_request_id=None,
@@ -202,8 +202,8 @@ class _UnitRouter:
 class _RawTextRouter:
     """Fake router returning non-JSON text (drives StructuredSynthesisError)."""
 
-    async def generate(self, _provider, _request, _api_key, *, timeout_s):
-        return LLMResponse(
+    async def generate(self, _request, *, key, timeout_s):
+        return ModelResponse(
             text="not json at all",
             usage=None,
             provider_request_id=None,

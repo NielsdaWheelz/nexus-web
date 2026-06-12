@@ -18,7 +18,7 @@ from unittest.mock import patch
 from uuid import UUID, uuid4
 
 import pytest
-from llm_calling.types import LLMResponse
+from provider_runtime.types import ModelResponse
 from sqlalchemy import select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -164,7 +164,7 @@ class _SynapseRouter:
         self.calls = 0
         self.seen_lines: list[list[str]] = []
 
-    async def generate(self, _provider, request, _api_key, *, timeout_s):
+    async def generate(self, request, *, key, timeout_s):
         self.calls += 1
         lines = _CANDIDATE_LINE.findall(request.messages[-1].content)
         self.seen_lines.append(lines)
@@ -173,7 +173,7 @@ class _SynapseRouter:
             for index, line in enumerate(lines)
             if self._marker is None or self._marker in line
         ]
-        return LLMResponse(
+        return ModelResponse(
             text=json.dumps({"connections": connections}),
             usage=None,
             provider_request_id=None,
@@ -185,8 +185,8 @@ class _SynapseRouter:
 class _RawTextRouter:
     """Fake router returning non-JSON text (drives StructuredSynthesisError)."""
 
-    async def generate(self, _provider, _request, _api_key, *, timeout_s):
-        return LLMResponse(
+    async def generate(self, _request, *, key, timeout_s):
+        return ModelResponse(
             text="not json at all",
             usage=None,
             provider_request_id=None,
@@ -202,8 +202,8 @@ class _MediaUnitRouter:
     def __init__(self, summary_md: str = "An abstract.") -> None:
         self._summary_md = summary_md
 
-    async def generate(self, _provider, _request, _api_key, *, timeout_s):
-        return LLMResponse(
+    async def generate(self, _request, *, key, timeout_s):
+        return ModelResponse(
             text=json.dumps({"summary_md": self._summary_md, "claims": []}),
             usage=None,
             provider_request_id=None,
@@ -224,7 +224,7 @@ class _DismissingRouter:
         self._suppression = suppression
         self.calls = 0
 
-    async def generate(self, _provider, request, _api_key, *, timeout_s):
+    async def generate(self, request, *, key, timeout_s):
         self.calls += 1
         self._db.add(self._suppression)
         lines = _CANDIDATE_LINE.findall(request.messages[-1].content)
@@ -232,7 +232,7 @@ class _DismissingRouter:
             {"candidate_index": index, "kind": "context", "rationale": "It restates the claim."}
             for index in range(len(lines))
         ]
-        return LLMResponse(
+        return ModelResponse(
             text=json.dumps({"connections": connections}),
             usage=None,
             provider_request_id=None,

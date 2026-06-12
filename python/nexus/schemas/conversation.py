@@ -17,6 +17,7 @@ from pydantic import (
     model_validator,
 )
 
+from nexus.llm_catalog import LLMKeyMode, ReasoningMode
 from nexus.schemas.citation import CitationOut, CitationRole, CitationSnapshot, CitationTargetRef
 from nexus.schemas.retrieval import RetrievalContextRef, RetrievalLocator, RetrievalResultRef
 from nexus.schemas.search import SEARCH_RESULT_TYPES
@@ -405,10 +406,6 @@ class MessageRerankLedgerOut(BaseModel):
     created_at: datetime
 
 
-# Valid key modes for LLM calls
-KEY_MODES = Literal["auto", "byok_only", "platform_only"]
-REASONING_MODES = Literal["default", "none", "minimal", "low", "medium", "high", "max"]
-
 # Max content length
 MAX_MESSAGE_CONTENT_LENGTH = 20000
 
@@ -609,8 +606,8 @@ class ChatRunCreateRequest(BaseModel):
     branch_anchor: BranchAnchorRequest = Field(default_factory=NoBranchAnchorRequest)
     content: str
     model_id: UUID
-    reasoning: REASONING_MODES = "default"
-    key_mode: KEY_MODES = "auto"
+    reasoning: ReasoningMode
+    key_mode: LLMKeyMode
     reader_context: ReaderContextHint | None = None
     reader_selection: ReaderSelectionRequest | None = None
 

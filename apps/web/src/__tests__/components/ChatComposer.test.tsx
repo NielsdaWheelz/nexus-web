@@ -16,6 +16,23 @@ const MODELS = [
     reasoning_modes: ["default", "medium", "high"],
     max_context_tokens: 256000,
     available_via: "both",
+    provider_rank: 0,
+    model_rank: 1,
+    is_default: false,
+    available_key_modes: ["auto", "byok_only", "platform_only"],
+    capabilities: {
+      prompt_cache: {
+        mode: "keyed_ttl",
+        supported: true,
+        key_required: true,
+        ttl_options: ["5m", "1h"],
+      },
+      streaming: true,
+      tool_calling: true,
+      structured_output: true,
+      structured_output_streaming: false,
+      reasoning_continuation: true,
+    },
   },
   {
     id: "gpt-5-mini",
@@ -27,6 +44,23 @@ const MODELS = [
     reasoning_modes: ["default", "none", "medium"],
     max_context_tokens: 128000,
     available_via: "platform",
+    provider_rank: 0,
+    model_rank: 0,
+    is_default: true,
+    available_key_modes: ["auto", "platform_only"],
+    capabilities: {
+      prompt_cache: {
+        mode: "keyed_ttl",
+        supported: true,
+        key_required: true,
+        ttl_options: ["5m", "1h"],
+      },
+      streaming: true,
+      tool_calling: true,
+      structured_output: true,
+      structured_output_streaming: false,
+      reasoning_continuation: true,
+    },
   },
 ] as const;
 
@@ -58,7 +92,7 @@ function chatRunResponse(body: ChatRunCreateRequest) {
         assistant_message_id: "assistant-message-1",
         model_id: body.model_id,
         reasoning: body.reasoning,
-        key_mode: body.key_mode ?? "auto",
+        key_mode: body.key_mode,
         cancel_requested_at: null,
         started_at: null,
         completed_at: null,
@@ -218,7 +252,10 @@ describe("ChatComposer", () => {
     );
 
     await openModelSettings(user);
-    await user.click(screen.getByRole("checkbox", { name: "Use my keys only" }));
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Key mode" }),
+      "byok_only",
+    );
 
     const message = screen.getByRole("textbox", { name: "Ask anything" });
     await user.click(message);
@@ -255,6 +292,36 @@ describe("ChatComposer", () => {
       }),
     );
     expect(onChatRunCreated).toHaveBeenCalledOnce();
+  });
+
+  it("sends platform_only when selected from model settings", async () => {
+    const user = userEvent.setup();
+    const fetchMock = installChatComposerFetchMock();
+
+    render(<ChatComposer conversationId="conversation-1" />);
+
+    expect(
+      await screen.findByRole("button", { name: /gpt-5 mini.*default/i }),
+    ).toBeInTheDocument();
+
+    await openModelSettings(user);
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Key mode" }),
+      "platform_only",
+    );
+
+    const message = screen.getByRole("textbox", { name: "Ask anything" });
+    await user.click(message);
+    await user.keyboard("Use the platform key");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+
+    await waitFor(() => {
+      expect(chatRunCalls(fetchMock)).toHaveLength(1);
+    });
+
+    const [, init] = chatRunCalls(fetchMock)[0];
+    const body = JSON.parse(String(init?.body)) as ChatRunCreateRequest;
+    expect(body.key_mode).toBe("platform_only");
   });
 
   it("keeps Shift+Enter as a newline and sends on Enter", async () => {

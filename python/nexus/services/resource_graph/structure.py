@@ -24,7 +24,9 @@ class BlockOccurrence:
 
 
 def find_block_occurrence(db: Session, *, user_id: UUID, block_id: UUID) -> BlockOccurrence:
-    block = db.scalar(select(NoteBlock).where(NoteBlock.id == block_id, NoteBlock.user_id == user_id))
+    block = db.scalar(
+        select(NoteBlock).where(NoteBlock.id == block_id, NoteBlock.user_id == user_id)
+    )
     if block is None:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Note block not found")
 
@@ -57,9 +59,7 @@ def find_block_occurrence(db: Session, *, user_id: UUID, block_id: UUID) -> Bloc
     )
 
 
-def page_id_for_parent(
-    db: Session, *, user_id: UUID, parent: ResourceRef, seen: set[UUID]
-) -> UUID:
+def page_id_for_parent(db: Session, *, user_id: UUID, parent: ResourceRef, seen: set[UUID]) -> UUID:
     if parent.scheme == "page":
         return parent.id
     if parent.id in seen:

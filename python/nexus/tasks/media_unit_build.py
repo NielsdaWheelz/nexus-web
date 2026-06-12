@@ -5,11 +5,11 @@ from __future__ import annotations
 from uuid import UUID
 
 import httpx
-from llm_calling.router import LLMRouter
+from provider_runtime import ModelRuntime
 from sqlalchemy.orm import Session
 
 from nexus.db.models import MediaSummary
-from nexus.errors import ApiErrorCode
+from nexus.errors import ApiErrorCode, exception_error_detail
 from nexus.services import run_kit
 from nexus.services.media_intelligence import (
     fail_media_unit,
@@ -24,7 +24,7 @@ _SPEC = LlmTaskSpec(label="media_unit_build")
 def media_unit_build(media_id: str) -> dict:
     media_uuid = UUID(media_id)
 
-    async def _handler(db: Session, router: LLMRouter, _client: httpx.AsyncClient) -> dict:
+    async def _handler(db: Session, router: ModelRuntime, _client: httpx.AsyncClient) -> dict:
         status = await run_media_unit_build(db, media_id=media_uuid, llm=router)
         return {"status": status, "media_id": media_id}
 
@@ -43,7 +43,7 @@ def _fail_unit_after_worker_exception(db: Session, exc: Exception, *, media_id: 
             s,
             summary_id=summary.id,
             error_code=ApiErrorCode.E_INTERNAL.value,
-            error_detail=f"{type(exc).__name__}: {exc}"[:1000],
+            error_detail=exception_error_detail(exc),
         )
 
     run_kit.fail_run_after_worker_exception(

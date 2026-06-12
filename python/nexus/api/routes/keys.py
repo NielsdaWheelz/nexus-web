@@ -22,7 +22,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Response
-from llm_calling.router import LLMRouter
+from provider_runtime import ModelRuntime
 from sqlalchemy.orm import Session
 
 from nexus.api.deps import get_llm_router
@@ -99,7 +99,7 @@ async def test_key(
     key_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-    llm_router: Annotated[LLMRouter, Depends(get_llm_router)],
+    llm_router: Annotated[ModelRuntime, Depends(get_llm_router)],
 ) -> dict:
     """Validate a saved API key and return the updated provider state."""
     key_out = await user_keys_service.test_user_key(

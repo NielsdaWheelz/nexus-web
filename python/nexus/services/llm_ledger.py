@@ -1,16 +1,14 @@
 """The LLM-call ledger: sole writer of ``llm_calls`` + the one ``llm.request.*`` emitter.
 
-``observed_generate`` / ``observed_generate_stream`` wrap the two ``LLMRouter``
+``observed_generate`` / ``observed_generate_stream`` wrap the two ``ModelRuntime``
 call shapes. Each provider call emits ``llm.request.started`` and exactly one of
 ``llm.request.finished`` / ``llm.request.failed`` (one shared field schema), and
 records exactly one ``llm_calls`` row — on success AND failure — with
 ``call_seq`` allocated per owner. The row is flushed, not committed: it lives in
-the caller's transaction (run_kit doctrine). The harness owns this mechanics;
-surfaces own prompts, schemas, and finalization.
-
-One honest gap: a stream abandoned by its consumer before the terminal chunk
-(cancel paths) leaves only ``started`` telemetry — the generator must not touch
-the session from ``GeneratorExit``, where the caller may be mid-unwind.
+the caller's transaction (run_kit doctrine). Stream consumers that stop early
+must call ``aclose()`` or ``record_abandoned()`` on the returned stream handle
+before their terminal commit. The harness owns this mechanics; surfaces own
+prompts, schemas, and finalization.
 
 :func:`emit_llm_request_started` owns the ``llm.request.*`` field schema. The
 saved-key probe (``user_keys.test_user_key``) shares this emitter — it logs the
@@ -20,27 +18,47 @@ probe has no run to attribute the call to.
 
 from __future__ import annotations
 
+import asyncio
 import time
-from collections.abc import AsyncIterator
-from dataclasses import dataclass
-from typing import Literal
+from collections.abc import AsyncIterator, Awaitable, Callable
+from dataclasses import dataclass, field
+from typing import Literal, cast
 from uuid import UUID
 
-from llm_calling.errors import LLMError
-from llm_calling.router import LLMRouter
-from llm_calling.types import LLMChunk, LLMRequest, LLMResponse, LLMUsage
+from provider_runtime import (
+    DEFAULT_CATALOG,
+    DEFAULT_PRICING_SOURCE,
+    ModelRuntime,
+    ProviderApiKey,
+    lower_generate_request,
+)
+from provider_runtime.catalog import ModelCapability
+from provider_runtime.errors import ModelCallError
+from provider_runtime.types import (
+    ModelCall,
+    ModelChunk,
+    ModelResponse,
+    PromptCacheTTL,
+    ProviderApiKeySource,
+    RetryAttempt,
+    TokenUsage,
+)
+from provider_runtime.usage import estimate_catalog_cost
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import LLMCall
-from nexus.errors import LLM_ERROR_CODE_TO_API_ERROR_CODE
+from nexus.errors import api_error_code_for_model_call, exception_error_detail
 from nexus.logging import get_logger
 from nexus.services.chat_run_usage import usage_log_fields, usage_provider_json, usage_tokens
 from nexus.services.redact import safe_kv
 
 logger = get_logger(__name__)
 
-_ERROR_DETAIL_MAX_CHARS = 1000
+
+def _provider_api_key(api_key: str, *, key_mode: str) -> ProviderApiKey:
+    source: ProviderApiKeySource = "byok" if key_mode == "byok" else "platform"
+    return ProviderApiKey(api_key, source=source)
 
 
 @dataclass(frozen=True)
@@ -62,15 +80,15 @@ async def observed_generate(
     db: Session,
     *,
     owner: LlmCallOwner,
-    llm: LLMRouter,
+    llm: ModelRuntime,
     provider: str,
-    request: LLMRequest,
+    request: ModelCall,
     api_key: str,
     timeout_s: int,
     llm_operation: str,
     key_mode_requested: str,
     key_mode_used: str,
-) -> LLMResponse:
+) -> ModelResponse:
     """One observed non-streamed provider call; exceptions propagate unchanged."""
     call = _begin(
         owner=owner,
@@ -82,32 +100,42 @@ async def observed_generate(
         key_mode_used=key_mode_used,
     )
     try:
-        response = await llm.generate(provider, request, api_key, timeout_s=timeout_s)
+        response = await llm.generate(
+            request,
+            key=_provider_api_key(api_key, key_mode=key_mode_used),
+            timeout_s=timeout_s,
+        )
     except Exception as exc:
         call.record(db, usage=None, provider_request_id=None, exc=exc)
         raise
-    call.record(db, usage=response.usage, provider_request_id=response.provider_request_id)
+    call.record(
+        db,
+        usage=response.usage,
+        provider_request_id=response.provider_request_id,
+        attempts=response.attempts,
+    )
     return response
 
 
-async def observed_generate_stream(
+def observed_generate_stream(
     db: Session,
     *,
     owner: LlmCallOwner,
-    llm: LLMRouter,
+    llm: ModelRuntime,
     provider: str,
-    request: LLMRequest,
+    request: ModelCall,
     api_key: str,
     timeout_s: int,
     llm_operation: str,
     key_mode_requested: str,
     key_mode_used: str,
-) -> AsyncIterator[LLMChunk]:
+) -> ObservedModelStream:
     """One observed streamed provider call, yielding chunks through unchanged.
 
     The row is written when the terminal (``done``) chunk is observed — before
     yielding it, so a consumer that stops iterating there still leaves a row —
-    or, failing that, when the stream raises or ends without a terminal chunk.
+    or, failing that, when the stream raises, ends without a terminal chunk, or
+    the consumer closes the stream handle before terminal.
     """
     call = _begin(
         owner=owner,
@@ -118,44 +146,122 @@ async def observed_generate_stream(
         key_mode_requested=key_mode_requested,
         key_mode_used=key_mode_used,
     )
-    recorded = False
-    try:
-        async for chunk in llm.generate_stream(provider, request, api_key, timeout_s=timeout_s):
-            if chunk.done and not recorded:
-                recorded = True
-                call.record(db, usage=chunk.usage, provider_request_id=chunk.provider_request_id)
-            yield chunk
-        if not recorded:
-            call.record(db, usage=None, provider_request_id=None)
-    except Exception as exc:
-        if not recorded:
-            call.record(db, usage=None, provider_request_id=None, exc=exc)
-        raise
+    return ObservedModelStream(
+        db=db,
+        call=call,
+        source=llm.stream(
+            request,
+            key=_provider_api_key(api_key, key_mode=key_mode_used),
+            timeout_s=timeout_s,
+        ),
+    )
+
+
+@dataclass
+class ObservedModelStream:
+    """Async iterator carrying the one ledger row for a provider stream."""
+
+    db: Session
+    call: _Call
+    source: AsyncIterator[ModelChunk]
+    recorded: bool = False
+    exhausted: bool = False
+    closed: bool = False
+    _source_close: Callable[[], Awaitable[None]] | None = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        close = getattr(self.source, "aclose", None)
+        self._source_close = cast(
+            Callable[[], Awaitable[None]] | None,
+            close if callable(close) else None,
+        )
+
+    def __aiter__(self) -> ObservedModelStream:
+        return self
+
+    async def __anext__(self) -> ModelChunk:
+        if self.closed:
+            raise StopAsyncIteration
+        try:
+            chunk = await anext(self.source)
+        except StopAsyncIteration:
+            self.exhausted = True
+            self.closed = True
+            if not self.recorded:
+                self.record_abandoned(error_detail="stream ended before terminal chunk")
+            raise
+        except asyncio.CancelledError as exc:
+            if not self.recorded:
+                self.recorded = True
+                self.call.record(self.db, usage=None, provider_request_id=None, exc=exc)
+            raise
+        except Exception as exc:
+            if not self.recorded:
+                self.recorded = True
+                self.call.record(self.db, usage=None, provider_request_id=None, exc=exc)
+            raise
+
+        if chunk.done and not self.recorded:
+            self.recorded = True
+            self.call.record(
+                self.db,
+                usage=chunk.usage,
+                provider_request_id=chunk.provider_request_id,
+                attempts=chunk.attempts,
+            )
+        return chunk
+
+    def record_abandoned(
+        self,
+        *,
+        error_class: str = "E_LLM_INTERRUPTED",
+        error_detail: str = "stream abandoned before terminal chunk",
+    ) -> None:
+        """Record an early consumer stop before the caller commits terminal state."""
+        if self.recorded:
+            return
+        self.recorded = True
+        self.call.record(
+            self.db,
+            usage=None,
+            provider_request_id=None,
+            error_class=error_class,
+            error_detail=error_detail,
+        )
+
+    async def aclose(self) -> None:
+        """Close the upstream stream and ledger an unrecorded early stop."""
+        if self.closed:
+            return
+        if not self.exhausted and not self.recorded:
+            self.record_abandoned()
+        self.closed = True
+        if callable(self._source_close):
+            await self._source_close()
 
 
 @dataclass(frozen=True)
 class LedgeredLLM:
     """``run_structured_synthesis``'s llm seam bound to one owner: each
     ``generate`` is an :func:`observed_generate`, so a repaired synthesis
-    ledgers one row per attempt."""
+    ledgers one row per application generate call. Provider-runtime retries stay
+    inside the row's bounded attempt trace."""
 
     db: Session
     owner: LlmCallOwner
-    router: LLMRouter
+    router: ModelRuntime
     llm_operation: str
     key_mode_requested: str
     key_mode_used: str
 
-    async def generate(
-        self, provider: str, req: LLMRequest, api_key: str, *, timeout_s: int
-    ) -> LLMResponse:
+    async def generate(self, req: ModelCall, *, key: str, timeout_s: int) -> ModelResponse:
         return await observed_generate(
             self.db,
             owner=self.owner,
             llm=self.router,
-            provider=provider,
+            provider=req.model.route or req.model.provider,
             request=req,
-            api_key=api_key,
+            api_key=key,
             timeout_s=timeout_s,
             llm_operation=self.llm_operation,
             key_mode_requested=self.key_mode_requested,
@@ -175,7 +281,7 @@ class LlmRequestLog:
     fields: dict
     started: float
 
-    def finished(self, *, provider_request_id: str | None, usage: LLMUsage | None) -> int:
+    def finished(self, *, provider_request_id: str | None, usage: TokenUsage | None) -> int:
         latency_ms = int((time.monotonic() - self.started) * 1000)
         logger.info(
             "llm.request.finished",
@@ -194,7 +300,7 @@ class LlmRequestLog:
         *,
         error_class: str,
         provider_request_id: str | None = None,
-        usage: LLMUsage | None = None,
+        usage: TokenUsage | None = None,
     ) -> int:
         latency_ms = int((time.monotonic() - self.started) * 1000)
         logger.error(
@@ -214,7 +320,7 @@ class LlmRequestLog:
 def emit_llm_request_started(
     *,
     provider: str,
-    request: LLMRequest,
+    request: ModelCall,
     streaming: bool,
     llm_operation: str,
     key_mode: str,
@@ -227,8 +333,8 @@ def emit_llm_request_started(
     """
     fields = safe_kv(
         provider=provider,
-        model_name=request.model_name,
-        reasoning_effort=request.reasoning_effort,
+        model_name=request.model.model,
+        reasoning_effort=request.reasoning.effort,
         key_mode=key_mode,
         streaming=streaming,
         llm_operation=llm_operation,
@@ -247,37 +353,63 @@ class _Call:
     owner: LlmCallOwner
     key_mode_requested: str
     key_mode_used: str
+    request: ModelCall
     log: LlmRequestLog
 
     def record(
         self,
         db: Session,
         *,
-        usage: LLMUsage | None,
+        usage: TokenUsage | None,
         provider_request_id: str | None,
-        exc: Exception | None = None,
+        exc: BaseException | None = None,
+        error_class: str | None = None,
+        error_detail: str | None = None,
+        attempts: tuple[RetryAttempt, ...] | None = None,
     ) -> None:
         """Emit the terminal telemetry event and flush the one ledger row."""
-        if exc is None:
-            error_class = error_detail = None
+        if provider_request_id is None and isinstance(exc, ModelCallError):
+            provider_request_id = exc.provider_request_id
+        if attempts is None and isinstance(exc, ModelCallError):
+            attempts = exc.attempts
+        if exc is None and error_class is None:
+            error_detail = None
             latency_ms = self.log.finished(provider_request_id=provider_request_id, usage=usage)
+            terminal_attempt_status = "success"
         else:
-            error_class = (
-                LLM_ERROR_CODE_TO_API_ERROR_CODE[exc.error_code].value
-                if isinstance(exc, LLMError)
-                else type(exc).__name__
-            )
-            error_detail = f"{type(exc).__name__}: {exc}"[:_ERROR_DETAIL_MAX_CHARS]
+            if error_class is None:
+                error_class = (
+                    api_error_code_for_model_call(exc.error_code).value
+                    if isinstance(exc, ModelCallError)
+                    else type(exc).__name__
+                    if exc is not None
+                    else "Exception"
+                )
+            if error_detail is None and exc is not None:
+                error_detail = exception_error_detail(exc, provider_request_id=provider_request_id)
             latency_ms = self.log.failed(
                 error_class=error_class, provider_request_id=provider_request_id, usage=usage
             )
+            terminal_attempt_status = (
+                "abandoned" if error_class == "E_LLM_INTERRUPTED" else "terminal_error"
+            )
         fields = self.log.fields
+        attempt_fields = _attempt_fields(
+            attempts=attempts or (),
+            terminal_attempt_status=terminal_attempt_status,
+        )
+        cost_fields = _cost_fields(
+            request=self.request,
+            usage=usage,
+            streaming=bool(fields["streaming"]),
+        )
         db.add(
             LLMCall(
                 owner_kind=self.owner.kind,
                 owner_id=self.owner.id,
                 call_seq=_next_call_seq(db, self.owner),
                 provider=fields["provider"],
+                provider_route=self.request.model.route or self.request.model.provider,
                 model_name=fields["model_name"],
                 llm_operation=fields["llm_operation"],
                 streaming=fields["streaming"],
@@ -289,6 +421,8 @@ class _Call:
                 error_class=error_class,
                 error_detail=error_detail,
                 provider_request_id=provider_request_id,
+                **cost_fields,
+                **attempt_fields,
                 provider_usage=usage_provider_json(usage),
             )
         )
@@ -299,12 +433,13 @@ def _begin(
     *,
     owner: LlmCallOwner,
     provider: str,
-    request: LLMRequest,
+    request: ModelCall,
     streaming: bool,
     llm_operation: str,
     key_mode_requested: str,
     key_mode_used: str,
 ) -> _Call:
+    DEFAULT_CATALOG.require_capabilities(request.model)
     log = emit_llm_request_started(
         provider=provider,
         request=request,
@@ -313,7 +448,82 @@ def _begin(
         key_mode=key_mode_used,
         owner=owner,
     )
-    return _Call(owner, key_mode_requested, key_mode_used, log)
+    return _Call(owner, key_mode_requested, key_mode_used, request, log)
+
+
+def _attempt_fields(
+    *,
+    attempts: tuple[RetryAttempt, ...],
+    terminal_attempt_status: str,
+) -> dict[str, object]:
+    if not attempts:
+        return {
+            "attempt_count": 1,
+            "retry_count": 0,
+            "terminal_attempt_status": terminal_attempt_status,
+            "provider_attempts": None,
+        }
+    return {
+        "attempt_count": len(attempts),
+        "retry_count": max(0, len(attempts) - 1),
+        "terminal_attempt_status": attempts[-1].status,
+        "provider_attempts": [attempt.to_json() for attempt in attempts],
+    }
+
+
+def _cost_fields(
+    *,
+    request: ModelCall,
+    usage: TokenUsage | None,
+    streaming: bool,
+) -> dict[str, object]:
+    capability = DEFAULT_CATALOG.require_capabilities(request.model)
+    cache_write_ttl = _effective_cache_write_ttl(
+        request,
+        capability=capability,
+        streaming=streaming,
+    )
+    estimate = estimate_catalog_cost(
+        usage,
+        capability.pricing,
+        cache_write_ttl=cache_write_ttl,
+        pricing_source=DEFAULT_PRICING_SOURCE,
+    )
+    breakdown = estimate.breakdown
+    return {
+        "input_cost_usd_micros": breakdown.input_cost_usd_micros,
+        "output_cost_usd_micros": breakdown.output_cost_usd_micros,
+        "cache_write_cost_usd_micros": breakdown.cache_write_cost_usd_micros,
+        "cache_read_cost_usd_micros": breakdown.cache_read_cost_usd_micros,
+        "reasoning_cost_usd_micros": breakdown.reasoning_cost_usd_micros,
+        "total_cost_usd_micros": breakdown.total_cost_usd_micros,
+        "cost_status": estimate.status,
+        "pricing_snapshot": {
+            "pricing_source": estimate.pricing_source,
+            "provider": request.model.provider,
+            "model": request.model.model,
+            "route": request.model.route or request.model.provider,
+            "cache_write_ttl": cache_write_ttl,
+            "pricing": estimate.pricing.to_json(),
+        },
+    }
+
+
+def _cache_write_ttl(request: ModelCall) -> PromptCacheTTL | None:
+    for message in request.messages:
+        if message.cache_ttl != "none":
+            return message.cache_ttl
+    return None
+
+
+def _effective_cache_write_ttl(
+    request: ModelCall,
+    *,
+    capability: ModelCapability,
+    streaming: bool,
+) -> PromptCacheTTL | None:
+    plan = lower_generate_request(request, capability, streaming=streaming)
+    return _cache_write_ttl(plan.call)
 
 
 def _next_call_seq(db: Session, owner: LlmCallOwner) -> int:

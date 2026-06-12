@@ -25,9 +25,9 @@ from dataclasses import dataclass
 from typing import Literal, cast
 from uuid import UUID, uuid4
 
-from llm_calling.errors import LLMError
-from llm_calling.router import LLMRouter
-from llm_calling.types import LLMRequest
+from provider_runtime import ModelRuntime
+from provider_runtime.errors import ModelCallError
+from provider_runtime.types import ModelCall
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import and_, or_, select, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -37,11 +37,11 @@ from nexus.config import get_settings
 from nexus.db.errors import integrity_constraint_name
 from nexus.db.models import Highlight, Media, NoteBlock, Page, SynapseSuppression
 from nexus.errors import (
-    LLM_ERROR_CODE_TO_API_ERROR_CODE,
     ApiError,
     ApiErrorCode,
     ConflictError,
     NotFoundError,
+    api_error_code_for_model_call,
 )
 from nexus.jobs.queue import enqueue_unique_job
 from nexus.llm_catalog import require_catalog_model
@@ -157,7 +157,7 @@ def scan_status(
 
 
 async def run_synapse_scan(
-    db: Session, *, user_id: UUID, ref: ResourceRef, llm: LLMRouter
+    db: Session, *, user_id: UUID, ref: ResourceRef, llm: ModelRuntime
 ) -> Literal["ok", "skipped", "failed"]:
     """Worker body: one dossier → retrieve → judge → replace-set scan.
 
@@ -182,7 +182,7 @@ async def run_synapse_scan(
         return "skipped"
     try:
         resolved_key = resolve_api_key(db, user_id, SYNAPSE_PROVIDER, "auto")
-    except (ApiError, LLMError) as exc:
+    except (ApiError, ModelCallError) as exc:
         logger.info("synapse_scan_skipped", ref=ref.uri, reason="no_api_key", error=str(exc))
         return "skipped"
 
@@ -267,8 +267,8 @@ async def run_synapse_scan(
                 ),
                 schema=SynapseSynthesis,
             )
-        except LLMError as exc:
-            error_code = LLM_ERROR_CODE_TO_API_ERROR_CODE[exc.error_code].value
+        except ModelCallError as exc:
+            error_code = api_error_code_for_model_call(exc.error_code).value
             logger.warning("synapse_scan_llm_failure", ref=ref.uri, error_code=error_code)
             if resolved_key.mode == "byok" and error_code == ApiErrorCode.E_LLM_INVALID_KEY.value:
                 update_user_key_status(db, resolved_key.user_key_id, "invalid")
@@ -666,12 +666,13 @@ _SYNAPSE_SYSTEM_PROMPT = build_synthesis_prompt(
 )
 
 
-def _build_llm_request(source_text: str, candidates: list[_SynapseCandidate]) -> LLMRequest:
+def _build_llm_request(source_text: str, candidates: list[_SynapseCandidate]) -> ModelCall:
     rendered = "\n\n".join(
         f"[{index}] {candidate.label}: {candidate.snippet}"
         for index, candidate in enumerate(candidates)
     )
     return build_synthesis_request(
+        provider=SYNAPSE_PROVIDER,
         system_prompt=_SYNAPSE_SYSTEM_PROMPT,
         candidates_header="CANDIDATES",
         rendered_candidates=rendered,

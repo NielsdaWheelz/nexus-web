@@ -20,9 +20,7 @@ def note_block_outline_markdown(db: Session, *, viewer_id: UUID, block_id: UUID)
     from nexus.services.resource_graph import documents as graph_documents
 
     occurrence = graph_documents.find_block_occurrence(db, user_id=viewer_id, block_id=block_id)
-    document = graph_documents.load_page_document(
-        db, user_id=viewer_id, page_id=occurrence.page_id
-    )
+    document = graph_documents.load_page_document(db, user_id=viewer_id, page_id=occurrence.page_id)
     node = graph_documents.find_document_block(document, block_id)
     return _document_outline_markdown([node]) if node is not None else ""
 

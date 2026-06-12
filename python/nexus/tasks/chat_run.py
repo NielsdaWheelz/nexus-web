@@ -7,7 +7,7 @@ from typing import Any
 from uuid import UUID
 
 import httpx
-from llm_calling.router import LLMRouter
+from provider_runtime import ModelRuntime
 from sqlalchemy.orm import Session
 from web_search_tool.brave import BraveSearchProvider
 from web_search_tool.types import WebSearchProvider
@@ -44,7 +44,7 @@ def chat_run(
     )
     settings = get_settings()
 
-    async def _handler(db: Session, router: LLMRouter, client: httpx.AsyncClient) -> dict:
+    async def _handler(db: Session, router: ModelRuntime, client: httpx.AsyncClient) -> dict:
         web_search_provider: WebSearchProvider | None = (
             BraveSearchProvider(client, api_key=settings.brave_search_api_key)
             if settings.brave_search_api_key

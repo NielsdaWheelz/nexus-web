@@ -77,6 +77,23 @@ const MODELS = [
     reasoning_modes: ["default"],
     max_context_tokens: 128000,
     available_via: "platform",
+    provider_rank: 0,
+    model_rank: 0,
+    is_default: true,
+    available_key_modes: ["auto", "platform_only"],
+    capabilities: {
+      prompt_cache: {
+        mode: "keyed_ttl",
+        supported: true,
+        key_required: true,
+        ttl_options: ["5m", "1h"],
+      },
+      streaming: true,
+      tool_calling: true,
+      structured_output: true,
+      structured_output_streaming: false,
+      reasoning_continuation: true,
+    },
   },
 ];
 
@@ -673,7 +690,7 @@ describe("Conversation", () => {
               assistant_message_id: "assistant-message-1",
               model_id: body.model_id,
               reasoning: body.reasoning,
-              key_mode: body.key_mode ?? "auto",
+              key_mode: body.key_mode,
               cancel_requested_at: null,
               started_at: timestamp,
               completed_at: timestamp,

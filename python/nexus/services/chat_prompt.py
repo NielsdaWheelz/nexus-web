@@ -6,7 +6,15 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal, cast
 
-from llm_calling.types import LLMRequest, ReasoningEffort, Turn
+from provider_runtime import PromptCacheTTL
+from provider_runtime.types import (
+    ModelCall,
+    ModelMessage,
+    ModelRef,
+    ProviderName,
+    ReasoningConfig,
+    ReasoningEffort,
+)
 
 from nexus.services.prompt_budget import (
     ContextBudgetError,
@@ -116,35 +124,39 @@ def build_llm_request_from_plan(
     model_name: str,
     max_tokens: int,
     reasoning_effort: str,
-) -> LLMRequest:
+) -> ModelCall:
     """Derive the provider request from the prompt plan exactly once."""
 
-    messages: list[Turn] = []
+    messages: list[ModelMessage] = []
     for turn in plan.turns:
         for block in turn.blocks:
-            cache_ttl = "none"
-            if block.cache_policy is not None:
-                ttl_seconds = block.cache_policy.get("ttl_seconds")
-                if ttl_seconds == 300:
-                    cache_ttl = "5m"
-                elif ttl_seconds == 3600:
-                    cache_ttl = "1h"
+            cache_ttl = cache_ttl_from_policy(block.cache_policy) or "none"
             messages.append(
-                Turn(
+                ModelMessage(
                     role=turn.role,
                     content=block.text,
                     cache_ttl=cache_ttl,
                 )
             )
 
-    return LLMRequest(
-        model_name=model_name,
+    return ModelCall(
+        model=ModelRef(provider=cast(ProviderName, provider), model=model_name),
         messages=messages,
-        max_tokens=max_tokens,
+        max_output_tokens=max_tokens,
         temperature=0.7,
-        reasoning_effort=cast(ReasoningEffort, reasoning_effort),
-        prompt_cache_key=None,
+        reasoning=ReasoningConfig(effort=cast(ReasoningEffort, reasoning_effort)),
     )
+
+
+def cache_ttl_from_policy(cache_policy: object) -> PromptCacheTTL | None:
+    if not isinstance(cache_policy, dict):
+        return None
+    ttl_seconds = cache_policy.get("ttl_seconds")
+    if ttl_seconds == 300:
+        return "5m"
+    if ttl_seconds == 3600:
+        return "1h"
+    return None
 
 
 def validate_prompt_plan_budget(plan: PromptPlan, input_budget_tokens: int) -> int:

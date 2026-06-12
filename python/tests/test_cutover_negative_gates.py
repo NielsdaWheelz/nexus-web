@@ -1,11 +1,11 @@
-"""CI-assertable §14 negative gates for the Library-Intelligence AI-native cutover.
+"""CI-assertable negative gates for finished hard cutovers.
 
 Each test greps production code (``python/nexus`` + ``apps/web/src``) and asserts
 that a dropped symbol is ABSENT (or, for the anti-over-deletion gates, that a
-must-REMAIN symbol is PRESENT). The point of these gates is to keep the hard
-cutover from silently regressing — a reintroduced section compiler, a revived
-verifier-taxonomy column, or an over-eager deletion of a load-bearing store all
-fail here with a file:line pointer.
+must-REMAIN symbol is PRESENT). The point of these gates is to keep hard cutovers
+from silently regressing — a reintroduced section compiler, a revived
+verifier-taxonomy column, legacy provider-runtime import path, or an over-eager
+deletion of a load-bearing store all fail here with a file:line pointer.
 
 These are pure repo greps (no DB, no app import), so they run in the unit lane.
 Each gate scans ONLY ``python/nexus`` + ``apps/web/src``.
@@ -20,7 +20,6 @@ legitimately name dropped symbols in their own absence assertions.
 from __future__ import annotations
 
 import re
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -59,26 +58,28 @@ class _Hit:
         return f"{self.path}:{self.line}: {self.text}"
 
 
-def _grep(pattern: str, *roots: Path) -> list[_Hit]:
-    """Run ``grep -rnE`` for ``pattern`` over ``roots``; return parsed hits.
-
-    grep exits 1 (no matches) or 0 (matches); anything else is a real error.
-    """
-    existing = [str(root) for root in roots if root.exists()]
-    if not existing:
+def _iter_scan_files(root: Path) -> list[Path]:
+    if not root.exists():
         return []
-    result = subprocess.run(
-        ["grep", "-rnE", "--", pattern, *existing],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode not in (0, 1):
-        raise RuntimeError(f"grep failed for {pattern!r}: {result.stderr}")
+    if root.is_file():
+        return [] if _skip_scan_file(root) else [root]
+    return sorted(path for path in root.rglob("*") if path.is_file() and not _skip_scan_file(path))
+
+
+def _skip_scan_file(path: Path) -> bool:
+    return "__pycache__" in path.parts or path.suffix in {".pyc", ".pyo"}
+
+
+def _grep(pattern: str, *roots: Path) -> list[_Hit]:
+    """Run a Python-regex line scan over ``roots``; return parsed hits."""
+    rx = re.compile(pattern)
     hits: list[_Hit] = []
-    for raw in result.stdout.splitlines():
-        path, _, rest = raw.partition(":")
-        line_str, _, text = rest.partition(":")
-        hits.append(_Hit(path=path, line=int(line_str), text=text.strip()))
+    for root in roots:
+        for path in _iter_scan_files(root):
+            text = path.read_text(encoding="utf-8", errors="ignore")
+            for line_no, line in enumerate(text.splitlines(), start=1):
+                if rx.search(line):
+                    hits.append(_Hit(path=path.as_posix(), line=line_no, text=line.strip()))
     return hits
 
 
@@ -94,6 +95,7 @@ def _filtered(pattern: str, *roots: Path, exclude: re.Pattern[str] | None = None
 # OUTSIDE the grep roots — so neither can ever appear in a hit; only the frontend
 # ``*.test.{ts,tsx}`` files (which DO live under apps/web/src) need excluding.
 _FRONTEND_TEST = re.compile(r"\.test\.")
+_FRONTEND_TEST_OR_READER_FIXTURE = re.compile(r"\.test\.|/apps/web/src/lib/reader/__fixtures__/")
 
 
 def _fmt(hits: list[_Hit]) -> str:
@@ -389,18 +391,186 @@ def test_no_event_loop_construction_under_tasks_except_llm_task():
 def test_no_raw_provider_key_reads_outside_key_spine():
     # The platform-key reads live only in llm_catalog.py (which exposes them via
     # platform_key_for_provider) and api_key_resolver.py; config.py owns the
-    # settings fields. semantic_chunks.py is the embeddings provider path — a
-    # separate substrate with its own OpenAI key, not an LLM-generation surface,
-    # and not part of the resolve_api_key spine (out of §14 scope).
-    pattern = r"settings\.(anthropic|openai|gemini|deepseek)_api_key"
+    # settings fields.
+    pattern = (
+        r"settings\.(anthropic|openai|gemini|openrouter)_api_key|settings\.cloudflare_ai_api_token"
+    )
     hits = _excluding(
         _grep(pattern, _PY_ROOT),
         "llm_catalog.py",
         "services/api_key_resolver.py",
         "config.py",
-        "services/semantic_chunks.py",
     )
     assert not hits, f"raw provider-key read outside the key spine:\n{_fmt(hits)}"
+
+
+# =============================================================================
+# Shared provider runtime: no direct provider SDK imports or brittle error maps
+# =============================================================================
+
+
+def test_no_direct_provider_sdk_imports_in_nexus():
+    # Nexus may import provider_runtime. Direct provider SDK/API substrates belong
+    # in the shared runtime package, not in application services.
+    pattern = (
+        r"^\s*(from|import) (openai|anthropic|groq)\b|"
+        r"^\s*from google import genai\b|"
+        r"^\s*(from|import) google\.(genai|generativeai)\b|"
+        r"^\s*(from|import) pydantic_ai\.(models|providers)\b"
+    )
+    hits = _filtered(pattern, _PY_ROOT, exclude=_FRONTEND_TEST)
+    assert not hits, f"direct provider SDK import in Nexus production code:\n{_fmt(hits)}"
+
+
+def test_legacy_llm_calling_imports_absent_from_app_code():
+    hits = _filtered(r"\bllm_calling\b|llm-calling", _PY_ROOT, _WEB_ROOT, exclude=_FRONTEND_TEST)
+    assert not hits, f"legacy llm-calling import path present in app code:\n{_fmt(hits)}"
+
+
+def test_no_direct_provider_http_endpoints_in_nexus():
+    pattern = (
+        r"api\.openai\.com|api\.anthropic\.com|"
+        r"generativelanguage\.googleapis\.com|openrouter\.ai|api\.cloudflare\.com"
+    )
+    hits = _filtered(pattern, _PY_ROOT, _WEB_ROOT, exclude=_FRONTEND_TEST)
+    assert not hits, (
+        f"direct provider HTTP endpoint literal in Nexus production code:\n{_fmt(hits)}"
+    )
+
+
+def test_provider_response_cursor_absent_from_app_code():
+    hits = _filtered(r"\bprevious_response_id\b", _PY_ROOT, _WEB_ROOT, exclude=_FRONTEND_TEST)
+    assert not hits, f"provider-stored response cursor present in app code:\n{_fmt(hits)}"
+
+
+def test_provider_native_reasoning_artifact_fields_absent_from_app_code():
+    pattern = (
+        r"\bencrypted_content\b|\bredacted_thinking\b|\bthoughtSignature\b|"
+        r"\breasoning_content\b|\bThinkingPart\b|\breasoning_summary\b"
+    )
+    hits = _filtered(pattern, _PY_ROOT, _WEB_ROOT, exclude=_FRONTEND_TEST)
+    assert not hits, f"provider-native reasoning artifact fields in app code:\n{_fmt(hits)}"
+
+
+def test_provider_runtime_router_import_absent_from_app_code():
+    hits = _filtered(r"provider_runtime\.router", _PY_ROOT, _WEB_ROOT, exclude=_FRONTEND_TEST)
+    assert not hits, f"provider_runtime.router import path present in app code:\n{_fmt(hits)}"
+
+
+def test_nexus_owned_llm_request_lowering_absent():
+    lowering_path = _PY_ROOT / "services" / "llm_request_lowering.py"
+    assert not lowering_path.exists(), f"{lowering_path} must not exist"
+
+    hits = _filtered(
+        r"nexus\.services\.llm_request_lowering|lower_llm_request_for_provider",
+        _PY_ROOT,
+        _WEB_ROOT,
+        exclude=_FRONTEND_TEST,
+    )
+    assert not hits, f"Nexus-local LLM request lowering referenced:\n{_fmt(hits)}"
+
+
+def test_removed_deepseek_provider_absent_from_app_code():
+    hits = _filtered(
+        r"\bdeepseek\b|\bDeepSeek\b",
+        _PY_ROOT,
+        _WEB_ROOT,
+        exclude=_FRONTEND_TEST_OR_READER_FIXTURE,
+    )
+    assert not hits, f"removed DeepSeek provider referenced in app code:\n{_fmt(hits)}"
+
+
+def test_provider_runtime_dependency_is_not_editable_sibling_path():
+    for relative_path in ("python/pyproject.toml", "python/uv.lock"):
+        text = (_REPO_ROOT / relative_path).read_text(encoding="utf-8")
+        assert "../../llm-calling" not in text, (
+            f"{relative_path} still points provider-runtime at the sibling checkout"
+        )
+        assert 'editable = "../../llm-calling"' not in text, (
+            f"{relative_path} still locks provider-runtime as editable"
+        )
+
+
+def test_live_provider_gate_includes_shared_llm_provider_matrix():
+    makefile = (_REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+    assert "_test-shared-llm-provider-matrix-raw" in makefile
+    assert "tests/live/test_provider_matrix.py" in makefile
+    assert "LLM_RUNTIME_LIVE=1" in makefile
+    assert "env -u LLM_RUNTIME_LIVE_PROVIDERS" in makefile
+    assert "_test-provider-runtime-raw" in makefile
+    assert "uv run ruff check src tests" in makefile
+    assert "uv run pyright src tests" in makefile
+    assert "uv run pytest -q" in makefile
+    assert "python/pyproject.toml" in makefile
+    assert "rev-parse HEAD" in makefile
+
+    workflow = (_REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    assert "test-provider-runtime:" in workflow
+    assert "LLM_CALLING_DIR: llm-calling" in workflow
+    assert "Resolve provider-runtime revision" in workflow
+    assert "repository: NielsdaWheelz/llm-calling" in workflow
+    assert "ref: ${{ steps.provider-runtime.outputs.rev }}" in workflow
+    assert "Test pinned provider-runtime" in workflow
+    assert "Check live-provider secrets" in workflow
+    assert "live_ready=false" in workflow
+    assert "Live-provider gate not run" in workflow
+    assert "This CI run is not live-provider proof" in workflow
+    assert "Test live-provider gate" in workflow
+    assert "if: steps.live-provider-secrets.outputs.live_ready == 'true'" in workflow
+    for secret in (
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "GEMINI_API_KEY",
+        "OPENROUTER_API_KEY",
+        "CLOUDFLARE_AI_API_TOKEN",
+        "CLOUDFLARE_AI_ACCOUNT_ID",
+        "PODCAST_INDEX_API_KEY",
+        "PODCAST_INDEX_API_SECRET",
+        "DEEPGRAM_API_KEY",
+        "YOUTUBE_DATA_API_KEY",
+        "X_API_BEARER_TOKEN",
+        "X_LIVE_TEST_POST_URL",
+        "X_LIVE_TEST_EXPECTED_TEXT",
+    ):
+        assert f"secrets.{secret}" in workflow
+
+
+def test_raw_model_runtime_calls_stay_inside_ledger_or_explicit_exceptions():
+    # Generation paths must call providers through llm_ledger. The explicit
+    # exceptions are structured_synthesis' ledgered interface and saved-key probes.
+    hits = _excluding(
+        _grep(
+            r"\b(?:router|llm_router|runtime|llm|model_runtime|provider_runtime|provider_router)\.(?:generate|stream)\(",
+            _PY_ROOT,
+        ),
+        "services/llm_ledger.py",
+        "services/structured_synthesis.py",
+        "services/user_keys.py",
+    )
+    assert not hits, f"raw ModelRuntime generate/stream call outside ledger owners:\n{_fmt(hits)}"
+
+
+def test_frontend_chat_model_policy_has_no_static_provider_or_model_literals():
+    pattern = (
+        r"PROVIDER_ORDER|DEFAULT_MODEL|DEFAULT_CHAT_MODEL|providerOrder|"
+        r"gpt-|claude-|gemini-|moonshotai|@cf/|openrouter|anthropic|openai|cloudflare"
+    )
+    hits = _filtered(
+        pattern,
+        _WEB_ROOT / "components" / "chat",
+        _WEB_ROOT / "lib" / "conversations",
+        exclude=_FRONTEND_TEST,
+    )
+    assert not hits, (
+        f"frontend chat model policy contains static provider/model literals:\n{_fmt(hits)}"
+    )
+
+
+def test_llm_error_code_mapping_is_not_indexed_directly():
+    # Unknown shared-runtime error codes should degrade through
+    # api_error_code_for_model_call instead of raising KeyError.
+    hits = _filtered(r"LLM_ERROR_CODE_TO_API_ERROR_CODE\[", _PY_ROOT, exclude=_FRONTEND_TEST)
+    assert not hits, f"direct LLM error-code map indexing in production code:\n{_fmt(hits)}"
 
 
 # =============================================================================
@@ -501,7 +671,7 @@ def test_message_retrievals_insert_only_in_retrieval_citation():
 
 def test_generation_harness_dead_symbols_absent():
     # charge_token_budget (dead RateLimiter method), _unread_stream_api_error_code
-    # (nexus router-exception patch, superseded by the llm-calling catch widening),
+    # (nexus router-exception patch, superseded by the provider_runtime catch widening),
     # and generator_model_id (dropped oracle column) are all gone.
     pattern = r"charge_token_budget|_unread_stream_api_error_code|generator_model_id"
     hits = _filtered(pattern, _PY_ROOT, _WEB_ROOT, exclude=_FRONTEND_TEST)
@@ -714,6 +884,15 @@ _DROPPED_TOKEN_BACKTICK_PROSE = re.compile(
 def _is_allowed_graph_residue(hit: _Hit) -> bool:
     # Frontend absence-assertion tests legitimately name dropped symbols.
     if _FRONTEND_TEST.search(hit.path):
+        return True
+    # Reader apparatus owns source-local extraction ordinals while projecting
+    # source-authored citations into graph edges; this is not the removed graph
+    # relationship field. Fixture JSON records that source-local extraction
+    # payload for deterministic parser tests.
+    if "citation_ordinal" in hit.text and (
+        hit.path.endswith("/python/nexus/services/reader_apparatus.py")
+        or "/apps/web/src/lib/reader/__fixtures__/" in hit.path
+    ):
         return True
     # Backtick-quoted historical prose (module/function docstrings explaining the
     # store a route/cleanup path replaced).

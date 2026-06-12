@@ -61,24 +61,31 @@ class HydratedObjectRef(ObjectRef):
 
 class NoteBlockOut(BaseModel):
     id: UUID
-    page_id: UUID = Field(validation_alias=AliasChoices("page_id", "pageId"), serialization_alias="pageId")
+    page_id: UUID = Field(
+        validation_alias=AliasChoices("page_id", "pageId"), serialization_alias="pageId"
+    )
     parent_block_id: UUID | None = Field(
         None,
         validation_alias=AliasChoices("parent_block_id", "parentBlockId"),
         serialization_alias="parentBlockId",
     )
-    order_key: str = Field(validation_alias=AliasChoices("order_key", "orderKey"), serialization_alias="orderKey")
+    order_key: str = Field(
+        validation_alias=AliasChoices("order_key", "orderKey"), serialization_alias="orderKey"
+    )
     block_kind: NOTE_BLOCK_KINDS = Field(
         validation_alias=AliasChoices("block_kind", "blockKind"), serialization_alias="blockKind"
     )
     body_pm_json: dict[str, Any] = Field(
-        validation_alias=AliasChoices("body_pm_json", "bodyPmJson"), serialization_alias="bodyPmJson"
+        validation_alias=AliasChoices("body_pm_json", "bodyPmJson"),
+        serialization_alias="bodyPmJson",
     )
     body_markdown: str = Field(
         validation_alias=AliasChoices("body_markdown", "bodyMarkdown"),
         serialization_alias="bodyMarkdown",
     )
-    body_text: str = Field(validation_alias=AliasChoices("body_text", "bodyText"), serialization_alias="bodyText")
+    body_text: str = Field(
+        validation_alias=AliasChoices("body_text", "bodyText"), serialization_alias="bodyText"
+    )
     collapsed: bool
     children: list["NoteBlockOut"] = Field(default_factory=list)
     created_at: datetime = Field(
@@ -111,8 +118,12 @@ class NotePageOut(NotePageSummaryOut):
 
 
 class DailyNotePageOut(BaseModel):
-    local_date: date = Field(validation_alias=AliasChoices("local_date", "localDate"), serialization_alias="localDate")
-    time_zone: str = Field(validation_alias=AliasChoices("time_zone", "timeZone"), serialization_alias="timeZone")
+    local_date: date = Field(
+        validation_alias=AliasChoices("local_date", "localDate"), serialization_alias="localDate"
+    )
+    time_zone: str = Field(
+        validation_alias=AliasChoices("time_zone", "timeZone"), serialization_alias="timeZone"
+    )
     page: NotePageOut
 
     model_config = ConfigDict(populate_by_name=True)

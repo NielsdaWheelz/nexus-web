@@ -104,8 +104,9 @@ scaffolding.
                            └──────────────┘
 
    Identity: Supabase Auth (JWT/JWKS) only — no Supabase DB or Storage.
-   External: OpenAI / Anthropic / Gemini / DeepSeek (LLM + embeddings),
-             Brave (web search), Podcast Index, Deepgram, YouTube Data API,
+   External: OpenAI / Anthropic / Gemini / OpenRouter / Cloudflare (LLM + embeddings),
+             Brave (web search), Podcast Index, Deepgram, YouTube Data API
+             plus YouTube transcript/caption egress,
              Stripe (billing), Cloudflare R2.
 ```
 
@@ -506,14 +507,16 @@ Task catalog (each is a thin handler in `tasks/` that wraps a service):
 `oracle_reading_generate`, `library_intelligence_artifact_generate`,
 `media_unit_build`, `enrich_metadata`) run their bodies inside one shared worker
 envelope, `tasks/llm_task.py:run_llm_task` — the sole owner of the event loop,
-`httpx` client, and `LLMRouter` construction (including the fixture swap and the
-worker-exception boundary). Every provider call inside a job leaves one
-`llm_calls` ledger row via `llm_ledger.observed_generate`, on success and on
-failure, and `run_kit.mark_terminal` stamps `error_code`/`error_detail` on the
-run parent — so a failed run is always diagnosable. The worker installs the
-process-global rate limiter at startup so the first job of any kind has a working
-limiter. SERIALIZABLE retries everywhere (including the scheduler loop) go through
-the one helper `db/retries.py:retry_serializable`. See
+`httpx` client, and `ModelRuntime` construction (including the fixture swap and
+the worker-exception boundary). Ledgered generation calls inside those jobs leave
+one `llm_calls` row via `llm_ledger.observed_generate` /
+`observed_generate_stream`, on success and on failure, and
+`run_kit.mark_terminal` stamps `error_code`/`error_detail` on the run parent —
+so a failed run is diagnosable. Saved-key probes and transcript embeddings are
+explicit exceptions described in [modules/llms.md](modules/llms.md). The worker
+installs the process-global rate limiter at startup so the first job of any kind
+has a working limiter. SERIALIZABLE retries everywhere (including the scheduler
+loop) go through the one helper `db/retries.py:retry_serializable`. See
 [modules/llms.md](modules/llms.md).
 
 ### 7.4 Auth, identity & bootstrap
@@ -537,8 +540,9 @@ Other identity surfaces:
 
 ### 7.5 BYOK keys, billing & entitlements
 
-- **BYOK** (`services/user_keys.py`, `crypto.py`, `api_key_resolver.py`): provider
-  keys (openai/anthropic/gemini/deepseek) are encrypted with XChaCha20-Poly1305
+- **BYOK** (`services/user_keys.py`, `crypto.py`, `api_key_resolver.py`): user
+  provider keys (openai/anthropic/gemini/openrouter; Cloudflare is platform-only
+  in the current credential contract) are encrypted with XChaCha20-Poly1305
   (PyNaCl `SecretBox`) under `NEXUS_KEY_ENCRYPTION_KEY`; only a 4-char fingerprint
   is exposed. Status lifecycle `untested → valid → invalid → revoked` (revoke
   wipes ciphertext, keeps fingerprint for audit). `key_mode ∈ {auto, byok_only,
@@ -556,7 +560,8 @@ Other identity surfaces:
 - **Rate limiting** (`services/rate_limit.py`): a Postgres-backed limiter using
   per-scope advisory locks; limits RPM (20), concurrency (3 inflight slots), and a
   monthly platform-token budget via a reserve→commit pattern with TTL'd
-  reservations. It **fails closed** on acquire/check, open on release.
+  reservations and polymorphic reservation-id charges for chat and background
+  generation. It **fails closed** on acquire/check, open on release.
 
 ### 7.6 Search, retrieval & the embedding pipeline
 
@@ -651,8 +656,11 @@ capability-owned:
   `external_provider_events`. There is no scraping, oEmbed, or generic article
   fallback for X URLs.
 - `youtube_video_ingest.py`: YouTube metadata/transcript materialization for
-  queued source attempts; it is called by `media_source_ingest.py`, not
-  registered as a separate source-acquisition job lane.
+  queued source attempts. Metadata uses the YouTube Data API; transcript/caption
+  acquisition is a separate egress boundary that may require
+  `YOUTUBE_TRANSCRIPT_PROXY_URL` from datacenter hosts. It is called by
+  `media_source_ingest.py`, not registered as a separate source-acquisition job
+  lane.
 - `remote_file_client.py`: PDF/EPUB URL outbound policy, SSRF-safe streaming to
   storage, byte-size accounting, and signature validation for queued source
   attempts.
@@ -1087,7 +1095,7 @@ Tiers:
 | Migrations | Alembic up/down | dedicated DB | `make test-migrations` |
 | E2E (default) | user journeys, prod-built web, no-reload API | full real stack, fixture providers | `make test-e2e` |
 | Real-media | ingest/search/chat acceptance | real code, deterministic fixture LLM + `fixture_hash` embeddings | `make test-real-media` |
-| Live-providers | real OpenAI/Podcast Index/Deepgram/X | live external | `make test-live-providers` |
+| Live-providers | real OpenAI/Anthropic/Gemini/OpenRouter/Cloudflare, OpenAI embeddings/transcription, Podcast Index/Deepgram/YouTube/X | live external | `make test-live-providers` |
 
 The **real-media vs live-providers** split is the determinism boundary:
 real-media runs real product code but swaps the *external provider edge* for

@@ -16,6 +16,23 @@ const MODEL: ConversationModel = {
   reasoning_modes: ["default", "high"],
   max_context_tokens: 200_000,
   available_via: "platform",
+  provider_rank: 1,
+  model_rank: 1,
+  is_default: true,
+  available_key_modes: ["auto", "platform_only"],
+  capabilities: {
+    prompt_cache: {
+      mode: "turn_ttl",
+      supported: true,
+      key_required: false,
+      ttl_options: ["5m", "1h"],
+    },
+    streaming: true,
+    tool_calling: true,
+    structured_output: true,
+    structured_output_streaming: false,
+    reasoning_continuation: true,
+  },
 };
 
 const MODELS: UseChatModels = {
@@ -24,25 +41,25 @@ const MODELS: UseChatModels = {
   selectedProvider: "anthropic",
   selectedModelId: MODEL.id,
   selectedReasoning: "default",
+  selectedKeyMode: "auto",
   providerOptions: ["anthropic"],
   reasoningOptions: ["default", "high"],
+  keyModeOptions: ["auto", "platform_only"],
   modelSummary: "Claude / Default",
   setProvider: () => {},
   setModel: () => {},
   setReasoning: () => {},
+  setKeyMode: () => {},
 };
 
 function Harness() {
   const [open, setOpen] = useState(false);
-  const [onlyUseMyKeys, setOnlyUseMyKeys] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
   return (
     <ModelSettingsPopover
       open={open}
       setOpen={setOpen}
       models={MODELS}
-      onlyUseMyKeys={onlyUseMyKeys}
-      setOnlyUseMyKeys={setOnlyUseMyKeys}
       disabled={false}
       buttonRef={buttonRef}
     />
@@ -114,6 +131,31 @@ describe("ModelSettingsPopover", () => {
 
       fireEvent.keyDown(document, { key: "Escape" });
       dialogGone();
+    });
+
+    it("calls the key-mode setter from the key mode select", () => {
+      const setKeyMode = vi.fn();
+      const models = { ...MODELS, setKeyMode };
+      const setOpen = vi.fn();
+      const buttonRef = { current: document.createElement("button") };
+      render(
+        withRenderEnvironment(
+          <ModelSettingsPopover
+            open
+            setOpen={setOpen}
+            models={models}
+            disabled={false}
+            buttonRef={buttonRef}
+          />,
+          { initialViewport: "desktop" },
+        ),
+      );
+
+      fireEvent.change(screen.getByLabelText("Key mode"), {
+        target: { value: "platform_only" },
+      });
+
+      expect(setKeyMode).toHaveBeenCalledWith("platform_only");
     });
   });
 

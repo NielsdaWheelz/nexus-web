@@ -19,8 +19,8 @@ generic mechanics are owned here once:
 
 **Domain stays with the caller**: the prompt text (persona/preamble/domain
 rules/JSON shape), per-candidate rendering, the schema fields, the semantic
-judgement inside ``validate``, and mapping any propagated ``LLMError`` to its
-domain error codes; this primitive does not catch ``LLMError`` so that per-code
+judgement inside ``validate``, and mapping any propagated ``ModelCallError`` to its
+domain error codes; this primitive does not catch ``ModelCallError`` so that per-code
 distinctions survive intact (provider failures are never repaired).
 
 Failure of the parse/validate step (unparseable, schema-mismatch, not a bare
@@ -33,19 +33,25 @@ from __future__ import annotations
 import json
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
-from typing import Literal, Protocol
+from typing import Literal, Protocol, cast
 
-from llm_calling.types import LLMRequest, LLMResponse, LLMUsage, Turn
+from provider_runtime.types import (
+    ModelCall,
+    ModelMessage,
+    ModelRef,
+    ModelResponse,
+    ProviderName,
+    ReasoningConfig,
+    TokenUsage,
+)
 from pydantic import BaseModel, ValidationError
 
 
 class SynthesisLLM(Protocol):
-    """The one call shape synthesis needs: ``LLMRouter`` or a ledgered wrapper
+    """The one call shape synthesis needs: ``ModelRuntime`` or a ledgered wrapper
     (``llm_ledger.LedgeredLLM``, which writes one ``llm_calls`` row per attempt)."""
 
-    async def generate(
-        self, provider: str, req: LLMRequest, api_key: str, *, timeout_s: int
-    ) -> LLMResponse: ...
+    async def generate(self, req: ModelCall, *, key: str, timeout_s: int) -> ModelResponse: ...
 
 
 # The shared index-grounding rule. Call sites pass it as their first domain
@@ -70,7 +76,7 @@ class SynthesisRequest:
     """A fully-rendered structured-synthesis request (the prompt is domain-built)."""
 
     provider: str
-    llm_request: LLMRequest
+    llm_request: ModelCall
     api_key: str
     timeout_s: int
 
@@ -85,7 +91,7 @@ class SynthesisResult[T: BaseModel]:
     """
 
     value: T
-    usage: LLMUsage | None
+    usage: TokenUsage | None
 
 
 def build_synthesis_prompt(
@@ -112,13 +118,14 @@ def build_synthesis_prompt(
 
 def build_synthesis_request(
     *,
+    provider: str,
     system_prompt: str,
     candidates_header: str,
     rendered_candidates: str,
     extra_user_block: str | None,
     model_name: str,
     max_tokens: int,
-) -> LLMRequest:
+) -> ModelCall:
     """Assemble the shared two-turn synthesis request.
 
     Cached system turn (``cache_ttl="5m"``) + one user turn:
@@ -130,15 +137,14 @@ def build_synthesis_request(
     if extra_user_block is not None:
         user_content += f"{extra_user_block}\n\n"
     user_content += "Respond with the strict JSON object as instructed."
-    return LLMRequest(
-        model_name=model_name,
+    return ModelCall(
+        model=ModelRef(provider=cast(ProviderName, provider), model=model_name),
         messages=[
-            Turn(role="system", content=system_prompt, cache_ttl="5m"),
-            Turn(role="user", content=user_content, cache_ttl="none"),
+            ModelMessage(role="system", content=system_prompt, cache_ttl="5m"),
+            ModelMessage(role="user", content=user_content, cache_ttl="none"),
         ],
-        max_tokens=max_tokens,
-        reasoning_effort="none",
-        prompt_cache_key=None,
+        max_output_tokens=max_tokens,
+        reasoning=ReasoningConfig(effort="none"),
     )
 
 
@@ -182,13 +188,12 @@ async def run_structured_synthesis[T: BaseModel](
     of any of those steps the call is re-issued ONCE with the bad output
     appended as an assistant turn plus a user turn naming the reason; a second
     failure raises :class:`StructuredSynthesisError` exactly as the first
-    would have. The provider-call failure (``LLMError``) propagates unchanged
+    would have. The provider-call failure (``ModelCallError``) propagates unchanged
     from either attempt so the caller keeps its per-code mapping.
     """
     response = await llm.generate(
-        request.provider,
         request.llm_request,
-        request.api_key,
+        key=request.api_key,
         timeout_s=request.timeout_s,
     )
     try:
@@ -198,9 +203,8 @@ async def run_structured_synthesis[T: BaseModel](
         first_usage = response.usage
         repair_request = _repair_request(request.llm_request, raw=response.text, reason=str(exc))
     response = await llm.generate(
-        request.provider,
         repair_request,
-        request.api_key,
+        key=request.api_key,
         timeout_s=request.timeout_s,
     )
     value = _validated_value(response.text, schema=schema, validate=validate)
@@ -232,13 +236,13 @@ def _validate_strict_json[T: BaseModel](raw: str, *, schema: type[T]) -> T:
         raise StructuredSynthesisError("response JSON does not match the schema") from exc
 
 
-def _repair_request(original: LLMRequest, *, raw: str, reason: str) -> LLMRequest:
+def _repair_request(original: ModelCall, *, raw: str, reason: str) -> ModelCall:
     return replace(
         original,
         messages=[
             *original.messages,
-            Turn(role="assistant", content=raw),
-            Turn(
+            ModelMessage(role="assistant", content=raw),
+            ModelMessage(
                 role="user",
                 content=(
                     f"Your previous response was invalid: {reason}. "
@@ -249,7 +253,7 @@ def _repair_request(original: LLMRequest, *, raw: str, reason: str) -> LLMReques
     )
 
 
-def _sum_usage(first: LLMUsage | None, second: LLMUsage | None) -> LLMUsage | None:
+def _sum_usage(first: TokenUsage | None, second: TokenUsage | None) -> TokenUsage | None:
     if first is None:
         return second
     if second is None:
@@ -258,7 +262,7 @@ def _sum_usage(first: LLMUsage | None, second: LLMUsage | None) -> LLMUsage | No
     def add(x: int | None, y: int | None) -> int | None:
         return None if x is None and y is None else (x or 0) + (y or 0)
 
-    return LLMUsage(
+    return TokenUsage(
         input_tokens=add(first.input_tokens, second.input_tokens),
         output_tokens=add(first.output_tokens, second.output_tokens),
         total_tokens=add(first.total_tokens, second.total_tokens),

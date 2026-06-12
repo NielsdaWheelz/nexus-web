@@ -9,7 +9,9 @@ and `external_audio` resolution) is owned by the [player module](player.md); tra
 chunk indexing is owned by `content_indexing`.
 
 Backend owners live under `python/nexus/services/podcasts/*`, the media-level
-`python/nexus/services/transcripts/*`, and the egress helpers under
+`python/nexus/services/transcripts/*`, the YouTube transcript owners
+`python/nexus/services/youtube_video_ingest.py` and
+`python/nexus/services/youtube_transcripts.py`, and the egress helpers under
 `python/nexus/services/net/*`. Frontend owners live under
 `apps/web/src/app/(authenticated)/podcasts/*`.
 
@@ -79,3 +81,19 @@ calls the writer; RSS sync fetches a sidecar via `safe_get`, parses it
 chunks flow into the shared `content_chunks` index via
 `content_indexing.rebuild_transcript_content_index`; semantic readiness is keyed by the
 current embedding provider/model.
+
+`podcasts.deepgram_adapter` is a documented non-LLM provider port, not part of the shared
+generation runtime. It owns Deepgram diarization fallback, fixture normalization, and podcast
+transcript error mapping. The removal gate is a provider-runtime transcription API that can
+preserve those podcast semantics; until then, `make test-live-providers` is the live Deepgram
+proof for this adapter.
+
+YouTube video transcripts are a separate non-LLM transcript provider path. The Google
+YouTube Data API key proves metadata access only; public transcript/caption acquisition is
+performed by the YouTube transcript provider and may be blocked from datacenter IP ranges.
+Production deployments that ingest arbitrary YouTube transcripts should configure
+`YOUTUBE_TRANSCRIPT_PROXY_URL` with an operator-owned egress/proxy that is allowed to fetch
+public captions; otherwise YouTube ingest fails closed as `E_TRANSCRIPT_UNAVAILABLE`. The
+YouTube transcript live proof skips when this proxy is not configured because
+the YouTube Data API key proves only metadata and caption-track listing, not
+caption download.

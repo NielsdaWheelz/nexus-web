@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from uuid import UUID
 
 from sqlalchemy import text
@@ -11,6 +12,87 @@ from nexus.services.semantic_chunks import (
     current_transcript_embedding_provider,
 )
 from tests.utils.db import DirectSessionManager
+
+_SEARCH_STOPWORDS = frozenset(
+    {
+        "about",
+        "after",
+        "again",
+        "because",
+        "before",
+        "being",
+        "could",
+        "every",
+        "first",
+        "from",
+        "have",
+        "just",
+        "like",
+        "more",
+        "some",
+        "that",
+        "their",
+        "there",
+        "these",
+        "they",
+        "this",
+        "what",
+        "when",
+        "where",
+        "which",
+        "with",
+        "would",
+    }
+)
+_SEARCH_WORD_RE = re.compile(r"[A-Za-z][A-Za-z0-9'-]{4,}")
+
+
+def choose_indexed_search_query(
+    direct_db: DirectSessionManager,
+    media_id: UUID,
+    source_kind: str,
+) -> dict:
+    with direct_db.session() as session:
+        rows = (
+            session.execute(
+                text(
+                    """
+                    SELECT id, chunk_text
+                    FROM content_chunks
+                    WHERE owner_kind = 'media' AND owner_id = :media_id
+                      AND source_kind = :source_kind
+                    ORDER BY chunk_idx ASC
+                    LIMIT 20
+                    """
+                ),
+                {"media_id": media_id, "source_kind": source_kind},
+            )
+            .mappings()
+            .all()
+        )
+    assert rows, f"media {media_id} had no indexed chunks for {source_kind}"
+
+    fallback: tuple[str, object] | None = None
+    for row in rows:
+        for match in _SEARCH_WORD_RE.finditer(str(row["chunk_text"] or "")):
+            query = match.group(0)
+            lowered = query.casefold()
+            if fallback is None:
+                fallback = (query, row)
+            if lowered not in _SEARCH_STOPWORDS and not query.isdigit():
+                return {
+                    "query": query,
+                    "chunk_id": str(row["id"]),
+                    "source_kind": source_kind,
+                }
+
+    assert fallback is not None, f"media {media_id} had no searchable indexed words"
+    query, row = fallback
+    return {
+        "query": query,
+        "chunk_id": str(row["id"]),
+        "source_kind": source_kind,
+    }
 
 
 def assert_media_ready(auth_client, headers: dict[str, str], media_id: UUID) -> dict:

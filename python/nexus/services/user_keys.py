@@ -23,20 +23,19 @@ from datetime import UTC, datetime
 from typing import cast
 from uuid import UUID
 
-from llm_calling.errors import LLMError, LLMErrorCode
-from llm_calling.router import LLMRouter
-from llm_calling.types import LLMRequest, Turn
+from provider_runtime import ModelRuntime, ProviderApiKey, build_key_probe_call
+from provider_runtime.errors import ModelCallErrorCode
+from provider_runtime.types import ProviderName
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from nexus.config import get_settings
 from nexus.db.models import UserApiKey
-from nexus.errors import LLM_ERROR_CODE_TO_API_ERROR_CODE, ApiError, ApiErrorCode
+from nexus.errors import ApiError, ApiErrorCode, api_error_code_for_model_call
 from nexus.llm_catalog import (
-    PROVIDER_ORDER,
-    VALID_PROVIDERS,
-    enabled_provider_names,
-    key_test_model,
+    KEY_PROVIDER_ORDER,
+    VALID_KEY_PROVIDERS,
+    enabled_key_provider_names,
     provider_display_name,
 )
 from nexus.logging import get_logger
@@ -48,7 +47,7 @@ logger = get_logger(__name__)
 
 
 def _enabled_providers() -> tuple[str, ...]:
-    return enabled_provider_names(get_settings())
+    return enabled_key_provider_names(get_settings())
 
 
 def _key_to_out(key: UserApiKey) -> UserApiKeyOut:
@@ -106,7 +105,7 @@ def list_user_keys(db: Session, user_id: UUID) -> list[UserApiKeyOut]:
         _key_to_out(keys_by_provider[provider])
         if provider in keys_by_provider
         else _missing_provider_out(provider)
-        for provider in PROVIDER_ORDER
+        for provider in KEY_PROVIDER_ORDER
         if provider in enabled_providers
     ]
 
@@ -133,7 +132,7 @@ def upsert_user_key(
     Args:
         db: Database session.
         user_id: The user's ID.
-        provider: The LLM provider (openai, anthropic, gemini, deepseek).
+        provider: The BYOK provider (openai, anthropic, gemini, openrouter).
         api_key: The plaintext API key (already validated by schema).
 
     Returns:
@@ -147,10 +146,10 @@ def upsert_user_key(
     provider = provider.lower()
 
     # Validate provider
-    if provider not in VALID_PROVIDERS:
+    if provider not in VALID_KEY_PROVIDERS:
         raise ApiError(
             ApiErrorCode.E_KEY_PROVIDER_INVALID,
-            f"Unknown provider: {provider}. Must be one of: {', '.join(sorted(VALID_PROVIDERS))}",
+            f"Unknown provider: {provider}. Must be one of: {', '.join(sorted(VALID_KEY_PROVIDERS))}",
         )
 
     # Validate key format (defensive - schema should have already validated)
@@ -227,7 +226,7 @@ async def test_user_key(
     db: Session,
     user_id: UUID,
     key_id: UUID,
-    router: LLMRouter,
+    router: ModelRuntime,
 ) -> UserApiKeyOut:
     """Validate a saved BYOK key and update its status.
 
@@ -257,16 +256,9 @@ async def test_user_key(
         db.commit()
         return _key_to_out(key)
 
-    model_name = key_test_model(key.provider)
-    if model_name is None:
+    req = build_key_probe_call(cast(ProviderName, key.provider))
+    if req is None:
         raise ApiError(ApiErrorCode.E_KEY_PROVIDER_INVALID, f"Unknown provider: {key.provider}")
-
-    req = LLMRequest(
-        model_name=model_name,
-        messages=[Turn(role="user", content="Reply with ok.")],
-        max_tokens=8,
-        reasoning_effort="none",
-    )
 
     # The saved-key probe shares llm_ledger's llm.request.* emitter but writes no
     # ledger row (no owner run to attribute the call to).
@@ -278,35 +270,46 @@ async def test_user_key(
         key_mode="byok",
     )
     try:
-        response = await router.generate(
-            key.provider,
-            req,
-            api_key,
+        result = await router.probe_key(
+            provider=cast(ProviderName, key.provider),
+            key=ProviderApiKey(api_key, source="probe"),
             timeout_s=15,
         )
-        if response.status == "incomplete":
+        if result.ok and result.status == "incomplete":
             llm_log.failed(
                 error_class=ApiErrorCode.E_LLM_INCOMPLETE.value,
-                provider_request_id=response.provider_request_id,
+                provider_request_id=result.provider_request_id,
+                usage=result.usage,
             )
             raise ApiError(
                 ApiErrorCode.E_LLM_INCOMPLETE,
                 "The provider returned an incomplete key-test response.",
             )
-    except LLMError as e:
-        error_code = LLM_ERROR_CODE_TO_API_ERROR_CODE[e.error_code]
-        llm_log.failed(error_class=error_code.value)
-        if e.error_code == LLMErrorCode.INVALID_KEY:
-            key.status = "invalid"
-            key.last_tested_at = datetime.now(UTC)
-            db.commit()
-            return _key_to_out(key)
-
-        raise ApiError(error_code, e.message) from e
+        if not result.ok:
+            model_error_code = (
+                ModelCallErrorCode(result.error_code)
+                if result.error_code is not None
+                else ModelCallErrorCode.PROVIDER_DOWN
+            )
+            error_code = api_error_code_for_model_call(model_error_code)
+            llm_log.failed(
+                error_class=error_code.value,
+                provider_request_id=result.provider_request_id,
+                usage=result.usage,
+            )
+            if model_error_code == ModelCallErrorCode.INVALID_KEY:
+                key.status = "invalid"
+                key.last_tested_at = datetime.now(UTC)
+                db.commit()
+                return _key_to_out(key)
+            raise ApiError(error_code, "Provider key test failed.")
+    except ValueError as exc:
+        llm_log.failed(error_class=ApiErrorCode.E_LLM_PROVIDER_DOWN.value)
+        raise ApiError(ApiErrorCode.E_LLM_PROVIDER_DOWN, "Provider key test failed.") from exc
     finally:
         api_key = ""
 
-    llm_log.finished(provider_request_id=None, usage=None)
+    llm_log.finished(provider_request_id=result.provider_request_id, usage=result.usage)
 
     key.status = "valid"
     key.last_tested_at = datetime.now(UTC)
@@ -398,6 +401,7 @@ def get_usable_key_providers(db: Session, user_id: UUID) -> set[str]:
     """
     stmt = select(UserApiKey).where(
         UserApiKey.user_id == user_id,
+        UserApiKey.provider.in_(VALID_KEY_PROVIDERS),
         UserApiKey.status.in_(["untested", "valid"]),
         UserApiKey.encrypted_key.is_not(None),
         UserApiKey.key_nonce.is_not(None),

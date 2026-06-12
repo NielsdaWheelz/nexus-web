@@ -15,6 +15,7 @@ from tests.real_media.assertions import (
     assert_complete_evidence_trace,
     assert_media_ready,
     assert_search_and_resolver,
+    choose_indexed_search_query,
 )
 from tests.real_media.conftest import (
     grant_ai_plus,
@@ -184,7 +185,10 @@ def test_live_podcast_episode_transcribes_and_indexes_real_episode(
     register_background_job_cleanup(direct_db, media_id)
     media_trace = assert_media_ready(auth_client, headers, media_id)
     evidence_trace = assert_complete_evidence_trace(direct_db, media_id, "transcript", "transcript")
-    search_trace = assert_search_and_resolver(auth_client, headers, media_id, "NASA", "transcript")
+    search_query = choose_indexed_search_query(direct_db, media_id, "transcript")
+    search_trace = assert_search_and_resolver(
+        auth_client, headers, media_id, search_query["query"], "transcript"
+    )
     write_trace(
         tmp_path,
         "live-podcast-hwhap-trace.json",
@@ -194,6 +198,7 @@ def test_live_podcast_episode_transcribes_and_indexes_real_episode(
             "media": media_trace,
             "evidence": evidence_trace,
             "search": search_trace,
+            "search_query": search_query,
             "transcription": asdict(transcription_result),
         },
     )

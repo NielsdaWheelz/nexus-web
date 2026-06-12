@@ -11,7 +11,8 @@
 
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { invalidateChatModelsCache } from "@/components/chat/useChatModels";
 import { apiFetch } from "@/lib/api/client";
 import { settingsKeysResource } from "@/lib/api/resource";
 import { useResource } from "@/lib/api/useResource";
@@ -25,7 +26,7 @@ import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import Pill from "@/components/ui/Pill";
-import { compareStableString, formatDisplayDate } from "@/lib/display/format";
+import { formatDisplayDate } from "@/lib/display/format";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
 import styles from "./page.module.css";
@@ -46,15 +47,6 @@ interface ApiKey {
 interface ApiKeysResponse {
   data: ApiKey[];
 }
-
-const PROVIDER_ORDER = ["openai", "anthropic", "gemini", "deepseek"] as const;
-
-const PROVIDER_META = {
-  openai: { label: "OpenAI", placeholder: "sk-..." },
-  anthropic: { label: "Anthropic", placeholder: "sk-ant-..." },
-  gemini: { label: "Google", placeholder: "AIza..." },
-  deepseek: { label: "DeepSeek", placeholder: "sk-..." },
-} as const;
 
 type EditState = {
   provider: string;
@@ -80,18 +72,9 @@ function formatDate(
   }) ?? "Never";
 }
 
-function providerSortRank(provider: string): number {
-  const index = PROVIDER_ORDER.findIndex((item) => item === provider);
-  return index === -1 ? PROVIDER_ORDER.length : index;
-}
-
 function providerLabel(provider: string, key?: ApiKey): string {
   if (key?.provider_display_name) return key.provider_display_name;
-  return PROVIDER_META[provider as keyof typeof PROVIDER_META]?.label ?? provider;
-}
-
-function providerPlaceholder(provider: string): string {
-  return PROVIDER_META[provider as keyof typeof PROVIDER_META]?.placeholder ?? "sk-...";
+  return provider;
 }
 
 function statusLabel(status: ApiKeyStatus): string {
@@ -117,13 +100,7 @@ export default function SettingsKeysPaneBody() {
   });
   const loading = keysResource.status === "loading" && keys.length === 0;
 
-  const providerStates = useMemo(() => {
-    return [...keys].sort((a, b) => {
-      const rankDelta = providerSortRank(a.provider) - providerSortRank(b.provider);
-      if (rankDelta !== 0) return rankDelta;
-      return compareStableString(a.provider, b.provider);
-    });
-  }, [keys]);
+  const providerStates = keys;
 
   const refreshKeys = useCallback(() => {
     setKeysRefreshVersion((version) => version + 1);
@@ -165,11 +142,15 @@ export default function SettingsKeysPaneBody() {
       setBusyProvider(provider);
 
       try {
-        await apiFetch("/api/keys", {
+        const savedKey = await apiFetch<{ data: ApiKey }>("/api/keys", {
           method: "POST",
           body: JSON.stringify({ provider, api_key: apiKey }),
         });
-        setFormSuccess({ severity: "success", title: `${providerLabel(provider)} key saved.` });
+        invalidateChatModelsCache();
+        setFormSuccess({
+          severity: "success",
+          title: `${providerLabel(provider, savedKey.data)} key saved.`,
+        });
         setEditing(null);
         refreshKeys();
       } catch (err) {
@@ -193,6 +174,7 @@ export default function SettingsKeysPaneBody() {
       setBusyProvider(key.provider);
       try {
         await apiFetch(`/api/keys/${key.id}`, { method: "DELETE" });
+        invalidateChatModelsCache();
         refreshKeys();
         setFormSuccess({
           severity: "success",
@@ -223,6 +205,7 @@ export default function SettingsKeysPaneBody() {
       setBusyProvider(key.provider);
       try {
         await apiFetch(`/api/keys/${key.id}/test`, { method: "POST" });
+        invalidateChatModelsCache();
         refreshKeys();
         setFormSuccess({
           severity: "success",
@@ -311,7 +294,7 @@ export default function SettingsKeysPaneBody() {
                       className={styles.keyInput}
                       value={apiKey}
                       onChange={(e) => setApiKey(e.target.value)}
-                      placeholder={providerPlaceholder(key.provider)}
+                      placeholder="Paste API key"
                       autoComplete="off"
                       disabled={isBusy}
                     />

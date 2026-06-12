@@ -49,6 +49,10 @@ def _configure_real_media_fixture_embeddings(monkeypatch: pytest.MonkeyPatch) ->
     clear_settings_cache()
 
 
+async def _no_retry_sleep(_seconds: float) -> None:
+    return None
+
+
 @respx.mock
 def test_real_media_fixture_embeddings_are_deterministic_without_openai(
     monkeypatch: pytest.MonkeyPatch,
@@ -108,7 +112,7 @@ def test_openai_embedding_http_errors_raise_stable_codes(
     expected_code: ApiErrorCode,
 ):
     _configure_openai_embeddings(monkeypatch)
-    monkeypatch.setattr("nexus.services.semantic_chunks.time.sleep", lambda _: None)
+    monkeypatch.setattr("provider_runtime._adapter_runtime.asyncio.sleep", _no_retry_sleep)
     route = respx.post(OPENAI_EMBEDDINGS_URL).respond(
         status_code,
         json={"error": {"message": "provider secret body"}},
@@ -128,7 +132,7 @@ def test_openai_embedding_retries_transient_provider_errors(
     monkeypatch: pytest.MonkeyPatch,
 ):
     _configure_openai_embeddings(monkeypatch)
-    monkeypatch.setattr("nexus.services.semantic_chunks.time.sleep", lambda _: None)
+    monkeypatch.setattr("provider_runtime._adapter_runtime.asyncio.sleep", _no_retry_sleep)
     route = respx.post(OPENAI_EMBEDDINGS_URL).mock(
         side_effect=[
             httpx.Response(520, json={"error": {"message": "edge error"}}),
@@ -149,7 +153,7 @@ def test_openai_embedding_429_insufficient_quota_raises_quota_exceeded_without_r
     monkeypatch: pytest.MonkeyPatch,
 ):
     _configure_openai_embeddings(monkeypatch)
-    monkeypatch.setattr("nexus.services.semantic_chunks.time.sleep", lambda _: None)
+    monkeypatch.setattr("provider_runtime._adapter_runtime.asyncio.sleep", _no_retry_sleep)
     route = respx.post(OPENAI_EMBEDDINGS_URL).respond(
         429,
         json={
@@ -180,7 +184,7 @@ def test_openai_embedding_429_transient_error_type_retries_as_rate_limit(
     monkeypatch: pytest.MonkeyPatch,
 ):
     _configure_openai_embeddings(monkeypatch)
-    monkeypatch.setattr("nexus.services.semantic_chunks.time.sleep", lambda _: None)
+    monkeypatch.setattr("provider_runtime._adapter_runtime.asyncio.sleep", _no_retry_sleep)
     route = respx.post(OPENAI_EMBEDDINGS_URL).respond(
         429,
         json={

@@ -23,6 +23,7 @@ import pytest
 import respx
 from sqlalchemy import text
 
+from nexus.llm_catalog import KEY_PROVIDER_ORDER
 from nexus.services.crypto import (
     CURRENT_MASTER_KEY_VERSION,
     MASTER_KEY_SIZE,
@@ -58,6 +59,10 @@ def _openai_key_test_success() -> dict:
 
 def _provider_state(data: list[dict], provider: str) -> dict:
     return next(item for item in data if item["provider"] == provider)
+
+
+def _events(log_sink, name: str) -> list[dict]:
+    return [event for event in log_sink if event["event"] == name]
 
 
 # =============================================================================
@@ -170,7 +175,7 @@ class TestApiSafety:
 
         assert response.status_code == 200
         data = response.json()["data"]
-        assert len(data) == 4
+        assert [item["provider"] for item in data] == list(KEY_PROVIDER_ORDER)
 
         key = _provider_state(data, "openai")
         # These fields must NEVER be present
@@ -230,19 +235,33 @@ class TestApiSafety:
 class TestValidation:
     """Tests for input validation error handling."""
 
-    def test_deepseek_provider_is_accepted(self, auth_client):
-        """POST /keys accepts deepseek provider."""
+    def test_openrouter_provider_is_accepted(self, auth_client):
+        """POST /keys accepts openrouter provider."""
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
 
         response = auth_client.post(
             "/keys",
-            json={"provider": "deepseek", "api_key": "sk-deepseek-key-1234567890abcdef"},
+            json={"provider": "openrouter", "api_key": "sk-or-v1-openrouter-key-1234567890"},
             headers=auth_headers(user_id),
         )
 
         assert response.status_code == 201
-        assert response.json()["data"]["provider"] == "deepseek"
+        assert response.json()["data"]["provider"] == "openrouter"
+
+    def test_cloudflare_provider_is_rejected_for_byok(self, auth_client):
+        """Cloudflare is platform-only until its account-id credential object exists."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        response = auth_client.post(
+            "/keys",
+            json={"provider": "cloudflare", "api_key": "cf-test-key-1234567890abcdef"},
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
 
     def test_invalid_provider_returns_400(self, auth_client):
         """POST /keys with invalid provider returns 400 E_KEY_PROVIDER_INVALID."""
@@ -717,7 +736,7 @@ class TestListKeys:
             "openai",
             "anthropic",
             "gemini",
-            "deepseek",
+            "openrouter",
         ]
         assert {item["status"] for item in data} == {"missing"}
         assert all(item["id"] is None for item in data)
@@ -747,7 +766,7 @@ class TestListKeys:
         assert _provider_state(data, "openai")["status"] == "untested"
         assert _provider_state(data, "anthropic")["status"] == "untested"
         assert _provider_state(data, "gemini")["status"] == "missing"
-        assert _provider_state(data, "deepseek")["status"] == "missing"
+        assert _provider_state(data, "openrouter")["status"] == "missing"
 
     def test_list_keys_isolation(self, auth_client):
         """Users can only see their own saved key states."""
@@ -809,7 +828,9 @@ class TestKeyValidation:
         assert "temperature" not in body
 
     @respx.mock
-    def test_test_key_marks_saved_key_valid(self, auth_client, direct_db: DirectSessionManager):
+    def test_test_key_marks_saved_key_valid(
+        self, auth_client, direct_db: DirectSessionManager, log_sink
+    ):
         """A successful provider validation marks the key valid and updates last_tested_at."""
         user_id = create_test_user_id()
         create_resp = auth_client.post(
@@ -831,6 +852,10 @@ class TestKeyValidation:
         assert "encrypted_key" not in data
         assert "key_nonce" not in data
         assert "master_key_version" not in data
+        finished = _events(log_sink, "llm.request.finished")
+        assert len(finished) == 1
+        assert finished[0]["provider_request_id"] == "resp_test_key"
+        assert finished[0]["tokens_total"] == 2
 
         with direct_db.session() as session:
             result = session.execute(
@@ -842,7 +867,9 @@ class TestKeyValidation:
             assert row[1] is not None
 
     @respx.mock
-    def test_test_key_marks_saved_key_invalid(self, auth_client, direct_db: DirectSessionManager):
+    def test_test_key_marks_saved_key_invalid(
+        self, auth_client, direct_db: DirectSessionManager, log_sink
+    ):
         """An auth failure marks the key invalid and returns the updated state."""
         user_id = create_test_user_id()
         create_resp = auth_client.post(
@@ -855,6 +882,7 @@ class TestKeyValidation:
         respx.post(OPENAI_RESPONSES_URL).respond(
             401,
             json={"error": {"message": "Invalid API key", "code": "invalid_api_key"}},
+            headers={"x-request-id": "req_invalid_key"},
         )
 
         response = auth_client.post(f"/keys/{key_id}/test", headers=auth_headers(user_id))
@@ -863,6 +891,9 @@ class TestKeyValidation:
         data = response.json()["data"]
         assert data["status"] == "invalid"
         assert data["last_tested_at"] is not None
+        failed = _events(log_sink, "llm.request.failed")
+        assert len(failed) == 1
+        assert failed[0]["provider_request_id"] == "req_invalid_key"
 
         with direct_db.session() as session:
             result = session.execute(

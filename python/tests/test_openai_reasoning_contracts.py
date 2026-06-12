@@ -3,8 +3,9 @@
 from uuid import UUID, uuid4
 
 import pytest
-from llm_calling.errors import LLMError, LLMErrorCode
-from llm_calling.types import LLMChunk, LLMRequest, LLMUsage, ToolCall
+from provider_runtime.errors import ModelCallError, ModelCallErrorCode
+from provider_runtime.types import ModelCall, ModelChunk, TokenUsage, ToolCall
+from pydantic import ValidationError
 from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
 
@@ -13,6 +14,7 @@ from nexus.db.models import Model
 from nexus.llm_catalog import model_catalog_entry
 from nexus.schemas.conversation import ChatRunCreateRequest, ReaderSelectionRequest
 from nexus.services.billing_entitlements import grant_entitlement_override
+from nexus.services.chat_run_finalize import MAX_ASSISTANT_CONTENT_LENGTH, TRUNCATION_NOTICE
 from nexus.services.chat_runs import (
     ERROR_CODE_TO_MESSAGE,
     _max_output_tokens_for_reasoning,
@@ -34,44 +36,80 @@ from tests.utils.db import DirectSessionManager
 class _CapturingRouter:
     def __init__(self, terminal_chunk):
         self.terminal_chunk = terminal_chunk
-        self.request: LLMRequest | None = None
+        self.request: ModelCall | None = None
 
-    async def generate_stream(self, provider, req, api_key, timeout_s):
+    async def stream(self, req, *, key, timeout_s):
         self.request = req
         yield self.terminal_chunk
 
 
-class _IncompleteChunk:
-    delta_text = ""
-    done = True
-    usage = LLMUsage(input_tokens=10, output_tokens=25000, total_tokens=25010)
-    provider_request_id = "resp_incomplete"
-    status = "incomplete"
-    incomplete_details = {"reason": "max_output_tokens"}
+class _OversizedDeltaRouter:
+    async def stream(self, req, *, key, timeout_s):
+        yield ModelChunk(delta_text="x" * (MAX_ASSISTANT_CONTENT_LENGTH + 100))
+        yield ModelChunk(
+            done=True,
+            usage=TokenUsage(input_tokens=10, output_tokens=50000, total_tokens=50010),
+            provider_request_id="resp_after_local_truncation",
+        )
+
+
+def _incomplete_chunk() -> ModelChunk:
+    return ModelChunk(
+        done=True,
+        usage=TokenUsage(input_tokens=10, output_tokens=25000, total_tokens=25010),
+        provider_request_id="resp_incomplete",
+        status="incomplete",
+        incomplete_details={"reason": "max_output_tokens"},
+    )
+
+
+class _RecordingRateLimiter:
+    def __init__(self) -> None:
+        self.events: list[tuple[str, UUID, UUID | None, int | None]] = []
+
+    def acquire_inflight_slot(self, user_id: UUID) -> None:
+        self.events.append(("acquire_inflight_slot", user_id, None, None))
+
+    def release_inflight_slot(self, user_id: UUID) -> None:
+        self.events.append(("release_inflight_slot", user_id, None, None))
+
+    def reserve_token_budget(
+        self, user_id: UUID, reservation_id: UUID, est_tokens: int, ttl: int = 300
+    ) -> None:
+        self.events.append(("reserve_token_budget", user_id, reservation_id, est_tokens))
+
+    def commit_token_budget(self, user_id: UUID, reservation_id: UUID, actual_tokens: int) -> None:
+        self.events.append(("commit_token_budget", user_id, reservation_id, actual_tokens))
+
+    def release_token_budget(self, user_id: UUID, reservation_id: UUID) -> None:
+        self.events.append(("release_token_budget", user_id, reservation_id, None))
+
+    def event_names(self) -> list[str]:
+        return [event[0] for event in self.events]
 
 
 class _ToolLoopRouter:
     """Two-iteration fake: reasoning items + a tool call, then the final answer."""
 
     def __init__(self) -> None:
-        self.requests: list[LLMRequest] = []
+        self.requests: list[ModelCall] = []
 
-    async def generate_stream(self, provider, req, api_key, timeout_s):
+    async def stream(self, req, *, key, timeout_s):
         self.requests.append(req)
         if len(self.requests) == 1:
-            yield LLMChunk(provider_item={"type": "reasoning", "id": "rs_1"})
-            yield LLMChunk(tool_call=ToolCall(id="call-1", name="mystery_tool", arguments={}))
-            yield LLMChunk(provider_item={"type": "reasoning", "id": "rs_2"})
-            yield LLMChunk(
+            yield ModelChunk(provider_artifact={"type": "reasoning", "id": "rs_1"})
+            yield ModelChunk(tool_call=ToolCall(id="call-1", name="mystery_tool", arguments={}))
+            yield ModelChunk(provider_artifact={"type": "reasoning", "id": "rs_2"})
+            yield ModelChunk(
                 done=True,
-                usage=LLMUsage(input_tokens=10, output_tokens=5, total_tokens=15),
+                usage=TokenUsage(input_tokens=10, output_tokens=5, total_tokens=15),
                 provider_request_id="resp_iter_1",
             )
             return
-        yield LLMChunk(delta_text="Final answer.")
-        yield LLMChunk(
+        yield ModelChunk(delta_text="Final answer.")
+        yield ModelChunk(
             done=True,
-            usage=LLMUsage(input_tokens=20, output_tokens=3, total_tokens=23),
+            usage=TokenUsage(input_tokens=20, output_tokens=3, total_tokens=23),
             provider_request_id="resp_iter_2",
         )
 
@@ -82,9 +120,34 @@ class _RaisingStreamRouter:
     def __init__(self, error: Exception) -> None:
         self.error = error
 
-    async def generate_stream(self, provider, req, api_key, timeout_s):
+    async def stream(self, req, *, key, timeout_s):
         raise self.error
         yield  # pragma: no cover - makes this an async generator
+
+
+class _CancellingStreamRouter:
+    """Provider stream that sees a user cancel request before the first delta returns."""
+
+    def __init__(self, direct_db: DirectSessionManager, run_id: UUID) -> None:
+        self.direct_db = direct_db
+        self.run_id = run_id
+
+    async def stream(self, req, *, key, timeout_s):
+        with self.direct_db.session() as session:
+            session.execute(
+                text(
+                    "UPDATE chat_runs SET cancel_requested_at = now(), updated_at = now() "
+                    "WHERE id = :run_id"
+                ),
+                {"run_id": self.run_id},
+            )
+            session.commit()
+        yield ModelChunk(delta_text="partial")
+        yield ModelChunk(
+            done=True,
+            usage=TokenUsage(input_tokens=10, output_tokens=3, total_tokens=13),
+            provider_request_id="resp_after_cancel",
+        )
 
 
 class _DocumentStackRouter:
@@ -92,32 +155,32 @@ class _DocumentStackRouter:
         self.media_id = media_id
         self.request_count = 0
 
-    async def generate_stream(self, provider, req, api_key, timeout_s):
+    async def stream(self, req, *, key, timeout_s):
         self.request_count += 1
         if self.request_count == 1:
-            yield LLMChunk(
+            yield ModelChunk(
                 tool_call=ToolCall(
                     id="inspect-call",
                     name="inspect_resource",
                     arguments={"uri": f"media:{self.media_id}"},
                 )
             )
-            yield LLMChunk(done=True)
+            yield ModelChunk(done=True)
             return
         if self.request_count == 2:
-            yield LLMChunk(
+            yield ModelChunk(
                 tool_call=ToolCall(
                     id="read-call",
                     name="read_resource",
                     arguments={"uri": f"page_range:{self.media_id}:1-1"},
                 )
             )
-            yield LLMChunk(done=True)
+            yield ModelChunk(done=True)
             return
-        yield LLMChunk(delta_text="Summary [1].")
-        yield LLMChunk(
+        yield ModelChunk(delta_text="Summary [1].")
+        yield ModelChunk(
             done=True,
-            usage=LLMUsage(input_tokens=10, output_tokens=3, total_tokens=13),
+            usage=TokenUsage(input_tokens=10, output_tokens=3, total_tokens=13),
             provider_request_id="resp_doc_stack",
         )
 
@@ -126,17 +189,26 @@ def test_openai_catalog_exposes_default_separate_from_none():
     metadata = model_catalog_entry("openai", "gpt-5.5")
 
     assert metadata is not None
-    assert list(metadata.reasoning_modes) == ["default", "none", "low", "medium", "high", "max"]
+    assert list(metadata.reasoning_modes) == [
+        "default",
+        "none",
+        "low",
+        "medium",
+        "high",
+        "max",
+    ]
 
 
-def test_chat_run_request_defaults_reasoning_to_default():
-    request = ChatRunCreateRequest(
-        conversation_id=uuid4(),
-        content="Summarize this.",
-        model_id=uuid4(),
-    )
+def test_chat_run_request_requires_reasoning_and_key_mode():
+    with pytest.raises(ValidationError) as info:
+        ChatRunCreateRequest(
+            conversation_id=uuid4(),
+            content="Summarize this.",
+            model_id=uuid4(),
+        )
 
-    assert request.reasoning == "default"
+    missing_fields = {error["loc"][0] for error in info.value.errors()}
+    assert {"reasoning", "key_mode"} <= missing_fields
 
 
 def test_output_token_budget_is_reasoning_aware():
@@ -150,6 +222,17 @@ def test_output_token_budget_is_reasoning_aware():
     assert _max_output_tokens_for_reasoning(model, "none") == 4096
     assert _max_output_tokens_for_reasoning(model, "default") == 25000
     assert _max_output_tokens_for_reasoning(model, "high") == 25000
+
+
+def test_output_token_budget_uses_catalog_context_window_not_db_overlay():
+    model = Model(
+        provider="openai",
+        model_name="gpt-5.4-mini",
+        max_context_tokens=1,
+        is_available=True,
+    )
+
+    assert _max_output_tokens_for_reasoning(model, "default") == 25000
 
 
 def test_incomplete_error_message_is_actionable():
@@ -238,7 +321,7 @@ def _create_conversation(auth_client, user_id: UUID) -> UUID:
     return UUID(resp.json()["data"]["id"])
 
 
-def test_omitted_reasoning_stores_explicit_default(
+def test_omitted_reasoning_is_rejected(
     auth_client, direct_db: DirectSessionManager, chat_runs_schema
 ):
     user_id = create_test_user_id()
@@ -252,11 +335,8 @@ def test_omitted_reasoning_stores_explicit_default(
         auth_client, user_id, model_id, reasoning=None, conversation_id=conversation_id
     )
 
-    assert response.status_code == 200, (
-        f"Expected omitted reasoning to default, got {response.status_code}: {response.text}"
-    )
-    data = response.json()["data"]
-    assert data["run"]["reasoning"] == "default"
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
 
     _register_run_cleanup(direct_db, conversation_id)
 
@@ -269,7 +349,26 @@ def test_unsupported_reasoning_mode_returns_actionable_400(
     auth_client.get("/me", headers=auth_headers(user_id))
     _seed_ai_plus_billing(direct_db, user_id)
     with direct_db.session() as session:
-        model_id = create_test_model(session)
+        model = (
+            session.query(Model)
+            .filter(
+                Model.provider == "openai",
+                Model.model_name == "gpt-5.5",
+            )
+            .first()
+        )
+        if model is None:
+            model = Model(
+                id=uuid4(),
+                provider="openai",
+                model_name="gpt-5.5",
+                max_context_tokens=400000,
+                is_available=True,
+            )
+            session.add(model)
+        model.is_available = True
+        session.commit()
+        model_id = model.id
     conversation_id = _create_conversation(auth_client, user_id)
     direct_db.register_cleanup("conversations", "id", conversation_id)
 
@@ -286,7 +385,7 @@ def test_unsupported_reasoning_mode_returns_actionable_400(
     )
     assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
     assert "minimal" in response.json()["error"]["message"]
-    assert "openai/gpt-5.4-mini" in response.json()["error"]["message"]
+    assert "openai/gpt-5.5" in response.json()["error"]["message"]
 
 
 @pytest.mark.integration
@@ -313,10 +412,10 @@ async def test_default_reasoning_uses_reasoning_aware_output_budget(
     _register_run_cleanup(direct_db, conversation_id)
 
     router = _CapturingRouter(
-        LLMChunk(
+        ModelChunk(
             delta_text="",
             done=True,
-            usage=LLMUsage(input_tokens=10, output_tokens=1, total_tokens=11),
+            usage=TokenUsage(input_tokens=10, output_tokens=1, total_tokens=11),
             provider_request_id="resp_ok",
         )
     )
@@ -329,8 +428,8 @@ async def test_default_reasoning_uses_reasoning_aware_output_budget(
 
     assert result == {"status": "complete"}
     assert router.request is not None, "Expected chat run to call the LLM router"
-    assert router.request.reasoning_effort == "default"
-    assert router.request.max_tokens == 25000
+    assert router.request.reasoning.effort == "default"
+    assert router.request.max_output_tokens == 25000
     # The usage ledger moved to llm_calls (written by llm_ledger at the call
     # sites, wired in the harness slice); only the prompt assembly pin remains.
     with direct_db.session() as session:
@@ -419,10 +518,10 @@ async def test_attached_highlight_public_run_persists_citation_index_and_reader_
     }
 
     router = _CapturingRouter(
-        LLMChunk(
+        ModelChunk(
             delta_text="Attached quote [1].",
             done=True,
-            usage=LLMUsage(input_tokens=12, output_tokens=4, total_tokens=16),
+            usage=TokenUsage(input_tokens=12, output_tokens=4, total_tokens=16),
             provider_request_id="resp_attached_quote",
         )
     )
@@ -616,7 +715,7 @@ async def test_incomplete_llm_result_finalizes_error_not_success(
         result = await execute_chat_run(
             session,
             run_id=run_id,
-            llm_router=_CapturingRouter(_IncompleteChunk()),
+            llm_router=_CapturingRouter(_incomplete_chunk()),
         )
 
     assert result == {"status": "error", "error_code": "E_LLM_INCOMPLETE"}
@@ -633,6 +732,46 @@ async def test_incomplete_llm_result_finalizes_error_not_success(
         "output tokens"
         in fetched_data["assistant_message"]["message_document"]["blocks"][0]["text"]
     )
+
+
+@pytest.mark.integration
+async def test_local_assistant_content_limit_finalizes_interrupted_and_ledgers_same_cause(
+    auth_client, direct_db: DirectSessionManager, chat_runs_schema
+):
+    run_id = _create_run_for_executor(auth_client, direct_db)
+
+    with direct_db.session() as session:
+        result = await execute_chat_run(session, run_id=run_id, llm_router=_OversizedDeltaRouter())
+
+    assert result == {"status": "error", "error_code": "E_LLM_INTERRUPTED"}
+
+    with direct_db.session() as session:
+        row = session.execute(
+            text(
+                """
+                SELECT cr.status AS run_status, cr.error_code AS run_error_code,
+                       cr.error_detail AS run_error_detail,
+                       m.status AS message_status, m.error_code AS message_error_code,
+                       m.content AS message_content
+                FROM chat_runs cr
+                JOIN messages m ON m.id = cr.assistant_message_id
+                WHERE cr.id = :run_id
+                """
+            ),
+            {"run_id": run_id},
+        ).one()
+
+    assert row.run_status == "error"
+    assert row.run_error_code == "E_LLM_INTERRUPTED"
+    assert row.run_error_detail == "stream abandoned after local assistant content limit"
+    assert row.message_status == "error"
+    assert row.message_error_code == "E_LLM_INTERRUPTED"
+    assert row.message_content == ("x" * MAX_ASSISTANT_CONTENT_LENGTH) + TRUNCATION_NOTICE
+
+    (call_row,) = _fetch_llm_calls(direct_db, run_id)
+    assert call_row.error_class == "E_LLM_INTERRUPTED"
+    assert call_row.error_detail == "stream abandoned after local assistant content limit"
+    assert call_row.provider_request_id is None
 
 
 def _create_run_for_executor(
@@ -659,7 +798,7 @@ def _create_run_for_executor(
 def _fetch_run_error(direct_db: DirectSessionManager, run_id: UUID):
     with direct_db.session() as session:
         return session.execute(
-            text("SELECT error_code, error_detail FROM chat_runs WHERE id = :run_id"),
+            text("SELECT status, error_code, error_detail FROM chat_runs WHERE id = :run_id"),
             {"run_id": run_id},
         ).one()
 
@@ -681,10 +820,12 @@ def _fetch_llm_calls(direct_db: DirectSessionManager, run_id: UUID):
 
 
 @pytest.mark.integration
-async def test_tool_loop_replays_provider_items_and_ledgers_each_iteration(
-    auth_client, direct_db: DirectSessionManager, chat_runs_schema
+async def test_tool_loop_replays_provider_artifacts_and_ledgers_each_iteration(
+    auth_client, direct_db: DirectSessionManager, chat_runs_schema, monkeypatch
 ):
     run_id = _create_run_for_executor(auth_client, direct_db)
+    rate_limiter = _RecordingRateLimiter()
+    monkeypatch.setattr("nexus.services.chat_runs.get_rate_limiter", lambda: rate_limiter)
 
     router = _ToolLoopRouter()
     with direct_db.session() as session:
@@ -697,7 +838,7 @@ async def test_tool_loop_replays_provider_items_and_ledgers_each_iteration(
     # ahead of the tool-results turn on the continuation request.
     assistant_turn, tool_turn = router.requests[1].messages[-2:]
     assert assistant_turn.role == "assistant"
-    assert assistant_turn.provider_items == (
+    assert assistant_turn.provider_artifacts == (
         {"type": "reasoning", "id": "rs_1"},
         {"type": "reasoning", "id": "rs_2"},
     )
@@ -715,6 +856,13 @@ async def test_tool_loop_replays_provider_items_and_ledgers_each_iteration(
     assert all(row.key_mode_requested == "auto" for row in rows)
     assert all(row.key_mode_used == "platform" for row in rows)
     assert all(row.error_class is None for row in rows)
+    assert rate_limiter.event_names() == [
+        "acquire_inflight_slot",
+        "reserve_token_budget",
+        "commit_token_budget",
+        "release_inflight_slot",
+    ], f"unexpected envelope: {rate_limiter.events}"
+    assert rate_limiter.events[2][3] == 38
 
 
 @pytest.mark.integration
@@ -723,18 +871,41 @@ async def test_llm_error_stamps_run_error_code_and_detail(
 ):
     run_id = _create_run_for_executor(auth_client, direct_db)
 
-    router = _RaisingStreamRouter(LLMError(LLMErrorCode.RATE_LIMIT, "slow down", provider="openai"))
+    router = _RaisingStreamRouter(
+        ModelCallError(ModelCallErrorCode.RATE_LIMIT, "slow down", provider="openai")
+    )
     with direct_db.session() as session:
         result = await execute_chat_run(session, run_id=run_id, llm_router=router)
 
     assert result == {"status": "error", "error_code": "E_LLM_RATE_LIMIT"}
     run_row = _fetch_run_error(direct_db, run_id)
     assert run_row.error_code == "E_LLM_RATE_LIMIT"
-    assert run_row.error_detail == "LLMError: slow down"
+    assert run_row.error_detail == "ModelCallError: slow down"
 
     (call_row,) = _fetch_llm_calls(direct_db, run_id)
     assert call_row.error_class == "E_LLM_RATE_LIMIT"
-    assert call_row.error_detail == "LLMError: slow down"
+    assert call_row.error_detail == "ModelCallError: slow down"
+
+
+@pytest.mark.integration
+async def test_cancelled_mid_stream_ledgers_abandoned_provider_call(
+    auth_client, direct_db: DirectSessionManager, chat_runs_schema
+):
+    run_id = _create_run_for_executor(auth_client, direct_db)
+
+    router = _CancellingStreamRouter(direct_db, run_id)
+    with direct_db.session() as session:
+        result = await execute_chat_run(session, run_id=run_id, llm_router=router)
+
+    assert result == {"status": "cancelled"}
+    run_row = _fetch_run_error(direct_db, run_id)
+    assert run_row.status == "cancelled"
+    assert run_row.error_code == "E_CANCELLED"
+
+    (call_row,) = _fetch_llm_calls(direct_db, run_id)
+    assert call_row.error_class == "E_CANCELLED"
+    assert call_row.error_detail == "chat run cancelled during provider stream"
+    assert call_row.provider_request_id is None
 
 
 @pytest.mark.integration

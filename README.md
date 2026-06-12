@@ -103,10 +103,11 @@ Real-media gates are strict. `make test-real-media` runs deterministic backend
 and Playwright acceptance coverage, requires Supabase Auth plus local
 Postgres/MinIO, uses checked provider fixtures including deterministic fixture
 embeddings, and seeds the browser corpus through the product paths.
-`make test-live-providers` owns live OpenAI embedding validation plus real
-Podcast Index and Deepgram credentials. The default Playwright project covers
-deterministic seeded feature flows; the real-media project covers deterministic
-real-media acceptance flows.
+`make test-live-providers` owns the strict backend live-provider gate plus the
+shared `provider_runtime` live matrix for OpenAI, Anthropic, Gemini,
+OpenRouter, Cloudflare, embeddings, and transcription. The default Playwright
+project covers deterministic seeded feature flows; the real-media project
+covers deterministic real-media acceptance flows.
 
 Local application data is stored in the standalone Docker Compose Postgres
 container on `localhost:54320`. Local uploads use MinIO through the same

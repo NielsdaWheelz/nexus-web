@@ -19,7 +19,7 @@ export interface ChatRunCreateRequest {
   content: string;
   model_id: string;
   reasoning: "default" | "none" | "minimal" | "low" | "medium" | "high" | "max";
-  key_mode?: "auto" | "byok_only" | "platform_only";
+  key_mode: "auto" | "byok_only" | "platform_only";
   parent_message_id?: string;
   branch_anchor?: BranchAnchor;
   reader_context: ReaderContextHintInput | null;

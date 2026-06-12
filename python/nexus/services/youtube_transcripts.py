@@ -6,12 +6,30 @@ from pathlib import Path
 from typing import Any
 
 from requests import Session
+from youtube_transcript_api.proxies import ProxyConfig, RequestsProxyConfigDict
 
 from nexus.config import get_settings, real_media_provider_fixtures_requested
 from nexus.errors import ApiErrorCode
 from nexus.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+class _TranscriptProxyConfig(ProxyConfig):
+    def __init__(self, proxy_url: str, *, retries_when_blocked: int) -> None:
+        self._proxy_url = proxy_url
+        self._retries_when_blocked = retries_when_blocked
+
+    def to_requests_dict(self) -> RequestsProxyConfigDict:
+        return {"http": self._proxy_url, "https": self._proxy_url}
+
+    @property
+    def prevent_keeping_connections_alive(self) -> bool:
+        return self._retries_when_blocked > 0
+
+    @property
+    def retries_when_blocked(self) -> int:
+        return self._retries_when_blocked
 
 
 class _TimeoutSession(Session):
@@ -83,9 +101,11 @@ def fetch_youtube_transcript(provider_video_id: str) -> dict[str, Any]:
 
     settings = get_settings()
     try:
+        proxy_config = _proxy_config_from_settings(settings)
         raw_segments = list(
             YouTubeTranscriptApi(
-                http_client=_TimeoutSession(settings.youtube_transcript_timeout_seconds)
+                http_client=_TimeoutSession(settings.youtube_transcript_timeout_seconds),
+                proxy_config=proxy_config,
             ).fetch(video_id)
         )
     except Exception as exc:  # justify-ignore-error: dispatch on exc class name to avoid coupling to YouTubeTranscriptApi internals
@@ -144,6 +164,16 @@ def fetch_youtube_transcript(provider_video_id: str) -> dict[str, Any]:
         "status": "completed",
         "segments": segments,
     }
+
+
+def _proxy_config_from_settings(settings: Any) -> _TranscriptProxyConfig | None:
+    proxy_url = str(settings.youtube_transcript_proxy_url or "").strip()
+    if not proxy_url:
+        return None
+    return _TranscriptProxyConfig(
+        proxy_url,
+        retries_when_blocked=int(settings.youtube_transcript_proxy_retries_when_blocked),
+    )
 
 
 def _fetch_real_media_fixture(video_id: str, fixture_dir: str | None) -> dict[str, Any]:

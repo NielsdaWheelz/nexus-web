@@ -4,11 +4,11 @@
 .PHONY: help setup dev down logs clean api api-e2e web web-e2e worker migrate migrate-test migrate-down seed seed-real-media-e2e \
 	check check-back type-back check-front check-android check-workflows format format-back fix-front build build-android build-android-release build-icons check-bundle audit \
 	test-unit test test-back-unit test-back-integration test-front-unit test-front-browser \
-	test-android test-migrations test-supabase test-real-media test-live-providers test-e2e test-e2e-ui test-csp \
+	test-android test-migrations test-supabase test-real-media test-provider-runtime test-live-providers test-e2e test-e2e-ui test-csp \
 	smoke smoke-auth-redirects verify verify-android verify-android-release verify-full \
 	_ensure-node-ingest _ensure-e2e-deps _test-back-db-ready \
-	_test-back-integration-raw _test-migrations-raw \
-	_test-supabase-raw _test-real-media-raw _test-real-media-backend-raw _test-live-providers-raw \
+	_test-back-integration-raw _test-migrations-raw _test-provider-runtime-raw \
+	_test-supabase-raw _test-real-media-raw _test-real-media-backend-raw _test-live-providers-raw _test-shared-llm-provider-matrix-raw \
 	_seed-real-media-e2e-raw _test-e2e-raw _test-csp-raw _test-real-media-e2e-raw _test-e2e-ui-raw
 
 -include .env
@@ -43,6 +43,7 @@ R2_REGION ?= us-east-1
 WEB_PORT ?= 3000
 API_PORT ?= 8000
 PLAYWRIGHT_ARGS ?=
+LLM_CALLING_DIR ?= ../llm-calling
 
 help:
 	@echo "Nexus Development Commands"
@@ -74,6 +75,7 @@ help:
 	@echo "  make test-e2e           - Default Playwright E2E tests"
 	@echo "  make test-csp           - Strict-CSP Playwright profile (enforced policy)"
 	@echo "  make test-real-media    - Strict deterministic real-media backend + Playwright gates"
+	@echo "  make test-provider-runtime - Non-live checks for pinned shared provider runtime"
 	@echo "  make test-live-providers  - Strict live-provider backend gate"
 	@echo "  make verify             - check + build + test"
 	@echo "  make verify-full        - verify + real-media + live-provider + default E2E gates"
@@ -324,7 +326,7 @@ check-bundle:
 audit:
 	cd python && uv sync --all-extras --locked
 	cd python && uv export --locked --all-extras --no-emit-project \
-		--no-emit-package llm-calling --no-emit-package web-search-tool \
+		--no-emit-package provider-runtime --no-emit-package web-search-tool \
 		--format requirements.txt > /tmp/nexus-python-audit-requirements.txt
 	cd python && uv run pip-audit --strict --no-deps --disable-pip \
 		--requirement /tmp/nexus-python-audit-requirements.txt
@@ -406,8 +408,24 @@ _test-real-media-backend-raw:
 		--basetemp=../test-results/real-media-backend \
 		-m real_media
 
+test-provider-runtime:
+	make _test-provider-runtime-raw
+
+_test-provider-runtime-raw:
+	test -d "$(LLM_CALLING_DIR)" || (echo "LLM_CALLING_DIR=$(LLM_CALLING_DIR) does not exist" >&2; exit 1)
+	expected_rev=$$(sed -n 's/^provider-runtime.*rev = "\([0-9a-f]*\)".*/\1/p' python/pyproject.toml); \
+	actual_rev=$$(git -C "$(LLM_CALLING_DIR)" rev-parse HEAD); \
+	if [ "$$actual_rev" != "$$expected_rev" ]; then \
+		echo "LLM_CALLING_DIR=$(LLM_CALLING_DIR) is at $$actual_rev, expected provider-runtime $$expected_rev" >&2; \
+		exit 1; \
+	fi
+	cd "$(LLM_CALLING_DIR)" && uv run ruff check src tests
+	cd "$(LLM_CALLING_DIR)" && uv run ruff format --check src tests
+	cd "$(LLM_CALLING_DIR)" && uv run pyright src tests
+	cd "$(LLM_CALLING_DIR)" && uv run pytest -q
+
 test-live-providers:
-	./scripts/with_test_services.sh ./scripts/with_supabase_services.sh make _test-back-db-ready _test-live-providers-raw
+	./scripts/with_test_services.sh ./scripts/with_supabase_services.sh make _test-back-db-ready _test-live-providers-raw _test-shared-llm-provider-matrix-raw
 
 _test-live-providers-raw:
 	make _ensure-node-ingest
@@ -415,6 +433,18 @@ _test-live-providers-raw:
 	cd python && NEXUS_ENV=local PODCAST_INITIAL_EPISODE_WINDOW=1 uv run pytest -v --tb=short \
 		--basetemp=../test-results/live-providers \
 		-m live_provider
+
+_test-shared-llm-provider-matrix-raw:
+	test -d "$(LLM_CALLING_DIR)" || (echo "LLM_CALLING_DIR=$(LLM_CALLING_DIR) does not exist" >&2; exit 1)
+	expected_rev=$$(sed -n 's/^provider-runtime.*rev = "\([0-9a-f]*\)".*/\1/p' python/pyproject.toml); \
+	actual_rev=$$(git -C "$(LLM_CALLING_DIR)" rev-parse HEAD); \
+	if [ "$$actual_rev" != "$$expected_rev" ]; then \
+		echo "LLM_CALLING_DIR=$(LLM_CALLING_DIR) is at $$actual_rev, expected provider-runtime $$expected_rev" >&2; \
+		exit 1; \
+	fi
+	cd "$(LLM_CALLING_DIR)" && env -u LLM_RUNTIME_LIVE_PROVIDERS LLM_RUNTIME_LIVE=1 uv run pytest -v --tb=short \
+		-m live_provider \
+		tests/live/test_provider_matrix.py
 
 test-e2e: _ensure-e2e-deps
 	./scripts/with_test_services.sh ./scripts/with_supabase_services.sh --require-admin make _test-e2e-raw

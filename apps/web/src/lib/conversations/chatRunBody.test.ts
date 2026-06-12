@@ -7,7 +7,7 @@ const base = {
   content: "hello",
   modelId: "model-1",
   reasoning: "default" as const,
-  onlyUseMyKeys: false,
+  keyMode: "auto" as const,
   branchDraft: null,
   parentMessageId: null,
   readerContext: null,
@@ -101,9 +101,12 @@ describe("buildChatRunBody", () => {
     expect("reader_selection" in body).toBe(false);
   });
 
-  it("sets key_mode to byok_only when the user pins their own keys", () => {
-    expect(buildChatRunBody({ ...base, onlyUseMyKeys: true }).key_mode).toBe(
+  it("forwards the selected key mode", () => {
+    expect(buildChatRunBody({ ...base, keyMode: "byok_only" }).key_mode).toBe(
       "byok_only",
+    );
+    expect(buildChatRunBody({ ...base, keyMode: "platform_only" }).key_mode).toBe(
+      "platform_only",
     );
   });
 

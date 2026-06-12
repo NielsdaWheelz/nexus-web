@@ -24,16 +24,22 @@ from dataclasses import dataclass
 from typing import cast
 from uuid import UUID
 
-from llm_calling.errors import LLMError
-from llm_calling.router import LLMRouter
-from llm_calling.types import LLMRequest
+from provider_runtime import ModelRuntime
+from provider_runtime.errors import ModelCallError
+from provider_runtime.types import ModelCall
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import bindparam, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
 from nexus.db.retries import retry_serializable
-from nexus.errors import LLM_ERROR_CODE_TO_API_ERROR_CODE, ApiError, ApiErrorCode, NotFoundError
+from nexus.errors import (
+    ApiError,
+    ApiErrorCode,
+    NotFoundError,
+    api_error_code_for_model_call,
+    exception_error_detail,
+)
 from nexus.llm_catalog import require_catalog_model
 from nexus.logging import get_logger
 from nexus.schemas.library_intelligence import LibraryIntelligenceDoneEventPayload
@@ -84,7 +90,7 @@ require_catalog_model(LI_PROVIDER, LI_MODEL_NAME)
 # ---------- worker: run_artifact_generation (the reduce) --------------------
 
 
-async def run_artifact_generation(db: Session, *, revision_id: UUID, llm: LLMRouter) -> None:
+async def run_artifact_generation(db: Session, *, revision_id: UUID, llm: ModelRuntime) -> None:
     """Worker body: reduce over per-media units into prose + grounded citations.
 
     Replay-safe: a no-op when the revision is missing or not ``building``. Resolves
@@ -117,12 +123,12 @@ async def run_artifact_generation(db: Session, *, revision_id: UUID, llm: LLMRou
             db, revision_id=revision_id, error_code=exc.code.value, error_detail=exc.message
         )
         return
-    except LLMError as exc:
+    except ModelCallError as exc:
         _fail_revision(
             db,
             revision_id=revision_id,
-            error_code=LLM_ERROR_CODE_TO_API_ERROR_CODE[exc.error_code].value,
-            error_detail=str(exc)[:1000],
+            error_code=api_error_code_for_model_call(exc.error_code).value,
+            error_detail=exception_error_detail(exc),
         )
         return
 
@@ -195,8 +201,8 @@ async def run_artifact_generation(db: Session, *, revision_id: UUID, llm: LLMRou
                 ),
                 schema=_LiSynthesis,
             )
-        except LLMError as exc:
-            error_code = LLM_ERROR_CODE_TO_API_ERROR_CODE[exc.error_code].value
+        except ModelCallError as exc:
+            error_code = api_error_code_for_model_call(exc.error_code).value
             logger.warning(
                 "library_intelligence.reduce_failure",
                 revision_id=str(revision_id),
@@ -205,7 +211,10 @@ async def run_artifact_generation(db: Session, *, revision_id: UUID, llm: LLMRou
             if resolved_key.mode == "byok" and error_code == ApiErrorCode.E_LLM_INVALID_KEY.value:
                 update_user_key_status(db, resolved_key.user_key_id, "invalid")
             _fail_revision(
-                db, revision_id=revision_id, error_code=error_code, error_detail=str(exc)[:1000]
+                db,
+                revision_id=revision_id,
+                error_code=error_code,
+                error_detail=exception_error_detail(exc),
             )
             return
         except StructuredSynthesisError as exc:
@@ -218,7 +227,7 @@ async def run_artifact_generation(db: Session, *, revision_id: UUID, llm: LLMRou
                 db,
                 revision_id=revision_id,
                 error_code=ApiErrorCode.E_LLM_BAD_REQUEST.value,
-                error_detail=str(exc)[:1000],
+                error_detail=exception_error_detail(exc),
             )
             return
 
@@ -597,12 +606,13 @@ _LI_SYSTEM_PROMPT = build_synthesis_prompt(
 )
 
 
-def _build_reduce_request(candidates: list[_Candidate]) -> LLMRequest:
+def _build_reduce_request(candidates: list[_Candidate]) -> ModelCall:
     rendered = "\n\n".join(
         f"[{c.global_index}] (media {c.media_id})\nsummary: {c.summary_md}\nclaim: {c.claim_text}"
         for c in candidates
     )
     return build_synthesis_request(
+        provider=LI_PROVIDER,
         system_prompt=_LI_SYSTEM_PROMPT,
         candidates_header="UNIT CLAIMS",
         rendered_candidates=rendered,

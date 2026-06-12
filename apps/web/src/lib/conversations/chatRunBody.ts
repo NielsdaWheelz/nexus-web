@@ -16,7 +16,7 @@ export function buildChatRunBody(input: {
   content: string;
   modelId: string;
   reasoning: ChatRunCreateRequest["reasoning"];
-  onlyUseMyKeys: boolean;
+  keyMode: NonNullable<ChatRunCreateRequest["key_mode"]>;
   branchDraft: BranchDraft | null;
   parentMessageId: string | null;
   readerContext: ReaderContextHintInput | null;
@@ -39,7 +39,7 @@ export function buildChatRunBody(input: {
     content: input.content,
     model_id: input.modelId,
     reasoning: input.reasoning,
-    key_mode: input.onlyUseMyKeys ? "byok_only" : "auto",
+    key_mode: input.keyMode,
     ...(replyParentMessageId
       ? { parent_message_id: replyParentMessageId }
       : {}),
