@@ -15,13 +15,15 @@ import {
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
+import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
-import { AppList, AppListItem } from "@/components/ui/AppList";
+import PaneSurface from "@/components/ui/PaneSurface";
+import ResourceList from "@/components/ui/ResourceList";
+import ResourceRow from "@/components/ui/ResourceRow";
 import type { ConversationSummary } from "@/lib/conversations/types";
 import { formatDisplayDate } from "@/lib/display/format";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
-import styles from "./ConversationsPaneBody.module.css";
 
 interface ConversationsResponse {
   data: ConversationSummary[];
@@ -89,19 +91,38 @@ export default function ConversationsPaneBody() {
     []
   );
 
+  const loading = initialConversations.status === "loading";
+
   return (
-    <div className={styles.body}>
-      {initialConversations.status === "loading" && <PaneLoadingState />}
-      {error ? <FeedbackNotice feedback={error} /> : null}
-
-      {initialConversations.status !== "loading" &&
-        !error &&
-        conversations.length === 0 && (
-        <FeedbackNotice severity="neutral">No conversations yet.</FeedbackNotice>
-        )}
-
-      {conversations.length > 0 && (
-        <AppList>
+    <PaneSurface
+      state={
+        loading || error ? (
+          <>
+            {loading ? <PaneLoadingState /> : null}
+            {error ? <FeedbackNotice feedback={error} /> : null}
+          </>
+        ) : null
+      }
+      empty={
+        !loading && !error && conversations.length === 0 ? (
+          <FeedbackNotice severity="neutral">No conversations yet.</FeedbackNotice>
+        ) : null
+      }
+      footer={
+        nextCursor ? (
+          <Button
+            variant="secondary"
+            aria-label="Load more conversations"
+            loading={loadingMore}
+            onClick={() => void loadMore()}
+          >
+            Load more
+          </Button>
+        ) : null
+      }
+    >
+      {conversations.length > 0 ? (
+        <ResourceList>
           {conversations.map((conv) => (
             <ConversationListItem
               key={conv.id}
@@ -110,21 +131,9 @@ export default function ConversationsPaneBody() {
               onDelete={handleDelete}
             />
           ))}
-        </AppList>
-      )}
-
-      {nextCursor && (
-        <Button
-          variant="secondary"
-          className={styles.loadMore}
-          aria-label="Load more conversations"
-          loading={loadingMore}
-          onClick={() => void loadMore()}
-        >
-          Load more
-        </Button>
-      )}
-    </div>
+        </ResourceList>
+      ) : null}
+    </PaneSurface>
   );
 }
 
@@ -138,14 +147,21 @@ function ConversationListItem({
   onDelete: (conversationId: string) => Promise<void>;
 }) {
   return (
-    <AppListItem
-      href={`/conversations/${conversation.id}`}
+    <ResourceRow
+      primary={{
+        kind: "link",
+        href: `/conversations/${conversation.id}`,
+        paneTitleHint: conversation.title,
+      }}
       title={conversation.title}
-      paneTitleHint={conversation.title}
       meta={formatDisplayDate(conversation.updated_at, display) ?? ""}
-      options={conversationResourceOptions({
-        onDelete: () => void onDelete(conversation.id),
-      })}
+      actions={
+        <ActionMenu
+          options={conversationResourceOptions({
+            onDelete: () => void onDelete(conversation.id),
+          })}
+        />
+      }
     />
   );
 }

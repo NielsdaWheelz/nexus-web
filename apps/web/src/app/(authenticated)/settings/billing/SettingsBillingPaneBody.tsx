@@ -8,8 +8,9 @@ import {
   toFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
-import SectionCard from "@/components/ui/SectionCard";
 import Button from "@/components/ui/Button";
+import PaneSection from "@/components/ui/PaneSection";
+import PaneSurface from "@/components/ui/PaneSurface";
 import Pill from "@/components/ui/Pill";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { planLabel } from "@/lib/billing/planLabel";
@@ -208,8 +209,9 @@ export default function SettingsBillingPaneBody() {
   }, [account?.can_manage_billing, billingEnabled]);
 
   return (
-    <SectionCard>
-      <div className={styles.content}>
+    <PaneSurface>
+      <PaneSection>
+        <div className={styles.content}>
         {loading && <PaneLoadingState />}
         {error && <FeedbackNotice severity="error">{error}</FeedbackNotice>}
         {actionError ? <FeedbackNotice feedback={actionError} /> : null}
@@ -335,7 +337,8 @@ export default function SettingsBillingPaneBody() {
             )}
           </>
         )}
-      </div>
-    </SectionCard>
+        </div>
+      </PaneSection>
+    </PaneSurface>
   );
 }

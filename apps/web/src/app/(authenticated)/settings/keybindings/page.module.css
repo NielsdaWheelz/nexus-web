@@ -1,49 +1,14 @@
-.list {
-  display: flex;
-  flex-direction: column;
-}
-
-.row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  padding: var(--space-3) 0;
-  border-bottom: 1px solid var(--edge-subtle);
-}
-
-.row:last-child {
-  border-bottom: none;
-}
-
-.actionLabel {
-  font-size: var(--text-sm);
-  color: var(--ink);
-  min-width: 0;
-  flex-shrink: 1;
-}
-
-.bindingRow {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex-shrink: 0;
-}
-
 .combo {
   font-family: var(--font-mono);
   font-size: var(--text-sm);
   color: var(--ink-muted);
-  min-width: 48px;
-  text-align: right;
 }
 
-.captureRow {
+.rowActions {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
   flex-wrap: wrap;
-  justify-content: flex-end;
+  gap: var(--space-1);
 }
 
 .captureHint {
@@ -52,24 +17,7 @@
   font-family: var(--font-mono);
 }
 
-.captureActions {
-  display: flex;
-  gap: var(--space-1);
-}
-
 .conflict {
   font-size: var(--text-xs);
   color: var(--danger);
-}
-
-@media (max-width: 600px) {
-  .row {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: var(--space-2);
-  }
-
-  .captureRow {
-    justify-content: flex-start;
-  }
 }

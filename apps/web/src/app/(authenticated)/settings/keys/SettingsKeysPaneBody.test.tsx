@@ -131,7 +131,7 @@ describe("SettingsKeysPaneBody", () => {
 
     await screen.findByRole("heading", { name: "OpenRouter" });
 
-    const headings = screen.getAllByRole("heading", { level: 3 });
+    const headings = screen.getAllByRole("heading", { level: 2 });
     expect(headings).toHaveLength(3);
     expect(headings[0]).toHaveTextContent("OpenRouter");
     expect(headings[1]).toHaveTextContent("Cloudflare");

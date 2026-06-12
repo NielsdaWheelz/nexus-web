@@ -1,0 +1,154 @@
+.row {
+  container-type: inline-size;
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: stretch;
+  padding: var(--space-3);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
+  transition: background-color var(--duration-fast) var(--ease-glide),
+    border-color var(--duration-fast) var(--ease-glide);
+}
+
+.row:has(a.primary:hover),
+.row:has(button.primary:hover:not(:disabled)) {
+  border-color: var(--edge-strong);
+  background: var(--surface-hover);
+}
+
+.selected {
+  border-color: var(--accent);
+}
+
+.main {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+}
+
+.primary {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  gap: var(--space-3);
+  align-items: flex-start;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  text-decoration: none;
+}
+
+button.primary {
+  cursor: pointer;
+}
+
+button.primary:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.staticPrimary {
+  cursor: default;
+}
+
+.leading {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.copy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.eyebrow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.title {
+  color: var(--ink);
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-snug);
+  overflow-wrap: anywhere;
+}
+
+.description {
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  overflow-wrap: anywhere;
+}
+
+.meta {
+  color: var(--ink-faint);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+.trailing {
+  display: inline-flex;
+  min-width: 0;
+  flex: none;
+  align-items: center;
+}
+
+.side {
+  display: flex;
+  min-width: 0;
+  flex: none;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.contributors {
+  display: flex;
+  min-width: 0;
+  justify-content: flex-end;
+}
+
+.actions {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.expanded {
+  min-width: 0;
+  flex-basis: 100%;
+}
+
+@container (max-width: 520px) {
+  .main,
+  .side {
+    flex-basis: 100%;
+  }
+
+  .side {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .actions,
+  .contributors {
+    width: 100%;
+    justify-content: flex-start;
+  }
+}

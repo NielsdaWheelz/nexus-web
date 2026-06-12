@@ -25,6 +25,8 @@ import {
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
+import PaneSection from "@/components/ui/PaneSection";
+import PaneSurface from "@/components/ui/PaneSurface";
 import Pill from "@/components/ui/Pill";
 import { formatDisplayDate } from "@/lib/display/format";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
@@ -222,139 +224,138 @@ export default function SettingsKeysPaneBody() {
   );
 
   return (
-    <div className={styles.content}>
-      <div className={styles.messages}>
-        {loading && <PaneLoadingState />}
-        {error ? <FeedbackNotice feedback={error} /> : null}
-        {formError ? <FeedbackNotice feedback={formError} /> : null}
-        {formSuccess ? <FeedbackNotice feedback={formSuccess} /> : null}
-      </div>
+    <PaneSurface
+      state={
+        loading || error || formError || formSuccess ? (
+          <div className={styles.messages}>
+            {loading ? <PaneLoadingState /> : null}
+            {error ? <FeedbackNotice feedback={error} /> : null}
+            {formError ? <FeedbackNotice feedback={formError} /> : null}
+            {formSuccess ? <FeedbackNotice feedback={formSuccess} /> : null}
+          </div>
+        ) : null
+      }
+      empty={
+        !loading && !error && providerStates.length === 0 ? (
+          <FeedbackNotice severity="neutral">No providers are enabled.</FeedbackNotice>
+        ) : undefined
+      }
+    >
+      {providerStates.length > 0 ? (
+        <div className={styles.providerGrid}>
+          {providerStates.map((key) => {
+            const hasSavedKey = Boolean(
+              key.id && key.status !== "missing" && key.status !== "revoked"
+            );
+            const isEditing = editing?.provider === key.provider;
+            const isBusy = busyProvider === key.provider;
+            const fingerprint = key.key_fingerprint ? `...${key.key_fingerprint}` : "Not connected";
+            const label = providerLabel(key.provider, key);
 
-      {!loading && !error && providerStates.length === 0 && (
-        <FeedbackNotice severity="neutral">No providers are enabled.</FeedbackNotice>
-      )}
-
-      <div className={styles.providerGrid}>
-        {providerStates.map((key) => {
-          const hasSavedKey = Boolean(
-            key.id && key.status !== "missing" && key.status !== "revoked"
-          );
-          const isEditing = editing?.provider === key.provider;
-          const isBusy = busyProvider === key.provider;
-          const fingerprint = key.key_fingerprint ? `...${key.key_fingerprint}` : "Not connected";
-          const label = providerLabel(key.provider, key);
-
-          return (
-            <section
-              key={key.provider}
-              className={styles.providerCard}
-              data-provider-card={key.provider}
-              aria-labelledby={`provider-${key.provider}`}
-            >
-              <div className={styles.providerCardHeader}>
-                <div>
-                  <h3 id={`provider-${key.provider}`} className={styles.providerName}>
-                    {label}
-                  </h3>
-                  <p className={styles.fingerprint}>{fingerprint}</p>
-                </div>
-                <Pill tone={statusVariant(key.status)}>
-                  {statusLabel(key.status)}
-                </Pill>
-              </div>
-
-              <dl className={styles.metaGrid}>
-                <div>
-                  <dt>Status</dt>
-                  <dd>{statusLabel(key.status)}</dd>
-                </div>
-                <div>
-                  <dt>Fingerprint</dt>
-                  <dd>{fingerprint}</dd>
-                </div>
-                <div>
-                  <dt>Last tested</dt>
-                  <dd>{formatDate(key.last_tested_at, display)}</dd>
-                </div>
-                <div>
-                  <dt>Last used</dt>
-                  <dd>{formatDate(key.last_used_at, display)}</dd>
-                </div>
-              </dl>
-
-              {isEditing ? (
-                <form className={styles.inlineForm} onSubmit={handleSubmit}>
-                  <label className={styles.formLabel} htmlFor={`apiKey-${key.provider}`}>
-                    API key
-                  </label>
-                  <div className={styles.inlineFormRow}>
-                    <Input
-                      id={`apiKey-${key.provider}`}
-                      type="password"
-                      className={styles.keyInput}
-                      value={apiKey}
-                      onChange={(e) => setApiKey(e.target.value)}
-                      placeholder="Paste API key"
-                      autoComplete="off"
-                      disabled={isBusy}
-                    />
-                    <Button
-                      type="submit"
-                      variant="primary"
-                      disabled={isBusy || !apiKey.trim()}
-                    >
-                      {isBusy ? "Saving..." : editing.mode === "replace" ? "Replace" : "Connect"}
-                    </Button>
-                    <Button
-                      variant="secondary"
-                      onClick={closeEditor}
-                      disabled={isBusy}
-                    >
-                      Cancel
-                    </Button>
+            return (
+              <PaneSection
+                key={key.provider}
+                title={label}
+                description={<span className={styles.fingerprint}>{fingerprint}</span>}
+                actions={
+                  <Pill tone={statusVariant(key.status)}>
+                    {statusLabel(key.status)}
+                  </Pill>
+                }
+              >
+                <dl className={styles.metaGrid}>
+                  <div>
+                    <dt>Status</dt>
+                    <dd>{statusLabel(key.status)}</dd>
                   </div>
-                </form>
-              ) : (
-                <div className={styles.actions}>
-                  {hasSavedKey ? (
-                    <>
-                      <Button
-                        variant="secondary"
-                        onClick={() => handleTest(key)}
+                  <div>
+                    <dt>Fingerprint</dt>
+                    <dd>{fingerprint}</dd>
+                  </div>
+                  <div>
+                    <dt>Last tested</dt>
+                    <dd>{formatDate(key.last_tested_at, display)}</dd>
+                  </div>
+                  <div>
+                    <dt>Last used</dt>
+                    <dd>{formatDate(key.last_used_at, display)}</dd>
+                  </div>
+                </dl>
+
+                {isEditing ? (
+                  <form className={styles.inlineForm} onSubmit={handleSubmit}>
+                    <label className={styles.formLabel} htmlFor={`apiKey-${key.provider}`}>
+                      API key
+                    </label>
+                    <div className={styles.inlineFormRow}>
+                      <Input
+                        id={`apiKey-${key.provider}`}
+                        type="password"
+                        className={styles.keyInput}
+                        value={apiKey}
+                        onChange={(e) => setApiKey(e.target.value)}
+                        placeholder="Paste API key"
+                        autoComplete="off"
                         disabled={isBusy}
+                      />
+                      <Button
+                        type="submit"
+                        variant="primary"
+                        disabled={isBusy || !apiKey.trim()}
                       >
-                        {isBusy ? "Testing..." : "Test"}
+                        {isBusy ? "Saving..." : editing.mode === "replace" ? "Replace" : "Connect"}
                       </Button>
                       <Button
                         variant="secondary"
-                        onClick={() => openEditor(key.provider, "replace")}
+                        onClick={closeEditor}
                         disabled={isBusy}
                       >
-                        Replace
+                        Cancel
                       </Button>
+                    </div>
+                  </form>
+                ) : (
+                  <div className={styles.actions}>
+                    {hasSavedKey ? (
+                      <>
+                        <Button
+                          variant="secondary"
+                          onClick={() => handleTest(key)}
+                          disabled={isBusy}
+                        >
+                          {isBusy ? "Testing..." : "Test"}
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          onClick={() => openEditor(key.provider, "replace")}
+                          disabled={isBusy}
+                        >
+                          Replace
+                        </Button>
+                        <Button
+                          variant="danger"
+                          onClick={() => handleRevoke(key)}
+                          disabled={isBusy}
+                        >
+                          {isBusy ? "Revoking..." : "Revoke"}
+                        </Button>
+                      </>
+                    ) : (
                       <Button
-                        variant="danger"
-                        onClick={() => handleRevoke(key)}
+                        variant="primary"
+                        onClick={() => openEditor(key.provider, "connect")}
                         disabled={isBusy}
                       >
-                        {isBusy ? "Revoking..." : "Revoke"}
+                        Connect
                       </Button>
-                    </>
-                  ) : (
-                    <Button
-                      variant="primary"
-                      onClick={() => openEditor(key.provider, "connect")}
-                      disabled={isBusy}
-                    >
-                      Connect
-                    </Button>
-                  )}
-                </div>
-              )}
-            </section>
-          );
-        })}
-      </div>
-    </div>
+                    )}
+                  </div>
+                )}
+              </PaneSection>
+            );
+          })}
+        </div>
+      ) : null}
+    </PaneSurface>
   );
 }

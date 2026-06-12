@@ -69,6 +69,7 @@ function makeSearchResult(
     contextRef: null,
     typeLabel: "Article",
     primaryText: "Search Hit",
+    paneTitleHint: "Search Hit",
     snippetSegments: [],
     sourceMeta: null,
     contributorCredits: [],

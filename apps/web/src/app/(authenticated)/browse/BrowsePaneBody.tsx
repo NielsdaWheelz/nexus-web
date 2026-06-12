@@ -10,7 +10,9 @@ import {
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import ContributorCreditList from "@/components/contributors/ContributorCreditList";
-import SectionCard from "@/components/ui/SectionCard";
+import PaneSurface from "@/components/ui/PaneSurface";
+import ResourceList from "@/components/ui/ResourceList";
+import ResourceRow from "@/components/ui/ResourceRow";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import { apiFetch } from "@/lib/api/client";
@@ -326,9 +328,32 @@ export default function BrowsePaneBody() {
     (type) => sections[type].results.length > 0,
   );
 
+  const state =
+    error || !hasSearched || searching ? (
+      <>
+        {error ? <FeedbackNotice feedback={error} /> : null}
+        {!hasSearched ? (
+          <FeedbackNotice severity="info">
+            Search once, then filter which result types stay visible. Browse
+            finds things that are not already in your workspace.
+          </FeedbackNotice>
+        ) : null}
+        {searching ? <PaneLoadingState /> : null}
+      </>
+    ) : null;
+
+  const empty =
+    hasSearched && !searching && visibleSections.length === 0 ? (
+      <FeedbackNotice severity="neutral">
+        {visibleTypes.length === 0
+          ? "Select at least one visible result type."
+          : "No browse results found for this query."}
+      </FeedbackNotice>
+    ) : null;
+
   return (
-    <SectionCard>
-      <div className={styles.content}>
+    <PaneSurface
+      toolbar={
         <form
           className={styles.searchForm}
           onSubmit={(event) => {
@@ -362,35 +387,32 @@ export default function BrowsePaneBody() {
 
           <BrowseTypeFilters visibleTypes={visibleTypes} onChange={updateVisibleTypes} />
         </form>
-
-        {error ? <FeedbackNotice feedback={error} /> : null}
-
-        {!hasSearched ? (
-          <FeedbackNotice severity="info">
-            Search once, then filter which result types stay visible. Browse
-            finds things that are not already in your workspace.
-          </FeedbackNotice>
-        ) : null}
-
-        {searching ? <PaneLoadingState /> : null}
-
-        {hasSearched && !searching && visibleSections.length === 0 ? (
-          <FeedbackNotice severity="neutral">
-            {visibleTypes.length === 0
-              ? "Select at least one visible result type."
-              : "No browse results found for this query."}
-          </FeedbackNotice>
-        ) : null}
-
-        {visibleSections.map((sectionType) => (
-          <section key={sectionType} className={styles.section}>
-            <div className={styles.sectionHeader}>
-              <h2 className={styles.sectionTitle}>
-                {TYPE_LABELS[sectionType]}
-              </h2>
-            </div>
-
-            <div className={styles.resultRows}>
+      }
+      state={state}
+      empty={empty}
+    >
+      {visibleSections.length > 0
+        ? visibleSections.map((sectionType) => (
+            <ResourceList
+              key={sectionType}
+              label={TYPE_LABELS[sectionType]}
+              footer={
+                sections[sectionType].page.next_cursor ? (
+                  <Button
+                    variant="secondary"
+                    size="md"
+                    onClick={() => {
+                      void loadMore(sectionType);
+                    }}
+                    disabled={loadingMoreTypes.has(sectionType)}
+                  >
+                    {loadingMoreTypes.has(sectionType)
+                      ? "Loading..."
+                      : `Load more ${TYPE_LABELS[sectionType].toLowerCase()}`}
+                  </Button>
+                ) : undefined
+              }
+            >
               {sections[sectionType].results.map((result) => {
                 if (result.type === "documents") {
                   const busy = busyKeys.ids.has(`document:${result.url}`);
@@ -398,74 +420,67 @@ export default function BrowsePaneBody() {
                   const rowKey = `document:${result.url}`;
                   const selectedLibraryIds = getRowLibraryIds(rowKey);
                   return (
-                    <div key={result.url} className={styles.row}>
-                      <div
-                        role="button"
-                        tabIndex={0}
-                        className={styles.primary}
-                        onClick={() => {
-                          void addAndOpenResult(result, selectedLibraryIds);
-                        }}
-                        onKeyDown={(event) => {
-                          if (event.key !== "Enter" && event.key !== " ") {
-                            return;
-                          }
-                          event.preventDefault();
-                          void addAndOpenResult(result, selectedLibraryIds);
-                        }}
-                      >
-                        <div className={styles.leading}>
-                          <span className={styles.fallback} aria-hidden="true">
-                            <FileText size={18} />
+                    <ResourceRow
+                      key={result.url}
+                      primary={{
+                        kind: "button",
+                        label: `${getDocumentActionLabel(result, busy)} ${result.title}`,
+                        busy,
+                        onActivate: () =>
+                          addAndOpenResult(result, selectedLibraryIds),
+                      }}
+                      leading={
+                        <span className={styles.fallback} aria-hidden="true">
+                          <FileText size={18} />
+                        </span>
+                      }
+                      badges={
+                        <>
+                          <span className={styles.typeBadge}>
+                            {result.document_kind === "pdf"
+                              ? "PDF"
+                              : result.document_kind === "epub"
+                                ? "EPUB"
+                                : "Article"}
                           </span>
-                        </div>
-                        <div className={styles.copy}>
-                          <div className={styles.headingRow}>
-                            <span className={styles.typeBadge}>
-                              {result.document_kind === "pdf"
-                                ? "PDF"
-                                : result.document_kind === "epub"
-                                  ? "EPUB"
-                                  : "Article"}
-                            </span>
-                            {sourceLabel ? (
-                              <span className={styles.typeBadge}>
-                                {sourceLabel}
-                              </span>
-                            ) : null}
-                          </div>
-                          <div className={styles.title}>{result.title}</div>
-                          <div className={styles.description}>
-                            {result.description ||
-                              getDocumentFallbackDescription(result)}
-                          </div>
-                        </div>
-                      </div>
-                      <ContributorCreditList
-                        credits={result.contributors}
-                        className={styles.rowContributors}
-                        maxVisible={2}
-                      />
-                      <div className={styles.actions}>
-                        {!result.media_id ? (
-                          <LibraryDestinationPicker
-                            selectedLibraryIds={selectedLibraryIds}
-                            onChange={(next) => setRowSelection(rowKey, next)}
-                            label="Libraries"
-                          />
-                        ) : null}
-                        <Button
-                          variant="primary"
-                          size="md"
-                          disabled={busy}
-                          onClick={() => {
-                            void addAndOpenResult(result, selectedLibraryIds);
-                          }}
-                        >
-                          {getDocumentActionLabel(result, busy)}
-                        </Button>
-                      </div>
-                    </div>
+                          {sourceLabel ? (
+                            <span className={styles.typeBadge}>{sourceLabel}</span>
+                          ) : null}
+                        </>
+                      }
+                      title={result.title}
+                      description={
+                        result.description ||
+                        getDocumentFallbackDescription(result)
+                      }
+                      contributors={
+                        <ContributorCreditList
+                          credits={result.contributors}
+                          maxVisible={2}
+                        />
+                      }
+                      actions={
+                        <>
+                          {!result.media_id ? (
+                            <LibraryDestinationPicker
+                              selectedLibraryIds={selectedLibraryIds}
+                              onChange={(next) => setRowSelection(rowKey, next)}
+                              label="Libraries"
+                            />
+                          ) : null}
+                          <Button
+                            variant="primary"
+                            size="md"
+                            disabled={busy}
+                            onClick={() => {
+                              void addAndOpenResult(result, selectedLibraryIds);
+                            }}
+                          >
+                            {getDocumentActionLabel(result, busy)}
+                          </Button>
+                        </>
+                      }
+                    />
                   );
                 }
 
@@ -476,83 +491,71 @@ export default function BrowsePaneBody() {
                   const rowKey = `video:${result.provider_video_id}`;
                   const selectedLibraryIds = getRowLibraryIds(rowKey);
                   return (
-                    <div key={result.provider_video_id} className={styles.row}>
-                      <div
-                        role="button"
-                        tabIndex={0}
-                        className={styles.primary}
-                        onClick={() => {
-                          void addAndOpenResult(result, selectedLibraryIds);
-                        }}
-                        onKeyDown={(event) => {
-                          if (event.key !== "Enter" && event.key !== " ") {
-                            return;
-                          }
-                          event.preventDefault();
-                          void addAndOpenResult(result, selectedLibraryIds);
-                        }}
-                      >
-                        <div className={styles.leading}>
-                          {result.thumbnail_url ? (
-                            <MediaImage
-                              kind="proxied"
-                              remoteUrl={result.thumbnail_url}
-                              alt=""
-                              width={56}
-                              height={56}
-                              className={styles.artwork}
-                            />
-                          ) : (
-                            <span
-                              className={styles.fallback}
-                              aria-hidden="true"
-                            >
-                              <Video size={18} />
-                            </span>
-                          )}
-                        </div>
-                        <div className={styles.copy}>
-                          <div className={styles.headingRow}>
-                            <span className={styles.typeBadge}>Video</span>
-                          </div>
-                          <div className={styles.title}>{result.title}</div>
-                          <div className={styles.description}>
-                            {result.description ||
-                              "Add this video to open it in the media reader."}
-                          </div>
-                        </div>
-                      </div>
-                      <ContributorCreditList
-                        credits={result.contributors}
-                        className={styles.rowContributors}
-                        maxVisible={2}
-                      />
-                      <div className={styles.actions}>
-                        {!result.media_id ? (
-                          <LibraryDestinationPicker
-                            selectedLibraryIds={selectedLibraryIds}
-                            onChange={(next) => setRowSelection(rowKey, next)}
-                            label="Libraries"
+                    <ResourceRow
+                      key={result.provider_video_id}
+                      primary={{
+                        kind: "button",
+                        label: `${result.media_id ? "Open" : "Add"} ${result.title}`,
+                        busy,
+                        onActivate: () =>
+                          addAndOpenResult(result, selectedLibraryIds),
+                      }}
+                      leading={
+                        result.thumbnail_url ? (
+                          <MediaImage
+                            kind="proxied"
+                            remoteUrl={result.thumbnail_url}
+                            alt=""
+                            width={56}
+                            height={56}
+                            className={styles.artwork}
                           />
-                        ) : null}
-                        <Button
-                          variant="primary"
-                          size="md"
-                          disabled={busy}
-                          onClick={() => {
-                            void addAndOpenResult(result, selectedLibraryIds);
-                          }}
-                        >
-                          {result.media_id
-                            ? busy
-                              ? "Opening..."
-                              : "Open"
-                            : busy
-                              ? "Adding..."
-                              : "Add"}
-                        </Button>
-                      </div>
-                    </div>
+                        ) : (
+                          <span className={styles.fallback} aria-hidden="true">
+                            <Video size={18} />
+                          </span>
+                        )
+                      }
+                      badges={<span className={styles.typeBadge}>Video</span>}
+                      title={result.title}
+                      description={
+                        result.description ||
+                        "Add this video to open it in the media reader."
+                      }
+                      contributors={
+                        <ContributorCreditList
+                          credits={result.contributors}
+                          maxVisible={2}
+                        />
+                      }
+                      actions={
+                        <>
+                          {!result.media_id ? (
+                            <LibraryDestinationPicker
+                              selectedLibraryIds={selectedLibraryIds}
+                              onChange={(next) => setRowSelection(rowKey, next)}
+                              label="Libraries"
+                            />
+                          ) : null}
+                          <Button
+                            variant="primary"
+                            size="md"
+                            disabled={busy}
+                            onClick={() => {
+                              void addAndOpenResult(result, selectedLibraryIds);
+                            }}
+                          >
+                            {result.media_id
+                              ? busy
+                                ? "Opening..."
+                                : "Open"
+                              : busy
+                                ? "Adding..."
+                                : "Add"}
+                          </Button>
+                        </>
+                      }
+                    />
                   );
                 }
 
@@ -563,123 +566,19 @@ export default function BrowsePaneBody() {
                   const rowKey = `podcast:${result.provider_podcast_id}`;
                   const selectedLibraryIds = getRowLibraryIds(rowKey);
                   return (
-                    <div
+                    <ResourceRow
                       key={result.provider_podcast_id}
-                      className={styles.row}
-                    >
-                      <div
-                        role="button"
-                        tabIndex={0}
-                        className={styles.primary}
-                        onClick={() => {
-                          void ensureAndOpenPodcast(result);
-                        }}
-                        onKeyDown={(event) => {
-                          if (event.key !== "Enter" && event.key !== " ") {
-                            return;
-                          }
-                          event.preventDefault();
-                          void ensureAndOpenPodcast(result);
-                        }}
-                      >
-                        <div className={styles.leading}>
-                          {result.image_url ? (
-                            <MediaImage
-                              kind="proxied"
-                              remoteUrl={result.image_url}
-                              alt=""
-                              width={56}
-                              height={56}
-                              className={styles.artwork}
-                            />
-                          ) : (
-                            <span
-                              className={styles.fallback}
-                              aria-hidden="true"
-                            >
-                              <Mic size={18} />
-                            </span>
-                          )}
-                        </div>
-                        <div className={styles.copy}>
-                          <div className={styles.headingRow}>
-                            <span className={styles.typeBadge}>Podcast</span>
-                          </div>
-                          <div className={styles.title}>{result.title}</div>
-                          <div className={styles.description}>
-                            {result.description ||
-                              "Open the show page or follow it from browse."}
-                          </div>
-                        </div>
-                      </div>
-                      <ContributorCreditList
-                        credits={result.contributors}
-                        className={styles.rowContributors}
-                        maxVisible={2}
-                      />
-                      <div className={styles.actions}>
-                        {result.podcast_id ? (
-                          <Button
-                            variant="primary"
-                            size="md"
-                            disabled={busy}
-                            onClick={() => {
-                              void ensureAndOpenPodcast(result);
-                            }}
-                          >
-                            {busy ? "Opening..." : "Open"}
-                          </Button>
-                        ) : (
-                          <>
-                            <LibraryDestinationPicker
-                              selectedLibraryIds={selectedLibraryIds}
-                              onChange={(next) =>
-                                setRowSelection(rowKey, next)
-                              }
-                              label="Libraries"
-                            />
-                            <Button
-                              variant="primary"
-                              size="md"
-                              disabled={busy}
-                              onClick={() => {
-                                void followPodcast(result, selectedLibraryIds);
-                              }}
-                            >
-                              {busy ? "Following..." : "Follow"}
-                            </Button>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  );
-                }
-
-                const busy = busyKeys.ids.has(
-                  `podcast:${result.provider_podcast_id}`,
-                );
-                return (
-                  <div key={result.provider_episode_id} className={styles.row}>
-                    <div
-                      role="button"
-                      tabIndex={0}
-                      className={styles.primary}
-                      onClick={() => {
-                        void ensureAndOpenPodcast(result);
+                      primary={{
+                        kind: "button",
+                        label: `Open ${result.title}`,
+                        busy,
+                        onActivate: () => ensureAndOpenPodcast(result),
                       }}
-                      onKeyDown={(event) => {
-                        if (event.key !== "Enter" && event.key !== " ") {
-                          return;
-                        }
-                        event.preventDefault();
-                        void ensureAndOpenPodcast(result);
-                      }}
-                    >
-                      <div className={styles.leading}>
-                        {result.podcast_image_url ? (
+                      leading={
+                        result.image_url ? (
                           <MediaImage
                             kind="proxied"
-                            remoteUrl={result.podcast_image_url}
+                            remoteUrl={result.image_url}
                             alt=""
                             width={56}
                             height={56}
@@ -687,29 +586,107 @@ export default function BrowsePaneBody() {
                           />
                         ) : (
                           <span className={styles.fallback} aria-hidden="true">
-                            <Play size={18} />
+                            <Mic size={18} />
                           </span>
-                        )}
-                      </div>
-                      <div className={styles.copy}>
-                        <div className={styles.headingRow}>
-                          <span className={styles.typeBadge}>Episode</span>
-                          <span className={styles.meta}>
-                            {result.podcast_title}
-                          </span>
-                        </div>
-                        <div className={styles.title}>{result.title}</div>
-                        <div className={styles.description}>
-                          {formatEpisodeMeta(result, display)}
-                        </div>
-                      </div>
-                    </div>
-                    <ContributorCreditList
-                      credits={result.podcast_contributors}
-                      className={styles.rowContributors}
-                      maxVisible={2}
+                        )
+                      }
+                      badges={<span className={styles.typeBadge}>Podcast</span>}
+                      title={result.title}
+                      description={
+                        result.description ||
+                        "Open the show page or follow it from browse."
+                      }
+                      contributors={
+                        <ContributorCreditList
+                          credits={result.contributors}
+                          maxVisible={2}
+                        />
+                      }
+                      actions={
+                        <>
+                          {result.podcast_id ? (
+                            <Button
+                              variant="primary"
+                              size="md"
+                              disabled={busy}
+                              onClick={() => {
+                                void ensureAndOpenPodcast(result);
+                              }}
+                            >
+                              {busy ? "Opening..." : "Open"}
+                            </Button>
+                          ) : (
+                            <>
+                              <LibraryDestinationPicker
+                                selectedLibraryIds={selectedLibraryIds}
+                                onChange={(next) =>
+                                  setRowSelection(rowKey, next)
+                                }
+                                label="Libraries"
+                              />
+                              <Button
+                                variant="primary"
+                                size="md"
+                                disabled={busy}
+                                onClick={() => {
+                                  void followPodcast(result, selectedLibraryIds);
+                                }}
+                              >
+                                {busy ? "Following..." : "Follow"}
+                              </Button>
+                            </>
+                          )}
+                        </>
+                      }
                     />
-                    <div className={styles.actions}>
+                  );
+                }
+
+                const busy = busyKeys.ids.has(
+                  `podcast:${result.provider_podcast_id}`,
+                );
+                return (
+                  <ResourceRow
+                    key={result.provider_episode_id}
+                    primary={{
+                      kind: "button",
+                      label: `Open show for ${result.title}`,
+                      busy,
+                      onActivate: () => ensureAndOpenPodcast(result),
+                    }}
+                    leading={
+                      result.podcast_image_url ? (
+                        <MediaImage
+                          kind="proxied"
+                          remoteUrl={result.podcast_image_url}
+                          alt=""
+                          width={56}
+                          height={56}
+                          className={styles.artwork}
+                        />
+                      ) : (
+                        <span className={styles.fallback} aria-hidden="true">
+                          <Play size={18} />
+                        </span>
+                      )
+                    }
+                    badges={
+                      <>
+                        <span className={styles.typeBadge}>Episode</span>
+                        <span className={styles.meta}>
+                          {result.podcast_title}
+                        </span>
+                      </>
+                    }
+                    title={result.title}
+                    description={formatEpisodeMeta(result, display)}
+                    contributors={
+                      <ContributorCreditList
+                        credits={result.podcast_contributors}
+                        maxVisible={2}
+                      />
+                    }
+                    actions={
                       <Button
                         variant="primary"
                         size="md"
@@ -720,30 +697,13 @@ export default function BrowsePaneBody() {
                       >
                         {busy ? "Opening..." : "Open show"}
                       </Button>
-                    </div>
-                  </div>
+                    }
+                  />
                 );
               })}
-            </div>
-
-            {sections[sectionType].page.next_cursor ? (
-              <Button
-                variant="secondary"
-                size="md"
-                className={styles.loadMore}
-                onClick={() => {
-                  void loadMore(sectionType);
-                }}
-                disabled={loadingMoreTypes.has(sectionType)}
-              >
-                {loadingMoreTypes.has(sectionType)
-                  ? "Loading..."
-                  : `Load more ${TYPE_LABELS[sectionType].toLowerCase()}`}
-              </Button>
-            ) : null}
-          </section>
-        ))}
-      </div>
-    </SectionCard>
+            </ResourceList>
+          ))
+        : null}
+    </PaneSurface>
   );
 }

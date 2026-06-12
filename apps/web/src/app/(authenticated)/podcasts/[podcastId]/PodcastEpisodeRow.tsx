@@ -6,8 +6,9 @@ import { useLibraryMembership } from "@/lib/media/useLibraryMembership";
 import { formatContributorCreditSummary } from "@/lib/contributors/formatting";
 import ContributorCreditList from "@/components/contributors/ContributorCreditList";
 import LibraryMembershipPanel from "@/components/LibraryMembershipPanel";
-import { AppListItem } from "@/components/ui/AppList";
+import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
+import ResourceRow from "@/components/ui/ResourceRow";
 import Select from "@/components/ui/Select";
 import {
   canRequestTranscriptForEpisode,
@@ -136,9 +137,12 @@ export default function PodcastEpisodeRow({
 
   return (
     <>
-      <AppListItem
-        href={`/media/${episode.id}`}
-        paneTitleHint={paneTitleHint}
+      <ResourceRow
+        primary={{
+          kind: "link",
+          href: `/media/${episode.id}`,
+          paneTitleHint,
+        }}
         title={
           <span className={styles.episodeTitle}>
             {episodeState === "unplayed" && (
@@ -205,142 +209,138 @@ export default function PodcastEpisodeRow({
           </span>
         }
         actions={
-          <div className={styles.episodeActions}>
-            <ContributorCreditList
-              credits={episode.contributors}
-              maxVisible={1}
-            />
-            {showNotesText ? (
+          <>
+            <div className={styles.episodeActions}>
+              <ContributorCreditList
+                credits={episode.contributors}
+                maxVisible={1}
+              />
+              {showNotesText ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className={styles.showNotesToggleButton}
+                  aria-label={`${showNotesExpanded ? "Hide" : "Show"} notes for ${episode.title}`}
+                  onClick={() => onToggleShowNotes(episode.id)}
+                >
+                  {showNotesExpanded ? "Hide notes" : "Show notes"}
+                </Button>
+              ) : null}
               <Button
-                variant="ghost"
+                variant="secondary"
                 size="sm"
-                className={styles.showNotesToggleButton}
-                aria-label={`${showNotesExpanded ? "Hide" : "Show"} notes for ${episode.title}`}
-                onClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  onToggleShowNotes(episode.id);
+                aria-label={`Play next for ${episode.title}`}
+                onClick={() => {
+                  onAddToQueue(episode.id, "next");
                 }}
               >
-                {showNotesExpanded ? "Hide notes" : "Show notes"}
+                Play next
               </Button>
-            ) : null}
-            <Button
-              variant="secondary"
-              size="sm"
-              aria-label={`Play next for ${episode.title}`}
-              onClick={() => {
-                onAddToQueue(episode.id, "next");
-              }}
-            >
-              Play next
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              aria-label={`Add ${episode.title} to queue`}
-              onClick={() => {
-                onAddToQueue(episode.id, "last");
-              }}
-            >
-              Add to queue
-            </Button>
-            {inQueue && <span className={styles.queueBadge}>In Queue</span>}
-            {canRequestTranscript &&
-              !transcript.expandedTranscriptMediaIds.ids.has(episode.id) && (
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    transcript.expandedTranscriptMediaIds.add(episode.id);
-                  }}
-                  aria-label={`Request transcript for ${episode.title}`}
-                >
-                  Request transcript...
-                </Button>
-              )}
-            {canRequestTranscript &&
-              transcript.expandedTranscriptMediaIds.ids.has(episode.id) && (
-                <>
-                  <label className={styles.reasonLabel}>
-                    Transcript reason
-                    <Select
-                      size="sm"
-                      value={transcriptReason}
-                      onChange={(event) =>
-                        transcript.setTranscriptReasonByMediaId((prev) => ({
-                          ...prev,
-                          [episode.id]: event.target
-                            .value as TranscriptRequestReason,
-                        }))
-                      }
-                      aria-label={`Transcript request reason for ${episode.title}`}
-                    >
-                      <option value="search">search</option>
-                      <option value="highlight">highlight</option>
-                      <option value="quote">quote</option>
-                    </Select>
-                  </label>
+              <Button
+                variant="secondary"
+                size="sm"
+                aria-label={`Add ${episode.title} to queue`}
+                onClick={() => {
+                  onAddToQueue(episode.id, "last");
+                }}
+              >
+                Add to queue
+              </Button>
+              {inQueue && <span className={styles.queueBadge}>In Queue</span>}
+              {canRequestTranscript &&
+                !transcript.expandedTranscriptMediaIds.ids.has(episode.id) && (
                   <Button
                     variant="secondary"
                     size="sm"
-                    aria-label={`Submit transcript request for ${episode.title}`}
-                    disabled={transcriptRequestDisabled}
-                    onClick={() =>
-                      void transcript.handleRequestTranscript(episode.id)
-                    }
+                    onClick={() => {
+                      transcript.expandedTranscriptMediaIds.add(episode.id);
+                    }}
+                    aria-label={`Request transcript for ${episode.title}`}
                   >
-                    {transcript.requestingTranscriptMediaIds.ids.has(episode.id)
-                      ? "Requesting..."
-                      : "Request transcript"}
+                    Request transcript...
                   </Button>
-                  {forecastForSelectedReason && (
-                    <span className={styles.transcriptRequestHint}>
-                      {forecastForSelectedReason.source === "request"
-                        ? forecastForSelectedReason.request_enqueued
-                          ? "queued"
-                          : "acknowledged"
-                        : "estimate"}{" "}
-                      · {forecastForSelectedReason.required_minutes} min ·
-                      remaining{" "}
-                      {forecastForSelectedReason.remaining_minutes == null
-                        ? "unlimited"
-                        : `${forecastForSelectedReason.remaining_minutes} min`}
-                    </span>
-                  )}
-                  {forecastForSelectedReason &&
-                    !forecastForSelectedReason.fits_budget && (
-                      <span className={styles.transcriptQuotaWarning}>
-                        Not enough monthly transcription quota for this request.
+                )}
+              {canRequestTranscript &&
+                transcript.expandedTranscriptMediaIds.ids.has(episode.id) && (
+                  <>
+                    <label className={styles.reasonLabel}>
+                      Transcript reason
+                      <Select
+                        size="sm"
+                        value={transcriptReason}
+                        onChange={(event) =>
+                          transcript.setTranscriptReasonByMediaId((prev) => ({
+                            ...prev,
+                            [episode.id]: event.target
+                              .value as TranscriptRequestReason,
+                          }))
+                        }
+                        aria-label={`Transcript request reason for ${episode.title}`}
+                      >
+                        <option value="search">search</option>
+                        <option value="highlight">highlight</option>
+                        <option value="quote">quote</option>
+                      </Select>
+                    </label>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      aria-label={`Submit transcript request for ${episode.title}`}
+                      disabled={transcriptRequestDisabled}
+                      onClick={() =>
+                        void transcript.handleRequestTranscript(episode.id)
+                      }
+                    >
+                      {transcript.requestingTranscriptMediaIds.ids.has(episode.id)
+                        ? "Requesting..."
+                        : "Request transcript"}
+                    </Button>
+                    {forecastForSelectedReason && (
+                      <span className={styles.transcriptRequestHint}>
+                        {forecastForSelectedReason.source === "request"
+                          ? forecastForSelectedReason.request_enqueued
+                            ? "queued"
+                            : "acknowledged"
+                          : "estimate"}{" "}
+                        · {forecastForSelectedReason.required_minutes} min ·
+                        remaining{" "}
+                        {forecastForSelectedReason.remaining_minutes == null
+                          ? "unlimited"
+                          : `${forecastForSelectedReason.remaining_minutes} min`}
                       </span>
                     )}
-                </>
+                    {forecastForSelectedReason &&
+                      !forecastForSelectedReason.fits_budget && (
+                        <span className={styles.transcriptQuotaWarning}>
+                          Not enough monthly transcription quota for this request.
+                        </span>
+                      )}
+                  </>
+                )}
+              {!canRequestTranscript && !transcriptionAllowed && (
+                <span className={styles.transcriptQuotaWarning}>
+                  {billingDisabled
+                    ? "Billing is temporarily unavailable, so transcription upgrades are unavailable right now."
+                    : "Transcription is included with AI Plus and AI Pro."}
+                </span>
               )}
-            {!canRequestTranscript && !transcriptionAllowed && (
-              <span className={styles.transcriptQuotaWarning}>
-                {billingDisabled
-                  ? "Billing is temporarily unavailable, so transcription upgrades are unavailable right now."
-                  : "Transcription is included with AI Plus and AI Pro."}
-              </span>
-            )}
-            {!canRequestTranscript && transcriptionAllowed && (
-              <span className={styles.transcriptStatus}>
-                {episode.transcript_state === "ready"
-                  ? "Transcript ready"
-                  : episode.transcript_state === "partial"
-                    ? "Transcript partially ready"
-                    : transcriptProvisioningInProgress
-                      ? "Transcript request in progress"
-                      : episode.transcript_state === "unavailable"
-                        ? "Transcript unavailable"
-                        : "Transcript state unavailable"}
-              </span>
-            )}
-          </div>
+              {!canRequestTranscript && transcriptionAllowed && (
+                <span className={styles.transcriptStatus}>
+                  {episode.transcript_state === "ready"
+                    ? "Transcript ready"
+                    : episode.transcript_state === "partial"
+                      ? "Transcript partially ready"
+                      : transcriptProvisioningInProgress
+                        ? "Transcript request in progress"
+                        : episode.transcript_state === "unavailable"
+                          ? "Transcript unavailable"
+                          : "Transcript state unavailable"}
+                </span>
+              )}
+            </div>
+            <ActionMenu options={rowOptions} />
+          </>
         }
-        options={rowOptions}
       />
 
       <LibraryMembershipPanel

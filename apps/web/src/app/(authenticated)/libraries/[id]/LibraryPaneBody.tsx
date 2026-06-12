@@ -6,8 +6,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type KeyboardEvent,
-  type MouseEvent,
 } from "react";
 import { flushSync } from "react-dom";
 import { dispatchOpenAddContent } from "@/components/addContentEvents";
@@ -56,7 +54,8 @@ import LibraryIntelligencePane from "./LibraryIntelligencePane";
 import ContributorCreditList from "@/components/contributors/ContributorCreditList";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
-import SectionCard from "@/components/ui/SectionCard";
+import PaneSurface from "@/components/ui/PaneSurface";
+import ResourceRow from "@/components/ui/ResourceRow";
 import SortableList from "@/components/sortable/SortableList";
 import LibraryEditDialog from "@/components/LibraryEditDialog";
 import {
@@ -152,19 +151,6 @@ function hasContributorLinks(
   return Array.isArray(contributors)
     ? contributors.some((credit) => credit.contributor_handle?.trim())
     : false;
-}
-
-function isInteractiveRowTarget(
-  target: EventTarget | null,
-  currentTarget: HTMLElement,
-): boolean {
-  if (!(target instanceof HTMLElement)) {
-    return false;
-  }
-  const interactive = target.closest(
-    'a, button, input, textarea, select, [role="button"], [role="menuitem"]',
-  );
-  return Boolean(interactive && currentTarget.contains(interactive));
 }
 
 export default function LibraryPaneBody() {
@@ -264,52 +250,6 @@ export default function LibraryPaneBody() {
     setLibraryPanelBusy(false);
     setLibraryPanelError(null);
   }, []);
-
-  const openLibraryEntry = useCallback(
-    (href: string, title: string, openInSeparatePane: boolean) => {
-      if (openInSeparatePane) {
-        openInNewPane?.(href, title);
-        return;
-      }
-      router.push(href, { titleHint: title });
-    },
-    [openInNewPane, router],
-  );
-
-  const handleLibraryEntryRowClick = useCallback(
-    (event: MouseEvent<HTMLDivElement>, href: string, title: string) => {
-      if (
-        event.defaultPrevented ||
-        event.button !== 0 ||
-        event.metaKey ||
-        event.ctrlKey ||
-        event.altKey ||
-        isInteractiveRowTarget(event.target, event.currentTarget)
-      ) {
-        return;
-      }
-      event.preventDefault();
-      openLibraryEntry(href, title, event.shiftKey);
-    },
-    [openLibraryEntry],
-  );
-
-  const handleLibraryEntryRowKeyDown = useCallback(
-    (event: KeyboardEvent<HTMLDivElement>, href: string, title: string) => {
-      if (
-        event.target !== event.currentTarget ||
-        event.metaKey ||
-        event.ctrlKey ||
-        event.altKey ||
-        (event.key !== "Enter" && event.key !== " ")
-      ) {
-        return;
-      }
-      event.preventDefault();
-      openLibraryEntry(href, title, event.shiftKey);
-    },
-    [openLibraryEntry],
-  );
 
   const openLibraryPanel = useCallback(
     async (entry: LibraryEntry, triggerEl: HTMLElement | null) => {
@@ -922,16 +862,18 @@ export default function LibraryPaneBody() {
           void handleRemoveFromLibrary(libraryId);
         }}
       />
-      <SectionCard>
-        <div className={styles.content}>
-          {error && <FeedbackNotice {...error} />}
-
-          {visibleEntries.length === 0 ? (
+      <PaneSurface
+        state={error ? <FeedbackNotice {...error} /> : null}
+        empty={
+          visibleEntries.length === 0 ? (
             <FeedbackNotice
               severity="neutral"
               title="No podcasts or media in this library yet."
             />
-          ) : (
+          ) : null
+        }
+      >
+          {visibleEntries.length > 0 ? (
             <SortableList
               key={visibleEntries.map((entry) => entry.id).join(":")}
               className={styles.mediaList}
@@ -968,68 +910,58 @@ export default function LibraryPaneBody() {
                   });
                   const href = `/podcasts/${item.podcast.id}`;
                   return (
-                    <div
-                      className={styles.mediaRow}
-                      data-dragging={isDragging ? "true" : "false"}
-                      role="link"
-                      tabIndex={0}
-                      onClick={(event) =>
-                        handleLibraryEntryRowClick(
-                          event,
-                          href,
-                          item.podcast.title,
-                        )
-                      }
-                      onKeyDown={(event) =>
-                        handleLibraryEntryRowKeyDown(
-                          event,
-                          href,
-                          item.podcast.title,
-                        )
-                      }
-                    >
-                      <div className={styles.mediaRowMain}>
-                        {currentLibrary.role === "admin" && (
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            className={styles.dragHandle}
-                            aria-label={`Reorder ${item.podcast.title}`}
-                            disabled={reorderBusy}
-                            {...dragHandleBindings}
-                          >
-                            ⋮⋮
-                          </Button>
-                        )}
-                        <div className={styles.mediaLink}>
-                          <span className={styles.mediaTitleRow}>
-                            <Radio size={18} aria-hidden="true" />
-                            <span className={styles.mediaTitle}>
-                              {item.podcast.title}
+                    <ResourceRow
+                      as="div"
+                      selected={isDragging}
+                      primary={{
+                        kind: "link",
+                        href,
+                        paneTitleHint: item.podcast.title,
+                      }}
+                      leading={<Radio size={18} aria-hidden="true" />}
+                      title={item.podcast.title}
+                      meta={
+                        podcastMetaParts.length > 0 ? (
+                          <span className={styles.mediaMetaRow}>
+                            <span className={styles.mediaMeta}>
+                              {podcastMetaParts.join(" · ")}
                             </span>
                           </span>
-                          {hasContributors || podcastMetaParts.length > 0 ? (
-                            <span className={styles.mediaMetaRow}>
-                              <ContributorCreditList
-                                credits={item.podcast.contributors}
-                                maxVisible={1}
+                        ) : undefined
+                      }
+                      contributors={
+                        hasContributors ? (
+                          <ContributorCreditList
+                            credits={item.podcast.contributors}
+                            maxVisible={1}
+                          />
+                        ) : undefined
+                      }
+                      actions={
+                        currentLibrary.role === "admin" || rowOptions.length > 0 ? (
+                          <>
+                            {currentLibrary.role === "admin" ? (
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                className={styles.dragHandle}
+                                aria-label={`Reorder ${item.podcast.title}`}
+                                disabled={reorderBusy}
+                                {...dragHandleBindings}
+                              >
+                                ⋮⋮
+                              </Button>
+                            ) : null}
+                            {rowOptions.length > 0 ? (
+                              <ActionMenu
+                                options={rowOptions}
+                                className={styles.rowActionMenu}
                               />
-                              {podcastMetaParts.length > 0 ? (
-                                <span className={styles.mediaMeta}>
-                                  {podcastMetaParts.join(" · ")}
-                                </span>
-                              ) : null}
-                            </span>
-                          ) : null}
-                        </div>
-                      </div>
-                      {rowOptions.length > 0 ? (
-                        <ActionMenu
-                          options={rowOptions}
-                          className={styles.rowActionMenu}
-                        />
-                      ) : null}
-                    </div>
+                            ) : null}
+                          </>
+                        ) : undefined
+                      }
+                    />
                   );
                 }
 
@@ -1091,80 +1023,73 @@ export default function LibraryPaneBody() {
                 }
                 const href = `/media/${item.media.id}`;
                 return (
-                  <div
-                    className={styles.mediaRow}
-                    data-dragging={isDragging ? "true" : "false"}
-                    role="link"
-                    tabIndex={0}
-                    onClick={(event) =>
-                      handleLibraryEntryRowClick(event, href, item.media.title)
-                    }
-                    onKeyDown={(event) =>
-                      handleLibraryEntryRowKeyDown(
-                        event,
-                        href,
-                        item.media.title,
-                      )
-                    }
-                  >
-                    <div className={styles.mediaRowMain}>
-                      {currentLibrary.role === "admin" && (
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          className={styles.dragHandle}
-                          aria-label={`Reorder ${item.media.title}`}
-                          disabled={reorderBusy}
-                          {...dragHandleBindings}
-                        >
-                          ⋮⋮
-                        </Button>
-                      )}
-                      <div className={styles.mediaLink}>
-                        <span className={styles.mediaTitleRow}>
-                          <Icon size={18} aria-hidden="true" />
-                          <span className={styles.mediaTitle}>
-                            {item.media.title}
-                          </span>
+                  <ResourceRow
+                    as="div"
+                    selected={isDragging}
+                    primary={{
+                      kind: "link",
+                      href,
+                      paneTitleHint: item.media.title,
+                    }}
+                    leading={<Icon size={18} aria-hidden="true" />}
+                    title={item.media.title}
+                    meta={
+                      metaParts.length > 0 || statusLabel ? (
+                        <span className={styles.mediaMetaRow}>
+                          {metaParts.length > 0 ? (
+                            <span className={styles.mediaMeta}>
+                              {metaParts.join(" · ")}
+                            </span>
+                          ) : null}
+                          {statusLabel ? (
+                            <span
+                              className={styles.mediaStatus}
+                              data-status={item.media.processing_status}
+                            >
+                              {statusLabel}
+                            </span>
+                          ) : null}
                         </span>
-                        {hasContributors ||
-                        metaParts.length > 0 ||
-                        statusLabel ? (
-                          <span className={styles.mediaMetaRow}>
-                            <ContributorCreditList
-                              credits={item.media.contributors}
-                              maxVisible={1}
+                      ) : undefined
+                    }
+                    contributors={
+                      hasContributors ? (
+                        <ContributorCreditList
+                          credits={item.media.contributors}
+                          maxVisible={1}
+                        />
+                      ) : undefined
+                    }
+                    actions={
+                      currentLibrary.role === "admin" || rowOptions.length > 0 ? (
+                        <>
+                          {currentLibrary.role === "admin" ? (
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              className={styles.dragHandle}
+                              aria-label={`Reorder ${item.media.title}`}
+                              disabled={reorderBusy}
+                              {...dragHandleBindings}
+                            >
+                              ⋮⋮
+                            </Button>
+                          ) : null}
+                          {rowOptions.length > 0 ? (
+                            <ActionMenu
+                              options={rowOptions}
+                              className={styles.rowActionMenu}
                             />
-                            {metaParts.length > 0 ? (
-                              <span className={styles.mediaMeta}>
-                                {metaParts.join(" · ")}
-                              </span>
-                            ) : null}
-                            {statusLabel ? (
-                              <span
-                                className={styles.mediaStatus}
-                                data-status={item.media.processing_status}
-                              >
-                                {statusLabel}
-                              </span>
-                            ) : null}
-                          </span>
-                        ) : null}
-                      </div>
-                    </div>
-                    {rowOptions.length > 0 ? (
-                      <ActionMenu
-                        options={rowOptions}
-                        className={styles.rowActionMenu}
-                      />
-                    ) : null}
-                  </div>
+                          ) : null}
+                        </>
+                      ) : undefined
+                    }
+                  />
                 );
               }}
             />
-          )}
-        </div>
-      </SectionCard>
+          ) : null}
+      </PaneSurface>
 
       {editOpen && (
         <LibraryEditDialog

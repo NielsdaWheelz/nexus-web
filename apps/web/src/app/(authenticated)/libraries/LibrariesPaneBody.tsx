@@ -14,10 +14,12 @@ import {
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import Pill from "@/components/ui/Pill";
+import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
-import { AppList, AppListItem } from "@/components/ui/AppList";
-import SectionCard from "@/components/ui/SectionCard";
+import PaneSurface from "@/components/ui/PaneSurface";
+import ResourceList from "@/components/ui/ResourceList";
+import ResourceRow from "@/components/ui/ResourceRow";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import LibraryEditDialog from "@/components/LibraryEditDialog";
 import {
@@ -265,8 +267,8 @@ export default function LibrariesPaneBody() {
 
   return (
     <>
-      <SectionCard>
-        <div className={styles.content}>
+      <PaneSurface
+        toolbar={
           <form className={styles.createForm} onSubmit={handleCreateLibrary}>
             <Input
               value={newLibraryName}
@@ -284,25 +286,36 @@ export default function LibrariesPaneBody() {
               {creating ? "Creating..." : "Create"}
             </Button>
           </form>
-
-          {error && <FeedbackNotice {...error} />}
-
-          {loading ? (
-            <PaneLoadingState />
-          ) : libraries.length === 0 ? (
+        }
+        state={
+          error || loading ? (
+            <>
+              {error ? <FeedbackNotice {...error} /> : null}
+              {loading ? <PaneLoadingState /> : null}
+            </>
+          ) : null
+        }
+        empty={
+          !loading && libraries.length === 0 ? (
             <FeedbackNotice
               severity="neutral"
               title="No libraries yet."
               message="Create your first library above."
             />
-          ) : (
-            <AppList>
+          ) : null
+        }
+      >
+        {libraries.length > 0 ? (
+            <ResourceList>
               {libraries.map((library) => (
-                <AppListItem
+                <ResourceRow
                   key={library.id}
-                  href={`/libraries/${library.id}`}
-                  paneTitleHint={library.name}
-                  icon={<LibraryIcon size={18} />}
+                  primary={{
+                    kind: "link",
+                    href: `/libraries/${library.id}`,
+                    paneTitleHint: library.name,
+                  }}
+                  leading={<LibraryIcon size={18} />}
                   title={library.name}
                   meta={
                     library.is_default
@@ -314,24 +327,27 @@ export default function LibrariesPaneBody() {
                       <Pill tone="info">default</Pill>
                     ) : null
                   }
-                  options={libraryResourceOptions({
-                    library,
-                    onViewIntelligence: () => {
-                      openInNewPane?.(
-                        `/libraries/${library.id}`,
-                        library.name,
-                        "library-intelligence",
-                      );
-                    },
-                    onEdit: () => void openEditDialog(library),
-                    onDelete: () => void handleDeleteLibrary(library),
-                  })}
+                  actions={
+                    <ActionMenu
+                      options={libraryResourceOptions({
+                        library,
+                        onViewIntelligence: () => {
+                          openInNewPane?.(
+                            `/libraries/${library.id}`,
+                            library.name,
+                            "library-intelligence",
+                          );
+                        },
+                        onEdit: () => void openEditDialog(library),
+                        onDelete: () => void handleDeleteLibrary(library),
+                      })}
+                    />
+                  }
                 />
               ))}
-            </AppList>
-          )}
-        </div>
-      </SectionCard>
+            </ResourceList>
+          ) : null}
+      </PaneSurface>
 
       {editLibraryForDialog && (
         <LibraryEditDialog

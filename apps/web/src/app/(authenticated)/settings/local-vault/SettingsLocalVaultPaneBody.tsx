@@ -20,8 +20,9 @@ import {
   writeVaultPayload,
   type VaultSyncPayload,
 } from "@/lib/vault/localVault";
-import SectionCard from "@/components/ui/SectionCard";
 import Button from "@/components/ui/Button";
+import PaneSection from "@/components/ui/PaneSection";
+import PaneSurface from "@/components/ui/PaneSurface";
 import Pill from "@/components/ui/Pill";
 import Toggle from "@/components/ui/Toggle";
 import styles from "./page.module.css";
@@ -216,28 +217,33 @@ export default function SettingsLocalVaultPaneBody() {
 
   if (androidShell) {
     return (
-      <SectionCard>
-        <FeedbackNotice severity="info">
-          Local Vault is not available in the Android app. Use a supported desktop browser to
-          connect and sync a local folder.
-        </FeedbackNotice>
-      </SectionCard>
+      <PaneSurface>
+        <PaneSection>
+          <FeedbackNotice severity="info">
+            Local Vault is not available in the Android app. Use a supported desktop browser to
+            connect and sync a local folder.
+          </FeedbackNotice>
+        </PaneSection>
+      </PaneSurface>
     );
   }
 
   if (!supported) {
     return (
-      <SectionCard>
-        <FeedbackNotice severity="error">
-          This browser cannot connect a writable local folder. Use a supported desktop browser.
-        </FeedbackNotice>
-      </SectionCard>
+      <PaneSurface>
+        <PaneSection>
+          <FeedbackNotice severity="error">
+            This browser cannot connect a writable local folder. Use a supported desktop browser.
+          </FeedbackNotice>
+        </PaneSection>
+      </PaneSurface>
     );
   }
 
   return (
-    <SectionCard>
-      <div className={styles.content}>
+    <PaneSurface>
+      <PaneSection>
+        <div className={styles.content}>
         <div className={styles.statusRow}>
           <Pill tone={statusVariant(status)}>{statusLabel(status)}</Pill>
           <span className={styles.statusText}>{message}</span>
@@ -285,7 +291,8 @@ export default function SettingsLocalVaultPaneBody() {
           onCheckedChange={toggleAutoSync}
           label="Auto-sync on app load and when this tab becomes active again"
         />
-      </div>
-    </SectionCard>
+        </div>
+      </PaneSection>
+    </PaneSurface>
   );
 }

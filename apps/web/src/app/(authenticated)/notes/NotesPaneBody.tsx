@@ -4,6 +4,9 @@ import { useCallback, useEffect, useState } from "react";
 import { Plus } from "lucide-react";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
+import PaneSurface from "@/components/ui/PaneSurface";
+import ResourceList from "@/components/ui/ResourceList";
+import ResourceRow from "@/components/ui/ResourceRow";
 import { FeedbackNotice, toFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { notePagesResource, type NoResourceParams } from "@/lib/api/resource";
@@ -65,7 +68,8 @@ export default function NotesPaneBody() {
   }, [router, title]);
 
   return (
-    <div className={styles.shell}>
+    <PaneSurface
+      toolbar={
       <form
         className={styles.toolbar}
         onSubmit={(event) => {
@@ -84,23 +88,32 @@ export default function NotesPaneBody() {
           <Plus size={16} aria-hidden="true" />
         </Button>
       </form>
-
-      {feedback ? <FeedbackNotice {...feedback} /> : null}
-      {loading ? <PaneLoadingState /> : null}
-
-      <div className={styles.pageList}>
+      }
+      state={
+        feedback || loading ? (
+        <>
+          {feedback ? <FeedbackNotice {...feedback} /> : null}
+          {loading ? <PaneLoadingState /> : null}
+        </>
+        ) : null
+      }
+    >
+      {pages.length > 0 ? (
+        <ResourceList>
         {pages.map((page) => (
-          <a
+          <ResourceRow
             key={page.id}
-            className={styles.pageLink}
-            href={`/pages/${page.id}`}
-            data-pane-title-hint={page.title}
-          >
-            <span className={styles.pageTitle}>{page.title}</span>
-            {page.description ? <span className={styles.pageDescription}>{page.description}</span> : null}
-          </a>
+            primary={{
+              kind: "link",
+              href: `/pages/${page.id}`,
+              paneTitleHint: page.title,
+            }}
+            title={page.title}
+            description={page.description}
+          />
         ))}
-      </div>
-    </div>
+        </ResourceList>
+      ) : null}
+    </PaneSurface>
   );
 }

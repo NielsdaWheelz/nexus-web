@@ -2,10 +2,11 @@
 
 import { useCallback, useState, useTransition } from "react";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
-import { AppList, AppListItem } from "@/components/ui/AppList";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import Input from "@/components/ui/Input";
+import ResourceList from "@/components/ui/ResourceList";
+import ResourceRow from "@/components/ui/ResourceRow";
 import {
   findEmailIdentity,
   mayRemovePassword,
@@ -74,9 +75,10 @@ export function PasswordRow({
 
   return (
     <>
-      <AppList>
+      <ResourceList>
         {emailIdentity ? (
-          <AppListItem
+          <ResourceRow
+            primary={{ kind: "static" }}
             title="Password"
             description={`Password is set on ${emailIdentity.email ?? "your account"}`}
             actions={
@@ -116,7 +118,8 @@ export function PasswordRow({
             }
           />
         ) : (
-          <AppListItem
+          <ResourceRow
+            primary={{ kind: "static" }}
             title="Password"
             description="Sign in with email and password"
             actions={
@@ -134,7 +137,7 @@ export function PasswordRow({
             }
           />
         )}
-      </AppList>
+      </ResourceList>
 
       {rowError ? <FeedbackNotice severity="error" title={rowError} /> : null}
 

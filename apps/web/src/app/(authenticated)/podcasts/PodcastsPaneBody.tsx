@@ -16,14 +16,15 @@ import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import Select from "@/components/ui/Select";
-import SectionCard from "@/components/ui/SectionCard";
+import PaneSurface from "@/components/ui/PaneSurface";
+import ResourceList from "@/components/ui/ResourceList";
+import ResourceRow from "@/components/ui/ResourceRow";
 import {
   FeedbackNotice,
   toFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
-import { AppList, AppListItem } from "@/components/ui/AppList";
 import {
   getPodcastSubscriptionSettingsPatch,
   type PodcastLibraryMembership,
@@ -399,8 +400,8 @@ export default function PodcastsPaneBody() {
 
   return (
     <>
-      <SectionCard>
-        <div className={styles.content}>
+      <PaneSurface
+        toolbar={
           <div className={styles.toolbar}>
             <form
               className={styles.searchForm}
@@ -486,31 +487,17 @@ export default function PodcastsPaneBody() {
               />
             </div>
           </div>
-
-          <div className={styles.summaryRow}>
-            <span className={styles.summaryCount}>
-              {pluralize(activeCount, "followed show")}
-            </span>
-            {hasActiveFilters ? (
-              <Button
-                variant="secondary"
-                size="md"
-                onClick={() => {
-                  setSearchText("");
-                  setAppliedSearch("");
-                  setSubscriptionFilter("all");
-                  setSelectedLibraryId("");
-                }}
-              >
-                Clear filters
-              </Button>
-            ) : null}
-          </div>
-
-          {loading ? <PaneLoadingState /> : null}
-          {error ? <FeedbackNotice feedback={error} /> : null}
-
-          {!loading && rows.length === 0 && !error ? (
+        }
+        state={
+          loading || error ? (
+            <>
+              {loading ? <PaneLoadingState /> : null}
+              {error ? <FeedbackNotice feedback={error} /> : null}
+            </>
+          ) : undefined
+        }
+        empty={
+          !loading && rows.length === 0 && !error ? (
             <FeedbackNotice severity="neutral">
               {hasActiveFilters ? (
                 <>
@@ -543,122 +530,13 @@ export default function PodcastsPaneBody() {
                 </>
               )}
             </FeedbackNotice>
-          ) : null}
-
-          {rows.length > 0 ? (
-            <AppList>
-              {rows.map((row) => {
-                const rowBusy = actions.unsubscribingPodcastIds.ids.has(row.podcast_id);
-                const rowRefreshing = actions.refreshingPodcastIds.ids.has(row.podcast_id);
-
-                return (
-                  <AppListItem
-                    key={row.podcast_id}
-                    href={`/podcasts/${row.podcast_id}`}
-                    paneTitleHint={row.podcast.title}
-                    icon={
-                      row.podcast.image_url ? (
-                        <MediaImage
-                          kind="proxied"
-                          remoteUrl={row.podcast.image_url}
-                          alt=""
-                          width={32}
-                          height={32}
-                          className={styles.podcastArtwork}
-                        />
-                      ) : (
-                        <span className={styles.thumbnailFallback}>
-                          {row.podcast.title
-                            .split(/\s+/)
-                            .filter(Boolean)
-                            .slice(0, 2)
-                            .map((part) => part[0]?.toUpperCase() ?? "")
-                            .join("") || "P"}
-                        </span>
-                      )
-                    }
-                    title={row.podcast.title}
-                    description={
-                      <span className={styles.rowDescription}>
-                        <span className={styles.rowSummary}>
-                          {row.podcast.description?.trim() || "No summary from source."}
-                        </span>
-                      </span>
-                    }
-                    meta={
-                      <span className={styles.metaRow}>
-                        <span className={styles.metaBadge}>
-                          {formatLatestEpisodeLabel(
-                            row.latest_episode_published_at,
-                            display,
-                          )}
-                        </span>
-                        {row.default_playback_speed != null ? (
-                          <span className={styles.metaBadge}>
-                            {formatPlaybackSpeedLabel(row.default_playback_speed)} default
-                          </span>
-                        ) : null}
-                        {row.auto_queue ? (
-                          <span className={styles.metaBadge}>Auto-queue</span>
-                        ) : null}
-                        {row.visible_libraries.map((library) => (
-                          <span key={library.id} className={styles.libraryBadge}>
-                            <LibraryColorDot color={library.color} size="sm" />
-                            {library.name}
-                          </span>
-                        ))}
-                        {row.sync_status !== "complete" ? (
-                          <span className={styles.syncBadge}>Sync {row.sync_status}</span>
-                        ) : null}
-                      </span>
-                    }
-                    trailing={
-                      <span className={styles.trailing}>
-                        {row.unplayed_count > 0 ? (
-                          <span className={styles.unplayedBadge}>
-                            {row.unplayed_count} new
-                          </span>
-                        ) : null}
-                      </span>
-                    }
-                    actions={
-                      row.podcast.contributors.length > 0 ? (
-                        <ContributorCreditList
-                          credits={row.podcast.contributors}
-                          className={styles.rowAuthor}
-                          maxVisible={2}
-                        />
-                      ) : undefined
-                    }
-                    options={podcastResourceOptions({
-                      canUsePodcastActions: true,
-                      busy: rowBusy,
-                      refreshBusy: rowRefreshing,
-                      unsubscribeBusy: rowBusy,
-                      onManageLibraries: ({ triggerEl }) => {
-                        setMembershipPanelPodcastId(row.podcast_id);
-                        setMembershipPanelTriggerEl(triggerEl);
-                        void ensurePodcastLibrariesLoaded(row.podcast_id);
-                      },
-                      onOpenSettings: () => settingsModal.open(row),
-                      onRefreshSync: () => {
-                        void refreshPodcastSync(row.podcast_id);
-                      },
-                      onUnsubscribe: () => {
-                        void unsubscribePodcast(row);
-                      },
-                    })}
-                  />
-                );
-              })}
-            </AppList>
-          ) : null}
-
-          {hasMore ? (
+          ) : undefined
+        }
+        footer={
+          hasMore ? (
             <Button
               variant="secondary"
               size="md"
-              className={styles.loadMoreButton}
               onClick={() => {
                 void loadMoreSubscriptions();
               }}
@@ -666,9 +544,145 @@ export default function PodcastsPaneBody() {
             >
               {loadingMore ? "Loading..." : "Load more"}
             </Button>
+          ) : undefined
+        }
+      >
+        <div className={styles.summaryRow}>
+          <span className={styles.summaryCount}>
+            {pluralize(activeCount, "followed show")}
+          </span>
+          {hasActiveFilters ? (
+            <Button
+              variant="secondary"
+              size="md"
+              onClick={() => {
+                setSearchText("");
+                setAppliedSearch("");
+                setSubscriptionFilter("all");
+                setSelectedLibraryId("");
+              }}
+            >
+              Clear filters
+            </Button>
           ) : null}
         </div>
-      </SectionCard>
+
+        {rows.length > 0 ? (
+          <ResourceList>
+            {rows.map((row) => {
+              const rowBusy = actions.unsubscribingPodcastIds.ids.has(row.podcast_id);
+              const rowRefreshing = actions.refreshingPodcastIds.ids.has(row.podcast_id);
+
+              return (
+                <ResourceRow
+                  key={row.podcast_id}
+                  primary={{
+                    kind: "link",
+                    href: `/podcasts/${row.podcast_id}`,
+                    paneTitleHint: row.podcast.title,
+                  }}
+                  leading={
+                    row.podcast.image_url ? (
+                      <MediaImage
+                        kind="proxied"
+                        remoteUrl={row.podcast.image_url}
+                        alt=""
+                        width={32}
+                        height={32}
+                        className={styles.podcastArtwork}
+                      />
+                    ) : (
+                      <span className={styles.thumbnailFallback}>
+                        {row.podcast.title
+                          .split(/\s+/)
+                          .filter(Boolean)
+                          .slice(0, 2)
+                          .map((part) => part[0]?.toUpperCase() ?? "")
+                          .join("") || "P"}
+                      </span>
+                    )
+                  }
+                  title={row.podcast.title}
+                  description={
+                    <span className={styles.rowDescription}>
+                      <span className={styles.rowSummary}>
+                        {row.podcast.description?.trim() || "No summary from source."}
+                      </span>
+                    </span>
+                  }
+                  meta={
+                    <span className={styles.metaRow}>
+                      <span className={styles.metaBadge}>
+                        {formatLatestEpisodeLabel(
+                          row.latest_episode_published_at,
+                          display,
+                        )}
+                      </span>
+                      {row.default_playback_speed != null ? (
+                        <span className={styles.metaBadge}>
+                          {formatPlaybackSpeedLabel(row.default_playback_speed)} default
+                        </span>
+                      ) : null}
+                      {row.auto_queue ? (
+                        <span className={styles.metaBadge}>Auto-queue</span>
+                      ) : null}
+                      {row.visible_libraries.map((library) => (
+                        <span key={library.id} className={styles.libraryBadge}>
+                          <LibraryColorDot color={library.color} size="sm" />
+                          {library.name}
+                        </span>
+                      ))}
+                      {row.sync_status !== "complete" ? (
+                        <span className={styles.syncBadge}>Sync {row.sync_status}</span>
+                      ) : null}
+                    </span>
+                  }
+                  trailing={
+                    <span className={styles.trailing}>
+                      {row.unplayed_count > 0 ? (
+                        <span className={styles.unplayedBadge}>
+                          {row.unplayed_count} new
+                        </span>
+                      ) : null}
+                    </span>
+                  }
+                  contributors={
+                    row.podcast.contributors.length > 0 ? (
+                      <ContributorCreditList
+                        credits={row.podcast.contributors}
+                        className={styles.rowAuthor}
+                        maxVisible={2}
+                      />
+                    ) : undefined
+                  }
+                  actions={
+                    <ActionMenu
+                      options={podcastResourceOptions({
+                        canUsePodcastActions: true,
+                        busy: rowBusy,
+                        refreshBusy: rowRefreshing,
+                        unsubscribeBusy: rowBusy,
+                        onManageLibraries: ({ triggerEl }) => {
+                          setMembershipPanelPodcastId(row.podcast_id);
+                          setMembershipPanelTriggerEl(triggerEl);
+                          void ensurePodcastLibrariesLoaded(row.podcast_id);
+                        },
+                        onOpenSettings: () => settingsModal.open(row),
+                        onRefreshSync: () => {
+                          void refreshPodcastSync(row.podcast_id);
+                        },
+                        onUnsubscribe: () => {
+                          void unsubscribePodcast(row);
+                        },
+                      })}
+                    />
+                  }
+                />
+              );
+            })}
+          </ResourceList>
+        ) : null}
+      </PaneSurface>
 
       <LibraryMembershipPanel
         open={membershipPanelPodcastId !== null}

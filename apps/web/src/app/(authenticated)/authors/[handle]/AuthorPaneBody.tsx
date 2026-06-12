@@ -7,8 +7,9 @@ import {
   toFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
-import SectionCard from "@/components/ui/SectionCard";
-import { AppList, AppListItem } from "@/components/ui/AppList";
+import PaneSurface from "@/components/ui/PaneSurface";
+import ResourceList from "@/components/ui/ResourceList";
+import ResourceRow from "@/components/ui/ResourceRow";
 import Pill from "@/components/ui/Pill";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
@@ -340,309 +341,313 @@ export default function AuthorPaneBody() {
     data && handle && handle !== data.contributor.handle ? handle : null;
 
   return (
-    <SectionCard>
-      <div className={styles.content}>
-        {loading ? <PaneLoadingState /> : null}
-        {error ? <FeedbackNotice feedback={error} /> : null}
-
-        {data ? (
+    <PaneSurface
+      state={
+        loading || error ? (
           <>
-            <header className={styles.header}>
-              <div className={styles.avatar} aria-hidden="true">
-                <UserRound size={24} />
-              </div>
-              <div className={styles.identity}>
-                <h1 className={styles.name}>{data.contributor.display_name}</h1>
-                <div className={styles.identityMeta}>
-                  {data.contributor.sort_name ? (
-                    <span>{data.contributor.sort_name}</span>
-                  ) : null}
-                  {data.contributor.status ? (
-                    <Pill tone="neutral">{data.contributor.status}</Pill>
-                  ) : null}
-                  {data.contributor.kind ? (
-                    <span>{data.contributor.kind.replace(/_/g, " ")}</span>
-                  ) : null}
-                  {formerlyHandle ? (
-                    <span className={styles.formerly}>Formerly {formerlyHandle}</span>
-                  ) : null}
-                </div>
-                {data.contributor.disambiguation ? (
-                  <p className={styles.disambiguation}>
-                    {data.contributor.disambiguation}
-                  </p>
+            {loading ? <PaneLoadingState /> : null}
+            {error ? <FeedbackNotice feedback={error} /> : null}
+          </>
+        ) : null
+      }
+    >
+      {data ? (
+        <>
+          <header className={styles.header}>
+            <div className={styles.avatar} aria-hidden="true">
+              <UserRound size={24} />
+            </div>
+            <div className={styles.identity}>
+              <h1 className={styles.name}>{data.contributor.display_name}</h1>
+              <div className={styles.identityMeta}>
+                {data.contributor.sort_name ? (
+                  <span>{data.contributor.sort_name}</span>
                 ) : null}
-                <div className={styles.headerActions}>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => setMergeOpen(true)}
-                    disabled={busy}
-                  >
-                    Merge into…
-                  </Button>
-                  <Button
-                    variant="danger"
-                    size="sm"
-                    onClick={() =>
-                      void runMutation(
-                        () => tombstoneContributor(data.contributor.handle),
-                        "Failed to tombstone author",
-                      )
-                    }
-                    disabled={busy}
-                  >
-                    Tombstone
-                  </Button>
-                </div>
+                {data.contributor.status ? (
+                  <Pill tone="neutral">{data.contributor.status}</Pill>
+                ) : null}
+                {data.contributor.kind ? (
+                  <span>{data.contributor.kind.replace(/_/g, " ")}</span>
+                ) : null}
+                {formerlyHandle ? (
+                  <span className={styles.formerly}>Formerly {formerlyHandle}</span>
+                ) : null}
               </div>
-            </header>
+              {data.contributor.disambiguation ? (
+                <p className={styles.disambiguation}>
+                  {data.contributor.disambiguation}
+                </p>
+              ) : null}
+              <div className={styles.headerActions}>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setMergeOpen(true)}
+                  disabled={busy}
+                >
+                  Merge into…
+                </Button>
+                <Button
+                  variant="danger"
+                  size="sm"
+                  onClick={() =>
+                    void runMutation(
+                      () => tombstoneContributor(data.contributor.handle),
+                      "Failed to tombstone author",
+                    )
+                  }
+                  disabled={busy}
+                >
+                  Tombstone
+                </Button>
+              </div>
+            </div>
+          </header>
 
-            {/* split UI deferred */}
-            <div className={styles.identityDetails}>
-              <section>
-                <h2>Aliases</h2>
-                <div className={styles.pillRow}>
-                  {data.aliases.map((alias, index) => (
-                    <span
-                      key={alias.id ?? `${alias.alias}-${index}`}
-                      className={styles.removablePill}
-                    >
-                      {alias.alias}
-                      {alias.id ? (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          aria-label={`Remove alias ${alias.alias}`}
-                          disabled={busy}
-                          onClick={() =>
-                            void runMutation(
-                              () =>
-                                deleteContributorAlias(
-                                  data.contributor.handle,
-                                  alias.id as string,
-                                ),
-                              "Failed to remove alias",
-                            )
-                          }
-                        >
-                          <X size={12} aria-hidden="true" />
-                        </Button>
-                      ) : null}
-                    </span>
-                  ))}
-                </div>
-                <div className={styles.inlineForm}>
-                  <Input
-                    aria-label="New alias"
-                    value={aliasDraft}
-                    placeholder="Add alias…"
-                    className={styles.inlineFormInput}
-                    onChange={(event) => setAliasDraft(event.target.value)}
-                  />
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    disabled={busy || !aliasDraft.trim()}
-                    onClick={() => void handleAddAlias()}
+          {/* split UI deferred */}
+          <div className={styles.identityDetails}>
+            <section>
+              <h2>Aliases</h2>
+              <div className={styles.pillRow}>
+                {data.aliases.map((alias, index) => (
+                  <span
+                    key={alias.id ?? `${alias.alias}-${index}`}
+                    className={styles.removablePill}
                   >
-                    Add
-                  </Button>
-                </div>
-              </section>
-              <section>
-                <h2>Authority IDs</h2>
-                <div className={styles.pillRow}>
-                  {data.externalIds.map((externalId, index) => (
-                    <span
-                      key={
-                        externalId.id ??
-                        `${externalId.authority}-${externalId.external_key}-${index}`
-                      }
-                      className={styles.removablePill}
-                    >
-                      {externalId.external_url ? (
-                        <a
-                          href={externalId.external_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className={styles.detailPill}
-                        >
-                          {externalId.authority}
-                          <ExternalLink size={12} aria-hidden="true" />
-                        </a>
-                      ) : (
-                        externalId.authority
-                      )}
-                      {externalId.id ? (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          aria-label={`Remove authority ID ${externalId.authority}`}
-                          disabled={busy}
-                          onClick={() =>
-                            void runMutation(
-                              () =>
-                                deleteContributorExternalId(
-                                  data.contributor.handle,
-                                  externalId.id as string,
-                                ),
-                              "Failed to remove authority ID",
-                            )
-                          }
-                        >
-                          <X size={12} aria-hidden="true" />
-                        </Button>
-                      ) : null}
-                    </span>
-                  ))}
-                </div>
-                <div className={styles.inlineForm}>
-                  <Input
-                    aria-label="New authority"
-                    value={authorityDraft}
-                    placeholder="Authority…"
-                    className={styles.inlineFormInput}
-                    onChange={(event) => setAuthorityDraft(event.target.value)}
-                  />
-                  <Input
-                    aria-label="New authority key"
-                    value={externalKeyDraft}
-                    placeholder="External key…"
-                    className={styles.inlineFormInput}
-                    onChange={(event) => setExternalKeyDraft(event.target.value)}
-                  />
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    disabled={busy || !authorityDraft.trim() || !externalKeyDraft.trim()}
-                    onClick={() => void handleAddExternalId()}
+                    {alias.alias}
+                    {alias.id ? (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        aria-label={`Remove alias ${alias.alias}`}
+                        disabled={busy}
+                        onClick={() =>
+                          void runMutation(
+                            () =>
+                              deleteContributorAlias(
+                                data.contributor.handle,
+                                alias.id as string,
+                              ),
+                            "Failed to remove alias",
+                          )
+                        }
+                      >
+                        <X size={12} aria-hidden="true" />
+                      </Button>
+                    ) : null}
+                  </span>
+                ))}
+              </div>
+              <div className={styles.inlineForm}>
+                <Input
+                  aria-label="New alias"
+                  value={aliasDraft}
+                  placeholder="Add alias…"
+                  className={styles.inlineFormInput}
+                  onChange={(event) => setAliasDraft(event.target.value)}
+                />
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={busy || !aliasDraft.trim()}
+                  onClick={() => void handleAddAlias()}
+                >
+                  Add
+                </Button>
+              </div>
+            </section>
+            <section>
+              <h2>Authority IDs</h2>
+              <div className={styles.pillRow}>
+                {data.externalIds.map((externalId, index) => (
+                  <span
+                    key={
+                      externalId.id ??
+                      `${externalId.authority}-${externalId.external_key}-${index}`
+                    }
+                    className={styles.removablePill}
                   >
-                    Add
-                  </Button>
-                </div>
-              </section>
+                    {externalId.external_url ? (
+                      <a
+                        href={externalId.external_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className={styles.detailPill}
+                      >
+                        {externalId.authority}
+                        <ExternalLink size={12} aria-hidden="true" />
+                      </a>
+                    ) : (
+                      externalId.authority
+                    )}
+                    {externalId.id ? (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        aria-label={`Remove authority ID ${externalId.authority}`}
+                        disabled={busy}
+                        onClick={() =>
+                          void runMutation(
+                            () =>
+                              deleteContributorExternalId(
+                                data.contributor.handle,
+                                externalId.id as string,
+                              ),
+                            "Failed to remove authority ID",
+                          )
+                        }
+                      >
+                        <X size={12} aria-hidden="true" />
+                      </Button>
+                    ) : null}
+                  </span>
+                ))}
+              </div>
+              <div className={styles.inlineForm}>
+                <Input
+                  aria-label="New authority"
+                  value={authorityDraft}
+                  placeholder="Authority…"
+                  className={styles.inlineFormInput}
+                  onChange={(event) => setAuthorityDraft(event.target.value)}
+                />
+                <Input
+                  aria-label="New authority key"
+                  value={externalKeyDraft}
+                  placeholder="External key…"
+                  className={styles.inlineFormInput}
+                  onChange={(event) => setExternalKeyDraft(event.target.value)}
+                />
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={busy || !authorityDraft.trim() || !externalKeyDraft.trim()}
+                  onClick={() => void handleAddExternalId()}
+                >
+                  Add
+                </Button>
+              </div>
+            </section>
+          </div>
+
+          <section className={styles.worksSection}>
+            <div className={styles.worksHeader}>
+              <h2>Works</h2>
+              <a
+                href={`/search?authors=${encodeURIComponent(
+                  data.contributor.handle,
+                )}`}
+                onClick={(event) => {
+                  event.preventDefault();
+                  paneRouter.push(
+                    `/search?authors=${encodeURIComponent(
+                      data.contributor.handle,
+                    )}`,
+                  );
+                }}
+              >
+                Search this author&apos;s works
+              </a>
+            </div>
+            <div className={styles.workToolbar}>
+              <label>
+                <span>Search works</span>
+                <Input
+                  type="search"
+                  value={queryFilter}
+                  onChange={(event) => setQueryFilter(event.target.value)}
+                  placeholder="Filter credited works..."
+                  className={styles.workSearchInput}
+                />
+              </label>
+              <label>
+                <span>Role</span>
+                <Select
+                  value={roleFilter}
+                  onChange={(event) => setRoleFilter(event.target.value)}
+                >
+                  <option value="">All roles</option>
+                  {roleOptions.map((role) => (
+                    <option key={role} value={role}>
+                      {formatContributorRole(role)}
+                    </option>
+                  ))}
+                </Select>
+              </label>
+              <label>
+                <span>Kind</span>
+                <Select
+                  value={kindFilter}
+                  onChange={(event) => setKindFilter(event.target.value)}
+                >
+                  <option value="">All kinds</option>
+                  {kindOptions.map((kind) => (
+                    <option key={kind} value={kind}>
+                      {formatContentKind(kind)}
+                    </option>
+                  ))}
+                </Select>
+              </label>
             </div>
 
-            <section className={styles.worksSection}>
-              <div className={styles.worksHeader}>
-                <h2>Works</h2>
-                <a
-                  href={`/search?authors=${encodeURIComponent(
-                    data.contributor.handle,
-                  )}`}
-                  onClick={(event) => {
-                    event.preventDefault();
-                    paneRouter.push(
-                      `/search?authors=${encodeURIComponent(
-                        data.contributor.handle,
-                      )}`,
-                    );
-                  }}
-                >
-                  Search this author&apos;s works
-                </a>
-              </div>
-              <div className={styles.workToolbar}>
-                <label>
-                  <span>Search works</span>
-                  <Input
-                    type="search"
-                    value={queryFilter}
-                    onChange={(event) => setQueryFilter(event.target.value)}
-                    placeholder="Filter credited works..."
-                    className={styles.workSearchInput}
+            {visibleWorks.length === 0 ? (
+              <FeedbackNotice severity="neutral">
+                No visible credited works match the current filters.
+              </FeedbackNotice>
+            ) : (
+              <ResourceList>
+                {visibleWorks.map((work) => (
+                  <ResourceRow
+                    key={`${work.route}-${work.object_id}`}
+                    primary={{ kind: "link", href: work.route }}
+                    title={work.title}
+                    description={formatWorkKind(work)}
+                    meta={buildWorkMeta(work)}
                   />
-                </label>
-                <label>
-                  <span>Role</span>
-                  <Select
-                    value={roleFilter}
-                    onChange={(event) => setRoleFilter(event.target.value)}
-                  >
-                    <option value="">All roles</option>
-                    {roleOptions.map((role) => (
-                      <option key={role} value={role}>
-                        {formatContributorRole(role)}
-                      </option>
-                    ))}
-                  </Select>
-                </label>
-                <label>
-                  <span>Kind</span>
-                  <Select
-                    value={kindFilter}
-                    onChange={(event) => setKindFilter(event.target.value)}
-                  >
-                    <option value="">All kinds</option>
-                    {kindOptions.map((kind) => (
-                      <option key={kind} value={kind}>
-                        {formatContentKind(kind)}
-                      </option>
-                    ))}
-                  </Select>
-                </label>
-              </div>
+                ))}
+              </ResourceList>
+            )}
+          </section>
 
-              {visibleWorks.length === 0 ? (
-                <FeedbackNotice severity="neutral">
-                  No visible credited works match the current filters.
-                </FeedbackNotice>
-              ) : (
-                <AppList>
-                  {visibleWorks.map((work) => (
-                    <AppListItem
-                      key={`${work.route}-${work.object_id}`}
-                      href={work.route}
-                      title={work.title}
-                      description={formatWorkKind(work)}
-                      meta={buildWorkMeta(work)}
-                    />
-                  ))}
-                </AppList>
-              )}
-            </section>
-
-            {mergeOpen ? (
+          {mergeOpen ? (
+            <div
+              className={styles.modalBackdrop}
+              role="presentation"
+              onClick={() => setMergeOpen(false)}
+            >
               <div
-                className={styles.modalBackdrop}
-                role="presentation"
-                onClick={() => setMergeOpen(false)}
+                ref={mergeCardRef}
+                className={styles.modalCard}
+                role="dialog"
+                aria-modal="true"
+                aria-label="Merge author"
+                onClick={(event) => event.stopPropagation()}
               >
-                <div
-                  ref={mergeCardRef}
-                  className={styles.modalCard}
-                  role="dialog"
-                  aria-modal="true"
-                  aria-label="Merge author"
-                  onClick={(event) => event.stopPropagation()}
-                >
-                  <h2 className={styles.modalTitle}>Merge into…</h2>
-                  <p className={styles.modalDescription}>
-                    Pick the author to merge <strong>{data.contributor.display_name}</strong>{" "}
-                    into. Credits, aliases, and authority IDs move to the survivor.
-                  </p>
-                  <ContributorPicker
-                    excludeHandle={data.contributor.handle}
-                    onSelect={(target) => void handleMergeSelect(target)}
-                    busy={busy}
-                  />
-                  <div className={styles.modalActions}>
-                    <Button
-                      variant="secondary"
-                      size="md"
-                      onClick={() => setMergeOpen(false)}
-                      disabled={busy}
-                    >
-                      Cancel
-                    </Button>
-                  </div>
+                <h2 className={styles.modalTitle}>Merge into…</h2>
+                <p className={styles.modalDescription}>
+                  Pick the author to merge <strong>{data.contributor.display_name}</strong>{" "}
+                  into. Credits, aliases, and authority IDs move to the survivor.
+                </p>
+                <ContributorPicker
+                  excludeHandle={data.contributor.handle}
+                  onSelect={(target) => void handleMergeSelect(target)}
+                  busy={busy}
+                />
+                <div className={styles.modalActions}>
+                  <Button
+                    variant="secondary"
+                    size="md"
+                    onClick={() => setMergeOpen(false)}
+                    disabled={busy}
+                  >
+                    Cancel
+                  </Button>
                 </div>
               </div>
-            ) : null}
-          </>
-        ) : null}
-      </div>
-    </SectionCard>
+            </div>
+          ) : null}
+        </>
+      ) : null}
+    </PaneSurface>
   );
 }

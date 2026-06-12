@@ -14,7 +14,8 @@ import {
   toFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
-import SectionCard from "@/components/ui/SectionCard";
+import PaneSurface from "@/components/ui/PaneSurface";
+import ResourceList from "@/components/ui/ResourceList";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import ActionMenu from "@/components/ui/ActionMenu";
@@ -221,10 +222,33 @@ export default function SearchPaneBody() {
   };
 
   const filtersActive = hasActiveFilters(query);
+  const state =
+    error || (!hasSearched && !searching) || searching ? (
+      <>
+        {error ? <FeedbackNotice feedback={error} /> : null}
+        {!hasSearched && !searching ? (
+          <FeedbackNotice severity="info">
+            Search everything in your Nexus. Narrow with the kind chips or filters.
+          </FeedbackNotice>
+        ) : null}
+        {searching ? <FeedbackNotice severity="info">Searching…</FeedbackNotice> : null}
+      </>
+    ) : null;
+  const empty =
+    hasSearched && results.length === 0 && !searching ? (
+      <div className={styles.emptyResults}>
+        <FeedbackNotice severity="neutral">No results found.</FeedbackNotice>
+        {filtersActive ? (
+          <Button variant="secondary" size="md" onClick={clearAllFilters}>
+            Clear filters
+          </Button>
+        ) : null}
+      </div>
+    ) : null;
 
   return (
-    <SectionCard>
-      <div className={styles.content}>
+    <PaneSurface
+      toolbar={
         <div className={styles.searchForm}>
           <Input
             aria-label="Search content"
@@ -264,48 +288,29 @@ export default function SearchPaneBody() {
             onClearAll={clearAllFilters}
           />
         </div>
-
-        {error ? <FeedbackNotice feedback={error} /> : null}
-
-        {!hasSearched && !searching && (
-          <FeedbackNotice severity="info">
-            Search everything in your Nexus. Narrow with the kind chips or filters.
-          </FeedbackNotice>
-        )}
-
-        {hasSearched && results.length === 0 && !searching && (
-          <div className={styles.emptyResults}>
-            <FeedbackNotice severity="neutral">No results found.</FeedbackNotice>
-            {filtersActive && (
-              <Button variant="secondary" size="md" onClick={clearAllFilters}>
-                Clear filters
-              </Button>
-            )}
-          </div>
-        )}
-
-        {searching && <FeedbackNotice severity="info">Searching…</FeedbackNotice>}
-
-        {results.length > 0 && (
-          <div className={styles.resultRows}>
-            {results.map((result) => (
-              <SearchResultRow key={result.key} row={result} />
-            ))}
-          </div>
-        )}
-
-        {nextCursor && (
+      }
+      state={state}
+      empty={empty}
+      footer={
+        nextCursor ? (
           <Button
             variant="secondary"
             size="md"
-            className={styles.loadMore}
             onClick={() => runSearch(nextCursor)}
             disabled={searching}
           >
             Load more
           </Button>
-        )}
-      </div>
-    </SectionCard>
+        ) : null
+      }
+    >
+      {results.length > 0 ? (
+        <ResourceList>
+          {results.map((result) => (
+            <SearchResultRow key={result.key} row={result} />
+          ))}
+        </ResourceList>
+      ) : null}
+    </PaneSurface>
   );
 }

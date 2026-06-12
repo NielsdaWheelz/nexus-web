@@ -16,7 +16,8 @@ import {
 } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
-import SectionCard from "@/components/ui/SectionCard";
+import PaneSection from "@/components/ui/PaneSection";
+import PaneSurface from "@/components/ui/PaneSurface";
 import {
   DISPLAY_NAME_CHANGE_FAILURE_MESSAGE,
   DISPLAY_NAME_CHANGE_SUCCESS_MESSAGE,
@@ -142,8 +143,8 @@ export default function SettingsAccountPaneBody() {
   );
 
   return (
-    <div className={styles.content}>
-      <SectionCard title="Email">
+    <PaneSurface>
+      <PaneSection title="Email">
         <form className={styles.form} onSubmit={handleEmailSubmit}>
           {emailFeedback ? <FeedbackNotice feedback={emailFeedback} /> : null}
           <p className={styles.current}>Current: {currentEmail}</p>
@@ -170,9 +171,9 @@ export default function SettingsAccountPaneBody() {
             Update email
           </Button>
         </form>
-      </SectionCard>
+      </PaneSection>
 
-      <SectionCard title="Display name">
+      <PaneSection title="Display name">
         <form className={styles.form} onSubmit={handleDisplayNameSubmit}>
           {displayNameFeedback ? (
             <FeedbackNotice feedback={displayNameFeedback} />
@@ -206,7 +207,7 @@ export default function SettingsAccountPaneBody() {
             Update display name
           </Button>
         </form>
-      </SectionCard>
-    </div>
+      </PaneSection>
+    </PaneSurface>
   );
 }

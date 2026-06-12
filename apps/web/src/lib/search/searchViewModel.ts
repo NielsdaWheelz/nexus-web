@@ -161,9 +161,12 @@ function getContributorCredits(result: SearchApiResult): ContributorCredit[] {
 export function adaptSearchResultRow(
   result: SearchApiResult,
 ): SearchResultRowViewModel {
+  const primaryText = buildPrimaryText(result);
+
   return {
     key: `${result.type}-${result.id}`,
     href: result.deep_link,
+    paneTitleHint: primaryText,
     type: result.type,
     mediaId: result.media_id,
     contextRef: {
@@ -188,7 +191,7 @@ export function adaptSearchResultRow(
             : result.type === "web_result"
               ? "web result"
             : result.type,
-    primaryText: buildPrimaryText(result),
+    primaryText,
     snippetSegments: parseSnippetSegments(result.snippet),
     sourceMeta: buildSourceMeta(result),
     contributorCredits: getContributorCredits(result),
