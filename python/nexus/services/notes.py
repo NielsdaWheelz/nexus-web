@@ -23,7 +23,6 @@ from nexus.db.models import (
     Page,
     PageDocumentMutation,
     PinnedObjectRef,
-    ResourceEdge,
 )
 from nexus.db.retries import retry_serializable
 from nexus.errors import ApiError, ApiErrorCode, ConflictError, NotFoundError
@@ -48,6 +47,7 @@ from nexus.services.content_indexing import IndexOwner, delete_content_index
 from nexus.services.highlight_access import get_highlight_for_visible_read_or_404
 from nexus.services.note_indexing import enqueue_page_reindex
 from nexus.services.resource_graph import documents as graph_documents
+from nexus.services.resource_graph import highlight_notes as graph_highlight_notes
 from nexus.services.resource_graph import tags as graph_tags
 from nexus.services.resource_graph.cleanup import delete_edges_for_deleted_resource
 from nexus.services.resource_graph.edges import create_edge
@@ -1178,19 +1178,8 @@ def _delete_object_edges(db: Session, scheme: ResourceScheme, object_id: UUID) -
 def _first_highlight_note_block(
     db: Session, viewer_id: UUID, highlight_id: UUID
 ) -> NoteBlock | None:
-    return db.scalar(
-        select(NoteBlock)
-        .join(
-            ResourceEdge,
-            (ResourceEdge.target_scheme == "note_block") & (ResourceEdge.target_id == NoteBlock.id),
-        )
-        .where(
-            ResourceEdge.user_id == viewer_id,
-            ResourceEdge.origin == "highlight_note",
-            ResourceEdge.source_scheme == "highlight",
-            ResourceEdge.source_id == highlight_id,
-        )
-        .order_by(ResourceEdge.created_at.asc(), ResourceEdge.id.asc(), NoteBlock.id.asc())
+    return graph_highlight_notes.first_note_block_for_highlight(
+        db, viewer_id=viewer_id, highlight_id=highlight_id
     )
 
 

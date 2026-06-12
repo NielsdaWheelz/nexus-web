@@ -1266,7 +1266,7 @@ logic.
 - `apps/web/src/components/PdfReader.tsx`
 - `apps/web/src/lib/highlights/api.ts`
 - `apps/web/src/components/reader/toAnchoredHighlightRow.ts`
-- `apps/web/src/components/reader/useAnchoredHighlightProjection.ts`
+- `apps/web/src/components/reader/useAnchoredReaderProjection.ts`
 - `apps/web/src/lib/notes/api.ts`
 - `apps/web/src/app/(authenticated)/notes/NotesPaneBody.tsx`
 - `apps/web/src/app/(authenticated)/pages/[pageId]/PagePaneBody.tsx`

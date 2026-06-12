@@ -29,13 +29,20 @@ from nexus.schemas.notes import (
 from nexus.services import notes, object_refs
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.contributor_credits import replace_media_contributor_credits
-from nexus.services.highlight_notes import linked_note_blocks_for_highlights
 from nexus.services.note_indexing import rebuild_page_content_index
 from nexus.services.notes import markdown_from_pm_json, text_from_pm_json
 from nexus.services.resource_graph import documents as graph_documents
-from nexus.services.resource_graph.edges import create_edge, list_edges_for_ref
+from nexus.services.resource_graph.connections import query_connections
+from nexus.services.resource_graph.edges import create_edge
+from nexus.services.resource_graph.highlight_notes import linked_note_blocks_for_highlights
 from nexus.services.resource_graph.refs import ResourceRef
-from nexus.services.resource_graph.schemas import EdgeCreate, EdgeOut
+from nexus.services.resource_graph.schemas import (
+    ConnectionFilters,
+    ConnectionQuery,
+    EdgeCreate,
+    EdgeOrigin,
+    EdgeOut,
+)
 from nexus.services.search.service import get_search_result
 from tests.factories import (
     add_library_member,
@@ -109,13 +116,55 @@ def _note_body_edges(db, viewer_id, block_id: UUID) -> list[EdgeOut]:
     source = ResourceRef(scheme="note_block", id=block_id)
     return [
         edge
-        for edge in list_edges_for_ref(db, viewer_id=viewer_id, ref=source, origin="note_body")
+        for edge in _connection_edges(db, viewer_id=viewer_id, ref=source, origin="note_body")
         if edge.source == source
     ]
 
 
 def _note_body_targets(db, viewer_id, block_id: UUID) -> set[str]:
     return {edge.target.uri for edge in _note_body_edges(db, viewer_id, block_id)}
+
+
+def _connection_edges(
+    db,
+    *,
+    viewer_id: UUID,
+    ref: ResourceRef,
+    origin: EdgeOrigin | None = None,
+) -> list[EdgeOut]:
+    out: list[EdgeOut] = []
+    cursor = None
+    while True:
+        page = query_connections(
+            db,
+            viewer_id=viewer_id,
+            query=ConnectionQuery(
+                refs=(ref,),
+                direction="both",
+                rollup="exact",
+                filters=ConnectionFilters(origins=(origin,) if origin is not None else None),
+                limit=100,
+                cursor=cursor,
+            ),
+        )
+        out.extend(
+            EdgeOut(
+                id=edge.edge_id,
+                source=edge.source_ref,
+                target=edge.target_ref,
+                kind=edge.kind,
+                origin=edge.origin,
+                source_order_key=edge.source_order_key,
+                target_order_key=edge.target_order_key,
+                ordinal=edge.ordinal,
+                snapshot=edge.snapshot,
+                created_at=edge.created_at,
+            )
+            for edge in page.items
+        )
+        if page.next_cursor is None:
+            return out
+        cursor = page.next_cursor
 
 
 def _paragraph_text(text_value: str) -> dict:
@@ -321,7 +370,7 @@ def test_nested_note_create_move_and_delete_cleanup(db_session, bootstrapped_use
 
     with pytest.raises(NotFoundError):
         notes.get_note_block(db_session, bootstrapped_user, child_two.id)
-    remaining = list_edges_for_ref(
+    remaining = _connection_edges(
         db_session, viewer_id=bootstrapped_user, ref=ResourceRef(scheme="page", id=page.id)
     )
     remaining_by_origin: dict[str, list[EdgeOut]] = {}
@@ -1246,7 +1295,7 @@ def test_shared_reader_can_attach_own_note_to_visible_highlight(db_session):
     )
 
     assert block.body_text == "Reader-owned note"
-    edges = list_edges_for_ref(
+    edges = _connection_edges(
         db_session,
         viewer_id=reader_id,
         ref=ResourceRef(scheme="highlight", id=highlight_id),
@@ -1442,7 +1491,7 @@ def test_body_sync_replace_sets_only_its_origin_scope(db_session, bootstrapped_u
     assert _note_body_targets(db_session, bootstrapped_user, block.id) == {
         f"page:{second_target.id}"
     }
-    survivors = list_edges_for_ref(db_session, viewer_id=bootstrapped_user, ref=block_ref)
+    survivors = _connection_edges(db_session, viewer_id=bootstrapped_user, ref=block_ref)
     by_origin: dict[str, list[EdgeOut]] = {}
     for edge in survivors:
         by_origin.setdefault(edge.origin, []).append(edge)

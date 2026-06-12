@@ -171,21 +171,23 @@ class TestCreateConversation:
             rows = session.execute(
                 text(
                     """
-                    SELECT target_scheme, target_id
+                    SELECT target_scheme, target_id, source_order_key
                     FROM resource_edges
                     WHERE source_scheme = 'conversation' AND source_id = :conversation_id
                       AND kind = 'context'
+                    ORDER BY source_order_key ASC
                     """
                 ),
                 {"conversation_id": conversation_id},
             ).all()
-            # Both refs are inserted in one create-time transaction (AC-4). They
-            # share the transaction `created_at`, so relative row order is decided
-            # by the random `gen_random_uuid()` id tiebreak — assert membership,
-            # not a stable sequence.
-            assert {f"{scheme}:{tid}" for scheme, tid in rows} == {artifact_uri, library_uri}, (
-                "Both refs must be inserted in one create-time transaction (AC-4)"
-            )
+            assert [f"{scheme}:{tid}" for scheme, tid, _order_key in rows] == [
+                artifact_uri,
+                library_uri,
+            ], "Both refs must be inserted in one create-time transaction (AC-4)"
+            assert [order_key for _scheme, _tid, order_key in rows] == [
+                "0000000001",
+                "0000000002",
+            ]
 
     def test_create_conversation_invalid_initial_reference_rolls_back(
         self, auth_client, direct_db: DirectSessionManager

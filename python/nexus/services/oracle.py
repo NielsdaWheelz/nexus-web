@@ -65,9 +65,13 @@ from nexus.services.resource_graph.citations import (
     concordant_sources,
     record_citation,
 )
-from nexus.services.resource_graph.edges import list_edges_for_ref
+from nexus.services.resource_graph.connections import query_connections
 from nexus.services.resource_graph.refs import ResourceRef
-from nexus.services.resource_graph.schemas import CitationSnapshot
+from nexus.services.resource_graph.schemas import (
+    CitationSnapshot,
+    ConnectionFilters,
+    ConnectionQuery,
+)
 from nexus.services.semantic_chunks import (
     build_deterministic_hash_embedding,
     build_text_embedding,
@@ -350,11 +354,25 @@ def get_reading_detail(
         .all()
     )
     reading_ref = ResourceRef(scheme="oracle_reading", id=reading_id)
-    edge_by_id = {
-        edge.id: edge
-        for edge in list_edges_for_ref(db, viewer_id=viewer_id, ref=reading_ref, origin="citation")
-        if edge.source == reading_ref and edge.ordinal is not None
-    }
+    edge_by_id = {}
+    cursor = None
+    while True:
+        page = query_connections(
+            db,
+            viewer_id=viewer_id,
+            query=ConnectionQuery(
+                refs=(reading_ref,),
+                direction="outgoing",
+                rollup="exact",
+                filters=ConnectionFilters(origins=("citation",)),
+                limit=100,
+                cursor=cursor,
+            ),
+        )
+        edge_by_id.update({edge.edge_id: edge for edge in page.items if edge.ordinal is not None})
+        if page.next_cursor is None:
+            break
+        cursor = page.next_cursor
     # The clickable in-reader jump (AC8) is the shared edge-built CitationOut read
     # model (G6): build_citation_outs is the sole producer; it reconstructs
     # (media_id, locator) from each target's own anchoring. Keyed by ordinal

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  toPdfAnchoredHighlightRow,
-  toTextAnchoredHighlightRow,
+  toPdfAnchoredReaderRow,
+  toTextAnchoredReaderRow,
 } from "./toAnchoredHighlightRow";
 
 const baseHighlight = {
@@ -17,9 +17,9 @@ const baseHighlight = {
   linked_note_blocks: undefined,
 };
 
-describe("toPdfAnchoredHighlightRow", () => {
+describe("toPdfAnchoredReaderRow", () => {
   it("derives a deterministic stable_order_key from the first quad's coordinates", () => {
-    const row = toPdfAnchoredHighlightRow(baseHighlight, 7, [
+    const row = toPdfAnchoredReaderRow(baseHighlight, 7, [
       { x1: 12.345, y1: 67.891, x2: 0, y2: 0, x3: 0, y3: 0, x4: 0, y4: 0 },
     ]);
     expect(row).toEqual({
@@ -32,16 +32,16 @@ describe("toPdfAnchoredHighlightRow", () => {
   });
 
   it("falls back to zero coordinates when the quad list is empty", () => {
-    const row = toPdfAnchoredHighlightRow(baseHighlight, 1, []);
+    const row = toPdfAnchoredReaderRow(baseHighlight, 1, []);
     expect(row.stable_order_key).toBe(
       "000001:00000000.000:00000000.000:2026-05-01T00:00:00.000Z:h-1",
     );
   });
 });
 
-describe("toTextAnchoredHighlightRow", () => {
+describe("toTextAnchoredReaderRow", () => {
   it("includes fragment timing fields when a fragment is supplied", () => {
-    const row = toTextAnchoredHighlightRow(
+    const row = toTextAnchoredReaderRow(
       baseHighlight,
       { fragment_id: "frag-1", start_offset: 12, end_offset: 34 },
       { t_start_ms: 1000, t_end_ms: 2000 },
@@ -59,7 +59,7 @@ describe("toTextAnchoredHighlightRow", () => {
   });
 
   it("omits timing fields when no fragment is supplied", () => {
-    const row = toTextAnchoredHighlightRow(
+    const row = toTextAnchoredReaderRow(
       baseHighlight,
       { fragment_id: "frag-1", start_offset: 0, end_offset: 5 },
       null,

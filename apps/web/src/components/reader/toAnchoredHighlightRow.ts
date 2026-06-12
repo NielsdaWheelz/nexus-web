@@ -1,10 +1,10 @@
 import type { Highlight } from "@/lib/highlights/api";
 import type { PdfHighlightQuad } from "@/lib/highlights/pdfTypes";
-import type { AnchoredHighlightRow } from "./useAnchoredHighlightProjection";
+import type { AnchoredReaderRow } from "./useAnchoredReaderProjection";
 
 /**
  * Fields shared by every `Highlight` and `PdfHighlight` that flow into an
- * `AnchoredHighlightRow`. Both row constructors copy these through unchanged.
+ * `AnchoredReaderRow`. Both row constructors copy these through unchanged.
  */
 type HighlightMetadata = Pick<
   Highlight,
@@ -25,11 +25,11 @@ interface TextAnchorFragmentTiming {
   t_end_ms?: number | null;
 }
 
-export function toPdfAnchoredHighlightRow(
+export function toPdfAnchoredReaderRow(
   highlight: HighlightMetadata,
   pageNumber: number,
   quads: PdfHighlightQuad[],
-): AnchoredHighlightRow {
+): AnchoredReaderRow {
   const firstQuad = quads[0];
   return {
     ...highlight,
@@ -45,11 +45,11 @@ export function toPdfAnchoredHighlightRow(
   };
 }
 
-export function toTextAnchoredHighlightRow(
+export function toTextAnchoredReaderRow(
   highlight: HighlightMetadata,
   anchor: { fragment_id: string; start_offset: number; end_offset: number },
   fragment: TextAnchorFragmentTiming | null,
-): AnchoredHighlightRow {
+): AnchoredReaderRow {
   return {
     ...highlight,
     anchor: {

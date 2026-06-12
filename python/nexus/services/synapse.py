@@ -53,20 +53,25 @@ from nexus.schemas.search import (
 )
 from nexus.services.api_key_resolver import resolve_api_key, update_user_key_status
 from nexus.services.chat_run_usage import usage_tokens
-from nexus.services.highlight_notes import linked_note_blocks_for_highlights
 from nexus.services.llm_ledger import LedgeredLLM, LlmCallOwner
 from nexus.services.media_intelligence import NotReady, get_media_unit
 from nexus.services.prompt_budget import estimate_tokens
 from nexus.services.rate_limit import get_rate_limiter
+from nexus.services.resource_graph.connections import query_connections
 from nexus.services.resource_graph.edges import (
     delete_edge,
     get_owned_edge,
-    list_edges_for_ref,
     replace_edges_for_origin,
 )
+from nexus.services.resource_graph.highlight_notes import linked_note_blocks_for_highlights
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.resource_graph.resolve import assert_ref_visible
-from nexus.services.resource_graph.schemas import CitationSnapshot, EdgeCreate
+from nexus.services.resource_graph.schemas import (
+    CitationSnapshot,
+    ConnectionFilters,
+    ConnectionQuery,
+    EdgeCreate,
+)
 from nexus.services.search import search
 from nexus.services.search.query import SearchQuery
 from nexus.services.structured_synthesis import (
@@ -539,12 +544,29 @@ def _excluded_refs(
 ) -> set[ResourceRef]:
     """Targets the judge must never see: self, kin, connected, suppressed (D7/D8)."""
     excluded = {ref, *kin}
-    for edge in list_edges_for_ref(db, viewer_id=user_id, ref=ref):
-        if edge.origin == "synapse" and edge.source == ref:
-            # This scan's own replace-set: keepable targets must stay
-            # proposable (AC2); every other edge's pair is already connected.
-            continue
-        excluded.add(edge.target if edge.source == ref else edge.source)
+    cursor = None
+    while True:
+        page = query_connections(
+            db,
+            viewer_id=user_id,
+            query=ConnectionQuery(
+                refs=(ref,),
+                direction="both",
+                rollup="exact",
+                filters=ConnectionFilters(),
+                limit=100,
+                cursor=cursor,
+            ),
+        )
+        for edge in page.items:
+            if edge.origin == "synapse" and edge.source_ref == ref:
+                # This scan's own replace-set: keepable targets must stay
+                # proposable (AC2); every other edge's pair is already connected.
+                continue
+            excluded.add(edge.other.ref)
+        if page.next_cursor is None:
+            break
+        cursor = page.next_cursor
     suppressions = (
         db.execute(
             select(SynapseSuppression).where(

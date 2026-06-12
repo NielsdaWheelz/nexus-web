@@ -50,7 +50,7 @@ For a one-user prototype, the lightweight version is still this pipeline. The th
 
 - `apps/web/src/lib/panes/paneSecondaryModel.ts` already owns the `reader-tools` secondary group with `reader-highlights`, `reader-contents`, and `reader-doc-chat`.
 - `apps/web/src/app/(authenticated)/media/[id]/MediaPaneBody.tsx` publishes reader secondary surfaces and owns reader activation, temporary highlights, and sidecar composition.
-- `apps/web/src/components/reader/ReaderHighlightsSurface.tsx` and `apps/web/src/components/reader/useAnchoredHighlightProjection.ts` already solve visible-row alignment for anchored reader artifacts.
+- `apps/web/src/components/reader/ReaderHighlightsSurface.tsx` and `apps/web/src/components/reader/useAnchoredReaderProjection.ts` already solve visible-row alignment for anchored reader artifacts.
 - `apps/web/src/components/reader/ReaderContentsNav.tsx` is the closest peer surface: a reader-owned tab, separate from chat context.
 - `apps/web/src/components/ui/ReaderCitation.tsx` has useful hover/action patterns, but its domain is generated chat citations. Reuse presentation primitives, not its data model.
 
@@ -616,7 +616,7 @@ Do not create a parallel geometry system.
 Reuse the existing projection hook:
 
 ```text
-useAnchoredHighlightProjection(...)
+useAnchoredReaderProjection(...)
 ```
 
 The hook accepts an explicit target selector so highlights continue to measure
@@ -820,7 +820,7 @@ Docs:
 
 | Existing pattern | Reuse or consolidate | Rule |
 | --- | --- | --- |
-| `ReaderHighlightsSurface` sidecar alignment | Extend and reuse `useAnchoredHighlightProjection` with a target selector | No second viewport projection implementation. |
+| `ReaderHighlightsSurface` sidecar alignment | Extend and reuse `useAnchoredReaderProjection` with a target selector | No second viewport projection implementation. |
 | `RetrievalLocator` union | Reuse for apparatus item locators | No parallel locator JSON grammar. |
 | `reader-tools` secondary group | Add `reader-apparatus` peer surface | Do not put source apparatus in conversation context `References`. |
 | `ReaderCitation` hover styling | Reuse hover/popup primitives only | Do not reuse generated-citation data model. |

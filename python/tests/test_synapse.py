@@ -40,14 +40,19 @@ from nexus.services.highlights import create_highlight_for_fragment
 from nexus.services.media_intelligence import run_media_unit_build
 from nexus.services.note_indexing import rebuild_page_content_index
 from nexus.services.pdf_highlights import create_pdf_highlight
+from nexus.services.resource_graph.connections import query_connections
 from nexus.services.resource_graph.edges import (
     create_edge,
     get_owned_edge,
-    list_edges_for_ref,
     replace_edges_for_origin,
 )
 from nexus.services.resource_graph.refs import ResourceRef
-from nexus.services.resource_graph.schemas import EdgeCreate, EdgeOut
+from nexus.services.resource_graph.schemas import (
+    ConnectionFilters,
+    ConnectionQuery,
+    EdgeCreate,
+    EdgeOut,
+)
 from nexus.services.search import search
 from nexus.services.search.query import SearchQuery
 from nexus.services.synapse import (
@@ -331,9 +336,50 @@ def _scan(db: Session, *, user_id: UUID, ref: ResourceRef, router) -> str:
 def _synapse_edges(db: Session, *, user_id: UUID, ref: ResourceRef) -> list[EdgeOut]:
     return [
         edge
-        for edge in list_edges_for_ref(db, viewer_id=user_id, ref=ref, origin="synapse")
-        if edge.source == ref
+        for edge in _connection_edges(db, viewer_id=user_id, ref=ref)
+        if edge.source == ref and edge.origin == "synapse"
     ]
+
+
+def _connection_edges(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    ref: ResourceRef,
+) -> list[EdgeOut]:
+    out: list[EdgeOut] = []
+    cursor = None
+    while True:
+        page = query_connections(
+            db,
+            viewer_id=viewer_id,
+            query=ConnectionQuery(
+                refs=(ref,),
+                direction="both",
+                rollup="exact",
+                filters=ConnectionFilters(origins=("synapse",)),
+                limit=100,
+                cursor=cursor,
+            ),
+        )
+        out.extend(
+            EdgeOut(
+                id=edge.edge_id,
+                source=edge.source_ref,
+                target=edge.target_ref,
+                kind=edge.kind,
+                origin=edge.origin,
+                source_order_key=edge.source_order_key,
+                target_order_key=edge.target_order_key,
+                ordinal=edge.ordinal,
+                snapshot=edge.snapshot,
+                created_at=edge.created_at,
+            )
+            for edge in page.items
+        )
+        if page.next_cursor is None:
+            return out
+        cursor = page.next_cursor
 
 
 def _targets(edges: list[EdgeOut]) -> set[str]:

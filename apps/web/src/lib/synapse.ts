@@ -1,8 +1,8 @@
 /**
  * Client for the Synapse resonance engine (synapse-resonance-engine spec §8):
  * manual scan requests, scan-status reads for bounded polling, and dismissal
- * of agent-proposed (`origin: "synapse"`) edges. The Connections section
- * (`NoteBacklinks`) is the sole consumer.
+ * of agent-proposed (`origin: "synapse"`) edges. The Connections section is
+ * the sole consumer.
  */
 
 import type { ApiPath } from "@/lib/api/client";

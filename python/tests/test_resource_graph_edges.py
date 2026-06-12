@@ -27,10 +27,10 @@ from nexus.services.resource_graph.cleanup import (
     assert_no_dangling_bare_edges,
     delete_edges_for_deleted_resource,
 )
+from nexus.services.resource_graph.connections import query_connections
 from nexus.services.resource_graph.edges import (
     create_edge,
     delete_edge,
-    list_edges_for_ref,
     replace_edges_for_origin,
     repoint_edges,
 )
@@ -38,11 +38,15 @@ from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_graph.schemas import (
     CitationInput,
     CitationSnapshot,
+    ConnectionFilters,
+    ConnectionQuery,
     EdgeCreate,
     EdgeKind,
     EdgeOrigin,
+    EdgeOut,
 )
 from tests.factories import (
+    create_test_conversation,
     create_test_conversation_with_message,
     create_test_media_in_library,
     get_user_default_library,
@@ -52,6 +56,52 @@ from tests.test_resource_graph_resolve import _make_page
 pytestmark = pytest.mark.integration
 
 _SNAPSHOT = CitationSnapshot(title="Cited Title", excerpt="cited excerpt", deep_link="/media/x#y")
+
+
+def _connection_edges(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    ref: ResourceRef,
+    kind: EdgeKind | None = None,
+    origin: EdgeOrigin | None = None,
+) -> list[EdgeOut]:
+    out: list[EdgeOut] = []
+    cursor = None
+    while True:
+        page = query_connections(
+            db,
+            viewer_id=viewer_id,
+            query=ConnectionQuery(
+                refs=(ref,),
+                direction="both",
+                rollup="exact",
+                filters=ConnectionFilters(
+                    kinds=(kind,) if kind is not None else None,
+                    origins=(origin,) if origin is not None else None,
+                ),
+                limit=100,
+                cursor=cursor,
+            ),
+        )
+        out.extend(
+            EdgeOut(
+                id=edge.edge_id,
+                source=edge.source_ref,
+                target=edge.target_ref,
+                kind=edge.kind,
+                origin=edge.origin,
+                source_order_key=edge.source_order_key,
+                target_order_key=edge.target_order_key,
+                ordinal=edge.ordinal,
+                snapshot=edge.snapshot,
+                created_at=edge.created_at,
+            )
+            for edge in page.items
+        )
+        if page.next_cursor is None:
+            return out
+        cursor = page.next_cursor
 
 
 def _media_ref(db: Session, user_id: UUID, *, title: str = "Edge Media") -> ResourceRef:
@@ -364,7 +414,7 @@ def test_same_directed_pair_can_exist_under_different_origins(
     )
 
     assert user_edge.id != note_body_edge.id
-    edges = list_edges_for_ref(db_session, viewer_id=bootstrapped_user, ref=source)
+    edges = _connection_edges(db_session, viewer_id=bootstrapped_user, ref=source)
     assert {(edge.origin, edge.target.id) for edge in edges} == {
         ("user", target.id),
         ("note_body", target.id),
@@ -387,6 +437,44 @@ def test_user_edges_reject_order_keys(db_session: Session, bootstrapped_user: UU
                 source_order_key="0000000001",
             ),
         )
+
+
+def test_conversation_context_edges_allow_source_order_key(
+    db_session: Session, bootstrapped_user: UUID
+):
+    source = ResourceRef(
+        scheme="conversation",
+        id=create_test_conversation(db_session, bootstrapped_user),
+    )
+    target = _media_ref(db_session, bootstrapped_user)
+
+    edge = create_edge(
+        db_session,
+        viewer_id=bootstrapped_user,
+        input=EdgeCreate(
+            source=source,
+            target=target,
+            kind="context",
+            origin="user",
+            source_order_key="0000000001",
+        ),
+    )
+
+    assert edge.source_order_key == "0000000001"
+
+    citation_context_edge = create_edge(
+        db_session,
+        viewer_id=bootstrapped_user,
+        input=EdgeCreate(
+            source=source,
+            target=_page_ref(db_session, bootstrapped_user),
+            kind="context",
+            origin="citation",
+            source_order_key="0000000002",
+        ),
+    )
+
+    assert citation_context_edge.source_order_key == "0000000002"
 
 
 def test_note_containment_requires_shape_and_source_order(
@@ -484,7 +572,7 @@ def test_replace_edges_for_origin_replaces_exactly_its_set(
         edges=[_bare(page, b, origin="note_body"), _bare(page, d, origin="note_body")],
     )
 
-    edges = list_edges_for_ref(db_session, viewer_id=bootstrapped_user, ref=page)
+    edges = _connection_edges(db_session, viewer_id=bootstrapped_user, ref=page)
     by_origin: dict[str, set[UUID]] = {}
     for edge in edges:
         by_origin.setdefault(edge.origin, set()).add(edge.target.id)
@@ -514,7 +602,7 @@ def test_replace_edges_drops_self_target_member(db_session: Session, bootstrappe
     assert [edge.target.id for edge in created] == [other.id], (
         f"The self-target member must be dropped; only real targets remain; got {created}"
     )
-    edges = list_edges_for_ref(db_session, viewer_id=bootstrapped_user, ref=page)
+    edges = _connection_edges(db_session, viewer_id=bootstrapped_user, ref=page)
     assert all(edge.source != edge.target for edge in edges), (
         f"No self-edge may be stored from a replace-set; got "
         f"{[(e.source.uri, e.target.uri) for e in edges]}"
@@ -539,7 +627,7 @@ def test_replace_edges_keeps_pairs_owned_by_another_origin(
     )
 
     assert len(created) == 1, "A note_body edge is distinct from the user's explicit link"
-    edges = list_edges_for_ref(db_session, viewer_id=bootstrapped_user, ref=page)
+    edges = _connection_edges(db_session, viewer_id=bootstrapped_user, ref=page)
     assert {(edge.origin, edge.id) for edge in edges} == {
         ("user", user_edge.id),
         ("note_body", created[0].id),
@@ -579,7 +667,7 @@ def test_cleanup_bare_edges_die_with_either_endpoint_cited_edges_survive_target(
     delete_edges_for_deleted_resource(db_session, ref=target)
 
     assert_no_dangling_bare_edges(db_session, ref=target)
-    remaining = list_edges_for_ref(db_session, viewer_id=bootstrapped_user, ref=target)
+    remaining = _connection_edges(db_session, viewer_id=bootstrapped_user, ref=target)
     assert [edge.id for edge in remaining] == [cited.id], (
         f"Rule 1: the cited edge must outlive its target; got {remaining}"
     )
@@ -603,7 +691,7 @@ def test_cleanup_cited_edges_die_with_their_source(db_session: Session, bootstra
 
     delete_edges_for_deleted_resource(db_session, ref=message)
 
-    assert list_edges_for_ref(db_session, viewer_id=bootstrapped_user, ref=message) == [], (
+    assert _connection_edges(db_session, viewer_id=bootstrapped_user, ref=message) == [], (
         "Rule 1: a citation dies with its domain parent (the source)"
     )
 
@@ -754,10 +842,10 @@ def test_repoint_moves_every_kind_and_keeps_ordinals(db_session: Session, bootst
     )
 
     assert moved == 3, f"All three edges touch the duplicate and must move; got {moved}"
-    assert list_edges_for_ref(db_session, viewer_id=bootstrapped_user, ref=duplicate) == [], (
+    assert _connection_edges(db_session, viewer_id=bootstrapped_user, ref=duplicate) == [], (
         "No edge may still reference the merged-away identity"
     )
-    repointed = list_edges_for_ref(db_session, viewer_id=bootstrapped_user, ref=canonical)
+    repointed = _connection_edges(db_session, viewer_id=bootstrapped_user, ref=canonical)
     assert len(repointed) == 3, f"Every kind moves (bare, stance, citation); got {repointed}"
     citation = next(edge for edge in repointed if edge.ordinal is not None)
     assert citation.ordinal == 1 and citation.snapshot is not None, (
@@ -787,7 +875,7 @@ def test_repoint_drops_bare_duplicates_on_reverse_collision(
     )
 
     assert moved == 1, f"The reverse-colliding edge is processed (dropped); got {moved}"
-    edges = list_edges_for_ref(db_session, viewer_id=bootstrapped_user, ref=canonical)
+    edges = _connection_edges(db_session, viewer_id=bootstrapped_user, ref=canonical)
     assert [edge.id for edge in edges] == [kept.id], (
         f"Repoint must not leave a symmetric user-link pair; got "
         f"{[(e.source.uri, e.target.uri) for e in edges]}"
@@ -809,7 +897,7 @@ def test_repoint_drops_edge_that_would_become_a_self_edge(
     )
 
     assert moved == 1, f"The would-be self-edge is processed (dropped); got {moved}"
-    edges = list_edges_for_ref(db_session, viewer_id=bootstrapped_user, ref=canonical)
+    edges = _connection_edges(db_session, viewer_id=bootstrapped_user, ref=canonical)
     assert edges == [], (
         f"A repoint collapsing both endpoints must drop the row, not store a self-edge; "
         f"got {[(e.source.uri, e.target.uri) for e in edges]}"
@@ -836,7 +924,7 @@ def test_repoint_drops_bare_duplicates_on_collision(db_session: Session, bootstr
     )
 
     assert moved == 1, f"The colliding edge is processed (dropped); got {moved}"
-    edges = list_edges_for_ref(db_session, viewer_id=bootstrapped_user, ref=canonical)
+    edges = _connection_edges(db_session, viewer_id=bootstrapped_user, ref=canonical)
     assert [edge.id for edge in edges] == [kept.id], (
         f"The pre-existing pair survives; the moving duplicate is dropped; got {edges}"
     )
@@ -856,6 +944,6 @@ def test_delete_edge_removes_the_row_and_404s_on_unknown(
 
     delete_edge(db_session, viewer_id=bootstrapped_user, edge_id=edge.id)
 
-    assert list_edges_for_ref(db_session, viewer_id=bootstrapped_user, ref=page) == []
+    assert _connection_edges(db_session, viewer_id=bootstrapped_user, ref=page) == []
     with pytest.raises(NotFoundError):
         delete_edge(db_session, viewer_id=bootstrapped_user, edge_id=edge.id)

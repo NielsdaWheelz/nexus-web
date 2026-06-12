@@ -43,7 +43,7 @@ describe("paneSecondaryModel", () => {
     expect(getSecondarySurfaceIdsForGroup("reader-tools")).toEqual([
       "reader-highlights",
       "reader-contents",
-      "connections",
+      "reader-connections",
       "reader-apparatus",
       "reader-doc-chat",
     ]);

@@ -1,6 +1,6 @@
 import type { ReaderNavigationSection } from "@/lib/media/readerNavigation";
 import { canonicalCpLength } from "@/lib/reader/textOffsets";
-import type { AnchoredHighlightRow } from "./useAnchoredHighlightProjection";
+import type { AnchoredReaderRow } from "./useAnchoredReaderProjection";
 
 export interface OverviewPositionFragment {
   id: string;
@@ -9,7 +9,7 @@ export interface OverviewPositionFragment {
 }
 
 export interface PositionedHighlight {
-  highlight: AnchoredHighlightRow;
+  highlight: AnchoredReaderRow;
   position: number; // 0..1, fraction through the whole document
 }
 
@@ -24,7 +24,7 @@ export interface PositionedHighlight {
  */
 export function positionHighlights(input: {
   mediaKind: "web" | "transcript" | "epub" | "pdf";
-  highlights: AnchoredHighlightRow[];
+  highlights: AnchoredReaderRow[];
   fragments: OverviewPositionFragment[];
   epubSections: ReaderNavigationSection[];
   numPages: number | null;

@@ -178,9 +178,11 @@ function installMatchMedia() {
 installMatchMedia();
 
 afterEach(async () => {
+  vi.useRealTimers();
   const { cleanup } = await import("@testing-library/react");
   cleanup();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
   installMatchMedia();
 });

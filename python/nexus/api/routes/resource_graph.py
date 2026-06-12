@@ -1,6 +1,6 @@
 """Resource provenance graph routes (spec §10.2/§10.3).
 
-- GET    /resource-graph/edges      the one connections read (backlinks, cited-by)
+- POST   /resource-graph/connections/query hydrated connection reads
 - POST   /resource-graph/edges      user links and user stance edges
 - DELETE /resource-graph/edges/{id} user-origin rows only
 - POST   /resource-graph/resolve    batch ref hydration for UI display
@@ -10,10 +10,10 @@ graph services, and return envelopes. Graph semantics (dedup, permission
 checks, hydration) live in ``nexus.services.resource_graph``.
 """
 
-from typing import Annotated, cast
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, Response
 from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
@@ -21,20 +21,30 @@ from nexus.db.session import get_db
 from nexus.errors import ApiErrorCode, ForbiddenError, InvalidRequestError, NotFoundError
 from nexus.responses import ok
 from nexus.schemas.resource_graph import (
-    EDGE_KIND_VALUES,
-    EDGE_ORIGIN_VALUES,
+    ConnectionCitationOut,
+    ConnectionEndpointOut,
+    ConnectionFiltersRequest,
+    ConnectionOut,
+    ConnectionPageOut,
+    ConnectionQueryRequest,
+    ConnectionReaderTargetOut,
     CreateEdgeRequest,
-    EdgeKind,
-    EdgeOrigin,
     EdgeOut,
     ResolvedResourceOut,
     ResolveRefsRequest,
 )
+from nexus.services.resource_graph import connections as connections_service
 from nexus.services.resource_graph import edges as edges_service
 from nexus.services.resource_graph import refs as refs_service
 from nexus.services.resource_graph import resolve as resolve_service
 from nexus.services.resource_graph.refs import ResourceRef
-from nexus.services.resource_graph.schemas import snapshot_to_jsonb
+from nexus.services.resource_graph.schemas import (
+    Connection,
+    ConnectionEndpoint,
+    ConnectionFilters,
+    ConnectionQuery,
+    snapshot_to_jsonb,
+)
 
 router = APIRouter(prefix="/resource-graph", tags=["resource-graph"])
 
@@ -81,38 +91,30 @@ def _edge_outs(db: Session, viewer_id: UUID, edge_rows: list) -> list[EdgeOut]:
     return outs
 
 
-@router.get("/edges")
-def list_edges(
+@router.post("/connections/query")
+def query_connections(
+    body: ConnectionQueryRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-    ref: Annotated[str, Query(description="Resource ref matched against either endpoint")],
-    kind: Annotated[str | None, Query()] = None,
-    origin: Annotated[str | None, Query()] = None,
 ) -> dict:
-    """List edges touching ``ref`` on either endpoint, newest-last.
-
-    Errors:
-        E_INVALID_REQUEST (400): malformed ref, or unknown kind/origin value.
-    """
-    parsed = _parse_ref_or_400(ref)
-    if kind is not None and kind not in EDGE_KIND_VALUES:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            f"Invalid kind: {kind!r}. Expected one of {', '.join(EDGE_KIND_VALUES)}.",
-        )
-    if origin is not None and origin not in EDGE_ORIGIN_VALUES:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            f"Invalid origin: {origin!r}. Expected one of {', '.join(EDGE_ORIGIN_VALUES)}.",
-        )
-    edge_rows = edges_service.list_edges_for_ref(
-        db,
+    parsed = tuple(_parse_ref_or_400(raw) for raw in body.refs)
+    page = connections_service.query_connections(
+        db=db,
         viewer_id=viewer.user_id,
-        ref=parsed,
-        kind=cast("EdgeKind | None", kind),
-        origin=cast("EdgeOrigin | None", origin),
+        query=ConnectionQuery(
+            refs=parsed,
+            direction=body.direction,
+            rollup=body.rollup,
+            filters=_connection_filters(body.filters),
+            limit=body.limit,
+            cursor=body.cursor,
+        ),
     )
-    return ok(_edge_outs(db, viewer.user_id, list(edge_rows)))
+    return ok(
+        ConnectionPageOut(
+            items=[_connection_out(item) for item in page.items], next_cursor=page.next_cursor
+        )
+    )
 
 
 @router.post("/edges", status_code=201)
@@ -195,4 +197,60 @@ def resolve_refs(
             )
             for ref, item in zip(parsed, resolved, strict=True)
         ]
+    )
+
+
+def _connection_filters(body: ConnectionFiltersRequest) -> ConnectionFilters:
+    return ConnectionFilters(
+        origins=tuple(body.origins) if body.origins is not None else None,
+        kinds=tuple(body.kinds) if body.kinds is not None else None,
+        source_schemes=tuple(body.source_schemes) if body.source_schemes is not None else None,
+        target_schemes=tuple(body.target_schemes) if body.target_schemes is not None else None,
+    )
+
+
+def _endpoint_out(endpoint: ConnectionEndpoint) -> ConnectionEndpointOut:
+    return ConnectionEndpointOut(
+        ref=endpoint.ref.uri,
+        scheme=endpoint.ref.scheme,
+        id=endpoint.ref.id,
+        label=endpoint.label,
+        description=endpoint.description,
+        href=endpoint.href,
+        missing=endpoint.missing,
+    )
+
+
+def _connection_out(item: Connection) -> ConnectionOut:
+    citation = None
+    if item.citation is not None:
+        target_reader = None
+        if item.citation.target_media_id is not None or item.citation.target_locator is not None:
+            target_reader = ConnectionReaderTargetOut(
+                media_id=item.citation.target_media_id,
+                locator=item.citation.target_locator,
+            )
+        citation = ConnectionCitationOut(
+            ordinal=item.citation.ordinal,
+            role=item.citation.role,
+            snapshot=snapshot_to_jsonb(item.citation.snapshot),
+            target_reader=target_reader,
+            target_status=item.citation.target_status,
+        )
+    return ConnectionOut(
+        edge_id=item.edge_id,
+        direction=item.direction,
+        kind=item.kind,
+        origin=item.origin,
+        snapshot=snapshot_to_jsonb(item.snapshot) if item.snapshot is not None else None,
+        source_order_key=item.source_order_key,
+        target_order_key=item.target_order_key,
+        ordinal=item.ordinal,
+        source_ref=item.source_ref.uri,
+        target_ref=item.target_ref.uri,
+        source=_endpoint_out(item.source),
+        target=_endpoint_out(item.target),
+        other=_endpoint_out(item.other),
+        citation=citation,
+        created_at=item.created_at,
     )

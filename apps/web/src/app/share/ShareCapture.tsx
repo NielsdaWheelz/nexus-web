@@ -41,7 +41,7 @@ export default function ShareCapture({
   // double-invoke; the caller block id also makes transport retries converge on
   // the same daily-note block.
   const capturedAttempt = useRef<number | null>(null);
-  const quickCaptureBlockId = useRef(createRandomId("share-note"));
+  const quickCaptureBlockId = useRef(createRandomId());
   const quickCaptureMutationId = useRef(createRandomId("share-note-mutation"));
   const urlIdempotencyKeys = useRef<Map<string, string>>(new Map());
   const [selectedLibraryIds, setSelectedLibraryIds] = useState<string[]>([]);

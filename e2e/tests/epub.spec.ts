@@ -46,12 +46,13 @@ interface HighlightOut {
   }>;
 }
 
-interface EdgesResponse {
-  data: Array<{
-    id: string;
-    source_ref: string;
-    target_ref: string;
-  }>;
+interface ConnectionsResponse {
+  data: {
+    items: Array<{
+      source_ref: string;
+      target_ref: string;
+    }>;
+  };
 }
 
 function paragraphPmJsonFromText(text: string) {
@@ -65,14 +66,20 @@ async function upsertHighlightNote(
   highlightId: string,
   body: string,
 ): Promise<void> {
-  const edgesResponse = await page.request.get(
-    `/api/resource-graph/edges?ref=${encodeURIComponent(`highlight:${highlightId}`)}&origin=highlight_note`
-  );
+  const edgesResponse = await page.request.post("/api/resource-graph/connections/query", {
+    data: {
+      refs: [`highlight:${highlightId}`],
+      direction: "both",
+      filters: { origins: ["highlight_note"] },
+      limit: 100,
+    },
+    headers: stateChangingApiHeaders(),
+  });
   expect(edgesResponse.ok()).toBeTruthy();
-  const edgesPayload = (await edgesResponse.json()) as EdgesResponse;
+  const edgesPayload = (await edgesResponse.json()) as ConnectionsResponse;
   const [primaryNoteBlockId] = Array.from(
     new Set(
-      edgesPayload.data
+      edgesPayload.data.items
         .map((edge) => {
           const [scheme, id] = edge.target_ref.split(":");
           return scheme === "note_block" ? id : null;
@@ -866,7 +873,7 @@ test.describe("epub", () => {
       activePane.getByRole("heading", { name: seed.chapter_titles[0] })
     ).toBeVisible({ timeout: 15_000 });
 
-    const anchorLeaf = activePane.getByRole("button", { name: seed.toc_anchor_label });
+    let anchorLeaf = activePane.getByRole("button", { name: seed.toc_anchor_label });
     if (
       (await anchorLeaf.count()) === 0 ||
       !(await anchorLeaf.first().isVisible().catch(() => false))
@@ -874,6 +881,9 @@ test.describe("epub", () => {
       const contentsButton = activePane.getByRole("button", { name: "Contents" });
       await expect(contentsButton).toBeVisible();
       await contentsButton.click();
+      const contentsDialog = page.getByRole("dialog", { name: "Contents" });
+      await expect(contentsDialog).toBeVisible();
+      anchorLeaf = contentsDialog.getByRole("button", { name: seed.toc_anchor_label });
     }
 
     await expect(anchorLeaf).toBeVisible();

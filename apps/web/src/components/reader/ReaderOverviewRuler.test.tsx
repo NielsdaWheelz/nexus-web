@@ -6,7 +6,7 @@ import ReaderOverviewRuler, {
   OVERVIEW_TICK_MIN_GAP_PX,
 } from "./ReaderOverviewRuler";
 import type { PositionedHighlight } from "./overviewPositions";
-import type { AnchoredHighlightRow } from "./useAnchoredHighlightProjection";
+import type { AnchoredReaderRow } from "./useAnchoredReaderProjection";
 
 const RULER_HEIGHT = 400;
 // .openSlot is a sm icon button plus var(--space-1) padding top and bottom; the
@@ -17,8 +17,8 @@ function trackHeight(): number {
 
 function highlight(
   id: string,
-  overrides: Partial<AnchoredHighlightRow> = {},
-): AnchoredHighlightRow {
+  overrides: Partial<AnchoredReaderRow> = {},
+): AnchoredReaderRow {
   return {
     id,
     exact: `Quote ${id}`,

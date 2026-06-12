@@ -19,7 +19,7 @@ import { clamp } from "@/lib/clamp";
 import { cx } from "@/lib/ui/cx";
 import { nextRovingIndexForKey } from "@/lib/ui/rovingIndex";
 import { type PositionedHighlight } from "./overviewPositions";
-import { findScrollParent } from "./useAnchoredHighlightProjection";
+import { findScrollParent } from "./useAnchoredReaderProjection";
 import styles from "./ReaderOverviewRuler.module.css";
 
 export const OVERVIEW_TICK_MIN_GAP_PX = 14;

@@ -37,10 +37,6 @@ interface EdgeResponse {
   data: EdgeOut;
 }
 
-interface EdgesResponse {
-  data: EdgeOut[];
-}
-
 interface ResolveResponse {
   data: ResolvedResourceOut[];
 }
@@ -50,17 +46,6 @@ export interface ResolvedResourceOut {
   label: string;
   summary: string;
   missing: boolean;
-}
-
-export async function listEdgesForRef(
-  ref: string,
-  options: { signal?: AbortSignal } = {},
-): Promise<EdgeOut[]> {
-  const path = `/api/resource-graph/edges?ref=${encodeURIComponent(ref)}` as ApiPath;
-  const response = options.signal
-    ? await apiFetch<EdgesResponse>(path, { signal: options.signal })
-    : await apiFetch<EdgesResponse>(path);
-  return response.data;
 }
 
 export async function createUserEdge(input: {

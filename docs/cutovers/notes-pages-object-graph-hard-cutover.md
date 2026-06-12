@@ -1126,7 +1126,7 @@ origin=highlight_note
 - Inline reference syncing in `notes.py`
   - Replace with `origin=note_body` replace-set sync.
 - Backlink queries split across old notes/object-link paths
-  - Replace with `resource_graph.edges.list_edges_for_ref`.
+  - Replace with `resource_graph.connections.query_connections`.
 - Any lingering `ObjectLink` symbols after the resource graph cutover
   - Delete. Do not recreate.
 - Page reindex traversal through old block structural columns
@@ -1607,7 +1607,7 @@ Grep/head assertions:
       the same document mutation machinery; quick-note empty-delete plans a
       page-document deletion instead of calling block mutation APIs.
 - [x] Ship low chrome writing surface: success autosave chrome is silent and
-      connections/backlinks publish through notes secondary chrome.
+      object connections publish through the generic secondary connections surface.
 - [x] Add quick/daily/highlight capture over the shared editor session
       controller.
 - [x] Replace public `/api/notes/blocks` mutation clients/routes with product

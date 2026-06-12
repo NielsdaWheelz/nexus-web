@@ -1166,7 +1166,7 @@ The things most likely to bite you, distilled:
 | Chat / conversations | `python/nexus/services/chat_runs.py` + `chat_run_*`, `context_assembler.py`, `conversations.py` |
 | Oracle | `python/nexus/services/oracle.py`, `python/nexus/services/oracle_plates.py` |
 | Search / retrieval / indexing | `python/nexus/services/{search,content_indexing,semantic_chunks,retrieval_citation}.py` |
-| Resource graph (edges, refs, citations) | `python/nexus/services/resource_graph/` (`refs`, `resolve`, `edges`, `context`, `citations`, `cleanup`) |
+| Resource graph (edges, refs, citations, connections) | `python/nexus/services/resource_graph/` (`refs`, `resolve`, `edges`, `connections`, `context`, `citations`, `cleanup`) |
 | Agent tools | `python/nexus/services/agent_tools/` |
 | Libraries / contributors / notes | `python/nexus/services/{library_governance,library_entries,library_invitations,default_library_closure,contributors,notes}.py` |
 | Podcasts / playback | `python/nexus/services/podcasts/`, `playback_queue.py` |

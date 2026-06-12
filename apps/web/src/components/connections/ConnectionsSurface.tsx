@@ -31,10 +31,12 @@ import {
 import {
   createUserEdge,
   deleteUserEdge,
-  listEdgesForRef,
   type EdgeKind,
-  type EdgeOut,
 } from "@/lib/resourceGraph/edges";
+import {
+  queryConnections,
+  type ConnectionOut,
+} from "@/lib/resourceGraph/connections";
 import {
   formatResourceRef,
   parseResourceRef,
@@ -47,23 +49,22 @@ import {
 } from "@/lib/synapse";
 import { useIntervalPoll } from "@/lib/useIntervalPoll";
 import {
-  isObjectType,
-  resolveObjectRefs,
   searchObjectRefs,
   type HydratedObjectRef,
   type ObjectRef,
   type ObjectType,
 } from "@/lib/objectRefs";
-import styles from "./NoteBacklinks.module.css";
+import styles from "./ConnectionsSurface.module.css";
 
 /** The endpoint of a connection that is NOT the object being viewed. */
 interface Connection {
   edgeId: string;
   ref: string;
   label: string;
+  href: string | null;
   missing: boolean;
   kind: EdgeKind;
-  origin: EdgeOut["origin"];
+  origin: ConnectionOut["origin"];
   rationale: string | null;
   createdAt: string;
 }
@@ -87,13 +88,7 @@ const SYNAPSE_SCANNABLE_TYPES = new Set<ObjectType>([
   "highlight",
 ]);
 
-/** Synapse rationale rides in the edge snapshot's `excerpt` (spec §8). */
-function synapseRationale(edge: EdgeOut): string | null {
-  const excerpt = edge.snapshot?.excerpt;
-  return typeof excerpt === "string" && excerpt.length > 0 ? excerpt : null;
-}
-
-export default function NoteBacklinks({
+export default function ConnectionsSurface({
   objectRef,
   onOpenRoute,
 }: {
@@ -105,44 +100,47 @@ export default function NoteBacklinks({
     scheme: objectRef.objectType,
     id: objectRef.objectId,
   });
-  const edgesResource = useResource<{ data: EdgeOut[] }>({
+  const connectionsResource = useResource<{ data: ConnectionOut[] }>({
     cacheKey: `${selfRef}:${refreshTick}`,
-    load: async (signal) => ({ data: await listEdgesForRef(selfRef, { signal }) }),
+    load: async (signal) => ({
+      data: (
+        await queryConnections(
+          {
+            refs: [selfRef],
+            direction: "both",
+            rollup: "owner",
+            limit: 100,
+          },
+          { signal },
+        )
+      ).items,
+    }),
   });
-  const loading = edgesResource.status === "loading";
+  const loading = connectionsResource.status === "loading";
   const error: FeedbackContent | null =
-    edgesResource.status === "error"
-      ? toFeedback(edgesResource.error, {
+    connectionsResource.status === "error"
+      ? toFeedback(connectionsResource.error, {
           fallback: "Connections could not be loaded.",
         })
       : null;
 
   const connections: Connection[] =
-    edgesResource.status === "ready"
-      ? edgesResource.data.data
-          .map((edge) =>
-            edge.source_ref === selfRef
-              ? {
-                  edgeId: edge.id,
-                  ref: edge.target_ref,
-                  label: edge.target_label,
-                  missing: edge.target_missing,
-                  kind: edge.kind,
-                  origin: edge.origin,
-                  rationale: synapseRationale(edge),
-                  createdAt: edge.created_at,
-                }
-              : {
-                  edgeId: edge.id,
-                  ref: edge.source_ref,
-                  label: edge.source_label,
-                  missing: edge.source_missing,
-                  kind: edge.kind,
-                  origin: edge.origin,
-                  rationale: synapseRationale(edge),
-                  createdAt: edge.created_at,
-                },
-          )
+    connectionsResource.status === "ready"
+      ? connectionsResource.data.data
+          .map((connection) => ({
+            edgeId: connection.edge_id,
+            ref: connection.other.ref,
+            label: connection.other.label ?? connection.other.ref,
+            href: connection.other.href,
+            missing: connection.other.missing || connection.other.href === null,
+            kind: connection.kind,
+            origin: connection.origin,
+            rationale:
+              connection.snapshot?.excerpt && typeof connection.snapshot.excerpt === "string"
+                ? connection.snapshot.excerpt
+                : null,
+            createdAt: connection.created_at,
+          }))
           .sort(compareConnections)
       : [];
 
@@ -154,7 +152,7 @@ export default function NoteBacklinks({
   const [scanVoice, setScanVoice] = useState<string | null>(null);
   const scanBaselineRef = useRef<number | null>(null);
   const connectionsCountRef = useRef(0);
-  if (edgesResource.status === "ready") {
+  if (connectionsResource.status === "ready") {
     connectionsCountRef.current = connections.length;
   }
 
@@ -178,33 +176,23 @@ export default function NoteBacklinks({
   const scanning = scan.phase !== "idle";
 
   useEffect(() => {
-    if (edgesResource.status !== "ready" || scanBaselineRef.current === null) {
+    if (connectionsResource.status !== "ready" || scanBaselineRef.current === null) {
       return;
     }
-    const found = edgesResource.data.data.length - scanBaselineRef.current;
+    const found = connectionsResource.data.data.length - scanBaselineRef.current;
     scanBaselineRef.current = null;
     setScanVoice(
       found > 0
         ? `${found} new connection${found === 1 ? "" : "s"} found.`
         : "No new connections found.",
     );
-  }, [edgesResource]);
+  }, [connectionsResource]);
 
   const openConnection = useCallback(
-    async (ref: string, openInNewPane: boolean) => {
-      const parsed = parseResourceRef(ref);
-      if (!parsed || !isObjectType(parsed.scheme)) return;
-      try {
-        const [resolved] = await resolveObjectRefs([
-          { objectType: parsed.scheme, objectId: parsed.id },
-        ]);
-        if (resolved?.route) onOpenRoute?.(resolved.route, openInNewPane);
-      } catch (err) {
-        if (handleUnauthenticatedApiError(err)) return;
-        console.error("Failed to open connection:", err);
-      }
+    (href: string | null, openInNewPane: boolean) => {
+      if (href) onOpenRoute?.(href, openInNewPane);
     },
-    [onOpenRoute]
+    [onOpenRoute],
   );
 
   return (
@@ -261,7 +249,7 @@ export default function NoteBacklinks({
                   type="button"
                   className={styles.linkButton}
                   disabled={connection.missing}
-                  onClick={(event) => void openConnection(connection.ref, event.shiftKey)}
+                  onClick={(event) => openConnection(connection.href, event.shiftKey)}
                 >
                   <Icon size={14} aria-hidden="true" />
                   <span className={styles.connectionText}>

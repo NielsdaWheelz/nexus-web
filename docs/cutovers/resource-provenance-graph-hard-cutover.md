@@ -58,7 +58,7 @@ The shared primitive is:
 
 Two earlier framings are now refuted by code census:
 
-**"User links need relation verbs" — no.** `object_links.relation_type` has six values. The census (2026-06-09): `note_about` is the machine-written highlight↔note attachment (`notes.py:998`, read at `notes.py:937/1453/1795`, `vault.py:709/985`, `search/retrievers/notes.py:291`); `references`/`embeds` are machine-synced from note body content (`notes.py:1337`, replace-set diff at `notes.py:1366-1417`); `used_as_context` has a search-scope reader (`search/scope.py:156`) but no live writer; `derived_from` and `related` have no writers; there is **no frontend UI that lets a user pick a verb** (the only link surface is read-only `NoteBacklinks`). The verb column was never user vocabulary — it was a writer-ownership discriminator plus dead taxonomy. The replacement is an explicit `origin` column; user-facing links are verbless, like every backlink system that survived contact with users.
+**"User links need relation verbs" — no.** `object_links.relation_type` has six values. The census (2026-06-09): `note_about` is the machine-written highlight↔note attachment (`notes.py:998`, read at `notes.py:937/1453/1795`, `vault.py:709/985`, `search/retrievers/notes.py:291`); `references`/`embeds` are machine-synced from note body content (`notes.py:1337`, replace-set diff at `notes.py:1366-1417`); `used_as_context` has a search-scope reader (`search/scope.py:156`) but no live writer; `derived_from` and `related` have no writers; there is **no frontend UI that lets a user pick a verb**. The verb column was never user vocabulary — it was a writer-ownership discriminator plus dead taxonomy. The replacement is an explicit `origin` column; user-facing links are verbless, like every backlink system that survived contact with users.
 
 **"Distinct invariants need distinct tables" — only for non-connections.** The Rev 2 sidecars held three kinds of payload: edge identity (belongs on the edge), run telemetry (retrieval ordinals, prompt-inclusion flags, rerank traces — belongs to the chat run, exactly as `message_tool_calls` already does under N7), and generated content (Oracle marginalia — belongs to the reading). Evict the last two and the residual edge payload is exactly one optional pair — `ordinal` + `snapshot`, jointly meaning "this edge renders as a citation" — constrained by CHECKs. The null-soup objection applied to flattening telemetry and content into edges; it does not apply to one two-column variant.
 
@@ -533,12 +533,11 @@ assert_ref_visible(db, *, viewer_id: UUID, ref: ResourceRef) -> None
 ```python
 create_edge(db, *, viewer_id: UUID, input: EdgeCreate) -> EdgeOut                  # flush-only
 delete_edge(db, *, viewer_id: UUID, edge_id: UUID) -> None
-list_edges_for_ref(db, *, viewer_id: UUID, ref: ResourceRef, kind: EdgeKind | None, origin: EdgeOrigin | None) -> list[EdgeOut]   # either endpoint — the one connections read (G9)
 replace_edges_for_origin(db, *, viewer_id: UUID, source: ResourceRef, origin: EdgeOrigin, edges: Sequence[EdgeCreate]) -> list[EdgeOut]   # note_body sync, citation sets
 repoint_edges(db, *, viewer_id: UUID, from_ref: ResourceRef, to_ref: ResourceRef) -> int   # identity merges; all kinds, ordinals/snapshots untouched
 ```
 
-Undirected dedup for `origin=user` unlocated pairs is owned here (both-direction check before insert, as today).
+Undirected dedup for `origin=user` unlocated pairs is owned here (both-direction check before insert, as today). Product connection reads are owned by `resource_graph.connections.query_connections`; `resource_graph.edges` is the write/delete owner.
 
 ### 9.4 `resource_graph.context`
 
@@ -593,11 +592,11 @@ Old route modules are deleted: `api/routes/conversation_references.py`, `api/rou
 | DELETE | `/conversations/{id}/context-refs/{edge_id}` | `context.remove_context_ref` | |
 | GET | `/conversations?has_context_ref=...` | `context.list_conversations_with_context_ref` | replaces `has_reference` |
 
-### 10.2 Edges (connections + user links)
+### 10.2 Connections and edges
 
 | Method | Route | Service | Notes |
 |---|---|---|---|
-| GET | `/resource-graph/edges?ref=...&kind=&origin=` | `edges.list_edges_for_ref` | the one connections read: backlinks, cited-by, referenced-in |
+| POST | `/resource-graph/connections/query` | `connections.query_connections` | the one product connection read: backlinks, cited-by, referenced-in, outgoing links |
 | POST | `/resource-graph/edges` | `edges.create_edge` | user links and user stance edges; `origin` forced to `user` at the route |
 | DELETE | `/resource-graph/edges/{edge_id}` | `edges.delete_edge` | user-origin rows only at this route |
 
@@ -657,7 +656,7 @@ Body sync re-targets to `edges.replace_edges_for_origin(source=page, origin=note
 
 ### 11.11 Frontend
 
-Frontend deletes object-link and conversation-reference clients. New modules: `resourceRef.ts`, `edges.ts`, `contextRefs.ts`, `citations.ts`. `ReaderCitation` remains the renderer; `NoteBacklinks` becomes a verbless connections list over `GET /resource-graph/edges`; conversation reference surfaces become context-ref surfaces.
+Frontend deletes object-link and conversation-reference clients. New modules: `resourceRef.ts`, `edges.ts`, `connections.ts`, `contextRefs.ts`, `citations.ts`. `ReaderCitation` remains the renderer; object sidecars use `ConnectionsSurface` over `POST /resource-graph/connections/query`; conversation reference surfaces become context-ref surfaces.
 
 ---
 
@@ -674,7 +673,7 @@ Frontend deletes object-link and conversation-reference clients. New modules: `r
 | User link CRUD and hydration | `object_links`, `object_refs`, notes schemas | `resource_graph.edges` |
 | Note body reference sync + highlight note attachment | `object_links` verb rows in `notes.py` | `origin=note_body` / `origin=highlight_note` edges |
 | Cleanup of refs to deleted media/chunks/spans | `media_deletion`, `content_indexing`, ad hoc SQL | `resource_graph.cleanup` (two rules) |
-| "What's connected to X" | `NoteBacklinks` query, `has_reference`, per-feature reverse lookups | `edges.list_edges_for_ref` (G9) |
+| "What's connected to X" | bespoke backlink query, `has_reference`, per-feature reverse lookups | `connections.query_connections` |
 
 ---
 
@@ -793,7 +792,7 @@ If a slice requires dual-read or dual-write to pass independently, do not land i
 - `apps/web/src/lib/conversations/readerTarget.ts`
 - `apps/web/src/lib/conversations/types.ts`
 - `apps/web/src/lib/resources/resourceKind.ts`
-- `apps/web/src/components/notes/NoteBacklinks.tsx` (verbless connections list)
+- `apps/web/src/components/connections/ConnectionsSurface.tsx` (verbless connections list)
 - `apps/web/src/components/chat/ConversationReferencesSurface.tsx`
 - `apps/web/src/components/chat/useConversation.ts`
 - `apps/web/src/components/chat/useChatRunTail.ts`
