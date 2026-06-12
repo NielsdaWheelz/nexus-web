@@ -1,13 +1,12 @@
-import type { ReactNode } from "react";
+import type { ComponentPropsWithoutRef, ReactNode } from "react";
 import { cx } from "@/lib/ui/cx";
 import styles from "./PaneSection.module.css";
 
-interface PaneSectionProps {
+interface PaneSectionProps extends Omit<ComponentPropsWithoutRef<"section">, "title"> {
   title?: ReactNode;
   description?: ReactNode;
   actions?: ReactNode;
   children: ReactNode;
-  className?: string;
 }
 
 export default function PaneSection({
@@ -16,9 +15,10 @@ export default function PaneSection({
   actions,
   children,
   className,
+  ...sectionProps
 }: PaneSectionProps) {
   return (
-    <section className={cx(styles.section, className)}>
+    <section {...sectionProps} className={cx(styles.section, className)}>
       {title || description || actions ? (
         <header className={styles.header}>
           <div className={styles.heading}>

@@ -136,6 +136,8 @@ describe("SettingsKeysPaneBody", () => {
     expect(headings[0]).toHaveTextContent("OpenRouter");
     expect(headings[1]).toHaveTextContent("Cloudflare");
     expect(headings[2]).toHaveTextContent("OpenAI");
+    expect(screen.getByRole("region", { name: "OpenAI provider key" }))
+      .toHaveAttribute("data-provider-card", "openai");
   });
 
   it("invalidates chat models after saving a key", async () => {

@@ -255,6 +255,8 @@ export default function SettingsKeysPaneBody() {
             return (
               <PaneSection
                 key={key.provider}
+                aria-label={`${label} provider key`}
+                data-provider-card={key.provider}
                 title={label}
                 description={<span className={styles.fingerprint}>{fingerprint}</span>}
                 actions={
