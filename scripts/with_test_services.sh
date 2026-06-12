@@ -60,6 +60,18 @@ postgres_container="$(docker compose -f "$COMPOSE_FILE" ps -q postgres)"
 test_env_require_tool curl
 test_env_require_tool python3
 
+create_postgres_database() {
+    local database="$1"
+
+    if [ "$(docker exec "$postgres_container" psql -U postgres -d postgres \
+        -v ON_ERROR_STOP=1 -tAc "SELECT 1 FROM pg_database WHERE datname = '${database}'")" != "1" ]; then
+        docker exec "$postgres_container" createdb -U postgres "$database"
+    fi
+    test_env_wait_until "$database database" 30 0.5 \
+        docker exec "$postgres_container" psql -U postgres -d "$database" \
+        -v ON_ERROR_STOP=1 -c "SELECT 1"
+}
+
 # pg_isready confirms Postgres is ready inside the container; test_env_tcp_accepts
 # then confirms the published host port the app actually connects through is live.
 test_env_wait_until "postgres" 30 1 docker exec "$postgres_container" pg_isready -U postgres
@@ -67,8 +79,8 @@ test_env_wait_until "postgres host port" 120 0.25 test_env_tcp_accepts "$POSTGRE
 test_env_wait_until "MinIO" 30 1 \
     curl -fsS "http://127.0.0.1:${MINIO_PORT}/minio/health/ready"
 
-docker exec "$postgres_container" createdb -U postgres nexus_test >/dev/null 2>&1 || true
-docker exec "$postgres_container" createdb -U postgres nexus_test_migrations >/dev/null 2>&1 || true
+create_postgres_database nexus_test
+create_postgres_database nexus_test_migrations
 
 test_env_export_db_urls
 test_env_export_r2_env
