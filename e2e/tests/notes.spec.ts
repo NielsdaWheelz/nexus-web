@@ -66,13 +66,15 @@ interface NoteBlockPayload {
   children: NoteBlockPayload[];
 }
 
-interface ResourceGraphEdgesPayload {
-  data: Array<{
-    origin: string;
-    source_ref: string;
-    target_ref: string;
-    source_order_key: string | null;
-  }>;
+interface ResourceGraphConnectionsPayload {
+  data: {
+    items: Array<{
+      origin: string;
+      source_ref: string;
+      target_ref: string;
+      source_order_key: string | null;
+    }>;
+  };
 }
 
 function readSeededNonPdfMedia(): SeededNonPdfMedia {
@@ -175,11 +177,16 @@ async function readResourceGraphEdges(
   ref: string,
   origin = "note_containment"
 ) {
-  const response = await page.request.get(
-    `/api/resource-graph/edges?ref=${encodeURIComponent(ref)}&origin=${origin}`
-  );
+  const response = await page.request.post("/api/resource-graph/connections/query", {
+    data: {
+      refs: [ref],
+      direction: "both",
+      filters: { origins: [origin] },
+      limit: 100,
+    },
+  });
   await expectOk(response, `Fetch ${origin} edges`);
-  return ((await response.json()) as ResourceGraphEdgesPayload).data;
+  return ((await response.json()) as ResourceGraphConnectionsPayload).data.items;
 }
 
 /**

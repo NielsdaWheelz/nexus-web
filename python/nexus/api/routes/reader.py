@@ -4,14 +4,15 @@ Transport-only: validate input, call one reader-family service, return the
 envelope. All paths are `/media/{media_id}/...`.
 """
 
-from typing import Annotated
+from typing import Annotated, cast
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
+from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import ok, success_response
 from nexus.schemas.media import MediaEvidenceResponse
 from nexus.services import (
@@ -19,9 +20,12 @@ from nexus.services import (
     locator_resolver,
     media_file_access,
     reader_apparatus,
+    reader_connections,
     reader_navigation,
 )
 from nexus.services import reader as reader_service
+from nexus.services.resource_graph.refs import RESOURCE_SCHEMES, ResourceScheme
+from nexus.services.resource_graph.schemas import EDGE_ORIGINS, EdgeOrigin
 
 router = APIRouter(tags=["media"])
 
@@ -78,6 +82,28 @@ def get_media_apparatus(
     return ok(result)
 
 
+@router.get("/media/{media_id}/reader-connections")
+def get_media_reader_connections(
+    media_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+    origin: Annotated[list[str] | None, Query()] = None,
+    source_scheme: Annotated[list[str] | None, Query()] = None,
+    limit: int = Query(default=100, ge=1, le=100),
+    cursor: str | None = Query(default=None),
+) -> dict:
+    result = reader_connections.list_reader_connections(
+        db,
+        viewer_id=viewer.user_id,
+        media_id=media_id,
+        origins=_edge_origins(origin),
+        source_schemes=_resource_schemes(source_scheme),
+        limit=limit,
+        cursor=cursor,
+    )
+    return ok(result)
+
+
 @router.get("/media/{media_id}/reader-state")
 def get_reader_state(
     media_id: UUID,
@@ -118,3 +144,23 @@ def get_media_file(
         media_id=media_id,
     )
     return success_response(result)
+
+
+def _edge_origins(values: list[str] | None) -> tuple[EdgeOrigin, ...] | None:
+    if values is None:
+        return None
+    for value in values:
+        if value not in EDGE_ORIGINS:
+            raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, f"Invalid origin: {value!r}")
+    return tuple(cast("EdgeOrigin", value) for value in values)
+
+
+def _resource_schemes(values: list[str] | None) -> tuple[ResourceScheme, ...] | None:
+    if values is None:
+        return None
+    for value in values:
+        if value not in RESOURCE_SCHEMES:
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST, f"Invalid source_scheme: {value!r}"
+            )
+    return tuple(cast("ResourceScheme", value) for value in values)

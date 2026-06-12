@@ -29,10 +29,11 @@ from nexus.schemas.retrieval import RetrievalLocator
 from nexus.services.media_intelligence import get_ready_summaries
 from nexus.services.resource_graph.edges import create_edge, replace_edges_for_origin
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
-from nexus.services.resource_graph.resolve import reader_target_for_citation_target
+from nexus.services.resource_graph.resolve import reader_target_for_citation_target, resolve_ref
 from nexus.services.resource_graph.schemas import (
     CitationInput,
     CitationSnapshot,
+    CitationTargetProjection,
     ConcordantSource,
     EdgeCreate,
     EdgeKind,
@@ -140,6 +141,33 @@ def build_citation_outs(db: Session, *, viewer_id: UUID, source: ResourceRef) ->
     return [_citation_out(db, viewer_id=viewer_id, row=row, summaries=summaries) for row in rows]
 
 
+def citation_reader_target_for_edge(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    edge: ResourceEdge,
+) -> CitationTargetProjection:
+    """Project one citation edge through the same target-owned reader jump logic."""
+    assert edge.ordinal is not None and edge.snapshot is not None, (
+        f"citation edge {edge.id} lost its ordinal/snapshot pair"
+    )
+    target = ResourceRef(scheme=cast("ResourceScheme", edge.target_scheme), id=edge.target_id)
+    media_id, locator = reader_target_for_citation_target(db, viewer_id=viewer_id, target=target)
+    target_status = (
+        "missing"
+        if resolve_ref(db, viewer_id=viewer_id, ref=target).missing
+        else ("current" if media_id is not None or locator is not None else "unanchorable")
+    )
+    return CitationTargetProjection(
+        ordinal=edge.ordinal,
+        role=cast("EdgeKind", edge.kind),
+        snapshot=snapshot_from_jsonb(edge.snapshot),
+        media_id=media_id,
+        locator=locator,
+        target_status=target_status,
+    )
+
+
 def concordant_sources(
     db: Session,
     *,
@@ -200,32 +228,27 @@ def _citation_out(
     row: ResourceEdge,
     summaries: Mapping[UUID, str],
 ) -> CitationOut:
-    assert row.ordinal is not None and row.snapshot is not None, (
-        f"citation edge {row.id} lost its ordinal/snapshot pair"
-    )
-    snapshot = snapshot_from_jsonb(row.snapshot)
-    target = ResourceRef(scheme=cast("ResourceScheme", row.target_scheme), id=row.target_id)
-    media_id, locator = reader_target_for_citation_target(db, viewer_id=viewer_id, target=target)
+    projection = citation_reader_target_for_edge(db, viewer_id=viewer_id, edge=row)
     # Only media-scheme targets carry the summary abstract; a content_chunk/span
     # whose parent happens to be media is a finer grain and does not (mirrors the
     # harness's "media targets only" rule, keyed by the media target id).
     summary_md = summaries.get(row.target_id) if row.target_scheme == "media" else None
     return CitationOut(
-        ordinal=row.ordinal,
-        role=cast("CitationRole", row.kind),
+        ordinal=projection.ordinal,
+        role=cast("CitationRole", projection.role),
         target_ref=CitationTargetRef(
             type=cast("CitationTargetType", row.target_scheme),
             id=row.target_id,
         ),
-        media_id=media_id,
+        media_id=projection.media_id,
         # Pydantic coerces the validated locator JSON into the RetrievalLocator union.
-        locator=cast("RetrievalLocator | None", locator),
-        deep_link=snapshot.deep_link,
+        locator=cast("RetrievalLocator | None", projection.locator),
+        deep_link=projection.snapshot.deep_link,
         snapshot=CitationSnapshotOut(
-            title=snapshot.title,
-            excerpt=snapshot.excerpt,
-            section_label=snapshot.section_label,
-            result_type=snapshot.result_type,
+            title=projection.snapshot.title,
+            excerpt=projection.snapshot.excerpt,
+            section_label=projection.snapshot.section_label,
+            result_type=projection.snapshot.result_type,
             summary_md=summary_md,
         ),
     )

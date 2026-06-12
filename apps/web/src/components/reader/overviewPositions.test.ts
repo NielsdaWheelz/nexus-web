@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ReaderNavigationSection } from "@/lib/media/readerNavigation";
 import { type OverviewPositionFragment, positionHighlights } from "./overviewPositions";
-import type { AnchoredHighlightRow } from "./useAnchoredHighlightProjection";
+import type { AnchoredReaderRow } from "./useAnchoredReaderProjection";
 
 function fragment(
   id: string,
@@ -41,7 +41,7 @@ function fragmentHighlight(
   id: string,
   fragment_id: string,
   start_offset: number,
-): AnchoredHighlightRow {
+): AnchoredReaderRow {
   return {
     id,
     exact: id,
@@ -50,7 +50,7 @@ function fragmentHighlight(
   };
 }
 
-function pdfHighlight(id: string, page_number: number): AnchoredHighlightRow {
+function pdfHighlight(id: string, page_number: number): AnchoredReaderRow {
   return { id, exact: id, color: "yellow", page_number };
 }
 

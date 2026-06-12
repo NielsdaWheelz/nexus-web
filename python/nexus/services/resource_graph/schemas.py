@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Literal, get_args
 from uuid import UUID
 
-from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 
 # Single source for the edge vocabularies (LOW #20): the wire schema
 # (``nexus.schemas.resource_graph``) and the citation read-model
@@ -32,6 +32,9 @@ EdgeOrigin = Literal[
 
 EDGE_KINDS: tuple[EdgeKind, ...] = get_args(EdgeKind)
 EDGE_ORIGINS: tuple[EdgeOrigin, ...] = get_args(EdgeOrigin)
+ConnectionDirection = Literal["incoming", "outgoing", "both"]
+ConnectionRollup = Literal["exact", "owner"]
+ConnectionTargetStatus = Literal["current", "missing", "forbidden", "unanchorable"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,3 +114,75 @@ class ConcordantSource:
 
     source: ResourceRef
     shared_target_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class CitationTargetProjection:
+    ordinal: int
+    role: EdgeKind
+    snapshot: CitationSnapshot
+    media_id: UUID | None
+    locator: dict[str, object] | None
+    target_status: ConnectionTargetStatus
+
+
+@dataclass(frozen=True, slots=True)
+class ConnectionFilters:
+    origins: tuple[EdgeOrigin, ...] | None = None
+    kinds: tuple[EdgeKind, ...] | None = None
+    source_schemes: tuple[ResourceScheme, ...] | None = None
+    target_schemes: tuple[ResourceScheme, ...] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ConnectionQuery:
+    refs: tuple[ResourceRef, ...]
+    direction: ConnectionDirection
+    rollup: ConnectionRollup
+    filters: ConnectionFilters
+    limit: int
+    cursor: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ConnectionEndpoint:
+    ref: ResourceRef
+    label: str | None
+    description: str | None
+    href: str | None
+    missing: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ConnectionCitation:
+    ordinal: int
+    role: EdgeKind
+    snapshot: CitationSnapshot
+    target_media_id: UUID | None
+    target_locator: dict[str, object] | None
+    target_status: ConnectionTargetStatus
+
+
+@dataclass(frozen=True, slots=True)
+class Connection:
+    edge_id: UUID
+    direction: Literal["incoming", "outgoing"]
+    kind: EdgeKind
+    origin: EdgeOrigin
+    snapshot: CitationSnapshot | None
+    source_order_key: str | None
+    target_order_key: str | None
+    ordinal: int | None
+    source_ref: ResourceRef
+    target_ref: ResourceRef
+    source: ConnectionEndpoint
+    target: ConnectionEndpoint
+    other: ConnectionEndpoint
+    citation: ConnectionCitation | None
+    created_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class ConnectionPage:
+    items: tuple[Connection, ...]
+    next_cursor: str | None

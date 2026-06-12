@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, TypedDict, cast
 from uuid import UUID, uuid4
 
-from sqlalchemy import delete, func, select, text
+from sqlalchemy import delete, func, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -30,7 +30,6 @@ from nexus.db.models import (
     Media,
     NoteBlock,
     Page,
-    ResourceEdge,
 )
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.schemas.notes import NOTE_BLOCK_KIND_VALUES, NOTE_BLOCK_KINDS, PatchPageDocumentRequest
@@ -42,6 +41,7 @@ from nexus.services.highlights import (
 )
 from nexus.services.notes import delete_page, pm_doc_from_markdown_projection
 from nexus.services.resource_graph import documents as graph_documents
+from nexus.services.resource_graph import highlight_notes as graph_highlight_notes
 from nexus.services.resource_graph.cleanup import delete_edges_for_deleted_resource
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.storage.client import StorageClientBase, get_storage_client
@@ -876,15 +876,8 @@ def _editable_page_nodes_from_document(
     block_ids = document.block_ids
     if not block_ids:
         return []
-    highlight_note_ids = set(
-        db.scalars(
-            select(ResourceEdge.target_id).where(
-                ResourceEdge.user_id == viewer_id,
-                ResourceEdge.origin == "highlight_note",
-                ResourceEdge.target_scheme == "note_block",
-                ResourceEdge.target_id.in_(block_ids),
-            )
-        )
+    highlight_note_ids = graph_highlight_notes.note_block_ids_with_highlight_notes(
+        db, viewer_id=viewer_id, block_ids=block_ids
     )
 
     def keep(nodes: list[graph_documents.DocumentBlock]) -> list[graph_documents.DocumentBlock]:
@@ -1316,27 +1309,8 @@ def _highlight_note_blocks(
     viewer_id: UUID,
     highlight_id: UUID,
 ) -> list[NoteBlock]:
-    return list(
-        db.scalars(
-            select(NoteBlock)
-            .join(
-                ResourceEdge,
-                (ResourceEdge.target_scheme == "note_block")
-                & (ResourceEdge.target_id == NoteBlock.id),
-            )
-            .where(
-                ResourceEdge.user_id == viewer_id,
-                ResourceEdge.origin == "highlight_note",
-                ResourceEdge.source_scheme == "highlight",
-                ResourceEdge.source_id == highlight_id,
-                NoteBlock.user_id == viewer_id,
-            )
-            .order_by(
-                ResourceEdge.created_at.asc(),
-                ResourceEdge.id.asc(),
-                NoteBlock.id.asc(),
-            )
-        )
+    return graph_highlight_notes.note_blocks_for_highlight(
+        db, viewer_id=viewer_id, highlight_id=highlight_id
     )
 
 

@@ -3,7 +3,6 @@ import { apiFetch } from "@/lib/api/client";
 import {
   createUserEdge,
   deleteUserEdge,
-  listEdgesForRef,
   resolveResourceRefs,
   type EdgeOut,
 } from "./edges";
@@ -40,32 +39,6 @@ const edge: EdgeOut = {
 describe("resource graph edges client", () => {
   beforeEach(() => {
     apiFetchMock.mockReset();
-  });
-
-  it("lists edges for a resource ref", async () => {
-    apiFetchMock.mockResolvedValueOnce({ data: [edge] });
-
-    await expect(
-      listEdgesForRef("page:11111111-1111-4111-8111-111111111111"),
-    ).resolves.toEqual([edge]);
-
-    expect(apiFetchMock).toHaveBeenCalledWith(
-      "/api/resource-graph/edges?ref=page%3A11111111-1111-4111-8111-111111111111",
-    );
-  });
-
-  it("passes abort signals on edge reads", async () => {
-    const controller = new AbortController();
-    apiFetchMock.mockResolvedValueOnce({ data: [] });
-
-    await listEdgesForRef("media:22222222-2222-4222-8222-222222222222", {
-      signal: controller.signal,
-    });
-
-    expect(apiFetchMock).toHaveBeenCalledWith(
-      "/api/resource-graph/edges?ref=media%3A22222222-2222-4222-8222-222222222222",
-      { signal: controller.signal },
-    );
   });
 
   it("creates user edges without exposing order or origin writes", async () => {

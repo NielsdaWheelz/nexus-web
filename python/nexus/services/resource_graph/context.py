@@ -253,7 +253,7 @@ def batch_conversations_with_context_ref(
     Same admission as ``list_conversations_with_context_ref`` — any edge from a
     viewer-owned conversation to the target counts — but keyed by target id and
     joined to the conversation row so callers project their own ref shape. Kept
-    here, not on ``list_edges_for_ref``, because it needs the conversation join
+    here, not on the generic connection query, because it needs the conversation join
     and the per-target batching.
     """
     if not targets:

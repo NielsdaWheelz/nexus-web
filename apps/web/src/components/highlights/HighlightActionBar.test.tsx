@@ -2,10 +2,10 @@ import { describe, expect, it, vi, afterEach } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
-import type { AnchoredHighlightRow } from "@/components/reader/useAnchoredHighlightProjection";
+import type { AnchoredReaderRow } from "@/components/reader/useAnchoredReaderProjection";
 import HighlightActionBar from "./HighlightActionBar";
 
-const highlight: AnchoredHighlightRow = { id: "h1", exact: "hello", color: "yellow" };
+const highlight: AnchoredReaderRow = { id: "h1", exact: "hello", color: "yellow" };
 
 afterEach(() => {
   vi.restoreAllMocks();

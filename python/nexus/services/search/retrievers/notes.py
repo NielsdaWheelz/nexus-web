@@ -13,6 +13,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.schemas.retrieval import retrieval_locator_json
+from nexus.services.resource_graph.highlight_notes import highlight_excerpts_for_note_blocks
 from nexus.services.search.constants import (
     CONTENT_CHUNK_ANN_CANDIDATE_MULTIPLIER,
     CONTENT_CHUNK_MIN_ANN_CANDIDATES,
@@ -274,23 +275,9 @@ def _search_note_chunks(
 
 def _highlight_excerpts(db: Session, viewer_id: UUID, note_ids: list[UUID]) -> dict[UUID, str]:
     """First attached-highlight excerpt per note_block (``origin=highlight_note`` edges)."""
-    if not note_ids:
-        return {}
-    excerpts: dict[UUID, str] = {}
-    for row in db.execute(
-        text(
-            """
-            SELECT e.target_id AS note_block_id, h.exact
-            FROM resource_edges e
-            JOIN highlights h ON e.source_scheme = 'highlight' AND h.id = e.source_id
-            WHERE e.user_id = :viewer_id
-              AND e.origin = 'highlight_note'
-              AND e.target_scheme = 'note_block'
-              AND e.target_id = ANY(:note_ids)
-            ORDER BY e.created_at ASC, e.id ASC
-            """
-        ),
-        {"viewer_id": viewer_id, "note_ids": note_ids},
-    ).mappings():
-        excerpts.setdefault(row["note_block_id"], _truncate_snippet(str(row["exact"] or "")))
-    return excerpts
+    return {
+        note_id: _truncate_snippet(exact)
+        for note_id, exact in highlight_excerpts_for_note_blocks(
+            db, viewer_id=viewer_id, note_ids=note_ids
+        ).items()
+    }

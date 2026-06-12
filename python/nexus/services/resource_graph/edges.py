@@ -124,31 +124,6 @@ def delete_edge(db: Session, *, viewer_id: UUID, edge_id: UUID) -> None:
     db.flush()
 
 
-def list_edges_for_ref(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    ref: ResourceRef,
-    kind: EdgeKind | None = None,
-    origin: EdgeOrigin | None = None,
-) -> list[EdgeOut]:
-    """Every edge touching ``ref`` at either endpoint — the one connections read (G9)."""
-    query = select(ResourceEdge).where(
-        ResourceEdge.user_id == viewer_id,
-        or_(_source_is(ref), _target_is(ref)),
-    )
-    if kind is not None:
-        query = query.where(ResourceEdge.kind == kind)
-    if origin is not None:
-        query = query.where(ResourceEdge.origin == origin)
-    rows = (
-        db.execute(query.order_by(ResourceEdge.created_at.desc(), ResourceEdge.id.desc()))
-        .scalars()
-        .all()
-    )
-    return [_edge_out(row) for row in rows]
-
-
 def replace_edges_for_origin(
     db: Session,
     *,

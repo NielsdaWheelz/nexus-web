@@ -31,9 +31,9 @@ from nexus.auth.permissions import (
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas.retrieval import retrieval_locator_json
 from nexus.services import library_entries
-from nexus.services.highlight_notes import linked_note_blocks_for_highlights
 from nexus.services.locator_resolver import locator_from_resolution, resolve_evidence_span
 from nexus.services.media_document_map import load_media_document_summary
+from nexus.services.resource_graph.highlight_notes import linked_note_blocks_for_highlights
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.resource_graph.structure import find_block_occurrence
 

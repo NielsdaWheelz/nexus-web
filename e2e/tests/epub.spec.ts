@@ -46,12 +46,13 @@ interface HighlightOut {
   }>;
 }
 
-interface EdgesResponse {
-  data: Array<{
-    id: string;
-    source_ref: string;
-    target_ref: string;
-  }>;
+interface ConnectionsResponse {
+  data: {
+    items: Array<{
+      source_ref: string;
+      target_ref: string;
+    }>;
+  };
 }
 
 function paragraphPmJsonFromText(text: string) {
@@ -65,14 +66,19 @@ async function upsertHighlightNote(
   highlightId: string,
   body: string,
 ): Promise<void> {
-  const edgesResponse = await page.request.get(
-    `/api/resource-graph/edges?ref=${encodeURIComponent(`highlight:${highlightId}`)}&origin=highlight_note`
-  );
+  const edgesResponse = await page.request.post("/api/resource-graph/connections/query", {
+    data: {
+      refs: [`highlight:${highlightId}`],
+      direction: "both",
+      filters: { origins: ["highlight_note"] },
+      limit: 100,
+    },
+  });
   expect(edgesResponse.ok()).toBeTruthy();
-  const edgesPayload = (await edgesResponse.json()) as EdgesResponse;
+  const edgesPayload = (await edgesResponse.json()) as ConnectionsResponse;
   const [primaryNoteBlockId] = Array.from(
     new Set(
-      edgesPayload.data
+      edgesPayload.data.items
         .map((edge) => {
           const [scheme, id] = edge.target_ref.split(":");
           return scheme === "note_block" ? id : null;

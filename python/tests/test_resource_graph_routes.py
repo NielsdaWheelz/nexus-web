@@ -82,6 +82,11 @@ def _create_media(direct_db: DirectSessionManager, user_id: UUID, title: str) ->
     return media_id
 
 
+def _query_connections(auth_client, headers: dict[str, str], ref: str, **body):
+    payload = {"refs": [ref], "direction": "both", "limit": 100, **body}
+    return auth_client.post("/resource-graph/connections/query", headers=headers, json=payload)
+
+
 # =============================================================================
 # Conversation context refs
 # =============================================================================
@@ -430,7 +435,7 @@ def test_create_edge_duplicate_pair_rejected_both_directions(
     )
 
 
-def test_list_edges_returns_edges_from_either_endpoint(
+def test_query_connections_returns_edges_from_either_endpoint(
     auth_client, direct_db: DirectSessionManager
 ):
     user_id = _bootstrap_user(auth_client, direct_db)
@@ -447,13 +452,13 @@ def test_list_edges_returns_edges_from_either_endpoint(
     edge_id = created.json()["data"]["id"]
 
     for ref in (f"media:{a_media_id}", f"media:{b_media_id}"):
-        listing = auth_client.get(f"/resource-graph/edges?ref={ref}", headers=headers)
+        listing = _query_connections(auth_client, headers, ref)
         assert listing.status_code == 200, listing.text
-        ids = [edge["id"] for edge in listing.json()["data"]]
+        ids = [edge["edge_id"] for edge in listing.json()["data"]["items"]]
         assert ids == [edge_id], f"Edge must be listed from either endpoint (ref={ref}); got {ids}"
 
 
-def test_list_edges_filters_by_kind_and_origin(auth_client, direct_db: DirectSessionManager):
+def test_query_connections_filters_by_kind_and_origin(auth_client, direct_db: DirectSessionManager):
     user_id = _bootstrap_user(auth_client, direct_db)
     headers = auth_headers(user_id)
     a_media_id = _create_media(direct_db, user_id, title="Filter A")
@@ -474,36 +479,32 @@ def test_list_edges_filters_by_kind_and_origin(auth_client, direct_db: DirectSes
     )
     assert supports_edge.status_code == 201, supports_edge.text
 
-    kind_filtered = auth_client.get(
-        f"/resource-graph/edges?ref={a_ref}&kind=supports", headers=headers
-    )
+    kind_filtered = _query_connections(auth_client, headers, a_ref, filters={"kinds": ["supports"]})
     assert kind_filtered.status_code == 200, kind_filtered.text
-    kinds = [edge["kind"] for edge in kind_filtered.json()["data"]]
+    kinds = [edge["kind"] for edge in kind_filtered.json()["data"]["items"]]
     assert kinds == ["supports"], f"kind filter must apply; got {kinds}"
 
-    origin_filtered = auth_client.get(
-        f"/resource-graph/edges?ref={a_ref}&origin=user", headers=headers
-    )
+    origin_filtered = _query_connections(auth_client, headers, a_ref, filters={"origins": ["user"]})
     assert origin_filtered.status_code == 200, origin_filtered.text
-    assert len(origin_filtered.json()["data"]) == 2, origin_filtered.text
+    assert len(origin_filtered.json()["data"]["items"]) == 2, origin_filtered.text
 
 
-def test_list_edges_rejects_unknown_kind_and_origin_values(
+def test_query_connections_rejects_unknown_kind_and_origin_values(
     auth_client, direct_db: DirectSessionManager
 ):
     user_id = _bootstrap_user(auth_client, direct_db)
     headers = auth_headers(user_id)
     ref = f"media:{uuid4()}"
 
-    bad_kind = auth_client.get(f"/resource-graph/edges?ref={ref}&kind=banana", headers=headers)
+    bad_kind = _query_connections(auth_client, headers, ref, filters={"kinds": ["banana"]})
     assert bad_kind.status_code == 400, bad_kind.text
     assert bad_kind.json()["error"]["code"] == "E_INVALID_REQUEST"
 
-    bad_origin = auth_client.get(f"/resource-graph/edges?ref={ref}&origin=banana", headers=headers)
+    bad_origin = _query_connections(auth_client, headers, ref, filters={"origins": ["banana"]})
     assert bad_origin.status_code == 400, bad_origin.text
     assert bad_origin.json()["error"]["code"] == "E_INVALID_REQUEST"
 
-    bad_ref = auth_client.get("/resource-graph/edges?ref=not-a-ref", headers=headers)
+    bad_ref = _query_connections(auth_client, headers, "not-a-ref")
     assert bad_ref.status_code == 400, bad_ref.text
     assert bad_ref.json()["error"]["code"] == "E_INVALID_REQUEST"
 
@@ -526,8 +527,8 @@ def test_delete_edge_removes_user_edge(auth_client, direct_db: DirectSessionMana
     deleted = auth_client.delete(f"/resource-graph/edges/{edge_id}", headers=headers)
     assert deleted.status_code == 204, deleted.text
 
-    listing = auth_client.get(f"/resource-graph/edges?ref={a_ref}", headers=headers)
-    assert listing.json()["data"] == [], "Edge should be gone after delete"
+    listing = _query_connections(auth_client, headers, a_ref)
+    assert listing.json()["data"]["items"] == [], "Edge should be gone after delete"
 
     deleted_again = auth_client.delete(f"/resource-graph/edges/{edge_id}", headers=headers)
     assert deleted_again.status_code == 404, deleted_again.text
@@ -560,11 +561,11 @@ def test_delete_edge_refuses_non_user_origin_rows(auth_client, direct_db: Direct
     )
     assert response.json()["error"]["code"] == "E_FORBIDDEN"
 
-    listing = auth_client.get(
-        f"/resource-graph/edges?ref=media:{media_id}&origin=citation", headers=headers
+    listing = _query_connections(
+        auth_client, headers, f"media:{media_id}", filters={"origins": ["citation"]}
     )
     assert listing.status_code == 200, listing.text
-    assert [edge["id"] for edge in listing.json()["data"]] == [str(edge_id)], (
+    assert [edge["edge_id"] for edge in listing.json()["data"]["items"]] == [str(edge_id)], (
         "Citation edge must survive the refused delete"
     )
 
@@ -600,10 +601,8 @@ def test_delete_edge_another_users_edge_returns_404(auth_client, direct_db: Dire
         f"Another user's edge must 404, not leak existence: {response.text}"
     )
 
-    listing = auth_client.get(
-        f"/resource-graph/edges?ref=media:{source_media_id}", headers=auth_headers(owner_id)
-    )
-    assert [edge["id"] for edge in listing.json()["data"]] == [edge_id], (
+    listing = _query_connections(auth_client, auth_headers(owner_id), f"media:{source_media_id}")
+    assert [edge["edge_id"] for edge in listing.json()["data"]["items"]] == [edge_id], (
         "The owner's edge must survive an intruder's refused delete"
     )
 

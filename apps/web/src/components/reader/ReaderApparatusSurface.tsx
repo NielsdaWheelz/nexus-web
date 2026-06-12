@@ -2,11 +2,7 @@
 
 import {
   useCallback,
-  useEffect,
-  useLayoutEffect,
   useMemo,
-  useRef,
-  useState,
   type CSSProperties,
   type RefObject,
 } from "react";
@@ -18,15 +14,11 @@ import {
   type ReaderApparatusCapabilities,
   type ReaderApparatusRow,
 } from "@/lib/reader/apparatus";
-import {
-  findScrollParent,
-  useAnchoredHighlightProjection,
-  type AnchoredHighlightRow,
-} from "./useAnchoredHighlightProjection";
+import AnchoredSidecarSurface from "./AnchoredSidecarSurface";
+import type { AnchoredReaderRow } from "./useAnchoredReaderProjection";
 import styles from "./ReaderApparatusSurface.module.css";
 
 const ROW_HEIGHT = 112;
-const ROW_GAP = 4;
 
 interface ReaderApparatusSurfaceProps {
   rows: ReaderApparatusRow[];
@@ -55,177 +47,32 @@ export default function ReaderApparatusSurface({
   isMobile,
   pdfActivePage = null,
 }: ReaderApparatusSurfaceProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const rowRefs = useRef(new Map<string, HTMLButtonElement>());
-  const [alignedRows, setAlignedRows] = useState<
-    Array<{ id: string; top: number }>
-  >([]);
-  const [rowHeights, setRowHeights] = useState(new Map<string, number>());
-  const [overflowCount, setOverflowCount] = useState(0);
-  const [layoutVersion, setLayoutVersion] = useState(0);
   const anchoredRows = useMemo(
     () =>
-      (isMobile ? [] : (projectRows ?? rows))
+      (projectRows ?? rows)
         .map((row) => toAnchoredRow(row))
-        .filter((row): row is AnchoredHighlightRow => row !== null),
-    [isMobile, projectRows, rows],
+        .filter((row): row is AnchoredReaderRow => row !== null),
+    [projectRows, rows],
   );
   const apparatusTargetSelector = useCallback(
     (escapedId: string) => `[data-reader-apparatus-item-id="${escapedId}"]`,
     [],
   );
 
-  const { orderedHighlights, projections, viewportState } =
-    useAnchoredHighlightProjection({
-      contentRef,
-      highlights: anchoredRows,
-      measureKey,
-      targetSelector: apparatusTargetSelector,
-      missingTargetLogName: "reader_apparatus_target_missing",
-    });
-
-  const rowById = useMemo(
-    () => new Map(rows.map((row) => [row.id, row])),
-    [rows],
-  );
-  const alignedRowIds = useMemo(
-    () => new Set(alignedRows.map((row) => row.id)),
-    [alignedRows],
-  );
-  const unalignedRows = useMemo(
-    () => rows.filter((row) => !alignedRowIds.has(row.id)),
-    [alignedRowIds, rows],
-  );
-  const alignedContentHeight = useMemo(() => {
-    let bottom = 0;
-    for (const row of alignedRows) {
-      bottom = Math.max(
-        bottom,
-        row.top + (rowHeights.get(row.id) ?? ROW_HEIGHT),
-      );
-    }
-    return bottom;
-  }, [alignedRows, rowHeights]);
-
-  const alignRows = useCallback(() => {
-    if (isMobile || !containerRef.current || !contentRef.current) {
-      return;
-    }
-    const scrollParent = findScrollParent(contentRef.current);
-    const baseline =
-      scrollParent.getBoundingClientRect().top -
-      containerRef.current.getBoundingClientRect().top;
-    const orderById = new Map(
-      orderedHighlights.map((row, index) => [row.id, index]),
-    );
-    const positioned = projections
-      .map((projection) => ({
-        id: projection.highlight.id,
-        desiredTop: projection.rect.top - viewportState.scrollTop + baseline,
-      }))
-      .sort((left, right) => {
-        if (left.desiredTop !== right.desiredTop) {
-          return left.desiredTop - right.desiredTop;
-        }
-        return (orderById.get(left.id) ?? 0) - (orderById.get(right.id) ?? 0);
-      });
-
-    let previousBottom = -ROW_GAP;
-    const nextAlignedRows: Array<{ id: string; top: number }> = [];
-    for (const row of positioned) {
-      const top = Math.max(0, row.desiredTop, previousBottom + ROW_GAP);
-      nextAlignedRows.push({ id: row.id, top });
-      previousBottom = top + (rowHeights.get(row.id) ?? ROW_HEIGHT);
-    }
-    setAlignedRows(nextAlignedRows);
-
-    let nextOverflowCount = 0;
-    for (const row of nextAlignedRows) {
-      if (
-        row.top + (rowHeights.get(row.id) ?? ROW_HEIGHT) >
-        containerRef.current.clientHeight
-      ) {
-        nextOverflowCount += 1;
-      }
-    }
-    setOverflowCount(nextOverflowCount);
-  }, [
-    contentRef,
-    isMobile,
-    orderedHighlights,
-    projections,
-    rowHeights,
-    viewportState.scrollTop,
-  ]);
-
-  useLayoutEffect(() => {
-    if (isMobile) {
-      return;
-    }
-    setRowHeights((previousHeights) => {
-      const nextHeights = new Map<string, number>();
-      for (const row of orderedHighlights) {
-        nextHeights.set(
-          row.id,
-          Math.ceil(
-            rowRefs.current.get(row.id)?.getBoundingClientRect().height ??
-              ROW_HEIGHT,
-          ),
-        );
-      }
-      if (previousHeights.size === nextHeights.size) {
-        let same = true;
-        for (const [rowId, height] of nextHeights) {
-          if (previousHeights.get(rowId) !== height) {
-            same = false;
-            break;
-          }
-        }
-        if (same) {
-          return previousHeights;
-        }
-      }
-      return nextHeights;
-    });
-  }, [activeItemId, alignedRows, hoveredItemId, isMobile, orderedHighlights]);
-
-  useEffect(() => {
-    if (isMobile || !containerRef.current) {
-      return;
-    }
-    const observer = new ResizeObserver(() => {
-      setLayoutVersion((version) => version + 1);
-    });
-    observer.observe(containerRef.current);
-    return () => observer.disconnect();
-  }, [isMobile]);
-
-  useEffect(() => {
-    if (!isMobile) {
-      alignRows();
-    }
-  }, [alignRows, isMobile, layoutVersion, projections]);
-
-  const setRowRef = useCallback(
-    (rowId: string) => (element: HTMLButtonElement | null) => {
-      if (element) {
-        rowRefs.current.set(rowId, element);
-      } else {
-        rowRefs.current.delete(rowId);
-      }
-    },
-    [],
-  );
-
   const renderRow = useCallback(
-    (row: ReaderApparatusRow, className: string, style?: CSSProperties) => {
+    (
+      row: ReaderApparatusRow,
+      className: string,
+      style: CSSProperties | undefined,
+      rootRef: (element: HTMLElement | null) => void,
+    ) => {
       const presentation = readerApparatusRowPresentation(row, capabilities);
       const canActivateRow =
         presentation.canActivateMarker || presentation.canActivateTarget;
       return (
         <button
           key={row.id}
-          ref={setRowRef(row.id)}
+          ref={(element) => rootRef(element)}
           type="button"
           className={`${styles.card} ${className}`}
           style={style}
@@ -285,7 +132,6 @@ export default function ReaderApparatusSurface({
       hoveredItemId,
       onActivateRow,
       onHoverItem,
-      setRowRef,
     ],
   );
 
@@ -299,67 +145,22 @@ export default function ReaderApparatusSurface({
     </header>
   );
 
-  if (rows.length === 0) {
-    return (
-      <section className={styles.root} aria-label="Citations">
-        {header}
-        <div className={styles.empty}>
-          <FeedbackNotice
-            severity="neutral"
-            title="No citations in this context."
-          />
-        </div>
-      </section>
-    );
-  }
-
-  if (isMobile) {
-    return (
-      <section className={styles.root} aria-label="Citations">
-        {header}
-        <div ref={containerRef} className={styles.mobileContainer}>
-          {rows.map((row) => renderRow(row, styles.flowRow))}
-        </div>
-      </section>
-    );
-  }
-
   return (
-    <section className={styles.root} aria-label="Citations">
-      {header}
-      <div
-        ref={containerRef}
-        className={styles.container}
-        data-testid="reader-apparatus-container"
-      >
-        {alignedRows.map((alignedRow) => {
-          const row = rowById.get(alignedRow.id);
-          if (!row) {
-            return null;
-          }
-          return renderRow(row, styles.row, {
-            transform: `translateY(${alignedRow.top}px)`,
-          });
-        })}
-        {unalignedRows.length > 0 ? (
-          <div
-            className={styles.flowList}
-            style={
-              alignedRows.length > 0
-                ? { paddingTop: alignedContentHeight + ROW_GAP }
-                : undefined
-            }
-          >
-            {unalignedRows.map((row) => renderRow(row, styles.flowRow))}
-          </div>
-        ) : null}
-        {overflowCount > 0 ? (
-          <div className={styles.overflowIndicator}>
-            +{overflowCount} more below
-          </div>
-        ) : null}
-      </div>
-    </section>
+    <AnchoredSidecarSurface
+      ariaLabel="Citations"
+      header={header}
+      rows={rows}
+      anchoredRows={anchoredRows}
+      contentRef={contentRef}
+      measureKey={measureKey}
+      isMobile={isMobile}
+      rowHeight={ROW_HEIGHT}
+      testId="reader-apparatus-container"
+      targetSelector={apparatusTargetSelector}
+      empty={<FeedbackNotice severity="neutral" title="No citations in this context." />}
+      idForRow={(row) => row.id}
+      renderRow={(row, props) => renderRow(row, props.className, props.style, props.ref)}
+    />
   );
 }
 
@@ -384,7 +185,7 @@ function pluralize(word: string, count: number): string {
   return count === 1 ? word : `${word}s`;
 }
 
-function toAnchoredRow(row: ReaderApparatusRow): AnchoredHighlightRow | null {
+function toAnchoredRow(row: ReaderApparatusRow): AnchoredReaderRow | null {
   const locator = row.marker.locator ?? row.target?.locator ?? null;
   if (!locator) {
     return null;
