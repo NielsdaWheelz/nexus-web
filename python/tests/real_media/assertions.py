@@ -7,6 +7,7 @@ from uuid import UUID
 
 from sqlalchemy import text
 
+from nexus.services.search.constants import MAX_LIMIT
 from nexus.services.semantic_chunks import (
     current_transcript_embedding_model,
     current_transcript_embedding_provider,
@@ -517,17 +518,21 @@ def assert_search_and_resolver(
             "q": query,
             "scope": f"media:{media_id}",
             "kinds": "documents",
-            "limit": 5,
+            "limit": MAX_LIMIT,
         },
         headers=headers,
     )
     assert search_response.status_code == 200, search_response.text
+    search_results = search_response.json()["results"]
     matches = [
         result
-        for result in search_response.json()["results"]
+        for result in search_results
         if result["type"] == "content_chunk" and result["source"]["media_id"] == str(media_id)
     ]
-    assert matches, f"search did not return indexed content_chunk for {media_id}"
+    assert matches, (
+        f"search did not return indexed content_chunk for {media_id}; got "
+        f"{[(row.get('type'), row.get('id'), (row.get('source') or {}).get('media_id')) for row in search_results]}"
+    )
 
     result = matches[0]
     # Hybrid retrieval (FTS ∪ vector ANN) is always on; a second request exercises
@@ -538,17 +543,21 @@ def assert_search_and_resolver(
             "q": query,
             "scope": f"media:{media_id}",
             "kinds": "documents",
-            "limit": 5,
+            "limit": MAX_LIMIT,
         },
         headers=headers,
     )
     assert semantic_response.status_code == 200, semantic_response.text
+    semantic_results = semantic_response.json()["results"]
     semantic_matches = [
         item
-        for item in semantic_response.json()["results"]
+        for item in semantic_results
         if item["type"] == "content_chunk" and item["source"]["media_id"] == str(media_id)
     ]
-    assert semantic_matches, f"semantic search did not return indexed content_chunk for {media_id}"
+    assert semantic_matches, (
+        f"semantic search did not return indexed content_chunk for {media_id}; got "
+        f"{[(row.get('type'), row.get('id'), (row.get('source') or {}).get('media_id')) for row in semantic_results]}"
+    )
 
     assert result["context_ref"]["type"] == "content_chunk", result
     assert result["context_ref"]["evidence_span_ids"], result

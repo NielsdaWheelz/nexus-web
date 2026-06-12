@@ -516,23 +516,24 @@ export async function openActivePaneOptions(
   expectedItem?: string | RegExp,
 ) {
   const trigger = activeWorkspacePane(page)
+    .getByTestId("pane-shell-chrome")
     .getByRole("button", { name: "Options" })
     .first();
+  const menu = page.getByRole("menu").last();
   await expect(trigger).toBeVisible({ timeout: 15_000 });
 
-  if (!expectedItem) {
+  if (!(await menu.isVisible().catch(() => false))) {
     await trigger.click();
-    await expect(page.getByRole("menu").last()).toBeVisible({
-      timeout: 5_000,
-    });
+  }
+  await expect(menu).toBeVisible({ timeout: 5_000 });
+
+  if (!expectedItem) {
     return;
   }
 
   const deadline = Date.now() + 15_000;
   let lastMenuItems: string[] = [];
   while (Date.now() < deadline) {
-    await trigger.click();
-    await expect(page.getByRole("menu").last()).toBeVisible({ timeout: 2_000 });
     const item = page.getByRole("menuitem", { name: expectedItem }).first();
     if (await item.isVisible().catch(() => false)) {
       return;
@@ -540,7 +541,10 @@ export async function openActivePaneOptions(
     lastMenuItems = (await page.getByRole("menuitem").allTextContents().catch(
       () => [],
     )).map((label) => label.trim()).filter(Boolean);
-    await page.keyboard.press("Escape").catch(() => undefined);
+    if (!(await menu.isVisible().catch(() => false))) {
+      await trigger.click();
+      await expect(menu).toBeVisible({ timeout: 2_000 });
+    }
     await page.waitForTimeout(250);
   }
 
