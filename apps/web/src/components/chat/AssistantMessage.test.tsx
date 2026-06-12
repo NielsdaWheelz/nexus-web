@@ -228,7 +228,7 @@ describe("AssistantMessage", () => {
               retrieval_status: "selected",
               included_in_prompt: true,
               cited_edge_id: "edge-1",
-              citation_ordinal: 1,
+              citation_number: 1,
               citation_role: "context",
               included_in_prompt_source: "retrieval",
               created_at: "2026-06-03T00:00:00Z",

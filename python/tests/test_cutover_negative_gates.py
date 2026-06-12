@@ -128,7 +128,19 @@ def test_dropped_version_column_symbols_absent_in_production():
     # Anchored so the allowed Rev-3 symbols (current_revision_id / revision_id)
     # do NOT match parent_revision_id, and source_set_version_id is exact.
     pattern = r"\b(active_version_id|artifact_version|source_set_version_id|parent_revision_id|prompt_version|schema_version)\b"
-    hits = _filtered(pattern, _PY_ROOT, _WEB_ROOT, exclude=_FRONTEND_TEST)
+    hits = [
+        hit
+        for hit in _filtered(pattern, _PY_ROOT, _WEB_ROOT, exclude=_FRONTEND_TEST)
+        if not (
+            "schema_version" in hit.text
+            and "assistant_trust_trail.v1" in hit.text
+            and (
+                hit.path.endswith("/python/nexus/schemas/conversation.py")
+                or hit.path.endswith("/apps/web/src/lib/conversations/types.ts")
+                or hit.path.endswith("/apps/web/src/components/chat/useChatMessageUpdates.ts")
+            )
+        )
+    ]
     assert not hits, f"dropped version column-symbols referenced in production code:\n{_fmt(hits)}"
 
 

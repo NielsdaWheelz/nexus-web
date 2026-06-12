@@ -299,12 +299,12 @@ def build_assistant_trust_trails(
         prompt_retrieval_ids = set(prompt.included_retrieval_ids if prompt is not None else [])
         retrievals: list[TrustRetrievalOut] = []
         for row in retrievals_by_tool.get(tool.id, []):
-            citation_ordinal = None
+            citation_number = None
             citation_role = None
             if row.cited_edge_id is not None:
                 edge = edge_by_id.get(row.cited_edge_id)
                 if edge is not None:
-                    citation_ordinal = edge.ordinal
+                    citation_number = edge.ordinal
                     citation_role = cast(Any, edge.kind)
             if row.included_in_prompt:
                 included_in_prompt = True
@@ -340,7 +340,7 @@ def build_assistant_trust_trails(
                     included_in_prompt=included_in_prompt,
                     created_at=row.created_at,
                     cited_edge_id=row.cited_edge_id,
-                    citation_ordinal=citation_ordinal,
+                    citation_number=citation_number,
                     citation_role=citation_role,
                     included_in_prompt_source=cast(Any, included_source),
                 )

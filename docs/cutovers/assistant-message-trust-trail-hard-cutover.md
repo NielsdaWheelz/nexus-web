@@ -464,7 +464,7 @@ payload shape, not in pretending only search tools exist.
 `TrustRetrievalOut` is `MessageRetrievalOut` plus linkage:
 
 - `cited_edge_id: UUID | None`
-- `citation_ordinal: int | None`
+- `citation_number: int | None`
 - `citation_role: CitationRole | None`
 - `included_in_prompt_source: "retrieval" | "candidate_ledger" | "prompt_assembly" | "none"`
 
