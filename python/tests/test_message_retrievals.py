@@ -36,7 +36,9 @@ pytestmark = pytest.mark.integration
 
 def _owned_assistant_message(db_session: Session, viewer_id: UUID) -> tuple[UUID, UUID, UUID]:
     conversation_id = create_test_conversation(db_session, viewer_id)
-    user_message_id = create_test_message(db_session, conversation_id, seq=1, role="user", content="hi")
+    user_message_id = create_test_message(
+        db_session, conversation_id, seq=1, role="user", content="hi"
+    )
     assistant_message_id = create_test_message(
         db_session,
         conversation_id,

@@ -2333,9 +2333,7 @@ class TestCitationEdgeWriteThrough:
                 assistant_message_id=assistant_message_id,
             )
 
-        assert document["blocks"] == [
-            {"type": "text", "format": "markdown", "text": "Answer [1]."}
-        ]
+        assert document["blocks"] == [{"type": "text", "format": "markdown", "text": "Answer [1]."}]
         assert len(trail.tool_calls) == 1
         assert len(trail.tool_calls[0].retrievals) == 1
         retrieval = trail.tool_calls[0].retrievals[0]

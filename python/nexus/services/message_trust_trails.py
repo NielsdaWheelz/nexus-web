@@ -118,7 +118,9 @@ def build_assistant_trust_trails(
     prompt_by_message = {
         row.assistant_message_id: row
         for row in db.scalars(
-            select(ChatPromptAssembly).where(ChatPromptAssembly.assistant_message_id.in_(message_ids))
+            select(ChatPromptAssembly).where(
+                ChatPromptAssembly.assistant_message_id.in_(message_ids)
+            )
         )
     }
 
@@ -376,9 +378,7 @@ def build_assistant_trust_trails(
         citation_by_ordinal = citation_outs_by_message.get(message.id, {})
         trust_citations: list[TrustCitationOut] = []
         citation_ref_by_edge_id: dict[UUID, str] = {}
-        citation_edge_ids = {
-            edge.id for edge in citation_edges_by_message.get(message.id, [])
-        }
+        citation_edge_ids = {edge.id for edge in citation_edges_by_message.get(message.id, [])}
         for edge in citation_edges_by_message.get(message.id, []):
             citation = citation_by_ordinal.get(cast(int, edge.ordinal))
             if citation is None:
@@ -474,8 +474,7 @@ def build_assistant_trust_trails(
             if (
                 reference.citation_edge_id is None
                 or reference.citation_edge_id not in citation_edge_ids
-                or citation_ref_by_edge_id.get(reference.citation_edge_id)
-                != reference.resource_ref
+                or citation_ref_by_edge_id.get(reference.citation_edge_id) != reference.resource_ref
             ):
                 integrity_notices.append(
                     TrustIntegrityNoticeOut(

@@ -92,6 +92,7 @@ class ConversationOut(BaseModel):
 
     model_config = ConfigDict(from_attributes=True, extra="forbid")
 
+
 class MessageDocumentTextBlock(BaseModel):
     type: Literal["text"]
     format: Literal["plain", "markdown"]
