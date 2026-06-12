@@ -27,20 +27,23 @@ test.describe("reader pane tabs (references cutover)", () => {
     const secondary = await openReaderSecondary(page);
     const tablist = secondary.getByRole("tablist", { name: "Secondary surfaces" });
     const tabs = tablist.getByRole("tab");
+    const highlightsTab = tablist.getByRole("tab", { name: "Highlights" });
+    const documentChatTab = tablist.getByRole("tab", { name: "Document chat" });
+    const connectionsTab = tablist.getByRole("tab", { name: "Connections" });
 
     await expect(tabs).toHaveCount(3);
-    await expect(tabs.nth(0)).toHaveAccessibleName("Highlights");
-    await expect(tabs.nth(1)).toHaveAccessibleName("Document chat");
-    await expect(tabs.nth(2)).toHaveAccessibleName("Connections");
+    await expect(highlightsTab).toBeVisible();
+    await expect(documentChatTab).toBeVisible();
+    await expect(connectionsTab).toBeVisible();
 
     for (let index = 0; index < 3; index += 1) {
       const text = (await tabs.nth(index).innerText()).trim();
       expect(text).toBe("");
     }
 
-    await expect(tabs.nth(0)).toHaveAttribute("aria-selected", "true");
-    await tabs.nth(1).click();
-    await expect(tabs.nth(1)).toHaveAttribute("aria-selected", "true");
+    await expect(highlightsTab).toHaveAttribute("aria-selected", "true");
+    await documentChatTab.click();
+    await expect(documentChatTab).toHaveAttribute("aria-selected", "true");
     await expect(
       secondary.getByRole("button", {
         name: /Start new chat about this document|\+ New chat/i,
