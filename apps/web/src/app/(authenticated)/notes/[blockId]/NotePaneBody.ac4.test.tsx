@@ -9,7 +9,7 @@ import NotePaneBody from "./NotePaneBody";
 // the page id straight from that seed — never fetching `/api/notes/blocks/<blockId>`
 // for its own resource — and propagate that page id into the composed PagePaneBody.
 // The observable effect of the resolved page id is the page editor's own first fetch
-// to `/api/notes/pages/<pageId>` (PagePaneBody is not prefetched; its cacheKey embeds
+// to `/api/notes/pages/<pageId>/document` (PagePaneBody is not prefetched; its cacheKey embeds
 // the editor saveScope). This pins the seeded shape in paneServerLoaders.note
 // ({ blockId, pageId }) against what NotePaneBody consumes — if either side drifts the
 // pane would fall back to fetching the block and the page fetch would never carry the
@@ -21,8 +21,8 @@ describe("NotePaneBody (AC-4 hydration hit)", () => {
   });
 
   it("resolves pageId from the seed and never fetches /api/notes/blocks/<blockId>", async () => {
-    const blockId = "seeded-block-1";
-    const pageId = "seeded-page-9";
+    const blockId = "55555555-5555-4555-8555-555555555555";
+    const pageId = "66666666-6666-4666-8666-666666666666";
 
     // A never-resolving fetch keeps the downstream PagePaneBody editor in its loading
     // state, so this test observes only the network the panes initiate, not a full
@@ -46,7 +46,7 @@ describe("NotePaneBody (AC-4 hydration hit)", () => {
       expect(
         wasFetchPathCalled(
           fetchSpy,
-          `/api/notes/pages/${pageId}`,
+          `/api/notes/pages/${pageId}/document`,
         ),
       ).toBe(true);
     });

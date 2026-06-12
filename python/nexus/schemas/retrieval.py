@@ -628,7 +628,7 @@ RetrievalLocatorType = Literal[
     "external_url",
 ]
 
-_SOURCE_LOCATOR_TYPES = frozenset[RetrievalLocatorType](
+_SOURCE_LOCATOR_TYPES: frozenset[RetrievalLocatorType] = frozenset(
     {
         "web_text_offsets",
         "epub_fragment_offsets",
@@ -638,14 +638,17 @@ _SOURCE_LOCATOR_TYPES = frozenset[RetrievalLocatorType](
         "video_time_range",
     }
 )
+_NOTE_LOCATOR_TYPES: frozenset[RetrievalLocatorType] = frozenset({"note_block_offsets"})
+_MESSAGE_LOCATOR_TYPES: frozenset[RetrievalLocatorType] = frozenset({"message_offsets"})
+_EXTERNAL_LOCATOR_TYPES: frozenset[RetrievalLocatorType] = frozenset({"external_url"})
 _LOCATOR_TYPES_BY_RESULT_TYPE: dict[LocatorBackedResultType, frozenset[RetrievalLocatorType]] = {
-    "content_chunk": _SOURCE_LOCATOR_TYPES | frozenset({"note_block_offsets"}),
+    "content_chunk": _SOURCE_LOCATOR_TYPES,
     "fragment": _SOURCE_LOCATOR_TYPES,
     "highlight": _SOURCE_LOCATOR_TYPES,
-    "evidence_span": _SOURCE_LOCATOR_TYPES | frozenset({"note_block_offsets"}),
-    "note_block": frozenset({"note_block_offsets"}),
-    "message": frozenset({"message_offsets"}),
-    "web_result": frozenset({"external_url"}),
+    "evidence_span": _SOURCE_LOCATOR_TYPES | _NOTE_LOCATOR_TYPES,
+    "note_block": _NOTE_LOCATOR_TYPES,
+    "message": _MESSAGE_LOCATOR_TYPES,
+    "web_result": _EXTERNAL_LOCATOR_TYPES,
 }
 
 

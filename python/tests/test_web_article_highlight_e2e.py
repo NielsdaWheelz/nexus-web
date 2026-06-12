@@ -453,7 +453,10 @@ class TestSharedHighlightVisibility:
             json={
                 "note_block_id": str(uuid4()),
                 "client_mutation_id": f"highlight-note-{uuid4()}",
-                "body_pm_json": {"type": "paragraph", "content": [{"type": "text", "text": "Nope"}]},
+                "body_pm_json": {
+                    "type": "paragraph",
+                    "content": [{"type": "text", "text": "Nope"}],
+                },
             },
             headers=auth_headers(user_b),
         )

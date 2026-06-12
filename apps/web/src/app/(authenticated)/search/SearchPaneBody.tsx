@@ -101,7 +101,7 @@ export default function SearchPaneBody() {
     return () => clearTimeout(handle);
     // query/queryString intentionally omitted: this effect reacts to box edits;
     // the equality guard prevents a replace loop when the URL already matches.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- justify-eslint-override: URL query changes sync draft through the separate query.text effect; this debounce reacts only to box edits.
   }, [draft]);
 
   const runSearch = useCallback(
@@ -145,7 +145,7 @@ export default function SearchPaneBody() {
     if (!isBlankQuery(query)) {
       void runSearch();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- justify-eslint-override: queryString is the canonical route-change key; runSearch captures the same parsed query for this render.
   }, [queryString]);
 
   const formatDisabled = hasFormatFilter(query);

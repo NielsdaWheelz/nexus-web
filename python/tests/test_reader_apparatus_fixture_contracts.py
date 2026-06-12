@@ -208,19 +208,18 @@ def test_reader_apparatus_distill_full_source_fixtures_match_independent_dom_gra
     assert Counter(edge["extraction_method"] for edge in prepared.apparatus_edges) == (
         expected_edge_methods
     )
-    assert graph.rendered_bibliography_entry_count == expected_graph[
-        "rendered_bibliography_entry_count"
-    ]
-    assert graph.script_bibliography_entry_count == expected_graph[
-        "script_bibliography_entry_count"
-    ]
+    assert (
+        graph.rendered_bibliography_entry_count
+        == expected_graph["rendered_bibliography_entry_count"]
+    )
+    assert (
+        graph.script_bibliography_entry_count == expected_graph["script_bibliography_entry_count"]
+    )
     assert graph.blank_citation_key_count == expected_graph["blank_citation_key_count"]
-    assert len(graph.uncited_bibliography_keys) == expected_graph[
-        "uncited_bibliography_entry_count"
-    ]
-    assert list(graph.uncited_bibliography_keys) == expected_graph[
-        "uncited_bibliography_keys"
-    ]
+    assert (
+        len(graph.uncited_bibliography_keys) == expected_graph["uncited_bibliography_entry_count"]
+    )
+    assert list(graph.uncited_bibliography_keys) == expected_graph["uncited_bibliography_keys"]
     emitted_bibliography_keys = {
         item["source_ref"].get("citation_key")
         for item in prepared.apparatus_items
@@ -315,9 +314,7 @@ def test_reader_apparatus_mediawiki_full_source_fixtures_match_independent_dom_g
         edge for edge in prepared.apparatus_edges if edge["relation"] == "points_to_note"
     ]
     bibliography_edges = [
-        edge
-        for edge in prepared.apparatus_edges
-        if edge["relation"] == "cites_bibliography_entry"
+        edge for edge in prepared.apparatus_edges if edge["relation"] == "cites_bibliography_entry"
     ]
     assert_edge_target_source_ref_sequence(
         prepared.apparatus_items,
@@ -427,9 +424,7 @@ def test_reader_apparatus_tufte_full_source_fixture_matches_independent_dom_grap
         "marker_count": graph.marker_count,
     }
     assert tuple(gold_graph["diagnostics"]["dom_toggle_rows"]) == graph.rows
-    assert tuple(gold_graph["diagnostics"]["dom_note_body_sha256s"]) == (
-        graph.body_sha256s
-    )
+    assert tuple(gold_graph["diagnostics"]["dom_note_body_sha256s"]) == (graph.body_sha256s)
 
 
 @pytest.mark.parametrize(
@@ -523,11 +518,10 @@ def test_reader_apparatus_gutenberg_linknote_full_source_fixture_matches_indepen
         prepared.apparatus_edges,
         graph.marker_targets,
     )
-    assert tuple(
-        item["body_text"]
-        for item in prepared.apparatus_items
-        if item["kind"] == "endnote"
-    ) == graph.note_texts
+    assert (
+        tuple(item["body_text"] for item in prepared.apparatus_items if item["kind"] == "endnote")
+        == graph.note_texts
+    )
     assert gold_graph["diagnostics"]["independent_dom_graph"] == {
         "marker_count": graph.marker_count,
         "target_count": graph.target_count,
@@ -537,9 +531,7 @@ def test_reader_apparatus_gutenberg_linknote_full_source_fixture_matches_indepen
     assert tuple(gold_graph["diagnostics"]["dom_marker_ids"]) == graph.marker_ids
     assert tuple(gold_graph["diagnostics"]["dom_marker_targets"]) == graph.marker_targets
     assert tuple(gold_graph["diagnostics"]["dom_target_ids"]) == graph.target_ids
-    assert tuple(gold_graph["diagnostics"]["dom_note_body_sha256s"]) == (
-        graph.note_body_sha256s
-    )
+    assert tuple(gold_graph["diagnostics"]["dom_note_body_sha256s"]) == (graph.note_body_sha256s)
 
 
 @pytest.mark.parametrize(
@@ -613,9 +605,7 @@ def test_reader_apparatus_pdf_native_link_fixture_matches_independent_graph(
     }
     assert tuple(gold_graph["diagnostics"]["pdf_marker_rows"]) == graph.marker_rows
     assert tuple(gold_graph["diagnostics"]["pdf_target_rows"]) == graph.target_rows
-    assert tuple(gold_graph["diagnostics"]["target_body_sha256s"]) == (
-        graph.target_body_sha256s
-    )
+    assert tuple(gold_graph["diagnostics"]["target_body_sha256s"]) == (graph.target_body_sha256s)
 
 
 @pytest.mark.parametrize(

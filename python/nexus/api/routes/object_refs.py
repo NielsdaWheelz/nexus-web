@@ -1,6 +1,6 @@
 """Universal object-ref routes."""
 
-from typing import Annotated, get_args
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
@@ -11,7 +11,7 @@ from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.responses import success_response
-from nexus.schemas.notes import OBJECT_TYPES, ObjectRef
+from nexus.schemas.notes import OBJECT_TYPES, ObjectRef, is_object_type
 from nexus.services.object_refs import (
     hydrate_object_ref,
     search_object_refs,
@@ -62,10 +62,9 @@ def search_object_ref_targets(
 def _parse_object_ref_search_types(types: list[str] | None) -> set[OBJECT_TYPES] | None:
     if not types:
         return None
-    allowed = set(get_args(OBJECT_TYPES))
     parsed: set[OBJECT_TYPES] = set()
     for value in types:
-        if value not in allowed:
+        if not is_object_type(value):
             raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "type is invalid")
         parsed.add(value)
     return parsed

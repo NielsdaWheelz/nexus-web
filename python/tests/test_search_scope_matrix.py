@@ -130,16 +130,17 @@ def test_note_object_membership_cells_are_resource_edge_exists(
 
 @pytest.mark.parametrize("entity", ["page", "note_block"])
 @pytest.mark.parametrize("scope_type", ["media", "library"])
-def test_note_object_membership_cells_exclude_synapse_origin_edges(
+def test_note_object_membership_cells_admit_only_note_media_edge_origins(
     entity: str, scope_type: str
 ) -> None:
     # Machine-proposed (synapse) edges must not silently change scoped
-    # retrieval; admission requires a human/deterministic edge. The
-    # conversation cells stay any-origin (synapse never writes
-    # conversation-source edges) — pinned below.
+    # retrieval; admission requires the explicit note-media edge allowlist. The
+    # conversation cells use a separate conversation-context allowlist pinned below.
     result = scope_filter_sql(scope_type, uuid4(), entity)
     assert not isinstance(result, ScopeUnsupported)
-    assert "e.origin <> 'synapse'" in _squash(result[0])
+    sql = _squash(result[0])
+    assert "e.origin IN ('user', 'note_body', 'highlight_note')" in sql
+    assert "synapse" not in sql
 
 
 @pytest.mark.parametrize("entity,target_match", NOTE_OBJECT_CONTEXT_TARGET.items())

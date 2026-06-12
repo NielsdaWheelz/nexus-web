@@ -447,8 +447,7 @@ def _legal_footnote_targets(page, lines: list[dict[str, object]]) -> list[tuple[
     label_rows = [
         (int(line["text"]), line)
         for line in lower_lines
-        if re.fullmatch(r"[1-9]\d{0,2}", str(line["text"]).strip())
-        and float(line["left"]) <= 120
+        if re.fullmatch(r"[1-9]\d{0,2}", str(line["text"]).strip()) and float(line["left"]) <= 120
     ]
     targets: list[tuple[int, str]] = []
     for index, (label, label_line) in enumerate(label_rows):
@@ -459,7 +458,10 @@ def _legal_footnote_targets(page, lines: list[dict[str, object]]) -> list[tuple[
                 continue
             if float(line["top"]) < float(label_line["top"]) - 3:
                 continue
-            if next_label_line is not None and float(line["top"]) >= float(next_label_line["top"]) - 3:
+            if (
+                next_label_line is not None
+                and float(line["top"]) >= float(next_label_line["top"]) - 3
+            ):
                 continue
             if float(line["left"]) <= float(label_line["right"]):
                 continue

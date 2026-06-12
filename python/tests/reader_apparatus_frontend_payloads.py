@@ -46,9 +46,7 @@ from tests.reader_apparatus_corpus import (
 )
 
 REPO_ROOT = Path(__file__).parents[2]
-FRONTEND_PAYLOAD_DIR = (
-    REPO_ROOT / "apps/web/src/lib/reader/__fixtures__/reader-apparatus"
-)
+FRONTEND_PAYLOAD_DIR = REPO_ROOT / "apps/web/src/lib/reader/__fixtures__/reader-apparatus"
 FRONTEND_PAYLOAD_INDEX_PATH = FRONTEND_PAYLOAD_DIR / "index.ts"
 FRONTEND_MEDIA_NAMESPACE = UUID("11111111-1111-4111-8111-111111111111")
 FRONTEND_FRAGMENT_NAMESPACE = UUID("22222222-2222-4222-8222-222222222222")
@@ -270,9 +268,7 @@ def _should_generate_frontend_payload(case: dict[str, Any]) -> bool:
 
 def _expected_reader_tools_surface(case: dict[str, Any]) -> str:
     expected = case["expected"]
-    if expected["status"] in {"partial", "ready"} and sum(
-        expected.get("item_kinds", {}).values()
-    ):
+    if expected["status"] in {"partial", "ready"} and sum(expected.get("item_kinds", {}).values()):
         return "citations_tab_rows"
     return "citations_tab_omitted"
 
@@ -439,7 +435,8 @@ def _frontend_row_count(response: ReaderApparatusResponse) -> int:
     return sum(
         1
         for item in response.items
-        if item.kind in marker_kinds or (item.kind in target_kinds and item.stable_key not in linked_targets)
+        if item.kind in marker_kinds
+        or (item.kind in target_kinds and item.stable_key not in linked_targets)
     )
 
 

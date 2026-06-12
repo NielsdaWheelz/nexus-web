@@ -78,7 +78,7 @@ def error_response(
     if request_id is None:
         request_id = get_request_id()
 
-    error = {"code": code.value, "message": message}
+    error: dict[str, Any] = {"code": code.value, "message": message}
     if details is not None:
         error["details"] = details
     if request_id:

@@ -1,7 +1,7 @@
 """Schemas for notes and universal object refs (pins, picker, ref chips)."""
 
 from datetime import date, datetime
-from typing import Any, Literal, get_args
+from typing import Any, Literal, TypeGuard, get_args
 from uuid import UUID
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -20,6 +20,7 @@ OBJECT_TYPES = Literal[
     "evidence_span",
     "tag",
 ]
+OBJECT_TYPE_VALUES = frozenset(get_args(OBJECT_TYPES))
 NOTE_BLOCK_KINDS = Literal["bullet", "heading", "todo", "quote", "code", "image", "embed"]
 
 NOTE_BLOCK_KIND_VALUES = {"bullet", "heading", "todo", "quote", "code", "image", "embed"}
@@ -37,6 +38,10 @@ NOTE_PM_NODE_TYPES = {
 }
 NOTE_PM_INLINE_NODE_TYPES = {"text", "hard_break", "object_ref", "image"}
 NOTE_PM_MARK_TYPES = {"strong", "em", "code", "link", "strikethrough"}
+
+
+def is_object_type(value: str) -> TypeGuard[OBJECT_TYPES]:
+    return value in OBJECT_TYPE_VALUES
 
 
 class ObjectRef(BaseModel):
@@ -385,7 +390,7 @@ def _validate_pm_attrs(node_type: str, attrs: dict[str, Any] | None, *, path: st
             raise ValueError(f"{path} must be an object")
         object_type = attrs.get("objectType")
         object_id = attrs.get("objectId")
-        if not isinstance(object_type, str) or object_type not in get_args(OBJECT_TYPES):
+        if not isinstance(object_type, str) or not is_object_type(object_type):
             raise ValueError(f"{path}.objectType must be a known object type")
         if not isinstance(object_id, str):
             raise ValueError(f"{path}.objectId must be a UUID string")

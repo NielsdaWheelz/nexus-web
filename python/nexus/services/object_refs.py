@@ -7,7 +7,7 @@ here."""
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, assert_never, cast
+from typing import Literal, TypedDict, TypeGuard, assert_never, cast
 from uuid import UUID
 from xml.sax.saxutils import escape as xml_escape
 
@@ -50,6 +50,11 @@ from nexus.services.resource_graph.resolve import (
     parent_media_id_for_read_pointer,
     reader_target_for_citation_target,
 )
+
+
+class _NoteBlockOffsetsLocatorPayload(TypedDict):
+    type: Literal["note_block_offsets"]
+    block_id: str
 
 
 @dataclass(frozen=True)
@@ -229,7 +234,7 @@ def _read_pointer_route(
     return f"/pages/{page_id}" if page_id is not None else None
 
 
-def _is_note_block_offsets(locator: object) -> bool:
+def _is_note_block_offsets(locator: object) -> TypeGuard[_NoteBlockOffsetsLocatorPayload]:
     return (
         isinstance(locator, dict)
         and locator.get("type") == "note_block_offsets"

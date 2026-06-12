@@ -9,6 +9,13 @@ import {
   useSetPaneTitle,
 } from "@/lib/panes/paneRuntime";
 
+const MEDIA_ID_1 = "11111111-1111-4111-8111-111111111111";
+const MEDIA_ID_2 = "22222222-2222-4222-8222-222222222222";
+const LIBRARY_ID = "33333333-3333-4333-8333-333333333333";
+const MEDIA_HREF_1 = `/media/${MEDIA_ID_1}`;
+const MEDIA_HREF_2 = `/media/${MEDIA_ID_2}`;
+const LIBRARY_HREF = `/libraries/${LIBRARY_ID}`;
+
 function Publisher({ title }: { title: string }) {
   useSetPaneTitle(title);
   return null;
@@ -17,7 +24,7 @@ function Publisher({ title }: { title: string }) {
 function NavigateOnMount({ action }: { action: "push" | "replace" }) {
   const router = usePaneRouter();
   useEffect(() => {
-    router[action]("/media/media-1", { titleHint: "Library Row Title" });
+    router[action](MEDIA_HREF_1, { titleHint: "Library Row Title" });
   }, [action, router]);
   return null;
 }
@@ -29,7 +36,7 @@ function OpenInNewPaneOnMount() {
       throw new Error("Pane runtime missing");
     }
     runtime.openInNewPane(
-      "/media/media-1",
+      MEDIA_HREF_1,
       "Library Row Title",
       "reader-highlights",
     );
@@ -145,11 +152,11 @@ function runtime(
 describe("useSetPaneTitle", () => {
   it("does not republish the same title for the same resource", async () => {
     const onSetPaneTitle = vi.fn();
-    const { rerender } = render(runtime("/media/media-1", onSetPaneTitle));
+    const { rerender } = render(runtime(MEDIA_HREF_1, onSetPaneTitle));
 
     await waitFor(() => expect(onSetPaneTitle).toHaveBeenCalledTimes(1));
 
-    rerender(runtime("/media/media-1?loc=chapter-2", onSetPaneTitle));
+    rerender(runtime(`${MEDIA_HREF_1}?loc=chapter-2`, onSetPaneTitle));
 
     await new Promise((resolve) => window.setTimeout(resolve, 0));
     expect(onSetPaneTitle).toHaveBeenCalledTimes(1);
@@ -157,16 +164,16 @@ describe("useSetPaneTitle", () => {
 
   it("publishes again when the resource changes even if the title string matches", async () => {
     const onSetPaneTitle = vi.fn();
-    const { rerender } = render(runtime("/media/media-1", onSetPaneTitle));
+    const { rerender } = render(runtime(MEDIA_HREF_1, onSetPaneTitle));
 
     await waitFor(() => expect(onSetPaneTitle).toHaveBeenCalledTimes(1));
 
-    rerender(runtime("/media/media-2", onSetPaneTitle));
+    rerender(runtime(MEDIA_HREF_2, onSetPaneTitle));
 
     await waitFor(() => expect(onSetPaneTitle).toHaveBeenCalledTimes(2));
     expect(onSetPaneTitle).toHaveBeenLastCalledWith({
       paneId: "pane-1",
-      resourceKey: resolvePaneRouteIdentity("/media/media-2").resourceKey,
+      resourceKey: resolvePaneRouteIdentity(MEDIA_HREF_2).resourceKey,
       title: "Same title",
     });
   });
@@ -179,12 +186,12 @@ describe("PaneRuntimeProvider", () => {
   ] as const)("passes title hints through router.%s", async (action, callbackName) => {
     const onNavigatePane = vi.fn();
     const onReplacePane = vi.fn();
-    const identity = resolvePaneRouteIdentity("/libraries/library-1");
+    const identity = resolvePaneRouteIdentity(LIBRARY_HREF);
 
     render(
       <PaneRuntimeProvider
         paneId="pane-1"
-        href="/libraries/library-1"
+        href={LIBRARY_HREF}
         routeId={identity.routeId}
         resourceRef={identity.resourceRef}
         resourceKey={identity.resourceKey}
@@ -200,7 +207,7 @@ describe("PaneRuntimeProvider", () => {
     await waitFor(() => {
       expect({ onNavigatePane, onReplacePane }[callbackName]).toHaveBeenCalledWith(
         "pane-1",
-        "/media/media-1",
+        MEDIA_HREF_1,
         { titleHint: "Library Row Title" },
       );
     });
@@ -208,12 +215,12 @@ describe("PaneRuntimeProvider", () => {
 
   it("passes title hints through openInNewPane", async () => {
     const onOpenInNewPane = vi.fn();
-    const identity = resolvePaneRouteIdentity("/libraries/library-1");
+    const identity = resolvePaneRouteIdentity(LIBRARY_HREF);
 
     render(
       <PaneRuntimeProvider
         paneId="pane-1"
-        href="/libraries/library-1"
+        href={LIBRARY_HREF}
         routeId={identity.routeId}
         resourceRef={identity.resourceRef}
         resourceKey={identity.resourceKey}
@@ -228,7 +235,7 @@ describe("PaneRuntimeProvider", () => {
 
     await waitFor(() => {
       expect(onOpenInNewPane).toHaveBeenCalledWith(
-        "/media/media-1",
+        MEDIA_HREF_1,
         "Library Row Title",
         "reader-highlights",
       );
@@ -238,12 +245,12 @@ describe("PaneRuntimeProvider", () => {
   it("exposes pane Back and Forward through the scoped router", async () => {
     const onGoBackPane = vi.fn();
     const onGoForwardPane = vi.fn();
-    const identity = resolvePaneRouteIdentity("/libraries/library-1");
+    const identity = resolvePaneRouteIdentity(LIBRARY_HREF);
 
     render(
       <PaneRuntimeProvider
         paneId="pane-1"
-        href="/libraries/library-1"
+        href={LIBRARY_HREF}
         routeId={identity.routeId}
         resourceRef={identity.resourceRef}
         resourceKey={identity.resourceKey}
@@ -270,10 +277,10 @@ describe("PaneRuntimeProvider", () => {
 
   it("keeps the scoped router stable across unrelated runtime value changes", async () => {
     const onRouter = vi.fn();
-    const identity = resolvePaneRouteIdentity("/libraries/library-1");
+    const identity = resolvePaneRouteIdentity(LIBRARY_HREF);
     const stableProps = {
       paneId: "pane-1",
-      href: "/libraries/library-1",
+      href: LIBRARY_HREF,
       routeId: identity.routeId,
       resourceRef: identity.resourceRef,
       resourceKey: identity.resourceKey,
@@ -284,7 +291,7 @@ describe("PaneRuntimeProvider", () => {
     };
 
     const { rerender } = render(
-      <PaneRuntimeProvider {...stableProps} pathParams={{ id: "library-1" }}>
+      <PaneRuntimeProvider {...stableProps} pathParams={{ id: LIBRARY_ID }}>
         <RouterIdentityProbe onRouter={onRouter} />
       </PaneRuntimeProvider>,
     );
@@ -292,7 +299,7 @@ describe("PaneRuntimeProvider", () => {
     await waitFor(() => expect(onRouter).toHaveBeenCalledTimes(1));
 
     rerender(
-      <PaneRuntimeProvider {...stableProps} pathParams={{ id: "library-1" }}>
+      <PaneRuntimeProvider {...stableProps} pathParams={{ id: LIBRARY_ID }}>
         <RouterIdentityProbe onRouter={onRouter} />
       </PaneRuntimeProvider>,
     );
@@ -303,10 +310,10 @@ describe("PaneRuntimeProvider", () => {
 
   it("keeps scoped router commands stable across navigation state changes", async () => {
     const onRouter = vi.fn();
-    const identity = resolvePaneRouteIdentity("/libraries/library-1");
+    const identity = resolvePaneRouteIdentity(LIBRARY_HREF);
     const stableProps = {
       paneId: "pane-1",
-      href: "/libraries/library-1",
+      href: LIBRARY_HREF,
       routeId: identity.routeId,
       resourceRef: identity.resourceRef,
       resourceKey: identity.resourceKey,
@@ -356,12 +363,12 @@ describe("PaneRuntimeProvider", () => {
 
   it("publishes pane layout with pane and resource identity", async () => {
     const onSetPaneLayout = vi.fn();
-    const identity = resolvePaneRouteIdentity("/libraries/library-1");
+    const identity = resolvePaneRouteIdentity(LIBRARY_HREF);
 
     render(
       <PaneRuntimeProvider
         paneId="pane-1"
-        href="/libraries/library-1"
+        href={LIBRARY_HREF}
         routeId={identity.routeId}
         resourceRef={identity.resourceRef}
         resourceKey={identity.resourceKey}
@@ -390,12 +397,12 @@ describe("PaneRuntimeProvider", () => {
     const onRequestSecondarySurface = vi.fn();
     const onCloseSecondaryPane = vi.fn();
     const onSetSecondarySurface = vi.fn();
-    const identity = resolvePaneRouteIdentity("/media/media-1");
+    const identity = resolvePaneRouteIdentity(MEDIA_HREF_1);
 
     render(
       <PaneRuntimeProvider
         paneId="pane-1"
-        href="/media/media-1"
+        href={MEDIA_HREF_1}
         routeId={identity.routeId}
         resourceRef={identity.resourceRef}
         resourceKey={identity.resourceKey}
@@ -434,12 +441,12 @@ describe("PaneRuntimeProvider", () => {
 
   it("does not expose removed pane width setters", async () => {
     const onValue = vi.fn();
-    const identity = resolvePaneRouteIdentity("/libraries/library-1");
+    const identity = resolvePaneRouteIdentity(LIBRARY_HREF);
 
     render(
       <PaneRuntimeProvider
         paneId="pane-1"
-        href="/libraries/library-1"
+        href={LIBRARY_HREF}
         routeId={identity.routeId}
         resourceRef={identity.resourceRef}
         resourceKey={identity.resourceKey}

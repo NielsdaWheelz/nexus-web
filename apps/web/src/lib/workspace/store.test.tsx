@@ -196,11 +196,11 @@ describe("WorkspaceStoreProvider", () => {
     const workspace = await mountWorkspaceStore();
 
     act(() => {
-      workspace().openPane({ href: "/media/media-1" });
+      workspace().openPane({ href: "/media/11111111-1111-4111-8111-111111111111" });
     });
 
     await waitFor(() => {
-      expect(activeHref(workspace())).toBe("/media/media-1");
+      expect(activeHref(workspace())).toBe("/media/11111111-1111-4111-8111-111111111111");
       expect(primaryPanes(workspace().state)[1]?.primaryWidthPx).toBe(
         workspacePrimaryMetrics.primaryDefaultWidthPx,
       );
@@ -212,7 +212,7 @@ describe("WorkspaceStoreProvider", () => {
     const workspace = await mountWorkspaceStore();
 
     act(() => {
-      workspace().openPane({ href: "/libraries/library-1" });
+      workspace().openPane({ href: "/libraries/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" });
     });
 
     await waitFor(() => {
@@ -222,39 +222,39 @@ describe("WorkspaceStoreProvider", () => {
   });
 
   it("reuses an existing resource pane instead of duplicating it", async () => {
-    const workspace = await mountWorkspaceStore("/media/media-1");
+    const workspace = await mountWorkspaceStore("/media/11111111-1111-4111-8111-111111111111");
 
     act(() => {
-      workspace().openPane({ href: "/conversations/conversation-1?run=run-old" });
+      workspace().openPane({ href: "/conversations/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa?run=run-old" });
     });
     await waitFor(() => {
-      expect(activeHref(workspace())).toBe("/conversations/conversation-1?run=run-old");
+      expect(activeHref(workspace())).toBe("/conversations/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa?run=run-old");
     });
     const conversationPaneId = workspace().state.activePrimaryPaneId;
 
     act(() => {
-      workspace().openPane({ href: "/conversations/conversation-1?run=run-new" });
+      workspace().openPane({ href: "/conversations/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa?run=run-new" });
     });
 
     await waitFor(() => {
       expect(primaryPanes(workspace().state)).toHaveLength(2);
       expect(workspace().state.activePrimaryPaneId).toBe(conversationPaneId);
-      expect(activeHref(workspace())).toBe("/conversations/conversation-1?run=run-new");
+      expect(activeHref(workspace())).toBe("/conversations/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa?run=run-new");
     });
     flushWorkspaceSession();
   });
 
   it("records pane-local history for push navigation and traverses it", async () => {
-    const workspace = await mountWorkspaceStore("/media/media-1");
+    const workspace = await mountWorkspaceStore("/media/11111111-1111-4111-8111-111111111111");
     const paneId = workspace().state.activePrimaryPaneId;
 
     act(() => {
-      workspace().navigatePane(paneId, "/media/media-2");
+      workspace().navigatePane(paneId, "/media/22222222-2222-4222-8222-222222222222");
     });
     await waitFor(() => {
-      expect(primaryPanes(workspace().state)[0]?.href).toBe("/media/media-2");
+      expect(primaryPanes(workspace().state)[0]?.href).toBe("/media/22222222-2222-4222-8222-222222222222");
       expect(primaryPanes(workspace().state)[0]?.history).toEqual({
-        back: ["/media/media-1"],
+        back: ["/media/11111111-1111-4111-8111-111111111111"],
         forward: [],
       });
     });
@@ -263,10 +263,10 @@ describe("WorkspaceStoreProvider", () => {
       workspace().goBackPane(paneId);
     });
     await waitFor(() => {
-      expect(primaryPanes(workspace().state)[0]?.href).toBe("/media/media-1");
+      expect(primaryPanes(workspace().state)[0]?.href).toBe("/media/11111111-1111-4111-8111-111111111111");
       expect(primaryPanes(workspace().state)[0]?.history).toEqual({
         back: [],
-        forward: ["/media/media-2"],
+        forward: ["/media/22222222-2222-4222-8222-222222222222"],
       });
     });
 
@@ -274,9 +274,9 @@ describe("WorkspaceStoreProvider", () => {
       workspace().goForwardPane(paneId);
     });
     await waitFor(() => {
-      expect(primaryPanes(workspace().state)[0]?.href).toBe("/media/media-2");
+      expect(primaryPanes(workspace().state)[0]?.href).toBe("/media/22222222-2222-4222-8222-222222222222");
       expect(primaryPanes(workspace().state)[0]?.history).toEqual({
-        back: ["/media/media-1"],
+        back: ["/media/11111111-1111-4111-8111-111111111111"],
         forward: [],
       });
     });
@@ -284,23 +284,23 @@ describe("WorkspaceStoreProvider", () => {
   });
 
   it("replace navigation updates href without changing pane history", async () => {
-    const workspace = await mountWorkspaceStore("/media/media-1");
+    const workspace = await mountWorkspaceStore("/media/11111111-1111-4111-8111-111111111111");
     const paneId = workspace().state.activePrimaryPaneId;
 
     act(() => {
-      workspace().navigatePane(paneId, "/media/media-2");
+      workspace().navigatePane(paneId, "/media/22222222-2222-4222-8222-222222222222");
     });
     await waitFor(() => {
-      expect(primaryPanes(workspace().state)[0]?.history.back).toEqual(["/media/media-1"]);
+      expect(primaryPanes(workspace().state)[0]?.history.back).toEqual(["/media/11111111-1111-4111-8111-111111111111"]);
     });
 
     act(() => {
-      workspace().navigatePane(paneId, "/media/media-3", { replace: true });
+      workspace().navigatePane(paneId, "/media/33333333-3333-4333-8333-333333333333", { replace: true });
     });
     await waitFor(() => {
-      expect(primaryPanes(workspace().state)[0]?.href).toBe("/media/media-3");
+      expect(primaryPanes(workspace().state)[0]?.href).toBe("/media/33333333-3333-4333-8333-333333333333");
       expect(primaryPanes(workspace().state)[0]?.history).toEqual({
-        back: ["/media/media-1"],
+        back: ["/media/11111111-1111-4111-8111-111111111111"],
         forward: [],
       });
     });
@@ -308,17 +308,17 @@ describe("WorkspaceStoreProvider", () => {
   });
 
   it("records pane-local history when duplicate opens retarget an existing pane", async () => {
-    const workspace = await mountWorkspaceStore("/media/media-1");
+    const workspace = await mountWorkspaceStore("/media/11111111-1111-4111-8111-111111111111");
 
     act(() => {
-      workspace().openPane({ href: "/media/media-1?loc=chapter-2" });
+      workspace().openPane({ href: "/media/11111111-1111-4111-8111-111111111111?loc=chapter-2" });
     });
 
     await waitFor(() => {
       expect(primaryPanes(workspace().state)).toHaveLength(1);
-      expect(primaryPanes(workspace().state)[0]?.href).toBe("/media/media-1?loc=chapter-2");
+      expect(primaryPanes(workspace().state)[0]?.href).toBe("/media/11111111-1111-4111-8111-111111111111?loc=chapter-2");
       expect(primaryPanes(workspace().state)[0]?.history).toEqual({
-        back: ["/media/media-1"],
+        back: ["/media/11111111-1111-4111-8111-111111111111"],
         forward: [],
       });
     });
@@ -326,11 +326,11 @@ describe("WorkspaceStoreProvider", () => {
   });
 
   it("does not record history for same-href navigation", async () => {
-    const workspace = await mountWorkspaceStore("/media/media-1");
+    const workspace = await mountWorkspaceStore("/media/11111111-1111-4111-8111-111111111111");
     const paneId = workspace().state.activePrimaryPaneId;
 
     act(() => {
-      workspace().navigatePane(paneId, "/media/media-1");
+      workspace().navigatePane(paneId, "/media/11111111-1111-4111-8111-111111111111");
     });
 
     await waitFor(() => {
@@ -343,7 +343,7 @@ describe("WorkspaceStoreProvider", () => {
   });
 
   it("preserves resized width when duplicate opens reuse a resource pane", async () => {
-    const workspace = await mountWorkspaceStore("/media/media-1");
+    const workspace = await mountWorkspaceStore("/media/11111111-1111-4111-8111-111111111111");
     const paneId = workspace().state.activePrimaryPaneId;
 
     act(() => {
@@ -354,13 +354,13 @@ describe("WorkspaceStoreProvider", () => {
     });
 
     act(() => {
-      workspace().openPane({ href: "/media/media-1?loc=chapter-2" });
+      workspace().openPane({ href: "/media/11111111-1111-4111-8111-111111111111?loc=chapter-2" });
     });
 
     await waitFor(() => {
       expect(primaryPanes(workspace().state)).toHaveLength(1);
       expect(primaryPanes(workspace().state)[0]).toMatchObject({
-        href: "/media/media-1?loc=chapter-2",
+        href: "/media/11111111-1111-4111-8111-111111111111?loc=chapter-2",
         primaryWidthPx: 900,
       });
     });
@@ -368,7 +368,7 @@ describe("WorkspaceStoreProvider", () => {
   });
 
   it("opens, switches, resizes, and closes a secondary without changing primary width", async () => {
-    const workspace = await mountWorkspaceStore("/media/media-1");
+    const workspace = await mountWorkspaceStore("/media/11111111-1111-4111-8111-111111111111");
     const paneId = workspace().state.activePrimaryPaneId;
 
     act(() => {
@@ -413,17 +413,17 @@ describe("WorkspaceStoreProvider", () => {
   });
 
   it("mutating one secondary leaves every sibling primary and secondary width unchanged", async () => {
-    const workspace = await mountWorkspaceStore("/media/media-1");
+    const workspace = await mountWorkspaceStore("/media/11111111-1111-4111-8111-111111111111");
     const paneAId = workspace().state.activePrimaryPaneId;
 
     act(() => {
-      workspace().openPane({ href: "/media/media-2" });
+      workspace().openPane({ href: "/media/22222222-2222-4222-8222-222222222222" });
     });
     await waitFor(() => {
       expect(primaryPanes(workspace().state)).toHaveLength(2);
     });
     const paneBId = primaryPanes(workspace().state).find(
-      (pane) => pane.href === "/media/media-2",
+      (pane) => pane.href === "/media/22222222-2222-4222-8222-222222222222",
     )!.id;
 
     // Give each pane a distinct primary width and an attached reader-tools secondary.
@@ -494,16 +494,16 @@ describe("WorkspaceStoreProvider", () => {
   });
 
   it("drops incompatible secondarys across resource navigation", async () => {
-    const workspace = await mountWorkspaceStore("/media/media-1");
+    const workspace = await mountWorkspaceStore("/media/11111111-1111-4111-8111-111111111111");
     const paneId = workspace().state.activePrimaryPaneId;
 
     act(() => {
       workspace().requestSecondarySurface(paneId, "reader-highlights");
-      workspace().navigatePane(paneId, "/libraries/library-1");
+      workspace().navigatePane(paneId, "/libraries/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
     });
 
     await waitFor(() => {
-      expect(primaryPanes(workspace().state)[0]?.href).toBe("/libraries/library-1");
+      expect(primaryPanes(workspace().state)[0]?.href).toBe("/libraries/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
       expect(primaryPanes(workspace().state)[0]?.attachedSecondaryPaneId).toBeNull();
       expect(workspace().state.secondaryPanesById).toEqual({});
     });
@@ -529,7 +529,7 @@ describe("WorkspaceStoreProvider", () => {
   });
 
   it("resets pane width when navigating to a different resource", async () => {
-    const workspace = await mountWorkspaceStore("/media/media-1");
+    const workspace = await mountWorkspaceStore("/media/11111111-1111-4111-8111-111111111111");
     const paneId = workspace().state.activePrimaryPaneId;
 
     act(() => {
@@ -553,7 +553,7 @@ describe("WorkspaceStoreProvider", () => {
   });
 
   it("uses workspace defaults while traversing history across resources", async () => {
-    const workspace = await mountWorkspaceStore("/media/media-1");
+    const workspace = await mountWorkspaceStore("/media/11111111-1111-4111-8111-111111111111");
     const paneId = workspace().state.activePrimaryPaneId;
 
     act(() => {
@@ -564,7 +564,7 @@ describe("WorkspaceStoreProvider", () => {
       expect(primaryPanes(workspace().state)[0]).toMatchObject({
         href: "/libraries",
         primaryWidthPx: workspacePrimaryMetrics.primaryDefaultWidthPx,
-        history: { back: ["/media/media-1"], forward: [] },
+        history: { back: ["/media/11111111-1111-4111-8111-111111111111"], forward: [] },
       });
     });
 
@@ -573,7 +573,7 @@ describe("WorkspaceStoreProvider", () => {
     });
     await waitFor(() => {
       expect(primaryPanes(workspace().state)[0]).toMatchObject({
-        href: "/media/media-1",
+        href: "/media/11111111-1111-4111-8111-111111111111",
         primaryWidthPx: workspacePrimaryMetrics.primaryDefaultWidthPx,
         history: { back: [], forward: ["/libraries"] },
       });
@@ -586,7 +586,7 @@ describe("WorkspaceStoreProvider", () => {
       expect(primaryPanes(workspace().state)[0]).toMatchObject({
         href: "/libraries",
         primaryWidthPx: workspacePrimaryMetrics.primaryDefaultWidthPx,
-        history: { back: ["/media/media-1"], forward: [] },
+        history: { back: ["/media/11111111-1111-4111-8111-111111111111"], forward: [] },
       });
     });
     flushWorkspaceSession();
@@ -658,13 +658,13 @@ describe("WorkspaceStoreProvider", () => {
     expect(workspace().state.activePrimaryPaneId).toBe(firstPaneId);
 
     act(() => {
-      workspace().navigatePane(secondPaneId, "/conversations/conversation-1", {
+      workspace().navigatePane(secondPaneId, "/conversations/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", {
         activate: false,
       });
     });
     await waitFor(() => {
       const secondPane = primaryPanes(workspace().state).find((pane) => pane.id === secondPaneId);
-      expect(secondPane?.href).toBe("/conversations/conversation-1");
+      expect(secondPane?.href).toBe("/conversations/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
       expect(secondPane?.visibility).toBe("minimized");
       expect(workspace().state.activePrimaryPaneId).toBe(firstPaneId);
     });
@@ -684,7 +684,7 @@ describe("WorkspaceStoreProvider", () => {
 
     act(() => {
       workspace().openPane({
-        href: "/media/media-1",
+        href: "/media/11111111-1111-4111-8111-111111111111",
         openerPaneId: secondPaneId,
         activate: false,
       });
@@ -754,9 +754,9 @@ describe("WorkspaceStoreProvider", () => {
   });
 
   it("publishes runtime titles and keeps them across same-resource location changes", async () => {
-    const workspace = await mountWorkspaceStore("/media/media-1");
+    const workspace = await mountWorkspaceStore("/media/11111111-1111-4111-8111-111111111111");
     const paneId = workspace().state.activePrimaryPaneId;
-    const resourceKey = resolvePaneRouteIdentity("/media/media-1").resourceKey;
+    const resourceKey = resolvePaneRouteIdentity("/media/11111111-1111-4111-8111-111111111111").resourceKey;
 
     act(() => {
       workspace().publishPaneTitle({ paneId, resourceKey, title: "My Book" });
@@ -766,19 +766,19 @@ describe("WorkspaceStoreProvider", () => {
     });
 
     act(() => {
-      workspace().navigatePane(paneId, "/media/media-1?loc=chapter-2");
+      workspace().navigatePane(paneId, "/media/11111111-1111-4111-8111-111111111111?loc=chapter-2");
     });
     await waitFor(() => {
-      expect(primaryPanes(workspace().state)[0]?.href).toBe("/media/media-1?loc=chapter-2");
+      expect(primaryPanes(workspace().state)[0]?.href).toBe("/media/11111111-1111-4111-8111-111111111111?loc=chapter-2");
       expect(workspace().runtimeTitleByPaneId.get(paneId)?.title).toBe("My Book");
     });
     flushWorkspaceSession();
   });
 
   it("clears runtime titles when the pane navigates to a different resource", async () => {
-    const workspace = await mountWorkspaceStore("/media/media-1");
+    const workspace = await mountWorkspaceStore("/media/11111111-1111-4111-8111-111111111111");
     const paneId = workspace().state.activePrimaryPaneId;
-    const resourceKey = resolvePaneRouteIdentity("/media/media-1").resourceKey;
+    const resourceKey = resolvePaneRouteIdentity("/media/11111111-1111-4111-8111-111111111111").resourceKey;
 
     act(() => {
       workspace().publishPaneTitle({ paneId, resourceKey, title: "My Book" });
@@ -788,7 +788,7 @@ describe("WorkspaceStoreProvider", () => {
     });
 
     act(() => {
-      workspace().navigatePane(paneId, "/media/media-2");
+      workspace().navigatePane(paneId, "/media/22222222-2222-4222-8222-222222222222");
     });
     await waitFor(() => {
       expect(workspace().runtimeTitleByPaneId.has(paneId)).toBe(false);
@@ -797,12 +797,12 @@ describe("WorkspaceStoreProvider", () => {
   });
 
   it("ignores stale runtime title publishes from a previous resource", async () => {
-    const workspace = await mountWorkspaceStore("/media/media-1");
+    const workspace = await mountWorkspaceStore("/media/11111111-1111-4111-8111-111111111111");
     const paneId = workspace().state.activePrimaryPaneId;
-    const oldResourceKey = resolvePaneRouteIdentity("/media/media-1").resourceKey;
+    const oldResourceKey = resolvePaneRouteIdentity("/media/11111111-1111-4111-8111-111111111111").resourceKey;
 
     act(() => {
-      workspace().navigatePane(paneId, "/media/media-2");
+      workspace().navigatePane(paneId, "/media/22222222-2222-4222-8222-222222222222");
       workspace().publishPaneTitle({
         paneId,
         resourceKey: oldResourceKey,
@@ -814,7 +814,7 @@ describe("WorkspaceStoreProvider", () => {
       const activePane = primaryPanes(workspace().state).find(
         (pane) => pane.id === workspace().state.activePrimaryPaneId,
       );
-      expect(activePane?.href).toBe("/media/media-2");
+      expect(activePane?.href).toBe("/media/22222222-2222-4222-8222-222222222222");
       expect(workspace().runtimeTitleByPaneId.has(paneId)).toBe(false);
       expect(resolveWorkspacePaneTitle(activePane!, workspace().runtimeTitleByPaneId)).toMatchObject({
         title: "Media",
@@ -829,7 +829,7 @@ describe("WorkspaceStoreProvider", () => {
     const workspace = await mountWorkspaceStore("/libraries");
 
     act(() => {
-      workspace().openPane({ href: "/media/media-1", titleHint: "Library Row Title" });
+      workspace().openPane({ href: "/media/11111111-1111-4111-8111-111111111111", titleHint: "Library Row Title" });
     });
 
     await waitFor(() => {
@@ -843,7 +843,7 @@ describe("WorkspaceStoreProvider", () => {
     });
 
     const paneId = workspace().state.activePrimaryPaneId;
-    const resourceKey = resolvePaneRouteIdentity("/media/media-1").resourceKey;
+    const resourceKey = resolvePaneRouteIdentity("/media/11111111-1111-4111-8111-111111111111").resourceKey;
     act(() => {
       workspace().publishPaneTitle({ paneId, resourceKey, title: "Runtime Title" });
     });
@@ -859,11 +859,11 @@ describe("WorkspaceStoreProvider", () => {
   });
 
   it("uses title hints for same-pane navigation", async () => {
-    const workspace = await mountWorkspaceStore("/libraries/library-1");
+    const workspace = await mountWorkspaceStore("/libraries/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
     const paneId = workspace().state.activePrimaryPaneId;
 
     act(() => {
-      workspace().navigatePane(paneId, "/media/media-1", {
+      workspace().navigatePane(paneId, "/media/11111111-1111-4111-8111-111111111111", {
         titleHint: "Library Row Title",
       });
     });
@@ -872,7 +872,7 @@ describe("WorkspaceStoreProvider", () => {
       const activePane = primaryPanes(workspace().state).find(
         (pane) => pane.id === workspace().state.activePrimaryPaneId,
       );
-      expect(activePane?.href).toBe("/media/media-1");
+      expect(activePane?.href).toBe("/media/11111111-1111-4111-8111-111111111111");
       expect(resolveWorkspacePaneTitle(activePane!, workspace().runtimeTitleByPaneId)).toMatchObject({
         title: "Library Row Title",
         titleState: "resolved",
@@ -886,9 +886,9 @@ describe("WorkspaceStoreProvider", () => {
     const workspace = await mountWorkspaceStore("/libraries");
 
     act(() => {
-      workspace().openPane({ href: "/media/media-1", titleHint: "First title" });
+      workspace().openPane({ href: "/media/11111111-1111-4111-8111-111111111111", titleHint: "First title" });
       workspace().openPane({
-        href: "/media/media-1?loc=chapter-2",
+        href: "/media/11111111-1111-4111-8111-111111111111?loc=chapter-2",
         titleHint: "Second title",
       });
     });
@@ -898,7 +898,7 @@ describe("WorkspaceStoreProvider", () => {
       const activePane = primaryPanes(workspace().state).find(
         (pane) => pane.id === workspace().state.activePrimaryPaneId,
       );
-      expect(activePane?.href).toBe("/media/media-1?loc=chapter-2");
+      expect(activePane?.href).toBe("/media/11111111-1111-4111-8111-111111111111?loc=chapter-2");
       expect(resolveWorkspacePaneTitle(activePane!, workspace().runtimeTitleByPaneId)).toMatchObject({
         title: "Second title",
         titleState: "resolved",
@@ -913,23 +913,23 @@ describe("WorkspaceStoreProvider", () => {
       activePrimaryPaneId: "pane-conversation",
       primaryPanes: [
         pane("pane-libraries", "/libraries"),
-        pane("pane-conversation", "/conversations/conversation-1"),
+        pane("pane-conversation", "/conversations/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
         pane("pane-notes", "/notes"),
       ],
     });
     const { snapshots, fetchSpy, workspace } = renderSeeded(
       initialState,
-      "/conversations/conversation-1",
+      "/conversations/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
     );
 
     // The very FIRST rendered state already has all three panes — no 1→N swap.
     expect(primaryPanes(snapshots[0]!).map((item) => item.href)).toEqual([
       "/libraries",
-      "/conversations/conversation-1",
+      "/conversations/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
       "/notes",
     ]);
     expect(snapshots.every((state) => primaryPanes(state).length === 3)).toBe(true);
-    expect(activeHref(workspace())).toBe("/conversations/conversation-1");
+    expect(activeHref(workspace())).toBe("/conversations/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
     // No restore round-trip: every fetch (if any) is the capture PUT, never a GET.
     expect(
       fetchSpy.mock.calls.every(([, init]) => init?.method === "PUT"),
@@ -942,10 +942,10 @@ describe("WorkspaceStoreProvider", () => {
       activePrimaryPaneId: "pane-conversation",
       primaryPanes: [
         pane("pane-libraries", "/libraries"),
-        pane("pane-conversation", "/conversations/conversation-1"),
+        pane("pane-conversation", "/conversations/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
       ],
     });
-    window.history.replaceState({}, "", "/conversations/conversation-1");
+    window.history.replaceState({}, "", "/conversations/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
     const fetchSpy = mockWorkspaceSession();
     let store: WorkspaceStore | null = null;
     const { rerender } = render(
@@ -968,7 +968,7 @@ describe("WorkspaceStoreProvider", () => {
     expect(store).not.toBeNull();
     expect(primaryPanes(store!.state).map((item) => item.href)).toEqual([
       "/libraries",
-      "/conversations/conversation-1",
+      "/conversations/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
     ]);
     expect(fetchSpy.mock.calls.every(([, init]) => init?.method === "PUT")).toBe(true);
     flushWorkspaceSession();
@@ -981,7 +981,7 @@ describe("WorkspaceStoreProvider", () => {
     );
 
     act(() => {
-      workspace().openPane({ href: "/libraries/library-1" });
+      workspace().openPane({ href: "/libraries/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" });
     });
     await waitFor(() => {
       expect(primaryPanes(workspace().state)).toHaveLength(2);
@@ -1001,12 +1001,12 @@ describe("WorkspaceStoreProvider", () => {
     const pushStateSpy = vi.spyOn(window.history, "pushState");
 
     act(() => {
-      workspace().openPane({ href: "/conversations/conversation-1?run=run-1" });
+      workspace().openPane({ href: "/conversations/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa?run=run-1" });
     });
 
     await waitFor(() => {
-      expect(activeHref(workspace())).toBe("/conversations/conversation-1?run=run-1");
-      expect(window.location.pathname).toBe("/conversations/conversation-1");
+      expect(activeHref(workspace())).toBe("/conversations/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa?run=run-1");
+      expect(window.location.pathname).toBe("/conversations/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
       expect(window.location.search).toBe("?run=run-1");
     });
     expect(pushStateSpy).not.toHaveBeenCalled();
@@ -1035,17 +1035,17 @@ describe("WorkspaceStoreProvider", () => {
       activePrimaryPaneId: "pane-media",
       primaryPanes: [
         pane("pane-libraries", "/libraries"),
-        pane("pane-media", "/media/media-1"),
+        pane("pane-media", "/media/11111111-1111-4111-8111-111111111111"),
       ],
     });
-    const { workspace } = renderSeeded(initialState, "/media/media-1#loc=chapter-2");
+    const { workspace } = renderSeeded(initialState, "/media/11111111-1111-4111-8111-111111111111#loc=chapter-2");
 
     await waitFor(() => {
-      expect(activeHref(workspace())).toBe("/media/media-1#loc=chapter-2");
+      expect(activeHref(workspace())).toBe("/media/11111111-1111-4111-8111-111111111111#loc=chapter-2");
     });
     expect(primaryPanes(workspace().state).map((item) => item.href)).toEqual([
       "/libraries",
-      "/media/media-1#loc=chapter-2",
+      "/media/11111111-1111-4111-8111-111111111111#loc=chapter-2",
     ]);
     flushWorkspaceSession();
   });

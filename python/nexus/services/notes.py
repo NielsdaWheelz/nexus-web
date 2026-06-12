@@ -7,7 +7,7 @@ import json
 import re
 from collections.abc import Callable
 from datetime import date, datetime
-from typing import Any, cast, get_args
+from typing import Any, Literal, cast
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -29,16 +29,20 @@ from nexus.db.retries import retry_serializable
 from nexus.errors import ApiError, ApiErrorCode, ConflictError, NotFoundError
 from nexus.schemas.notes import (
     NOTE_BLOCK_KINDS,
-    OBJECT_TYPES,
     CreatePageRequest,
     DailyNotePageOut,
     NoteBlockOut,
     NotePageOut,
     NotePageSummaryOut,
+    PageDocumentBlockRequest,
+    PageDocumentChildRequest,
+    PageDocumentContainmentRequest,
+    PageDocumentParentRef,
     PatchPageDocumentRequest,
     PatchPageDocumentResponse,
     QuickCaptureRequest,
     UpdatePageRequest,
+    is_object_type,
 )
 from nexus.services.content_indexing import IndexOwner, delete_content_index
 from nexus.services.highlight_access import get_highlight_for_visible_read_or_404
@@ -70,7 +74,7 @@ def pm_doc_from_markdown_projection(markdown: str) -> dict[str, Any]:
         if match.start() > position:
             _append_text_and_break_nodes(content, markdown[position : match.start()])
         object_type = match.group(1)
-        if object_type not in get_args(OBJECT_TYPES):
+        if not is_object_type(object_type):
             raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Object reference type is invalid")
         content.append(
             {
@@ -405,6 +409,7 @@ def _patch_page_document_once(
 
     title_changed = request.title is not None and request.title != page.title
     changed_block_ids: set[UUID] = set(deleted_ids)
+    reindex_job_id: UUID | None = None
     for block_id, patch in requested_by_id.items():
         block = existing_blocks.get(block_id)
         if block is None:
@@ -483,7 +488,7 @@ def _patch_page_document_once(
 
             page.updated_at = func.now()
             page.document_version += 1
-            enqueue_page_reindex(db, page_id=page.id, reason="page_patch")
+            reindex_job_id = enqueue_page_reindex(db, page_id=page.id, reason="page_patch")
 
         focused_block = None
         if request.focus_block_id is not None and request.focus_block_id not in deleted_ids:
@@ -495,6 +500,7 @@ def _patch_page_document_once(
             document_version=page.document_version,
             changed_block_ids=sorted(changed_block_ids, key=str),
             changed_edge_ids=changed_edge_ids,
+            reindex_job_id=reindex_job_id,
             focused_block=focused_block,
         )
         db.add(
@@ -636,24 +642,24 @@ def quick_capture(
         if occurrence.page_id != page.id:
             raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Note block id already exists")
     document = graph_documents.load_page_document(db, user_id=viewer_id, page_id=page.id)
-    blocks: list[dict[str, object]] = []
-    containment_by_parent: dict[ResourceRef, list[dict[str, object]]] = {}
+    blocks: list[PageDocumentBlockRequest] = []
+    containment_by_parent: dict[ResourceRef, list[PageDocumentChildRequest]] = {}
 
     def append_node(node: graph_documents.DocumentBlock) -> None:
         node_body = body_pm_json if node.block.id == block_id else node.block.body_pm_json
         blocks.append(
-            {
-                "id": node.block.id,
-                "block_kind": node.block.block_kind,
-                "body_pm_json": node_body,
-            }
+            PageDocumentBlockRequest(
+                id=node.block.id,
+                block_kind=cast(NOTE_BLOCK_KINDS, node.block.block_kind),
+                body_pm_json=node_body,
+            )
         )
         containment_by_parent.setdefault(node.parent, []).append(
-            {
-                "block_id": node.block.id,
-                "source_order_key": node.source_order_key,
-                "collapsed": node.collapsed,
-            }
+            PageDocumentChildRequest(
+                block_id=node.block.id,
+                source_order_key=node.source_order_key,
+                collapsed=node.collapsed,
+            )
         )
         for child in node.children:
             append_node(child)
@@ -663,18 +669,14 @@ def quick_capture(
 
     if existing is None:
         blocks.append(
-            {
-                "id": block_id,
-                "block_kind": "bullet",
-                "body_pm_json": body_pm_json,
-            }
+            PageDocumentBlockRequest(id=block_id, block_kind="bullet", body_pm_json=body_pm_json)
         )
         containment_by_parent.setdefault(ResourceRef(scheme="page", id=page.id), []).append(
-            {
-                "block_id": block_id,
-                "source_order_key": f"{len(document.roots) + 1:010d}",
-                "collapsed": False,
-            }
+            PageDocumentChildRequest(
+                block_id=block_id,
+                source_order_key=f"{len(document.roots) + 1:010d}",
+                collapsed=False,
+            )
         )
 
     patch_page_document(
@@ -684,13 +686,14 @@ def quick_capture(
         PatchPageDocumentRequest(
             client_mutation_id=request.client_mutation_id,
             base_document_version=page.document_version,
+            title=None,
             focus_block_id=block_id,
             blocks=blocks,
             containment=[
-                {
-                    "parent": {"scheme": parent.scheme, "id": parent.id},
-                    "children": children,
-                }
+                PageDocumentContainmentRequest(
+                    parent=_page_document_parent_ref(parent),
+                    children=children,
+                )
                 for parent, children in containment_by_parent.items()
             ],
             deleted_block_ids=[],
@@ -762,6 +765,7 @@ def set_highlight_note_body_pm_json(
             PatchPageDocumentRequest(
                 client_mutation_id=client_mutation_id,
                 base_document_version=page.document_version,
+                title=None,
                 focus_block_id=block_id,
                 blocks=blocks,
                 containment=containment,
@@ -787,6 +791,7 @@ def set_highlight_note_body_pm_json(
         PatchPageDocumentRequest(
             client_mutation_id=client_mutation_id,
             base_document_version=page.document_version,
+            title=None,
             focus_block_id=existing.id,
             blocks=blocks,
             containment=containment,
@@ -828,6 +833,7 @@ def delete_highlight_note(
         PatchPageDocumentRequest(
             client_mutation_id=client_mutation_id,
             base_document_version=page.document_version,
+            title=None,
             focus_block_id=None,
             blocks=blocks,
             containment=containment,
@@ -1057,7 +1063,7 @@ def _page_document_command_from_document(
     body_updates: dict[UUID, dict[str, Any]] | None = None,
     append_root: tuple[UUID, NOTE_BLOCK_KINDS, dict[str, Any]] | None = None,
     delete_root_ids: set[UUID] | None = None,
-) -> tuple[list[dict[str, object]], list[dict[str, object]], list[UUID]]:
+) -> tuple[list[PageDocumentBlockRequest], list[PageDocumentContainmentRequest], list[UUID]]:
     updates = body_updates or {}
     delete_roots = delete_root_ids or set()
     existing_nodes = {node.block.id: node for node in _flatten_document_nodes(document.roots)}
@@ -1073,25 +1079,25 @@ def _page_document_command_from_document(
         deleted_ids.add(block_id)
         deleted_ids.update(_document_descendant_ids(existing_nodes[block_id]))
 
-    blocks: list[dict[str, object]] = []
-    containment_by_parent: dict[ResourceRef, list[dict[str, object]]] = {}
+    blocks: list[PageDocumentBlockRequest] = []
+    containment_by_parent: dict[ResourceRef, list[PageDocumentChildRequest]] = {}
 
     def append_node(node: graph_documents.DocumentBlock) -> None:
         if node.block.id in deleted_ids:
             return
         blocks.append(
-            {
-                "id": node.block.id,
-                "block_kind": node.block.block_kind,
-                "body_pm_json": updates.get(node.block.id, node.block.body_pm_json),
-            }
+            PageDocumentBlockRequest(
+                id=node.block.id,
+                block_kind=cast(NOTE_BLOCK_KINDS, node.block.block_kind),
+                body_pm_json=updates.get(node.block.id, node.block.body_pm_json),
+            )
         )
         containment_by_parent.setdefault(node.parent, []).append(
-            {
-                "block_id": node.block.id,
-                "source_order_key": node.source_order_key,
-                "collapsed": node.collapsed,
-            }
+            PageDocumentChildRequest(
+                block_id=node.block.id,
+                source_order_key=node.source_order_key,
+                collapsed=node.collapsed,
+            )
         )
         for child in node.children:
             append_node(child)
@@ -1102,33 +1108,38 @@ def _page_document_command_from_document(
     if append_root is not None:
         block_id, block_kind, body_pm_json = append_root
         blocks.append(
-            {
-                "id": block_id,
-                "block_kind": block_kind,
-                "body_pm_json": body_pm_json,
-            }
+            PageDocumentBlockRequest(id=block_id, block_kind=block_kind, body_pm_json=body_pm_json)
         )
         root_ref = ResourceRef(scheme="page", id=document.page.id)
         root_children = containment_by_parent.setdefault(root_ref, [])
         root_children.append(
-            {
-                "block_id": block_id,
-                "source_order_key": f"{len(root_children) + 1:010d}",
-                "collapsed": False,
-            }
+            PageDocumentChildRequest(
+                block_id=block_id,
+                source_order_key=f"{len(root_children) + 1:010d}",
+                collapsed=False,
+            )
         )
 
     return (
         blocks,
         [
-            {
-                "parent": {"scheme": parent.scheme, "id": parent.id},
-                "children": children,
-            }
+            PageDocumentContainmentRequest(
+                parent=_page_document_parent_ref(parent),
+                children=children,
+            )
             for parent, children in containment_by_parent.items()
             if children
         ],
         sorted(delete_roots, key=str),
+    )
+
+
+def _page_document_parent_ref(parent: ResourceRef) -> PageDocumentParentRef:
+    if parent.scheme not in {"page", "note_block"}:
+        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Document parent must be page or note_block")
+    return PageDocumentParentRef(
+        scheme=cast(Literal["page", "note_block"], parent.scheme),
+        id=parent.id,
     )
 
 

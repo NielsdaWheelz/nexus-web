@@ -89,6 +89,7 @@ export default function PagePaneBody({
   const router = usePaneRouter();
   const paneRuntime = usePaneRuntime();
   const openInNewPaneCommand = paneRuntime?.openInNewPane;
+  const requestSecondarySurface = paneRuntime?.requestSecondarySurface;
   const toast = useFeedback();
   const pageId = pageIdOverride ?? routePageId;
   if (!pageId) throw new Error("page route requires a page id");
@@ -594,7 +595,7 @@ export default function PagePaneBody({
         id: "show-note-connections",
         label: "Show connections",
         onSelect: () => {
-          paneRuntime?.requestSecondarySurface("notes-connections");
+          requestSecondarySurface?.("notes-connections");
         },
       },
       {
@@ -605,7 +606,7 @@ export default function PagePaneBody({
         },
       },
     ],
-    [focusBlockId, paneRuntime, pinCurrentObject]
+    [focusBlockId, pinCurrentObject, requestSecondarySurface]
   );
   usePaneChromeOverride({ options: paneOptions });
 

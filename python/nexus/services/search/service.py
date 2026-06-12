@@ -347,44 +347,41 @@ def get_search_result(
                     m.title,
                     m.published_date,
                     mcc.contributor_credits,
-                    p.title AS page_title,
-                    p.user_id AS page_user_id,
                     cc.chunk_text,
                     cc.source_kind,
                     cc.primary_evidence_span_id
                 FROM content_chunks cc
-                LEFT JOIN media m ON m.id = cc.owner_id AND cc.owner_kind = 'media'
-                LEFT JOIN visible_media vm ON vm.media_id = cc.owner_id
-                LEFT JOIN pages p ON p.id = cc.owner_id AND cc.owner_kind = 'page'
+                JOIN media m ON m.id = cc.owner_id AND cc.owner_kind = 'media'
+                JOIN visible_media vm ON vm.media_id = cc.owner_id
                 JOIN content_index_states mcis ON mcis.owner_kind = cc.owner_kind
                     AND mcis.owner_id = cc.owner_id
                     AND mcis.status = 'ready'
                 LEFT JOIN media_contributor_credits mcc ON mcc.media_id = m.id
                 WHERE cc.id = :id
-                  AND (vm.media_id IS NOT NULL OR p.user_id = :viewer_id)
+                  AND cc.owner_kind = 'media'
+                  AND vm.media_id IS NOT NULL
                 """
             ),
             {"viewer_id": viewer_id, "id": chunk_id},
         ).first()
-        if row is None or row[11] is None:
+        if row is None or row[9] is None:
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
-        if evidence_span_ids and row[11] not in evidence_span_ids:
+        if evidence_span_ids and row[9] not in evidence_span_ids:
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
         resolution = resolve_evidence_span(
             db,
             viewer_id=viewer_id,
-            evidence_span_id=row[11],
+            evidence_span_id=row[9],
         )
         _require_resolved_evidence(resolution)
-        owner_kind = str(row[1])
-        source_kind = str(row[3] or "page") if owner_kind == "media" else "page"
-        source_title = str(row[4] if owner_kind == "media" else row[7])
+        source_kind = str(row[3])
+        source_title = str(row[4])
         return _result_to_out(
             _RankedContentChunkResult(
                 id=row[0],
-                snippet=_truncate_snippet(str(row[9] or "")),
-                source_kind=str(row[10]),
-                evidence_span_ids=[row[11]],
+                snippet=_truncate_snippet(str(row[7] or "")),
+                source_kind=str(row[8]),
+                evidence_span_ids=[row[9]],
                 citation_label=str(resolution["citation_label"]),
                 locator=locator_from_resolution(
                     resolution,
@@ -396,8 +393,8 @@ def get_search_result(
                     row[2],
                     source_kind,
                     source_title,
-                    row[6] if owner_kind == "media" else None,
-                    row[5] if owner_kind == "media" else None,
+                    row[6],
+                    row[5],
                 ),
                 score=score,
             )

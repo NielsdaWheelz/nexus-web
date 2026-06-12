@@ -725,7 +725,9 @@ def _gutenberg_linknote_body_element(
     parent = target_anchor.getparent()
     if not isinstance(parent, HtmlElement) or str(parent.tag).lower() != "p":
         return None
-    body = next((sibling for sibling in parent.itersiblings() if isinstance(sibling, HtmlElement)), None)
+    body = next(
+        (sibling for sibling in parent.itersiblings() if isinstance(sibling, HtmlElement)), None
+    )
     if body is None or str(body.tag).lower() != "p" or "footnote" not in _class_tokens(body):
         return None
     return body if _gutenberg_linknote_backlink(body, number) is not None else None

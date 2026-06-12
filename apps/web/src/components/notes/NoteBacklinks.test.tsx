@@ -206,7 +206,7 @@ describe("NoteBacklinks", () => {
         },
       }),
     );
-    await user.click(await screen.findByRole("button", { name: /Linked media/ }));
+    await user.click(await screen.findByRole("option", { name: /Linked media/ }));
     await user.click(screen.getByRole("button", { name: "Connect" }));
 
     const edgePosts = () =>

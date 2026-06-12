@@ -20,6 +20,7 @@ def _tar_bytes(entries: list[tuple[str, bytes]], *, gzip: bool = False) -> bytes
     with tarfile.open(fileobj=data, mode="w:gz" if gzip else "w") as archive:
         for name, content in entries:
             info = tarfile.TarInfo(name)
+            info.mtime = 0
             info.size = len(content)
             archive.addfile(info, io.BytesIO(content))
     return data.getvalue()
@@ -29,6 +30,7 @@ def _tar_symlink_bytes(name: str, linkname: str) -> bytes:
     data = io.BytesIO()
     with tarfile.open(fileobj=data, mode="w") as archive:
         info = tarfile.TarInfo(name)
+        info.mtime = 0
         info.type = tarfile.SYMTYPE
         info.linkname = linkname
         archive.addfile(info)
@@ -107,7 +109,7 @@ def test_latex_independent_verifier_recognizes_supported_citation_commands():
         [
             (
                 "main.tex",
-                br"""
+                rb"""
                 \begin{document}
                 One \cite{alpha}.
                 Two \parencite[see][p.~4]{beta,gamma}.
@@ -121,7 +123,7 @@ def test_latex_independent_verifier_recognizes_supported_citation_commands():
             ),
             (
                 "refs.bib",
-                br"""
+                rb"""
                 @article{alpha, title = {Alpha}}
                 @article{beta, title = {Beta}}
                 @article{gamma, title = {Gamma}}
@@ -228,6 +230,16 @@ def test_latex_independent_verifier_recognizes_supported_citation_commands():
             ),
             "unsupported_member_type",
         ),
+    ],
+    ids=[
+        "path_traversal",
+        "absolute_path",
+        "duplicate_path",
+        "too_many_entries",
+        "single_entry_too_large",
+        "total_uncompressed_too_large",
+        "compression_ratio_too_high",
+        "unsupported_member_type",
     ],
 )
 def test_latex_source_archive_safety_rejects_unsafe_archives(

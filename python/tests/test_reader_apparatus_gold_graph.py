@@ -40,7 +40,9 @@ from tests.reader_apparatus_gold_graph import (
 
 pytestmark = pytest.mark.integration
 
-FRONTEND_PAYLOAD_FIXTURE_IDS = {payload["fixture_id"] for payload in frontend_api_payload_fixtures()}
+FRONTEND_PAYLOAD_FIXTURE_IDS = {
+    payload["fixture_id"] for payload in frontend_api_payload_fixtures()
+}
 FRONTEND_PAYLOAD_GOLD_GRAPHS = [
     entry for entry in gold_graph_fixtures() if entry["fixture_id"] in FRONTEND_PAYLOAD_FIXTURE_IDS
 ]
@@ -83,9 +85,7 @@ def test_reader_apparatus_frontend_payload_matches_gold_graph(
     payload_fixture = payload_fixtures[fixture_id]
     payload = json.loads((repo_root / payload_fixture["path"]).read_text(encoding="utf-8"))
     gold_graph = load_reader_apparatus_gold_graph(fixture_id)
-    apparatus = ReaderApparatusResponse.model_validate(payload["apparatus"]).model_dump(
-        mode="json"
-    )
+    apparatus = ReaderApparatusResponse.model_validate(payload["apparatus"]).model_dump(mode="json")
 
     expected_response = gold_graph["expected_response"]
     assert apparatus["status"] == expected_response["status"]
@@ -304,9 +304,8 @@ def _assert_tei_ref_hand_gold_matrix(
         assert source_ref.get("target_id") == row["source_target_id"], row
         assert source_ref.get("declared_target_id") == row["declared_target_id"], row
         assert source_ref.get("resolved_target_ids") == expected_targets, row
-        assert (
-            source_ref.get("suppressed_resolution_reason")
-            == row.get("suppressed_resolution_reason")
+        assert source_ref.get("suppressed_resolution_reason") == row.get(
+            "suppressed_resolution_reason"
         ), row
         assert source_ref.get("suppressed_candidate_target_ids") == row.get(
             "suppressed_candidate_target_ids",

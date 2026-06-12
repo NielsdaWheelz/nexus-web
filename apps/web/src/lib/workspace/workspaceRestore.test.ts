@@ -19,6 +19,10 @@ const metrics: WorkspacePrimaryMetrics = {
   primaryMinWidthPx: 684,
   primaryDefaultWidthPx: 684,
 };
+const DEEP_LINK_MEDIA_ID = "11111111-1111-4111-8111-111111111111";
+const FORWARD_MEDIA_ID = "22222222-2222-4222-8222-222222222222";
+const DEEP_LINK_MEDIA_HREF = `/media/${DEEP_LINK_MEDIA_ID}`;
+const FORWARD_MEDIA_HREF = `/media/${FORWARD_MEDIA_ID}`;
 
 const emptyHistory = () => ({ back: [], forward: [] });
 
@@ -304,12 +308,14 @@ describe("mergeRestoredWorkspaceWithDeepLink", () => {
   it("adds an explicit deep link as the active pane instead of letting restore override it", () => {
     const deepLink = workspace({
       activePrimaryPaneId: "pane-url-media",
-      primaryPanes: [primary("pane-url-media", "/media/media-123", { primaryWidthPx: 1280 })],
+      primaryPanes: [
+        primary("pane-url-media", DEEP_LINK_MEDIA_HREF, { primaryWidthPx: 1280 }),
+      ],
     });
 
     const merged = mergeRestoredWorkspaceWithDeepLink(restored, deepLink, metrics);
 
-    expect(hrefs(merged)).toEqual(["/libraries", "/notes", "/media/media-123"]);
+    expect(hrefs(merged)).toEqual(["/libraries", "/notes", DEEP_LINK_MEDIA_HREF]);
     expect(merged.activePrimaryPaneId).toBe("pane-url-media");
   });
 
@@ -318,17 +324,19 @@ describe("mergeRestoredWorkspaceWithDeepLink", () => {
       activePrimaryPaneId: "pane-saved-libraries",
       primaryPanes: [
         ...getWorkspacePrimaryPanes(restored),
-        primary("pane-saved-media", "/media/media-123", {
+        primary("pane-saved-media", DEEP_LINK_MEDIA_HREF, {
           primaryWidthPx: 960,
           visibility: "minimized",
-          history: { back: ["/libraries"], forward: ["/media/media-999"] },
+          history: { back: ["/libraries"], forward: [FORWARD_MEDIA_HREF] },
         }),
       ],
     });
     const deepLink = workspace({
       activePrimaryPaneId: "pane-url-media",
       primaryPanes: [
-        primary("pane-url-media", "/media/media-123?loc=chapter-2", { primaryWidthPx: 1280 }),
+        primary("pane-url-media", `${DEEP_LINK_MEDIA_HREF}?loc=chapter-2`, {
+          primaryWidthPx: 1280,
+        }),
       ],
     });
 
@@ -339,11 +347,11 @@ describe("mergeRestoredWorkspaceWithDeepLink", () => {
     expect(
       getWorkspacePrimaryPanes(merged).find((item) => item.id === "pane-saved-media"),
     ).toMatchObject({
-      href: "/media/media-123?loc=chapter-2",
+      href: `${DEEP_LINK_MEDIA_HREF}?loc=chapter-2`,
       visibility: "visible",
       primaryWidthPx: 960,
       attachedSecondaryPaneId: null,
-      history: { back: ["/libraries"], forward: ["/media/media-999"] },
+      history: { back: ["/libraries"], forward: [FORWARD_MEDIA_HREF] },
     });
   });
 });

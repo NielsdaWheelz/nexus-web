@@ -7,6 +7,12 @@ import {
   resolvePaneRouteWidthContract,
 } from "@/lib/panes/paneRouteModel";
 
+const LIBRARY_ID = "11111111-1111-4111-8111-111111111111";
+const MEDIA_ID = "22222222-2222-4222-8222-222222222222";
+const PODCAST_ID = "33333333-3333-4333-8333-333333333333";
+const PAGE_ID = "44444444-4444-4444-8444-444444444444";
+const CONVERSATION_ID = "55555555-5555-4555-8555-555555555555";
+
 describe("pane route model", () => {
   it("resolves representative routes with identity, body mode, and width policy", () => {
     expect(resolvePaneRouteModel("/libraries")).toMatchObject({
@@ -19,35 +25,35 @@ describe("pane route model", () => {
         allowsIntrinsicPrimaryWidth: false,
       },
     });
-    expect(resolvePaneRouteModel("/libraries/lib-1")).toMatchObject({
+    expect(resolvePaneRouteModel(`/libraries/${LIBRARY_ID}`)).toMatchObject({
       id: "library",
-      params: { id: "lib-1" },
-      resourceRef: "library:lib-1",
+      params: { id: LIBRARY_ID },
+      resourceRef: `library:${LIBRARY_ID}`,
       definition: { allowsIntrinsicPrimaryWidth: false },
     });
-    expect(resolvePaneRouteModel("/media/media-1")).toMatchObject({
+    expect(resolvePaneRouteModel(`/media/${MEDIA_ID}`)).toMatchObject({
       id: "media",
-      params: { id: "media-1" },
-      resourceRef: "media:media-1",
+      params: { id: MEDIA_ID },
+      resourceRef: `media:${MEDIA_ID}`,
       definition: {
         bodyMode: "document",
         maxWidthPx: MAX_MEDIA_PANE_WIDTH_PX,
         allowsIntrinsicPrimaryWidth: true,
       },
     });
-    expect(resolvePaneRouteModel("/podcasts/podcast-1")).toMatchObject({
+    expect(resolvePaneRouteModel(`/podcasts/${PODCAST_ID}`)).toMatchObject({
       id: "podcastDetail",
-      params: { podcastId: "podcast-1" },
-      resourceRef: "podcast:podcast-1",
+      params: { podcastId: PODCAST_ID },
+      resourceRef: `podcast:${PODCAST_ID}`,
       definition: {
         bodyMode: "document",
         maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
         allowsIntrinsicPrimaryWidth: false,
       },
     });
-    expect(resolvePaneRouteModel("/pages/page-1")).toMatchObject({
+    expect(resolvePaneRouteModel(`/pages/${PAGE_ID}`)).toMatchObject({
       id: "page",
-      resourceRef: "page:page-1",
+      resourceRef: `page:${PAGE_ID}`,
       definition: {
         bodyMode: "document",
         maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
@@ -60,9 +66,9 @@ describe("pane route model", () => {
       id: "conversationNew",
       resourceRef: null,
     });
-    expect(resolvePaneRouteModel("/conversations/conversation-1")).toMatchObject({
+    expect(resolvePaneRouteModel(`/conversations/${CONVERSATION_ID}`)).toMatchObject({
       id: "conversation",
-      resourceRef: "conversation:conversation-1",
+      resourceRef: `conversation:${CONVERSATION_ID}`,
     });
   });
 

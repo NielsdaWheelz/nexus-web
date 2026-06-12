@@ -19,7 +19,7 @@ function sheet(props: Partial<ComponentProps<typeof MobileSheet>> = {}) {
 const dialog = () => screen.getByRole("dialog", { name: "Test sheet" });
 const first = () => screen.getByRole("button", { name: "First" });
 const last = () => screen.getByRole("button", { name: "Last" });
-// eslint-disable-next-line testing-library/no-node-access -- the grabber is aria-hidden decorative; no role/label to query by
+// eslint-disable-next-line testing-library/no-node-access -- justify-eslint-override: the grabber is aria-hidden decorative; no role/label to query by
 const grabber = () => document.querySelector("[data-grabber]");
 
 /** EventTarget-based visualViewport stub (the keyboard-inset hook test's pattern). */
@@ -109,7 +109,7 @@ describe("MobileSheet", () => {
   it("honors initialFocus", async () => {
     render(
       sheet({
-        // eslint-disable-next-line testing-library/no-node-access -- initialFocus receives the panel container, not a screen query
+        // eslint-disable-next-line testing-library/no-node-access -- justify-eslint-override: initialFocus receives the panel container, not a screen query
         initialFocus: (container) => container.querySelector<HTMLElement>("button:nth-of-type(2)"),
       }),
     );

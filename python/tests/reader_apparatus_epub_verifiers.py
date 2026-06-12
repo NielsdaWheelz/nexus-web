@@ -31,8 +31,7 @@ class EpubArchiveNoteref:
         target_tokens = set(self.target_semantic_tokens)
         container_tokens = set(self.target_container_semantic_tokens)
         return bool(
-            target_tokens & _NOTE_TARGET_TOKENS
-            or container_tokens & _NOTE_CONTAINER_TOKENS
+            target_tokens & _NOTE_TARGET_TOKENS or container_tokens & _NOTE_CONTAINER_TOKENS
         )
 
 
@@ -239,9 +238,7 @@ def _ancestor_semantic_tokens(element: HtmlElement) -> set[str]:
 
 
 _NOTE_TARGET_TOKENS = frozenset({"doc-endnote", "doc-footnote", "endnote", "footnote"})
-_NOTE_CONTAINER_TOKENS = frozenset(
-    {"doc-endnotes", "doc-footnotes", "endnotes", "footnotes"}
-)
+_NOTE_CONTAINER_TOKENS = frozenset({"doc-endnotes", "doc-footnotes", "endnotes", "footnotes"})
 
 
 _EPUB_NS = {

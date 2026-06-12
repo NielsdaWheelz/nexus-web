@@ -191,7 +191,7 @@ describe("ModelSettingsPopover", () => {
       fireEvent.click(dialog());
       expect(dialog()).toBeVisible();
 
-      // eslint-disable-next-line testing-library/no-node-access -- the backdrop is presentational (no role/label); it is the panel's parent layer
+      // eslint-disable-next-line testing-library/no-node-access -- justify-eslint-override: the backdrop is presentational with no role/label; it is the panel's parent layer
       fireEvent.click(dialog().parentElement!);
       dialogGone();
     });

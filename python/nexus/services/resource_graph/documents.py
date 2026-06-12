@@ -6,7 +6,7 @@ This module loads and mutates that ordered graph without importing notes.py.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import cast
 from uuid import UUID
@@ -162,7 +162,7 @@ def apply_page_document_structure(
     *,
     user_id: UUID,
     previous_parents: Iterable[ResourceRef],
-    children_by_parent: dict[ResourceRef, Sequence[OrderedChildBlock]],
+    children_by_parent: Mapping[ResourceRef, Sequence[OrderedChildBlock]],
     collapsed_by_block_id: dict[UUID, bool],
     deleted_block_ids: set[UUID],
 ) -> list[UUID]:
@@ -401,7 +401,7 @@ def delete_block_subtree(
 
 
 def _containment_rows(db: Session, *, user_id: UUID) -> list[tuple[ResourceEdge, NoteBlock]]:
-    return (
+    return list(
         db.execute(
             select(ResourceEdge, NoteBlock)
             .join(

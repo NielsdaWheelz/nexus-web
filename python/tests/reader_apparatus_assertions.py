@@ -92,9 +92,7 @@ def edge_target_source_ref_values(
     source_ref_key: str = "target_id",
 ) -> tuple[str, ...]:
     by_key = {item["stable_key"]: item for item in items}
-    return tuple(
-        str(by_key[edge["to_stable_key"]]["source_ref"][source_ref_key]) for edge in edges
-    )
+    return tuple(str(by_key[edge["to_stable_key"]]["source_ref"][source_ref_key]) for edge in edges)
 
 
 def edge_source_ref_values(
@@ -130,11 +128,14 @@ def assert_edge_target_source_ref_sequence(
     *,
     source_ref_key: str = "target_id",
 ) -> None:
-    assert edge_target_source_ref_values(
-        items,
-        edges,
-        source_ref_key=source_ref_key,
-    ) == expected
+    assert (
+        edge_target_source_ref_values(
+            items,
+            edges,
+            source_ref_key=source_ref_key,
+        )
+        == expected
+    )
 
 
 def assert_edge_source_ref_sequence(
@@ -154,9 +155,12 @@ def assert_edge_source_to_target_source_ref_pairs(
     edge_source_ref_key: str,
     target_source_ref_key: str | None = None,
 ) -> None:
-    assert edge_source_to_target_source_ref_pairs(
-        items,
-        edges,
-        edge_source_ref_key=edge_source_ref_key,
-        target_source_ref_key=target_source_ref_key,
-    ) == expected
+    assert (
+        edge_source_to_target_source_ref_pairs(
+            items,
+            edges,
+            edge_source_ref_key=edge_source_ref_key,
+            target_source_ref_key=target_source_ref_key,
+        )
+        == expected
+    )

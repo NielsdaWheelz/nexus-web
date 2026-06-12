@@ -106,8 +106,7 @@ def _validate_tei_hand_gold_ref_matrix(graph: dict[str, Any], *, label: str) -> 
 
         expected_targets = row["expected_target_ids"]
         if not isinstance(expected_targets, list) or any(
-            not isinstance(target_id, str) or not target_id
-            for target_id in expected_targets
+            not isinstance(target_id, str) or not target_id for target_id in expected_targets
         ):
             raise AssertionError(f"{label} expected_target_ids must be strings: {row}")
         expected_edge_count = row["expected_edge_count"]
@@ -119,14 +118,11 @@ def _validate_tei_hand_gold_ref_matrix(graph: dict[str, Any], *, label: str) -> 
             raise AssertionError(f"{label} matrix ref_text must be a non-empty string: {row}")
         if row["source_target_id"] is not None and not isinstance(row["source_target_id"], str):
             raise AssertionError(f"{label} source_target_id must be string/null: {row}")
-        if row["declared_target_id"] is not None and not isinstance(
-            row["declared_target_id"], str
-        ):
+        if row["declared_target_id"] is not None and not isinstance(row["declared_target_id"], str):
             raise AssertionError(f"{label} declared_target_id must be string/null: {row}")
         suppressed_candidates = row.get("suppressed_candidate_target_ids", [])
         if not isinstance(suppressed_candidates, list) or any(
-            not isinstance(target_id, str) or not target_id
-            for target_id in suppressed_candidates
+            not isinstance(target_id, str) or not target_id for target_id in suppressed_candidates
         ):
             raise AssertionError(f"{label} suppressed candidates must be strings: {row}")
 
@@ -160,8 +156,7 @@ def assert_reader_apparatus_matches_gold_graph(
     }
     actual_items_by_key = {item["stable_key"]: item for item in apparatus["items"]}
     actual_item_signatures_by_key = {
-        stable_key: _actual_item_signature(item)
-        for stable_key, item in actual_items_by_key.items()
+        stable_key: _actual_item_signature(item) for stable_key, item in actual_items_by_key.items()
     }
 
     actual_item_signatures = Counter(actual_item_signatures_by_key.values())

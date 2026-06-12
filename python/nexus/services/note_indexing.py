@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
+from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -76,7 +77,7 @@ def rebuild_page_content_index(db: Session, *, page_id: UUID, reason: str) -> Co
     )
 
 
-def enqueue_page_reindex(db: Session, *, page_id: UUID, reason: str) -> None:
+def enqueue_page_reindex(db: Session, *, page_id: UUID, reason: str) -> UUID:
     """Mark the page stale and ensure exactly one in-flight reindex for it.
 
     Rapid edits coalesce onto the queued/running job (uq_page_reindex_job_inflight);
@@ -88,16 +89,38 @@ def enqueue_page_reindex(db: Session, *, page_id: UUID, reason: str) -> None:
     mark_content_index_pending(db, owner=IndexOwner("page", page_id), reason=reason)
     try:
         with db.begin_nested():
-            enqueue_job(
+            job = enqueue_job(
                 db,
                 kind="page_reindex_job",
                 payload={"page_id": str(page_id), "reason": reason},
             )
+            return job.id
     except IntegrityError as exc:
         # An in-flight reindex already covers this page; it rebuilds from current state,
         # so this edit lands without a second job.
         if integrity_constraint_name(exc) != "uq_page_reindex_job_inflight":
             raise
+        job_id = _inflight_page_reindex_job_id(db, page_id=page_id)
+        if job_id is None:
+            raise
+        return job_id
+
+
+def _inflight_page_reindex_job_id(db: Session, *, page_id: UUID) -> UUID | None:
+    return db.scalar(
+        text(
+            """
+            SELECT id
+            FROM background_jobs
+            WHERE kind = 'page_reindex_job'
+              AND payload->>'page_id' = :page_id
+              AND status NOT IN ('succeeded', 'dead')
+            ORDER BY created_at ASC, id ASC
+            LIMIT 1
+            """
+        ),
+        {"page_id": str(page_id)},
+    )
 
 
 def _blocks_in_render_order(db: Session, page: Page) -> list[tuple[object, tuple[str, ...]]]:

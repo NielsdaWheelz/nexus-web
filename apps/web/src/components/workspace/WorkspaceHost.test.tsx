@@ -17,6 +17,13 @@ import type {
   WorkspaceSecondarySurfaceId,
 } from "@/lib/panes/paneSecondaryModel";
 
+const MEDIA_ID_1 = "11111111-1111-4111-8111-111111111111";
+const MEDIA_ID_2 = "22222222-2222-4222-8222-222222222222";
+const MEDIA_ID_3 = "33333333-3333-4333-8333-333333333333";
+const MEDIA_HREF_1 = `/media/${MEDIA_ID_1}`;
+const MEDIA_HREF_2 = `/media/${MEDIA_ID_2}`;
+const MEDIA_HREF_3 = `/media/${MEDIA_ID_3}`;
+
 const hostMocks = vi.hoisted(() => ({
   bodyInstanceId: 0,
   mountedBodyIds: [] as number[],
@@ -42,7 +49,7 @@ const hostMocks = vi.hoisted(() => ({
       primaryPanesById: {
         "pane-1": {
           id: "pane-1",
-          href: "/media/media-1",
+          href: "/media/11111111-1111-4111-8111-111111111111",
           primaryWidthPx: 640,
           attachedSecondaryPaneId: null as string | null,
           visibility: "visible" as const,
@@ -147,7 +154,7 @@ function TestPaneBody() {
       data-instance-id={instanceId.current}
       data-runtime-secondary-id={paneRuntime?.secondaryPane?.id ?? "none"}
     >
-      {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
+      {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- justify-eslint-override: test fixture uses a plain anchor so WorkspaceHost link interception is the behavior under test */}
       <a href="/authors/body-author" data-pane-title-hint="Body Author">
         Body Author
       </a>
@@ -238,7 +245,7 @@ vi.mock("@/components/workspace/PaneShell", () => ({
           >
             Go forward in this pane
           </button>
-          {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
+          {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- justify-eslint-override: mock pane chrome uses a plain anchor so WorkspaceHost link interception is the behavior under test */}
           <a href="/authors/author-1" data-pane-title-hint="Chrome Author">
             Chrome Author
           </a>
@@ -376,14 +383,14 @@ describe("WorkspaceHost pane route lifecycle", () => {
     hostMocks.store.setSecondarySurface.mockReset();
     hostMocks.store.resizeSecondaryPane.mockReset();
     hostMocks.store.runtimeTitleByPaneId = new Map();
-    setPaneHref("/media/media-1");
+    setPaneHref(MEDIA_HREF_1);
   });
 
   it("does not remount the route body for same-resource location changes", () => {
     const { rerender } = render(<WorkspaceHost />);
     const firstInstance = screen.getByTestId("route-body").dataset.instanceId;
 
-    setPaneHref("/media/media-1?loc=chapter-2");
+    setPaneHref(`${MEDIA_HREF_1}?loc=chapter-2`);
     rerender(<WorkspaceHost />);
 
     expect(screen.getByTestId("route-body")).toHaveAttribute(
@@ -412,7 +419,7 @@ describe("WorkspaceHost pane route lifecycle", () => {
     const { rerender } = render(<WorkspaceHost />);
     const firstInstance = screen.getByTestId("route-body").dataset.instanceId;
 
-    setPaneHref("/media/media-2");
+    setPaneHref(MEDIA_HREF_2);
     rerender(<WorkspaceHost />);
 
     expect(screen.getByTestId("route-body")).not.toHaveAttribute(
@@ -447,7 +454,7 @@ describe("WorkspaceHost pane route lifecycle", () => {
 
     hostMocks.store.resizePrimaryPane.mockClear();
     hostMocks.runtimeLayout = null;
-    setPaneHref("/media/media-2");
+    setPaneHref(MEDIA_HREF_2);
     rerender(<WorkspaceHost />);
 
     expect(screen.getByTestId("pane-shell")).toHaveAttribute(
@@ -475,9 +482,9 @@ describe("WorkspaceHost pane route lifecycle", () => {
   });
 
   it("routes header Back and Forward through the target pane only", () => {
-    setPaneHref("/media/media-2", {
-      back: ["/media/media-1"],
-      forward: ["/media/media-3"],
+    setPaneHref(MEDIA_HREF_2, {
+      back: [MEDIA_HREF_1],
+      forward: [MEDIA_HREF_3],
     });
 
     render(<WorkspaceHost />);
@@ -552,7 +559,7 @@ function setPaneWithSecondary(secondary: {
     primaryPanesById: {
       "pane-1": {
         id: "pane-1",
-        href: "/media/media-1",
+        href: MEDIA_HREF_1,
         primaryWidthPx: 640,
         attachedSecondaryPaneId: "secondary-1",
         visibility: "visible",
@@ -591,7 +598,7 @@ describe("WorkspaceHost secondary publication validation", () => {
     hostMocks.store.dropSecondaryPane.mockReset();
     hostMocks.store.setSecondarySurface.mockReset();
     hostMocks.store.runtimeTitleByPaneId = new Map();
-    setPaneHref("/media/media-1");
+    setPaneHref(MEDIA_HREF_1);
   });
 
   it("does not render or expose a visible secondary without a matching publication", () => {
@@ -714,7 +721,7 @@ describe("WorkspaceHost secondary publication validation", () => {
   it("launches a pending cross-pane secondary request once the target publishes the surface", async () => {
     hostMocks.secondaryPublication = READER_TOOLS_WITH_DOC_CHAT;
     hostMocks.openInNewPaneRequest = {
-      href: "/media/media-1",
+      href: MEDIA_HREF_1,
       titleHint: "Doc chat",
       surfaceId: "reader-doc-chat",
     };
@@ -732,7 +739,7 @@ describe("WorkspaceHost secondary publication validation", () => {
   it("discards a pending cross-pane secondary request when the target publishes without the surface", async () => {
     hostMocks.secondaryPublication = READER_TOOLS_HIGHLIGHTS_ONLY;
     hostMocks.openInNewPaneRequest = {
-      href: "/media/media-1",
+      href: MEDIA_HREF_1,
       titleHint: "Doc chat",
       surfaceId: "reader-doc-chat",
     };

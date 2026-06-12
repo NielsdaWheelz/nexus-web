@@ -23,6 +23,14 @@ from nexus.services.resource_graph.refs import (
 
 pytestmark = pytest.mark.unit
 
+PARAM_UPPERCASE_UUID = UUID("11111111-1111-4111-8111-111111111111")
+PARAM_BRACED_UUID = UUID("22222222-2222-4222-8222-222222222222")
+PARAM_URN_UUID = UUID("33333333-3333-4333-8333-333333333333")
+PARAM_WHITESPACE_UUID = UUID("44444444-4444-4444-8444-444444444444")
+PARAM_UNKNOWN_SCHEME_UUID = UUID("55555555-5555-4555-8555-555555555555")
+PARAM_EMPTY_SCHEME_UUID = UUID("66666666-6666-4666-8666-666666666666")
+PARAM_OLD_ALIAS_UUID = UUID("77777777-7777-4777-8777-777777777777")
+
 
 def test_scheme_constant_matches_the_literal_type():
     assert get_args(ResourceScheme) == RESOURCE_SCHEMES, (
@@ -120,15 +128,15 @@ def test_parse_rejects_old_aliases(old_scheme: str):
     [
         ("media", "invalid_format"),  # no colon
         ("", "invalid_format"),
-        (f"media:{uuid4()}".upper(), "unsupported_scheme"),  # scheme case-sensitive
+        (f"media:{PARAM_UPPERCASE_UUID}".upper(), "unsupported_scheme"),  # scheme case-sensitive
         ("media:", "invalid_format"),  # empty id
         ("media:not-a-uuid", "invalid_format"),
         ("media:123", "invalid_format"),
-        (f"media:{{{uuid4()}}}", "invalid_format"),  # braced UUID is non-canonical
-        (f"media:urn:uuid:{uuid4()}", "invalid_format"),
-        (f"media: {uuid4()}", "invalid_format"),  # whitespace
-        (f"unknown_scheme:{uuid4()}", "unsupported_scheme"),
-        (f":{uuid4()}", "unsupported_scheme"),  # empty scheme
+        (f"media:{{{PARAM_BRACED_UUID}}}", "invalid_format"),  # braced UUID is non-canonical
+        (f"media:urn:uuid:{PARAM_URN_UUID}", "invalid_format"),
+        (f"media: {PARAM_WHITESPACE_UUID}", "invalid_format"),  # whitespace
+        (f"unknown_scheme:{PARAM_UNKNOWN_SCHEME_UUID}", "unsupported_scheme"),
+        (f":{PARAM_EMPTY_SCHEME_UUID}", "unsupported_scheme"),  # empty scheme
     ],
 )
 def test_parse_rejects_malformed_input(raw: str, reason: str):
@@ -160,7 +168,7 @@ def test_assert_resource_ref_returns_ref_for_valid_input():
     )
 
 
-@pytest.mark.parametrize("raw", ["span:not-a-uuid", f"span:{uuid4()}", "garbage"])
+@pytest.mark.parametrize("raw", ["span:not-a-uuid", f"span:{PARAM_OLD_ALIAS_UUID}", "garbage"])
 def test_assert_resource_ref_raises_on_invalid_input(raw: str):
     with pytest.raises(AssertionError):
         assert_resource_ref(raw)

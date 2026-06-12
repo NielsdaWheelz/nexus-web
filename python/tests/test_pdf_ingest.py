@@ -602,9 +602,7 @@ def test_pdf_native_link_apparatus_keeps_marker_rows_when_targets_do_not_materia
 
     assert result.status == "partial"
     assert Counter(item["kind"] for item in result.items) == {"bibliography_ref": 2}
-    assert Counter(item["extraction_method"] for item in result.items) == {
-        "pdf_native_link": 2
-    }
+    assert Counter(item["extraction_method"] for item in result.items) == {"pdf_native_link": 2}
     assert {str(item["label"]) for item in result.items} == {"[U]", "[X]"}
     assert result.edges == []
 

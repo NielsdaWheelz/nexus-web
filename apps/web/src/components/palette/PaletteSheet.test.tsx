@@ -109,7 +109,7 @@ describe("PaletteSheet (mobile bottom sheet)", () => {
 
     // Grabber element is present (the drag handle at the top of the sheet). It is
     // aria-hidden decorative, so there is no role/label to query it by.
-    // eslint-disable-next-line testing-library/no-node-access
+    // eslint-disable-next-line testing-library/no-node-access -- justify-eslint-override: the grabber is aria-hidden decorative; no role/label to query by
     expect(document.querySelector("[data-grabber]")).not.toBeNull();
 
     // Combobox has focus via useDialogOverlay's initialFocus
@@ -159,7 +159,7 @@ describe("PaletteSheet (mobile bottom sheet)", () => {
     await screen.findByRole("dialog", { name: "Command palette" });
 
     // The grabber is aria-hidden decorative, so there is no role/label to query it by.
-    // eslint-disable-next-line testing-library/no-node-access
+    // eslint-disable-next-line testing-library/no-node-access -- justify-eslint-override: drag gestures target the aria-hidden decorative grabber directly
     const grabber = document.querySelector("[data-grabber]")!;
 
     fireEvent.pointerDown(grabber, { clientY: 100, pointerId: 1, bubbles: true });
@@ -177,7 +177,7 @@ describe("PaletteSheet (mobile bottom sheet)", () => {
 
     await screen.findByRole("dialog", { name: "Command palette" });
 
-    // eslint-disable-next-line testing-library/no-node-access
+    // eslint-disable-next-line testing-library/no-node-access -- justify-eslint-override: drag gestures target the aria-hidden decorative grabber directly
     const grabber = document.querySelector("[data-grabber]")!;
 
     fireEvent.pointerDown(grabber, { clientY: 100, pointerId: 1, bubbles: true });
@@ -195,7 +195,7 @@ describe("PaletteSheet (mobile bottom sheet)", () => {
 
     await screen.findByRole("dialog", { name: "Command palette" });
 
-    // eslint-disable-next-line testing-library/no-node-access
+    // eslint-disable-next-line testing-library/no-node-access -- justify-eslint-override: drag gestures target the aria-hidden decorative grabber directly
     const grabber = document.querySelector("[data-grabber]")!;
 
     // Same past-threshold gesture as the dismissal test; reduced motion must suppress it.

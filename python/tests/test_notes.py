@@ -36,6 +36,7 @@ from nexus.services.resource_graph import documents as graph_documents
 from nexus.services.resource_graph.edges import create_edge, list_edges_for_ref
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_graph.schemas import EdgeCreate, EdgeOut
+from nexus.services.search.service import get_search_result
 from tests.factories import (
     add_library_member,
     add_media_to_library,
@@ -1187,6 +1188,8 @@ def test_object_ref_search_and_hydration_support_page_owned_chunks_and_spans(
     assert [(ref.object_type, ref.object_id, ref.route) for ref in span_results] == [
         ("evidence_span", evidence_span_id, f"/notes/{block.id}")
     ]
+    with pytest.raises(NotFoundError):
+        get_search_result(db_session, bootstrapped_user, "content_chunk", str(chunk_id))
 
     other_user = create_test_user_id()
     assert (
