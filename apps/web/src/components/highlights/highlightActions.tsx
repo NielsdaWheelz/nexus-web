@@ -1,13 +1,13 @@
 import { MessageSquarePlus, MessagesSquare, NotebookPen, TextSelect, Trash2 } from "lucide-react";
 import type { ActionMenuOption } from "@/components/ui/ActionMenu";
 import HighlightColorPicker from "@/components/highlights/HighlightColorPicker";
-import type { AnchoredHighlightRow } from "@/components/reader/useAnchoredHighlightProjection";
+import type { AnchoredReaderRow } from "@/components/reader/useAnchoredReaderProjection";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
 import { cx } from "@/lib/ui/cx";
 import styles from "./highlightActions.module.css";
 
 export type HighlightActionTarget =
-  | { kind: "existing"; highlight: AnchoredHighlightRow }
+  | { kind: "existing"; highlight: AnchoredReaderRow }
   | { kind: "selection"; color: HighlightColor };
 
 function ColorDot({ color }: { color: HighlightColor }) {

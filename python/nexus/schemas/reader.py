@@ -2,8 +2,11 @@
 
 from datetime import datetime
 from typing import Annotated, Any, Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from nexus.schemas.resource_graph import ConnectionOut
 
 ThemeValue = Literal["light", "dark"]
 FontFamilyValue = Literal["serif", "sans"]
@@ -24,6 +27,44 @@ class ReaderProfileOut(BaseModel):
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class ReaderConnectionAnchorOut(BaseModel):
+    ref: str
+    media_id: UUID
+    locator: dict[str, Any] | None
+    page_number: int | None = None
+    fragment_id: UUID | None = None
+    highlight_id: UUID | None = None
+    evidence_span_id: UUID | None = None
+    order_key: str | None = None
+
+
+class ReaderConnectionRowOut(BaseModel):
+    id: str
+    connection: ConnectionOut
+    anchor: ReaderConnectionAnchorOut | None
+    source_category: Literal[
+        "chat",
+        "library_intelligence",
+        "oracle",
+        "note",
+        "highlight_note",
+        "user_link",
+        "synapse",
+        "system",
+        "other",
+    ]
+    title: str
+    subtitle: str | None = None
+    excerpt: str | None = None
+    href: str | None = None
+
+
+class ReaderConnectionPageOut(BaseModel):
+    anchored: list[ReaderConnectionRowOut]
+    unanchored: list[ReaderConnectionRowOut]
+    next_cursor: str | None
 
 
 class ReaderProfilePatch(BaseModel):

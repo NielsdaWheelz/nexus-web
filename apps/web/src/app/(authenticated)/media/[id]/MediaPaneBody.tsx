@@ -13,6 +13,7 @@ import {
   useCallback,
   useRef,
   useMemo,
+  type MouseEvent,
   type UIEvent,
 } from "react";
 import DocChatTab from "@/components/chat/DocChatTab";
@@ -22,13 +23,14 @@ import type {
   ReaderSourceTarget,
 } from "@/lib/conversations/readerTarget";
 import ReaderHighlightsSurface from "@/components/reader/ReaderHighlightsSurface";
+import ReaderConnectionsSurface from "@/components/reader/ReaderConnectionsSurface";
 import ReaderOverviewRuler from "@/components/reader/ReaderOverviewRuler";
 import { positionHighlights } from "@/components/reader/overviewPositions";
 import {
-  toPdfAnchoredHighlightRow,
-  toTextAnchoredHighlightRow,
+  toPdfAnchoredReaderRow,
+  toTextAnchoredReaderRow,
 } from "@/components/reader/toAnchoredHighlightRow";
-import type { AnchoredHighlightRow } from "@/components/reader/useAnchoredHighlightProjection";
+import type { AnchoredReaderRow } from "@/components/reader/useAnchoredReaderProjection";
 import ReaderApparatusSurface from "@/components/reader/ReaderApparatusSurface";
 import { OVERVIEW_RULER_WIDTH_PX } from "@/lib/workspace/fixedPrimaryChrome";
 import PdfReader, {
@@ -93,7 +95,12 @@ import HoverPreview, {
 } from "@/components/ui/HoverPreview";
 import ActionMenu, { type ActionMenuOption } from "@/components/ui/ActionMenu";
 import LibraryMembershipPanel from "@/components/LibraryMembershipPanel";
-import NoteBacklinks from "@/components/notes/NoteBacklinks";
+import { isRetrievalLocator } from "@/lib/api/sse/locators";
+import {
+  listReaderConnections,
+  type ReaderConnectionPage,
+  type ReaderConnectionRow,
+} from "@/lib/media/readerConnections";
 import {
   usePaneParam,
   usePaneSearchParams,
@@ -1003,6 +1010,10 @@ export default function MediaPaneBody() {
       return assertReaderApparatusResponse(response.data);
     },
   });
+  const readerConnectionsResource = useResource<ReaderConnectionPage>({
+    cacheKey: media && canRead ? `${id}:reader-connections` : null,
+    load: (signal) => listReaderConnections(id, { limit: 100, signal }),
+  });
   const epubSections =
     epubNavigationResource.status === "ready"
       ? epubNavigationResource.data.sections
@@ -1032,6 +1043,22 @@ export default function MediaPaneBody() {
         : [],
     [readerApparatus],
   );
+  const readerConnectionRows = useMemo(
+    () =>
+      readerConnectionsResource.status === "ready"
+        ? [
+            ...readerConnectionsResource.data.anchored,
+            ...readerConnectionsResource.data.unanchored,
+          ]
+        : [],
+    [readerConnectionsResource],
+  );
+  const readerConnectionsError =
+    readerConnectionsResource.status === "error"
+      ? toFeedback(readerConnectionsResource.error, {
+          fallback: "Connections could not be loaded.",
+        })
+      : null;
 
   // Active content
   const activeContent: ActiveContent | null = useMemo(() => {
@@ -4667,6 +4694,40 @@ export default function MediaPaneBody() {
     [handleTranscriptSeek, id, openInNewPane],
   );
 
+  const handleOpenReaderConnectionSource = useCallback(
+    (row: ReaderConnectionRow, event?: MouseEvent) => {
+      if (!row.href) return;
+      if (event?.shiftKey) {
+        openInNewPane?.(row.href, row.title);
+      } else {
+        paneRouterPush?.(row.href);
+      }
+    },
+    [openInNewPane, paneRouterPush],
+  );
+
+  const handleActivateReaderConnectionTarget = useCallback(
+    (row: ReaderConnectionRow) => {
+      const locator = row.anchor?.locator;
+      if (!locator || !isRetrievalLocator(locator) || locator.type === "note_block_offsets") {
+        return;
+      }
+      handleReaderSourceActivate({
+        kind: "media",
+        source: "message_retrieval",
+        media_id: id,
+        locator,
+        snippet: row.excerpt,
+        highlight_behavior: "pulse",
+        focus_behavior: "scroll_into_view",
+        label: row.title,
+        href: row.href,
+        evidence_span_id: row.anchor?.evidence_span_id,
+      });
+    },
+    [handleReaderSourceActivate, id],
+  );
+
   useEffect(() => {
     if (!paneMobileChrome || !isMobileViewport) {
       return;
@@ -4709,10 +4770,10 @@ export default function MediaPaneBody() {
     setLibraryPanelAnchorEl(null);
   }, [media]);
 
-  const anchoredHighlights = useMemo<AnchoredHighlightRow[]>(() => {
+  const anchoredHighlights = useMemo<AnchoredReaderRow[]>(() => {
     if (isPdf) {
       return pdfDocumentHighlights.map((highlight) =>
-        toPdfAnchoredHighlightRow(
+        toPdfAnchoredReaderRow(
           highlight,
           highlight.anchor.page_number,
           highlight.anchor.quads,
@@ -4720,7 +4781,7 @@ export default function MediaPaneBody() {
       );
     }
     return highlights.map((highlight) =>
-      toTextAnchoredHighlightRow(
+      toTextAnchoredReaderRow(
         highlight,
         highlight.anchor,
         isTranscriptMedia
@@ -4735,17 +4796,17 @@ export default function MediaPaneBody() {
   // Media-wide highlights mapped to overview-ruler rows. Separate from
   // `anchoredHighlights` (per-fragment, projected for the secondary): this maps the
   // typed-union `mediaHighlights` straight from stored anchors.
-  const mediaAnchoredHighlights = useMemo<AnchoredHighlightRow[]>(() => {
+  const mediaAnchoredHighlights = useMemo<AnchoredReaderRow[]>(() => {
     return mediaHighlights.map((highlight) => {
       const anchor = highlight.anchor;
       if (anchor.type === "pdf_page_geometry") {
-        return toPdfAnchoredHighlightRow(
+        return toPdfAnchoredReaderRow(
           highlight,
           anchor.page_number,
           anchor.quads,
         );
       }
-      return toTextAnchoredHighlightRow(
+      return toTextAnchoredReaderRow(
         highlight,
         anchor,
         isTranscriptMedia
@@ -5125,6 +5186,43 @@ export default function MediaPaneBody() {
     ],
   );
 
+  const readerConnectionsMeasureKey = useMemo(
+    () =>
+      [
+        id,
+        readerConnectionRows.map((row) => row.id).join("|"),
+        isPdf ? (pdfControlsState?.pageRenderEpoch ?? "") : renderedHtml,
+      ].join("||"),
+    [id, isPdf, pdfControlsState?.pageRenderEpoch, readerConnectionRows, renderedHtml],
+  );
+
+  const readerConnectionsSecondaryBody = useMemo(
+    () => (
+      <ReaderConnectionsSurface
+        contentRef={isPdf ? pdfContentRef : contentRef}
+        rows={readerConnectionRows}
+        loading={readerConnectionsResource.status === "loading"}
+        error={readerConnectionsError}
+        onOpenSource={handleOpenReaderConnectionSource}
+        onActivateTarget={handleActivateReaderConnectionTarget}
+        measureKey={readerConnectionsMeasureKey}
+        isMobile={isMobileViewport}
+      />
+    ),
+    [
+      contentRef,
+      handleActivateReaderConnectionTarget,
+      handleOpenReaderConnectionSource,
+      isMobileViewport,
+      isPdf,
+      pdfContentRef,
+      readerConnectionRows,
+      readerConnectionsError,
+      readerConnectionsMeasureKey,
+      readerConnectionsResource.status,
+    ],
+  );
+
   const readerSecondarySurfaces = useMemo<
     PaneSecondarySurfacePublication[]
   >(() => {
@@ -5146,6 +5244,14 @@ export default function MediaPaneBody() {
     if (contentsAvailable) {
       surfaces.push({ id: "reader-contents", body: contentsSurfaceBody });
     }
+    surfaces.push({
+      id: "reader-connections",
+      body: (
+        <div className={styles.readerSecondaryBody}>
+          {readerConnectionsSecondaryBody}
+        </div>
+      ),
+    });
     if (showApparatusPane) {
       surfaces.push({
         id: "reader-apparatus",
@@ -5195,14 +5301,6 @@ export default function MediaPaneBody() {
         </div>
       ),
     });
-    surfaces.push({
-      id: "connections",
-      body: (
-        <div className={styles.connectionsSurfaceBody}>
-          <NoteBacklinks objectRef={{ objectType: "media", objectId: id }} />
-        </div>
-      ),
-    });
     return surfaces;
   }, [
     contentsAvailable,
@@ -5214,6 +5312,7 @@ export default function MediaPaneBody() {
     openChatInSecondary,
     pendingQuoteUri,
     readerApparatusSecondaryBody,
+    readerConnectionsSecondaryBody,
     secondaryChat,
     showApparatusPane,
     showHighlightsPane,

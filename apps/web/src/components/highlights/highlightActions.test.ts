@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { AnchoredHighlightRow } from "@/components/reader/useAnchoredHighlightProjection";
+import type { AnchoredReaderRow } from "@/components/reader/useAnchoredReaderProjection";
 import { buildHighlightActions } from "./highlightActions";
 
 const noopHandlers = {
@@ -11,8 +11,8 @@ const noopHandlers = {
 };
 const idleState = { isEditingBounds: false, deleting: false, changingColor: false };
 
-function existing(overrides: Partial<AnchoredHighlightRow> = {}) {
-  const highlight: AnchoredHighlightRow = { id: "h1", exact: "hello", color: "yellow", ...overrides };
+function existing(overrides: Partial<AnchoredReaderRow> = {}) {
+  const highlight: AnchoredReaderRow = { id: "h1", exact: "hello", color: "yellow", ...overrides };
   return { kind: "existing" as const, highlight };
 }
 
@@ -145,7 +145,7 @@ describe("buildHighlightActions", () => {
   });
 
   it("labels the note action by whether a linked note exists", () => {
-    const noteLabel = (overrides: Partial<AnchoredHighlightRow>) =>
+    const noteLabel = (overrides: Partial<AnchoredReaderRow>) =>
       buildHighlightActions({
         target: existing(overrides),
         canQuoteToChat: false, canAddNote: true,

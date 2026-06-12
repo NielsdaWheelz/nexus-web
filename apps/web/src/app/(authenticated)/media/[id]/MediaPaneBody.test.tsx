@@ -6,6 +6,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
+import { userEvent } from "vitest/browser";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
@@ -641,8 +642,8 @@ describe("MediaPaneBody pane sizing", () => {
       });
       expect(publication?.surfaces.map((surface) => surface.id)).toEqual([
         "reader-contents",
+        "reader-connections",
         "reader-doc-chat",
-        "connections",
       ]);
     });
   });
@@ -735,12 +736,13 @@ describe("MediaPaneBody pane sizing", () => {
       );
     });
 
+    const user = userEvent.setup();
     const marker = await screen.findByText("1");
-    fireEvent.pointerOver(marker);
+    await user.hover(marker);
 
-    expect(await screen.findByRole("tooltip")).toHaveTextContent(
-      "Preview note body.",
-    );
+    expect(
+      await screen.findByRole("tooltip", {}, { timeout: 3_000 }),
+    ).toHaveTextContent("Preview note body.");
 
     fireEvent.click(screen.getByText("1"));
     expect(onRequestSecondarySurface).toHaveBeenCalledWith(

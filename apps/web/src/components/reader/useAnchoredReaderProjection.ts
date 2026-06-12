@@ -13,6 +13,9 @@ import {
   projectPdfQuadToViewportRect,
   type PdfPageViewportTransform,
 } from "@/lib/highlights/coordinateTransforms";
+import { buildCanonicalCursor, type CanonicalNode } from "@/lib/highlights/canonicalCursor";
+import { canonicalCpToRawCp } from "@/lib/highlights/canonicalText";
+import { codepointToUtf16 } from "@/lib/highlights/codepoints";
 import { escapeAttrValue } from "@/lib/highlights/escapeAttrValue";
 import { compareStableString } from "@/lib/display/format";
 import type { PdfHighlightQuad } from "@/lib/highlights/pdfTypes";
@@ -20,7 +23,7 @@ import type { HighlightColor } from "@/lib/highlights/segmenter";
 
 const MEASURE_DEBOUNCE_MS = 75;
 
-export interface AnchoredHighlightRow {
+export interface AnchoredReaderRow {
   id: string;
   exact: string;
   color: HighlightColor;
@@ -48,8 +51,8 @@ export interface AnchoredHighlightRow {
   is_owner?: boolean;
 }
 
-export interface AnchoredHighlightProjection {
-  highlight: AnchoredHighlightRow;
+export interface AnchoredReaderProjection {
+  row: AnchoredReaderRow;
   rect: { top: number; bottom: number };
 }
 
@@ -147,15 +150,108 @@ function pickVisibleRect(
   return visibleRect;
 }
 
-export function useAnchoredHighlightProjection({
+function boundaryAt(
+  nodes: CanonicalNode[],
+  offset: number,
+): { node: Text; utf16Offset: number } | null {
+  for (const entry of nodes) {
+    if (offset >= entry.start && offset <= entry.end) {
+      const text = entry.node.textContent ?? "";
+      const rawCp = canonicalCpToRawCp(text, offset - entry.start, entry.trimLeadCp);
+      return { node: entry.node, utf16Offset: codepointToUtf16(text, rawCp) };
+    }
+  }
+  return null;
+}
+
+function textAnchorRects(
+  contentElement: HTMLElement,
+  row: AnchoredReaderRow,
+  viewerRect: DOMRect,
+  viewerScrollTop: number,
+) {
+  const anchor = row.anchor;
+  if (!anchor?.fragment_id) return [];
+  if (anchor.end_offset < anchor.start_offset) return [];
+  const fragment = contentElement.querySelector<HTMLElement>(
+    `[data-fragment-id="${escapeAttrValue(anchor.fragment_id)}"]`,
+  );
+  if (!fragment) return [];
+  const cursor = buildCanonicalCursor(fragment);
+  const start = boundaryAt(cursor.nodes, anchor.start_offset);
+  const end = boundaryAt(cursor.nodes, anchor.end_offset);
+  if (!start || !end) return [];
+
+  const range = document.createRange();
+  range.setStart(start.node, start.utf16Offset);
+  range.setEnd(end.node, end.utf16Offset);
+  return Array.from(range.getClientRects())
+    .filter((rect) => rect.width > 0 && rect.height > 0)
+    .map((rect) => ({
+      top: rect.top - viewerRect.top + viewerScrollTop,
+      bottom: rect.bottom - viewerRect.top + viewerScrollTop,
+    }));
+}
+
+function elementRects(
+  elements: Iterable<HTMLElement>,
+  viewerRect: DOMRect,
+  viewerScrollTop: number,
+) {
+  const rects: Array<{ top: number; bottom: number }> = [];
+  for (const element of elements) {
+    const clientRects = Array.from(element.getClientRects()).filter(
+      (rect) => rect.width > 0 && rect.height > 0,
+    );
+
+    for (const rect of clientRects) {
+      if (rect.width <= 0 || rect.height <= 0) {
+        continue;
+      }
+      const top = rect.top - viewerRect.top + viewerScrollTop;
+      rects.push({ top, bottom: top + rect.height });
+    }
+  }
+  return rects;
+}
+
+function sameRectMaps(
+  left: Map<string, Array<{ top: number; bottom: number }>>,
+  right: Map<string, Array<{ top: number; bottom: number }>>,
+) {
+  if (left.size !== right.size) return false;
+  for (const [id, leftRects] of left) {
+    const rightRects = right.get(id);
+    if (!rightRects || leftRects.length !== rightRects.length) return false;
+    for (let index = 0; index < leftRects.length; index += 1) {
+      if (
+        leftRects[index]?.top !== rightRects[index]?.top ||
+        leftRects[index]?.bottom !== rightRects[index]?.bottom
+      ) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+function sameStringArray(left: string[], right: string[]) {
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) return false;
+  }
+  return true;
+}
+
+export function useAnchoredReaderProjection({
   contentRef,
-  highlights,
+  rows,
   measureKey = 0,
   targetSelector,
-  missingTargetLogName = "highlight_target_missing",
+  missingTargetLogName = "reader_row_target_missing",
 }: {
   contentRef: RefObject<HTMLElement | null>;
-  highlights: AnchoredHighlightRow[];
+  rows: AnchoredReaderRow[];
   measureKey?: string | number;
   targetSelector?: (escapedId: string) => string;
   missingTargetLogName?: string;
@@ -172,8 +268,8 @@ export function useAnchoredHighlightProjection({
     clientHeight: 0,
   });
 
-  const orderedHighlights = useMemo(() => {
-    const sorted = [...highlights];
+  const orderedRows = useMemo(() => {
+    const sorted = [...rows];
     sorted.sort((left, right) => {
       if (
         left.stable_order_key &&
@@ -214,7 +310,7 @@ export function useAnchoredHighlightProjection({
       return compareStableString(left.id, right.id);
     });
     return sorted;
-  }, [highlights]);
+  }, [rows]);
 
   const syncViewportState = useCallback((scrollParent: HTMLElement) => {
     setViewportState((previous) => {
@@ -234,8 +330,8 @@ export function useAnchoredHighlightProjection({
 
   const measureTargets = useCallback(() => {
     if (!contentRef.current) {
-      setTargetRects(new Map());
-      setMissingTargets([]);
+      setTargetRects((previous) => (previous.size === 0 ? previous : new Map()));
+      setMissingTargets((previous) => (previous.length === 0 ? previous : []));
       return;
     }
 
@@ -252,66 +348,64 @@ export function useAnchoredHighlightProjection({
     >();
     const nextMissingTargets: string[] = [];
 
-    for (const highlight of orderedHighlights) {
+    for (const row of orderedRows) {
       const rects: Array<{ top: number; bottom: number }> = [];
 
-      if (highlight.page_number && highlight.quads?.length) {
-        let pageElement = pageElements.get(highlight.page_number);
+      if (row.page_number && row.quads?.length) {
+        let pageElement = pageElements.get(row.page_number);
         if (pageElement === undefined) {
           pageElement =
             contentRef.current.querySelector<HTMLElement>(
-              `.page[data-page-number="${highlight.page_number}"]`,
+              `.page[data-page-number="${row.page_number}"]`,
             ) ??
             contentRef.current.querySelectorAll<HTMLElement>(".page")[
-              highlight.page_number - 1
+              row.page_number - 1
             ] ??
             null;
-          pageElements.set(highlight.page_number, pageElement);
+          pageElements.set(row.page_number, pageElement);
         }
 
         if (!pageElement) {
-          nextMissingTargets.push(highlight.id);
+          nextMissingTargets.push(row.id);
           continue;
         }
 
         const transform = readPdfPageViewportTransform(pageElement);
         if (!transform) {
-          nextMissingTargets.push(highlight.id);
+          nextMissingTargets.push(row.id);
           continue;
         }
 
         const pageRect = pageElement.getBoundingClientRect();
-        for (const quad of highlight.quads) {
+        for (const quad of row.quads) {
           const rect = projectPdfQuadToViewportRect(quad, transform);
           const top =
             pageRect.top - viewerRect.top + viewerScrollTop + rect.top;
           rects.push({ top, bottom: top + rect.height });
         }
       } else {
-        const escapedId = escapeAttrValue(highlight.id);
+        const escapedId = escapeAttrValue(row.id);
         const segments = contentRef.current.querySelectorAll<HTMLElement>(
           targetSelector
             ? targetSelector(escapedId)
             : `[data-active-highlight-ids~="${escapedId}"]`,
         );
+        rects.push(...elementRects(segments, viewerRect, viewerScrollTop));
 
-        for (const segment of segments) {
-          const clientRects = Array.from(segment.getClientRects()).filter(
-            (rect) => rect.width > 0 && rect.height > 0,
+        if (!targetSelector && rects.length === 0 && row.anchor?.fragment_id) {
+          rects.push(
+            ...textAnchorRects(
+              contentRef.current,
+              row,
+              viewerRect,
+              viewerScrollTop,
+            ),
           );
-
-          for (const rect of clientRects) {
-            if (rect.width <= 0 || rect.height <= 0) {
-              continue;
-            }
-            const top = rect.top - viewerRect.top + viewerScrollTop;
-            rects.push({ top, bottom: top + rect.height });
-          }
         }
       }
 
       if (rects.length === 0) {
-        nextMissingTargets.push(highlight.id);
+        nextMissingTargets.push(row.id);
         continue;
       }
 
@@ -321,12 +415,16 @@ export function useAnchoredHighlightProjection({
         }
         return left.bottom - right.bottom;
       });
-      nextTargetRects.set(highlight.id, rects);
+      nextTargetRects.set(row.id, rects);
     }
 
-    setTargetRects(nextTargetRects);
-    setMissingTargets(nextMissingTargets);
-  }, [contentRef, orderedHighlights, syncViewportState, targetSelector]);
+    setTargetRects((previous) =>
+      sameRectMaps(previous, nextTargetRects) ? previous : nextTargetRects,
+    );
+    setMissingTargets((previous) =>
+      sameStringArray(previous, nextMissingTargets) ? previous : nextMissingTargets,
+    );
+  }, [contentRef, orderedRows, syncViewportState, targetSelector]);
 
   const scheduleMeasure = useCallback(() => {
     if (measureTimerRef.current != null) {
@@ -350,8 +448,8 @@ export function useAnchoredHighlightProjection({
   }, []);
 
   useEffect(() => {
-    setTargetRects(new Map());
-    setMissingTargets([]);
+    setTargetRects((previous) => (previous.size === 0 ? previous : new Map()));
+    setMissingTargets((previous) => (previous.length === 0 ? previous : []));
     let secondFrameId: number | null = null;
     const frameId = window.requestAnimationFrame(() => {
       measureTargets();
@@ -394,7 +492,7 @@ export function useAnchoredHighlightProjection({
         scrollFrameRef.current = null;
       }
     };
-  }, [contentRef, orderedHighlights.length, measureKey, syncViewportState]);
+  }, [contentRef, orderedRows.length, measureKey, syncViewportState]);
 
   useEffect(() => {
     const contentElement = contentRef.current;
@@ -414,7 +512,7 @@ export function useAnchoredHighlightProjection({
     }
 
     return () => observer.disconnect();
-  }, [contentRef, orderedHighlights.length, measureKey, scheduleMeasure]);
+  }, [contentRef, orderedRows.length, measureKey, scheduleMeasure]);
 
   useEffect(() => {
     const contentElement = contentRef.current;
@@ -447,13 +545,13 @@ export function useAnchoredHighlightProjection({
     console.warn(missingTargetLogName, { targetIds: missingTargets });
   }, [missingTargetLogName, missingTargets]);
 
-  const projections = useMemo<AnchoredHighlightProjection[]>(() => {
+  const projections = useMemo<AnchoredReaderProjection[]>(() => {
     const viewportTop = viewportState.scrollTop;
     const viewportBottom = viewportTop + viewportState.clientHeight;
-    const out: AnchoredHighlightProjection[] = [];
+    const out: AnchoredReaderProjection[] = [];
 
-    for (const highlight of orderedHighlights) {
-      const rects = targetRects.get(highlight.id);
+    for (const row of orderedRows) {
+      const rects = targetRects.get(row.id);
       if (!rects) {
         continue;
       }
@@ -463,14 +561,14 @@ export function useAnchoredHighlightProjection({
         continue;
       }
 
-      out.push({ highlight, rect });
+      out.push({ row, rect });
     }
 
     return out;
-  }, [orderedHighlights, targetRects, viewportState]);
+  }, [orderedRows, targetRects, viewportState]);
 
   return {
-    orderedHighlights,
+    orderedRows,
     projections,
     targetRects,
     missingTargets,

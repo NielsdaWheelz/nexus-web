@@ -136,13 +136,18 @@ from nexus.services.prompt_budget import ContextBudgetError, estimate_tokens
 from nexus.services.rate_limit import get_rate_limiter
 from nexus.services.resource_graph import cleanup as graph_cleanup
 from nexus.services.resource_graph.citations import record_citation
+from nexus.services.resource_graph.connections import query_connections
 from nexus.services.resource_graph.context import (
     add_context_ref_without_commit,
     is_context_ref,
 )
-from nexus.services.resource_graph.edges import delete_edge, list_edges_for_ref
+from nexus.services.resource_graph.edges import delete_edge
 from nexus.services.resource_graph.refs import ResourceRef
-from nexus.services.resource_graph.schemas import CitationSnapshot
+from nexus.services.resource_graph.schemas import (
+    CitationSnapshot,
+    ConnectionFilters,
+    ConnectionQuery,
+)
 from nexus.services.retrieval_citation import (
     RetrievalCitation,
     citation_from_search_result,
@@ -881,26 +886,36 @@ def _emit_citation_index(db: Session, run: ChatRun) -> None:
     from the returned ContextRefOut (spec §5.1/§11.6).
     """
     message_ref = ResourceRef(scheme="message", id=run.assistant_message_id)
-    edges = sorted(
-        (
-            edge
-            for edge in list_edges_for_ref(
-                db, viewer_id=run.owner_user_id, ref=message_ref, origin="citation"
-            )
-            if edge.source == message_ref and edge.ordinal is not None
-        ),
-        key=lambda edge: edge.ordinal or 0,
-    )
+    edges = []
+    cursor = None
+    while True:
+        page = query_connections(
+            db,
+            viewer_id=run.owner_user_id,
+            query=ConnectionQuery(
+                refs=(message_ref,),
+                direction="outgoing",
+                rollup="exact",
+                filters=ConnectionFilters(origins=("citation",)),
+                limit=100,
+                cursor=cursor,
+            ),
+        )
+        edges.extend(edge for edge in page.items if edge.ordinal is not None)
+        if page.next_cursor is None:
+            break
+        cursor = page.next_cursor
+    edges.sort(key=lambda edge: edge.ordinal or 0)
     if not edges:
         return
     entries = []
     for edge in edges:
-        assert edge.snapshot is not None, f"citation edge {edge.id} lost its snapshot"
+        assert edge.snapshot is not None, f"citation edge {edge.edge_id} lost its snapshot"
         entries.append(
             {
-                "citation_edge_id": str(edge.id),
+                "citation_edge_id": str(edge.edge_id),
                 "n": edge.ordinal,
-                "target_ref": {"type": edge.target.scheme, "id": str(edge.target.id)},
+                "target_ref": {"type": edge.target_ref.scheme, "id": str(edge.target_ref.id)},
                 "kind": edge.kind,
                 "deep_link": edge.snapshot.deep_link,
                 "snapshot": {
@@ -918,16 +933,16 @@ def _emit_citation_index(db: Session, run: ChatRun) -> None:
         {"assistant_message_id": str(run.assistant_message_id), "entries": entries},
     )
     for edge in edges:
-        if edge.target.scheme == "external_snapshot":
+        if edge.target_ref.scheme == "external_snapshot":
             continue
-        if is_context_ref(db, conversation_id=run.conversation_id, target=edge.target):
+        if is_context_ref(db, conversation_id=run.conversation_id, target=edge.target_ref):
             continue
         try:
             context_ref = add_context_ref_without_commit(
                 db,
                 viewer_id=run.owner_user_id,
                 conversation_id=run.conversation_id,
-                target=edge.target,
+                target=edge.target_ref,
                 origin="citation",
             )
         except NotFoundError:
@@ -947,7 +962,7 @@ def _emit_citation_index(db: Session, run: ChatRun) -> None:
                 "summary": context_ref.resolved.summary,
                 "missing": context_ref.resolved.missing,
                 "created_at": context_ref.created_at,
-                "citation_edge_id": str(edge.id),
+                "citation_edge_id": str(edge.edge_id),
             },
         )
 

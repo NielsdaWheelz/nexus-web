@@ -38,9 +38,9 @@ from nexus.services.highlight_access import (
 from nexus.services.highlight_access import (
     require_typed_highlight_or_404 as _require_typed_highlight_or_404,
 )
-from nexus.services.highlight_notes import linked_note_blocks_for_highlights
 from nexus.services.resource_graph.cleanup import delete_edges_for_deleted_resource
 from nexus.services.resource_graph.context import batch_conversations_with_context_ref
+from nexus.services.resource_graph.highlight_notes import linked_note_blocks_for_highlights
 from nexus.services.resource_graph.refs import ResourceRef
 
 logger = get_logger(__name__)

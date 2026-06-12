@@ -2,7 +2,7 @@
 
 import HighlightActionBar from "@/components/highlights/HighlightActionBar";
 import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
-import type { AnchoredHighlightRow } from "@/components/reader/useAnchoredHighlightProjection";
+import type { AnchoredReaderRow } from "@/components/reader/useAnchoredReaderProjection";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
 
 /**
@@ -24,7 +24,7 @@ export default function HighlightActionPopover({
   onToggleEditBounds,
   onDismiss,
 }: {
-  highlight: AnchoredHighlightRow;
+  highlight: AnchoredReaderRow;
   anchorRect: DOMRect;
   canQuoteToChat: boolean;
   canAddNote?: boolean;

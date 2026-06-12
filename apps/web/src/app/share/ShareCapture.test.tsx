@@ -41,6 +41,9 @@ function noteBlock() {
   };
 }
 
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 function installShareFetch({
   fromUrl,
   createLibrary,
@@ -386,8 +389,13 @@ describe("ShareCapture", () => {
     renderShareCapture("plain note");
 
     await screen.findByText("Added to today");
-    expect(quickCaptureBodies(fetchMock)).toContainEqual(
-      expect.objectContaining({ body_markdown: "plain note" }),
+    const [body] = quickCaptureBodies(fetchMock);
+    expect(body).toEqual(
+      expect.objectContaining({
+        id: expect.stringMatching(UUID_RE),
+        client_mutation_id: expect.stringMatching(/^share-note-mutation-/),
+        body_markdown: "plain note",
+      }),
     );
     expect(screen.queryByRole("combobox", { name: "Library destinations" })).toBeNull();
   });

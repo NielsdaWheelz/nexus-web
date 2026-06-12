@@ -185,7 +185,7 @@ async def run_synapse_scan(db: Session, *, user_id: UUID, ref: ResourceRef, llm:
    highlight → its `anchor_media_id` media; note_block → its own page's
    blocks and `page:<page_id>`; page → its own blocks; media → its own
    chunks' media. (c) pairs already edge-connected to the source in either
-   direction, any kind/origin (one `list_edges_for_ref` read);
+   direction, any kind/origin (`resource_graph.connections.query_connections`);
    (d) suppressed pairs, both directions (`synapse_suppressions`).
 5. **Judge.** Zero candidates → replace-set to `[]`, `"ok"` (current-only:
    the engine currently sees nothing). Else one structured synthesis:
@@ -277,7 +277,7 @@ bumping the stale 132 — plus these two; this branch absorbs that drift).
 FE client `apps/web/src/lib/synapse.ts`: `requestSynapseScan(ref)`,
 `fetchSynapseScanStatus(ref)`, `dismissSynapseEdge(edgeId)`.
 
-`NoteBacklinks.tsx` (extend the committed version, do not restructure):
+`ConnectionsSurface.tsx`:
 - Synapse rows: a small `✦` marker (Pill, `aria-label="Synapse connection"`)
   + the rationale (`edge.snapshot?.excerpt`) as a `connectionMeta` line; a
   dismiss button (X) for `origin === "synapse"` calling `dismissSynapseEdge`
@@ -291,7 +291,7 @@ New mount — media pane secondary surface: register
 `{id: "connections", groupId: "reader-tools", title: "Connections", ...}` in
 `lib/panes/paneSecondaryModel.ts:29-71` and push the surface in
 `MediaPaneBody.tsx` `readerSecondarySurfaces` (:4611-4665) rendering
-`<NoteBacklinks objectRef={{objectType: "media", objectId}} />`.
+`<ConnectionsSurface objectRef={{objectType: "media", objectId}} />`.
 
 ## 9. Key decisions
 
@@ -363,7 +363,7 @@ entitlement grant + `_RecordingRateLimiter`):
 - Gate in `test_cutover_negative_gates.py`: `origin="synapse"` outside
   `services/synapse.py` (excluding tests) is forbidden.
 
-Frontend (`NoteBacklinks.test.tsx` additions — fetch-boundary mock only):
+Frontend (`ConnectionsSurface.test.tsx` additions — fetch-boundary mock only):
 synapse row renders rationale + marker; dismiss POSTs + reloads; scan button
 POSTs, polls, reloads on idle; user-origin rows keep delete (no dismiss).
 Unit: `lib/synapse.ts` paths. Pane registration: `paneSecondaryModel` id
@@ -393,7 +393,7 @@ Modify: `db/models.py`, `services/resource_graph/schemas.py`,
 `.env.example`, `python/tests/test_hetzner_env_sync_validation.py`,
 `python/tests/test_migrations.py`, `python/tests/test_cutover_negative_gates.py`,
 `apps/web/src/lib/resourceGraph/edges.ts`,
-`apps/web/src/components/notes/NoteBacklinks.tsx` (+ `.module.css`,
+`apps/web/src/components/connections/ConnectionsSurface.tsx` (+ `.module.css`,
 `.test.tsx`), `apps/web/src/lib/panes/paneSecondaryModel.ts`,
 `apps/web/src/app/(authenticated)/media/[id]/MediaPaneBody.tsx`,
 `apps/web/src/app/api/proxy-routes.test.ts`.
@@ -447,7 +447,7 @@ anything:
    count from a base that was already stale (base committed 132 with 133
    files). Merged value = real file count = **136** (133 base + 2 synapse +
    1 resolve), not either branch's number and not delta arithmetic.
-10. **`NoteBacklinks.tsx/.test.tsx`, `models.py`** remaining hunks: additive
+10. **`ConnectionsSurface.tsx/.test.tsx`, `models.py`** remaining hunks: additive
     textual merges (verified disjoint regions).
 11. **Search retriever contract.** Synapse consumes
     `SearchResultNoteBlockOut.page_id`/`page_title` (kin exclusion, labels)
@@ -467,7 +467,7 @@ anything:
     deferred here — that function is mid-rewrite on the other branch).
 
 Re-verify after merge: `test_migrations.py -k "0148 or 0149"`,
-`test_resource_graph_edges.py`, `test_synapse.py`, FE `NoteBacklinks.test.tsx`
+`test_resource_graph_edges.py`, `test_synapse.py`, FE `ConnectionsSurface.test.tsx`
 + `proxy-routes.test.ts` + typecheck.
 
 ## 14. Done means

@@ -8,7 +8,7 @@ import {
   useFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
-import NoteBacklinks from "@/components/notes/NoteBacklinks";
+import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import NoteDraftRecovery from "@/components/notes/NoteDraftRecovery";
 import ProseMirrorOutlineEditor, {
   type NotePulseEditorTarget,
@@ -624,7 +624,7 @@ export default function PagePaneBody({
       surfaces: [
         {
           id: "notes-connections" as const,
-          body: <NoteBacklinks objectRef={backlinkObjectRef} onOpenRoute={openRoute} />,
+          body: <ConnectionsSurface objectRef={backlinkObjectRef} onOpenRoute={openRoute} />,
         },
       ],
     }),

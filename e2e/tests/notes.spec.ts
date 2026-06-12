@@ -5,6 +5,7 @@ import {
   type APIResponse,
   type Locator,
   type Page,
+  type Response as PlaywrightResponse,
 } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -66,13 +67,15 @@ interface NoteBlockPayload {
   children: NoteBlockPayload[];
 }
 
-interface ResourceGraphEdgesPayload {
-  data: Array<{
-    origin: string;
-    source_ref: string;
-    target_ref: string;
-    source_order_key: string | null;
-  }>;
+interface ResourceGraphConnectionsPayload {
+  data: {
+    items: Array<{
+      origin: string;
+      source_ref: string;
+      target_ref: string;
+      source_order_key: string | null;
+    }>;
+  };
 }
 
 function readSeededNonPdfMedia(): SeededNonPdfMedia {
@@ -154,6 +157,18 @@ async function expectOk(response: APIResponse, label: string): Promise<void> {
   expect(response.status(), `${label}: ${await response.text()}`).toBe(200);
 }
 
+async function waitForHighlightNoteSave(
+  page: Page,
+  highlightId: string
+): Promise<PlaywrightResponse> {
+  return page.waitForResponse((response) => {
+    return (
+      new URL(response.url()).pathname === `/api/highlights/${highlightId}/note` &&
+      response.request().method() === "PUT"
+    );
+  });
+}
+
 async function blockedExactsForFragment(
   page: Page,
   fragmentId: string
@@ -175,11 +190,17 @@ async function readResourceGraphEdges(
   ref: string,
   origin = "note_containment"
 ) {
-  const response = await page.request.get(
-    `/api/resource-graph/edges?ref=${encodeURIComponent(ref)}&origin=${origin}`
-  );
+  const response = await page.request.post("/api/resource-graph/connections/query", {
+    data: {
+      refs: [ref],
+      direction: "both",
+      filters: { origins: [origin] },
+      limit: 100,
+    },
+    headers: stateChangingApiHeaders(),
+  });
   await expectOk(response, `Fetch ${origin} edges`);
-  return ((await response.json()) as ResourceGraphEdgesPayload).data;
+  return ((await response.json()) as ResourceGraphConnectionsPayload).data.items;
 }
 
 /**
@@ -367,7 +388,12 @@ test.describe("notes cutover", () => {
       await noteEditor.scrollIntoViewIfNeeded();
       await expect(noteEditor).toBeEditable();
       await noteEditor.click();
+      const saveResponsePromise = waitForHighlightNoteSave(page, highlight.id);
       await page.keyboard.insertText(`${noteText} ${mediaRefText}`);
+      const saveResponse = await saveResponsePromise;
+      expect(saveResponse.ok(), `Save linked highlight note: ${await saveResponse.text()}`).toBe(
+        true
+      );
 
       await expect
         .poll(() => linkedNoteForHighlight(page, highlight.fragmentId, highlight.id), {
@@ -540,11 +566,16 @@ test.describe("notes cutover", () => {
       const composerEditor = composer.getByRole("textbox", { name: "Highlight note" });
       await expect(composerEditor).toBeFocused({ timeout: 5_000 });
 
+      const saveResponsePromise = waitForHighlightNoteSave(page, created.id);
       await page.keyboard.insertText(noteText);
 
       // AC-2: Esc closes without discarding; unmount flushes the canonical save path.
       await page.keyboard.press("Escape");
       await expect(composer).toBeHidden({ timeout: 5_000 });
+      const saveResponse = await saveResponsePromise;
+      expect(saveResponse.ok(), `Save quick highlight note: ${await saveResponse.text()}`).toBe(
+        true
+      );
 
       await expect
         .poll(() => linkedNoteForHighlight(page, created.fragmentId, created.id), {

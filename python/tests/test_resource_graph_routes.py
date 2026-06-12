@@ -15,6 +15,7 @@ from __future__ import annotations
 from uuid import UUID, uuid4
 
 import pytest
+from sqlalchemy import text
 
 from nexus.db.models import ResourceEdge
 from nexus.schemas.notes import CreatePageRequest
@@ -80,6 +81,34 @@ def _create_media(direct_db: DirectSessionManager, user_id: UUID, title: str) ->
     direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
     direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
     return media_id
+
+
+def _query_connections(auth_client, headers: dict[str, str], ref: str, **body):
+    payload = {"refs": [ref], "direction": "both", "limit": 100, **body}
+    return auth_client.post("/resource-graph/connections/query", headers=headers, json=payload)
+
+
+def _create_content_chunk(direct_db: DirectSessionManager, media_id: UUID) -> UUID:
+    with direct_db.session() as session:
+        chunk_id = session.execute(
+            text(
+                """
+                INSERT INTO content_chunks (
+                    owner_kind, owner_id, chunk_idx, source_kind, chunk_text,
+                    token_count, heading_path, summary_locator
+                )
+                VALUES (
+                    'media', :media_id, 0, 'web_article', 'Attachable chunk',
+                    2, '[]'::jsonb, '{}'::jsonb
+                )
+                RETURNING id
+                """
+            ),
+            {"media_id": media_id},
+        ).scalar_one()
+        session.commit()
+    direct_db.register_cleanup("content_chunks", "owner_id", media_id)
+    return chunk_id
 
 
 # =============================================================================
@@ -173,9 +202,7 @@ def test_add_context_ref_missing_resource_returns_404(auth_client, direct_db: Di
     assert response.status_code == 404, response.text
 
 
-def test_list_context_refs_orders_created_at_ascending(
-    auth_client, direct_db: DirectSessionManager
-):
+def test_list_context_refs_orders_first_attached(auth_client, direct_db: DirectSessionManager):
     user_id = _bootstrap_user(auth_client, direct_db)
     headers = auth_headers(user_id)
     first_media_id = _create_media(direct_db, user_id, title="First Doc")
@@ -195,8 +222,31 @@ def test_list_context_refs_orders_created_at_ascending(
     assert listing.status_code == 200, listing.text
     refs = [row["resource_ref"] for row in listing.json()["data"]]
     assert refs == [f"media:{first_media_id}", f"media:{second_media_id}"], (
-        f"Context refs should list created_at ascending; got {refs}"
+        f"Context refs should list in first-attached order; got {refs}"
     )
+
+
+def test_create_conversation_initial_context_refs_preserves_request_order(
+    auth_client, direct_db: DirectSessionManager
+):
+    user_id = _bootstrap_user(auth_client, direct_db)
+    headers = auth_headers(user_id)
+    media_id = _create_media(direct_db, user_id, title="Ordered Context Doc")
+    chunk_id = _create_content_chunk(direct_db, media_id)
+    expected_refs = [f"media:{media_id}", f"content_chunk:{chunk_id}"]
+
+    created = auth_client.post(
+        "/conversations",
+        headers=headers,
+        json={"initial_references": expected_refs},
+    )
+    assert created.status_code == 201, created.text
+    conversation_id = created.json()["data"]["id"]
+
+    listing = auth_client.get(f"/conversations/{conversation_id}/context-refs", headers=headers)
+    assert listing.status_code == 200, listing.text
+    refs = [row["resource_ref"] for row in listing.json()["data"]]
+    assert refs == expected_refs
 
 
 def test_remove_context_ref_deletes_row(auth_client, direct_db: DirectSessionManager):
@@ -430,7 +480,7 @@ def test_create_edge_duplicate_pair_rejected_both_directions(
     )
 
 
-def test_list_edges_returns_edges_from_either_endpoint(
+def test_query_connections_returns_edges_from_either_endpoint(
     auth_client, direct_db: DirectSessionManager
 ):
     user_id = _bootstrap_user(auth_client, direct_db)
@@ -447,13 +497,13 @@ def test_list_edges_returns_edges_from_either_endpoint(
     edge_id = created.json()["data"]["id"]
 
     for ref in (f"media:{a_media_id}", f"media:{b_media_id}"):
-        listing = auth_client.get(f"/resource-graph/edges?ref={ref}", headers=headers)
+        listing = _query_connections(auth_client, headers, ref)
         assert listing.status_code == 200, listing.text
-        ids = [edge["id"] for edge in listing.json()["data"]]
+        ids = [edge["edge_id"] for edge in listing.json()["data"]["items"]]
         assert ids == [edge_id], f"Edge must be listed from either endpoint (ref={ref}); got {ids}"
 
 
-def test_list_edges_filters_by_kind_and_origin(auth_client, direct_db: DirectSessionManager):
+def test_query_connections_filters_by_kind_and_origin(auth_client, direct_db: DirectSessionManager):
     user_id = _bootstrap_user(auth_client, direct_db)
     headers = auth_headers(user_id)
     a_media_id = _create_media(direct_db, user_id, title="Filter A")
@@ -474,36 +524,32 @@ def test_list_edges_filters_by_kind_and_origin(auth_client, direct_db: DirectSes
     )
     assert supports_edge.status_code == 201, supports_edge.text
 
-    kind_filtered = auth_client.get(
-        f"/resource-graph/edges?ref={a_ref}&kind=supports", headers=headers
-    )
+    kind_filtered = _query_connections(auth_client, headers, a_ref, filters={"kinds": ["supports"]})
     assert kind_filtered.status_code == 200, kind_filtered.text
-    kinds = [edge["kind"] for edge in kind_filtered.json()["data"]]
+    kinds = [edge["kind"] for edge in kind_filtered.json()["data"]["items"]]
     assert kinds == ["supports"], f"kind filter must apply; got {kinds}"
 
-    origin_filtered = auth_client.get(
-        f"/resource-graph/edges?ref={a_ref}&origin=user", headers=headers
-    )
+    origin_filtered = _query_connections(auth_client, headers, a_ref, filters={"origins": ["user"]})
     assert origin_filtered.status_code == 200, origin_filtered.text
-    assert len(origin_filtered.json()["data"]) == 2, origin_filtered.text
+    assert len(origin_filtered.json()["data"]["items"]) == 2, origin_filtered.text
 
 
-def test_list_edges_rejects_unknown_kind_and_origin_values(
+def test_query_connections_rejects_unknown_kind_and_origin_values(
     auth_client, direct_db: DirectSessionManager
 ):
     user_id = _bootstrap_user(auth_client, direct_db)
     headers = auth_headers(user_id)
     ref = f"media:{uuid4()}"
 
-    bad_kind = auth_client.get(f"/resource-graph/edges?ref={ref}&kind=banana", headers=headers)
+    bad_kind = _query_connections(auth_client, headers, ref, filters={"kinds": ["banana"]})
     assert bad_kind.status_code == 400, bad_kind.text
     assert bad_kind.json()["error"]["code"] == "E_INVALID_REQUEST"
 
-    bad_origin = auth_client.get(f"/resource-graph/edges?ref={ref}&origin=banana", headers=headers)
+    bad_origin = _query_connections(auth_client, headers, ref, filters={"origins": ["banana"]})
     assert bad_origin.status_code == 400, bad_origin.text
     assert bad_origin.json()["error"]["code"] == "E_INVALID_REQUEST"
 
-    bad_ref = auth_client.get("/resource-graph/edges?ref=not-a-ref", headers=headers)
+    bad_ref = _query_connections(auth_client, headers, "not-a-ref")
     assert bad_ref.status_code == 400, bad_ref.text
     assert bad_ref.json()["error"]["code"] == "E_INVALID_REQUEST"
 
@@ -526,8 +572,8 @@ def test_delete_edge_removes_user_edge(auth_client, direct_db: DirectSessionMana
     deleted = auth_client.delete(f"/resource-graph/edges/{edge_id}", headers=headers)
     assert deleted.status_code == 204, deleted.text
 
-    listing = auth_client.get(f"/resource-graph/edges?ref={a_ref}", headers=headers)
-    assert listing.json()["data"] == [], "Edge should be gone after delete"
+    listing = _query_connections(auth_client, headers, a_ref)
+    assert listing.json()["data"]["items"] == [], "Edge should be gone after delete"
 
     deleted_again = auth_client.delete(f"/resource-graph/edges/{edge_id}", headers=headers)
     assert deleted_again.status_code == 404, deleted_again.text
@@ -560,11 +606,11 @@ def test_delete_edge_refuses_non_user_origin_rows(auth_client, direct_db: Direct
     )
     assert response.json()["error"]["code"] == "E_FORBIDDEN"
 
-    listing = auth_client.get(
-        f"/resource-graph/edges?ref=media:{media_id}&origin=citation", headers=headers
+    listing = _query_connections(
+        auth_client, headers, f"media:{media_id}", filters={"origins": ["citation"]}
     )
     assert listing.status_code == 200, listing.text
-    assert [edge["id"] for edge in listing.json()["data"]] == [str(edge_id)], (
+    assert [edge["edge_id"] for edge in listing.json()["data"]["items"]] == [str(edge_id)], (
         "Citation edge must survive the refused delete"
     )
 
@@ -600,10 +646,8 @@ def test_delete_edge_another_users_edge_returns_404(auth_client, direct_db: Dire
         f"Another user's edge must 404, not leak existence: {response.text}"
     )
 
-    listing = auth_client.get(
-        f"/resource-graph/edges?ref=media:{source_media_id}", headers=auth_headers(owner_id)
-    )
-    assert [edge["id"] for edge in listing.json()["data"]] == [edge_id], (
+    listing = _query_connections(auth_client, auth_headers(owner_id), f"media:{source_media_id}")
+    assert [edge["edge_id"] for edge in listing.json()["data"]["items"]] == [edge_id], (
         "The owner's edge must survive an intruder's refused delete"
     )
 

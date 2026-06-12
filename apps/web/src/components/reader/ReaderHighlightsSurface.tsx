@@ -3,11 +3,11 @@
 import {
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type CSSProperties,
+  type Ref,
   type RefObject,
 } from "react";
 import { MessageSquare } from "lucide-react";
@@ -25,19 +25,19 @@ import { preferredScrollBehavior } from "@/lib/preferredScrollBehavior";
 import { useStringIdSet } from "@/lib/useStringIdSet";
 import {
   findScrollParent,
-  useAnchoredHighlightProjection,
-  type AnchoredHighlightRow,
-} from "./useAnchoredHighlightProjection";
+  useAnchoredReaderProjection,
+  type AnchoredReaderRow,
+} from "./useAnchoredReaderProjection";
+import AnchoredSidecarSurface from "./AnchoredSidecarSurface";
 import styles from "./ReaderHighlightsSurface.module.css";
 
 const COLLAPSED_ROW_HEIGHT = 44;
-const ROW_GAP = 4;
 
 interface ReaderHighlightsSurfaceProps {
   title?: string;
   description?: string;
   pdfActivePage?: number | null;
-  highlights: AnchoredHighlightRow[];
+  highlights: AnchoredReaderRow[];
   contentRef: RefObject<HTMLElement | null>;
   focusedId: string | null;
   onFocusHighlight: (highlightId: string) => void;
@@ -98,26 +98,24 @@ export default function ReaderHighlightsSurface({
   onOpenNoteLink,
 }: ReaderHighlightsSurfaceProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const rowRefs = useRef(new Map<string, HTMLDivElement>());
   const noteLayoutTimerRef = useRef<number | null>(null);
-  const [alignedRows, setAlignedRows] = useState<
-    Array<{ id: string; top: number }>
-  >([]);
-  const [rowHeights, setRowHeights] = useState(new Map<string, number>());
-  const [overflowCount, setOverflowCount] = useState(0);
-  const [secondaryLayoutVersion, setSecondaryLayoutVersion] = useState(0);
   const [noteLayoutVersion, setNoteLayoutVersion] = useState(0);
   const expandedTextIds = useStringIdSet();
   const draftNoteEditorKeysRef = useRef(new Map<string, string>());
   const noteEditorKeysByBlockIdRef = useRef(new Map<string, string>());
 
   const {
-    orderedHighlights,
+    orderedRows,
     projections,
     targetRects,
     viewportState,
     hasMeasuredTargets,
-  } = useAnchoredHighlightProjection({ contentRef, highlights, measureKey });
+  } = useAnchoredReaderProjection({
+    contentRef,
+    rows: isMobile ? highlights : [],
+    measureKey,
+    missingTargetLogName: "reader_highlight_target_missing",
+  });
 
   useEffect(() => {
     return () => {
@@ -145,117 +143,6 @@ export default function ReaderHighlightsSurface({
     },
     [contentRef],
   );
-
-  const alignRows = useCallback(() => {
-    if (isMobile || !containerRef.current) {
-      return;
-    }
-
-    const contentElement = contentRef.current;
-    if (!contentElement) {
-      return;
-    }
-
-    const scrollParent = findScrollParent(contentElement);
-    const baseline =
-      scrollParent.getBoundingClientRect().top -
-      containerRef.current.getBoundingClientRect().top;
-    const rows: Array<{
-      highlight: AnchoredHighlightRow;
-      desiredTop: number;
-    }> = [];
-
-    for (const projection of projections) {
-      rows.push({
-        highlight: projection.highlight,
-        desiredTop: projection.rect.top - viewportState.scrollTop + baseline,
-      });
-    }
-
-    const orderById = new Map(
-      orderedHighlights.map((highlight, index) => [highlight.id, index]),
-    );
-    rows.sort((left, right) => {
-      if (left.desiredTop !== right.desiredTop) {
-        return left.desiredTop - right.desiredTop;
-      }
-      return (
-        (orderById.get(left.highlight.id) ?? 0) -
-        (orderById.get(right.highlight.id) ?? 0)
-      );
-    });
-
-    let previousBottom = -ROW_GAP;
-    const nextAlignedRows: Array<{ id: string; top: number }> = [];
-    for (const row of rows) {
-      const top = Math.max(0, row.desiredTop, previousBottom + ROW_GAP);
-      nextAlignedRows.push({ id: row.highlight.id, top });
-      previousBottom =
-        top + (rowHeights.get(row.highlight.id) ?? COLLAPSED_ROW_HEIGHT);
-    }
-
-    setAlignedRows(nextAlignedRows);
-
-    let nextOverflowCount = 0;
-    for (const row of nextAlignedRows) {
-      if (
-        row.top + (rowHeights.get(row.id) ?? COLLAPSED_ROW_HEIGHT) >
-        containerRef.current.clientHeight
-      ) {
-        nextOverflowCount += 1;
-      }
-    }
-    setOverflowCount(nextOverflowCount);
-  }, [
-    contentRef,
-    isMobile,
-    orderedHighlights,
-    projections,
-    rowHeights,
-    viewportState.scrollTop,
-  ]);
-
-  useLayoutEffect(() => {
-    if (isMobile) {
-      return;
-    }
-
-    setRowHeights((previousHeights) => {
-      const nextHeights = new Map<string, number>();
-      for (const highlight of orderedHighlights) {
-        nextHeights.set(
-          highlight.id,
-          Math.ceil(
-            rowRefs.current.get(highlight.id)?.getBoundingClientRect().height ??
-              COLLAPSED_ROW_HEIGHT,
-          ),
-        );
-      }
-
-      if (previousHeights.size === nextHeights.size) {
-        let same = true;
-        for (const [highlightId, height] of nextHeights) {
-          if (previousHeights.get(highlightId) !== height) {
-            same = false;
-            break;
-          }
-        }
-        if (same) {
-          return previousHeights;
-        }
-      }
-
-      return nextHeights;
-    });
-  }, [
-    alignedRows,
-    expandedTextIds,
-    focusedId,
-    isEditingBounds,
-    isMobile,
-    noteLayoutVersion,
-    orderedHighlights,
-  ]);
 
   useEffect(() => {
     const renderedHighlightIds = new Set<string>();
@@ -286,29 +173,10 @@ export default function ReaderHighlightsSurface({
     }
   }, [expandedTextIds, highlights]);
 
-  useEffect(() => {
-    if (isMobile || !containerRef.current) {
-      return;
-    }
-
-    const observer = new ResizeObserver(() => {
-      setSecondaryLayoutVersion((version) => version + 1);
-    });
-    observer.observe(containerRef.current);
-    return () => observer.disconnect();
-  }, [isMobile]);
-
-  useEffect(() => {
-    if (isMobile) {
-      return;
-    }
-    alignRows();
-  }, [alignRows, isMobile, projections, secondaryLayoutVersion]);
-
   const mobileHighlightsState = useMemo(() => {
     if (!isMobile) {
       return {
-        visibleHighlights: [] as AnchoredHighlightRow[],
+        visibleHighlights: [] as AnchoredReaderRow[],
         aboveCount: 0,
         belowCount: 0,
         nearestAboveId: null as string | null,
@@ -316,18 +184,16 @@ export default function ReaderHighlightsSurface({
       };
     }
 
-    const visibleHighlights: AnchoredHighlightRow[] = [];
+    const visibleHighlights: AnchoredReaderRow[] = [];
     let aboveCount = 0;
     let belowCount = 0;
     let nearestAboveId: string | null = null;
     let nearestBelowId: string | null = null;
     const viewportTop = viewportState.scrollTop;
     const viewportBottom = viewportTop + viewportState.clientHeight;
-    const visibleIds = new Set(
-      projections.map((projection) => projection.highlight.id),
-    );
+    const visibleIds = new Set(projections.map((projection) => projection.row.id));
 
-    for (const highlight of orderedHighlights) {
+    for (const highlight of orderedRows) {
       const rects = targetRects.get(highlight.id);
       if (!rects) {
         continue;
@@ -370,7 +236,7 @@ export default function ReaderHighlightsSurface({
       nearestAboveId,
       nearestBelowId,
     };
-  }, [isMobile, orderedHighlights, projections, targetRects, viewportState]);
+  }, [isMobile, orderedRows, projections, targetRects, viewportState]);
 
   // The only thing in the sidecar that scrolls. `onlyIfNeeded` no-ops when the
   // anchor is already fully in view (the desktop scanline case); `align:"start"`
@@ -420,17 +286,6 @@ export default function ReaderHighlightsSurface({
     [onFocusHighlight, revealHighlightInReader],
   );
 
-  const setRowRef = useCallback(
-    (highlightId: string) => (element: HTMLDivElement | null) => {
-      if (element) {
-        rowRefs.current.set(highlightId, element);
-        return;
-      }
-      rowRefs.current.delete(highlightId);
-    },
-    [],
-  );
-
   const toggleTextExpansion = useCallback(
     (highlightId: string) => {
       if (expandedTextIds.has(highlightId)) {
@@ -466,7 +321,7 @@ export default function ReaderHighlightsSurface({
   const getNoteEditorKey = useCallback(
     (
       highlightId: string,
-      note: NonNullable<AnchoredHighlightRow["linked_note_blocks"]>[number] | null,
+      note: NonNullable<AnchoredReaderRow["linked_note_blocks"]>[number] | null,
     ) => {
       if (!note) {
         return getDraftNoteEditorKey(highlightId);
@@ -509,9 +364,10 @@ export default function ReaderHighlightsSurface({
 
   const renderRow = useCallback(
     (
-      highlight: AnchoredHighlightRow,
+      highlight: AnchoredReaderRow,
       className: string,
       style?: CSSProperties,
+      rootRef?: Ref<HTMLDivElement>,
     ) => {
       const isFocused = focusedId === highlight.id;
       const linkedNotes = highlight.linked_note_blocks ?? [];
@@ -585,7 +441,7 @@ export default function ReaderHighlightsSurface({
           hovered={hoveredId === highlight.id}
           showFullText={expandedTextIds.ids.has(highlight.id)}
           onToggleFullText={() => toggleTextExpansion(highlight.id)}
-          rootRef={setRowRef(highlight.id)}
+          rootRef={rootRef}
           style={style}
           className={className || undefined}
           highlightId={highlight.id}
@@ -619,7 +475,6 @@ export default function ReaderHighlightsSurface({
       onQuoteToExtantChat,
       onStartEditBounds,
       scheduleNoteLayoutMeasure,
-      setRowRef,
     ],
   );
 
@@ -636,6 +491,13 @@ export default function ReaderHighlightsSurface({
       ) : null}
     </header>
   );
+  const sidecarMeasureKey = [
+    measureKey,
+    noteLayoutVersion,
+    expandedTextIds.ids.size,
+    focusedId ?? "",
+    isEditingBounds ? "editing" : "idle",
+  ].join(":");
 
   if (highlights.length === 0) {
     return (
@@ -718,38 +580,29 @@ export default function ReaderHighlightsSurface({
     );
   }
 
-  const highlightMap = new Map(
-    orderedHighlights.map((highlight) => [highlight.id, highlight]),
-  );
-
   return (
-    <section className={styles.root} aria-label={title}>
-      {header}
-      <div
-        ref={containerRef}
-        className={styles.linkedItemsContainer}
-        data-testid="anchored-highlights-container"
-      >
-        {alignedRows.map((row) => {
-          const highlight = highlightMap.get(row.id);
-          if (!highlight) {
-            return null;
-          }
-          return renderRow(highlight, styles.row, {
-            transform: `translateY(${row.top}px)`,
-          });
-        })}
-        {alignedRows.length === 0 && hasMeasuredTargets ? (
-          <div className={styles.emptyFeedbackMessage}>
-            <FeedbackNotice severity="neutral" title="No highlights in view." />
-          </div>
-        ) : null}
-        {overflowCount > 0 ? (
-          <div className={styles.overflowIndicator}>
-            +{overflowCount} more below
-          </div>
-        ) : null}
-      </div>
-    </section>
+    <AnchoredSidecarSurface
+      ariaLabel={title}
+      header={header}
+      rows={highlights}
+      anchoredRows={highlights}
+      contentRef={contentRef}
+      measureKey={sidecarMeasureKey}
+      isMobile={false}
+      rowHeight={COLLAPSED_ROW_HEIGHT}
+      testId="anchored-highlights-container"
+      empty={<FeedbackNotice severity="neutral" title="No highlights in this context." />}
+      noAlignedRows={<FeedbackNotice severity="neutral" title="No highlights in view." />}
+      showUnalignedRows={false}
+      idForRow={(highlight) => highlight.id}
+      renderRow={(highlight, props) =>
+        renderRow(
+          highlight,
+          `${styles.row} ${props.className}`,
+          props.style,
+          props.ref as Ref<HTMLDivElement>,
+        )
+      }
+    />
   );
 }

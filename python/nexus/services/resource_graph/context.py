@@ -72,7 +72,11 @@ def list_context_refs(
                 ResourceEdge.source_id == conversation_id,
                 ResourceEdge.kind == "context",
             )
-            .order_by(ResourceEdge.created_at.asc(), ResourceEdge.id.asc())
+            .order_by(
+                ResourceEdge.source_order_key.asc().nulls_last(),
+                ResourceEdge.created_at.asc(),
+                ResourceEdge.id.asc(),
+            )
         )
         .scalars()
         .all()
@@ -92,6 +96,7 @@ def add_context_ref_without_commit(
     conversation_id: UUID,
     target: ResourceRef,
     origin: EdgeOrigin,
+    source_order_key: str | None = None,
 ) -> ContextRefOut:
     """Add a context edge inside the caller's transaction (conversation create composes).
 
@@ -123,6 +128,12 @@ def add_context_ref_without_commit(
             target=target,
             kind="context",
             origin=origin,
+            source_order_key=source_order_key
+            or _next_context_source_order_key(
+                db,
+                viewer_id=viewer_id,
+                conversation_id=conversation_id,
+            ),
         ),
     )
     return ContextRefOut(
@@ -253,7 +264,7 @@ def batch_conversations_with_context_ref(
     Same admission as ``list_conversations_with_context_ref`` — any edge from a
     viewer-owned conversation to the target counts — but keyed by target id and
     joined to the conversation row so callers project their own ref shape. Kept
-    here, not on ``list_edges_for_ref``, because it needs the conversation join
+    here, not on the generic connection query, because it needs the conversation join
     and the per-target batching.
     """
     if not targets:
@@ -292,7 +303,11 @@ def search_scope_refs_for_conversation(
             ResourceEdge.ordinal.is_(None),
             Conversation.owner_user_id == viewer_id,
         )
-        .order_by(ResourceEdge.created_at.asc(), ResourceEdge.id.asc())
+        .order_by(
+            ResourceEdge.source_order_key.asc().nulls_last(),
+            ResourceEdge.created_at.asc(),
+            ResourceEdge.id.asc(),
+        )
     ).all()
     out: list[ResourceRef] = []
     seen: set[tuple[str, UUID]] = set()
@@ -331,6 +346,24 @@ def _context_ref_out(
         resolved=resolved,
         created_at=row.created_at,
     )
+
+
+def _next_context_source_order_key(db: Session, *, viewer_id: UUID, conversation_id: UUID) -> str:
+    existing = db.execute(
+        select(ResourceEdge.source_order_key)
+        .where(
+            ResourceEdge.user_id == viewer_id,
+            ResourceEdge.source_scheme == "conversation",
+            ResourceEdge.source_id == conversation_id,
+            ResourceEdge.kind == "context",
+            ResourceEdge.source_order_key.is_not(None),
+        )
+        .order_by(ResourceEdge.source_order_key.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    if existing is None:
+        return "0000000001"
+    return f"{int(existing) + 1:010d}"
 
 
 def _decode_cursor_clause(cursor: str | None) -> tuple[str, dict[str, object]]:

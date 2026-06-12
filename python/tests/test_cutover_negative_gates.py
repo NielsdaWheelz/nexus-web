@@ -1008,6 +1008,55 @@ def test_public_resource_graph_edge_create_does_not_accept_order_keys():
 
 
 # =============================================================================
+# Incoming reader connections cutover — one graph read model + one sidecar layout
+# =============================================================================
+
+
+def test_incoming_connections_legacy_read_surfaces_absent_in_production():
+    hits = _filtered(
+        r"\blistEdgesForRef\b|\blist_edges_for_ref\b|\breverse_citations\b",
+        _PY_ROOT,
+        _WEB_ROOT,
+        _SCRIPTS_ROOT,
+        exclude=_FRONTEND_TEST,
+    )
+    assert not hits, f"legacy reverse-connection read surface referenced:\n{_fmt(hits)}"
+
+
+def test_incoming_connections_old_routes_and_note_component_absent():
+    rel_paths = [
+        "apps/web/src/components/notes/NoteBacklinks.tsx",
+        "apps/web/src/components/notes/NoteBacklinks.module.css",
+        "apps/web/src/app/api/object-links",
+        "apps/web/src/app/api/object-graph",
+        "python/nexus/api/routes/object_links.py",
+        "python/nexus/api/routes/object_graph.py",
+    ]
+    present = [path for path in rel_paths if (_REPO_ROOT / path).exists()]
+    assert not present, f"old object/backlink routes or components exist: {present}"
+
+    edge_route = (_WEB_ROOT / "app" / "api" / "resource-graph" / "edges" / "route.ts").read_text(
+        encoding="utf-8"
+    )
+    assert "export async function GET" not in edge_route
+
+
+def test_reader_sidecar_alignment_owned_by_shared_surface():
+    roots = [
+        _WEB_ROOT / "components" / "reader" / "ReaderHighlightsSurface.tsx",
+        _WEB_ROOT / "components" / "reader" / "ReaderApparatusSurface.tsx",
+        _WEB_ROOT / "components" / "reader" / "ReaderConnectionsSurface.tsx",
+    ]
+    hits = _filtered(r"\b(setAlignedRows|rowHeights|overflowCount)\b", *roots)
+    assert not hits, f"reader surfaces own duplicate sidecar alignment state:\n{_fmt(hits)}"
+
+    shared = (_WEB_ROOT / "components" / "reader" / "AnchoredSidecarSurface.tsx").read_text(
+        encoding="utf-8"
+    )
+    assert "setAlignedRows" in shared
+
+
+# =============================================================================
 # Synapse: one origin='synapse' edge writer (synapse spec AC9)
 # =============================================================================
 

@@ -5,14 +5,14 @@ import { toFeedback, useFeedback } from "@/components/feedback/Feedback";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import ActionBar from "@/components/ui/ActionBar";
 import ActionMenu from "@/components/ui/ActionMenu";
-import type { AnchoredHighlightRow } from "@/components/reader/useAnchoredHighlightProjection";
+import type { AnchoredReaderRow } from "@/components/reader/useAnchoredReaderProjection";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
 import { buildHighlightActions } from "./highlightActions";
 
 type ExistingProps = {
   variant: "existing";
   presentation: "bar" | "menu";
-  highlight: AnchoredHighlightRow;
+  highlight: AnchoredReaderRow;
   canQuoteToChat: boolean;
   canAddNote?: boolean;
   isReflowable: boolean;

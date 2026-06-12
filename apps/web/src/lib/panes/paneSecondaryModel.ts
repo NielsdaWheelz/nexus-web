@@ -44,7 +44,7 @@ const PANE_SECONDARY_SURFACE_DEFINITIONS = [
     iconId: "list-tree",
   },
   {
-    id: "connections",
+    id: "reader-connections",
     groupId: "reader-tools",
     title: "Connections",
     iconId: "link-2",

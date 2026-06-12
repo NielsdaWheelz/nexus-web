@@ -58,7 +58,7 @@ def list_context_refs(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    """List a conversation's context refs, hydrated, created_at ascending.
+    """List a conversation's context refs, hydrated, first-attached order.
 
     Errors:
         E_CONVERSATION_NOT_FOUND (404): conversation doesn't exist or viewer is not owner.

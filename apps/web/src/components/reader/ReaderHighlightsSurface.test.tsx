@@ -4,7 +4,7 @@ import { useRef, useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 import ReaderHighlightsSurface from "./ReaderHighlightsSurface";
-import type { AnchoredHighlightRow } from "./useAnchoredHighlightProjection";
+import type { AnchoredReaderRow } from "./useAnchoredReaderProjection";
 
 vi.mock("@/components/notes/HighlightNoteEditor", () => ({
   default: function MockHighlightNoteEditor({
@@ -56,7 +56,7 @@ function highlight(
   exact: string,
   prefix: string,
   suffix: string,
-): AnchoredHighlightRow {
+): AnchoredReaderRow {
   return {
     id,
     exact,
@@ -105,9 +105,9 @@ function ReaderHighlightsSurfaceHarness({
   onDelete?: ReaderHighlightsSurfacePropsForTest["onDelete"];
   onStartEditBounds?: () => void;
   onCancelEditBounds?: () => void;
-  linkedConversations?: NonNullable<AnchoredHighlightRow["linked_conversations"]>;
+  linkedConversations?: NonNullable<AnchoredReaderRow["linked_conversations"]>;
   onOpenConversation?: (conversationId: string, title: string) => void;
-  highlights?: AnchoredHighlightRow[];
+  highlights?: AnchoredReaderRow[];
   secondTargetMarginTop?: number;
 }) {
   const contentRef = useRef<HTMLDivElement>(null);
@@ -194,7 +194,7 @@ function StableNoteKeyHarness({
 }) {
   const contentRef = useRef<HTMLDivElement>(null);
   const [linkedNoteBlocks, setLinkedNoteBlocks] = useState<
-    NonNullable<AnchoredHighlightRow["linked_note_blocks"]>
+    NonNullable<AnchoredReaderRow["linked_note_blocks"]>
   >([]);
   const row = {
     ...highlight(
@@ -279,6 +279,33 @@ describe("ReaderHighlightsSurface", () => {
     expect(screen.getByText("Visible quote")).toBeVisible();
     expect(screen.queryByTestId("anchored-highlight-row-h2")).toBeNull();
     expect(screen.queryByText("Hidden quote")).toBeNull();
+  });
+
+  it("projects text highlights from rendered spans before canonical range fallback", async () => {
+    render(
+      <ReaderHighlightsSurfaceHarness
+        highlights={[
+          {
+            ...highlight(
+              "h1",
+              "Visible quote",
+              "Before visible context ",
+              " after visible context.",
+            ),
+            anchor: {
+              fragment_id: "fragment-not-present-in-test-dom",
+              start_offset: 10,
+              end_offset: 20,
+            },
+          },
+        ]}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("anchored-highlight-row-h1")).toBeTruthy();
+    });
+    expect(screen.getByText("Visible quote")).toBeVisible();
   });
 
   it("aligns a visible row to its source scanline", async () => {
@@ -545,9 +572,10 @@ describe("ReaderHighlightsSurface", () => {
     const collapsedHeight = row.getBoundingClientRect().height;
     await user.click(await within(row).findByRole("button", { name: "Show more" }));
 
-    expect(within(row).getByRole("button", { name: "Show less" })).toBeVisible();
+    const expandedRow = await screen.findByTestId("anchored-highlight-row-h1");
+    expect(within(expandedRow).getByRole("button", { name: "Show less" })).toBeVisible();
     await waitFor(() => {
-      expect(row.getBoundingClientRect().height).toBeGreaterThan(collapsedHeight);
+      expect(expandedRow.getBoundingClientRect().height).toBeGreaterThan(collapsedHeight);
     });
     expect(onFocusHighlight).not.toHaveBeenCalled();
   });
@@ -580,12 +608,24 @@ describe("ReaderHighlightsSurface", () => {
     );
 
     const row1 = await screen.findByTestId("anchored-highlight-row-h1");
-    const row2 = await screen.findByTestId("anchored-highlight-row-h2");
     await user.click(await within(row1).findByRole("button", { name: "Show more" }));
-    await user.click(await within(row2).findByRole("button", { name: "Show more" }));
+    await user.click(
+      await within(await screen.findByTestId("anchored-highlight-row-h2")).findByRole(
+        "button",
+        { name: "Show more" },
+      ),
+    );
 
-    expect(within(row1).getByRole("button", { name: "Show less" })).toBeVisible();
-    expect(within(row2).getByRole("button", { name: "Show less" })).toBeVisible();
+    expect(
+      within(await screen.findByTestId("anchored-highlight-row-h1")).getByRole("button", {
+        name: "Show less",
+      }),
+    ).toBeVisible();
+    expect(
+      within(await screen.findByTestId("anchored-highlight-row-h2")).getByRole("button", {
+        name: "Show less",
+      }),
+    ).toBeVisible();
   });
 
   it("keeps the note editor key stable after a first linked-note save", async () => {

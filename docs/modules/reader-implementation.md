@@ -218,6 +218,23 @@ is not generated chat citation evidence and must not write or read
   `python/tests/fixtures/reader_apparatus/corpus_manifest.json`, not in reader
   prose.
 
+### reader connections
+
+Reader connections are graph-authored linked items for the current media,
+separate from source-authored apparatus.
+
+- Backend reads flow through `resource_edges` via
+  `POST /resource-graph/connections/query`; the media reader uses
+  `GET /media/{id}/reader-connections` to roll incoming and outgoing
+  media-owned refs up into anchored and unanchored rows.
+- The reader exposes connections in the `Connections` tab
+  (`reader-connections`) under the existing `reader-tools` secondary group.
+- Rows align to the referenced passage when the media-owned endpoint resolves
+  to PDF geometry or exact rendered fragment text offsets. Unanchorable rows
+  stay in the same list below anchored rows instead of inventing locator data.
+- Activating a row opens the source object; activating its target uses the
+  target-owned reader locator. Edges never store reader locators.
+
 ### reader settings
 
 - `reader_profile` stores the global reader preferences for a user

@@ -27,7 +27,7 @@ test.describe("api keys", () => {
     await expect(page.locator("[data-provider-card='openai']")).toBeVisible();
     await expect(page.locator("[data-provider-card='anthropic']")).toBeVisible();
     await expect(page.locator("[data-provider-card='gemini']")).toBeVisible();
-    await expect(page.locator("[data-provider-card='deepseek']")).toBeVisible();
+    await expect(page.locator("[data-provider-card='openrouter']")).toBeVisible();
   });
 
   test("shows safe key metadata", async ({ page }) => {
