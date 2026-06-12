@@ -326,7 +326,7 @@ def test_trust_trail_links_run_prompt_retrieval_citation_and_reference(
     retrieval = tool.retrievals[0]
     assert retrieval.id == retrieval_id
     assert retrieval.cited_edge_id == edge_id
-    assert retrieval.citation_ordinal == 1
+    assert retrieval.citation_number == 1
     assert retrieval.included_in_prompt is True
     assert retrieval.included_in_prompt_source == "retrieval"
     assert len(trail.citations) == 1

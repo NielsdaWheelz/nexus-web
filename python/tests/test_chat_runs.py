@@ -2338,7 +2338,7 @@ class TestCitationEdgeWriteThrough:
         assert len(trail.tool_calls[0].retrievals) == 1
         retrieval = trail.tool_calls[0].retrievals[0]
         assert retrieval.result_type == "content_chunk"
-        assert retrieval.citation_ordinal == 1
+        assert retrieval.citation_number == 1
         assert retrieval.cited_edge_id is not None
         assert len(trail.citations) == 1, f"Chips come from edges; got {trail.citations}"
         chip = trail.citations[0].citation

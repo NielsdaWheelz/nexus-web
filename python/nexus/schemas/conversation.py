@@ -404,7 +404,7 @@ class TrustRunOut(BaseModel):
 
 class TrustRetrievalOut(MessageRetrievalOut):
     cited_edge_id: UUID | None = None
-    citation_ordinal: int | None = None
+    citation_number: int | None = None
     citation_role: CitationRole | None = None
     included_in_prompt_source: Literal[
         "retrieval", "candidate_ledger", "prompt_assembly", "none"

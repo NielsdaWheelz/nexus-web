@@ -306,7 +306,7 @@ function RetrievalRow({ retrieval }: { retrieval: MessageRetrieval }) {
           ? ` - score ${retrieval.score.toFixed(3)}`
           : ""}
         {retrieval.cited_edge_id ? ` - edge ${shortId(retrieval.cited_edge_id)}` : ""}
-        {retrieval.citation_ordinal ? ` - [${retrieval.citation_ordinal}]` : ""}
+        {retrieval.citation_number ? ` - [${retrieval.citation_number}]` : ""}
         {retrieval.included_in_prompt_source
           ? ` - source ${retrieval.included_in_prompt_source}`
           : ""}

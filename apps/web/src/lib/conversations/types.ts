@@ -80,7 +80,7 @@ export interface MessageRetrieval {
   retrieval_status?: MessageEvidenceRetrievalStatus;
   included_in_prompt?: boolean;
   cited_edge_id?: string | null;
-  citation_ordinal?: number | null;
+  citation_number?: number | null;
   citation_role?: "supports" | "contradicts" | "context" | null;
   included_in_prompt_source?:
     | "retrieval"
