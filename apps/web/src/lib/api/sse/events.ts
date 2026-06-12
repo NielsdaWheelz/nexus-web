@@ -52,7 +52,7 @@ interface SSEDoneEvent {
   data: {
     status: "complete" | "error" | "cancelled";
     error_code: string | null;
-    final_chars?: number;
+    final_chars?: number | null;
   };
 }
 
@@ -68,15 +68,12 @@ export interface SSEToolCallEvent {
   data: {
     tool_call_id?: string | null;
     assistant_message_id: string;
-    tool_name: "app_search" | "web_search";
+    tool_name: string;
     tool_call_index: number;
     status: ChatToolStatus;
     scope: string;
     types: string[];
     filters: Record<string, unknown>;
-    freshness_days?: number | null;
-    allowed_domains?: string[];
-    blocked_domains?: string[];
     error_code?: string | null;
   };
 }
@@ -86,7 +83,7 @@ export interface SSERetrievalResultEvent {
   data: {
     tool_call_id?: string | null;
     assistant_message_id: string;
-    tool_name: "app_search" | "web_search";
+    tool_name: string;
     tool_call_index: number;
     status: ChatToolStatus;
     error_code?: string | null;
@@ -127,6 +124,7 @@ export interface SSEReferenceAddedEvent {
     summary: string;
     missing: boolean;
     created_at: string;
+    citation_edge_id: string | null;
   };
 }
 
@@ -142,6 +140,13 @@ export type SSEEvent =
 function parseMetaData(data: unknown): SSEMetaEvent["data"] {
   if (
     !isRecord(data) ||
+    !hasOnlyKeys(data, [
+      "conversation_id",
+      "user_message_id",
+      "assistant_message_id",
+      "model_id",
+      "provider",
+    ]) ||
     typeof data.conversation_id !== "string" ||
     typeof data.user_message_id !== "string" ||
     typeof data.assistant_message_id !== "string" ||
@@ -156,7 +161,7 @@ function parseMetaData(data: unknown): SSEMetaEvent["data"] {
 }
 
 function parseDeltaData(data: unknown): SSEDeltaEvent["data"] {
-  if (!isRecord(data) || typeof data.delta !== "string") {
+  if (!isRecord(data) || !hasOnlyKeys(data, ["delta"]) || typeof data.delta !== "string") {
     throw new Error("Invalid SSE payload for delta");
   }
   // justify-type-assertion: the guard above exhaustively validated every
@@ -167,11 +172,16 @@ function parseDeltaData(data: unknown): SSEDeltaEvent["data"] {
 function parseDoneData(data: unknown): SSEDoneEvent["data"] {
   if (
     !isRecord(data) ||
+    !hasOnlyKeys(data, ["status", "error_code", "final_chars"]) ||
     (data.status !== "complete" &&
       data.status !== "error" &&
       data.status !== "cancelled") ||
     !(typeof data.error_code === "string" || data.error_code === null) ||
-    (data.final_chars !== undefined && !Number.isInteger(data.final_chars))
+    (data.final_chars !== undefined &&
+      data.final_chars !== null &&
+      (typeof data.final_chars !== "number" ||
+        !Number.isInteger(data.final_chars) ||
+        data.final_chars < 0))
   ) {
     throw new Error("Invalid SSE payload for done");
   }
@@ -192,14 +202,14 @@ function parseToolCallData(data: unknown): SSEToolCallEvent["data"] {
       "scope",
       "types",
       "filters",
-      "freshness_days",
-      "allowed_domains",
-      "blocked_domains",
       "error_code",
     ]) ||
     typeof data.assistant_message_id !== "string" ||
-    (data.tool_name !== "app_search" && data.tool_name !== "web_search") ||
+    typeof data.tool_name !== "string" ||
+    data.tool_name.length === 0 ||
+    typeof data.tool_call_index !== "number" ||
     !Number.isInteger(data.tool_call_index) ||
+    data.tool_call_index < 0 ||
     !isChatToolStatus(data.status) ||
     (data.tool_call_id !== undefined &&
       data.tool_call_id !== null &&
@@ -208,15 +218,6 @@ function parseToolCallData(data: unknown): SSEToolCallEvent["data"] {
     !Array.isArray(data.types) ||
     !data.types.every((item) => typeof item === "string") ||
     !isRecord(data.filters) ||
-    (data.freshness_days !== undefined &&
-      data.freshness_days !== null &&
-      !Number.isInteger(data.freshness_days)) ||
-    (data.allowed_domains !== undefined &&
-      (!Array.isArray(data.allowed_domains) ||
-        !data.allowed_domains.every((item) => typeof item === "string"))) ||
-    (data.blocked_domains !== undefined &&
-      (!Array.isArray(data.blocked_domains) ||
-        !data.blocked_domains.every((item) => typeof item === "string"))) ||
     !isOptionalString(data.error_code)
   ) {
     throw new Error("Invalid SSE payload for tool_call");
@@ -245,16 +246,25 @@ function parseRetrievalResultData(
       "results",
     ]) ||
     typeof data.assistant_message_id !== "string" ||
-    (data.tool_name !== "app_search" && data.tool_name !== "web_search") ||
+    typeof data.tool_name !== "string" ||
+    data.tool_name.length === 0 ||
     !isOptionalString(data.tool_call_id) ||
+    typeof data.tool_call_index !== "number" ||
     !Number.isInteger(data.tool_call_index) ||
+    data.tool_call_index < 0 ||
     !isChatToolStatus(data.status) ||
     !isOptionalString(data.error_code) ||
+    typeof data.result_count !== "number" ||
     !Number.isInteger(data.result_count) ||
+    data.result_count < 0 ||
+    typeof data.selected_count !== "number" ||
     !Number.isInteger(data.selected_count) ||
+    data.selected_count < 0 ||
     (data.latency_ms !== undefined &&
       data.latency_ms !== null &&
-      !Number.isInteger(data.latency_ms)) ||
+      (typeof data.latency_ms !== "number" ||
+        !Number.isInteger(data.latency_ms) ||
+        data.latency_ms < 0)) ||
     !isRecord(data.filters) ||
     !Array.isArray(data.results) ||
     !data.results.every(isCitationEventData)
@@ -323,15 +333,28 @@ function parseCitationIndexEntry(entry: unknown): SSECitationIndexEntry {
     !Number.isInteger(entry.n) ||
     entry.n < 1 ||
     !isRecord(entry.target_ref) ||
+    !hasOnlyKeys(entry.target_ref, ["type", "id"]) ||
     typeof entry.target_ref.id !== "string" ||
     !CITATION_TARGET_TYPES.includes(entry.target_ref.type as CitationTargetType) ||
     !CITATION_KINDS.includes(entry.kind as CitationRole) ||
     !(entry.deep_link === null || typeof entry.deep_link === "string") ||
-    !isRecord(entry.snapshot)
+    !isRecord(entry.snapshot) ||
+    !hasOnlyKeys(entry.snapshot, ["title", "excerpt", "section_label", "result_type"])
   ) {
     throw new Error("Invalid SSE payload for citation_index");
   }
-  const s = entry.snapshot;
+  const title = entry.snapshot.title;
+  const excerpt = entry.snapshot.excerpt;
+  const sectionLabel = entry.snapshot.section_label;
+  const resultType = entry.snapshot.result_type;
+  if (
+    !isStringOrNull(title) ||
+    !isStringOrNull(excerpt) ||
+    !isStringOrNull(sectionLabel) ||
+    !isStringOrNull(resultType)
+  ) {
+    throw new Error("Invalid SSE payload for citation_index");
+  }
   return {
     citation_edge_id: entry.citation_edge_id,
     n: entry.n,
@@ -342,12 +365,16 @@ function parseCitationIndexEntry(entry: unknown): SSECitationIndexEntry {
     kind: entry.kind as CitationRole,
     deep_link: entry.deep_link,
     snapshot: {
-      title: typeof s.title === "string" ? s.title : null,
-      excerpt: typeof s.excerpt === "string" ? s.excerpt : null,
-      section_label: typeof s.section_label === "string" ? s.section_label : null,
-      result_type: typeof s.result_type === "string" ? s.result_type : null,
+      title,
+      excerpt,
+      section_label: sectionLabel,
+      result_type: resultType,
     },
   };
+}
+
+function isStringOrNull(value: unknown): value is string | null {
+  return typeof value === "string" || value === null;
 }
 
 function parseReferenceAddedData(
@@ -355,13 +382,25 @@ function parseReferenceAddedData(
 ): SSEReferenceAddedEvent["data"] {
   if (
     !isRecord(data) ||
+    !hasOnlyKeys(data, [
+      "id",
+      "conversation_id",
+      "resource_ref",
+      "label",
+      "summary",
+      "missing",
+      "created_at",
+      "citation_edge_id",
+    ]) ||
     typeof data.id !== "string" ||
     typeof data.conversation_id !== "string" ||
     typeof data.resource_ref !== "string" ||
     typeof data.label !== "string" ||
     typeof data.summary !== "string" ||
     typeof data.missing !== "boolean" ||
-    typeof data.created_at !== "string"
+    typeof data.created_at !== "string" ||
+    !("citation_edge_id" in data) ||
+    !(typeof data.citation_edge_id === "string" || data.citation_edge_id === null)
   ) {
     throw new Error("Invalid SSE payload for reference_added");
   }

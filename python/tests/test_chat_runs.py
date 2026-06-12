@@ -1101,8 +1101,7 @@ class TestChatRunTooling:
     def test_chat_run_tools_always_registered(
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
     ):
-        """Every chat-run accepts both `app_search` and `web_search` as tool_name on
-        SSE tool_call events: the schemas registered for those events expose both."""
+        """Tool SSE events accept any non-empty tool name."""
         from nexus.schemas.conversation import (
             ChatRunRetrievalResultEventPayload,
             ChatRunToolCallEventPayload,
@@ -1115,7 +1114,13 @@ class TestChatRunTooling:
             "status": "running",
             "scope": "all",
         }
-        for tool_name in ("app_search", "web_search"):
+        for tool_name in (
+            "app_search",
+            "web_search",
+            "read_resource",
+            "inspect_resource",
+            "future_tool",
+        ):
             ChatRunToolCallEventPayload.model_validate(
                 {**common, "tool_name": tool_name, "types": [], "filters": {}}
             )
@@ -1701,6 +1706,7 @@ class TestCitationEdgeWriteThrough:
         conversation_id: UUID,
         user_message_id: UUID,
         assistant_message_id: UUID,
+        media_id: UUID,
         chunk_id: UUID,
         selected: bool,
     ) -> UUID:
@@ -1733,28 +1739,59 @@ class TestCitationEdgeWriteThrough:
                     "assistant_message_id": assistant_message_id,
                 },
             )
+            locator = {
+                "type": "web_text_offsets",
+                "media_id": str(media_id),
+                "fragment_id": str(chunk_id),
+                "start_offset": 0,
+                "end_offset": 12,
+                "media_kind": "web_article",
+            }
+            result_ref = {
+                "type": "content_chunk",
+                "id": str(chunk_id),
+                "result_type": "content_chunk",
+                "source_id": str(chunk_id),
+                "source_kind": "web_article",
+                "title": "Chunk title",
+                "source_label": "Section 1",
+                "snippet": "chunk snippet",
+                "deep_link": "/media/deep-link",
+                "citation_label": "Chunk title",
+                "context_ref": {"type": "content_chunk", "id": str(chunk_id)},
+                "evidence_span_id": None,
+                "evidence_span_ids": [],
+                "locator": locator,
+                "media_id": str(media_id),
+                "media_kind": "web_article",
+                "score": 0.9,
+                "selected": selected,
+            }
             session.execute(
                 text(
                     """
                     INSERT INTO message_retrievals (
-                        tool_call_id, ordinal, result_type, source_id, scope,
-                        context_ref, result_ref, selected, source_title,
-                        section_label, exact_snippet, deep_link
+                        tool_call_id, ordinal, result_type, source_id, media_id,
+                        scope, context_ref, result_ref, selected, source_title,
+                        section_label, exact_snippet, deep_link, locator
                     )
                     VALUES (
-                        :tool_call_id, 1, 'content_chunk', :chunk_id_str, 'all',
+                        :tool_call_id, 1, 'content_chunk', :chunk_id_str, :media_id,
+                        'all',
                         CAST(:context_ref AS jsonb),
                         CAST(:result_ref AS jsonb),
                         :selected, 'Chunk title', 'Section 1', 'chunk snippet',
-                        '/media/deep-link'
+                        '/media/deep-link', CAST(:locator AS jsonb)
                     )
                     """
                 ),
                 {
                     "tool_call_id": tool_call_id,
+                    "media_id": media_id,
                     "chunk_id_str": str(chunk_id),
                     "context_ref": json.dumps({"type": "content_chunk", "id": str(chunk_id)}),
-                    "result_ref": json.dumps({"id": str(chunk_id)}),
+                    "result_ref": json.dumps(result_ref),
+                    "locator": json.dumps(locator),
                     "selected": selected,
                 },
             )
@@ -1849,6 +1886,7 @@ class TestCitationEdgeWriteThrough:
             conversation_id=conversation_id,
             user_message_id=user_message_id,
             assistant_message_id=assistant_message_id,
+            media_id=media_id,
             chunk_id=chunk_id,
             selected=True,
         )
@@ -1982,6 +2020,7 @@ class TestCitationEdgeWriteThrough:
         assert reference_payload["resource_ref"] == f"content_chunk:{chunk_id}", (
             f"reference_added carries the context-ref target; got {reference_payload}"
         )
+        assert reference_payload["citation_edge_id"] == str(edge_id)
         assert reference_payload["conversation_id"] == str(conversation_id)
         assert reference_payload["missing"] is False
         assert {"id", "label", "summary", "created_at"} <= set(reference_payload), (
@@ -2016,6 +2055,7 @@ class TestCitationEdgeWriteThrough:
             conversation_id=conversation_id,
             user_message_id=user_message_id,
             assistant_message_id=assistant_message_id,
+            media_id=media_id,
             chunk_id=chunk_id,
             selected=False,
         )
@@ -2235,16 +2275,14 @@ class TestCitationEdgeWriteThrough:
         assert entry["deep_link"] == "https://example.com/1"
         assert entry["snapshot"]["result_type"] == "web_result"
 
-    def test_message_replay_builds_chips_from_edges_and_disclosures_from_telemetry(
+    def test_message_replay_builds_chips_and_trust_trail_from_edges_and_telemetry(
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
     ):
-        """AC6: reload rebuilds disclosures from message_retrievals (no per-row
-        ordinal key) and citation chips from edges via build_citation_outs."""
+        """Reload keeps answer content text-only and rebuilds trust from durable rows."""
         from nexus.db.models import ChatRun as ChatRunModel
-        from nexus.services.chat_run_message_blocks import message_document_with_run_components
+        from nexus.services.chat_run_message_blocks import message_document
         from nexus.services.chat_runs import _record_tool_citations
-        from nexus.services.resource_graph.citations import build_citation_outs
-        from nexus.services.resource_graph.refs import ResourceRef
+        from nexus.services.message_trust_trails import build_assistant_trust_trail
 
         (
             user_id,
@@ -2268,6 +2306,7 @@ class TestCitationEdgeWriteThrough:
             conversation_id=conversation_id,
             user_message_id=user_message_id,
             assistant_message_id=assistant_message_id,
+            media_id=media_id,
             chunk_id=chunk_id,
             selected=True,
         )
@@ -2287,27 +2326,24 @@ class TestCitationEdgeWriteThrough:
             session.commit()
 
         with direct_db.session() as session:
-            document = message_document_with_run_components(
-                session, run_id=run_id, role="assistant", content="Answer [1]."
-            )
-            citations = build_citation_outs(
+            document = message_document("assistant", "Answer [1].")
+            trail = build_assistant_trust_trail(
                 session,
                 viewer_id=user_id,
-                source=ResourceRef(scheme="message", id=assistant_message_id),
+                assistant_message_id=assistant_message_id,
             )
 
-        retrieval_blocks = [
-            block for block in document["blocks"] if block["type"] == "retrieval_result"
+        assert document["blocks"] == [
+            {"type": "text", "format": "markdown", "text": "Answer [1]."}
         ]
-        assert len(retrieval_blocks) == 1, (
-            f"Disclosures still come from telemetry rows; got {len(retrieval_blocks)} blocks"
-        )
-        assert retrieval_blocks[0]["result_type"] == "content_chunk"
-        assert "citation_ordinal" not in retrieval_blocks[0], (
-            "retrieval blocks must not carry per-row citation numbering anymore"
-        )
-        assert len(citations) == 1, f"Chips come from edges; got {citations}"
-        chip = citations[0]
+        assert len(trail.tool_calls) == 1
+        assert len(trail.tool_calls[0].retrievals) == 1
+        retrieval = trail.tool_calls[0].retrievals[0]
+        assert retrieval.result_type == "content_chunk"
+        assert retrieval.citation_ordinal == 1
+        assert retrieval.cited_edge_id is not None
+        assert len(trail.citations) == 1, f"Chips come from edges; got {trail.citations}"
+        chip = trail.citations[0].citation
         assert chip.ordinal == 1
         assert chip.role == "context"
         assert chip.target_ref.type == "content_chunk"
@@ -2354,6 +2390,7 @@ class TestCitationEdgeWriteThrough:
             conversation_id=conversation_id,
             user_message_id=user_message_id,
             assistant_message_id=assistant_message_id,
+            media_id=media_id,
             chunk_id=chunk_id,
             selected=True,
         )
@@ -2418,6 +2455,7 @@ class TestCitationEdgeWriteThrough:
             conversation_id=conversation_id,
             user_message_id=user_message_id,
             assistant_message_id=assistant_message_id,
+            media_id=media_id,
             chunk_id=chunk_id,
             selected=True,
         )

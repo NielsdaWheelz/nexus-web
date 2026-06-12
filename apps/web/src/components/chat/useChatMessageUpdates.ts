@@ -22,6 +22,7 @@ import type {
 import type { CitationOut } from "@/lib/conversations/citationOut";
 import { conversationMessageText } from "@/lib/conversations/types";
 import type {
+  AssistantTrustTrail,
   ConversationMessage,
   MessageDocument,
   MessageRetrievalResultRef,
@@ -94,66 +95,39 @@ function retrievalFromWebCitation(
   };
 }
 
-function sameToolBlock(
-  block: {
-    tool_call_id?: string | null;
-    tool_call_index?: number | null;
-    tool_name?: string | null;
-  },
-  data: {
-    tool_call_id?: string | null;
-    tool_call_index: number;
-    tool_name?: string | null;
-  },
-): boolean {
-  if (block.tool_name && data.tool_name && block.tool_name !== data.tool_name) {
-    return false;
-  }
-  return data.tool_call_id
-    ? block.tool_call_id === data.tool_call_id
-    : block.tool_call_index === data.tool_call_index;
-}
-
 function messageDocumentWithText(
   message: ConversationMessage,
   content: string,
 ): MessageDocument {
-  const existingBlocks = message.message_document?.blocks ?? [];
   return {
     type: "message_document",
-    blocks: [
-      ...(content.trim().length > 0
-        ? [
-            {
-              type: "text" as const,
-              format: "markdown" as const,
-              text: content,
-            },
-          ]
-        : []),
-      ...existingBlocks.filter((block) => block.type !== "text"),
-    ],
+    blocks:
+      content.trim().length > 0
+        ? [{ type: "text", format: "markdown", text: content }]
+        : [],
   };
 }
 
-function messageDocumentWithRetrievals(
+function trustTrailFor(
   message: ConversationMessage,
-  data: SSERetrievalResultEvent["data"],
-  retrievals: MessageRetrieval[],
-): MessageDocument {
-  const existingBlocks = message.message_document?.blocks ?? [];
+  assistantId: string,
+  conversationId = "",
+): AssistantTrustTrail {
+  if (message.trust_trail) return message.trust_trail;
   return {
-    type: "message_document",
-    blocks: [
-      ...existingBlocks.filter(
-        (block) =>
-          block.type !== "retrieval_result" || !sameToolBlock(block, data),
-      ),
-      ...retrievals.map((retrieval) => ({
-        type: "retrieval_result" as const,
-        ...retrieval,
-      })),
-    ],
+    schema_version: "assistant_trust_trail.v1",
+    assistant_message_id: assistantId,
+    conversation_id: conversationId,
+    chat_run_id: null,
+    status: "running",
+    run: null,
+    prompt: null,
+    tool_calls: [],
+    citations: [],
+    references_added: [],
+    integrity_notices: [],
+    created_at: message.created_at,
+    updated_at: message.updated_at,
   };
 }
 
@@ -209,7 +183,15 @@ export function useChatMessageUpdates({
       setMessages((prev) =>
         prev.map((m) => {
           if (m.id === tempUserId) return { ...m, id: realUserId };
-          if (m.id === tempAsstId) return { ...m, id: realAsstId };
+          if (m.id === tempAsstId) {
+            return {
+              ...m,
+              id: realAsstId,
+              trust_trail: m.trust_trail
+                ? { ...m.trust_trail, assistant_message_id: realAsstId }
+                : m.trust_trail,
+            };
+          }
           return m;
         }),
       );
@@ -233,15 +215,28 @@ export function useChatMessageUpdates({
       setMessages((prev) =>
         prev.map((m) => {
           if (m.id !== assistantId) return m;
-          const existing = m.tool_calls ?? [];
+          const trail = trustTrailFor(m, data.assistant_message_id);
+          const existing = trail.tool_calls;
+          const previous = existing.find(
+            (call) => call.tool_call_index === data.tool_call_index,
+          );
           const nextCall: MessageToolCall = {
-            id: data.tool_call_id ?? undefined,
+            ...(previous ?? {}),
+            id: data.tool_call_id ?? previous?.id,
             assistant_message_id: data.assistant_message_id,
             tool_name: data.tool_name,
             tool_call_index: data.tool_call_index,
             status: data.status,
             scope: data.scope,
             requested_types: data.types,
+            result_refs: previous?.result_refs ?? [],
+            selected_context_refs: previous?.selected_context_refs ?? [],
+            provider_request_ids: previous?.provider_request_ids ?? [],
+            result_count: previous?.result_count ?? 0,
+            selected_count: previous?.selected_count ?? 0,
+            retrievals: previous?.retrievals ?? [],
+            candidate_ledgers: previous?.candidate_ledgers ?? [],
+            rerank_ledgers: previous?.rerank_ledgers ?? [],
           };
           const index = existing.findIndex(
             (call) => call.tool_call_index === data.tool_call_index,
@@ -252,7 +247,10 @@ export function useChatMessageUpdates({
                   idx === index ? { ...call, ...nextCall } : call,
                 )
               : [...existing, nextCall];
-          return { ...m, tool_calls: toolCalls };
+          return {
+            ...m,
+            trust_trail: { ...trail, status: "running", tool_calls: toolCalls },
+          };
         }),
       );
     },
@@ -274,43 +272,39 @@ export function useChatMessageUpdates({
       setMessages((prev) =>
         prev.map((m) => {
           if (m.id !== assistantId) return m;
-          const existing = m.tool_calls ?? [];
+          const trail = trustTrailFor(m, data.assistant_message_id);
+          const existing = trail.tool_calls;
           const index = existing.findIndex(
             (call) => call.tool_call_index === data.tool_call_index,
           );
+          const previous = index >= 0 ? existing[index] : null;
           const nextCall: MessageToolCall = {
-            ...(index >= 0 ? existing[index] : {}),
-            id: data.tool_call_id ?? existing[index]?.id,
+            ...(previous ?? {}),
+            id: data.tool_call_id ?? previous?.id,
             assistant_message_id: data.assistant_message_id,
             tool_name: data.tool_name,
             tool_call_index: data.tool_call_index,
             status: data.status,
+            scope: previous?.scope ?? "all",
+            requested_types: previous?.requested_types ?? [],
             error_code: data.error_code ?? null,
             latency_ms: data.latency_ms,
             result_count: data.result_count,
             selected_count: data.selected_count,
+            result_refs: data.results as Array<Record<string, unknown>>,
+            selected_context_refs: previous?.selected_context_refs ?? [],
+            provider_request_ids: previous?.provider_request_ids ?? [],
+            retrievals,
+            candidate_ledgers: previous?.candidate_ledgers ?? [],
+            rerank_ledgers: previous?.rerank_ledgers ?? [],
           };
           const toolCalls =
             index >= 0
               ? existing.map((call, idx) => (idx === index ? nextCall : call))
               : [...existing, nextCall];
-          const existingRetrievals = m.retrievals ?? [];
-          const keyOf = (r: MessageRetrieval) =>
-            `${r.tool_call_id ?? ""}:${r.ordinal ?? ""}`;
-          const newKeys = new Set(retrievals.map(keyOf));
-          const mergedRetrievals = [
-            ...existingRetrievals.filter((r) => !newKeys.has(keyOf(r))),
-            ...retrievals,
-          ];
           return {
             ...m,
-            tool_calls: toolCalls,
-            retrievals: mergedRetrievals,
-            message_document: messageDocumentWithRetrievals(
-              m,
-              data,
-              retrievals,
-            ),
+            trust_trail: { ...trail, tool_calls: toolCalls },
           };
         }),
       );
@@ -333,17 +327,66 @@ export function useChatMessageUpdates({
         snapshot: entry.snapshot,
       }));
       setMessages((prev) =>
-        prev.map((m) => (m.id === assistantId ? { ...m, citations } : m)),
+        prev.map((m) => {
+          if (m.id !== assistantId) return m;
+          const trail = trustTrailFor(m, data.assistant_message_id);
+          return {
+            ...m,
+            citations,
+            trust_trail: {
+              ...trail,
+              citations: data.entries.map((entry, index) => ({
+                citation_edge_id: entry.citation_edge_id,
+                ordinal: entry.n,
+                role: entry.kind,
+                target_ref: entry.target_ref,
+                retrieval_id: null,
+                tool_call_id: null,
+                citation: citations[index],
+              })),
+            },
+          };
+        }),
       );
     },
     [setMessages],
   );
 
   const handleReferenceAdded = useCallback(
-    (data: SSEReferenceAddedEvent["data"]) => {
+    (assistantId: string, data: SSEReferenceAddedEvent["data"]) => {
       onReferenceAdded?.(data);
+      setMessages((prev) =>
+        prev.map((m) => {
+          if (m.id !== assistantId) return m;
+          const trail = trustTrailFor(m, assistantId, data.conversation_id);
+          const reference = {
+            chat_run_event_seq: 0,
+            id: data.id,
+            conversation_id: data.conversation_id,
+            resource_ref: data.resource_ref,
+            label: data.label,
+            summary: data.summary,
+            missing: data.missing,
+            created_at: data.created_at,
+            citation_edge_id: data.citation_edge_id,
+          };
+          return {
+            ...m,
+            trust_trail: {
+              ...trail,
+              references_added: trail.references_added.some(
+                (existing) => existing.id === data.id,
+              )
+                ? trail.references_added.map((existing) =>
+                    existing.id === data.id ? reference : existing,
+                  )
+                : [...trail.references_added, reference],
+            },
+          };
+        }),
+      );
     },
-    [onReferenceAdded],
+    [onReferenceAdded, setMessages],
   );
 
   const handleDone = useCallback(
@@ -367,6 +410,9 @@ export function useChatMessageUpdates({
             message_document: messageDocumentWithText(m, content),
             status,
             error_code: errorCode,
+            trust_trail: m.trust_trail
+              ? { ...m.trust_trail, status }
+              : m.trust_trail,
           };
         }),
       );

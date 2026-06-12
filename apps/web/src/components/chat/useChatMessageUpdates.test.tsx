@@ -33,6 +33,21 @@ function assistantMessage(): ConversationMessage {
         },
       ],
     },
+    trust_trail: {
+      schema_version: "assistant_trust_trail.v1",
+      assistant_message_id: ASSISTANT_ID,
+      conversation_id: "conversation-1",
+      chat_run_id: null,
+      status: "complete",
+      run: null,
+      prompt: null,
+      tool_calls: [],
+      citations: [],
+      references_added: [],
+      integrity_notices: [],
+      created_at: "2026-06-09T00:00:00Z",
+      updated_at: "2026-06-09T00:00:00Z",
+    },
   };
 }
 

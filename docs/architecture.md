@@ -390,7 +390,9 @@ branch pointers), `conversation_branches`, `conversation_active_paths`
 (telemetry; carries `cited_edge_id` pointing back at the citation edge),
 `message_retrieval_candidate_ledgers`, `message_rerank_ledgers`. (Conversation
 context refs are now `resource_edges` with `source_scheme='conversation'`, not a
-`conversation_references` table.)
+`conversation_references` table.) Assistant message API responses include a
+`trust_trail` read model assembled from these durable rows; persisted
+`message_document` blocks are text-only.
 
 **Podcasts / playback** — `podcasts`, `podcast_subscriptions`,
 `podcast_subscription_libraries`, `podcast_episodes` (PK = `media_id`),
@@ -1134,19 +1136,23 @@ The things most likely to bite you, distilled:
 8. **Active conversation path is per-viewer**; only path messages enter context.
 9. **Citation `[N]` is a dense, turn-global ordinal carried on an
    `origin='citation'` `resource_edge`**, not a per-tool index and not a column on
-   `message_retrievals` (which is telemetry pointing back via `cited_edge_id`); the
-   attached-reference citation regression came from breaking this density.
-10. **`background_jobs` is raw SQL**, invisible in `models.py`. Most ingest tasks'
+`message_retrievals` (which is telemetry pointing back via `cited_edge_id`); the
+attached-reference citation regression came from breaking this density.
+10. **Assistant trust trails are read models, not new truth.** They are assembled
+   when assistant messages are read from chat runs, prompt assemblies, tool calls,
+   retrieval ledgers, citation edges, and reference-added events. Message
+   documents remain text-only.
+11. **`background_jobs` is raw SQL**, invisible in `models.py`. Most ingest tasks'
    `{"status":"failed"}` returns mark the *queue* row succeeded; recovery is the
    reconciler + manual retry.
-11. **No DB cascades.** Deletion is explicit, reference-counted, and orders external
+12. **No DB cascades.** Deletion is explicit, reference-counted, and orders external
    (storage) effects after the DB commit.
-12. **pgvector is fixed at 256 dims**; chunk ANN uses the current embedding
+13. **pgvector is fixed at 256 dims**; chunk ANN uses the current embedding
     provider/model rows. A model change requires rebuilding current embeddings
     before semantic search should depend on them.
-13. **Frontend routing is the pane system, not `children`.** Behavior lives in
+14. **Frontend routing is the pane system, not `children`.** Behavior lives in
     `*PaneBody.tsx`; the URL is a projection of the active pane.
-14. **Migrations are hand-written**; `models.py` and the live DB can drift —
+15. **Migrations are hand-written**; `models.py` and the live DB can drift —
     there's no autogenerate safety net.
 
 ---

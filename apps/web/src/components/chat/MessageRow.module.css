@@ -166,391 +166,142 @@
   flex: 0 0 auto;
 }
 
-.claimAnswer {
-  position: relative;
-}
-
-.sourceManifest,
-.retrievalResults {
-  display: grid;
-  gap: var(--space-2);
-  margin-bottom: var(--space-3);
-}
-
-.sourceManifest {
-  padding: var(--space-3);
-  border: 1px solid var(--edge-subtle);
-  border-radius: var(--radius-md);
-  background: var(--surface-1);
-}
-
-.sourceManifestButton {
-  width: 100%;
-  height: auto;
-  min-height: var(--size-sm);
-  align-items: flex-start;
-  justify-content: space-between;
-  padding: 0;
-  color: var(--ink-muted);
-  text-align: left;
-  white-space: normal;
-}
-
-.sourceManifestButton > span:first-child {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.sourceManifestSummary {
-  display: grid;
-  gap: var(--space-2);
-  min-width: 0;
-}
-
-.sourceManifestTitle,
-.retrievalResultHeader {
-  display: flex;
-  align-items: center;
-  min-width: 0;
-  gap: var(--space-1);
-  color: var(--ink);
-  font-size: var(--text-xs);
-  font-weight: var(--weight-semibold);
-}
-
-.sourceManifestTitle svg,
-.retrievalResultHeader svg {
-  flex: 0 0 auto;
-  color: var(--ink-faint);
-}
-
-.sourceManifestRows {
-  display: grid;
-  gap: var(--space-2);
-  margin-top: var(--space-3);
-}
-
-.sourceManifestRow {
-  display: grid;
-  gap: var(--space-2);
-  padding-top: var(--space-2);
-  border-top: 1px solid var(--edge-subtle);
-}
-
-.sourceManifestRowHeader {
-  display: flex;
-  justify-content: space-between;
-  gap: var(--space-2);
-  color: var(--ink-muted);
-  font-size: var(--text-xs);
-  font-weight: var(--weight-semibold);
-}
-
-.sourceManifestFilters {
-  max-height: 160px;
-  margin: 0;
-  padding: var(--space-2);
-  overflow: auto;
-  border: 1px solid var(--edge-subtle);
-  border-radius: var(--radius-sm);
-  background: var(--surface-2);
-  color: var(--ink-muted);
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  line-height: var(--leading-normal);
-  white-space: pre-wrap;
-}
-
-.retrievalResult {
-  display: grid;
-  gap: var(--space-2);
-  padding: var(--space-3);
-  border: 1px solid var(--edge-subtle);
-  border-radius: var(--radius-md);
-  background: var(--surface-2);
-}
-
-.retrievalResultSelected {
-  border-color: color-mix(in srgb, var(--success) 26%, var(--edge-subtle));
-}
-
-.retrievalResultHeader span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.retrievalResultHeader strong {
-  margin-left: auto;
-  color: var(--success);
-  font-size: var(--text-xs);
-}
-
-.evidenceDisclosure {
-  margin-top: var(--space-3);
-}
-
-.evidenceDisclosureButton {
-  width: 100%;
-  justify-content: space-between;
-  padding-inline: var(--space-3);
-  color: var(--ink-muted);
-  border: 1px solid var(--edge-subtle);
-  background: var(--surface-1);
-}
-
-.evidenceDisclosureSummary {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  align-items: center;
-  min-width: 0;
-  text-align: left;
-}
-
-.evidenceDisclosureSummary span:first-child {
-  color: var(--ink);
-  font-weight: var(--weight-semibold);
-}
-
-.disclosureChevronOpen {
-  transform: rotate(180deg);
-}
-
-.claimEvidencePanel {
-  display: grid;
-  gap: var(--space-3);
-  margin-top: var(--space-3);
-}
-
-.evidenceSummary,
-.claimEvidenceCard {
-  padding: var(--space-3);
-  border: 1px solid var(--edge);
-  border-radius: var(--radius-md);
-  background: var(--surface-2);
-}
-
-.evidenceSummaryTitle {
-  margin-bottom: var(--space-2);
-  font-size: var(--text-xs);
-  font-weight: var(--weight-semibold);
-  color: var(--ink);
-}
-
-.claimHeader {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-2);
-}
-
-.claimNumber {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
-  width: 22px;
-  height: 22px;
-  border-radius: var(--radius-full);
-  background: var(--surface-2);
-  color: var(--ink-muted);
-  font-size: var(--text-xs);
-  font-weight: var(--weight-semibold);
-}
-
-.claimStatus {
-  font-size: var(--text-xs);
-  font-weight: var(--weight-semibold);
-  color: var(--ink);
-}
-
-.claimText {
-  margin: var(--space-2) 0 0;
-  padding-left: var(--space-3);
-  border-left: 3px solid var(--edge);
-  color: var(--ink-muted);
-}
-
-.evidenceRoleGroup {
-  margin-top: var(--space-3);
-}
-
-.evidenceRoleLabel {
-  margin-bottom: var(--space-2);
-  font-size: var(--text-xs);
-  font-weight: var(--weight-semibold);
-  color: var(--ink-faint);
-}
-
-.evidenceItem {
-  display: grid;
-  gap: var(--space-2);
-  padding: var(--space-3);
-  border: 1px solid var(--edge-subtle);
-  border-radius: var(--radius-md);
-  background: var(--surface-2);
-}
-
-.evidenceItem + .evidenceItem {
+.trustInspector {
   margin-top: var(--space-2);
-}
-
-.webEvidence {
-  border-color: color-mix(in srgb, var(--accent) 28%, var(--edge-subtle));
-  background: color-mix(in srgb, var(--accent) 7%, var(--surface-2));
-}
-
-.appEvidence {
-  border-color: color-mix(in srgb, var(--success) 24%, var(--edge-subtle));
-}
-
-.evidenceSource {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  min-width: 0;
-  font-size: var(--text-xs);
-  font-weight: var(--weight-semibold);
-}
-
-.evidenceSource svg {
-  flex: 0 0 auto;
-  color: var(--ink-faint);
-}
-
-.webEvidence .evidenceSource svg {
-  color: var(--accent);
-}
-
-.evidenceSource a {
-  display: inline-flex;
-  align-items: center;
-  min-width: 0;
-  gap: var(--space-1);
-  color: var(--ink);
-  text-decoration: none;
-}
-
-.evidenceSource a:hover,
-.evidenceSource a:focus-visible {
-  color: var(--accent);
-}
-
-.evidenceSourceButton {
-  min-width: 0;
-  padding: 0;
-  font-weight: var(--weight-semibold);
-  text-align: left;
-}
-
-.evidenceSourceButton:hover,
-.evidenceSourceButton:focus-visible {
-  color: var(--accent);
-}
-
-.evidenceSourceUnavailable {
-  color: var(--ink-faint);
-  cursor: not-allowed;
-}
-
-.sourceUnavailableLabel {
-  color: var(--ink-faint);
-  font-size: var(--text-xs);
-  font-weight: var(--weight-medium);
-}
-
-.evidenceSource span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.evidenceSnippet {
-  margin: 0;
-  padding-left: var(--space-3);
-  border-left: 3px solid var(--edge);
-  color: var(--ink);
-}
-
-.evidenceLocation {
-  color: var(--ink-faint);
-  font-size: var(--text-xs);
-}
-
-.evidenceFacts,
-.evidenceDiagnostics {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-1);
-}
-
-.evidenceFacts span {
-  padding: 1px var(--space-2);
-  border: 1px solid var(--edge-subtle);
-  border-radius: var(--radius-full);
-  background: var(--surface-1);
   color: var(--ink-muted);
   font-size: var(--text-xs);
-  line-height: var(--leading-normal);
 }
 
-.evidenceFacts span.auditFactOk {
-  border-color: color-mix(in srgb, var(--success) 34%, var(--edge-subtle));
-  color: var(--success);
+.trustInspector summary {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  cursor: pointer;
 }
 
-.evidenceFacts span.auditFactIssue {
-  border-color: color-mix(in srgb, var(--warning) 42%, var(--edge-subtle));
+.trustInspector summary strong {
   color: var(--warning);
 }
 
-.evidenceFacts a {
-  padding: 1px var(--space-2);
-  border: 1px solid var(--edge-subtle);
-  border-radius: var(--radius-full);
-  background: var(--surface-1);
-  color: var(--ink-muted);
-  font-size: var(--text-xs);
-  line-height: var(--leading-normal);
-  text-decoration: none;
-}
-
-.evidenceFacts a:hover,
-.evidenceFacts a:focus-visible {
-  color: var(--accent);
-}
-
-.retrievalAction {
-  min-height: 0;
-  padding: 1px var(--space-2);
-  color: var(--ink-muted);
-  font-size: var(--text-xs);
-}
-
-.diagnosticsDisclosure {
+.trustInspectorPanel {
+  display: grid;
+  gap: var(--space-3);
   margin-top: var(--space-2);
-}
-
-.diagnosticsButton {
-  min-height: 0;
-  padding: 0;
-  color: var(--ink-faint);
-  font-size: var(--text-xs);
-}
-
-.evidenceDiagnostics {
-  margin-top: var(--space-1);
-}
-
-.evidenceDiagnostics span {
-  padding: 1px var(--space-2);
+  padding: var(--space-3);
   border: 1px solid var(--edge-subtle);
-  border-radius: var(--radius-full);
-  background: var(--surface-2);
-  color: var(--ink-faint);
-  font-family: var(--font-mono);
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+}
+
+.trustInspectorPanel section {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.trustInspectorPanel h4,
+.trustInspectorPanel p,
+.trustInspectorPanel ol,
+.trustInspectorPanel dl {
+  margin: 0;
+}
+
+.trustInspectorPanel h4 {
+  color: var(--ink);
   font-size: var(--text-xs);
-  line-height: var(--leading-normal);
+}
+
+.trustToolList,
+.trustNestedList {
+  display: grid;
+  gap: var(--space-1);
+  padding-left: 0;
+  list-style: none;
+}
+
+.trustToolList > li,
+.trustNestedList > li {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding-top: var(--space-1);
+  border-top: 1px solid var(--edge-subtle);
+}
+
+.trustToolList > li:first-child,
+.trustNestedList > li:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.trustNestedList {
+  margin-top: var(--space-1);
+  padding-left: var(--space-3);
+}
+
+.trustMeta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: var(--space-1) var(--space-3);
+}
+
+.trustMeta div {
+  min-width: 0;
+}
+
+.trustMeta dt {
+  color: var(--ink-faint);
+}
+
+.trustMeta dd {
+  margin: 0;
+  color: var(--ink);
+}
+
+.trustLine {
+  display: flex;
+  gap: var(--space-1);
+  align-items: center;
+  min-width: 0;
+}
+
+.trustLine span:first-of-type {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.trustInspectorPanel svg {
+  flex: 0 0 auto;
+}
+
+.trustInspectorPanel button {
+  min-width: 0;
+  padding: 0;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.trustFlags,
+.trustCode {
+  color: var(--ink-faint);
+}
+
+.trustFlags {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+.trustCode {
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+}
+
+.trustSnippet {
+  color: var(--ink-muted);
+  overflow-wrap: anywhere;
 }
 
 .messageFeedback {
@@ -580,10 +331,4 @@
     max-width: min(88%, 46ch);
   }
 
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .timestamp {
-    transition: none;
-  }
 }

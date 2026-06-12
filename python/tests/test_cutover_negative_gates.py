@@ -664,6 +664,24 @@ def test_message_retrievals_insert_only_in_retrieval_citation():
     assert not hits, f"message_retrievals INSERT outside retrieval_citation.py:\n{_fmt(hits)}"
 
 
+def test_standalone_message_ledger_inspection_routes_are_deleted():
+    banned = (
+        "retrieval-candidate-ledgers",
+        "rerank-ledgers",
+        "verifier-runs",
+        "api/routes/message_retrievals.py",
+        "services/message_retrievals.py",
+    )
+    hits = _filtered("|".join(re.escape(item) for item in banned), _PY_ROOT, _WEB_ROOT)
+    allowed_docs = [
+        hit
+        for hit in hits
+        if hit.path.endswith("docs/cutovers/assistant-message-trust-trail-hard-cutover.md")
+    ]
+    live_hits = [hit for hit in hits if hit not in allowed_docs]
+    assert not live_hits, f"standalone ledger inspection route survived:\n{_fmt(live_hits)}"
+
+
 # =============================================================================
 # Dead-symbol sweep (generation-run harness consolidations)
 # =============================================================================

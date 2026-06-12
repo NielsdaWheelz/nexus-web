@@ -65,7 +65,24 @@ function message(
         : [],
     },
     parent_message_id: parentMessageId,
-    tool_calls: [],
+    trust_trail:
+      role === "assistant"
+        ? {
+            schema_version: "assistant_trust_trail.v1",
+            assistant_message_id: id,
+            conversation_id: "conversation-1",
+            chat_run_id: null,
+            status,
+            run: null,
+            prompt: null,
+            tool_calls: [],
+            citations: [],
+            references_added: [],
+            integrity_notices: [],
+            created_at: timestamp,
+            updated_at: timestamp,
+          }
+        : null,
     status,
     error_code: null,
     can_retry_response: false,
@@ -330,6 +347,7 @@ describe("useConversation", () => {
       summary: "Relevant context",
       missing: false,
       created_at: timestamp,
+      citation_edge_id: "edge-1",
     };
 
     renderHook(() =>

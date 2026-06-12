@@ -135,6 +135,7 @@ export function useChatRunTail({
       let replayDeltaCharsToSkip = 0;
       let doneNotified = false;
       let finished = false;
+      let streamDoneSeen = false;
       const token = (runTokensRef.current.get(runId) ?? 0) + 1;
 
       const runIsVisible = (
@@ -314,9 +315,10 @@ export function useChatRunTail({
                   handleCitationIndex(currentAssistantId, event.data);
                   break;
                 case "reference_added":
-                  handleReferenceAdded(event.data);
+                  handleReferenceAdded(currentAssistantId, event.data);
                   break;
                 case "done":
+                  streamDoneSeen = true;
                   if (currentRunIsVisible()) {
                     handleDone(
                       currentAssistantId,
@@ -362,11 +364,18 @@ export function useChatRunTail({
                 finishRun();
               })();
             },
-            onComplete: () => {
-              // Fires on a terminal event (the `done` handler already notified) or
-              // after `onReconnect` returned "stop" (reconcile finished the run).
+            onComplete: (terminalEventSeen) => {
+              // Terminal events still reconcile so the backend-built trust trail wins.
               if (runTokensRef.current.get(runId) !== token) return;
-              finishRun();
+              if (!terminalEventSeen || !streamDoneSeen) {
+                finishRun();
+                return;
+              }
+              void (async () => {
+                await reconcile();
+                if (runTokensRef.current.get(runId) !== token || finished) return;
+                finishRun();
+              })();
             },
             // The client owns Last-Event-ID resumption across its own reconnects;
             // a fresh tail always starts from the stream head.

@@ -204,7 +204,7 @@ The conversation owner can list and remove context edges. `app_search` may searc
 
 ### 5.2 Chat retrieval and citations
 
-Retrieval stays chat telemetry: `app_search`, `web_search`, attached resources, and `read_resource` evidence keep writing `message_retrievals` rows through `insert_retrieval_row`, and message replay keeps building retrieval disclosures from them, exactly as today.
+Retrieval stays chat telemetry: `app_search`, `web_search`, attached resources, and `read_resource` evidence keep writing `message_retrievals` rows through `insert_retrieval_row`. Assistant replay now surfaces those rows through the assistant-message trust trail, not `message_document` retrieval blocks.
 
 What moves is **citation numbering**. When a result is cited, chat writes a citation edge:
 

@@ -14,7 +14,7 @@ from nexus.schemas.conversation import chat_run_event_payload_json
 from nexus.services import run_kit
 from nexus.services.api_key_resolver import ResolvedKey, update_user_key_status
 from nexus.services.chat_run_event_store import TERMINAL_RUN_STATUSES
-from nexus.services.chat_run_message_blocks import message_document_with_run_components
+from nexus.services.chat_run_message_blocks import message_document
 
 MAX_ASSISTANT_CONTENT_LENGTH = 50000
 TRUNCATION_NOTICE = "\n\n[Response truncated due to length]"
@@ -124,12 +124,7 @@ def finalize_run(
         assistant_message.status = assistant_status
         assistant_message.error_code = error_code
         assistant_message.updated_at = func.now()
-        assistant_message.message_document = message_document_with_run_components(
-            db,
-            run_id=run.id,
-            role="assistant",
-            content=content,
-        )
+        assistant_message.message_document = message_document("assistant", content)
 
     if resolved_key is not None and resolved_key.mode == "byok":
         if assistant_status == "complete":

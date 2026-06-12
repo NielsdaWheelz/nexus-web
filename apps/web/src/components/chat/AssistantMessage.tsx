@@ -15,6 +15,7 @@ import { conversationMessageText } from "@/lib/conversations/types";
 import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
 import AssistantSelectionPopover from "./AssistantSelectionPopover";
 import AssistantEvidenceDisclosure from "./AssistantEvidenceDisclosure";
+import AssistantTrustInspector from "./AssistantTrustInspector";
 import ForkStrip from "./ForkStrip";
 import StreamingGutterCue from "./StreamingGutterCue";
 import { useAssistantSelectionBranch } from "./useAssistantSelectionBranch";
@@ -40,7 +41,7 @@ export default function AssistantMessage({
   timestampLabel: string;
 }) {
   const assistantText = conversationMessageText(message);
-  const toolCalls = message.tool_calls ?? [];
+  const toolCalls = message.trust_trail?.tool_calls ?? [];
   const canBranchFromAssistant =
     message.status === "complete" && Boolean(onReplyToAssistant);
   const {
@@ -102,6 +103,12 @@ export default function AssistantMessage({
           onCitationActivate={onCitationActivate}
         />
       ) : null}
+      {message.trust_trail ? (
+        <AssistantTrustInspector
+          trustTrail={message.trust_trail}
+          onCitationActivate={onCitationActivate}
+        />
+      ) : null}
       {selection ? (
         <AssistantSelectionPopover
           selection={selection}
@@ -141,7 +148,16 @@ function ToolActivity({ toolCalls }: { toolCalls: MessageToolCall[] }) {
     ["running", "pending"].includes(toolCall.status),
   );
   if (!active) return null;
-  const label = active.tool_name === "web_search" ? "Searching web" : "Searching library";
+  const label =
+    active.tool_name === "web_search"
+      ? "Searching web"
+      : active.tool_name === "app_search"
+        ? "Searching library"
+        : active.tool_name === "read_resource"
+          ? "Reading source"
+          : active.tool_name === "inspect_resource"
+            ? "Inspecting source"
+            : `Running ${active.tool_name}`;
 
   return (
     <div className={styles.toolActivity} role="status" aria-live="polite">
