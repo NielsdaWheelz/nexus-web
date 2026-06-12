@@ -143,6 +143,11 @@ class WebSearchRun:
             "status": "running",
             "scope": "public_web",
             "types": [self.result_type],
+            "filters": {
+                "freshness_days": self.requested_freshness_days,
+                "allowed_domains": self.requested_domains.get("allowed", []),
+                "blocked_domains": self.requested_domains.get("blocked", []),
+            },
         }
 
     def retrieval_result_event(self) -> dict[str, Any]:

@@ -152,6 +152,12 @@ decision is still written there, and a cited row points back at its citation edg
 through `cited_edge_id`, set in the same transaction the edge is minted. The
 ordinal lives on the edge, never on the telemetry row.
 
+Assistant message reads also carry a backend-built `trust_trail`. It is the
+durable inspector read model over `chat_runs`, prompt assemblies, tool calls,
+retrieval rows, candidate/rerank ledgers, citation edges, and reference-added
+events. `message_document` is text-only; tool and retrieval disclosures render
+from `message.trust_trail`.
+
 ## Backend Validation And Prompt Rendering
 
 FastAPI schemas accept `assistant_selection` branch anchors and `reader_selection` inputs as

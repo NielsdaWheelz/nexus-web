@@ -29,7 +29,6 @@ from nexus.api.routes.me import router as me_router
 from nexus.api.routes.media import router as media_router
 from nexus.api.routes.media_assets import router as media_assets_router
 from nexus.api.routes.media_ingest import router as media_ingest_router
-from nexus.api.routes.message_retrievals import router as message_retrievals_router
 from nexus.api.routes.messages import router as messages_router
 from nexus.api.routes.models import router as models_router
 from nexus.api.routes.notes import router as notes_router
@@ -88,7 +87,6 @@ def create_api_router() -> APIRouter:
     api_router.include_router(conversation_branches_router)
     api_router.include_router(conversation_shares_router)
     api_router.include_router(messages_router)
-    api_router.include_router(message_retrievals_router)
     api_router.include_router(contributors_router)
     api_router.include_router(chat_runs_router)
     api_router.include_router(oracle_router)

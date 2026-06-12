@@ -31,7 +31,14 @@ function messageDocument(text: string, role: ConversationMessage["role"]) {
 }
 
 function userMessage(id: string, seq: number, text: string): ConversationMessage {
-  return { ...baseMessage, id, seq, role: "user", message_document: messageDocument(text, "user") };
+  return {
+    ...baseMessage,
+    id,
+    seq,
+    role: "user",
+    message_document: messageDocument(text, "user"),
+    trust_trail: null,
+  };
 }
 
 function assistantMessage(
@@ -47,6 +54,21 @@ function assistantMessage(
     role: "assistant",
     parent_message_id: parentMessageId,
     message_document: messageDocument(text, "assistant"),
+    trust_trail: {
+      schema_version: "assistant_trust_trail.v1",
+      assistant_message_id: id,
+      conversation_id: "conversation-1",
+      chat_run_id: null,
+      status: "complete",
+      run: null,
+      prompt: null,
+      tool_calls: [],
+      citations: [],
+      references_added: [],
+      integrity_notices: [],
+      created_at: baseMessage.created_at,
+      updated_at: baseMessage.updated_at,
+    },
   };
 }
 

@@ -43,6 +43,24 @@ function message(
         : [],
     },
     parent_message_id: parentMessageId,
+    trust_trail:
+      role === "assistant"
+        ? {
+            schema_version: "assistant_trust_trail.v1",
+            assistant_message_id: id,
+            conversation_id: "conversation-1",
+            chat_run_id: null,
+            status: "complete",
+            run: null,
+            prompt: null,
+            tool_calls: [],
+            citations: [],
+            references_added: [],
+            integrity_notices: [],
+            created_at: base.created_at,
+            updated_at: base.updated_at,
+          }
+        : null,
   };
 }
 

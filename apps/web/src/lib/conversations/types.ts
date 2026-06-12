@@ -79,6 +79,14 @@ export interface MessageRetrieval {
   snippet_suffix?: string | null;
   retrieval_status?: MessageEvidenceRetrievalStatus;
   included_in_prompt?: boolean;
+  cited_edge_id?: string | null;
+  citation_ordinal?: number | null;
+  citation_role?: "supports" | "contradicts" | "context" | null;
+  included_in_prompt_source?:
+    | "retrieval"
+    | "candidate_ledger"
+    | "prompt_assembly"
+    | "none";
   created_at?: string;
 }
 
@@ -100,14 +108,14 @@ export interface MessageToolCall {
   conversation_id?: string;
   user_message_id?: string;
   assistant_message_id?: string;
-  tool_name: "app_search" | "web_search" | string;
+  tool_name: string;
   tool_call_index: number;
   query_hash?: string | null;
   scope?: string;
   requested_types?: string[];
-  result_refs?: MessageRetrievalResultRef[];
-  selected_context_refs?: RetrievalContextRef[];
-  provider_request_ids?: string[];
+  result_refs: Array<Record<string, unknown>>;
+  selected_context_refs: Array<Record<string, unknown>>;
+  provider_request_ids: string[];
   latency_ms?: number | null;
   result_count?: number;
   selected_count?: number;
@@ -115,7 +123,9 @@ export interface MessageToolCall {
   error_code?: string | null;
   created_at?: string;
   updated_at?: string;
-  retrievals?: MessageRetrieval[];
+  retrievals: MessageRetrieval[];
+  candidate_ledgers: MessageRetrievalCandidateLedger[];
+  rerank_ledgers: MessageRerankLedger[];
 }
 
 export interface MessageRetrievalCandidateLedger {
@@ -154,16 +164,73 @@ export interface MessageRerankLedger {
 
 export interface MessageDocument {
   type: "message_document";
-  blocks: Array<
-    | {
-        type: "text";
-        format: "plain" | "markdown";
-        text: string;
-      }
-    | ({
-        type: "retrieval_result";
-      } & MessageRetrieval)
-  >;
+  blocks: Array<{
+    type: "text";
+    format: "plain" | "markdown";
+    text: string;
+  }>;
+}
+
+export interface AssistantTrustTrail {
+  schema_version: "assistant_trust_trail.v1";
+  assistant_message_id: string;
+  conversation_id: string;
+  chat_run_id: string | null;
+  status: "pending" | "running" | "complete" | "error" | "cancelled";
+  run: {
+    run_id: string;
+    model_id: string;
+    provider: string;
+    model_name: string;
+    reasoning_mode: string | null;
+    key_mode: string | null;
+    status: "pending" | "running" | "complete" | "error" | "cancelled";
+    usage: Record<string, unknown> | null;
+    error_code: string | null;
+    final_chars: number | null;
+    started_at: string | null;
+    completed_at: string | null;
+  } | null;
+  prompt: {
+    id: string;
+    cacheable_input_tokens_estimate: number;
+    prompt_block_manifest: Record<string, unknown>;
+    max_context_tokens: number;
+    reserved_output_tokens: number;
+    reserved_reasoning_tokens: number;
+    input_budget_tokens: number;
+    estimated_input_tokens: number;
+    included_message_ids: string[];
+    included_retrieval_ids: string[];
+    included_context_refs: Array<Record<string, unknown>>;
+    dropped_items: Array<Record<string, unknown>>;
+    budget_breakdown: Record<string, unknown>;
+    created_at: string;
+  } | null;
+  tool_calls: MessageToolCall[];
+  citations: Array<{
+    citation_edge_id: string;
+    ordinal: number;
+    role: "supports" | "contradicts" | "context";
+    target_ref: CitationOut["target_ref"];
+    retrieval_id: string | null;
+    tool_call_id: string | null;
+    citation: CitationOut;
+  }>;
+  references_added: Array<{
+    chat_run_event_seq: number;
+    id: string;
+    conversation_id: string;
+    resource_ref: string;
+    label: string;
+    summary: string;
+    missing: boolean;
+    created_at: string;
+    citation_edge_id: string | null;
+  }>;
+  integrity_notices: Array<{ code: string; message: string }>;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface ConversationMessage {
@@ -175,8 +242,7 @@ export interface ConversationMessage {
   branch_root_message_id?: string | null;
   branch_anchor_kind?: BranchAnchorKind;
   branch_anchor?: BranchAnchor | null;
-  tool_calls?: MessageToolCall[];
-  retrievals?: MessageRetrieval[];
+  trust_trail: AssistantTrustTrail | null;
   /**
    * Citation chips (the `[N]` markers in the assistant prose), built backend-side
    * from citation edges. Present on the message GET and refreshed live by the

@@ -15,8 +15,7 @@ from nexus.services.conversations import (
     message_to_out,
     retryable_assistant_message_ids,
 )
-from nexus.services.resource_graph.citations import build_citation_outs
-from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.message_trust_trails import build_assistant_trust_trail
 
 
 def build_chat_run_response(db: Session, viewer_id: UUID, run: ChatRun) -> ChatRunResponse:
@@ -36,19 +35,16 @@ def build_chat_run_response(db: Session, viewer_id: UUID, run: ChatRun) -> ChatR
         user_message,
         can_retry_response=user_message.id in retryable_message_ids,
     )
-    # Rehydrate the assistant message's citation chips from its citation edges
-    # (mirrors list_messages and conversation_branches._message_outs_by_id,
-    # §5.2). build_citation_outs is the sole CitationOut producer. Without this
-    # the FE reconcile() that replaces the message on every stream completion
-    # would clobber the SSE-folded chips until a full reload.
+    trust_trail = build_assistant_trust_trail(
+        db,
+        viewer_id=viewer_id,
+        assistant_message_id=assistant_message.id,
+    )
     assistant_message_out = message_to_out(
         assistant_message,
         can_retry_response=assistant_message.id in retryable_message_ids,
-        citations=build_citation_outs(
-            db,
-            viewer_id=viewer_id,
-            source=ResourceRef(scheme="message", id=assistant_message.id),
-        ),
+        trust_trail=trust_trail,
+        citations=[trust_citation.citation for trust_citation in trust_trail.citations],
     )
     return ChatRunResponse(
         run=ChatRunOut.model_validate(run),

@@ -462,6 +462,7 @@ class TestChatRunEventStream:
         user_id = uuid4()
         run_id, conversation_id = _insert_terminal_run(direct_db, owner_user_id=user_id)
         context_edge_id = uuid4()
+        citation_edge_id = uuid4()
         resource_ref = f"content_chunk:{uuid4()}"
         created_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
         # The ContextRefOut shape (resource provenance graph §5.1): id is the
@@ -474,6 +475,7 @@ class TestChatRunEventStream:
             "summary": "A cited chunk.",
             "missing": False,
             "created_at": created_at,
+            "citation_edge_id": str(citation_edge_id),
         }
         with direct_db.session() as session:
             session.execute(

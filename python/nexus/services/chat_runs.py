@@ -26,7 +26,8 @@ from provider_runtime.types import (
     ToolResult,
     ToolSpec,
 )
-from sqlalchemy import select, text
+from sqlalchemy import bindparam, select, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 from web_search_tool.types import WebSearchProvider
 
@@ -625,6 +626,141 @@ def _persist_read_evidence_citation(
     return start_ordinal
 
 
+def _persist_tool_call_start(
+    db: Session,
+    *,
+    run: ChatRun,
+    tool_call_index: int,
+    tool_name: str,
+    scope: str,
+    requested_types: list[str],
+) -> UUID:
+    params = {
+        "conversation_id": run.conversation_id,
+        "user_message_id": run.user_message_id,
+        "assistant_message_id": run.assistant_message_id,
+        "tool_name": tool_name,
+        "tool_call_index": tool_call_index,
+        "scope": scope,
+        "requested_types": requested_types,
+    }
+    existing = db.execute(
+        text(
+            """
+            SELECT id
+            FROM message_tool_calls
+            WHERE assistant_message_id = :assistant_message_id
+              AND tool_call_index = :tool_call_index
+            FOR UPDATE
+            """
+        ),
+        params,
+    ).first()
+    if existing is None:
+        return db.execute(
+            text(
+                """
+                INSERT INTO message_tool_calls (
+                    conversation_id,
+                    user_message_id,
+                    assistant_message_id,
+                    tool_name,
+                    tool_call_index,
+                    query_hash,
+                    scope,
+                    requested_types,
+                    result_refs,
+                    selected_context_refs,
+                    provider_request_ids,
+                    latency_ms,
+                    status,
+                    error_code
+                )
+                VALUES (
+                    :conversation_id,
+                    :user_message_id,
+                    :assistant_message_id,
+                    :tool_name,
+                    :tool_call_index,
+                    NULL,
+                    :scope,
+                    :requested_types,
+                    '[]'::jsonb,
+                    '[]'::jsonb,
+                    '[]'::jsonb,
+                    NULL,
+                    'running',
+                    NULL
+                )
+                RETURNING id
+                """
+            ).bindparams(bindparam("requested_types", type_=JSONB)),
+            params,
+        ).scalar_one()
+
+    tool_call_id = existing[0]
+    db.execute(
+        text(
+            """
+            UPDATE message_tool_calls
+            SET tool_name = :tool_name,
+                query_hash = NULL,
+                scope = :scope,
+                requested_types = :requested_types,
+                result_refs = '[]'::jsonb,
+                selected_context_refs = '[]'::jsonb,
+                provider_request_ids = '[]'::jsonb,
+                latency_ms = NULL,
+                status = 'running',
+                error_code = NULL,
+                updated_at = now()
+            WHERE id = :tool_call_id
+            """
+        ).bindparams(bindparam("requested_types", type_=JSONB)),
+        {**params, "tool_call_id": tool_call_id},
+    )
+    prune_tool_call_retrievals(db, tool_call_id=tool_call_id)
+    return tool_call_id
+
+
+def _persist_tool_call_error(db: Session, *, tool_call_id: UUID, error_code: str) -> None:
+    db.execute(
+        text(
+            """
+            UPDATE message_tool_calls
+            SET status = 'error',
+                error_code = :error_code,
+                updated_at = now()
+            WHERE id = :tool_call_id
+            """
+        ),
+        {"tool_call_id": tool_call_id, "error_code": error_code},
+    )
+
+
+def _tool_start_event(
+    *,
+    run: ChatRun,
+    tool_call_id: UUID,
+    tool_call_index: int,
+    tool_name: str,
+    scope: str,
+    types: list[str],
+    filters: dict[str, object],
+) -> dict[str, object]:
+    return {
+        "tool_call_id": str(tool_call_id),
+        "assistant_message_id": str(run.assistant_message_id),
+        "tool_name": tool_name,
+        "tool_call_index": tool_call_index,
+        "status": "running",
+        "scope": scope,
+        "types": types,
+        "filters": filters,
+        "error_code": None,
+    }
+
+
 def _persist_tool_call_trace(
     db: Session,
     *,
@@ -720,6 +856,27 @@ def _persist_tool_call_trace(
     return tool_call_id
 
 
+def _tool_trace_event(
+    *,
+    run: ChatRun,
+    tool_call_id: UUID,
+    tool_call_index: int,
+    tool_name: str,
+    result: Any,
+) -> dict[str, object]:
+    return {
+        "tool_call_id": str(tool_call_id),
+        "assistant_message_id": str(run.assistant_message_id),
+        "tool_name": tool_name,
+        "tool_call_index": tool_call_index,
+        "status": "error" if result.is_error else "complete",
+        "scope": "conversation_context",
+        "types": [],
+        "filters": {"uri": result.uri},
+        "error_code": result.error_code,
+    }
+
+
 def _emit_citation_index(db: Session, run: ChatRun) -> None:
     """Emit the message's citation set (from edges) + graduate cited local targets.
 
@@ -805,6 +962,7 @@ def _emit_citation_index(db: Session, run: ChatRun) -> None:
                 "summary": context_ref.resolved.summary,
                 "missing": context_ref.resolved.missing,
                 "created_at": context_ref.created_at,
+                "citation_edge_id": str(edge.edge_id),
             },
         )
 
@@ -1454,6 +1612,29 @@ async def _execute_chat_run(
                             args = {}
                             scopes = []
                             forced_error = "app_search arguments must be an object"
+                        app_tool_call_id = _persist_tool_call_start(
+                            db,
+                            run=run,
+                            tool_call_index=tool_call_index_next,
+                            tool_name=APP_SEARCH_TOOL_NAME,
+                            scope="all",
+                            requested_types=["content_chunk", "note_block"],
+                        )
+                        append_run_event(
+                            db,
+                            run,
+                            "tool_call",
+                            _tool_start_event(
+                                run=run,
+                                tool_call_id=app_tool_call_id,
+                                tool_call_index=tool_call_index_next,
+                                tool_name=APP_SEARCH_TOOL_NAME,
+                                scope="all",
+                                types=["content_chunk", "note_block"],
+                                filters={},
+                            ),
+                        )
+                        db.commit()
                         run_result = execute_app_search(
                             db,
                             viewer_id=run.owner_user_id,
@@ -1467,6 +1648,7 @@ async def _execute_chat_run(
                             tool_call_index=tool_call_index_next,
                             forced_error=forced_error,
                         )
+                        assert run_result.tool_call_id is not None
                         start_n = citation_n_next
                         citation_n_next = _record_tool_citations(
                             db,
@@ -1478,11 +1660,16 @@ async def _execute_chat_run(
                             db,
                             run,
                             "tool_call",
-                            {**run_result.tool_call_event(), "status": run_result.status},
+                            {
+                                **run_result.tool_call_event(),
+                                "status": run_result.status,
+                                "error_code": run_result.error_code,
+                            },
                         )
                         append_run_event(
                             db, run, "retrieval_result", run_result.retrieval_result_event()
                         )
+                        db.commit()
                         tool_results.append(
                             ToolResult(
                                 call_id=tc.id,
@@ -1491,7 +1678,63 @@ async def _execute_chat_run(
                             )
                         )
                     elif tc.name == WEB_SEARCH_TOOL_NAME:
+                        args = tc.arguments or {}
+                        fresh_arg = args.get("freshness_days")
+                        freshness_days = fresh_arg if isinstance(fresh_arg, int) else None
+                        web_filters: dict[str, object] = {
+                            "freshness_days": freshness_days,
+                            "allowed_domains": [],
+                            "blocked_domains": [],
+                        }
+                        web_tool_call_id = _persist_tool_call_start(
+                            db,
+                            run=run,
+                            tool_call_index=tool_call_index_next,
+                            tool_name=WEB_SEARCH_TOOL_NAME,
+                            scope="public_web",
+                            requested_types=["mixed"],
+                        )
+                        append_run_event(
+                            db,
+                            run,
+                            "tool_call",
+                            _tool_start_event(
+                                run=run,
+                                tool_call_id=web_tool_call_id,
+                                tool_call_index=tool_call_index_next,
+                                tool_name=WEB_SEARCH_TOOL_NAME,
+                                scope="public_web",
+                                types=["mixed"],
+                                filters=web_filters,
+                            ),
+                        )
+                        db.commit()
                         if web_search_provider is None:
+                            error_code = "web_search_not_configured"
+                            _persist_tool_call_error(
+                                db,
+                                tool_call_id=web_tool_call_id,
+                                error_code=error_code,
+                            )
+                            append_run_event(
+                                db,
+                                run,
+                                "tool_call",
+                                {
+                                    **_tool_start_event(
+                                        run=run,
+                                        tool_call_id=web_tool_call_id,
+                                        tool_call_index=tool_call_index_next,
+                                        tool_name=WEB_SEARCH_TOOL_NAME,
+                                        scope="public_web",
+                                        types=["mixed"],
+                                        filters=web_filters,
+                                    ),
+                                    "status": "error",
+                                    "error_code": error_code,
+                                },
+                            )
+                            db.commit()
                             tool_results.append(
                                 ToolResult(
                                     call_id=tc.id,
@@ -1500,8 +1743,6 @@ async def _execute_chat_run(
                                 )
                             )
                             continue
-                        args = tc.arguments or {}
-                        fresh_arg = args.get("freshness_days")
                         run_result = await execute_web_search(
                             db,
                             provider=web_search_provider,
@@ -1509,9 +1750,10 @@ async def _execute_chat_run(
                             user_message_id=run.user_message_id,
                             assistant_message_id=run.assistant_message_id,
                             query=str(args.get("query") or ""),
-                            freshness_days=fresh_arg if isinstance(fresh_arg, int) else None,
+                            freshness_days=freshness_days,
                             tool_call_index=tool_call_index_next,
                         )
+                        assert run_result.tool_call_id is not None
                         start_n = citation_n_next
                         citation_n_next = _record_tool_citations(
                             db,
@@ -1523,11 +1765,16 @@ async def _execute_chat_run(
                             db,
                             run,
                             "tool_call",
-                            {**run_result.tool_call_event(), "status": run_result.status},
+                            {
+                                **run_result.tool_call_event(),
+                                "status": run_result.status,
+                                "error_code": run_result.error_code,
+                            },
                         )
                         append_run_event(
                             db, run, "retrieval_result", run_result.retrieval_result_event()
                         )
+                        db.commit()
                         tool_results.append(
                             ToolResult(
                                 call_id=tc.id,
@@ -1537,11 +1784,35 @@ async def _execute_chat_run(
                         )
                     elif tc.name == READ_RESOURCE_TOOL_NAME:
                         args = tc.arguments or {}
+                        uri = str(args.get("uri") or "")
+                        read_tool_call_id = _persist_tool_call_start(
+                            db,
+                            run=run,
+                            tool_call_index=tool_call_index_next,
+                            tool_name=READ_RESOURCE_TOOL_NAME,
+                            scope="conversation_context",
+                            requested_types=[],
+                        )
+                        append_run_event(
+                            db,
+                            run,
+                            "tool_call",
+                            _tool_start_event(
+                                run=run,
+                                tool_call_id=read_tool_call_id,
+                                tool_call_index=tool_call_index_next,
+                                tool_name=READ_RESOURCE_TOOL_NAME,
+                                scope="conversation_context",
+                                types=[],
+                                filters={"uri": uri},
+                            ),
+                        )
+                        db.commit()
                         read_result = execute_read_resource(
                             db,
                             viewer_id=run.owner_user_id,
                             conversation_id=run.conversation_id,
-                            uri=str(args.get("uri") or ""),
+                            uri=uri,
                         )
                         read_tool_call_id = _persist_tool_call_trace(
                             db,
@@ -1559,6 +1830,18 @@ async def _execute_chat_run(
                         )
                         if read_n is not None:
                             citation_n_next += 1
+                        append_run_event(
+                            db,
+                            run,
+                            "tool_call",
+                            _tool_trace_event(
+                                run=run,
+                                tool_call_id=read_tool_call_id,
+                                tool_call_index=tool_call_index_next,
+                                tool_name=READ_RESOURCE_TOOL_NAME,
+                                result=read_result,
+                            ),
+                        )
                         db.commit()
                         tool_results.append(
                             ToolResult(
@@ -1569,18 +1852,54 @@ async def _execute_chat_run(
                         )
                     elif tc.name == INSPECT_RESOURCE_TOOL_NAME:
                         args = tc.arguments or {}
+                        uri = str(args.get("uri") or "")
+                        inspect_tool_call_id = _persist_tool_call_start(
+                            db,
+                            run=run,
+                            tool_call_index=tool_call_index_next,
+                            tool_name=INSPECT_RESOURCE_TOOL_NAME,
+                            scope="conversation_context",
+                            requested_types=[],
+                        )
+                        append_run_event(
+                            db,
+                            run,
+                            "tool_call",
+                            _tool_start_event(
+                                run=run,
+                                tool_call_id=inspect_tool_call_id,
+                                tool_call_index=tool_call_index_next,
+                                tool_name=INSPECT_RESOURCE_TOOL_NAME,
+                                scope="conversation_context",
+                                types=[],
+                                filters={"uri": uri},
+                            ),
+                        )
+                        db.commit()
                         inspect_result = execute_inspect_resource(
                             db,
                             viewer_id=run.owner_user_id,
                             conversation_id=run.conversation_id,
-                            uri=str(args.get("uri") or ""),
+                            uri=uri,
                         )
-                        _persist_tool_call_trace(
+                        inspect_tool_call_id = _persist_tool_call_trace(
                             db,
                             run=run,
                             tool_call_index=tool_call_index_next,
                             tool_name=INSPECT_RESOURCE_TOOL_NAME,
                             result=inspect_result,
+                        )
+                        append_run_event(
+                            db,
+                            run,
+                            "tool_call",
+                            _tool_trace_event(
+                                run=run,
+                                tool_call_id=inspect_tool_call_id,
+                                tool_call_index=tool_call_index_next,
+                                tool_name=INSPECT_RESOURCE_TOOL_NAME,
+                                result=inspect_result,
+                            ),
                         )
                         db.commit()
                         tool_results.append(
@@ -1591,6 +1910,53 @@ async def _execute_chat_run(
                             )
                         )
                     else:
+                        error_code = "unknown_tool"
+                        tool_call_id = _persist_tool_call_start(
+                            db,
+                            run=run,
+                            tool_call_index=tool_call_index_next,
+                            tool_name=tc.name,
+                            scope="provider_tool",
+                            requested_types=[],
+                        )
+                        append_run_event(
+                            db,
+                            run,
+                            "tool_call",
+                            _tool_start_event(
+                                run=run,
+                                tool_call_id=tool_call_id,
+                                tool_call_index=tool_call_index_next,
+                                tool_name=tc.name,
+                                scope="provider_tool",
+                                types=[],
+                                filters={},
+                            ),
+                        )
+                        _persist_tool_call_error(
+                            db,
+                            tool_call_id=tool_call_id,
+                            error_code=error_code,
+                        )
+                        append_run_event(
+                            db,
+                            run,
+                            "tool_call",
+                            {
+                                **_tool_start_event(
+                                    run=run,
+                                    tool_call_id=tool_call_id,
+                                    tool_call_index=tool_call_index_next,
+                                    tool_name=tc.name,
+                                    scope="provider_tool",
+                                    types=[],
+                                    filters={},
+                                ),
+                                "status": "error",
+                                "error_code": error_code,
+                            },
+                        )
+                        db.commit()
                         tool_results.append(
                             ToolResult(
                                 call_id=tc.id,

@@ -35,8 +35,7 @@ from nexus.services.conversations import (
     message_to_out,
     retryable_assistant_message_ids,
 )
-from nexus.services.resource_graph.citations import build_citation_outs
-from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.message_trust_trails import build_assistant_trust_trails
 
 
 def branch_anchor_for_message(
@@ -1111,13 +1110,26 @@ def _message_outs_by_id(
         viewer_id=viewer_id,
         assistant_message_ids=message_ids,
     )
+    trust_trails = build_assistant_trust_trails(
+        db,
+        viewer_id=viewer_id,
+        assistant_message_ids=[
+            message.id for message in messages_by_id.values() if message.role == "assistant"
+        ],
+    )
     outs: dict[UUID, MessageOut] = {}
     for message_id, message in messages_by_id.items():
-        out = message_to_out(message, can_retry_response=message.id in retryable_message_ids)
-        if message.role == "assistant":
-            out.citations = build_citation_outs(
-                db, viewer_id=viewer_id, source=ResourceRef(scheme="message", id=message_id)
-            )
+        trust_trail = trust_trails[message_id] if message.role == "assistant" else None
+        out = message_to_out(
+            message,
+            can_retry_response=message.id in retryable_message_ids,
+            trust_trail=trust_trail,
+            citations=(
+                [trust_citation.citation for trust_citation in trust_trail.citations]
+                if trust_trail is not None
+                else []
+            ),
+        )
         outs[message_id] = out
     return outs
 

@@ -4696,6 +4696,10 @@ class ChatPromptAssembly(Base):
             name="ck_chat_prompt_assemblies_prompt_block_manifest_object",
         ),
         UniqueConstraint("chat_run_id", name="uix_chat_prompt_assemblies_chat_run"),
+        Index(
+            "idx_chat_prompt_assemblies_assistant_message",
+            "assistant_message_id",
+        ),
     )
 
     chat_run: Mapped["ChatRun"] = relationship("ChatRun", back_populates="prompt_assembly")
@@ -4740,6 +4744,7 @@ class ChatRunEvent(Base):
         ),
         UniqueConstraint("run_id", "seq", name="uix_chat_run_events_run_seq"),
         Index("idx_chat_run_events_run_seq", "run_id", "seq"),
+        Index("idx_chat_run_events_run_event_type_seq", "run_id", "event_type", "seq"),
     )
 
     run: Mapped["ChatRun"] = relationship("ChatRun", back_populates="events")

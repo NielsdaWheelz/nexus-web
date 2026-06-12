@@ -5,6 +5,8 @@ Contains request and response models for conversation and message endpoints.
 Message creation happens through durable chat runs.
 """
 
+from __future__ import annotations
+
 from datetime import datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID
@@ -99,68 +101,9 @@ class MessageDocumentTextBlock(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class MessageDocumentRetrievalResultBlock(BaseModel):
-    type: Literal["retrieval_result"]
-    id: UUID | None = None
-    tool_call_id: UUID | None = None
-    tool_call_index: int | None = Field(default=None, ge=0)
-    ordinal: int | None = Field(default=None, ge=0)
-    result_type: SEARCH_RESULT_TYPES
-    source_id: str
-    media_id: UUID | None = None
-    evidence_span_id: UUID | None = None
-    context_ref: RetrievalContextRef
-    result_ref: RetrievalResultRef
-    deep_link: str | None = None
-    locator: RetrievalLocator | None = None
-    score: float | None = None
-    selected: bool
-    source_title: str | None = None
-    section_label: str | None = None
-    exact_snippet: str | None = None
-    snippet_prefix: str | None = None
-    snippet_suffix: str | None = None
-    retrieval_status: EVIDENCE_RETRIEVAL_STATUSES | None = None
-    included_in_prompt: bool | None = None
-    created_at: datetime | None = None
-
-    model_config = ConfigDict(extra="forbid")
-
-    @model_validator(mode="after")
-    def validate_ref_type_parity(self) -> "MessageDocumentRetrievalResultBlock":
-        expected_context_type = (
-            "media" if self.result_type in {"episode", "video"} else self.result_type
-        )
-        if self.context_ref.type != expected_context_type:
-            raise ValueError("context_ref.type must match result_type")
-        if self.result_ref.type != self.result_type:
-            raise ValueError("result_ref.type must match result_type")
-        result_locator = getattr(self.result_ref, "locator", None)
-        if result_locator is None:
-            if self.locator is not None:
-                raise ValueError("locator must match result_ref.locator")
-        elif self.locator is None or self.locator.model_dump(
-            mode="json",
-            exclude_none=True,
-            exclude_defaults=True,
-        ) != result_locator.model_dump(
-            mode="json",
-            exclude_none=True,
-            exclude_defaults=True,
-        ):
-            raise ValueError("locator must match result_ref.locator")
-        return self
-
-
-MessageDocumentBlock = Annotated[
-    MessageDocumentTextBlock | MessageDocumentRetrievalResultBlock,
-    Field(discriminator="type"),
-]
-
-
 class MessageDocument(BaseModel):
     type: Literal["message_document"] = "message_document"
-    blocks: list[MessageDocumentBlock] = Field(default_factory=list)
+    blocks: list[MessageDocumentTextBlock] = Field(default_factory=list)
 
     model_config = ConfigDict(extra="forbid")
 
@@ -179,6 +122,7 @@ class MessageOut(BaseModel):
     # Citations rehydrated from the assistant message's citation edges (AC23/§5.2);
     # empty for user/system messages and assistants with no cited evidence.
     citations: list[CitationOut] = Field(default_factory=list)
+    trust_trail: AssistantTrustTrailOut | None = None
     parent_message_id: UUID | None = None
     branch_root_message_id: UUID | None = None
     branch_anchor_kind: BRANCH_ANCHOR_KINDS = "none"
@@ -190,6 +134,14 @@ class MessageOut(BaseModel):
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True, extra="forbid")
+
+    @model_validator(mode="after")
+    def validate_trust_trail_role(self) -> MessageOut:
+        if self.role == "assistant" and self.trust_trail is None:
+            raise ValueError("assistant messages require trust_trail")
+        if self.role != "assistant" and self.trust_trail is not None:
+            raise ValueError("only assistant messages may carry trust_trail")
+        return self
 
 
 class MessageRetrievalOut(BaseModel):
@@ -221,7 +173,7 @@ class MessageRetrievalOut(BaseModel):
     model_config = ConfigDict(from_attributes=True, extra="forbid")
 
     @model_validator(mode="after")
-    def validate_ref_type_parity(self) -> "MessageRetrievalOut":
+    def validate_ref_type_parity(self) -> MessageRetrievalOut:
         expected_context_type = (
             "media" if self.result_type in {"episode", "video"} else self.result_type
         )
@@ -264,7 +216,7 @@ class ChatRunToolCallEventPayload(BaseModel):
 
     tool_call_id: UUID | None = None
     assistant_message_id: UUID
-    tool_name: Literal["app_search", "web_search"]
+    tool_name: str = Field(min_length=1)
     tool_call_index: int = Field(ge=0)
     status: MESSAGE_TOOL_STATUSES
     scope: str = Field(min_length=1)
@@ -280,7 +232,7 @@ class ChatRunRetrievalResultEventPayload(BaseModel):
 
     tool_call_id: UUID | None = None
     assistant_message_id: UUID
-    tool_name: Literal["app_search", "web_search"]
+    tool_name: str = Field(min_length=1)
     tool_call_index: int = Field(ge=0)
     status: MESSAGE_TOOL_STATUSES
     error_code: str | None = None
@@ -344,6 +296,7 @@ class ChatRunReferenceAddedEventPayload(BaseModel):
     summary: str
     missing: bool
     created_at: datetime
+    citation_edge_id: UUID | None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -390,6 +343,8 @@ class MessageRetrievalCandidateLedgerOut(BaseModel):
     locator: RetrievalLocator | None = None
     created_at: datetime
 
+    model_config = ConfigDict(extra="forbid")
+
 
 class MessageRerankLedgerOut(BaseModel):
     """Selection/rerank pass ledger for one retrieval tool call."""
@@ -404,6 +359,134 @@ class MessageRerankLedgerOut(BaseModel):
     status: str
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
+
+    model_config = ConfigDict(extra="forbid")
+
+
+TRUST_TRAIL_VERSION = "assistant_trust_trail.v1"
+
+
+class TrustPromptAssemblyOut(BaseModel):
+    id: UUID
+    cacheable_input_tokens_estimate: int
+    prompt_block_manifest: dict[str, Any]
+    max_context_tokens: int
+    reserved_output_tokens: int
+    reserved_reasoning_tokens: int
+    input_budget_tokens: int
+    estimated_input_tokens: int
+    included_message_ids: list[str]
+    included_retrieval_ids: list[str]
+    included_context_refs: list[dict[str, Any]]
+    dropped_items: list[dict[str, Any]]
+    budget_breakdown: dict[str, Any]
+    created_at: datetime
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class TrustRunOut(BaseModel):
+    run_id: UUID
+    model_id: UUID
+    provider: str
+    model_name: str
+    reasoning_mode: str | None = None
+    key_mode: str | None = None
+    status: Literal["pending", "running", "complete", "error", "cancelled"]
+    usage: dict[str, Any] | None = None
+    error_code: str | None = None
+    final_chars: int | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class TrustRetrievalOut(MessageRetrievalOut):
+    cited_edge_id: UUID | None = None
+    citation_ordinal: int | None = None
+    citation_role: CitationRole | None = None
+    included_in_prompt_source: Literal[
+        "retrieval", "candidate_ledger", "prompt_assembly", "none"
+    ] = "retrieval"
+
+
+class TrustToolCallOut(BaseModel):
+    id: UUID
+    tool_name: str
+    tool_call_index: int
+    status: MESSAGE_TOOL_STATUSES
+    scope: str
+    requested_types: list[str]
+    query_hash: str | None = None
+    latency_ms: int | None = None
+    result_count: int
+    selected_count: int
+    error_code: str | None = None
+    provider_request_ids: list[str]
+    result_refs: list[dict[str, Any]]
+    selected_context_refs: list[dict[str, Any]]
+    retrievals: list[TrustRetrievalOut] = Field(default_factory=list)
+    candidate_ledgers: list[MessageRetrievalCandidateLedgerOut] = Field(default_factory=list)
+    rerank_ledgers: list[MessageRerankLedgerOut] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class TrustCitationOut(BaseModel):
+    citation_edge_id: UUID
+    ordinal: int
+    role: CitationRole
+    target_ref: CitationTargetRef
+    retrieval_id: UUID | None = None
+    tool_call_id: UUID | None = None
+    citation: CitationOut
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class TrustReferenceAddedOut(BaseModel):
+    chat_run_event_seq: int
+    id: UUID
+    conversation_id: UUID
+    resource_ref: str
+    label: str
+    summary: str
+    missing: bool
+    created_at: datetime
+    citation_edge_id: UUID | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class TrustIntegrityNoticeOut(BaseModel):
+    code: str
+    message: str
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AssistantTrustTrailOut(BaseModel):
+    schema_version: Literal["assistant_trust_trail.v1"] = TRUST_TRAIL_VERSION
+    assistant_message_id: UUID
+    conversation_id: UUID
+    chat_run_id: UUID | None = None
+    status: Literal["pending", "running", "complete", "error", "cancelled"]
+    run: TrustRunOut | None = None
+    prompt: TrustPromptAssemblyOut | None = None
+    tool_calls: list[TrustToolCallOut] = Field(default_factory=list)
+    citations: list[TrustCitationOut] = Field(default_factory=list)
+    references_added: list[TrustReferenceAddedOut] = Field(default_factory=list)
+    integrity_notices: list[TrustIntegrityNoticeOut] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(extra="forbid")
+
+
+MessageOut.model_rebuild()
 
 
 # Max content length
@@ -464,7 +547,7 @@ class AssistantSelectionBranchAnchorRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     @model_validator(mode="after")
-    def validate_selection_anchor(self) -> "AssistantSelectionBranchAnchorRequest":
+    def validate_selection_anchor(self) -> AssistantSelectionBranchAnchorRequest:
         if not self.exact.strip():
             raise ValueError("assistant_selection exact quote cannot be blank")
         return self
@@ -560,7 +643,7 @@ class RenameBranchRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     @model_validator(mode="after")
-    def validate_title(self) -> "RenameBranchRequest":
+    def validate_title(self) -> RenameBranchRequest:
         if self.title is not None and not self.title.strip():
             raise ValueError("title cannot be blank")
         return self
@@ -592,7 +675,7 @@ class ReaderSelectionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     @model_validator(mode="after")
-    def _exact_not_blank(self) -> "ReaderSelectionRequest":
+    def _exact_not_blank(self) -> ReaderSelectionRequest:
         if not self.exact.strip():
             raise ValueError("reader_selection exact quote cannot be blank")
         return self
@@ -653,7 +736,7 @@ class ChatRunEventOut(BaseModel):
     created_at: datetime
 
     @model_validator(mode="after")
-    def validate_payload(self) -> "ChatRunEventOut":
+    def validate_payload(self) -> ChatRunEventOut:
         self.payload = chat_run_event_payload_json(self.event_type, self.payload)
         return self
 

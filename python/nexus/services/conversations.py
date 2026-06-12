@@ -41,15 +41,16 @@ from nexus.logging import get_logger
 from nexus.schemas.citation import CitationOut
 from nexus.schemas.conversation import (
     BRANCH_ANCHOR_KINDS,
+    AssistantTrustTrailOut,
     ConversationOut,
     MessageDocument,
     MessageOut,
     MessagePageInfo,
     PageInfo,
 )
+from nexus.services.message_trust_trails import build_assistant_trust_trails
 from nexus.services.resource_graph import cleanup as graph_cleanup
 from nexus.services.resource_graph import context as context_service
-from nexus.services.resource_graph.citations import build_citation_outs
 from nexus.services.resource_graph.refs import (
     ResourceRef,
     ResourceRefParseFailure,
@@ -219,6 +220,7 @@ def message_to_out(
     message: Message,
     can_retry_response: bool = False,
     citations: list[CitationOut] | None = None,
+    trust_trail: AssistantTrustTrailOut | None = None,
 ) -> MessageOut:
     """Convert Message ORM model to MessageOut schema.
 
@@ -232,6 +234,7 @@ def message_to_out(
         role=message.role,
         message_document=MessageDocument.model_validate(message.message_document),
         citations=citations or [],
+        trust_trail=trust_trail,
         parent_message_id=message.parent_message_id,
         branch_root_message_id=message.branch_root_message_id,
         branch_anchor_kind=cast(BRANCH_ANCHOR_KINDS, message.branch_anchor_kind),
@@ -642,36 +645,43 @@ def list_messages(
             next_cursor = encode_message_cursor(last[1], last[0])
 
     message_ids = [row[0] for row in rows]
+    assistant_message_ids = [row[0] for row in rows if row[2] == "assistant"]
+    trust_trails = build_assistant_trust_trails(
+        db,
+        viewer_id=viewer_id,
+        assistant_message_ids=assistant_message_ids,
+    )
     retryable_message_ids = retryable_assistant_message_ids(
         db,
         viewer_id=viewer_id,
         assistant_message_ids=message_ids,
     )
-    messages = [
-        MessageOut(
-            id=row[0],
-            seq=row[1],
-            role=row[2],
-            message_document=MessageDocument.model_validate(row[12]),
-            parent_message_id=row[8],
-            branch_root_message_id=row[9],
-            branch_anchor_kind=row[10],
-            branch_anchor={"kind": row[10], **(row[11] or {})},
-            status=row[4],
-            error_code=row[5],
-            can_retry_response=row[0] in retryable_message_ids,
-            created_at=row[6],
-            updated_at=row[7],
-            citations=(
-                build_citation_outs(
-                    db, viewer_id=viewer_id, source=ResourceRef(scheme="message", id=row[0])
-                )
-                if row[2] == "assistant"
-                else []
-            ),
+    messages: list[MessageOut] = []
+    for row in rows:
+        trust_trail = trust_trails[row[0]] if row[2] == "assistant" else None
+        messages.append(
+            MessageOut(
+                id=row[0],
+                seq=row[1],
+                role=row[2],
+                message_document=MessageDocument.model_validate(row[12]),
+                parent_message_id=row[8],
+                branch_root_message_id=row[9],
+                branch_anchor_kind=row[10],
+                branch_anchor={"kind": row[10], **(row[11] or {})},
+                status=row[4],
+                error_code=row[5],
+                can_retry_response=row[0] in retryable_message_ids,
+                created_at=row[6],
+                updated_at=row[7],
+                trust_trail=trust_trail,
+                citations=(
+                    [trust_citation.citation for trust_citation in trust_trail.citations]
+                    if trust_trail is not None
+                    else []
+                ),
+            )
         )
-        for row in rows
-    ]
 
     if before_cursor or window == "latest":
         if has_older and messages:

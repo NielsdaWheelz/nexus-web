@@ -13,7 +13,7 @@ from collections.abc import Mapping, Sequence
 from typing import cast
 from uuid import UUID
 
-from sqlalchemy import select, text
+from sqlalchemy import and_, or_, select, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import ResourceEdge
@@ -121,24 +121,64 @@ def build_citation_outs(db: Session, *, viewer_id: UUID, source: ResourceRef) ->
     targets of this source (no per-edge N+1) — applying the same freshness gate
     as the result-card enrichment. Non-media targets keep ``summary_md = None``.
     """
-    rows = (
-        db.execute(
+    return build_citation_outs_for_sources(
+        db,
+        viewer_id=viewer_id,
+        edge_owner_id=viewer_id,
+        sources=[source],
+    ).get(source.uri, [])
+
+
+def build_citation_outs_for_sources(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    edge_owner_id: UUID,
+    sources: Sequence[ResourceRef],
+) -> dict[str, list[CitationOut]]:
+    """Batch-build ``CitationOut`` lists for sources.
+
+    Citation edge ownership is not always the same as the current reader:
+    shared conversations store citation edges under the conversation owner, while
+    target jump hydration still uses the current viewer's visibility.
+    """
+    unique_sources = list({source.uri: source for source in sources}.values())
+    out = {source.uri: [] for source in unique_sources}
+    if not unique_sources:
+        return out
+
+    rows = list(
+        db.scalars(
             select(ResourceEdge)
             .where(
-                ResourceEdge.user_id == viewer_id,
-                ResourceEdge.source_scheme == source.scheme,
-                ResourceEdge.source_id == source.id,
+                ResourceEdge.user_id == edge_owner_id,
                 ResourceEdge.origin == "citation",
                 ResourceEdge.ordinal.is_not(None),
+                or_(
+                    *[
+                        and_(
+                            ResourceEdge.source_scheme == source.scheme,
+                            ResourceEdge.source_id == source.id,
+                        )
+                        for source in unique_sources
+                    ]
+                ),
             )
-            .order_by(ResourceEdge.ordinal.asc())
+            .order_by(
+                ResourceEdge.source_scheme,
+                ResourceEdge.source_id,
+                ResourceEdge.ordinal.asc(),
+            )
         )
-        .scalars()
-        .all()
     )
     media_ids = sorted({row.target_id for row in rows if row.target_scheme == "media"})
     summaries = get_ready_summaries(db, media_ids=media_ids) if media_ids else {}
-    return [_citation_out(db, viewer_id=viewer_id, row=row, summaries=summaries) for row in rows]
+    for row in rows:
+        source_uri = f"{row.source_scheme}:{row.source_id}"
+        out.setdefault(source_uri, []).append(
+            _citation_out(db, viewer_id=viewer_id, row=row, summaries=summaries)
+        )
+    return out
 
 
 def citation_reader_target_for_edge(

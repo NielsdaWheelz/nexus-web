@@ -27,6 +27,7 @@ from pydantic import ValidationError
 
 from nexus.schemas.citation import CitationOut, CitationSnapshot, CitationTargetRef
 from nexus.schemas.conversation import (
+    AssistantTrustTrailOut,
     ChatRunCitationIndexEntry,
     ChatRunCitationIndexEventPayload,
     MessageOut,
@@ -193,8 +194,9 @@ def test_message_out_citations_defaults_empty_and_accepts_outs() -> None:
     assert user_message.citations == []
 
     media_id = uuid4()
+    assistant_message_id = uuid4()
     assistant_message = MessageOut(
-        id=uuid4(),
+        id=assistant_message_id,
         seq=2,
         role="assistant",
         status="complete",
@@ -208,6 +210,13 @@ def test_message_out_citations_defaults_empty_and_accepts_outs() -> None:
                 media_id=media_id,
             )
         ],
+        trust_trail=AssistantTrustTrailOut(
+            assistant_message_id=assistant_message_id,
+            conversation_id=uuid4(),
+            status="complete",
+            created_at=now,
+            updated_at=now,
+        ),
     )
     assert [c.ordinal for c in assistant_message.citations] == [1]
 

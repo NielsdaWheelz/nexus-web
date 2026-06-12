@@ -12229,3 +12229,175 @@ class TestMigration0154TokenBudgetChargesPolymorphic:
             assert "token_budget_charges_user_id_fkey" in after_fks
         finally:
             reset_test_schema()
+
+
+class TestMigration0155AssistantMessageTrustTrail:
+    """0155: assistant message trust trail strips legacy message-document telemetry."""
+
+    def test_0155_strips_retrieval_blocks_and_backfills_reference_edge_key(self):
+        reset_test_schema()
+        try:
+            result = run_alembic_command("upgrade 0154")
+            assert result.returncode == 0, f"upgrade to 0154 failed: {result.stderr}"
+
+            user_id = uuid4()
+            model_id = uuid4()
+            conversation_id = uuid4()
+            user_message_id = uuid4()
+            assistant_message_id = uuid4()
+            run_id = uuid4()
+            before_document = {
+                "type": "message_document",
+                "blocks": [
+                    {"type": "text", "format": "markdown", "text": "First"},
+                    {"type": "retrieval_result", "result_type": "media", "source_id": "old"},
+                    {"type": "text", "format": "markdown", "text": "Second"},
+                    {"type": "tool_result", "tool_name": "old"},
+                ],
+            }
+
+            engine = create_engine(get_test_database_url())
+            try:
+                with Session(engine) as session:
+                    session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO models (id, provider, model_name, max_context_tokens)
+                            VALUES (:id, 'openai', 'migration-test', 100000)
+                            """
+                        ),
+                        {"id": model_id},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO conversations (id, owner_user_id, sharing, next_seq)
+                            VALUES (:id, :owner_user_id, 'private', 3)
+                            """
+                        ),
+                        {"id": conversation_id, "owner_user_id": user_id},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO messages (
+                                id, conversation_id, seq, role, content, status, message_document
+                            )
+                            VALUES (
+                                :id, :conversation_id, 1, 'user', 'Question', 'complete',
+                                CAST(:message_document AS jsonb)
+                            )
+                            """
+                        ),
+                        {
+                            "id": user_message_id,
+                            "conversation_id": conversation_id,
+                            "message_document": json.dumps(
+                                {
+                                    "type": "message_document",
+                                    "blocks": [
+                                        {"type": "text", "format": "plain", "text": "Question"}
+                                    ],
+                                }
+                            ),
+                        },
+                    )
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO messages (
+                                id, conversation_id, seq, role, content, status,
+                                parent_message_id, message_document
+                            )
+                            VALUES (
+                                :id, :conversation_id, 2, 'assistant', 'First\n\nSecond',
+                                'complete', :parent_message_id, CAST(:message_document AS jsonb)
+                            )
+                            """
+                        ),
+                        {
+                            "id": assistant_message_id,
+                            "conversation_id": conversation_id,
+                            "parent_message_id": user_message_id,
+                            "message_document": json.dumps(before_document),
+                        },
+                    )
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO chat_runs (
+                                id, owner_user_id, conversation_id, user_message_id,
+                                assistant_message_id, idempotency_key, payload_hash, status,
+                                model_id, reasoning, key_mode
+                            )
+                            VALUES (
+                                :id, :owner_user_id, :conversation_id, :user_message_id,
+                                :assistant_message_id, 'migration-0155', 'hash', 'complete',
+                                :model_id, 'default', 'auto'
+                            )
+                            """
+                        ),
+                        {
+                            "id": run_id,
+                            "owner_user_id": user_id,
+                            "conversation_id": conversation_id,
+                            "user_message_id": user_message_id,
+                            "assistant_message_id": assistant_message_id,
+                            "model_id": model_id,
+                        },
+                    )
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO chat_run_events (run_id, seq, event_type, payload)
+                            VALUES (
+                                :run_id, 1, 'reference_added',
+                                CAST(:payload AS jsonb)
+                            )
+                            """
+                        ),
+                        {
+                            "run_id": run_id,
+                            "payload": json.dumps(
+                                {
+                                    "id": str(uuid4()),
+                                    "conversation_id": str(conversation_id),
+                                    "resource_ref": f"media:{uuid4()}",
+                                    "label": "Source",
+                                    "summary": "",
+                                    "missing": False,
+                                    "created_at": datetime.now(UTC).isoformat(),
+                                }
+                            ),
+                        },
+                    )
+                    session.commit()
+            finally:
+                engine.dispose()
+
+            result = run_alembic_command("upgrade 0155")
+            assert result.returncode == 0, f"upgrade to 0155 failed: {result.stderr}"
+
+            engine = create_engine(get_test_database_url())
+            try:
+                with Session(engine) as session:
+                    after_document = session.execute(
+                        text("SELECT message_document FROM messages WHERE id = :id"),
+                        {"id": assistant_message_id},
+                    ).scalar_one()
+                    payload = session.execute(
+                        text("SELECT payload FROM chat_run_events WHERE run_id = :run_id"),
+                        {"run_id": run_id},
+                    ).scalar_one()
+            finally:
+                engine.dispose()
+
+            assert after_document["blocks"] == [
+                {"type": "text", "format": "markdown", "text": "First"},
+                {"type": "text", "format": "markdown", "text": "Second"},
+            ]
+            assert "citation_edge_id" in payload
+            assert payload["citation_edge_id"] is None
+        finally:
+            reset_test_schema()
