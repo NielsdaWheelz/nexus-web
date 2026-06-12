@@ -4313,6 +4313,14 @@ export default function MediaPaneBody() {
       });
     }
 
+    if (isMobileViewport && contentsAvailable) {
+      readerOptions.push({
+        id: "show-contents",
+        label: "Show contents",
+        onSelect: () => requestSecondarySurface?.("reader-contents"),
+      });
+    }
+
     if (isReflowableReader) {
       readerOptions.push({
         id: "reader-theme-light",
@@ -4358,6 +4366,7 @@ export default function MediaPaneBody() {
     requestSecondarySurface,
     retryMetadataBusy,
     retryProcessingBusy,
+    contentsAvailable,
     showHighlightsPane,
     updateTheme,
   ]);

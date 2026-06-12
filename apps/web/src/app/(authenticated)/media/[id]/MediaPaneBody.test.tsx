@@ -10,6 +10,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
+import type { ActionMenuOption } from "@/components/ui/ActionMenu";
 import { PaneFixedChromeContext } from "@/components/workspace/PaneFixedChrome";
 import {
   PaneSecondaryContext,
@@ -242,6 +243,7 @@ const readerShellRepresentativeRowFixtures =
 
 type PaneChromeOverrides = {
   toolbar?: ReactNode;
+  options?: ActionMenuOption[];
 };
 
 function jsonResponse(data: unknown) {
@@ -363,6 +365,15 @@ async function getContentsSurfaceBody(
     expect(body).not.toBeNull();
   });
   return body;
+}
+
+async function getChromeOption(id: string): Promise<ActionMenuOption> {
+  let option: ActionMenuOption | undefined;
+  await waitFor(() => {
+    option = latestChromeOverrides()?.options?.find((item) => item.id === id);
+    expect(option).toBeDefined();
+  });
+  return option as ActionMenuOption;
 }
 
 async function getApparatusSurfaceBody(
@@ -1076,6 +1087,50 @@ describe("MediaPaneBody pane sizing", () => {
     } finally {
       window.removeEventListener(READER_PULSE_HIGHLIGHT, pulseHandler);
     }
+  });
+
+  it.each(["epub", "web_article"] as const)(
+    "requests the Contents secondary from %s mobile reader menu",
+    async (kind) => {
+      testState.mediaKind = kind;
+      testState.includeToc = true;
+      testState.isMobileViewport = true;
+      const { onRequestSecondarySurface, onSetPaneSecondary } =
+        renderMediaPane();
+      await getContentsSurfaceBody(onSetPaneSecondary);
+
+      const contentsOption = await getChromeOption("show-contents");
+      expect(contentsOption.label).toBe("Show contents");
+
+      contentsOption.onSelect?.({ triggerEl: null });
+
+      expect(onRequestSecondarySurface).toHaveBeenCalledWith(
+        "pane-1",
+        "reader-contents",
+      );
+    },
+  );
+
+  it("keeps mobile Contents available when focus mode hides highlights", async () => {
+    testState.mediaKind = "web_article";
+    testState.includeToc = true;
+    testState.isMobileViewport = true;
+    testState.readerFocusMode = "paragraph";
+    const { onRequestSecondarySurface, onSetPaneSecondary } = renderMediaPane();
+    await getContentsSurfaceBody(onSetPaneSecondary);
+
+    const contentsOption = await getChromeOption("show-contents");
+    const optionIds = latestChromeOverrides()?.options?.map((option) => option.id);
+
+    expect(optionIds).toContain("show-contents");
+    expect(optionIds).not.toContain("show-highlights");
+
+    contentsOption.onSelect?.({ triggerEl: null });
+
+    expect(onRequestSecondarySurface).toHaveBeenCalledWith(
+      "pane-1",
+      "reader-contents",
+    );
   });
 
   it.each(["epub", "web_article"] as const)(
