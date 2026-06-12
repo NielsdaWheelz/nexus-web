@@ -73,6 +73,7 @@ async function upsertHighlightNote(
       filters: { origins: ["highlight_note"] },
       limit: 100,
     },
+    headers: stateChangingApiHeaders(),
   });
   expect(edgesResponse.ok()).toBeTruthy();
   const edgesPayload = (await edgesResponse.json()) as ConnectionsResponse;
@@ -872,7 +873,7 @@ test.describe("epub", () => {
       activePane.getByRole("heading", { name: seed.chapter_titles[0] })
     ).toBeVisible({ timeout: 15_000 });
 
-    const anchorLeaf = activePane.getByRole("button", { name: seed.toc_anchor_label });
+    let anchorLeaf = activePane.getByRole("button", { name: seed.toc_anchor_label });
     if (
       (await anchorLeaf.count()) === 0 ||
       !(await anchorLeaf.first().isVisible().catch(() => false))
@@ -880,6 +881,9 @@ test.describe("epub", () => {
       const contentsButton = activePane.getByRole("button", { name: "Contents" });
       await expect(contentsButton).toBeVisible();
       await contentsButton.click();
+      const contentsDialog = page.getByRole("dialog", { name: "Contents" });
+      await expect(contentsDialog).toBeVisible();
+      anchorLeaf = contentsDialog.getByRole("button", { name: seed.toc_anchor_label });
     }
 
     await expect(anchorLeaf).toBeVisible();

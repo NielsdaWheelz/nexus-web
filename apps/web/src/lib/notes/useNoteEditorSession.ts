@@ -220,7 +220,7 @@ export function useNoteEditorSession({
       if (doc && pendingDocRef.current) {
         const clientMutationId =
           pendingClientMutationIdRef.current ??
-          createClientMutationId(resourceKeyRef.current, pendingSequenceRef.current);
+          createClientMutationId(pendingSequenceRef.current);
         pendingDocRef.current = doc;
         pendingClientMutationIdRef.current = clientMutationId;
         storeNoteEditorDraft(
@@ -253,10 +253,7 @@ export function useNoteEditorSession({
   const scheduleSave = useCallback(
     (doc: ProseMirrorNode) => {
       const nextSequence = localSequenceRef.current + 1;
-      const clientMutationId = createClientMutationId(
-        resourceKeyRef.current,
-        nextSequence
-      );
+      const clientMutationId = createClientMutationId(nextSequence);
       localSequenceRef.current = nextSequence;
       pendingDocRef.current = doc;
       pendingSequenceRef.current = nextSequence;
@@ -387,8 +384,8 @@ export function useNoteEditorSession({
   };
 }
 
-function createClientMutationId(resourceKey: string, sequence: number): string {
-  return `${resourceKey}:${sequence}:${createRandomId()}`;
+function createClientMutationId(sequence: number): string {
+  return `note-${sequence}-${createRandomId()}`;
 }
 
 export function readStoredNoteEditorDraft(resourceKey: string): StoredNoteEditorDraft | null {

@@ -290,12 +290,20 @@ def _validate_edge_input(db: Session, *, viewer_id: UUID, edge: EdgeCreate) -> N
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST, "Citation edges cannot carry order keys"
         )
-    if edge.origin != "note_containment" and (
-        edge.source_order_key is not None or edge.target_order_key is not None
+    if edge.target_order_key is not None and edge.origin != "note_containment":
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Target order keys are only valid for note containment edges",
+        )
+    if edge.source_order_key is not None and not (
+        edge.origin == "note_containment"
+        or (
+            edge.kind == "context" and edge.source.scheme == "conversation" and edge.ordinal is None
+        )
     ):
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST,
-            "Order keys are only valid for note containment edges",
+            "Source order key is not valid for this edge shape",
         )
     if edge.ordinal is not None and edge.origin != "citation":
         raise InvalidRequestError(

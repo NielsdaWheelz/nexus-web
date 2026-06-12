@@ -281,6 +281,33 @@ describe("ReaderHighlightsSurface", () => {
     expect(screen.queryByText("Hidden quote")).toBeNull();
   });
 
+  it("projects text highlights from rendered spans before canonical range fallback", async () => {
+    render(
+      <ReaderHighlightsSurfaceHarness
+        highlights={[
+          {
+            ...highlight(
+              "h1",
+              "Visible quote",
+              "Before visible context ",
+              " after visible context.",
+            ),
+            anchor: {
+              fragment_id: "fragment-not-present-in-test-dom",
+              start_offset: 10,
+              end_offset: 20,
+            },
+          },
+        ]}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("anchored-highlight-row-h1")).toBeTruthy();
+    });
+    expect(screen.getByText("Visible quote")).toBeVisible();
+  });
+
   it("aligns a visible row to its source scanline", async () => {
     render(<ReaderHighlightsSurfaceHarness />);
 

@@ -305,7 +305,7 @@ def create_conversation(
     result = conversation_to_out(db, conversation, message_count=0, viewer_id=viewer_id)
 
     if initial_references:
-        for resource_uri in initial_references:
+        for index, resource_uri in enumerate(initial_references):
             ref = parse_resource_ref(resource_uri)
             if isinstance(ref, ResourceRefParseFailure):
                 raise InvalidRequestError(
@@ -318,6 +318,7 @@ def create_conversation(
                 conversation_id=conversation.id,
                 target=ref,
                 origin="user",
+                source_order_key=f"{index + 1:010d}",
             )
 
     db.commit()

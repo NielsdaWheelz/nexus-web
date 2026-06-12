@@ -46,6 +46,7 @@ from nexus.services.resource_graph.schemas import (
     EdgeOut,
 )
 from tests.factories import (
+    create_test_conversation,
     create_test_conversation_with_message,
     create_test_media_in_library,
     get_user_default_library,
@@ -436,6 +437,44 @@ def test_user_edges_reject_order_keys(db_session: Session, bootstrapped_user: UU
                 source_order_key="0000000001",
             ),
         )
+
+
+def test_conversation_context_edges_allow_source_order_key(
+    db_session: Session, bootstrapped_user: UUID
+):
+    source = ResourceRef(
+        scheme="conversation",
+        id=create_test_conversation(db_session, bootstrapped_user),
+    )
+    target = _media_ref(db_session, bootstrapped_user)
+
+    edge = create_edge(
+        db_session,
+        viewer_id=bootstrapped_user,
+        input=EdgeCreate(
+            source=source,
+            target=target,
+            kind="context",
+            origin="user",
+            source_order_key="0000000001",
+        ),
+    )
+
+    assert edge.source_order_key == "0000000001"
+
+    citation_context_edge = create_edge(
+        db_session,
+        viewer_id=bootstrapped_user,
+        input=EdgeCreate(
+            source=source,
+            target=_page_ref(db_session, bootstrapped_user),
+            kind="context",
+            origin="citation",
+            source_order_key="0000000002",
+        ),
+    )
+
+    assert citation_context_edge.source_order_key == "0000000002"
 
 
 def test_note_containment_requires_shape_and_source_order(

@@ -15,6 +15,7 @@ from __future__ import annotations
 from uuid import UUID, uuid4
 
 import pytest
+from sqlalchemy import text
 
 from nexus.db.models import ResourceEdge
 from nexus.schemas.notes import CreatePageRequest
@@ -85,6 +86,29 @@ def _create_media(direct_db: DirectSessionManager, user_id: UUID, title: str) ->
 def _query_connections(auth_client, headers: dict[str, str], ref: str, **body):
     payload = {"refs": [ref], "direction": "both", "limit": 100, **body}
     return auth_client.post("/resource-graph/connections/query", headers=headers, json=payload)
+
+
+def _create_content_chunk(direct_db: DirectSessionManager, media_id: UUID) -> UUID:
+    with direct_db.session() as session:
+        chunk_id = session.execute(
+            text(
+                """
+                INSERT INTO content_chunks (
+                    owner_kind, owner_id, chunk_idx, source_kind, chunk_text,
+                    token_count, heading_path, summary_locator
+                )
+                VALUES (
+                    'media', :media_id, 0, 'web_article', 'Attachable chunk',
+                    2, '[]'::jsonb, '{}'::jsonb
+                )
+                RETURNING id
+                """
+            ),
+            {"media_id": media_id},
+        ).scalar_one()
+        session.commit()
+    direct_db.register_cleanup("content_chunks", "owner_id", media_id)
+    return chunk_id
 
 
 # =============================================================================
@@ -178,9 +202,7 @@ def test_add_context_ref_missing_resource_returns_404(auth_client, direct_db: Di
     assert response.status_code == 404, response.text
 
 
-def test_list_context_refs_orders_created_at_ascending(
-    auth_client, direct_db: DirectSessionManager
-):
+def test_list_context_refs_orders_first_attached(auth_client, direct_db: DirectSessionManager):
     user_id = _bootstrap_user(auth_client, direct_db)
     headers = auth_headers(user_id)
     first_media_id = _create_media(direct_db, user_id, title="First Doc")
@@ -200,8 +222,31 @@ def test_list_context_refs_orders_created_at_ascending(
     assert listing.status_code == 200, listing.text
     refs = [row["resource_ref"] for row in listing.json()["data"]]
     assert refs == [f"media:{first_media_id}", f"media:{second_media_id}"], (
-        f"Context refs should list created_at ascending; got {refs}"
+        f"Context refs should list in first-attached order; got {refs}"
     )
+
+
+def test_create_conversation_initial_context_refs_preserves_request_order(
+    auth_client, direct_db: DirectSessionManager
+):
+    user_id = _bootstrap_user(auth_client, direct_db)
+    headers = auth_headers(user_id)
+    media_id = _create_media(direct_db, user_id, title="Ordered Context Doc")
+    chunk_id = _create_content_chunk(direct_db, media_id)
+    expected_refs = [f"media:{media_id}", f"content_chunk:{chunk_id}"]
+
+    created = auth_client.post(
+        "/conversations",
+        headers=headers,
+        json={"initial_references": expected_refs},
+    )
+    assert created.status_code == 201, created.text
+    conversation_id = created.json()["data"]["id"]
+
+    listing = auth_client.get(f"/conversations/{conversation_id}/context-refs", headers=headers)
+    assert listing.status_code == 200, listing.text
+    refs = [row["resource_ref"] for row in listing.json()["data"]]
+    assert refs == expected_refs
 
 
 def test_remove_context_ref_deletes_row(auth_client, direct_db: DirectSessionManager):

@@ -193,6 +193,28 @@ function textAnchorRects(
     }));
 }
 
+function elementRects(
+  elements: Iterable<HTMLElement>,
+  viewerRect: DOMRect,
+  viewerScrollTop: number,
+) {
+  const rects: Array<{ top: number; bottom: number }> = [];
+  for (const element of elements) {
+    const clientRects = Array.from(element.getClientRects()).filter(
+      (rect) => rect.width > 0 && rect.height > 0,
+    );
+
+    for (const rect of clientRects) {
+      if (rect.width <= 0 || rect.height <= 0) {
+        continue;
+      }
+      const top = rect.top - viewerRect.top + viewerScrollTop;
+      rects.push({ top, bottom: top + rect.height });
+    }
+  }
+  return rects;
+}
+
 function sameRectMaps(
   left: Map<string, Array<{ top: number; bottom: number }>>,
   right: Map<string, Array<{ top: number; bottom: number }>>,
@@ -361,8 +383,6 @@ export function useAnchoredReaderProjection({
             pageRect.top - viewerRect.top + viewerScrollTop + rect.top;
           rects.push({ top, bottom: top + rect.height });
         }
-      } else if (!targetSelector && row.anchor?.fragment_id) {
-        rects.push(...textAnchorRects(contentRef.current, row, viewerRect, viewerScrollTop));
       } else {
         const escapedId = escapeAttrValue(row.id);
         const segments = contentRef.current.querySelectorAll<HTMLElement>(
@@ -370,19 +390,17 @@ export function useAnchoredReaderProjection({
             ? targetSelector(escapedId)
             : `[data-active-highlight-ids~="${escapedId}"]`,
         );
+        rects.push(...elementRects(segments, viewerRect, viewerScrollTop));
 
-        for (const segment of segments) {
-          const clientRects = Array.from(segment.getClientRects()).filter(
-            (rect) => rect.width > 0 && rect.height > 0,
+        if (!targetSelector && rects.length === 0 && row.anchor?.fragment_id) {
+          rects.push(
+            ...textAnchorRects(
+              contentRef.current,
+              row,
+              viewerRect,
+              viewerScrollTop,
+            ),
           );
-
-          for (const rect of clientRects) {
-            if (rect.width <= 0 || rect.height <= 0) {
-              continue;
-            }
-            const top = rect.top - viewerRect.top + viewerScrollTop;
-            rects.push({ top, bottom: top + rect.height });
-          }
         }
       }
 
