@@ -372,10 +372,6 @@
   font-size: var(--text-xs);
 }
 
-.loadMoreButton {
-  margin-top: 12px;
-}
-
 .transcriptRequestHint {
   color: var(--ink-faint);
   font-size: var(--text-xs);

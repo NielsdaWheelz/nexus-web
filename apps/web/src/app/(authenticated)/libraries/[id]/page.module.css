@@ -142,43 +142,6 @@
   list-style: none;
 }
 
-.mediaRow {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-3);
-  border: 1px solid var(--edge-subtle);
-  border-radius: var(--radius-lg);
-  padding: var(--space-3);
-  background: var(--surface-2);
-  cursor: pointer;
-  transition:
-    background var(--duration-fast) var(--ease-glide),
-    border-color var(--duration-fast) var(--ease-glide);
-}
-
-.mediaRow:hover {
-  border-color: var(--edge);
-  background: var(--surface-hover);
-}
-
-.mediaRow:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
-.mediaRow[data-dragging="true"] {
-  box-shadow: var(--shadow-2);
-}
-
-.mediaRowMain {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-3);
-  min-width: 0;
-  flex: 1;
-}
-
 .dragHandle {
   flex-shrink: 0;
   color: var(--ink-faint);
@@ -188,38 +151,6 @@
 
 .dragHandle:active {
   cursor: grabbing;
-}
-
-.mediaLink {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  color: inherit;
-  text-decoration: none;
-}
-
-.mediaTitleRow {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-2);
-  min-width: 0;
-}
-
-.mediaTitleRow > :first-child {
-  flex-shrink: 0;
-  margin-top: 2px;
-}
-
-.mediaTitle {
-  display: block;
-  min-width: 0;
-  font-weight: var(--weight-semibold);
-  line-height: var(--leading-snug);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .mediaMetaRow {

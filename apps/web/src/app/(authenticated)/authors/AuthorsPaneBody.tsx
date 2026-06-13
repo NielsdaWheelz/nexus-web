@@ -6,8 +6,9 @@ import {
   toFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
-import SectionCard from "@/components/ui/SectionCard";
-import { AppList, AppListItem } from "@/components/ui/AppList";
+import PaneSurface from "@/components/ui/PaneSurface";
+import ResourceList from "@/components/ui/ResourceList";
+import ResourceRow from "@/components/ui/ResourceRow";
 import Pill from "@/components/ui/Pill";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
@@ -188,65 +189,76 @@ export default function AuthorsPaneBody() {
   const loadingFirstPage = firstPage.status === "loading";
 
   return (
-    <SectionCard>
-      <AuthorsToolbar
-        urlState={urlState}
-        facets={facets}
-        onQueryChange={(q) => replaceState({ q })}
-        onToggle={(group, value) =>
-          replaceState({ [group]: toggleValue(urlState[group], value) })
-        }
-        onSortChange={(sort) => replaceState({ sort })}
-      />
-
-      {firstPage.status === "error" ? (
+    <PaneSurface
+      toolbar={
+        <AuthorsToolbar
+          urlState={urlState}
+          facets={facets}
+          onQueryChange={(q) => replaceState({ q })}
+          onToggle={(group, value) =>
+            replaceState({ [group]: toggleValue(urlState[group], value) })
+          }
+          onSortChange={(sort) => replaceState({ sort })}
+        />
+      }
+      state={
+        firstPage.status === "error" || loadMoreError || loadingFirstPage ? (
         <>
-          <FeedbackNotice
-            feedback={toFeedback(firstPage.error, { fallback: "Failed to load authors" })}
-          />
-          <Button variant="secondary" size="md" onClick={firstPage.retry}>
-            Retry
-          </Button>
+          {firstPage.status === "error" ? (
+            <>
+              <FeedbackNotice
+                feedback={toFeedback(firstPage.error, { fallback: "Failed to load authors" })}
+              />
+              <Button variant="secondary" size="md" onClick={firstPage.retry}>
+                Retry
+              </Button>
+            </>
+          ) : null}
+          {loadMoreError ? <FeedbackNotice feedback={loadMoreError} /> : null}
+          {loadingFirstPage ? <PaneLoadingState /> : null}
         </>
-      ) : null}
-
-      {loadMoreError ? <FeedbackNotice feedback={loadMoreError} /> : null}
-
-      {loadingFirstPage ? (
-        <PaneLoadingState />
-      ) : firstPage.status === "error" ? null : entries.length === 0 ? (
+        ) : null
+      }
+      empty={
+        !loadingFirstPage && firstPage.status !== "error" && entries.length === 0 ? (
         <FeedbackNotice
           severity="neutral"
           title="No authors yet."
           message="No contributors match the current filters."
         />
-      ) : (
-        <>
-          <AppList>
+        ) : null
+      }
+      footer={
+        nextCursor ? (
+          <Button
+            variant="secondary"
+            size="md"
+            onClick={() => void loadMore()}
+            disabled={loadingMore}
+          >
+            {loadingMore ? "Loading…" : "Load more"}
+          </Button>
+        ) : null
+      }
+    >
+      {!loadingFirstPage && firstPage.status !== "error" && entries.length > 0 ? (
+          <ResourceList>
             {entries.map((entry) => (
-              <AppListItem
+              <ResourceRow
                 key={entry.handle}
-                href={entry.href}
-                paneTitleHint={entry.display_name}
+                primary={{
+                  kind: "link",
+                  href: entry.href,
+                  paneTitleHint: entry.display_name,
+                }}
                 title={entry.display_name}
                 meta={entryMeta(entry)}
                 trailing={<Pill tone="info">{entry.work_count} works</Pill>}
               />
             ))}
-          </AppList>
-          {nextCursor ? (
-            <Button
-              variant="secondary"
-              size="md"
-              onClick={() => void loadMore()}
-              disabled={loadingMore}
-            >
-              {loadingMore ? "Loading…" : "Load more"}
-            </Button>
-          ) : null}
-        </>
-      )}
-    </SectionCard>
+          </ResourceList>
+        ) : null}
+    </PaneSurface>
   );
 }
 

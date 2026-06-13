@@ -2,10 +2,10 @@
 
 import type { Dispatch, SetStateAction } from "react";
 import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
-import { AppList } from "@/components/ui/AppList";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
+import ResourceList from "@/components/ui/ResourceList";
 import Select from "@/components/ui/Select";
 import { useStringIdSet } from "@/lib/useStringIdSet";
 import PodcastEpisodeRow from "./PodcastEpisodeRow";
@@ -181,8 +181,22 @@ export default function PodcastEpisodeList({
         </p>
       )}
 
-      {episodes.length > 0 && (
-        <AppList>
+      {episodes.length > 0 || (!loading && hasMoreEpisodes) ? (
+        <ResourceList
+          footer={
+            !loading && hasMoreEpisodes ? (
+              <Button
+                variant="secondary"
+                size="md"
+                onClick={() => onLoadMoreEpisodes()}
+                disabled={loadingMoreEpisodes}
+                aria-label="Load more episodes"
+              >
+                {loadingMoreEpisodes ? "Loading..." : "Load more episodes"}
+              </Button>
+            ) : undefined
+          }
+        >
           {episodes.map((episode) => (
             <PodcastEpisodeRow
               key={episode.id}
@@ -203,21 +217,8 @@ export default function PodcastEpisodeList({
               onTogglePlayed={onTogglePlayed}
             />
           ))}
-        </AppList>
-      )}
-
-      {!loading && hasMoreEpisodes && (
-        <Button
-          variant="secondary"
-          size="md"
-          className={styles.loadMoreButton}
-          onClick={() => onLoadMoreEpisodes()}
-          disabled={loadingMoreEpisodes}
-          aria-label="Load more episodes"
-        >
-          {loadingMoreEpisodes ? "Loading..." : "Load more episodes"}
-        </Button>
-      )}
+        </ResourceList>
+      ) : null}
     </div>
   );
 }

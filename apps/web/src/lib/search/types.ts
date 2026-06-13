@@ -165,6 +165,7 @@ export interface SearchResponseShape {
 export interface SearchResultRowViewModel {
   key: string;
   href: string;
+  paneTitleHint: string;
   type: SearchType;
   mediaId: string | null;
   contextRef: {

@@ -1,8 +1,9 @@
 "use client";
 
 import { ArrowRight } from "lucide-react";
-import SectionCard from "@/components/ui/SectionCard";
-import { AppList, AppListItem } from "@/components/ui/AppList";
+import PaneSurface from "@/components/ui/PaneSurface";
+import ResourceList from "@/components/ui/ResourceList";
+import ResourceRow from "@/components/ui/ResourceRow";
 import { isAndroidShellRestrictedHref } from "@/lib/androidShell";
 import { getPaneRouteIcon } from "@/lib/panes/paneRouteTable";
 import { useAndroidShell } from "@/lib/renderEnvironment/provider";
@@ -55,22 +56,22 @@ export default function SettingsPaneBody() {
   });
 
   return (
-    <SectionCard>
-      <AppList>
+    <PaneSurface>
+      <ResourceList>
         {settingsItems.map(({ href, title, description }) => {
           const Icon = getPaneRouteIcon(href);
           return (
-            <AppListItem
+            <ResourceRow
               key={href}
-              href={href}
-              icon={<Icon size={18} />}
+              primary={{ kind: "link", href, paneTitleHint: title }}
+              leading={<Icon size={18} />}
               title={title}
               description={description}
               trailing={<ArrowRight size={16} className={styles.arrow} aria-hidden="true" />}
             />
           );
         })}
-      </AppList>
-    </SectionCard>
+      </ResourceList>
+    </PaneSurface>
   );
 }

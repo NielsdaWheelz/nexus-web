@@ -8,7 +8,8 @@ import {
   type ReaderFocusMode,
 } from "@/lib/reader/types";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
-import SectionCard from "@/components/ui/SectionCard";
+import PaneSection from "@/components/ui/PaneSection";
+import PaneSurface from "@/components/ui/PaneSurface";
 import Select from "@/components/ui/Select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/Tabs";
 import Toggle from "@/components/ui/Toggle";
@@ -35,10 +36,11 @@ export default function SettingsReaderPaneBody() {
   } = useReaderContext();
 
   return (
-    <SectionCard title="Appearance">
-      {error && <FeedbackNotice severity="error">{error}</FeedbackNotice>}
+    <PaneSurface>
+      <PaneSection title="Appearance">
+        {error && <FeedbackNotice severity="error">{error}</FeedbackNotice>}
 
-      <div className={styles.form}>
+        <div className={styles.form}>
         <div className={styles.formRow}>
           <div className={styles.formField}>
             <label className={styles.formLabel} htmlFor="theme">
@@ -177,7 +179,8 @@ export default function SettingsReaderPaneBody() {
         </div>
 
         {saving && <p className={styles.savingHint}>Saving...</p>}
-      </div>
-    </SectionCard>
+        </div>
+      </PaneSection>
+    </PaneSurface>
   );
 }

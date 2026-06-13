@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import SectionCard from "@/components/ui/SectionCard";
+import PaneSection from "@/components/ui/PaneSection";
+import PaneSurface from "@/components/ui/PaneSurface";
 import { setAppearanceAction } from "@/lib/theme/setAppearanceAction";
 import styles from "./page.module.css";
 
@@ -28,45 +29,47 @@ export default function SettingsAppearancePaneBody() {
   if (selection === null) return null;
 
   return (
-    <SectionCard title="Theme">
-      <fieldset className={styles.fieldset}>
-        <legend className={styles.legend}>Choose how Nexus looks.</legend>
-        <label className={styles.option}>
-          <input
-            type="radio"
-            name="appearance"
-            value="light"
-            checked={selection === "light"}
-            onChange={() => handleChange("light")}
-          />
-          <span className={styles.optionLabel}>Light</span>
-          <span className={styles.optionHint}>Cream paper, dark ink.</span>
-        </label>
-        <label className={styles.option}>
-          <input
-            type="radio"
-            name="appearance"
-            value="dark"
-            checked={selection === "dark"}
-            onChange={() => handleChange("dark")}
-          />
-          <span className={styles.optionLabel}>Dark</span>
-          <span className={styles.optionHint}>Near-black canvas, warm ink.</span>
-        </label>
-        <label className={styles.option}>
-          <input
-            type="radio"
-            name="appearance"
-            value="system"
-            checked={selection === "system"}
-            onChange={() => handleChange("system")}
-          />
-          <span className={styles.optionLabel}>System</span>
-          <span className={styles.optionHint}>
-            Match your operating-system preference.
-          </span>
-        </label>
-      </fieldset>
-    </SectionCard>
+    <PaneSurface>
+      <PaneSection title="Theme">
+        <fieldset className={styles.fieldset}>
+          <legend className={styles.legend}>Choose how Nexus looks.</legend>
+          <label className={styles.option}>
+            <input
+              type="radio"
+              name="appearance"
+              value="light"
+              checked={selection === "light"}
+              onChange={() => handleChange("light")}
+            />
+            <span className={styles.optionLabel}>Light</span>
+            <span className={styles.optionHint}>Cream paper, dark ink.</span>
+          </label>
+          <label className={styles.option}>
+            <input
+              type="radio"
+              name="appearance"
+              value="dark"
+              checked={selection === "dark"}
+              onChange={() => handleChange("dark")}
+            />
+            <span className={styles.optionLabel}>Dark</span>
+            <span className={styles.optionHint}>Near-black canvas, warm ink.</span>
+          </label>
+          <label className={styles.option}>
+            <input
+              type="radio"
+              name="appearance"
+              value="system"
+              checked={selection === "system"}
+              onChange={() => handleChange("system")}
+            />
+            <span className={styles.optionLabel}>System</span>
+            <span className={styles.optionHint}>
+              Match your operating-system preference.
+            </span>
+          </label>
+        </fieldset>
+      </PaneSection>
+    </PaneSurface>
   );
 }

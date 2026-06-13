@@ -1,41 +1,44 @@
-.card {
+.section {
+  overflow: hidden;
   border: 1px solid var(--edge-subtle);
   border-radius: var(--radius-lg);
   background: var(--surface-2);
-  overflow: hidden;
 }
 
 .header {
   display: flex;
-  justify-content: space-between;
+  flex-wrap: wrap;
   align-items: flex-start;
+  justify-content: space-between;
   gap: var(--space-3);
   padding: var(--space-3) var(--space-4);
   border-bottom: 1px solid var(--edge-subtle);
 }
 
 .heading {
-  min-width: 0;
   display: flex;
+  min-width: 0;
   flex-direction: column;
   gap: var(--space-1);
 }
 
 .title {
   margin: 0;
-  font-size: var(--text-lg);
   color: var(--ink);
+  font-size: var(--text-lg);
 }
 
 .description {
   margin: 0;
-  font-size: var(--text-sm);
   color: var(--ink-faint);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
 }
 
 .actions {
-  flex-shrink: 0;
   display: flex;
+  flex-shrink: 0;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
 }

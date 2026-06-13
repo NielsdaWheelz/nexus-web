@@ -5,9 +5,11 @@ import {
   FeedbackNotice,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
-import SectionCard from "@/components/ui/SectionCard";
 import Button from "@/components/ui/Button";
-import { AppList, AppListItem } from "@/components/ui/AppList";
+import PaneSection from "@/components/ui/PaneSection";
+import PaneSurface from "@/components/ui/PaneSurface";
+import ResourceList from "@/components/ui/ResourceList";
+import ResourceRow from "@/components/ui/ResourceRow";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { useResource } from "@/lib/api/useResource";
 import {
@@ -134,8 +136,9 @@ export default function SettingsIdentitiesPaneBody() {
   );
 
   return (
-    <SectionCard>
-      <div className={styles.content}>
+    <PaneSurface>
+      <PaneSection>
+        <div className={styles.content}>
         {loading && <PaneLoadingState />}
         {error ? <FeedbackNotice feedback={error} /> : null}
         {notice ? <FeedbackNotice feedback={notice} /> : null}
@@ -147,14 +150,15 @@ export default function SettingsIdentitiesPaneBody() {
         )}
 
         {!loading && identities.length > 0 && (
-          <AppList>
+          <ResourceList>
             {identities.map((identity) => {
               const canUnlink = mayUnlinkIdentity(identities, identity.id);
               const pendingUnlink = unlinkingIdentityId === identity.id;
 
               return (
-                <AppListItem
+                <ResourceRow
                   key={identity.id}
+                  primary={{ kind: "static" }}
                   title={formatIdentityProvider(identity.provider)}
                   description={identity.email ?? "provider did not return an email"}
                   meta={linkedDate(identity, display)}
@@ -175,7 +179,7 @@ export default function SettingsIdentitiesPaneBody() {
                 />
               );
             })}
-          </AppList>
+          </ResourceList>
         )}
 
         <PasswordRow identities={identities} onChanged={loadIdentities} />
@@ -191,7 +195,8 @@ export default function SettingsIdentitiesPaneBody() {
             ))}
           </div>
         )}
-      </div>
-    </SectionCard>
+        </div>
+      </PaneSection>
+    </PaneSurface>
   );
 }

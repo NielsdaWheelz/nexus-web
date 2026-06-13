@@ -1,7 +1,7 @@
 "use client";
 
-import ContextRow from "@/components/ui/ContextRow";
 import ContributorCreditList from "@/components/contributors/ContributorCreditList";
+import ResourceRow from "@/components/ui/ResourceRow";
 import type { SearchResultRowViewModel } from "@/lib/search/types";
 import styles from "./SearchResultRow.module.css";
 
@@ -31,17 +31,12 @@ function renderSnippetContent(row: SearchResultRowViewModel) {
 
 export default function SearchResultRow({ row }: SearchResultRowProps) {
   return (
-    <ContextRow
-      className={styles.row}
-      mainClassName={styles.main}
-      href={row.href}
+    <ResourceRow
+      primary={{ kind: "link", href: row.href, paneTitleHint: row.paneTitleHint }}
       title={<span className={styles.primaryText}>{renderSnippetContent(row)}</span>}
-      titleClassName={styles.title}
-      description={row.typeLabel}
-      descriptionClassName={styles.type}
-      meta={row.sourceMeta}
-      metaClassName={styles.meta}
-      actions={
+      description={<span className={styles.type}>{row.typeLabel}</span>}
+      meta={<span className={styles.meta}>{row.sourceMeta}</span>}
+      contributors={
         row.contributorCredits.length > 0 ? (
           <ContributorCreditList
             credits={row.contributorCredits}
@@ -50,13 +45,11 @@ export default function SearchResultRow({ row }: SearchResultRowProps) {
           />
         ) : undefined
       }
-      actionsClassName={styles.actions}
-      expandedContent={
+      expanded={
         row.noteBody ? (
           <div className={styles.noteBody}>{row.noteBody}</div>
         ) : undefined
       }
-      expandedClassName={styles.expanded}
     />
   );
 }

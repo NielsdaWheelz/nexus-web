@@ -26,7 +26,7 @@ import PodcastEpisodeList from "./PodcastEpisodeList";
 import PodcastSubscriptionSettingsModal from "../PodcastSubscriptionSettingsModal";
 import LibraryDestinationPicker from "@/components/LibraryDestinationPicker";
 import LibraryMembershipPanel from "@/components/LibraryMembershipPanel";
-import SectionCard from "@/components/ui/SectionCard";
+import PaneSection from "@/components/ui/PaneSection";
 import {
   FeedbackNotice,
   toFeedback,
@@ -894,7 +894,7 @@ export default function PodcastDetailPaneBody() {
                 )}
               </div>
             </div>
-            <SectionCard>
+            <PaneSection>
               {loading && <PaneLoadingState />}
               {error && <FeedbackNotice feedback={error} />}
               {!loading && detail && (
@@ -904,7 +904,7 @@ export default function PodcastDetailPaneBody() {
                   podcastLibraryCount={podcastLibraryCount}
                 />
               )}
-            </SectionCard>
+            </PaneSection>
           </div>
         </div>
 

@@ -1,9 +1,3 @@
-.content {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-}
-
 .toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -63,8 +57,8 @@
 
 .podcastArtwork,
 .thumbnailFallback {
-  width: 100%;
-  height: 100%;
+  width: 32px;
+  height: 32px;
   border-radius: var(--radius-lg);
   display: inline-flex;
   align-items: center;
@@ -135,10 +129,6 @@
   display: inline-flex;
   align-items: center;
   gap: 8px;
-}
-
-.loadMoreButton {
-  align-self: flex-start;
 }
 
 .modalBackdrop {
