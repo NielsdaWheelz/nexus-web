@@ -1,7 +1,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useConversation } from "@/components/chat/useConversation";
-import type { SSEReferenceAddedEvent } from "@/lib/api/sse/events";
+import type { SSEContextRefAddedEvent } from "@/lib/api/sse/events";
 import type {
   ChatRunResponse,
   ConversationMessage,
@@ -77,7 +77,7 @@ function message(
             prompt: null,
             tool_calls: [],
             citations: [],
-            references_added: [],
+            context_refs_added: [],
             integrity_notices: [],
             created_at: timestamp,
             updated_at: timestamp,
@@ -337,9 +337,9 @@ describe("useConversation", () => {
     );
   });
 
-  it("forwards reference_added events from the tail to the reference owner", async () => {
-    const onReferenceAdded = vi.fn();
-    const referenceAdded: SSEReferenceAddedEvent["data"] = {
+  it("forwards context_ref_added events from the tail to the context-ref owner", async () => {
+    const onContextRefAdded = vi.fn();
+    const contextRefAdded: SSEContextRefAddedEvent["data"] = {
       id: "ref-1",
       conversation_id: "conversation-1",
       resource_ref: "content_chunk:33333333-3333-4333-8333-333333333333",
@@ -354,21 +354,21 @@ describe("useConversation", () => {
       useConversation({
         conversationId: null,
         branching: false,
-        onReferenceAdded,
+        onContextRefAdded,
       }),
     );
 
     const tailOptions = tailMocks.useChatRunTail.mock.calls[0]?.[0];
-    expect(tailOptions?.onReferenceAdded).toBeDefined();
+    expect(tailOptions?.onContextRefAdded).toBeDefined();
 
     act(() => {
-      tailOptions?.onReferenceAdded?.(referenceAdded);
+      tailOptions?.onContextRefAdded?.(contextRefAdded);
     });
 
-    expect(onReferenceAdded).toHaveBeenCalledWith(referenceAdded);
+    expect(onContextRefAdded).toHaveBeenCalledWith(contextRefAdded);
   });
 
-  it("attaches initialReferences to an existing conversation on resolve", async () => {
+  it("attaches initialContextRefs to an existing conversation on resolve", async () => {
     const fetchMock = stubFetch((input, init) => {
       const path = pathOf(input);
       if (path === "/api/conversations/conversation-1") {
@@ -390,7 +390,7 @@ describe("useConversation", () => {
     const { result } = renderHook(() =>
       useConversation({
         conversationId: "conversation-1",
-        initialReferences: [mediaRef],
+        initialContextRefs: [mediaRef],
         branching: false,
       }),
     );

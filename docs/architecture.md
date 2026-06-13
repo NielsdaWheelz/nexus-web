@@ -357,9 +357,9 @@ the same chunk/span/embedding pipeline; notes no longer have a parallel
 **Libraries / sharing** — `libraries`, `memberships`, `library_entries`,
 `library_invitations`, `default_library_intrinsics`,
 `default_library_closure_edges`, `default_library_backfill_jobs`, and the
-current **library-intelligence** subgraph (`library_intelligence_artifacts`,
-`library_intelligence_sections`, `library_intelligence_nodes`,
-`library_intelligence_claims`, `library_intelligence_evidence`).
+current **library-intelligence** head/revision subgraph
+(`library_intelligence_artifacts`, `library_intelligence_artifact_revisions`,
+`library_intelligence_revision_events`).
 
 **Contributors** — `contributors` (canonical identity, self-FK for merges),
 `contributor_aliases`, `contributor_external_ids`, `contributor_credits`,
@@ -372,25 +372,25 @@ highlight-note attachments, and backlinks are `resource_edges`, below — notes
 own no link table.
 
 **Resource graph** — `resource_edges` (the single directed connection table:
-stance `kind`, writer `origin`, polymorphic `scheme`+`id` endpoints with no
-endpoint FKs, optional ordered-adjacency keys, and one optional citation pair
-`ordinal`+`snapshot`), `tags` (user-owned tag resources),
+stance `kind`, writer `origin` (`user`, `citation`, `system`, `note_body`,
+`highlight_note`, `note_containment`, `synapse`), polymorphic `scheme`+`id`
+endpoints with no endpoint FKs, optional ordered-adjacency keys, citation
+`ordinal`+`snapshot`, and synapse rationale snapshots), `tags` (user-owned tag resources),
 `resource_external_snapshots` (stable targets for public web-search citations),
 and `oracle_reading_folios` (oracle-owned generated folio content referencing its
-citation edge). This subgraph replaced four superseded link/reference/citation
-stores — `object_links`, `conversation_references`, `oracle_reading_passages`,
-`library_intelligence_citations` — see §7.6.
+citation edge). This subgraph is the single durable positive connection
+contract.
 
 **Conversations / chat** — `conversations`, `messages` (the message tree with
 branch pointers), `conversation_branches`, `conversation_active_paths`
-(per-viewer), `conversation_shares`, `conversation_media`, `message_llm`,
-`models` (LLM registry); plus the **chat-run** machinery: `chat_runs`,
+(per-viewer), `conversation_shares`, `message_llm`, `models` (LLM registry);
+plus the **chat-run** machinery: `chat_runs`,
 `chat_run_events` (append-only SSE log), `chat_prompt_assemblies`; and the
 **retrieval/citation** ledgers: `message_tool_calls`, `message_retrievals`
 (telemetry; carries `cited_edge_id` pointing back at the citation edge),
-`message_retrieval_candidate_ledgers`, `message_rerank_ledgers`. (Conversation
-context refs are now `resource_edges` with `source_scheme='conversation'`, not a
-`conversation_references` table.) Assistant message API responses include a
+`message_retrieval_candidate_ledgers`, `message_rerank_ledgers`. Conversation
+context refs are `resource_edges` with `source_scheme='conversation'`. Assistant
+message API responses include a
 `trust_trail` read model assembled from these durable rows; persisted
 `message_document` blocks are text-only.
 
@@ -598,7 +598,8 @@ result-type grid. The package owns one concern per module (`kinds`, `query`, `sc
   `<scheme>:<uuid>` ref over a closed scheme set (`media`, `library`,
   `evidence_span`, `content_chunk`, `highlight`, `page`, `note_block`, `fragment`,
   `conversation`, `message`, `oracle_reading`, `oracle_corpus_passage`,
-  `library_intelligence_artifact`, `external_snapshot`, `contributor`, `podcast`)
+  `library_intelligence_artifact`, `library_intelligence_revision`,
+  `external_snapshot`, `contributor`, `podcast`)
   is the one persisted resource-identity vocabulary. The same ref identifies a
   resource everywhere: an edge endpoint, a citation target, an attached
   conversation context ref, and a read/inspect agent-tool argument. Parsing is
@@ -620,7 +621,7 @@ The chat/oracle LLM can call four tools (`services/agent_tools/`):
   navigation only, never cited.
 
 Citation `[N]` is a **dense, turn-global ordinal** assigned across the whole turn
-(attached references first, then each tool's selected results). A citation **is an
+(attached context refs first, then each tool's selected results). A citation **is an
 edge**: `[N]` is the `ordinal` on an `origin='citation'` `resource_edge` whose
 source is the assistant message and whose target is the cited resource. The
 backend builds the `CitationOut` read-model from those edges via
@@ -750,7 +751,7 @@ exact-only cutover, [`modules/reader-highlight-sidecar-exact-only`](cutovers/rea
 EPUB, and PDF ingest paths persist document-authored notes, endnotes,
 bibliography entries, in-document markers, and marker-to-target edges into
 `reader_apparatus_*` tables. This model is separate from generated chat
-citations, `message_retrievals`, and conversation references. Web/EPUB
+citations, `message_retrievals`, and conversation context refs. Web/EPUB
 apparatus is extracted before sanitization removes semantic attributes. PDF
 apparatus is capability-gated: native `cite.*` links can be `ready` when
 deterministic reference targets are materialized, marker-only native-link rows
@@ -853,11 +854,11 @@ predicates in `auth/permissions.py`; the search/object readers read
   media row survives in the default library if it has *either*. On invite-accept, a
   durable `default_library_backfill_jobs` row catches up historical content (the
   worker honors live revocation by locking the membership row).
-- **Library Intelligence** (`services/library_intelligence.py`) is one current,
-  source-grounded synthesis artifact per library/kind (claims/evidence/sections
-  graph). The build is currently a **deterministic compiler**, not yet
-  LLM-backed; source or membership drift marks the current artifact `stale` and
-  queues a replacement build when no build is already inflight.
+- **Library Intelligence** (`services/library_intelligence.py`) is one stable
+  synthesis artifact head per library plus immutable generated revisions.
+  Citations belong to `library_intelligence_revision:<id>`; the artifact head
+  resolves to the current revision and turns stale when source membership or
+  fingerprints drift.
 
 ### 8.6 Contributors
 
@@ -1140,7 +1141,7 @@ The things most likely to bite you, distilled:
 attached-reference citation regression came from breaking this density.
 10. **Assistant trust trails are read models, not new truth.** They are assembled
    when assistant messages are read from chat runs, prompt assemblies, tool calls,
-   retrieval ledgers, citation edges, and reference-added events. Message
+   retrieval ledgers, citation edges, and context-ref-added events. Message
    documents remain text-only.
 11. **`background_jobs` is raw SQL**, invisible in `models.py`. Most ingest tasks'
    `{"status":"failed"}` returns mark the *queue* row succeeded; recovery is the

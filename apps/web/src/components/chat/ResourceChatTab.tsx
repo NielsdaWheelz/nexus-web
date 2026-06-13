@@ -1,8 +1,8 @@
 "use client";
 
 import type { ReactNode } from "react";
-import ReferenceChatList from "@/components/chat/ReferenceChatList";
-import { useChatsByReference } from "@/lib/conversations/useChatsByReference";
+import ContextRefChatList from "@/components/chat/ContextRefChatList";
+import { useChatsByContextRef } from "@/lib/conversations/useChatsByContextRef";
 
 interface ResourceChatTabProps {
   resourceUri: string;
@@ -27,10 +27,10 @@ export default function ResourceChatTab({
   className,
   children,
 }: ResourceChatTabProps) {
-  const { conversations, isLoading } = useChatsByReference(resourceUri);
+  const { conversations, isLoading } = useChatsByContextRef(resourceUri);
 
   const chatList = (
-    <ReferenceChatList
+    <ContextRefChatList
       className={listClassName}
       conversations={conversations}
       density={density}

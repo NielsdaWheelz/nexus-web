@@ -10,6 +10,11 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_conversation, can_read_media, is_library_member
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
+from nexus.services.resource_graph.policy import (
+    CONVERSATION_CONTEXT_SCOPE_ORIGINS,
+    NOTE_MEDIA_SCOPE_ORIGINS,
+    SEARCH_SCOPE_EDGE_KIND,
+)
 from nexus.services.search.query import ScopeKind, SearchScope
 
 # =============================================================================
@@ -113,6 +118,29 @@ UNSUPPORTED = ScopeUnsupported()
 
 ScopeFilter = tuple[str, dict[str, Any]] | ScopeUnsupported
 
+def _sql_values(values: tuple[str, ...]) -> str:
+    return "(" + ", ".join(f"'{value}'" for value in values) + ")"
+
+
+NOTE_MEDIA_SCOPE_ORIGINS_SQL = _sql_values(NOTE_MEDIA_SCOPE_ORIGINS)
+CONVERSATION_CONTEXT_SCOPE_ORIGINS_SQL = _sql_values(CONVERSATION_CONTEXT_SCOPE_ORIGINS)
+
+
+def _media_context_ref_scope(media_id_sql: str) -> str:
+    return f"""
+            EXISTS (
+                SELECT 1 FROM resource_edges e
+                WHERE e.source_scheme = 'conversation'
+                  AND e.source_id = :scope_id
+                  AND e.target_scheme = 'media'
+                  AND e.target_id = {media_id_sql}
+                  AND e.kind = '{SEARCH_SCOPE_EDGE_KIND}'
+                  AND e.origin IN {CONVERSATION_CONTEXT_SCOPE_ORIGINS_SQL}
+                  AND e.user_id = :viewer_id
+                  AND e.ordinal IS NULL
+            )
+    """
+
 
 def _note_object_scope(scheme: str, object_id_sql: str) -> dict[str, str | ScopeUnsupported]:
     """resource_edges-based scope for a page/note_block keyed on (scheme, object_id_sql).
@@ -126,9 +154,9 @@ def _note_object_scope(scheme: str, object_id_sql: str) -> dict[str, str | Scope
         f"((e.source_scheme = '{scheme}' AND e.source_id = {object_id_sql}) "
         f"OR (e.target_scheme = '{scheme}' AND e.target_id = {object_id_sql}))"
     )
-    note_media_edge = """
-                  AND e.kind = 'context'
-                  AND e.origin IN ('user', 'note_body', 'highlight_note')
+    note_media_edge = f"""
+                  AND e.kind = '{SEARCH_SCOPE_EDGE_KIND}'
+                  AND e.origin IN {NOTE_MEDIA_SCOPE_ORIGINS_SQL}
                   AND e.user_id = :viewer_id
                   AND e.ordinal IS NULL
     """
@@ -168,8 +196,8 @@ def _note_object_scope(scheme: str, object_id_sql: str) -> dict[str, str | Scope
                   AND e.source_id = :scope_id
                   AND e.target_scheme = '{scheme}'
                   AND e.target_id = {object_id_sql}
-                  AND e.kind = 'context'
-                  AND e.origin IN ('user', 'citation', 'system')
+                  AND e.kind = '{SEARCH_SCOPE_EDGE_KIND}'
+                  AND e.origin IN {CONVERSATION_CONTEXT_SCOPE_ORIGINS_SQL}
                   AND e.user_id = :viewer_id
                   AND e.ordinal IS NULL
             )
@@ -190,13 +218,7 @@ _SCOPE_MATRIX: dict[str, dict[str, str | ScopeUnsupported]] = {
                   AND media_id IS NOT NULL
             )
         """,
-        "conversation": """
-            AND m.id IN (
-                SELECT media_id
-                FROM conversation_media
-                WHERE conversation_id = :scope_id
-            )
-        """,
+        "conversation": f"AND {_media_context_ref_scope('m.id')}",
     },
     "podcast": {
         "media": UNSUPPORTED,
@@ -208,13 +230,12 @@ _SCOPE_MATRIX: dict[str, dict[str, str | ScopeUnsupported]] = {
                   AND podcast_id IS NOT NULL
             )
         """,
-        "conversation": """
+        "conversation": f"""
             AND EXISTS (
                 SELECT 1
-                FROM conversation_media cm
-                JOIN podcast_episodes pe ON pe.media_id = cm.media_id
-                WHERE cm.conversation_id = :scope_id
-                  AND pe.podcast_id = p.id
+                FROM podcast_episodes pe
+                WHERE pe.podcast_id = p.id
+                  AND {_media_context_ref_scope('pe.media_id')}
             )
         """,
     },
@@ -228,12 +249,9 @@ _SCOPE_MATRIX: dict[str, dict[str, str | ScopeUnsupported]] = {
                   AND media_id IS NOT NULL
             )
         """,
-        "conversation": """
-            AND cc.owner_kind = 'media' AND cc.owner_id IN (
-                SELECT media_id
-                FROM conversation_media
-                WHERE conversation_id = :scope_id
-            )
+        "conversation": f"""
+            AND cc.owner_kind = 'media'
+            AND {_media_context_ref_scope('cc.owner_id')}
         """,
     },
     "fragment": {
@@ -255,10 +273,9 @@ _SCOPE_MATRIX: dict[str, dict[str, str | ScopeUnsupported]] = {
                 SELECT media_id FROM library_entries WHERE library_id = :scope_id
             )
         """,
-        "conversation": """
-            AND es.owner_kind = 'media' AND es.owner_id IN (
-                SELECT media_id FROM conversation_media WHERE conversation_id = :scope_id
-            )
+        "conversation": f"""
+            AND es.owner_kind = 'media'
+            AND {_media_context_ref_scope('es.owner_id')}
         """,
     },
     "page": _note_object_scope("page", "p.id"),
@@ -273,15 +290,15 @@ _SCOPE_MATRIX: dict[str, dict[str, str | ScopeUnsupported]] = {
                   AND media_id IS NOT NULL
             )
         """,
-        "conversation": """
+        "conversation": f"""
             AND EXISTS (
                 SELECT 1 FROM resource_edges e
                 WHERE e.source_scheme = 'conversation'
                   AND e.source_id = :scope_id
                   AND e.target_scheme = 'highlight'
                   AND e.target_id = h.id
-                  AND e.kind = 'context'
-                  AND e.origin IN ('user', 'citation', 'system')
+                  AND e.kind = '{SEARCH_SCOPE_EDGE_KIND}'
+                  AND e.origin IN {CONVERSATION_CONTEXT_SCOPE_ORIGINS_SQL}
                   AND e.user_id = :viewer_id
                   AND e.ordinal IS NULL
             )
@@ -342,18 +359,16 @@ _SCOPE_MATRIX: dict[str, dict[str, str | ScopeUnsupported]] = {
                 )
             )
         """,
-        "conversation": """
+        "conversation": f"""
             AND (
-                cc.media_id IN (
-                    SELECT media_id
-                    FROM conversation_media
-                    WHERE conversation_id = :scope_id
+                (
+                    cc.media_id IS NOT NULL
+                    AND {_media_context_ref_scope('cc.media_id')}
                 )
                 OR cc.podcast_id IN (
                     SELECT pe.podcast_id
-                    FROM conversation_media cm
-                    JOIN podcast_episodes pe ON pe.media_id = cm.media_id
-                    WHERE cm.conversation_id = :scope_id
+                    FROM podcast_episodes pe
+                    WHERE {_media_context_ref_scope('pe.media_id')}
                 )
             )
         """,

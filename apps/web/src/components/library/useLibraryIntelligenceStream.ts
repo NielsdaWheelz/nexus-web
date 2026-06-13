@@ -11,7 +11,7 @@ import {
 import { createRandomId } from "@/lib/createRandomId";
 
 interface GenerateResponse {
-  data: { artifact_id: string; revision_id: string; run_id: string };
+  data: { artifact_id: string; revision_id: string };
 }
 
 /**

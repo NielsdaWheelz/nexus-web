@@ -3,8 +3,9 @@
 Admission and search-scope semantics live here, in code, not in schema:
 
 - the context surface lists/removes ``kind=context`` edges (§5.1);
-- admission (``is_context_ref``) and the reverse lookup accept conversation
-  context edges; search-scope discovery narrows to bare context refs;
+- read admission (``admits_resource_for_conversation_read``) and the reverse
+  lookup accept any conversation edge to the target; search-scope discovery
+  narrows to bare context refs;
 - ``app_search`` may scope only to ``media:``/``library:`` targets.
 
 Mutators are flush-only (§9.0); committing wrappers belong to the routes.
@@ -29,8 +30,13 @@ from nexus.db.models import Conversation, ResourceEdge
 from nexus.errors import ApiErrorCode, ForbiddenError, InvalidRequestError, NotFoundError
 from nexus.schemas.conversation import ConversationOut, PageInfo
 from nexus.services.resource_graph.edges import create_edge
+from nexus.services.resource_graph.policy import (
+    APP_SEARCH_SCOPE_TARGET_SCHEMES,
+    CONVERSATION_CONTEXT_SCOPE_ORIGINS,
+    CONVERSATION_SCOPE_TARGET_SCHEMES,
+    SEARCH_SCOPE_EDGE_KIND,
+)
 from nexus.services.resource_graph.refs import (
-    SEARCH_SCOPE_SCHEMES,
     ResourceRef,
     ResourceScheme,
 )
@@ -68,9 +74,12 @@ def list_context_refs(
         db.execute(
             select(ResourceEdge)
             .where(
+                ResourceEdge.user_id == viewer_id,
                 ResourceEdge.source_scheme == "conversation",
                 ResourceEdge.source_id == conversation_id,
                 ResourceEdge.kind == "context",
+                ResourceEdge.origin.in_(CONVERSATION_CONTEXT_SCOPE_ORIGINS),
+                ResourceEdge.ordinal.is_(None),
             )
             .order_by(
                 ResourceEdge.source_order_key.asc().nulls_last(),
@@ -100,8 +109,8 @@ def add_context_ref_without_commit(
 ) -> ContextRefOut:
     """Add a context edge inside the caller's transaction (conversation create composes).
 
-    Idempotent: an existing bare edge for the pair is returned as-is, so
-    citation write-through and repeated attaches never double-insert.
+    Idempotent per bare conversation-target context edge. User, citation, and
+    system origins share one attached-context slot for the same target.
     """
     _require_owner(db, viewer_id, conversation_id)
     resolved = resolve_ref(db, viewer_id=viewer_id, ref=target)
@@ -112,6 +121,9 @@ def add_context_ref_without_commit(
         select(ResourceEdge).where(
             ResourceEdge.source_scheme == "conversation",
             ResourceEdge.source_id == conversation_id,
+            ResourceEdge.user_id == viewer_id,
+            ResourceEdge.kind == "context",
+            ResourceEdge.origin.in_(CONVERSATION_CONTEXT_SCOPE_ORIGINS),
             ResourceEdge.target_scheme == target.scheme,
             ResourceEdge.target_id == target.id,
             ResourceEdge.ordinal.is_(None),
@@ -155,6 +167,10 @@ def remove_context_ref(
             ResourceEdge.id == edge_id,
             ResourceEdge.source_scheme == "conversation",
             ResourceEdge.source_id == conversation_id,
+            ResourceEdge.user_id == viewer_id,
+            ResourceEdge.kind == "context",
+            ResourceEdge.origin.in_(CONVERSATION_CONTEXT_SCOPE_ORIGINS),
+            ResourceEdge.ordinal.is_(None),
         )
     ).scalar_one_or_none()
     if row is None:
@@ -163,7 +179,9 @@ def remove_context_ref(
     db.flush()
 
 
-def is_context_ref(db: Session, *, conversation_id: UUID, target: ResourceRef) -> bool:
+def admits_resource_for_conversation_read(
+    db: Session, *, conversation_id: UUID, target: ResourceRef
+) -> bool:
     """ANY edge from the conversation to the target admits (any kind, any origin).
 
     No owner check: callers are chat tools already authorized for the
@@ -184,7 +202,7 @@ def is_context_ref(db: Session, *, conversation_id: UUID, target: ResourceRef) -
     )
 
 
-def list_conversations_with_context_ref(
+def list_conversations_with_any_edge_to_ref(
     db: Session,
     *,
     viewer_id: UUID,
@@ -219,6 +237,7 @@ def list_conversations_with_context_ref(
                   FROM resource_edges e
                   WHERE e.source_scheme = 'conversation'
                     AND e.source_id = c.id
+                    AND e.user_id = :viewer_id
                     AND e.target_scheme = :target_scheme
                     AND e.target_id = :target_id
               )
@@ -255,13 +274,13 @@ def list_conversations_with_context_ref(
     return ConversationPage(conversations=conversations, page=PageInfo(next_cursor=next_cursor))
 
 
-def batch_conversations_with_context_ref(
+def batch_conversations_with_any_edge_to_ref(
     db: Session, *, viewer_id: UUID, targets: list[UUID], target_scheme: ResourceScheme
 ) -> dict[UUID, list[Conversation]]:
     """Reverse lookup batched over many targets of one scheme (the §9.4 owner of
     ``highlights._batch_linked_conversations``).
 
-    Same admission as ``list_conversations_with_context_ref`` — any edge from a
+    Same admission as ``list_conversations_with_any_edge_to_ref`` — any edge from a
     viewer-owned conversation to the target counts — but keyed by target id and
     joined to the conversation row so callers project their own ref shape. Kept
     here, not on the generic connection query, because it needs the conversation join
@@ -274,6 +293,7 @@ def batch_conversations_with_context_ref(
         .join(Conversation, Conversation.id == ResourceEdge.source_id)
         .where(
             ResourceEdge.source_scheme == "conversation",
+            ResourceEdge.user_id == viewer_id,
             ResourceEdge.target_scheme == target_scheme,
             ResourceEdge.target_id.in_(targets),
             Conversation.owner_user_id == viewer_id,
@@ -296,9 +316,9 @@ def search_scope_refs_for_conversation(
         .where(
             ResourceEdge.source_scheme == "conversation",
             ResourceEdge.source_id == conversation_id,
-            ResourceEdge.target_scheme.in_(SEARCH_SCOPE_SCHEMES),
-            ResourceEdge.kind == "context",
-            ResourceEdge.origin.in_(("user", "citation", "system")),
+            ResourceEdge.target_scheme.in_(APP_SEARCH_SCOPE_TARGET_SCHEMES),
+            ResourceEdge.kind == SEARCH_SCOPE_EDGE_KIND,
+            ResourceEdge.origin.in_(CONVERSATION_CONTEXT_SCOPE_ORIGINS),
             ResourceEdge.user_id == viewer_id,
             ResourceEdge.ordinal.is_(None),
             Conversation.owner_user_id == viewer_id,
@@ -317,6 +337,29 @@ def search_scope_refs_for_conversation(
         seen.add((scheme, resource_id))
         out.append(ResourceRef(scheme=cast("ResourceScheme", scheme), id=resource_id))
     return out
+
+
+def conversation_has_note_search_scope_refs(
+    db: Session, *, viewer_id: UUID, conversation_id: UUID
+) -> bool:
+    return (
+        db.execute(
+            select(ResourceEdge.id)
+            .join(Conversation, Conversation.id == ResourceEdge.source_id)
+            .where(
+                ResourceEdge.source_scheme == "conversation",
+                ResourceEdge.source_id == conversation_id,
+                ResourceEdge.target_scheme.in_(CONVERSATION_SCOPE_TARGET_SCHEMES),
+                ResourceEdge.kind == SEARCH_SCOPE_EDGE_KIND,
+                ResourceEdge.origin.in_(CONVERSATION_CONTEXT_SCOPE_ORIGINS),
+                ResourceEdge.user_id == viewer_id,
+                ResourceEdge.ordinal.is_(None),
+                Conversation.owner_user_id == viewer_id,
+            )
+            .limit(1)
+        ).scalar_one_or_none()
+        is not None
+    )
 
 
 # ---------- internals ---------------------------------------------------------
@@ -356,6 +399,8 @@ def _next_context_source_order_key(db: Session, *, viewer_id: UUID, conversation
             ResourceEdge.source_scheme == "conversation",
             ResourceEdge.source_id == conversation_id,
             ResourceEdge.kind == "context",
+            ResourceEdge.origin.in_(CONVERSATION_CONTEXT_SCOPE_ORIGINS),
+            ResourceEdge.ordinal.is_(None),
             ResourceEdge.source_order_key.is_not(None),
         )
         .order_by(ResourceEdge.source_order_key.desc())

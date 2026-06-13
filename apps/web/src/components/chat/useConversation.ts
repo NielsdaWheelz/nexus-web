@@ -5,7 +5,7 @@
  *
  * Consolidates the message lifecycle for the conversation pane, new-chat route,
  * and reader document-chat: history load, resolve/create-on-send, optimistic
- * seeding, retry, branch state, and reference fan-out. It has two history-load
+ * seeding, retry, branch state, and context-ref fan-out. It has two history-load
  * modes selected by `branching`:
  *
  *   branching: true  → GET /conversations/{id}/tree (entire selected path +
@@ -41,7 +41,7 @@ import {
   activeForkOptionsForPath,
   selectedPathMessageIds,
 } from "@/lib/conversations/branching";
-import type { SSEReferenceAddedEvent } from "@/lib/api/sse/events";
+import type { SSEContextRefAddedEvent } from "@/lib/api/sse/events";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { addContextRef } from "@/lib/resourceGraph/contextRefs";
 import { toFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
@@ -85,12 +85,12 @@ const EMPTY_BRANCH_GRAPH: BranchGraph = {
 interface UseConversationOptions {
   /** Existing conversation id, or null to create on first send. */
   conversationId: string | null;
-  /** URIs attached to the conversation when it is created on first send. */
-  initialReferences?: string[];
+  /** Context refs attached to the conversation when it is created on first send. */
+  initialContextRefs?: string[];
   /** Enable branch state + active-path persistence. Pane: true. Reader: false. */
   branching?: boolean;
-  /** Fired when a `reference_added` SSE event lands for this conversation. */
-  onReferenceAdded?: (data: SSEReferenceAddedEvent["data"]) => void;
+  /** Fired when a `context_ref_added` SSE event lands for this conversation. */
+  onContextRefAdded?: (data: SSEContextRefAddedEvent["data"]) => void;
   /** Fired the first time a run resolves a concrete conversation id. */
   onConversationCreated?: (conversationId: string, runId: string) => void;
 }
@@ -145,9 +145,9 @@ export function useConversation(
 ): UseConversation {
   const {
     conversationId: initialConversationId,
-    initialReferences,
+    initialContextRefs,
     branching = false,
-    onReferenceAdded,
+    onContextRefAdded,
     onConversationCreated,
   } = options;
 
@@ -183,9 +183,9 @@ export function useConversation(
   // initial route adoption must not refetch history. Existing conversations
   // must never enter this set, or route re-entry can skip a real reload.
   const locallyCreatedIdsRef = useRef<Set<string>>(new Set());
-  // References already attached to the current conversation (seeded at creation
+  // Context refs already attached to the current conversation (seeded at creation
   // or POSTed on a prior send), so a continuation send does not redundantly
-  // re-POST the permanent document reference each time. Reset when the id changes.
+  // re-POST the permanent document context ref each time. Reset when the id changes.
   const attachedRefsRef = useRef<{ id: string | null; uris: Set<string> }>({
     id: null,
     uris: new Set(),
@@ -200,8 +200,8 @@ export function useConversation(
     promise: Promise<{ data: ConversationTreeResponse }>;
   } | null>(null);
   const routeConversationIdRef = useRef(initialConversationId);
-  const initialReferencesRef = useRef(initialReferences);
-  initialReferencesRef.current = initialReferences;
+  const initialContextRefsRef = useRef(initialContextRefs);
+  initialContextRefsRef.current = initialContextRefs;
 
   const messageIdsForPath = useCallback(
     (path: ConversationMessage[], leafMessageId: string | null = null) => {
@@ -241,14 +241,14 @@ export function useConversation(
       ? {
           setMessages,
           setForkOptionsByParentId,
-          onReferenceAdded,
+          onContextRefAdded,
           onConversationAvailable: onConversationCreated,
           shouldStartRun: shouldStartRunForCurrentConversation,
           shouldApplyRun: shouldApplyRunToSelectedPath,
         }
       : {
           setMessages,
-          onReferenceAdded,
+          onContextRefAdded,
           onConversationAvailable: onConversationCreated,
           shouldStartRun: shouldStartRunForCurrentConversation,
         },
@@ -591,7 +591,7 @@ export function useConversation(
 
   const resolveConversation = useCallback(async (): Promise<string> => {
     setError(null);
-    const refUris = initialReferencesRef.current ?? [];
+    const refUris = initialContextRefsRef.current ?? [];
     const id = conversationId;
     if (id) {
       if (attachedRefsRef.current.id !== id) {
@@ -609,7 +609,7 @@ export function useConversation(
       "/api/conversations",
       {
         method: "POST",
-        body: JSON.stringify({ initial_references: refUris }),
+        body: JSON.stringify({ initial_context_refs: refUris }),
       },
     );
     locallyCreatedIdsRef.current.add(created.data.id);

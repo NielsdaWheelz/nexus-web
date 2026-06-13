@@ -146,7 +146,7 @@ function message(
             prompt: null,
             tool_calls: [],
             citations: [],
-            references_added: [],
+            context_refs_added: [],
             integrity_notices: [],
             created_at: timestamp,
             updated_at: timestamp,
@@ -880,11 +880,11 @@ describe("Conversation", () => {
       }),
     );
 
-    const referencesPane: WorkspaceAttachedSecondaryPaneState = {
+    const contextRefsPane: WorkspaceAttachedSecondaryPaneState = {
       id: "pane-1-secondary",
       parentPrimaryPaneId: "pane-1",
       groupId: "conversation-context",
-      activeSurfaceId: "conversation-references",
+      activeSurfaceId: "conversation-context-refs",
       widthPx: 320,
       visibility: "visible",
     };
@@ -931,25 +931,25 @@ describe("Conversation", () => {
 
     const view = render(tree(null));
 
-    // Branch history present → the Forks toggle joins References in the chrome.
+    // Branch history present -> the Forks toggle joins Context in the chrome.
     expect(await screen.findByText("Answer A")).toBeVisible();
-    const referencesToggle = screen.getByRole("button", { name: "References" });
-    expect(referencesToggle).toHaveAttribute("aria-pressed", "false");
+    const contextRefsToggle = screen.getByRole("button", { name: "Context" });
+    expect(contextRefsToggle).toHaveAttribute("aria-pressed", "false");
     expect(screen.getByRole("button", { name: "Forks" })).toBeInTheDocument();
 
-    await user.click(referencesToggle);
+    await user.click(contextRefsToggle);
     expect(onRequestSecondarySurface).toHaveBeenCalledWith(
       "pane-1",
-      "conversation-references",
+      "conversation-context-refs",
     );
 
-    // With the references surface open, the same button collapses it.
-    view.rerender(tree(referencesPane));
-    const activeReferencesToggle = screen.getByRole("button", {
-      name: "References",
+    // With the context-ref surface open, the same button collapses it.
+    view.rerender(tree(contextRefsPane));
+    const activeContextRefsToggle = screen.getByRole("button", {
+      name: "Context",
     });
-    expect(activeReferencesToggle).toHaveAttribute("aria-pressed", "true");
-    await user.click(activeReferencesToggle);
+    expect(activeContextRefsToggle).toHaveAttribute("aria-pressed", "true");
+    await user.click(activeContextRefsToggle);
     expect(onCloseSecondaryPane).toHaveBeenCalledWith("pane-1-secondary");
   });
 });

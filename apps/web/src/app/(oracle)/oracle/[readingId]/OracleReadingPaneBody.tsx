@@ -533,7 +533,7 @@ export default function OracleReadingPaneBody({
         {
           method: "POST",
           body: JSON.stringify({
-            initial_references: [`oracle_reading:${readingId}`],
+            initial_context_refs: [`oracle_reading:${readingId}`],
           }),
         },
       );

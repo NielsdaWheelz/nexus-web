@@ -39,7 +39,7 @@ from nexus.services.highlight_access import (
     require_typed_highlight_or_404 as _require_typed_highlight_or_404,
 )
 from nexus.services.resource_graph.cleanup import delete_edges_for_deleted_resource
-from nexus.services.resource_graph.context import batch_conversations_with_context_ref
+from nexus.services.resource_graph.context import batch_conversations_with_any_edge_to_ref
 from nexus.services.resource_graph.highlight_notes import linked_note_blocks_for_highlights
 from nexus.services.resource_graph.refs import ResourceRef
 
@@ -183,8 +183,8 @@ def _batch_linked_conversations(
     """Conversations that reference the given highlights, projected to refs.
 
     The reverse-lookup predicate is owned by its §9.4 home,
-    ``resource_graph.context.batch_conversations_with_context_ref`` (the batched
-    twin of ``list_conversations_with_context_ref``); this only maps the
+    ``resource_graph.context.batch_conversations_with_any_edge_to_ref`` (the batched
+    twin of ``list_conversations_with_any_edge_to_ref``); this only maps the
     conversation rows to ``LinkedConversationRef``, mirroring how
     ``_batch_linked_note_blocks`` delegates to ``notes``.
     """
@@ -193,7 +193,7 @@ def _batch_linked_conversations(
             LinkedConversationRef(conversation_id=conv.id, title=conv.title)
             for conv in conversations
         ]
-        for highlight_id, conversations in batch_conversations_with_context_ref(
+        for highlight_id, conversations in batch_conversations_with_any_edge_to_ref(
             db, viewer_id=viewer_id, targets=highlight_ids, target_scheme="highlight"
         ).items()
     }

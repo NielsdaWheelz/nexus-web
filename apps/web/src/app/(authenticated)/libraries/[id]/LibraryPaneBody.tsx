@@ -73,6 +73,7 @@ import {
   usePaneParam,
   usePaneRouter,
   usePaneRuntime,
+  usePaneSearchParams,
   useSetPaneTitle,
 } from "@/lib/panes/paneRuntime";
 import type { ContributorCredit } from "@/lib/contributors/types";
@@ -159,6 +160,7 @@ export default function LibraryPaneBody() {
     throw new Error("library route requires an id");
   }
   const router = usePaneRouter();
+  const selectedTab = usePaneSearchParams().get("tab");
   const { openInNewPane, requestSecondarySurface } = usePaneRuntime() ?? {};
   const feedback = useFeedback();
   const [library, setLibrary] = useState<Library | null>(null);
@@ -692,6 +694,11 @@ export default function LibraryPaneBody() {
   const handleOpenLibraryIntelligence = useCallback(() => {
     requestSecondarySurface?.("library-intelligence");
   }, [requestSecondarySurface]);
+  useEffect(() => {
+    if (selectedTab === "intelligence") {
+      requestSecondarySurface?.("library-intelligence");
+    }
+  }, [requestSecondarySurface, selectedTab]);
 
   const handleOpenMediaChat = useCallback(
     async (media: LibraryMediaEntry) => {
@@ -700,7 +707,7 @@ export default function LibraryPaneBody() {
           data: { id: string };
         }>("/api/conversations", {
           method: "POST",
-          body: JSON.stringify({ initial_references: [`media:${media.id}`] }),
+          body: JSON.stringify({ initial_context_refs: [`media:${media.id}`] }),
         });
         const route = `/conversations/${response.data.id}`;
         openInNewPane?.(route, media.title);
@@ -717,17 +724,14 @@ export default function LibraryPaneBody() {
   );
 
   const handleOpenIntelligenceChat = useCallback(
-    async (artifactId: string) => {
+    async (revisionRef: string) => {
       try {
         const response = await apiFetch<{
           data: { id: string };
         }>("/api/conversations", {
           method: "POST",
           body: JSON.stringify({
-            initial_references: [
-              `library_intelligence_artifact:${artifactId}`,
-              `library:${id}`,
-            ],
+            initial_context_refs: [revisionRef, `library:${id}`],
           }),
         });
         const route = `/conversations/${response.data.id}`;

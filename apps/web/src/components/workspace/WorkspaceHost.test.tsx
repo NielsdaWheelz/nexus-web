@@ -544,8 +544,8 @@ const READER_TOOLS_WITH_DOC_CHAT: PaneSecondaryPublication = {
 
 const CONVERSATION_CONTEXT_PUBLICATION: PaneSecondaryPublication = {
   groupId: "conversation-context",
-  defaultSurfaceId: "conversation-references",
-  surfaces: [{ id: "conversation-references", body: <div>References</div> }],
+  defaultSurfaceId: "conversation-context-refs",
+  surfaces: [{ id: "conversation-context-refs", body: <div>References</div> }],
 };
 
 function setPaneWithSecondary(secondary: {

@@ -296,7 +296,7 @@ def search_scopes(db: Session, viewer_id: UUID, base: SearchQuery,
                   scopes: Sequence[SearchScope]) -> SearchResponse: ...
 ```
 
-Owns the per-scope loop, union, **dedupe by `(result_type, id)` keeping max score**, sort, and cap — moved verbatim from `app_search._search_across_scopes` (`app_search.py:363–406`). `app_search` calls `search_scopes(...)`; it retains only chat-domain concerns (resolving empty `scopes` → conversation references, and `_empty_status_for_scopes`).
+Owns the per-scope loop, union, **dedupe by `(result_type, id)` keeping max score**, sort, and cap — moved verbatim from `app_search._search_across_scopes` (`app_search.py:363–406`). `app_search` calls `search_scopes(...)`; it retains only chat-domain concerns (resolving empty `scopes` → conversation context refs, and `_empty_status_for_scopes`).
 
 ---
 

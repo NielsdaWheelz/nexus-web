@@ -34,6 +34,15 @@ from nexus.services.resource_graph.schemas import (
     snapshot_to_jsonb,
 )
 
+READER_CONNECTION_ORIGINS: tuple[EdgeOrigin, ...] = (
+    "citation",
+    "note_body",
+    "highlight_note",
+    "user",
+    "synapse",
+    "system",
+)
+
 
 def list_reader_connections(
     db: Session,
@@ -289,7 +298,7 @@ def _source_category(
     if connection.origin == "citation":
         if connection.source_ref.scheme == "message":
             return "chat"
-        if connection.source_ref.scheme == "library_intelligence_artifact":
+        if connection.source_ref.scheme == "library_intelligence_revision":
             return "library_intelligence"
         if connection.source_ref.scheme == "oracle_reading":
             return "oracle"

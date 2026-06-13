@@ -278,6 +278,34 @@ def test_allowed_rev3_symbols_present_and_unflagged():
         assert hits, f"expected allowed Rev-3 symbol {symbol} to be present in production"
 
 
+def test_li_generated_citations_never_source_from_artifact_head():
+    pattern = (
+        r"source\s*=\s*ResourceRef\(\s*scheme\s*=\s*['\"]library_intelligence_artifact['\"]|"
+        r"source_scheme\s*=\s*['\"]library_intelligence_artifact['\"].*ordinal\s*="
+    )
+    hits = _filtered(pattern, _PY_ROOT, _SCRIPTS_ROOT, exclude=_FRONTEND_TEST)
+    assert not hits, (
+        "Library Intelligence generated citations must source from "
+        "library_intelligence_revision, never the mutable artifact head:\n"
+        f"{_fmt(hits)}"
+    )
+
+
+def test_li_generate_response_has_no_run_id_alias():
+    hits = [
+        hit
+        for hit in _filtered(
+            r"\brun_id\b",
+            _PY_ROOT / "api",
+            _PY_ROOT / "schemas",
+            _WEB_ROOT / "components" / "library",
+            exclude=_FRONTEND_TEST,
+        )
+        if "library_intelligence" in hit.path or "LibraryIntelligence" in hit.path
+    ]
+    assert not hits, f"LI generate response/run handling revived run_id alias:\n{_fmt(hits)}"
+
+
 # =============================================================================
 # AC-8 — single citation-render owner (apps/web)
 # =============================================================================
@@ -878,9 +906,9 @@ def test_optional_string_has_one_definition():
 #     false-matches ``lambda span:``, ``evidence_span:``, ``content_chunk:``, and
 #     f-strings. Alias rejection (D2) is proven directly by the ResourceRef parse
 #     test ``test_resource_graph_refs.test_assert_resource_ref_raises_on_invalid_input``.
-#   - Backtick-quoted historical prose (e.g. the ``conversation_context`` module
-#     docstring naming the routes it replaced) is allowed: see
-#     ``_DROPPED_TOKEN_BACKTICK_PROSE`` / ``_is_allowed_graph_residue``.
+#   - Production comments and docstrings are part of the hard-cutover contract:
+#     stale store names are allowed only in tests, migrations, and historical docs
+#     outside these production roots.
 #
 # These gates go green only once the parallel dead-code removals land; they are
 # written to the cutover's done-state, not its in-progress state.
@@ -900,16 +928,6 @@ _DROPPED_GRAPH_SYMBOLS: tuple[str, ...] = (
     "OBJECT_LINK_RELATIONS",
 )
 
-# Documented, minimal allowance for backtick-quoted historical prose. A hit is
-# permitted ONLY when the dropped token appears double-backtick-wrapped (RST/Sphinx
-# prose styling) — which real code references (``__tablename__ = "object_links"``,
-# attribute access, route paths, SQL strings) never are. This permits the
-# replacement-explaining docstrings without masking a genuine code reintroduction,
-# and it stays green whether or not a parallel agent later scrubs the prose.
-_DROPPED_TOKEN_BACKTICK_PROSE = re.compile(
-    r"``[A-Za-z0-9_./]*(?:" + "|".join(_DROPPED_GRAPH_SYMBOLS) + r")[A-Za-z0-9_./]*``"
-)
-
 
 def _is_allowed_graph_residue(hit: _Hit) -> bool:
     # Frontend absence-assertion tests legitimately name dropped symbols.
@@ -924,9 +942,7 @@ def _is_allowed_graph_residue(hit: _Hit) -> bool:
         or "/apps/web/src/lib/reader/__fixtures__/" in hit.path
     ):
         return True
-    # Backtick-quoted historical prose (module/function docstrings explaining the
-    # store a route/cleanup path replaced).
-    return bool(_DROPPED_TOKEN_BACKTICK_PROSE.search(hit.text))
+    return False
 
 
 @pytest.mark.parametrize("symbol", _DROPPED_GRAPH_SYMBOLS)
@@ -963,6 +979,82 @@ def test_dropped_provenance_graph_modules_absent(rel_path: str):
     assert not path.exists(), (
         f"{rel_path} must be deleted in the provenance-graph cutover "
         "(its concern moved to services/resource_graph/* + the graph routes)"
+    )
+
+
+def test_no_parallel_resource_graph_vocabulary_in_production():
+    pattern = (
+        r"\b(object_graph|object_graph_edges|resource_graph_edges|resource_links|"
+        r"resource_link_edges|link_edges|graph_edges)\b|object-graph|resource-links"
+    )
+    hits = _filtered(
+        pattern,
+        _PY_ROOT,
+        _WEB_ROOT,
+        _SCRIPTS_ROOT,
+        exclude=_FRONTEND_TEST,
+    )
+    assert not hits, f"parallel graph/link vocabulary referenced:\n{_fmt(hits)}"
+
+
+def test_resource_edge_durable_writes_stay_in_graph_owner():
+    pattern = (
+        r"\bResourceEdge\(|\b(insert|update|delete)\(ResourceEdge\)|"
+        r"\b(INSERT INTO|UPDATE|DELETE FROM|insert into|update|delete from) resource_edges\b"
+    )
+    hits = _excluding(
+        _grep(
+            pattern,
+            _PY_ROOT,
+            _SCRIPTS_ROOT,
+        ),
+        "db/models.py",
+        "services/resource_graph/edges.py",
+        "services/resource_graph/cleanup.py",
+    )
+    assert not hits, f"direct resource_edges write outside resource_graph owner:\n{_fmt(hits)}"
+
+
+_DROPPED_CONTEXT_SPINE_SYMBOLS: tuple[str, ...] = (
+    "conversation_media",
+    "initial_references",
+    "reference_added",
+    "references_added",
+    "ConversationReferences",
+    "ReferenceChatList",
+    "ReferencingChat",
+    "useConversationReferences",
+    "useChatsByReference",
+)
+
+
+@pytest.mark.parametrize("symbol", _DROPPED_CONTEXT_SPINE_SYMBOLS)
+def test_dropped_context_spine_symbols_absent_in_production(symbol: str):
+    hits = _filtered(rf"\b{symbol}\b", _PY_ROOT, _WEB_ROOT, _SCRIPTS_ROOT, exclude=_FRONTEND_TEST)
+    assert not hits, (
+        f"dropped context-spine symbol {symbol!r} still referenced in production-"
+        f"adjacent code:\n{_fmt(hits)}"
+    )
+
+
+def test_context_ref_phrase_drift_absent_in_production():
+    pattern = (
+        r"\bconversation references?\b|"
+        r"\breference-added\b|"
+        r"\breferences surface\b|"
+        r"\binitial references?\b|"
+        r"\battached references?\b"
+    )
+    hits = _filtered(pattern, _PY_ROOT, _WEB_ROOT, _SCRIPTS_ROOT, exclude=_FRONTEND_TEST)
+    assert not hits, f"stale context-ref vocabulary in production-adjacent code:\n{_fmt(hits)}"
+
+
+def test_app_search_does_not_query_resource_edges_directly():
+    path = _PY_ROOT / "services" / "agent_tools" / "app_search.py"
+    text = path.read_text(encoding="utf-8")
+    assert "resource_edges" not in text, (
+        "app_search must use resource_graph.context for graph-derived scopes; "
+        "direct resource_edges reads fork the search admission contract."
     )
 
 
@@ -1078,5 +1170,9 @@ def test_synapse_origin_edges_constructed_only_in_synapse_service():
     # other production construction site would bypass the replace-set +
     # suppression semantics. (python/tests lives outside the scanned roots;
     # the frontend only compares the origin, it never constructs it.)
-    hits = _excluding(_grep(r'origin="synapse"', _PY_ROOT, _SCRIPTS_ROOT), "services/synapse.py")
+    hits = _excluding(
+        _grep(r'origin="synapse"', _PY_ROOT, _SCRIPTS_ROOT),
+        "services/synapse.py",
+        "services/resource_graph/policy.py",
+    )
     assert not hits, f'origin="synapse" written outside services/synapse.py:\n{_fmt(hits)}'

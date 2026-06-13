@@ -22,7 +22,7 @@ When a source document contains a footnote marker, endnote marker, bibliography 
 3. Render inline affordances and hover previews without losing the reader's place.
 4. List the apparatus in the reader sidecar, aligned with the in-text markers when possible.
 5. Reuse the existing reader-tools, locator, evidence, and hover/activation infrastructure.
-6. Keep this separate from generated chat citations and conversation references.
+6. Keep this separate from generated chat citations and conversation context refs.
 
 The user-visible surface is a new reader-tools tab labelled `Citations`. The internal domain name is `reader_apparatus` because "citation" is already overloaded by generated assistant evidence, `message_retrievals`, and chat reference rendering.
 
@@ -153,7 +153,7 @@ The structural provenance used to audit why an item exists. Examples: EPUB packa
 5. Add one reader-tools sidecar tab that lists apparatus and aligns visible markers with sidecar rows.
 6. Add inline hover/click affordances for exact and strong markers where locators are available.
 7. Reuse existing locator types, reader activation routes, highlight projection mechanics, and media visibility checks.
-8. Keep generated assistant citations, conversation references, and source-authored apparatus as separate domains.
+8. Keep generated assistant citations, conversation context refs, and source-authored apparatus as separate domains.
 9. Bias toward false negatives over false positives.
 10. Build a fixture corpus that proves positive and negative cases across web article, EPUB, and PDF.
 

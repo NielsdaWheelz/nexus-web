@@ -340,7 +340,6 @@ def test_anchored_highlight_is_numbered_and_persists_valid_row(direct_db: Direct
     # down before those parents.
     _register_user_cleanup(direct_db, user_id)
     direct_db.register_cleanup("conversations", "id", conversation_id)
-    direct_db.register_cleanup("conversation_media", "conversation_id", conversation_id)
     _register_media_cleanup(direct_db, media_id)
     _register_highlight_cleanup(direct_db, highlight_id)
     direct_db.register_cleanup("chat_runs", "id", run.id)
@@ -387,7 +386,6 @@ def test_unanchored_highlight_is_not_numbered(direct_db: DirectSessionManager):
 
     _register_user_cleanup(direct_db, user_id)
     direct_db.register_cleanup("conversations", "id", conversation_id)
-    direct_db.register_cleanup("conversation_media", "conversation_id", conversation_id)
     _register_media_cleanup(direct_db, media_id)
     _register_highlight_cleanup(direct_db, highlight_id)
 
@@ -441,7 +439,6 @@ def test_dense_ordinals_skip_uncitable_resources(direct_db: DirectSessionManager
 
     _register_user_cleanup(direct_db, user_id)
     direct_db.register_cleanup("conversations", "id", conversation_id)
-    direct_db.register_cleanup("conversation_media", "conversation_id", conversation_id)
     for media_id in (first_media, unanchored_media, second_media):
         _register_media_cleanup(direct_db, media_id)
     for highlight_id in (first_id, unanchored_id, second_id):
@@ -499,7 +496,6 @@ def test_reexecution_with_fewer_citations_prunes_phantom_edges(direct_db: Direct
 
     _register_user_cleanup(direct_db, user_id)
     direct_db.register_cleanup("conversations", "id", conversation_id)
-    direct_db.register_cleanup("conversation_media", "conversation_id", conversation_id)
     _register_media_cleanup(direct_db, first_media)
     _register_media_cleanup(direct_db, second_media)
     _register_highlight_cleanup(direct_db, first_id)
@@ -567,7 +563,6 @@ def test_read_evidence_with_materializable_retrieval_persists_next_ordinal(
 
     _register_user_cleanup(direct_db, user_id)
     direct_db.register_cleanup("conversations", "id", conversation_id)
-    direct_db.register_cleanup("conversation_media", "conversation_id", conversation_id)
     _register_media_cleanup(direct_db, media_id)
     _register_highlight_cleanup(direct_db, highlight_id)
     direct_db.register_cleanup("chat_runs", "id", run.id)
@@ -657,7 +652,6 @@ def test_read_evidence_section_full_and_page_range_persist_citations(
 
     _register_user_cleanup(direct_db, user_id)
     direct_db.register_cleanup("conversations", "id", conversation_id)
-    direct_db.register_cleanup("conversation_media", "conversation_id", conversation_id)
     _register_media_cleanup(direct_db, media_id)
     _register_media_cleanup(direct_db, pdf_media_id)
     direct_db.register_cleanup("chat_runs", "id", run.id)
@@ -721,7 +715,6 @@ def test_read_evidence_without_materializable_retrieval_persists_nothing(
 
     _register_user_cleanup(direct_db, user_id)
     direct_db.register_cleanup("conversations", "id", conversation_id)
-    direct_db.register_cleanup("conversation_media", "conversation_id", conversation_id)
     _register_media_cleanup(direct_db, media_id)
     _register_highlight_cleanup(direct_db, highlight_id)
     direct_db.register_cleanup("chat_runs", "id", run.id)

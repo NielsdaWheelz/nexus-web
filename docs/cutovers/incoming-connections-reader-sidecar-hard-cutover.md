@@ -123,19 +123,19 @@ reader-tools surface for graph connections.
 
 ### 2.5 Library Intelligence
 
-Library Intelligence citations are current-head citation edges:
+Library Intelligence citations are revision-scoped citation edges:
 
 ```text
-source = library_intelligence_artifact:<artifact_id>
+source = library_intelligence_revision:<revision_id>
 target = evidence_span:<span_id>
 origin = citation
 ordinal = N
 snapshot = display card + deep link
 ```
 
-The target-centered reader row opens the stable artifact head. It does not claim
-historical revision-level citation identity. Revision-level backlinks are a
-separate product decision and are out of scope.
+The target-centered reader row opens the exact generated revision that cited the
+passage. The stable artifact head remains a latest/current alias, not the source
+identity for generated LI citation rows.
 
 ### 2.6 Source-authored apparatus
 
@@ -190,7 +190,8 @@ or recommendation engine.
 N2. No historical resolver. If a cited span no longer resolves, show the citation
 snapshot and mark the row as non-jumpable.
 
-N3. No Library Intelligence revision-level backlinks. Current artifact head only.
+N3. No source-versioned historical resolver for deleted targets. Library
+Intelligence generated revisions are the explicit durable-artifact carveout.
 
 N4. No occurrence-level note backlink storage. A note body edge means "this block
 currently references X", not "this block has three mentions at offsets A/B/C".
@@ -295,7 +296,7 @@ the API.
 Given:
 
 ```text
-library_intelligence_artifact:A -> evidence_span:S
+library_intelligence_revision:R -> evidence_span:S
 origin = citation
 ordinal = 4
 snapshot.deep_link = /media/M#evidence-S
@@ -307,7 +308,7 @@ to that page region:
 ```text
 Library Intelligence
 This artifact cites this passage as [4]
-Open artifact
+Open revision
 ```
 
 Clicking the row opens the LI artifact surface. Activating the target anchor
@@ -538,8 +539,10 @@ a connection citation target and would create noisy "everything in this library"
 backlinks.
 
 For `conversation:<id>`, `message:<id>`, `oracle_reading:<id>`,
-`library_intelligence_artifact:<id>`, `contributor:<id>`, `podcast:<id>`, and
+`library_intelligence_revision:<id>`, `contributor:<id>`, `podcast:<id>`, and
 `tag:<id>`, owner rollup equals exact unless a later spec defines child refs.
+For `library_intelligence_artifact:<id>`, owner rollup includes its immutable
+`library_intelligence_revision:<id>` children.
 
 ### 8.5 `reader_connections`
 
@@ -644,7 +647,7 @@ Request:
   "filters": {
     "origins": ["citation"],
     "kinds": null,
-    "source_schemes": ["message", "library_intelligence_artifact"],
+    "source_schemes": ["message", "library_intelligence_revision"],
     "target_schemes": null
   },
   "limit": 50,
@@ -863,12 +866,13 @@ also connections and may appear under a separate filter.
 
 ### 11.2 Library Intelligence
 
-LI promote continues to replace citation edges on the stable artifact head in
-the same transaction that updates `current_revision_id`.
+LI generated citations source from `library_intelligence_revision:<revision_id>`.
+Promote only moves `library_intelligence_artifacts.current_revision_id`; it does
+not replace, delete, or synthesize citation edges.
 
-Incoming rows open the current artifact. If the artifact has been regenerated,
-the row reflects the current citation set only. Restored historical revisions
-with empty citation edges do not invent old cited-by rows.
+Incoming rows for a revision open that exact revision. Artifact-head rows remain
+valid only for explicit latest/head links, and owner rollup may include immutable
+revision children when the caller asks for owner rollup.
 
 ### 11.3 Oracle
 
@@ -1107,8 +1111,8 @@ spans/chunks/highlights belong to a media item or note block.
 D5. **Citation snapshots are display-only.** They keep cards useful after target
 loss. They are not a resolver fallback.
 
-D6. **LI backlinks are current-head only.** Stable artifact identity is enough
-for this cutover.
+D6. **LI generated backlinks are revision-scoped.** Artifact identity is the
+latest/head alias; immutable revision refs own generated citation backlinks.
 
 D7. **Note body backlinks are block-level, not occurrence-level.** The edge is a
 durable reference fact; inline positions remain inside PM JSON.
@@ -1315,7 +1319,7 @@ Update after implementation:
   LI doc drift.
 - `docs/modules/reader-implementation.md`: reader-tools `reader-connections`.
 - `docs/modules/chat.md`: target-centered citation visibility.
-- `docs/modules/library.md`: LI current-head cited-by behavior.
+- `docs/modules/library.md`: LI revision-scoped cited-by behavior.
 - `docs/cutovers/resource-provenance-graph-hard-cutover.md`: amend G9 to point
   at `connections` as the product read model, with `edges` as row write/delete.
 - `docs/cutovers/notes-pages-object-graph-hard-cutover.md`: replace backlink

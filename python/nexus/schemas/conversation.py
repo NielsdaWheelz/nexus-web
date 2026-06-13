@@ -52,7 +52,7 @@ CHAT_RUN_EVENT_TYPES = Literal[
     "tool_call",
     "retrieval_result",
     "citation_index",
-    "reference_added",
+    "context_ref_added",
     "delta",
     "done",
 ]
@@ -286,7 +286,7 @@ class ChatRunCitationIndexEventPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class ChatRunReferenceAddedEventPayload(BaseModel):
+class ChatRunContextRefAddedEventPayload(BaseModel):
     """Strict SSE payload for a citation-materialized context edge (ContextRefOut shape)."""
 
     id: UUID
@@ -312,8 +312,8 @@ def chat_run_event_payload_json(event_type: str, payload: dict[str, Any]) -> dic
         return ChatRunRetrievalResultEventPayload.model_validate(payload).model_dump(mode="json")
     if event_type == "citation_index":
         return ChatRunCitationIndexEventPayload.model_validate(payload).model_dump(mode="json")
-    if event_type == "reference_added":
-        return ChatRunReferenceAddedEventPayload.model_validate(payload).model_dump(mode="json")
+    if event_type == "context_ref_added":
+        return ChatRunContextRefAddedEventPayload.model_validate(payload).model_dump(mode="json")
     if event_type == "delta":
         return ChatRunDeltaEventPayload.model_validate(payload).model_dump(mode="json")
     if event_type == "done":
@@ -447,7 +447,7 @@ class TrustCitationOut(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class TrustReferenceAddedOut(BaseModel):
+class TrustContextRefAddedOut(BaseModel):
     chat_run_event_seq: int
     id: UUID
     conversation_id: UUID
@@ -478,7 +478,7 @@ class AssistantTrustTrailOut(BaseModel):
     prompt: TrustPromptAssemblyOut | None = None
     tool_calls: list[TrustToolCallOut] = Field(default_factory=list)
     citations: list[TrustCitationOut] = Field(default_factory=list)
-    references_added: list[TrustReferenceAddedOut] = Field(default_factory=list)
+    context_refs_added: list[TrustContextRefAddedOut] = Field(default_factory=list)
     integrity_notices: list[TrustIntegrityNoticeOut] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime

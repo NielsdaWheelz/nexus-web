@@ -2,9 +2,9 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { ContextRefOut } from "@/lib/resourceGraph/contextRefs";
-import ConversationReferencesSurface from "./ConversationReferencesSurface";
+import ConversationContextRefsSurface from "./ConversationContextRefsSurface";
 
-function reference(overrides: Partial<ContextRefOut> = {}): ContextRefOut {
+function contextRef(overrides: Partial<ContextRefOut> = {}): ContextRefOut {
   return {
     id: "ref-1",
     conversation_id: "conv-1",
@@ -17,23 +17,23 @@ function reference(overrides: Partial<ContextRefOut> = {}): ContextRefOut {
   };
 }
 
-describe("ConversationReferencesSurface", () => {
-  it("renders a reference label", () => {
+describe("ConversationContextRefsSurface", () => {
+  it("renders a context ref label", () => {
     render(
-      <ConversationReferencesSurface
-        references={[reference()]}
-        removeReference={async () => {}}
+      <ConversationContextRefsSurface
+        contextRefs={[contextRef()]}
+        removeContextRef={async () => {}}
       />,
     );
     expect(screen.getByText("Annual report")).toBeVisible();
   });
 
-  it("marks a missing reference unavailable and disables Open", async () => {
+  it("marks a missing context ref unavailable and disables Open", async () => {
     const user = userEvent.setup();
     render(
-      <ConversationReferencesSurface
-        references={[reference({ missing: true })]}
-        removeReference={async () => {}}
+      <ConversationContextRefsSurface
+        contextRefs={[contextRef({ missing: true })]}
+        removeContextRef={async () => {}}
         onOpenResource={() => {}}
       />,
     );
@@ -44,28 +44,28 @@ describe("ConversationReferencesSurface", () => {
     expect(screen.getByRole("menuitem", { name: "Open" })).toBeDisabled();
   });
 
-  it("removes a reference from the actions menu", async () => {
+  it("removes a context ref from the actions menu", async () => {
     const user = userEvent.setup();
-    const removeReference = vi.fn(async () => {});
+    const removeContextRef = vi.fn(async () => {});
     render(
-      <ConversationReferencesSurface
-        references={[reference()]}
-        removeReference={removeReference}
+      <ConversationContextRefsSurface
+        contextRefs={[contextRef()]}
+        removeContextRef={removeContextRef}
       />,
     );
 
     await user.click(screen.getByRole("button", { name: "Actions" }));
     await user.click(screen.getByRole("menuitem", { name: "Remove" }));
-    expect(removeReference).toHaveBeenCalledWith("ref-1");
+    expect(removeContextRef).toHaveBeenCalledWith("ref-1");
   });
 
-  it("opens a reference from the body and actions menu", async () => {
+  it("opens a context ref from the body and actions menu", async () => {
     const user = userEvent.setup();
     const onOpenResource = vi.fn();
     render(
-      <ConversationReferencesSurface
-        references={[reference()]}
-        removeReference={async () => {}}
+      <ConversationContextRefsSurface
+        contextRefs={[contextRef()]}
+        removeContextRef={async () => {}}
         onOpenResource={onOpenResource}
       />,
     );
@@ -78,13 +78,13 @@ describe("ConversationReferencesSurface", () => {
     expect(onOpenResource).toHaveBeenCalledTimes(2);
   });
 
-  it("shows the empty state with no references", () => {
+  it("shows the empty state with no context refs", () => {
     render(
-      <ConversationReferencesSurface
-        references={[]}
-        removeReference={async () => {}}
+      <ConversationContextRefsSurface
+        contextRefs={[]}
+        removeContextRef={async () => {}}
       />,
     );
-    expect(screen.getByText("No references yet.")).toBeVisible();
+    expect(screen.getByText("No context yet.")).toBeVisible();
   });
 });

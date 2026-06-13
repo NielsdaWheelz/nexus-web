@@ -44,7 +44,10 @@ from nexus.services.prompt_budget import (
     build_prompt_budget,
     make_prompt_block,
 )
-from nexus.services.resource_graph.context import is_context_ref, list_context_refs
+from nexus.services.resource_graph.context import (
+    admits_resource_for_conversation_read,
+    list_context_refs,
+)
 from nexus.services.resource_graph.refs import (
     ResourceRef,
     ResourceRefParseFailure,
@@ -492,7 +495,7 @@ def _build_reader_selection_block(
     highlight = db.get(Highlight, reader_selection.highlight_id)
     if highlight is None or highlight.anchor_media_id != reader_selection.media_id:
         return None
-    if conversation_id is not None and not is_context_ref(
+    if conversation_id is not None and not admits_resource_for_conversation_read(
         db,
         conversation_id=conversation_id,
         target=ResourceRef(scheme="highlight", id=reader_selection.highlight_id),
@@ -553,12 +556,6 @@ def _build_resources_block(
     if not refs:
         return None, {}, (), ()
     citations: list[RetrievalCitation] = []
-    # "Which edition did this chat read" is answered post-cutover by the immutable
-    # snapshot on each citation edge minted this turn (§5.2), not by a per-edition
-    # stamp here: the edge-based ResolvedResource resolves the LI head fresh and
-    # carries no revision id. The ledger's revision-ref slot stays wired (the run
-    # ledger contract is unchanged) but empty until the graph resolve layer
-    # surfaces the consumed revision.
     revision_refs: list[Mapping[str, object]] = []
     lines = ["<resources>"]
     source_refs: list[Mapping[str, object]] = []
@@ -572,6 +569,15 @@ def _build_resources_block(
         source_refs.append(
             {"type": "context_ref", "id": str(ctx.edge_id), "resource_uri": ctx.target.uri}
         )
+        if ctx.resolved.resolved_revision_ref is not None:
+            revision_refs.append(
+                {
+                    "type": "context_ref_resolved_revision",
+                    "id": str(ctx.edge_id),
+                    "resource_uri": ctx.target.uri,
+                    "revision_uri": ctx.resolved.resolved_revision_ref,
+                }
+            )
     lines.append("</resources>")
     block = make_prompt_block(
         block_id=f"resources:{conversation_id}",

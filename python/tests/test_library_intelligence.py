@@ -20,7 +20,6 @@ from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.library_intelligence import (
     generate_artifact,
     get_artifact,
-    list_revisions,
     promote_revision,
 )
 from nexus.services.library_intelligence_reduce import (
@@ -32,6 +31,7 @@ from nexus.services.library_intelligence_reduce import (
     _map_li_citations,
     run_artifact_generation,
 )
+from nexus.services.library_intelligence_revisions import get_revision, list_revisions
 from nexus.tasks.library_intelligence import _fail_revision_after_worker_exception
 from tests.factories import (
     add_media_to_library,
@@ -493,13 +493,13 @@ def _drive_generation(db: Session, *, owner_id: UUID, library_id: UUID, token: s
     return ref.revision_id
 
 
-def _artifact_citation_edges(db: Session, artifact_id: UUID) -> list[ResourceEdge]:
-    """The artifact's citation edge rows (§5.5: citations key on the artifact)."""
+def _citation_edges(db: Session, source_scheme: str, source_id: UUID) -> list[ResourceEdge]:
     return (
         db.query(ResourceEdge)
         .filter(
-            ResourceEdge.source_scheme == "library_intelligence_artifact",
-            ResourceEdge.source_id == artifact_id,
+            ResourceEdge.source_scheme == source_scheme,
+            ResourceEdge.source_id == source_id,
+            ResourceEdge.origin == "citation",
         )
         .order_by(ResourceEdge.ordinal)
         .all()
@@ -529,8 +529,8 @@ class TestGenerateReduce:
         assert view.revision_id == revision_id
         assert "overview" in view.content_md
 
-        # The pane read-model is built from artifact-keyed citation edges (§5.5),
-        # roles verbatim and ordinals dense 1..N.
+        # The pane read-model is built from current-revision citation edges, roles
+        # verbatim and ordinals dense 1..N.
         assert [(c.ordinal, c.role) for c in view.citations] == [(1, "supports"), (2, "context")], (
             f"expected the two grounded citations; got {view.citations}"
         )
@@ -562,13 +562,14 @@ class TestGenerateReduce:
             "snapshot",
         }
 
-        # Storage contract: edges key on the artifact (not the revision).
+        # Storage contract: generated citation edges key on the revision, never the head.
         assert view.artifact_id is not None
-        edges = _artifact_citation_edges(db_session, view.artifact_id)
+        edges = _citation_edges(db_session, "library_intelligence_revision", revision_id)
         assert [(e.ordinal, e.kind, e.origin) for e in edges] == [
             (1, "supports", "citation"),
             (2, "context", "citation"),
-        ], f"expected two artifact-sourced citation edges; got {edges}"
+        ], f"expected two revision-sourced citation edges; got {edges}"
+        assert _citation_edges(db_session, "library_intelligence_artifact", view.artifact_id) == []
 
         # Normalized terminal grammar + AC-3 ledger row for the one reduce call.
         assert _done_payload(db_session, revision_id=revision_id) == {
@@ -660,9 +661,10 @@ class TestGenerateReduce:
         # AC22: only the promoting path writes citation edges.
         assert view.citations == []
         assert view.artifact_id is not None
-        assert _artifact_citation_edges(db_session, view.artifact_id) == [], (
+        assert _citation_edges(db_session, "library_intelligence_revision", revision_id) == [], (
             "a failed revision must write no citation edges"
         )
+        assert _citation_edges(db_session, "library_intelligence_artifact", view.artifact_id) == []
 
     def test_first_generate_builds_units_inline_and_succeeds(self, db_session: Session) -> None:
         # A fresh library whose per-media units were NOT pre-built: generation must
@@ -896,10 +898,12 @@ class TestRevisionsAndPromote:
         assert view.revision_id == first_rev
         assert "First synthesis" in view.content_md
         assert view.build is not None and view.build.revision_id == ref2.revision_id
-        # AC22: the in-flight draft has not touched the artifact's citation edges.
+        # AC22: the in-flight draft has not touched the current revision's citation edges.
         assert [(c.ordinal, c.role) for c in view.citations] == [(1, "supports")], (
             f"a draft must not touch the current citation set; got {view.citations}"
         )
+        assert _citation_edges(db_session, "library_intelligence_revision", first_rev)
+        assert _citation_edges(db_session, "library_intelligence_revision", ref2.revision_id) == []
 
         router2 = _ReduceRouter(
             content_md="Second synthesis [1][2]",
@@ -911,16 +915,18 @@ class TestRevisionsAndPromote:
         view = get_artifact(db_session, viewer_id=owner_id, library_id=library_id)
         assert view.revision_id == ref2.revision_id
         assert "Second synthesis" in view.content_md
-        # The promote swapped the citation set atomically with the content: the
-        # new dense set fully replaces the old one (no remnant of first_rev's set).
+        # The head now reads the second revision's citation set. The first
+        # revision's citation set remains addressable under first_rev.
         assert [(c.ordinal, c.role) for c in view.citations] == [
             (1, "supports"),
             (2, "context"),
-        ], f"the promote must swap in the new citation set; got {view.citations}"
+        ], f"the current head must read the new revision's citation set; got {view.citations}"
         assert view.artifact_id is not None
-        assert len(_artifact_citation_edges(db_session, view.artifact_id)) == 2, (
-            "the old citation set must be gone, not appended to"
+        assert len(_citation_edges(db_session, "library_intelligence_revision", first_rev)) == 1
+        assert (
+            len(_citation_edges(db_session, "library_intelligence_revision", ref2.revision_id)) == 2
         )
+        assert _citation_edges(db_session, "library_intelligence_artifact", view.artifact_id) == []
         # The prior revision is retained.
         prior = (
             db_session.execute(
@@ -953,24 +959,30 @@ class TestRevisionsAndPromote:
             == second_rev
         )
 
-        promote_revision(db_session, viewer_id=owner_id, revision_id=first_rev)
+        restored = promote_revision(
+            db_session, viewer_id=owner_id, library_id=library_id, revision_id=first_rev
+        )
+        assert restored.revision_id == first_rev
         db_session.expire_all()
         view = get_artifact(db_session, viewer_id=owner_id, library_id=library_id)
         assert view.revision_id == first_rev
         assert "One" in view.content_md
-        # Current-only doctrine (§5.5): the restored revision's per-revision
-        # citations died with the LI-private table, so the restore swaps the
-        # artifact's citation set to empty in the same transaction that moves the
-        # head — the superseded revision's chips must not survive under the
-        # restored prose.
-        assert view.citations == [], (
-            f"restore must clear the artifact's citation set; got {view.citations}"
+        assert [(c.ordinal, c.role) for c in view.citations] == [(1, "supports")]
+        second = get_revision(
+            db_session, viewer_id=owner_id, library_id=library_id, revision_id=second_rev
         )
+        assert [(c.ordinal, c.role) for c in second.citations] == [(1, "supports")]
         assert view.artifact_id is not None
-        assert _artifact_citation_edges(db_session, view.artifact_id) == []
+        assert len(_citation_edges(db_session, "library_intelligence_revision", first_rev)) == 1
+        assert len(_citation_edges(db_session, "library_intelligence_revision", second_rev)) == 1
+        assert _citation_edges(db_session, "library_intelligence_artifact", view.artifact_id) == []
         # Both revisions retained.
         summaries = list_revisions(db_session, viewer_id=owner_id, library_id=library_id)
         assert {s.revision_id for s in summaries} == {first_rev, second_rev}
+        assert {s.revision_id: s.citation_count for s in summaries} == {
+            first_rev: 1,
+            second_rev: 1,
+        }
 
     def test_idempotency_key_dedupes(self, db_session: Session) -> None:
         owner_id = _create_owner(db_session)
@@ -1012,7 +1024,8 @@ class TestWorkerBoundary:
         )
         db_session.expire_all()
         # AC22: the failed (non-promoting) path wrote no citation edges.
-        assert _artifact_citation_edges(db_session, ref.artifact_id) == []
+        assert _citation_edges(db_session, "library_intelligence_revision", ref.revision_id) == []
+        assert _citation_edges(db_session, "library_intelligence_artifact", ref.artifact_id) == []
         revision = db_session.execute(
             text(
                 "SELECT status, error_code, error_detail "

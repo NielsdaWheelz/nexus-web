@@ -37,9 +37,12 @@ from nexus.services import media_intelligence
 from nexus.services.contributor_taxonomy import normalize_contributor_role
 from nexus.services.contributors import get_contributor_by_handle
 from nexus.services.media_intelligence import MediaUnit
-from nexus.services.resource_graph.context import search_scope_refs_for_conversation
+from nexus.services.resource_graph.context import (
+    conversation_has_note_search_scope_refs,
+    search_scope_refs_for_conversation,
+)
+from nexus.services.resource_graph.policy import APP_SEARCH_SCOPE_TARGET_SCHEMES
 from nexus.services.resource_graph.refs import (
-    SEARCH_SCOPE_SCHEMES,
     ResourceRefParseFailure,
     parse_resource_ref,
 )
@@ -90,8 +93,8 @@ APP_SEARCH_TOOL_DEFINITION: dict[str, Any] = {
                 "items": {"type": "string"},
                 "description": (
                     "Optional URI scopes ('media:UUID' or 'library:UUID') "
-                    "from this conversation's references. Defaults to all "
-                    "media/library references."
+                    "from this conversation's context refs. Defaults to all "
+                    "media/library context refs."
                 ),
             },
         },
@@ -152,7 +155,7 @@ class AppSearchRun:
 
 
 class InvalidScopeError(Exception):
-    """Raised when a caller-supplied scope URI is not a valid conversation reference."""
+    """Raised when a caller-supplied scope URI is not a valid conversation context ref."""
 
 
 def execute_app_search(
@@ -178,7 +181,7 @@ def execute_app_search(
     error_code = None
     empty_status: str | None = None
 
-    # Empty input → use conversation's media/library references; explicit
+    # Empty input → use conversation's media/library context refs; explicit
     # input → validate each URI is a media/library reference of this
     # conversation.
     try:
@@ -327,7 +330,7 @@ def _resolve_scope_uris(
     ]
 
     if not scopes:
-        if _conversation_has_note_scope_refs(
+        if conversation_has_note_search_scope_refs(
             db,
             viewer_id=viewer_id,
             conversation_id=conversation_id,
@@ -345,43 +348,16 @@ def _resolve_scope_uris(
         if uri in seen:
             continue
         parsed = parse_resource_ref(uri)
-        if isinstance(parsed, ResourceRefParseFailure) or parsed.scheme not in SEARCH_SCOPE_SCHEMES:
+        if (
+            isinstance(parsed, ResourceRefParseFailure)
+            or parsed.scheme not in APP_SEARCH_SCOPE_TARGET_SCHEMES
+        ):
             raise InvalidScopeError(f"scope must be 'media:UUID' or 'library:UUID': {uri}")
         if uri not in allowed:
             raise InvalidScopeError(f"scope must be in conversation context: {uri}")
         seen.add(uri)
         resolved.append(uri)
     return resolved
-
-
-def _conversation_has_note_scope_refs(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    conversation_id: UUID,
-) -> bool:
-    return (
-        db.execute(
-            text(
-                """
-                SELECT 1
-                FROM resource_edges e
-                JOIN conversations c ON c.id = e.source_id
-                WHERE e.source_scheme = 'conversation'
-                  AND e.source_id = :conversation_id
-                  AND e.target_scheme IN ('page', 'note_block')
-                  AND e.kind = 'context'
-                  AND e.origin IN ('user', 'citation', 'system')
-                  AND e.user_id = :viewer_id
-                  AND e.ordinal IS NULL
-                  AND c.owner_user_id = :viewer_id
-                LIMIT 1
-                """
-            ),
-            {"viewer_id": viewer_id, "conversation_id": conversation_id},
-        ).scalar_one_or_none()
-        is not None
-    )
 
 
 # Result types whose evidence lives in content_chunks (media-owned or page-owned), so a

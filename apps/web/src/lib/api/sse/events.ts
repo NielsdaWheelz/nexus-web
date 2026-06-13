@@ -114,8 +114,8 @@ export interface SSECitationIndexEvent {
 }
 
 /** A citation-materialized context edge (`ContextRefOut` shape). */
-export interface SSEReferenceAddedEvent {
-  type: "reference_added";
+export interface SSEContextRefAddedEvent {
+  type: "context_ref_added";
   data: {
     id: string;
     conversation_id: string;
@@ -135,7 +135,7 @@ export type SSEEvent =
   | SSEToolCallEvent
   | SSERetrievalResultEvent
   | SSECitationIndexEvent
-  | SSEReferenceAddedEvent;
+  | SSEContextRefAddedEvent;
 
 function parseMetaData(data: unknown): SSEMetaEvent["data"] {
   if (
@@ -377,9 +377,9 @@ function isStringOrNull(value: unknown): value is string | null {
   return typeof value === "string" || value === null;
 }
 
-function parseReferenceAddedData(
+function parseContextRefAddedData(
   data: unknown,
-): SSEReferenceAddedEvent["data"] {
+): SSEContextRefAddedEvent["data"] {
   if (
     !isRecord(data) ||
     !hasOnlyKeys(data, [
@@ -402,11 +402,11 @@ function parseReferenceAddedData(
     !("citation_edge_id" in data) ||
     !(typeof data.citation_edge_id === "string" || data.citation_edge_id === null)
   ) {
-    throw new Error("Invalid SSE payload for reference_added");
+    throw new Error("Invalid SSE payload for context_ref_added");
   }
   // justify-type-assertion: the guard above exhaustively validated every
-  // field of the reference_added payload.
-  return data as SSEReferenceAddedEvent["data"];
+  // field of the context_ref_added payload.
+  return data as SSEContextRefAddedEvent["data"];
 }
 
 export function toChatSSEEvent(eventType: string, data: unknown): SSEEvent {
@@ -423,8 +423,8 @@ export function toChatSSEEvent(eventType: string, data: unknown): SSEEvent {
       return { type: "retrieval_result", data: parseRetrievalResultData(data) };
     case "citation_index":
       return { type: "citation_index", data: parseCitationIndexData(data) };
-    case "reference_added":
-      return { type: "reference_added", data: parseReferenceAddedData(data) };
+    case "context_ref_added":
+      return { type: "context_ref_added", data: parseContextRefAddedData(data) };
     default:
       throw new Error(`Unknown SSE event type: ${eventType || "message"}`);
   }

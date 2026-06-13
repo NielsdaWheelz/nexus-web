@@ -70,7 +70,7 @@ describe("toChatSSEEvent", () => {
     ).toThrow("Invalid SSE payload for citation_index");
   });
 
-  it("parses a reference_added event as a ContextRefOut", () => {
+  it("parses a context_ref_added event as a ContextRefOut", () => {
     const data = {
       id: "33333333-3333-4333-8333-333333333333",
       conversation_id: "conv-1",
@@ -81,15 +81,15 @@ describe("toChatSSEEvent", () => {
       created_at: "2026-01-01T00:00:00Z",
       citation_edge_id: "55555555-5555-4555-8555-555555555555",
     };
-    expect(toChatSSEEvent("reference_added", data)).toEqual({
-      type: "reference_added",
+    expect(toChatSSEEvent("context_ref_added", data)).toEqual({
+      type: "context_ref_added",
       data,
     });
   });
 
-  it("rejects reference_added payloads without a citation edge key", () => {
+  it("rejects context_ref_added payloads without a citation edge key", () => {
     expect(() =>
-      toChatSSEEvent("reference_added", {
+      toChatSSEEvent("context_ref_added", {
         id: "33333333-3333-4333-8333-333333333333",
         conversation_id: "conv-1",
         resource_ref: "media:44444444-4444-4444-8444-444444444444",
@@ -98,7 +98,7 @@ describe("toChatSSEEvent", () => {
         missing: false,
         created_at: "2026-01-01T00:00:00Z",
       }),
-    ).toThrow("Invalid SSE payload for reference_added");
+    ).toThrow("Invalid SSE payload for context_ref_added");
   });
 
   it("accepts generic non-empty tool names", () => {

@@ -76,10 +76,8 @@ def replace_citations_for_output(
 ) -> list[EdgeOut]:
     """Replace the source's citation set atomically inside the caller's transaction.
 
-    The LI promote calls this in the same transaction that moves
-    ``current_revision_id`` (§5.5), so an artifact's citations swap with its
-    content. Ordinals must be dense (1..N): the ``[N]`` markers in the stored
-    prose depend on them.
+    Ordinals must be dense (1..N): the ``[N]`` markers in the stored prose depend
+    on them.
     """
     ordinals = sorted(citation.ordinal for citation in citations)
     if ordinals != list(range(1, len(ordinals) + 1)):

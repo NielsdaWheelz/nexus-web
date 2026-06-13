@@ -21,7 +21,11 @@ import {
   hrefForReaderSourceTarget,
 } from "@/lib/conversations/readerSourceActivation";
 import { formatDisplayDate } from "@/lib/display/format";
-import { usePaneRouter, usePaneRuntime } from "@/lib/panes/paneRuntime";
+import {
+  usePaneRouter,
+  usePaneRuntime,
+  usePaneSearchParams,
+} from "@/lib/panes/paneRuntime";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import { useLibraryIntelligenceStream } from "@/components/library/useLibraryIntelligenceStream";
 import styles from "./page.module.css";
@@ -40,7 +44,9 @@ interface LibraryIntelligenceBuild {
 
 interface LibraryIntelligenceArtifact {
   artifact_id: string | null;
+  artifact_ref: string | null;
   revision_id: string | null;
+  revision_ref: string | null;
   status: ArtifactStatus;
   content_md: string;
   citations: CitationOut[];
@@ -48,12 +54,29 @@ interface LibraryIntelligenceArtifact {
   build: LibraryIntelligenceBuild | null;
 }
 
-interface RevisionSummary {
+interface LibraryIntelligenceRevision {
+  artifact_id: string;
+  artifact_ref: string;
   revision_id: string;
+  revision_ref: string;
+  status: "building" | "ready" | "failed";
+  content_md: string;
+  citations: CitationOut[];
+  created_at: string;
+  promoted_at: string | null;
+  is_current: boolean;
+}
+
+interface RevisionSummary {
+  artifact_id: string;
+  artifact_ref: string;
+  revision_id: string;
+  revision_ref: string;
   status: "building" | "ready" | "failed";
   created_at: string;
   promoted_at: string | null;
   is_current: boolean;
+  citation_count: number;
 }
 
 export default function LibraryIntelligencePane({
@@ -61,10 +84,11 @@ export default function LibraryIntelligencePane({
   onOpenChat,
 }: {
   libraryId: string;
-  onOpenChat: (artifactId: string) => void;
+  onOpenChat: (revisionRef: string) => void;
 }) {
   const display = useRenderEnvironment();
   const router = usePaneRouter();
+  const selectedRevisionId = usePaneSearchParams().get("revision");
   const paneRuntime = usePaneRuntime();
   const openInNewPane = paneRuntime?.openInNewPane;
   const [reloadNonce, setReloadNonce] = useState(0);
@@ -107,6 +131,16 @@ export default function LibraryIntelligencePane({
 
   const artifact =
     artifactResource.status === "ready" ? artifactResource.data.data : null;
+  const revisionResource = useResource<{ data: LibraryIntelligenceRevision }>({
+    cacheKey:
+      selectedRevisionId === null
+        ? null
+        : `library-intelligence-revision:${libraryId}:${selectedRevisionId}:${reloadNonce}`,
+    path: () =>
+      `/api/libraries/${libraryId}/intelligence/revisions/${selectedRevisionId}`,
+  });
+  const selectedRevision =
+    revisionResource.status === "ready" ? revisionResource.data.data : null;
 
   // Resume an in-flight build (e.g. opened mid-generation): subscribe to the
   // draft revision's stream when the GET reports a building draft. The hook
@@ -120,8 +154,11 @@ export default function LibraryIntelligencePane({
   }, [inFlightRevisionId, subscribe]);
 
   const citations = useMemo(
-    () => (artifact ? artifact.citations.map(toReaderCitationData) : []),
-    [artifact],
+    () =>
+      (selectedRevision?.citations ?? artifact?.citations ?? []).map(
+        toReaderCitationData,
+      ),
+    [artifact, selectedRevision],
   );
 
   const activate = useCallback(
@@ -161,12 +198,28 @@ export default function LibraryIntelligencePane({
   if (!artifact) {
     return <PaneLoadingState label="Loading intelligence…" />;
   }
+  if (selectedRevisionId !== null && revisionResource.status === "loading") {
+    return <PaneLoadingState label="Loading revision…" />;
+  }
+  if (selectedRevisionId !== null && revisionResource.status === "error") {
+    return (
+      <div className={styles.intelligencePane}>
+        <FeedbackNotice
+          {...toFeedback(revisionResource.error, {
+            fallback: "Failed to load intelligence revision",
+          })}
+        />
+      </div>
+    );
+  }
 
   const artifactId = artifact.artifact_id;
+  const displayedContent = selectedRevision?.content_md ?? artifact.content_md;
+  const chatRevisionRef = selectedRevision?.revision_ref ?? artifact.revision_ref;
   // The status reflects the head; a live SSE build overrides a stale/current
   // head so the in-flight regenerate shows "Generating…" immediately.
   const status: ArtifactStatus = building ? "building" : artifact.status;
-  const hasContent = artifact.content_md.trim().length > 0;
+  const hasContent = displayedContent.trim().length > 0;
 
   return (
     <div className={styles.intelligencePane}>
@@ -177,8 +230,8 @@ export default function LibraryIntelligencePane({
         <Button
           variant="secondary"
           size="sm"
-          onClick={() => artifactId && onOpenChat(artifactId)}
-          disabled={artifactId === null}
+          onClick={() => chatRevisionRef && onOpenChat(chatRevisionRef)}
+          disabled={chatRevisionRef === null}
           leadingIcon={<MessageSquare size={16} aria-hidden="true" />}
         >
           Chat
@@ -187,13 +240,15 @@ export default function LibraryIntelligencePane({
 
       {error ? <FeedbackNotice {...error} /> : null}
 
-      <StatusLine
-        status={status}
-        progress={progress}
-        staleSourceCount={artifact.stale_source_count}
-        building={building}
-        onGenerate={handleGenerate}
-      />
+      {selectedRevision === null ? (
+        <StatusLine
+          status={status}
+          progress={progress}
+          staleSourceCount={artifact.stale_source_count}
+          building={building}
+          onGenerate={handleGenerate}
+        />
+      ) : null}
 
       {status === "unavailable" && !hasContent ? (
         <FeedbackNotice
@@ -203,7 +258,7 @@ export default function LibraryIntelligencePane({
       ) : hasContent ? (
         <div className={styles.intelligenceBody}>
           <MarkdownMessage
-            content={artifact.content_md}
+            content={displayedContent}
             citations={citations}
             onCitationActivate={activate}
           />
@@ -214,6 +269,7 @@ export default function LibraryIntelligencePane({
         <RevisionHistory
           libraryId={libraryId}
           display={display}
+          selectedRevisionId={selectedRevisionId}
           onRestored={reload}
           onError={setError}
         />
@@ -318,14 +374,17 @@ function StatusLine({
 function RevisionHistory({
   libraryId,
   display,
+  selectedRevisionId,
   onRestored,
   onError,
 }: {
   libraryId: string;
   display: ReturnType<typeof useRenderEnvironment>;
+  selectedRevisionId: string | null;
   onRestored: () => void;
   onError: (feedback: FeedbackContent) => void;
 }) {
+  const router = usePaneRouter();
   const [open, setOpen] = useState(false);
   const [revisions, setRevisions] = useState<RevisionSummary[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -364,6 +423,7 @@ function RevisionHistory({
           `/api/libraries/${libraryId}/intelligence/revisions/${revisionId}/promote`,
           { method: "POST" },
         );
+        await loadRevisions();
         onRestored();
       } catch (err) {
         if (handleUnauthenticatedApiError(err)) return;
@@ -372,7 +432,13 @@ function RevisionHistory({
         setRestoringId(null);
       }
     },
-    [libraryId, onError, onRestored],
+    [libraryId, loadRevisions, onError, onRestored],
+  );
+  const openRevision = useCallback(
+    (revisionId: string) => {
+      router.push(`/libraries/${libraryId}?tab=intelligence&revision=${revisionId}`);
+    },
+    [libraryId, router],
   );
 
   return (
@@ -409,7 +475,20 @@ function RevisionHistory({
                       Current
                     </span>
                   ) : null}
+                  {revision.revision_id === selectedRevisionId ? (
+                    <span className={styles.intelligenceHistoryBadge}>
+                      Viewing
+                    </span>
+                  ) : null}
                 </span>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => openRevision(revision.revision_id)}
+                  disabled={revision.revision_id === selectedRevisionId}
+                >
+                  Open
+                </Button>
                 {!revision.is_current && revision.status === "ready" ? (
                   <Button
                     variant="secondary"

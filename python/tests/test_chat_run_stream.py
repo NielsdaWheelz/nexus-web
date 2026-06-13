@@ -456,7 +456,7 @@ class TestChatRunEventStream:
             "final_chars": None,
         }
 
-    def test_replays_strict_reference_added_payload(
+    def test_replays_strict_context_ref_added_payload(
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
     ):
         user_id = uuid4()
@@ -482,7 +482,7 @@ class TestChatRunEventStream:
                 text(
                     """
                     UPDATE chat_run_events
-                    SET event_type = 'reference_added',
+                    SET event_type = 'context_ref_added',
                         payload = CAST(:payload AS jsonb)
                     WHERE run_id = :run_id AND seq = 2
                     """
@@ -503,7 +503,7 @@ class TestChatRunEventStream:
         )
         events = _parse_sse_events(response.text)
         assert [(event["id"], event["event"]) for event in events] == [
-            ("2", "reference_added"),
+            ("2", "context_ref_added"),
             ("3", "done"),
         ]
         assert events[0]["data"] == reference_payload

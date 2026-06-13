@@ -15,6 +15,10 @@ describe("resourceRef", () => {
       scheme: "evidence_span",
       id: UUID,
     });
+    expect(parseResourceRef(`library_intelligence_revision:${UUID}`)).toEqual({
+      scheme: "library_intelligence_revision",
+      id: UUID,
+    });
   });
 
   it("rejects malformed, noncanonical, and unsupported refs", () => {
@@ -42,6 +46,7 @@ describe("resourceRef", () => {
   it("guards scheme membership", () => {
     expect(isResourceScheme("media")).toBe(true);
     expect(isResourceScheme("oracle_corpus_passage")).toBe(true);
+    expect(isResourceScheme("library_intelligence_revision")).toBe(true);
     expect(isResourceScheme("span")).toBe(false);
   });
 });

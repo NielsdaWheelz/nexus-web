@@ -89,6 +89,8 @@ def _scheme_is_handled(scheme: ResourceScheme) -> bool:
         return True
     if scheme == "library_intelligence_artifact":
         return True
+    if scheme == "library_intelligence_revision":
+        return True
     if scheme == "external_snapshot":
         return True
     if scheme == "contributor":

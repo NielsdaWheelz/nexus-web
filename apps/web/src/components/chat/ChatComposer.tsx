@@ -60,12 +60,12 @@ interface ChatComposerProps {
   /** Jumps the transcript to the visible parent message for branch mode. */
   onJumpToBranchParent?: (messageId: string) => void;
   /** Resolves (creating if needed) the conversation to send to, committing any
-   *  pending references — defers conversation creation to send time. Falls back to conversationId. */
+   *  pending context refs. Falls back to conversationId. */
   onResolveConversation?: () => Promise<string | null>;
-  /** Pending references shown as removable chips; committed by onResolveConversation on send. */
-  pendingReferences?: Array<{ uri: string; label: string }>;
-  /** Removes a pending reference chip before send. */
-  onRemovePendingReference?: (uri: string) => void;
+  /** Pending context refs shown as removable chips; committed by onResolveConversation on send. */
+  pendingContextRefs?: Array<{ uri: string; label: string }>;
+  /** Removes a pending context-ref chip before send. */
+  onRemovePendingContextRef?: (uri: string) => void;
   /** Reader context hint for the model (current media/library). Not a retrieval constraint. */
   readerContext?: ReaderContextHintInput | null;
   /** The quoted passage as a bind-only turn anchor for the asking turn. */
@@ -92,8 +92,8 @@ export default function ChatComposer({
   onClearBranchDraft,
   onJumpToBranchParent,
   onResolveConversation,
-  pendingReferences = [],
-  onRemovePendingReference,
+  pendingContextRefs = [],
+  onRemovePendingContextRef,
   readerContext = null,
   readerSelection = null,
   disabledReason,
@@ -234,18 +234,18 @@ export default function ChatComposer({
           />
         ) : null}
 
-        {pendingReferences.length > 0 ? (
+        {pendingContextRefs.length > 0 ? (
           <div className={styles.pendingRefs} aria-label="Attached to next message">
-            {pendingReferences.map((ref) => (
+            {pendingContextRefs.map((ref) => (
               <span key={ref.uri} className={styles.pendingRef}>
                 <Quote size={12} aria-hidden="true" />
                 <span className={styles.pendingRefLabel}>{ref.label}</span>
-                {onRemovePendingReference ? (
+                {onRemovePendingContextRef ? (
                   <button
                     type="button"
                     className={styles.pendingRefRemove}
                     aria-label={`Remove ${ref.label}`}
-                    onClick={() => onRemovePendingReference(ref.uri)}
+                    onClick={() => onRemovePendingContextRef(ref.uri)}
                   >
                     <X size={12} aria-hidden="true" />
                   </button>

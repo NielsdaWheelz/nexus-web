@@ -1,7 +1,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { useChatsByReference } from "./useChatsByReference";
-import { useConversationReferences } from "./useConversationReferences";
+import { useChatsByContextRef } from "./useChatsByContextRef";
+import { useConversationContextRefs } from "./useConversationContextRefs";
 import type { ConversationListItem } from "./types";
 import type { ContextRefOut } from "@/lib/resourceGraph/contextRefs";
 
@@ -34,7 +34,7 @@ function conversationItem(id: string): ConversationListItem {
   };
 }
 
-function reference(id: string, conversationId: string): ContextRefOut {
+function contextRef(id: string, conversationId: string): ContextRefOut {
   return {
     id,
     conversation_id: conversationId,
@@ -51,7 +51,7 @@ describe("conversation read hooks", () => {
     vi.unstubAllGlobals();
   });
 
-  it("aborts superseded reference chat list loads and drops late responses", async () => {
+  it("aborts superseded context-ref chat list loads and drops late responses", async () => {
     const first = deferredResponse();
     const second = deferredResponse();
     let firstSignal: AbortSignal | undefined;
@@ -74,7 +74,7 @@ describe("conversation read hooks", () => {
 
     const { result, rerender } = renderHook(
       ({ resourceUri }: { resourceUri: string | null }) =>
-        useChatsByReference(resourceUri),
+        useChatsByContextRef(resourceUri),
       { initialProps: { resourceUri: "media:a" } },
     );
     await waitFor(() => expect(firstSignal).toBeDefined());
@@ -100,7 +100,7 @@ describe("conversation read hooks", () => {
     ]);
   });
 
-  it("aborts superseded conversation reference loads and drops late responses", async () => {
+  it("aborts superseded conversation context-ref loads and drops late responses", async () => {
     const first = deferredResponse();
     const second = deferredResponse();
     let firstSignal: AbortSignal | undefined;
@@ -123,7 +123,7 @@ describe("conversation read hooks", () => {
 
     const { result, rerender } = renderHook(
       ({ conversationId }: { conversationId: string | null }) =>
-        useConversationReferences(conversationId),
+        useConversationContextRefs(conversationId),
       { initialProps: { conversationId: "conv-a" } },
     );
     await waitFor(() => expect(firstSignal).toBeDefined());
@@ -133,17 +133,17 @@ describe("conversation read hooks", () => {
     await waitFor(() => expect(secondSignal).toBeDefined());
 
     await act(async () => {
-      second.resolve(jsonResponse({ data: [reference("ref-b", "conv-b")] }));
+      second.resolve(jsonResponse({ data: [contextRef("ref-b", "conv-b")] }));
     });
     await waitFor(() =>
-      expect(result.current.references.map((item) => item.id)).toEqual([
+      expect(result.current.contextRefs.map((item) => item.id)).toEqual([
         "ref-b",
       ]),
     );
 
     await act(async () => {
-      first.resolve(jsonResponse({ data: [reference("ref-a", "conv-a")] }));
+      first.resolve(jsonResponse({ data: [contextRef("ref-a", "conv-a")] }));
     });
-    expect(result.current.references.map((item) => item.id)).toEqual(["ref-b"]);
+    expect(result.current.contextRefs.map((item) => item.id)).toEqual(["ref-b"]);
   });
 });

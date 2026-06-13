@@ -585,9 +585,9 @@ def _write_reader_overview_ruler_seed_file(
 def _clear_fragment_artifacts(db, media_id: UUID) -> None:
     """Clear fragments, highlights, and linked notes attached to media transcript content.
 
-    Provenance edges (``resource_edges``, the store that replaced ``object_links``)
-    are torn down through the same per-resource cleanup the production note- and
-    highlight-delete paths use, so no bare edge survives either deleted endpoint.
+    Provenance edges are torn down through the same per-resource cleanup the
+    production note- and highlight-delete paths use, so no bare edge survives
+    either deleted endpoint.
     """
     highlight_ids = list(
         db.scalars(

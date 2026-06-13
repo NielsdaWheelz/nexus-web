@@ -80,7 +80,7 @@ def render_system_prompt_block() -> str:
         "referring to that selection unless the user clearly means something else. "
         "You have three tools for the user's content. "
         "app_search(query=..., scopes=[...]) finds relevant passages across referenced "
-        "media and libraries; omit scopes to search this conversation's references. "
+        "media and libraries; omit scopes to search this conversation's context refs. "
         'inspect_resource("media:...") returns a document map — an ordered list of '
         "sections, each with a label, a short preview, and a read_uri. "
         "read_resource(uri) returns exact text for a resource or a read_uri and labels it "

@@ -27,7 +27,7 @@ Library Intelligence becomes a **first-class, source-grounded synthesis artifact
 
 ### 1.3 What we reuse (verified)
 - **Chattable resources:** `ConversationReference(conversation_id, resource_uri)` + `resource_resolver.ResourceUriScheme` (already includes `media`, `library`) + `context_assembler._build_resources_block`. `LibraryChatTab.tsx` already does `initial_references:["library:uuid"]`.
-- **Library-scoped retrieval:** `app_search` accepts `scopes:["library:uuid"]`, validated against conversation references, filtered via `library_entries` join (hybrid `content_embeddings` pgvector-256 + `ts_rank_cd`).
+- **Library-scoped retrieval:** `app_search` accepts `scopes:["library:uuid"]`, validated against conversation context refs, filtered via `library_entries` join (hybrid `content_embeddings` pgvector-256 + `ts_rank_cd`).
 - **Per-media content substrate:** `content_chunks` (ordered by `chunk_idx`), `evidence_spans` (durable citeable spans, `selector`, `resolver_kind`), `content_embeddings`. Citation jump: `hrefForReaderTarget()` → `#evidence-/#fragment-/#page-/#t-`, resolved by `locator_resolver` against the **active** index run.
 - **Durable run + SSE:** `api/routes/_sse.py` (`format_sse_event`, `tail_cursor_stream`, `open_sse_listener` over `LISTEN/NOTIFY`) — already shared; the event-append/finalize/worker-boundary are duplicated (chat `chat_run_event_store.append_run_event` auto-seq vs Oracle `oracle._append_event` manual seq).
 
@@ -86,13 +86,13 @@ N7. **No streamed token synthesis required.** The reduce is a single structured 
  features compose subsets — storage stays feature-typed:
    chat    → run_kit ; message_retrievals (UNCHANGED) → CitationOut ; native tool-loop ; domain finalize stays in chat
    oracle  → run_kit ; structured_synthesis ; oracle_reading_passages (UNCHANGED) ; concordance/marginalia stay
-   library_intelligence → run_kit ; structured_synthesis ; per-media units → reduce → prose + library_intelligence_citations
-                          ; chattable via conversation_references + library app_search scope
+  library_intelligence → run_kit ; structured_synthesis ; per-media units → reduce → prose + resource_edges citations
+                          ; chattable via revision context refs + library app_search scope
 ```
 
 - **`run_kit`** owns *only* the generic run mechanics: monotonic `seq`, append (auto-seq, the chat pattern), SSE tail, the terminal status transition, and the worker-boundary exception finalizer. **Domain finalization stays per-feature** — chat writes assistant content/message-doc/usage; Oracle mutates reading state + emits domain events; each calls `run_kit` only to mark terminal + emit `done`. (Finding 5.)
 - **`structured_synthesis`** is a **single** structured call (matching Oracle today, which is *not* token-streamed): render prompt + JSON schema → one `llm.generate` → validated typed object → emit progress events. Oracle's `_build_llm_request`/`_parse_llm_output` become callers; the LI reduce is a caller. (Finding 5.)
-- **Citation unification = render contract only** (findings 3, 6): a backend `CitationOut` read-model and a frontend `ReaderCitationData` adapter + the existing jump, fed by three **untouched/feature-typed** stores (`message_retrievals`, `oracle_reading_passages`, new `library_intelligence_citations`).
+- **Citation unification = graph-backed render contract** (findings 3, 6): a backend `CitationOut` read-model and a frontend `ReaderCitationData` adapter + the existing jump, fed by `resource_edges` citation rows for messages, Oracle readings, and Library Intelligence revisions.
 - **`media_intelligence`** is the shared per-media unit owner; **`library_intelligence`** is the slim artifact owner.
 
 ### 5.2 Data model — final state
@@ -113,7 +113,7 @@ N7. **No streamed token synthesis required.** The reduce is a single structured 
 |---|---|---|
 | `id` | uuid pk | |
 | `artifact_id` | uuid → library_intelligence_artifacts | the head |
-| `run_id` | uuid (run_kit), null | the generation run (status/SSE source while building) |
+| revision run identity | same as `id` | the revision id is the generation run/SSE identity; there is no separate run field |
 | `content_md` | text not null default '' | synthesis prose (markdown with `[N]`) |
 | `covered_targets` | jsonb not null | `[{kind:"media"|"podcast", id, fingerprint}]` snapshot at build (the `EntryTarget` set + per-source content fingerprint) |
 | `status` | text not null | `building` \| `ready` \| `failed` |
@@ -144,7 +144,12 @@ A revision is **immutable** once written. **No `parent_revision_id`** (no lineag
 | `ordinal` | int not null | |
 | `created_at` | timestamptz | |
 
-`library_intelligence_citations` (new — the **revision's** typed citations; LI-private, sole-writer):
+Superseded by the resource graph product spine: Library Intelligence revision
+citations are `resource_edges` rows with
+`source=library_intelligence_revision:<revision_id>`, `origin='citation'`, dense
+ordinals, and citation snapshots. No LI-private citation table remains.
+
+Retired pre-spine proposal:
 | column | type | notes |
 |---|---|---|
 | `id` | uuid pk | |
@@ -163,7 +168,7 @@ A revision is **immutable** once written. **No `parent_revision_id`** (no lineag
 
 ### 5.3 Citation render contract (the actual unification)
 
-- **Backend `CitationOut`** (shared read-model): `{ordinal, role, target_ref:(type,id), locator, deep_link, snapshot}`. Produced by: chat (from the cited subset of `message_retrievals`), Oracle (from folios, for the jump only), Library Intelligence (from `library_intelligence_citations`). Storage stays feature-typed; the **read-model** is shared.
+- **Backend `CitationOut`** (shared read-model): `{ordinal, role, target_ref:(type,id), locator, deep_link, snapshot}`. Produced by: chat, Oracle, and Library Intelligence from ordinal `resource_edges` citation rows. The **read-model** is shared.
 - **Frontend `ReaderCitationData` adapter** (finding 7): one `CitationOut → ReaderCitationData` function + locator normalization. `buildCitations` is generalized to consume `CitationOut[]` instead of being `message_retrievals`-shaped. `MarkdownMessage`/`ReaderCitation`/`hrefForReaderTarget` unchanged; the `[N]` jump is reused by all three features.
 - **Render is one-level:** the citation points at a resolvable node (`evidence_span`/`content_chunk`/`media`); the jump resolves against the **active** index run.
 - **Provenance is two-level by construction:** the reduce may only cite the `media_claims` it was given; each carries a `not-null evidence_span_id`; the artifact citation inherits that span. The model **cannot cite a span that does not exist** (no verifier needed).
@@ -199,7 +204,7 @@ run_structured_synthesis(*, llm, request: SynthesisRequest, schema: type[T],
 ```
 # backend
 build_citation_outs_for_message(db, *, assistant_message_id) -> list[CitationOut]   # from message_retrievals (cited subset)
-build_citation_outs_for_revision(db, *, revision_id) -> list[CitationOut]           # from library_intelligence_citations
+build_citation_outs_for_revision(db, *, revision_id) -> list[CitationOut]           # from resource_edges source=library_intelligence_revision:<id>
 # frontend
 toReaderCitationData(c: CitationOut): ReaderCitationData                            # + locator normalization
 ```
@@ -212,7 +217,7 @@ run_media_unit_build(db, *, media_id) -> None          # worker: structured_synt
 ```
 - Trigger: enqueued after content indexing completes; on-demand `POST /media/{id}/summarize`. Feeds the reduce, `app_search` result cards, reader, library list.
 
-### 6.5 `services/library_intelligence` (rewritten, slim — sole writer of the head, revisions, + `library_intelligence_citations`)
+### 6.5 `services/library_intelligence` (rewritten, slim — sole writer of the head and revisions)
 ```
 get_artifact(db, *, viewer_id, library_id) -> ArtifactView          # head + current-revision content + computed status (§5.4)
 generate_artifact(db, *, viewer_id, library_id, idempotency_key) -> RevisionRef   # 202; creates a draft revision; idempotency-key idempotent
@@ -237,7 +242,7 @@ promote_revision(db, *, viewer_id, revision_id) -> None                         
 | Method | Route | Handler → service | Notes |
 |---|---|---|---|
 | GET | `/libraries/{id}/intelligence` | `get_artifact` | `{artifact_id, revision_id, status, content_md, citations, build}` (current revision); **no** version/source-set fields |
-| POST | `/libraries/{id}/intelligence/generate` | `generate_artifact` | 202 `{artifact_id, revision_id, run_id}`; **idempotency = client `idempotency_key`** (same name as `chat_runs.idempotency_key`), so a no-change regenerate still builds a fresh draft revision |
+| POST | `/libraries/{id}/intelligence/generate` | `generate_artifact` | 202 `{artifact_id, revision_id}`; **idempotency = client `idempotency_key`** (same name as `chat_runs.idempotency_key`), so a no-change regenerate still builds a fresh draft revision |
 | GET (SSE) | `/stream/library-intelligence/{revision_id}/events` | `run_kit.tail` | reuses `_sse`; streams the draft revision's build |
 | GET | `/libraries/{id}/intelligence/revisions` | `list_revisions` | **optional** history; defer if not shipping restore now |
 | POST | `/libraries/{id}/intelligence/revisions/{revision_id}/promote` | `promote_revision` | **optional** restore; defer if not shipping now |
@@ -290,7 +295,7 @@ Chat/Oracle citation read paths are **unchanged on the wire**; only their *front
 
 One Alembic migration, `raise NotImplementedError` on downgrade. Teardown order (finding 9):
 1. Drop child FKs first: `library_intelligence_evidence` → `_claims` → `_nodes` → `_sections` → `_versions`; clear `library_intelligence_artifacts.active_version_id` FK; then drop `library_source_set_items` → `library_source_set_versions`, `library_intelligence_builds`, and the old `library_intelligence_artifacts`.
-2. `CREATE` the new `library_intelligence_artifacts` (head), then `library_intelligence_artifact_revisions`, then **add the head→revision FK** (`current_revision_id` nullable — circular FK resolved after both exist); then `media_summaries`, `media_claims`, `library_intelligence_citations`.
+2. `CREATE` the new `library_intelligence_artifacts` (head), then `library_intelligence_artifact_revisions`, then **add the head→revision FK** (`current_revision_id` nullable — circular FK resolved after both exist); then `media_summaries` and `media_claims`. Revision citations live in `resource_edges`, not an LI-private table.
 3. Drop the orphaned `AssistantClaimSupportStatus` enum and remove `claim`/`claim_evidence` from the `chat_run_events` `event_type` CHECK.
 4. Add `pg_notify` trigger for the LI run stream (mirror the chat/oracle event triggers).
 - **No** changes to `message_retrievals`, `conversation_references`, `oracle_reading_passages`, `object_links`. No data backfill (greenfield). No compat columns, no runtime fallback.
@@ -304,7 +309,7 @@ One Alembic migration, `raise NotImplementedError` on downgrade. Teardown order 
 - **S1 — `structured_synthesis` extraction.** Oracle calls it. Behavior-preserving.
 - **S2 — `media_intelligence` units.** New tables + service + worker + ingest hook + on-demand route + `app_search` card enrichment. Independently shippable value.
 - **S3 — citation render contract.** `CitationOut` read-models + frontend `toReaderCitationData`; refactor chat `buildCitations` to consume `CitationOut` (no storage change). Reader jump unchanged.
-- **S4 — LI artifact rewrite (head + revisions).** New tables (head, revisions, citations); reduce via `structured_synthesis` over units; prose + `library_intelligence_citations` (per revision); `covered_targets`; **draft revision → promote** (set `current_revision_id`); computed status; generate route + SSE; optional `revisions`/`promote` routes. Delete the deterministic compiler + the 9 LI tables.
+- **S4 — LI artifact rewrite (head + revisions).** New tables (head, revisions); reduce via `structured_synthesis` over units; prose + resource-edge revision citations; `covered_targets`; **draft revision → promote** (set `current_revision_id`); computed status; generate route + SSE; optional `revisions`/`promote` routes. Delete the deterministic compiler + the 9 LI tables.
 - **S5 — chattable artifact + delete `library-chat`.** Resource scheme + resolver; "Chat" affordance via existing `conversation_references`; delete `LibraryChatTab` + surface.
 - **S6 — frontend pane.** New pane (MarkdownMessage + shared citation render + status + SSE + Generate/Regenerate); delete `LibraryIntelligenceView` deterministic UI.
 - **S7 — negative gates + head-assertion tests + god-file split** (`library_intelligence.py` ≤ 620 lines: artifact-head owner only — GET read-model + freshness CTEs + the five public dataclasses + the SERIALIZABLE generate/promote transactions + SSE read deps; the LLM reduce worker lives in `library_intelligence_reduce.py`. The earlier ~250 target was aspirational; 620 is the realistic single-owner floor and the number the CI line-count gate enforces).
@@ -314,7 +319,7 @@ One Alembic migration, `raise NotImplementedError` on downgrade. Teardown order 
 ## 13. Acceptance criteria
 
 - **AC-1 (real synthesis).** Generation over a non-empty library produces LLM-derived prose, ≥1 citation per substantive claim; zero tautological "library includes the source X."
-- **AC-2 (grounding-by-construction).** Every `library_intelligence_citations` row targets an existing resolvable node; a `media_claim` with no `evidence_span_id` is not emitted; the reduce can only cite provided unit-claims (tested).
+- **AC-2 (grounding-by-construction).** Every Library Intelligence revision citation edge targets an existing resolvable node; a `media_claim` with no `evidence_span_id` is not emitted; the reduce can only cite provided unit-claims (tested).
 - **AC-3 (one-click jump).** `[N]` in the artifact and in a library-scoped chat navigate to the exact passage via the unchanged jump.
 - **AC-4 (chattable, unified).** "Chat on the artifact" opens a conversation referencing artifact + library, retrieval scoped to the library; no `library-chat` surface/route remains.
 - **AC-5 (head + revisions).** Exactly one stable artifact **head** per library; generate/regenerate/update creates **immutable revisions**; the current head swaps atomically by setting `current_revision_id`; old revisions remain addressable; **no `parent_revision_id`**, no source-set/version identity.
@@ -343,7 +348,7 @@ One Alembic migration, `raise NotImplementedError` on downgrade. Teardown order 
 
 ## 15. Rules & invariants
 
-- **Sole writers:** the head, revisions, + `library_intelligence_citations` ← `library_intelligence.py`; `media_summaries`/`media_claims` ← `media_intelligence.py`.
+- **Sole writers:** the head and revisions ← `library_intelligence.py`; revision citation edges ← `resource_graph.citations`; `media_summaries`/`media_claims` ← `media_intelligence.py`.
 - **Tier-R reads** via the owning service's read model; visibility in `auth/permissions.py`.
 - **Concurrency:** promotion runs `SERIALIZABLE` (mark revision `ready` + set `head.current_revision_id` atomically); revisions are append-only so concurrent drafts never collide (no `unique(library_id)` shadow contention); unit builds idempotent on `content_fingerprint`; job enqueue + row insert atomic with `pg_notify`.
 - **Exhaustiveness:** `status`, `role`, `RunStream`, `RunEventType`, `EntryTarget` are discriminated unions with `assert_never`.
@@ -418,13 +423,13 @@ Long-term consolidation of these stores **remains desirable** — Rev 2 keeps th
 | `message_retrievals` | **RetrievalLedger + CitationEdge** | retrieval replay (reconstructed on every message GET) **+** the cited subset |
 | `oracle_reading_passages` | **GeneratedFolio + CitationEdge** | generated per-passage content (phase, marginalia, attribution) + concordance **+** the cited subset |
 | `object_links` | **WorkspaceRelation** | user-facing relationship CRUD (symmetric, user-owned) |
-| `library_intelligence_citations` | **CitationEdge** | the artifact's cited subset (the one clean new edge) |
+| `resource_edges` with `source=library_intelligence_revision:<id>` | **CitationEdge** | the revision's cited subset |
 
 Three stores share a **CitationEdge** invariant. That edge — and *only* that edge — is what Rev 2 unifies, and only at the **render contract** (`CitationOut`/`ReaderCitationData`), never in storage.
 
 ### 20.2 SME rule (governs all future consolidation)
 
-> **Do not consolidate by table shape. Consolidate only by invariant** — one of: **authorization boundary, retrieval replay, generated content, user relationship, or citation render.** Two tables sharing `(a_id, b_id, role)` columns are not foldable if they carry different invariants; two tables with different columns may legitimately share one invariant (the CitationEdge spread across `message_retrievals` / folios / `library_intelligence_citations`). Shape-driven folds are the Rev 1 mistake.
+> **Do not consolidate by table shape. Consolidate only by invariant** — one of: **authorization boundary, retrieval replay, generated content, user relationship, or citation render.** Two tables sharing `(a_id, b_id, role)` columns are not foldable if they carry different invariants; two tables with different columns may legitimately share one invariant. Shape-driven folds are the Rev 1 mistake.
 
 ### 20.3 Proving ground (dependency order before any storage fold)
 

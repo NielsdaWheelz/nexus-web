@@ -131,7 +131,7 @@ function chatRunResponse(body: ChatRunCreateRequest) {
           prompt: null,
           tool_calls: [],
           citations: [],
-          references_added: [],
+          context_refs_added: [],
           integrity_notices: [],
           created_at: "2026-01-01T00:00:00Z",
           updated_at: "2026-01-01T00:00:00Z",
@@ -657,18 +657,18 @@ describe("ChatComposer", () => {
     expect(chatRunCalls(fetchMock)).toHaveLength(0);
   });
 
-  it("renders pending reference chips and removes them on click", async () => {
+  it("renders pending context-ref chips and removes them on click", async () => {
     const user = userEvent.setup();
     installChatComposerFetchMock();
-    const onRemovePendingReference = vi.fn();
+    const onRemovePendingContextRef = vi.fn();
 
     render(
       <ChatComposer
         conversationId="conversation-1"
-        pendingReferences={[
+        pendingContextRefs={[
           { uri: "media:media-1#p3", label: "On the Origin of Species" },
         ]}
-        onRemovePendingReference={onRemovePendingReference}
+        onRemovePendingContextRef={onRemovePendingContextRef}
       />,
     );
 
@@ -680,7 +680,7 @@ describe("ChatComposer", () => {
       screen.getByRole("button", { name: "Remove On the Origin of Species" }),
     );
 
-    expect(onRemovePendingReference).toHaveBeenCalledWith("media:media-1#p3");
+    expect(onRemovePendingContextRef).toHaveBeenCalledWith("media:media-1#p3");
   });
 
   it("does not render a web-search selector or scope chip in the composer", async () => {

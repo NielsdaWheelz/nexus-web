@@ -101,6 +101,7 @@ import {
   type ReaderConnectionPage,
   type ReaderConnectionRow,
 } from "@/lib/media/readerConnections";
+import type { EdgeOrigin } from "@/lib/resourceGraph/edges";
 import {
   usePaneParam,
   usePaneSearchParams,
@@ -374,6 +375,14 @@ const READER_APPARATUS_FOCUS_CLASS = "reader-apparatus-focused";
 const READER_APPARATUS_HOVER_CLASS = "reader-apparatus-hover";
 const READER_APPARATUS_PULSE_CLASS = "reader-apparatus-pulse";
 const READER_APPARATUS_PULSE_MS = 1200;
+const READER_CONNECTION_ORIGINS: EdgeOrigin[] = [
+  "citation",
+  "note_body",
+  "highlight_note",
+  "user",
+  "synapse",
+  "system",
+];
 
 interface ReaderApparatusPreviewState {
   itemId: string;
@@ -765,7 +774,7 @@ export default function MediaPaneBody() {
   const [isCreating, setIsCreating] = useState(false);
   const [isMismatchDisabled, setIsMismatchDisabled] = useState(false);
   // A highlight URI parked for "quote to existing chat": the next chat the user
-  // picks (or creates) in the doc-chat list gets this attached as a reference.
+  // picks (or creates) in the doc-chat list gets this attached as context.
   const [pendingQuoteUri, setPendingQuoteUri] = useState<string | null>(null);
   const [pendingQuoteLabel, setPendingQuoteLabel] = useState<string | null>(
     null,
@@ -1012,7 +1021,12 @@ export default function MediaPaneBody() {
   });
   const readerConnectionsResource = useResource<ReaderConnectionPage>({
     cacheKey: media && canRead ? `${id}:reader-connections` : null,
-    load: (signal) => listReaderConnections(id, { limit: 100, signal }),
+    load: (signal) =>
+      listReaderConnections(id, {
+        origins: READER_CONNECTION_ORIGINS,
+        limit: 100,
+        signal,
+      }),
   });
   const epubSections =
     epubNavigationResource.status === "ready"
@@ -4104,7 +4118,7 @@ export default function MediaPaneBody() {
   );
 
   // Quote a highlight into a brand-new (unsent) conversation in the secondary. The
-  // conversation and reference are created when the user sends, not now.
+  // conversation and context ref are created when the user sends, not now.
   const quoteHighlightToNewChat = useCallback(
     (highlightId: string, highlightOverride?: MediaHighlight) => {
       setSecondaryChat({

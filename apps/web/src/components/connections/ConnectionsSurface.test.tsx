@@ -147,7 +147,13 @@ describe("ConnectionsSurface", () => {
 
     const [readA, readB] = connectionReads(requests);
     expect(readA.init?.signal?.aborted).toBe(true);
-    expect(JSON.parse(String(readB.init?.body)).refs).toEqual([`note_block:${BLOCK_B}`]);
+    expect(JSON.parse(String(readB.init?.body))).toMatchObject({
+      refs: [`note_block:${BLOCK_B}`],
+      filters: {
+        origins: ["user", "note_body", "highlight_note", "citation", "synapse"],
+        kinds: ["context", "supports", "contradicts"],
+      },
+    });
 
     readB.resolve(
       connectionResponse([

@@ -15,7 +15,7 @@ import {
 } from "@/lib/api/sse/citations";
 import type {
   SSECitationIndexEvent,
-  SSEReferenceAddedEvent,
+  SSEContextRefAddedEvent,
   SSERetrievalResultEvent,
   SSEToolCallEvent,
 } from "@/lib/api/sse/events";
@@ -124,7 +124,7 @@ function trustTrailFor(
     prompt: null,
     tool_calls: [],
     citations: [],
-    references_added: [],
+    context_refs_added: [],
     integrity_notices: [],
     created_at: message.created_at,
     updated_at: message.updated_at,
@@ -133,10 +133,10 @@ function trustTrailFor(
 
 export function useChatMessageUpdates({
   setMessages,
-  onReferenceAdded,
+  onContextRefAdded,
 }: {
   setMessages: Dispatch<SetStateAction<ConversationMessage[]>>;
-  onReferenceAdded?: (data: SSEReferenceAddedEvent["data"]) => void;
+  onContextRefAdded?: (data: SSEContextRefAddedEvent["data"]) => void;
 }) {
   const deltaBufferRef = useRef<Map<string, string>>(new Map());
   const rafRef = useRef<number | null>(null);
@@ -352,14 +352,14 @@ export function useChatMessageUpdates({
     [setMessages],
   );
 
-  const handleReferenceAdded = useCallback(
-    (assistantId: string, data: SSEReferenceAddedEvent["data"]) => {
-      onReferenceAdded?.(data);
+  const handleContextRefAdded = useCallback(
+    (assistantId: string, data: SSEContextRefAddedEvent["data"]) => {
+      onContextRefAdded?.(data);
       setMessages((prev) =>
         prev.map((m) => {
           if (m.id !== assistantId) return m;
           const trail = trustTrailFor(m, assistantId, data.conversation_id);
-          const reference = {
+          const contextRef = {
             chat_run_event_seq: 0,
             id: data.id,
             conversation_id: data.conversation_id,
@@ -374,19 +374,19 @@ export function useChatMessageUpdates({
             ...m,
             trust_trail: {
               ...trail,
-              references_added: trail.references_added.some(
+              context_refs_added: trail.context_refs_added.some(
                 (existing) => existing.id === data.id,
               )
-                ? trail.references_added.map((existing) =>
-                    existing.id === data.id ? reference : existing,
+                ? trail.context_refs_added.map((existing) =>
+                    existing.id === data.id ? contextRef : existing,
                   )
-                : [...trail.references_added, reference],
+                : [...trail.context_refs_added, contextRef],
             },
           };
         }),
       );
     },
-    [onReferenceAdded, setMessages],
+    [onContextRefAdded, setMessages],
   );
 
   const handleDone = useCallback(
@@ -428,7 +428,7 @@ export function useChatMessageUpdates({
     handleToolCall,
     handleToolResult,
     handleCitationIndex,
-    handleReferenceAdded,
+    handleContextRefAdded,
     handleDone,
   };
 }

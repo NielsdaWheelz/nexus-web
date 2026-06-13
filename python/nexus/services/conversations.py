@@ -279,18 +279,18 @@ def retryable_assistant_message_ids(
 def create_conversation(
     db: Session,
     viewer_id: UUID,
-    initial_references: Sequence[str] | None = None,
+    initial_context_refs: Sequence[str] | None = None,
 ) -> ConversationOut:
     """Create a new empty private conversation.
 
-    Initial references are validated and inserted in the same transaction as the
+    Initial context refs are validated and inserted in the same transaction as the
     conversation row. Any validation or visibility failure leaves no partial
     conversation behind.
 
     Args:
         db: Database session.
         viewer_id: The ID of the user creating the conversation.
-        initial_references: Optional resource URIs to attach immediately.
+        initial_context_refs: Optional resource URIs to attach immediately.
 
     Returns:
         The created conversation with message_count=0.
@@ -307,8 +307,8 @@ def create_conversation(
 
     result = conversation_to_out(db, conversation, message_count=0, viewer_id=viewer_id)
 
-    if initial_references:
-        for index, resource_uri in enumerate(initial_references):
+    if initial_context_refs:
+        for index, resource_uri in enumerate(initial_context_refs):
             ref = parse_resource_ref(resource_uri)
             if isinstance(ref, ResourceRefParseFailure):
                 raise InvalidRequestError(
@@ -417,7 +417,7 @@ def list_conversations(
                 ApiErrorCode.E_INVALID_REQUEST,
                 f"Invalid has_context_ref: {has_context_ref!r}. Expected '<scheme>:<uuid>'.",
             )
-        page = context_service.list_conversations_with_context_ref(
+        page = context_service.list_conversations_with_any_edge_to_ref(
             db, viewer_id=viewer_id, target=ref, limit=limit, cursor=cursor
         )
         return page.conversations, page.page
@@ -804,10 +804,6 @@ def delete_conversation_rows_without_commit(db: Session, conversation_id: UUID) 
     )
     db.execute(
         text("DELETE FROM conversation_branches WHERE conversation_id = :conversation_id"),
-        {"conversation_id": conversation_id},
-    )
-    db.execute(
-        text("DELETE FROM conversation_media WHERE conversation_id = :conversation_id"),
         {"conversation_id": conversation_id},
     )
     db.execute(

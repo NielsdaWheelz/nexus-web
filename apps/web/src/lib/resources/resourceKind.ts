@@ -43,6 +43,7 @@ const RESOURCE_SCHEME_ICONS = {
   oracle_reading: Sparkles,
   oracle_corpus_passage: TextQuote,
   library_intelligence_artifact: Sparkles,
+  library_intelligence_revision: Sparkles,
   external_snapshot: Globe,
   contributor: User,
   podcast: Disc3,
@@ -50,8 +51,7 @@ const RESOURCE_SCHEME_ICONS = {
 } satisfies Record<ResourceScheme, LucideIcon>;
 
 // Schemes that map to an openable object-ref type (`objectRefs.ts`). Schemes
-// without an entry (library, oracle_*, library_intelligence_artifact,
-// external_snapshot) are not object-ref-resolvable.
+// without an entry (library, oracle_*, external_snapshot) are not object-ref-resolvable.
 const RESOURCE_SCHEME_OBJECT_TYPES: Partial<Record<ResourceScheme, ObjectType>> = {
   media: "media",
   evidence_span: "evidence_span",
@@ -62,6 +62,8 @@ const RESOURCE_SCHEME_OBJECT_TYPES: Partial<Record<ResourceScheme, ObjectType>> 
   fragment: "fragment",
   conversation: "conversation",
   message: "message",
+  library_intelligence_artifact: "library_intelligence_artifact",
+  library_intelligence_revision: "library_intelligence_revision",
   contributor: "contributor",
   podcast: "podcast",
   tag: "tag",

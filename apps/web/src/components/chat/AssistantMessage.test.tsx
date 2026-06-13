@@ -28,7 +28,7 @@ function assistantMessage(text = "Alpha beta gamma"): ConversationMessage {
       prompt: null,
       tool_calls: [],
       citations: [],
-      references_added: [],
+      context_refs_added: [],
       integrity_notices: [],
       created_at: "2026-06-03T00:00:00Z",
       updated_at: "2026-06-03T00:00:00Z",
@@ -119,7 +119,7 @@ describe("AssistantMessage", () => {
     ).toBeInTheDocument();
   });
 
-  it("renders trust-trail tool, retrieval, ledger, citation, reference, and notice details", () => {
+  it("renders trust-trail tool, retrieval, ledger, citation, context-ref, and notice details", () => {
     const message = assistantMessage("Answer [1].");
     const citation = {
       ordinal: 1,
@@ -300,7 +300,7 @@ describe("AssistantMessage", () => {
           citation,
         },
       ],
-      references_added: [
+      context_refs_added: [
         {
           chat_run_event_seq: 4,
           id: "ref-1",

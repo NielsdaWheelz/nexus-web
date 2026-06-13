@@ -148,7 +148,7 @@ def get_media_file(
 
 def _edge_origins(values: list[str] | None) -> tuple[EdgeOrigin, ...] | None:
     if values is None:
-        return None
+        return reader_connections.READER_CONNECTION_ORIGINS
     for value in values:
         if value not in EDGE_ORIGINS:
             raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, f"Invalid origin: {value!r}")

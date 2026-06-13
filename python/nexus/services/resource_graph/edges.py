@@ -20,11 +20,10 @@ from sqlalchemy.orm import Session
 
 from nexus.db.models import ResourceEdge
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
+from nexus.services.resource_graph.policy import validate_edge_shape
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.resource_graph.resolve import assert_ref_visible
 from nexus.services.resource_graph.schemas import (
-    EDGE_KINDS,
-    EDGE_ORIGINS,
     EdgeCreate,
     EdgeKind,
     EdgeOrigin,
@@ -75,15 +74,6 @@ def create_edge(db: Session, *, viewer_id: UUID, input: EdgeCreate) -> EdgeOut:
             and input.source_order_key is not None
             and _existing_source_order_id(
                 db, viewer_id=viewer_id, source=input.source, order_key=input.source_order_key
-            )
-            is not None
-        ):
-            raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Containment order exists")
-        if (
-            input.origin == "note_containment"
-            and input.target_order_key is not None
-            and _existing_target_order_id(
-                db, viewer_id=viewer_id, target=input.target, order_key=input.target_order_key
             )
             is not None
         ):
@@ -263,98 +253,8 @@ def _endpoint_matches(scheme: str, resource_id: UUID, ref: ResourceRef) -> bool:
 
 
 def _validate_edge_input(db: Session, *, viewer_id: UUID, edge: EdgeCreate) -> None:
-    """Boundary revalidation twin of the ``resource_edges`` CHECKs (AC20).
-
-    ``kind``/``origin`` arrive as strings from routes and model output; the
-    Literal types cannot be trusted at this boundary.
-    """
-    if edge.kind not in EDGE_KINDS:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST, f"Invalid edge kind {edge.kind!r}"
-        )
-    if edge.origin not in EDGE_ORIGINS:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST, f"Invalid edge origin {edge.origin!r}"
-        )
-    # The exact twin of ck_resource_edges_citation_has_snapshot: a citation
-    # (ordinal set) must carry its display snapshot; a bare edge MAY carry one
-    # too (the synapse rationale rides in snapshot.excerpt, synapse spec D2).
-    if edge.ordinal is not None and edge.snapshot is None:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            "Citation ordinal requires a snapshot",
-        )
-    if edge.ordinal is not None and (
-        edge.source_order_key is not None or edge.target_order_key is not None
-    ):
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST, "Citation edges cannot carry order keys"
-        )
-    if edge.target_order_key is not None and edge.origin != "note_containment":
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            "Target order keys are only valid for note containment edges",
-        )
-    if edge.source_order_key is not None and not (
-        edge.origin == "note_containment"
-        or (
-            edge.kind == "context" and edge.source.scheme == "conversation" and edge.ordinal is None
-        )
-    ):
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            "Source order key is not valid for this edge shape",
-        )
-    if edge.ordinal is not None and edge.origin != "citation":
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            "Only citation edges can carry ordinals",
-        )
-    if edge.ordinal is not None and edge.ordinal < 1:
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Citation ordinal must be >= 1")
-    for label, value in (
-        ("source_order_key", edge.source_order_key),
-        ("target_order_key", edge.target_order_key),
-    ):
-        if value is not None and not 1 <= len(value) <= 64:
-            raise InvalidRequestError(
-                ApiErrorCode.E_INVALID_REQUEST, f"{label} must be 1-64 characters"
-            )
-    if edge.origin == "note_containment":
-        if edge.kind != "context":
-            raise InvalidRequestError(
-                ApiErrorCode.E_INVALID_REQUEST, "Containment edges must use kind=context"
-            )
-        if edge.source.scheme not in ("page", "note_block") or edge.target.scheme != "note_block":
-            raise InvalidRequestError(
-                ApiErrorCode.E_INVALID_REQUEST,
-                "Containment edges must connect page/note_block to note_block",
-            )
-        if edge.source_order_key is None:
-            raise InvalidRequestError(
-                ApiErrorCode.E_INVALID_REQUEST, "Containment edges require source_order_key"
-            )
-        if edge.target_order_key is not None:
-            raise InvalidRequestError(
-                ApiErrorCode.E_INVALID_REQUEST,
-                "Containment target order is reserved until multi-occurrence blocks ship",
-            )
-    if edge.origin == "highlight_note":
-        if edge.kind != "context":
-            raise InvalidRequestError(
-                ApiErrorCode.E_INVALID_REQUEST, "Highlight note edges must use kind=context"
-            )
-        if edge.source.scheme != "highlight" or edge.target.scheme != "note_block":
-            raise InvalidRequestError(
-                ApiErrorCode.E_INVALID_REQUEST,
-                "Highlight note edges must connect highlight to note_block",
-            )
-    if edge.source == edge.target:
-        # No edge relates a resource to itself (§5.4): a self-link/citation is
-        # meaningless and would double-render the resource on both endpoints.
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST, "An edge cannot relate a resource to itself"
-        )
+    """Boundary validation plus visibility checks for edge writes."""
+    validate_edge_shape(edge)
     # Missing targets are rejected unless the target is an external snapshot,
     # which exists to outlive whatever it captured (§7.3).
     if edge.target.scheme != "external_snapshot":
@@ -396,19 +296,6 @@ def _existing_source_order_id(
             ResourceEdge.origin == "note_containment",
             _source_is(source),
             ResourceEdge.source_order_key == order_key,
-        )
-    ).scalar_one_or_none()
-
-
-def _existing_target_order_id(
-    db: Session, *, viewer_id: UUID, target: ResourceRef, order_key: str
-) -> UUID | None:
-    return db.execute(
-        select(ResourceEdge.id).where(
-            ResourceEdge.user_id == viewer_id,
-            ResourceEdge.origin == "note_containment",
-            _target_is(target),
-            ResourceEdge.target_order_key == order_key,
         )
     ).scalar_one_or_none()
 

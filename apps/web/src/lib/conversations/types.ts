@@ -217,7 +217,7 @@ export interface AssistantTrustTrail {
     tool_call_id: string | null;
     citation: CitationOut;
   }>;
-  references_added: Array<{
+  context_refs_added: Array<{
     chat_run_event_seq: number;
     id: string;
     conversation_id: string;

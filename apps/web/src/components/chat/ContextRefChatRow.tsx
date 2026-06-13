@@ -4,17 +4,17 @@ import type { ConversationListItem } from "@/lib/conversations/types";
 import { formatDisplayDate } from "@/lib/display/format";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import { pluralize } from "@/lib/text/pluralize";
-import styles from "./ReferencingChatRow.module.css";
+import styles from "./ContextRefChatRow.module.css";
 
-interface ReferencingChatRowProps {
+interface ContextRefChatRowProps {
   item: ConversationListItem;
   onTap: () => void;
 }
 
-export default function ReferencingChatRow({
+export default function ContextRefChatRow({
   item,
   onTap,
-}: ReferencingChatRowProps) {
+}: ContextRefChatRowProps) {
   const display = useRenderEnvironment();
   const date = formatDisplayDate(item.updated_at, display) ?? "";
   const subtitle = `${pluralize(item.message_count, "message")} • ${date}`;

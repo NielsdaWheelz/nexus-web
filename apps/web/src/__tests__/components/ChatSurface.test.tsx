@@ -64,7 +64,7 @@ function assistantMessage(
       prompt: null,
       tool_calls: [],
       citations: [],
-      references_added: [],
+      context_refs_added: [],
       integrity_notices: [],
       created_at: baseMessage.created_at,
       updated_at: baseMessage.updated_at,

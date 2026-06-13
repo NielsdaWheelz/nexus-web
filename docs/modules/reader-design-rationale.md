@@ -111,7 +111,7 @@ touching app theme tokens.
 ### reader-to-chat quote selection
 
 - quote-to-chat is highlight-first: the reader creates a durable highlight, adds
-  `highlight:<id>` as the conversation reference, and sends a transient
+  `highlight:<id>` as the conversation context ref, and sends a transient
   `reader_selection` anchor for that chat turn
 - `reader_selection` carries `media_id` + `highlight_id`; the backend
   canonicalizes prefix/exact/suffix/source from the highlight row before

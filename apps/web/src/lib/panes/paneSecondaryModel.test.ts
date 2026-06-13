@@ -15,7 +15,7 @@ describe("paneSecondaryModel", () => {
     expect(getSecondaryGroupForSurface("reader-apparatus")).toBe("reader-tools");
     expect(getSecondaryGroupForSurface("reader-doc-chat")).toBe("reader-tools");
     expect(getSecondaryGroupForSurface("reader-contents")).toBe("reader-tools");
-    expect(getSecondaryGroupForSurface("conversation-references")).toBe(
+    expect(getSecondaryGroupForSurface("conversation-context-refs")).toBe(
       "conversation-context",
     );
     expect(getSecondaryGroupForSurface("conversation-forks")).toBe(
@@ -48,7 +48,7 @@ describe("paneSecondaryModel", () => {
       "reader-doc-chat",
     ]);
     expect(getSecondarySurfaceIdsForGroup("conversation-context")).toEqual([
-      "conversation-references",
+      "conversation-context-refs",
       "conversation-forks",
     ]);
     expect(getSecondarySurfaceIdsForGroup("library-tools")).toEqual([

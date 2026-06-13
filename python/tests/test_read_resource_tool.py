@@ -30,6 +30,7 @@ from tests.factories import (
 )
 from tests.test_resource_graph_resolve import (
     _add_fragment,
+    _current_li_revision_id,
     _make_highlight_with_anchor,
     _make_li_artifact,
     _make_note_block,
@@ -73,7 +74,7 @@ def _admit_reference(db: Session, conversation_id: UUID, uri: str) -> None:
 # =============================================================================
 
 
-def test_read_resource_not_in_references_errors_with_actionable_hint(
+def test_read_resource_not_in_context_refs_errors_with_actionable_hint(
     db_session: Session, bootstrapped_user: UUID
 ):
     conversation_id = create_test_conversation(db_session, bootstrapped_user)
@@ -92,8 +93,8 @@ def test_read_resource_not_in_references_errors_with_actionable_hint(
     assert result.is_error, (
         f"Reading a URI that isn't a conversation reference must error; got {result}"
     )
-    assert result.error_code == "not_in_references", (
-        f"Expected error_code='not_in_references'; got {result.error_code}"
+    assert result.error_code == "not_in_context_refs", (
+        f"Expected error_code='not_in_context_refs'; got {result.error_code}"
     )
     assert "app_search" in result.body, (
         f"Error body should point the model at app_search; got {result.body}"
@@ -211,7 +212,7 @@ def test_read_resource_fragment_without_referenced_parent_errors(
     )
 
     assert result.is_error
-    assert result.error_code == "not_in_references"
+    assert result.error_code == "not_in_context_refs"
 
 
 def test_read_resource_library_uri_returns_scope_not_readable_error(
@@ -243,6 +244,7 @@ def test_read_resource_li_artifact_returns_current_revision_body(
     artifact_id = _make_li_artifact(
         db_session, library_id, bootstrapped_user, content_md=content_md
     )
+    revision_id = _current_li_revision_id(db_session, artifact_id)
     uri = f"library_intelligence_artifact:{artifact_id}"
     _admit_reference(db_session, conversation_id, uri)
 
@@ -253,7 +255,73 @@ def test_read_resource_li_artifact_returns_current_revision_body(
     assert not result.is_error, f"A member should read the artifact body; got {result}"
     assert result.kind == "library_intelligence"
     assert result.body == content_md
+    assert result.library_ref == f"library:{library_id}"
+    assert result.artifact_ref == uri
+    assert result.revision_ref == f"library_intelligence_revision:{revision_id}"
+    assert result.revision_status == "ready"
+    assert result.revision_is_current is True
+    assert f'revision_ref="library_intelligence_revision:{revision_id}"' in result.tool_output()
     # NON-citable: its [N] reference the revision's own citations, not a search chip.
+    assert result.citation_result_type is None
+    assert result.citation_source_id is None
+
+
+def test_read_resource_li_revision_returns_exact_body_after_head_moves(
+    db_session: Session, bootstrapped_user: UUID
+):
+    from sqlalchemy import text as sql_text
+
+    from tests.factories import create_test_library
+
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    library_id = create_test_library(db_session, bootstrapped_user, "Pinned Read")
+    artifact_id = _make_li_artifact(
+        db_session,
+        library_id,
+        bootstrapped_user,
+        content_md="Pinned synthesis body.",
+    )
+    pinned_revision_id = _current_li_revision_id(db_session, artifact_id)
+    new_revision_id = db_session.execute(
+        sql_text(
+            """
+            INSERT INTO library_intelligence_artifact_revisions (
+                artifact_id, content_md, covered_targets, status, promoted_at
+            )
+            VALUES (:artifact_id, 'New head body.', '[]'::jsonb, 'ready', now())
+            RETURNING id
+            """
+        ),
+        {"artifact_id": artifact_id},
+    ).scalar_one()
+    db_session.execute(
+        sql_text(
+            "UPDATE library_intelligence_artifacts "
+            "SET current_revision_id = :rev WHERE id = :artifact_id"
+        ),
+        {"rev": new_revision_id, "artifact_id": artifact_id},
+    )
+    db_session.commit()
+
+    uri = f"library_intelligence_revision:{pinned_revision_id}"
+    _admit_reference(db_session, conversation_id, uri)
+
+    result = execute_read_resource(
+        db_session, viewer_id=bootstrapped_user, conversation_id=conversation_id, uri=uri
+    )
+
+    assert not result.is_error, f"A member should read the exact revision body; got {result}"
+    assert result.kind == "library_intelligence_revision"
+    assert result.body == "Pinned synthesis body."
+    assert result.library_ref == f"library:{library_id}"
+    assert result.artifact_ref == f"library_intelligence_artifact:{artifact_id}"
+    assert result.revision_ref == uri
+    assert result.revision_status == "ready"
+    assert result.revision_is_current is False
+    output = result.tool_output()
+    assert f'artifact_ref="library_intelligence_artifact:{artifact_id}"' in output
+    assert f'revision_ref="{uri}"' in output
+    assert 'revision_is_current="false"' in output
     assert result.citation_result_type is None
     assert result.citation_source_id is None
 
@@ -275,6 +343,26 @@ def test_read_resource_li_artifact_non_member_masked(db_session: Session, bootst
     )
 
     assert result.is_error, "A non-member must not read another library's artifact"
+    assert result.error_code == "missing"
+
+
+def test_read_resource_li_revision_non_member_masked(db_session: Session, bootstrapped_user: UUID):
+    from tests.factories import create_test_library
+
+    other_user_id = uuid4()
+    ensure_user_and_default_library(db_session, other_user_id)
+    other_library_id = create_test_library(db_session, other_user_id, "Closed Revision")
+    artifact_id = _make_li_artifact(db_session, other_library_id, other_user_id)
+    revision_id = _current_li_revision_id(db_session, artifact_id)
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    uri = f"library_intelligence_revision:{revision_id}"
+    _admit_reference(db_session, conversation_id, uri)
+
+    result = execute_read_resource(
+        db_session, viewer_id=bootstrapped_user, conversation_id=conversation_id, uri=uri
+    )
+
+    assert result.is_error, "A non-member must not read another library's LI revision"
     assert result.error_code == "missing"
 
 
@@ -462,10 +550,10 @@ def test_read_resource_unknown_scheme_errors_without_raising(
     Pre-cutover, the retired conversation-ref store held raw URI strings, so an
     unknown scheme passed admission and surfaced the grammar code ``unknown_scheme``.
     Under the provenance graph, context edges are keyed on a parsed ``(scheme, uuid)`` ref
-    (``is_context_ref``), so an unparseable URI can never be admitted — there is no
+    (``admits_resource_for_conversation_read``), so an unparseable URI can never be admitted — there is no
     ``resource_edges`` row that admits it (the ``target_scheme`` CHECK forbids the
     scheme and ``target_id`` must be a uuid). Admission is the first gate, so the
-    service now returns ``not_in_references`` (no raise). The ``unknown_scheme``
+    service now returns ``not_in_context_refs`` (no raise). The ``unknown_scheme``
     classification this test guards is owned by ``parse_resource_ref``, asserted below.
     """
     conversation_id = create_test_conversation(db_session, bootstrapped_user)
@@ -483,7 +571,7 @@ def test_read_resource_unknown_scheme_errors_without_raising(
     )
 
     assert result.is_error
-    assert result.error_code == "not_in_references", (
+    assert result.error_code == "not_in_context_refs", (
         "an unparseable URI can hold no context edge, so admission rejects it first; "
         f"got {result.error_code}"
     )
@@ -496,7 +584,7 @@ def test_read_resource_invalid_uuid_returns_invalid_uri_error(
 
     As with the unknown-scheme case, no ``resource_edges`` row can admit a URI whose
     id is not a uuid (``target_id`` is a uuid column), so admission returns
-    ``not_in_references``. The ``invalid_uri`` classification this test guards is
+    ``not_in_context_refs``. The ``invalid_uri`` classification this test guards is
     owned by ``parse_resource_ref`` (reason ``invalid_format``), asserted below.
     """
     conversation_id = create_test_conversation(db_session, bootstrapped_user)
@@ -514,7 +602,7 @@ def test_read_resource_invalid_uuid_returns_invalid_uri_error(
     )
 
     assert result.is_error
-    assert result.error_code == "not_in_references", (
+    assert result.error_code == "not_in_context_refs", (
         "a non-uuid id can hold no context edge, so admission rejects it first; "
         f"got {result.error_code}"
     )

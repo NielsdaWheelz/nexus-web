@@ -13,13 +13,13 @@ Every assistant message carries one durable, backend-built trust trail that
 answers: what prompt budget and context assembled this answer, what model/run
 executed it, which tools ran, which retrieval rows and ledgers were produced,
 which retrievals became citation edges, which citation edges graduated into
-conversation references, and what terminal status/error/usage closed the run.
+conversation context refs, and what terminal status/error/usage closed the run.
 
 The trust trail is not a verifier and not a second log. It is a typed read model
 over the source-of-truth rows the backend already persists:
 `chat_prompt_assemblies`, `message_tool_calls`, `message_retrievals`,
 `message_retrieval_candidate_ledgers`, `message_rerank_ledgers`,
-`resource_edges(origin='citation')`, `chat_run_events(reference_added)`, and
+`resource_edges(origin='citation')`, `chat_run_events(context_ref_added)`, and
 `chat_runs`. The frontend renders that read model inside assistant messages.
 Streaming mutates the same shape while the run is live; reload returns the same
 shape from the API. No trust fact exists only in React state.
@@ -32,7 +32,7 @@ The product already records the evidence needed to debug agentic answers, but
 the read surface is split:
 
 - live streaming folds `tool_call`, `retrieval_result`, `citation_index`, and
-  `reference_added` into frontend state;
+  `context_ref_added` into frontend state;
 - message reload rehydrates citation chips from resource edges;
 - retrieval telemetry is duplicated into `message_document` retrieval blocks;
 - candidate and rerank ledgers live behind separate inspection endpoints;
@@ -96,7 +96,7 @@ reload state.
 
 Final state: frontend `ConversationMessage` has one `trust_trail` field for
 assistant messages. Active tool activity, completed tool trail, retrieval
-summaries, citation linkage, and reference-added records all read from it.
+summaries, citation linkage, and context-ref-added records all read from it.
 
 Delete top-level frontend `tool_calls` and `retrievals` once all callers move to
 `message.trust_trail`.
@@ -214,7 +214,7 @@ Each assistant message renders:
    - selected/included/cited state;
    - candidate and rerank ledger rows;
    - citation edge linkage;
-   - reference-added records;
+   - context-ref-added records;
    - warnings for integrity mismatches.
 
 The collapsed line is terse, for example:
@@ -240,12 +240,12 @@ already persist `message_tool_calls`. They may have no retrieval rows. The UI
 must render non-retrieval tools as first-class tool calls instead of labeling all
 non-web tools as "Searching library".
 
-### 6.5 Reference-added
+### 6.5 Context-ref-added
 
-If citation finalization creates a conversation reference, the trust trail shows
-the reference-added fact on the assistant message and the conversation reference
-owner still updates the references surface. The message trail is explanatory;
-the references surface remains the navigation owner.
+If citation finalization creates a conversation context ref, the trust trail shows
+the context-ref-added fact on the assistant message and the conversation context
+owner still updates the context surface. The message trail is explanatory;
+the context surface remains the navigation owner.
 
 ---
 
@@ -295,7 +295,7 @@ The trust trail service reads, but does not mutate, these owners:
 - `message_retrieval_candidate_ledgers`: candidate ledger rows.
 - `message_rerank_ledgers`: rerank/selection pass rows.
 - `resource_edges`: citation edges for `source=message:<assistant_message_id>`.
-- `chat_run_events`: `reference_added` records and event sequencing.
+- `chat_run_events`: `context_ref_added` records and event sequencing.
 - `citations.build_citation_outs`: chip read model. The trust trail wraps this
   rather than reimplementing chip projection.
 
@@ -375,7 +375,7 @@ verdicts. They only describe ledger/linkage consistency problems, for example:
 - citation edge has no matching retrieval row when one is expected;
 - candidate ledger included flag disagrees with linked retrieval included flag;
 - prompt assembly references a retrieval id not present for the message;
-- `reference_added` event target is not present in the citation set.
+- `context_ref_added` event target is not present in the citation set.
 
 Warnings render as debug notices and never suppress the assistant answer.
 
@@ -407,7 +407,7 @@ class AssistantTrustTrailOut(BaseModel):
     prompt: TrustPromptAssemblyOut | None
     tool_calls: list[TrustToolCallOut]
     citations: list[TrustCitationOut]
-    references_added: list[TrustReferenceAddedOut]
+    context_refs_added: list[TrustContextRefAddedOut]
     integrity_notices: list[TrustIntegrityNoticeOut]
     created_at: datetime
     updated_at: datetime
@@ -487,7 +487,7 @@ class TrustCitationOut(BaseModel):
 
 ### 8.7 Reference-added row
 
-`TrustReferenceAddedOut` matches the strict `reference_added` payload plus
+`TrustContextRefAddedOut` matches the strict `context_ref_added` payload plus
 `chat_run_event_seq` and `citation_edge_id | None` when linkable.
 
 ### 8.8 Candidate/rerank rows
@@ -539,8 +539,8 @@ Required contract changes:
 - retrieval-bearing tools emit `retrieval_result`;
 - `citation_index` still refreshes `message.citations` and also updates
   `trust_trail.citations`;
-- `reference_added` still updates conversation references and also appends to
-  `trust_trail.references_added`;
+- `context_ref_added` still updates conversation context refs and also appends to
+  `trust_trail.context_refs_added`;
 - `done` triggers reconcile; reconcile response wins.
 
 No old event fallback is kept. Tests update to the new strict grammar.
@@ -612,7 +612,7 @@ Rules:
 - nest retrievals, candidate ledgers, and rerank ledgers under their tool call;
 - build citations from resource edges and `build_citation_outs`;
 - link retrievals to citation edges through `message_retrievals.cited_edge_id`;
-- read `reference_added` from run events;
+- read `context_ref_added` from run events;
 - emit deterministic integrity notices only.
 
 ### S3 - Attach to message APIs
@@ -713,10 +713,10 @@ Citation rendering still belongs to `CitationOut` and `ReaderCitationData`.
 The trust trail composes by wrapping those outputs with edge IDs and retrieval
 linkage. It does not replace the citation chip system.
 
-### 12.2 Conversation references
+### 12.2 Conversation context refs
 
-`reference_added` continues to update `useConversationReferences` and the
-references surface. The trust trail mirrors the event on the originating
+`context_ref_added` continues to update `useConversationContextRefs` and the
+context surface. The trust trail mirrors the event on the originating
 assistant message for debug causality.
 
 ### 12.3 Prompt tracking
@@ -762,7 +762,7 @@ Allowed in UI:
 - retrieval source titles, snippets, scores, locators, selected/cited flags;
 - candidate/rerank ledger rows;
 - citation edge IDs and target refs;
-- reference-added resource refs.
+- context-ref-added resource refs.
 
 Not allowed in UI:
 
@@ -800,7 +800,7 @@ timeline.
 AC6. `citation_index` produces both normal citation chips and trust-trail
 citation linkage with `citation_edge_id`.
 
-AC7. `reference_added` updates both the conversation references owner and the
+AC7. `context_ref_added` updates both the conversation context refs owner and the
 assistant message trust trail.
 
 AC8. The inspector renders outside the assistant answer selection container and
@@ -830,7 +830,7 @@ Add `python/tests/test_assistant_message_trust_trail.py`:
 - app search tool gets tool call, retrievals, candidates, rerank rows;
 - selected retrieval with citation edge links retrieval to citation;
 - unselected retrieval remains telemetry-only;
-- `reference_added` event appears in trail;
+- `context_ref_added` event appears in trail;
 - prompt assembly summary is present and raw prompt text is absent;
 - `read_resource` / `inspect_resource` tool calls appear without retrieval rows;
 - failed tool/run returns safe statuses and error codes;

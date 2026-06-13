@@ -624,7 +624,6 @@ async def test_document_summary_trace_inspects_then_reads_map_pointer(
     direct_db.register_cleanup("pdf_page_text_spans", "media_id", media_id)
     direct_db.register_cleanup("conversations", "id", conversation_id)
     direct_db.register_cleanup("messages", "conversation_id", conversation_id)
-    direct_db.register_cleanup("conversation_media", "conversation_id", conversation_id)
 
     router = _DocumentStackRouter(media_id)
     with direct_db.session() as session:

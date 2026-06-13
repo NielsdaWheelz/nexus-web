@@ -12,19 +12,19 @@ import {
   type ContextRefOut,
 } from "@/lib/resourceGraph/contextRefs";
 
-export function useConversationReferences(conversationId: string | null) {
-  const [references, setReferences] = useState<ContextRefOut[]>([]);
+export function useConversationContextRefs(conversationId: string | null) {
+  const [contextRefs, setContextRefs] = useState<ContextRefOut[]>([]);
   const conversationIdRef = useRef(conversationId);
   const refreshSeqRef = useRef(0);
   const refreshControllerRef = useRef<AbortController | null>(null);
   const ignoreResourceForConversationRef = useRef<string | null>(null);
   conversationIdRef.current = conversationId;
-  const referencesResource = useResource<{ data: ContextRefOut[] }>({
+  const contextRefsResource = useResource<{ data: ContextRefOut[] }>({
     cacheKey: conversationId,
     path: (id) => `/api/conversations/${id}/context-refs` as ApiPath,
   });
 
-  const refreshReferences = useCallback(
+  const refreshContextRefs = useCallback(
     async (nextConversationId: string) => {
       const refreshSeq = refreshSeqRef.current + 1;
       refreshSeqRef.current = refreshSeq;
@@ -43,7 +43,7 @@ export function useConversationReferences(conversationId: string | null) {
         ) {
           return;
         }
-        setReferences(data);
+        setContextRefs(data);
       } catch (err) {
         if (
           isAbortError(err) ||
@@ -65,15 +65,15 @@ export function useConversationReferences(conversationId: string | null) {
 
   const mutate = useCallback(async () => {
     if (!conversationId) return;
-    await refreshReferences(conversationId);
-  }, [conversationId, refreshReferences]);
+    await refreshContextRefs(conversationId);
+  }, [conversationId, refreshContextRefs]);
 
   useEffect(() => {
     refreshSeqRef.current += 1;
     refreshControllerRef.current?.abort();
     refreshControllerRef.current = null;
     ignoreResourceForConversationRef.current = null;
-    setReferences([]);
+    setContextRefs([]);
   }, [conversationId]);
 
   useEffect(() => {
@@ -83,16 +83,16 @@ export function useConversationReferences(conversationId: string | null) {
     ) {
       return;
     }
-    if (referencesResource.status === "ready") {
-      setReferences(referencesResource.data.data);
+    if (contextRefsResource.status === "ready") {
+      setContextRefs(contextRefsResource.data.data);
       return;
     }
-    if (referencesResource.status === "error") {
-      setReferences([]);
+    if (contextRefsResource.status === "error") {
+      setContextRefs([]);
     }
-  }, [conversationId, referencesResource]);
+  }, [contextRefsResource, conversationId]);
 
-  const removeReference = useCallback(
+  const removeContextRefById = useCallback(
     async (edgeId: string) => {
       if (!conversationId) return;
       refreshSeqRef.current += 1;
@@ -100,21 +100,21 @@ export function useConversationReferences(conversationId: string | null) {
       refreshControllerRef.current = null;
       ignoreResourceForConversationRef.current = conversationId;
       await removeContextRef(conversationId, edgeId);
-      setReferences((current) => current.filter((r) => r.id !== edgeId));
+      setContextRefs((current) => current.filter((r) => r.id !== edgeId));
     },
     [conversationId],
   );
 
-  const upsertReference = useCallback((reference: ContextRefOut) => {
+  const upsertContextRef = useCallback((contextRef: ContextRefOut) => {
     if (conversationIdRef.current) {
       ignoreResourceForConversationRef.current = conversationIdRef.current;
     }
-    setReferences((current) => {
-      const index = current.findIndex((item) => item.id === reference.id);
+    setContextRefs((current) => {
+      const index = current.findIndex((item) => item.id === contextRef.id);
       if (index >= 0) {
-        return current.map((item, idx) => (idx === index ? reference : item));
+        return current.map((item, idx) => (idx === index ? contextRef : item));
       }
-      return [...current, reference].sort((left, right) => {
+      return [...current, contextRef].sort((left, right) => {
         if (left.created_at !== right.created_at) {
           return compareStableString(left.created_at, right.created_at);
         }
@@ -124,12 +124,12 @@ export function useConversationReferences(conversationId: string | null) {
   }, []);
 
   return {
-    references,
+    contextRefs,
     isLoading:
-      referencesResource.status === "loading" &&
+      contextRefsResource.status === "loading" &&
       ignoreResourceForConversationRef.current !== conversationId,
-    removeReference,
+    removeContextRef: removeContextRefById,
     mutate,
-    upsertReference,
+    upsertContextRef,
   };
 }

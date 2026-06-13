@@ -26,13 +26,13 @@ from nexus.db.models import (
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas.conversation import (
     AssistantTrustTrailOut,
-    ChatRunReferenceAddedEventPayload,
+    ChatRunContextRefAddedEventPayload,
     MessageRerankLedgerOut,
     MessageRetrievalCandidateLedgerOut,
     TrustCitationOut,
+    TrustContextRefAddedOut,
     TrustIntegrityNoticeOut,
     TrustPromptAssemblyOut,
-    TrustReferenceAddedOut,
     TrustRetrievalOut,
     TrustRunOut,
     TrustToolCallOut,
@@ -235,16 +235,16 @@ def build_assistant_trust_trails(
                 )
             )
 
-    references_by_run: dict[UUID, list[TrustReferenceAddedOut]] = {}
+    context_refs_by_run: dict[UUID, list[TrustContextRefAddedOut]] = {}
     if run_ids:
         for event in db.scalars(
             select(ChatRunEvent)
-            .where(ChatRunEvent.run_id.in_(run_ids), ChatRunEvent.event_type == "reference_added")
+            .where(ChatRunEvent.run_id.in_(run_ids), ChatRunEvent.event_type == "context_ref_added")
             .order_by(ChatRunEvent.run_id, ChatRunEvent.seq)
         ):
-            payload = ChatRunReferenceAddedEventPayload.model_validate(event.payload)
-            references_by_run.setdefault(event.run_id, []).append(
-                TrustReferenceAddedOut(
+            payload = ChatRunContextRefAddedEventPayload.model_validate(event.payload)
+            context_refs_by_run.setdefault(event.run_id, []).append(
+                TrustContextRefAddedOut(
                     chat_run_event_seq=event.seq,
                     id=payload.id,
                     conversation_id=payload.conversation_id,
@@ -409,7 +409,7 @@ def build_assistant_trust_trails(
         else:
             trail_status = message.status
 
-        references_added = references_by_run.get(run.id, []) if run is not None else []
+        context_refs_added = context_refs_by_run.get(run.id, []) if run is not None else []
 
         integrity_notices: list[TrustIntegrityNoticeOut] = []
         for row in retrievals_by_message.get(message.id, []):
@@ -470,17 +470,18 @@ def build_assistant_trust_trails(
                             ),
                         )
                     )
-        for reference in references_added:
+        for context_ref in context_refs_added:
             if (
-                reference.citation_edge_id is None
-                or reference.citation_edge_id not in citation_edge_ids
-                or citation_ref_by_edge_id.get(reference.citation_edge_id) != reference.resource_ref
+                context_ref.citation_edge_id is None
+                or context_ref.citation_edge_id not in citation_edge_ids
+                or citation_ref_by_edge_id.get(context_ref.citation_edge_id)
+                != context_ref.resource_ref
             ):
                 integrity_notices.append(
                     TrustIntegrityNoticeOut(
-                        code=f"reference_missing_citation:{reference.chat_run_event_seq}",
+                        code=f"context_ref_missing_citation:{context_ref.chat_run_event_seq}",
                         message=(
-                            f"Reference event {reference.chat_run_event_seq} does not "
+                            f"Context-ref event {context_ref.chat_run_event_seq} does not "
                             "match a citation edge on this message."
                         ),
                     )
@@ -531,7 +532,7 @@ def build_assistant_trust_trails(
             ),
             tool_calls=tools_by_message.get(message.id, []),
             citations=trust_citations,
-            references_added=references_added,
+            context_refs_added=context_refs_added,
             integrity_notices=integrity_notices,
             created_at=message.created_at,
             updated_at=message.updated_at,

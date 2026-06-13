@@ -81,7 +81,11 @@ class LoadedResource:
     message_role: str | None = None  # message "{role}: …"
     message_count: int | None = None  # conversation summary
     item_count: int | None = None  # library summary
-    related_library_id: UUID | None = None  # LI artifact -> the library: scope for app_search
+    related_library_id: UUID | None = None  # LI output -> the library: scope for app_search
+    related_artifact_id: UUID | None = None  # LI revision -> artifact head
+    related_revision_id: UUID | None = None  # LI artifact head -> current revision
+    related_revision_status: str | None = None
+    related_revision_is_current: bool | None = None
     locator_label: str | None = None  # oracle corpus passage locator
 
 
@@ -94,6 +98,7 @@ class ResolvedResource:
     fetch_hint: str
     quote: LoadedQuote | None = None  # set for highlights → <quote> instead of <body>
     missing: bool = False
+    resolved_revision_ref: str | None = None
 
 
 def resolve_ref(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> ResolvedResource:
@@ -154,6 +159,8 @@ def load_resource_batch(
             loaded = _load_library(db, items, viewer_id=viewer_id)
         elif scheme == "library_intelligence_artifact":
             loaded = _load_library_intelligence_artifact(db, items, viewer_id=viewer_id)
+        elif scheme == "library_intelligence_revision":
+            loaded = _load_library_intelligence_revision(db, items, viewer_id=viewer_id)
         elif scheme == "evidence_span":
             loaded = _load_evidence_span(db, items, viewer_id=viewer_id)
         elif scheme == "content_chunk":
@@ -441,7 +448,8 @@ def _load_library_intelligence_artifact(
     rows = db.execute(
         text(
             """
-            SELECT a.id, a.library_id, l.name, r.content_md
+            SELECT a.id, a.library_id, l.name, r.id AS revision_id, r.content_md,
+                   r.status, a.current_revision_id = r.id AS revision_is_current
             FROM library_intelligence_artifacts a
             JOIN libraries l ON l.id = a.library_id
             LEFT JOIN library_intelligence_artifact_revisions r
@@ -463,8 +471,53 @@ def _load_library_intelligence_artifact(
                 uri=ref.uri,
                 scheme="library_intelligence_artifact",
                 title=str(row[2]),
-                body=str(row[3]) if row[3] is not None else None,
+                body=str(row[4]) if row[4] is not None else None,
+                related_artifact_id=UUID(str(row[0])),
                 related_library_id=UUID(str(row[1])),
+                related_revision_id=UUID(str(row[3])) if row[3] is not None else None,
+                related_revision_status=str(row[5]) if row[5] is not None else None,
+                related_revision_is_current=bool(row[6]) if row[6] is not None else None,
+            )
+        )
+    return out
+
+
+def _load_library_intelligence_revision(
+    db: Session, items: list[ResourceRef], *, viewer_id: UUID
+) -> list[LoadedResource]:
+    ids = [ref.id for ref in items]
+    rows = db.execute(
+        text(
+            """
+            SELECT r.id, r.artifact_id, a.library_id, l.name, r.content_md, r.status,
+                   a.current_revision_id = r.id AS is_current
+            FROM library_intelligence_artifact_revisions r
+            JOIN library_intelligence_artifacts a ON a.id = r.artifact_id
+            JOIN libraries l ON l.id = a.library_id
+            WHERE r.id = ANY(:ids)
+            """
+        ),
+        {"ids": ids},
+    ).fetchall()
+    by_id = {row[0]: row for row in rows}
+    out: list[LoadedResource] = []
+    for ref in items:
+        row = by_id.get(ref.id)
+        if row is None or not is_library_member(db, viewer_id, row[2]):
+            out.append(_missing(ref.uri, "library_intelligence_revision"))
+            continue
+        suffix = "current" if row[6] else str(row[5])
+        out.append(
+            LoadedResource(
+                uri=ref.uri,
+                scheme="library_intelligence_revision",
+                title=f"{row[3]} ({suffix})",
+                body=str(row[4] or ""),
+                related_artifact_id=UUID(str(row[1])),
+                related_library_id=UUID(str(row[2])),
+                related_revision_id=UUID(str(row[0])),
+                related_revision_status=str(row[5]),
+                related_revision_is_current=bool(row[6]),
             )
         )
     return out
@@ -1027,7 +1080,7 @@ def _present(loaded: LoadedResource) -> ResolvedResource:
             inline_body=None,
             fetch_hint=f'app_search(scopes=["{loaded.uri}"], query=...)',
         )
-    if scheme == "library_intelligence_artifact":
+    if scheme in ("library_intelligence_artifact", "library_intelligence_revision"):
         name = loaded.title or ""
         content_md = loaded.body or ""
         library_uri = (
@@ -1040,14 +1093,25 @@ def _present(loaded: LoadedResource) -> ResolvedResource:
             if library_uri is not None
             else ""
         )
+        revision_ref = (
+            f"library_intelligence_revision:{loaded.related_revision_id}"
+            if loaded.related_revision_id is not None
+            else None
+        )
+        label = (
+            f"Library Intelligence — {name}"
+            if scheme == "library_intelligence_artifact"
+            else f"Library Intelligence revision — {name}"
+        )
         return ResolvedResource(
             uri=loaded.uri,
-            label=f"Library Intelligence — {name}",
+            label=label,
             summary=_first_line(content_md) or f"Library Intelligence for {name}",
             inline_body=(
                 content_md if content_md and len(content_md) < INLINE_THRESHOLD_CHARS else None
             ),
             fetch_hint=(f'read_resource("{loaded.uri}") for the full synthesis{library_search}'),
+            resolved_revision_ref=revision_ref,
         )
     if scheme == "highlight":
         quote = loaded.quote

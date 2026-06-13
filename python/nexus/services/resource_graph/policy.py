@@ -1,0 +1,295 @@
+"""Executable edge-shape policy for the resource graph product spine."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Literal
+
+from nexus.errors import ApiErrorCode, InvalidRequestError
+from nexus.services.resource_graph.refs import SEARCH_SCOPE_SCHEMES, ResourceScheme
+from nexus.services.resource_graph.schemas import (
+    EDGE_KINDS,
+    EDGE_ORIGINS,
+    EdgeCreate,
+    EdgeKind,
+    EdgeOrigin,
+)
+
+SchemeSet = tuple[ResourceScheme, ...] | Literal["any"]
+
+SEARCH_SCOPE_EDGE_KIND: EdgeKind = "context"
+NOTE_MEDIA_SCOPE_ORIGINS: tuple[EdgeOrigin, ...] = ("user", "note_body", "highlight_note")
+CONVERSATION_CONTEXT_SCOPE_ORIGINS: tuple[EdgeOrigin, ...] = ("user", "citation", "system")
+CONVERSATION_SCOPE_TARGET_SCHEMES: tuple[ResourceScheme, ...] = (
+    "page",
+    "note_block",
+    "highlight",
+)
+APP_SEARCH_SCOPE_TARGET_SCHEMES: tuple[ResourceScheme, ...] = SEARCH_SCOPE_SCHEMES
+CITATION_OUTPUT_SOURCE_SCHEMES: tuple[ResourceScheme, ...] = (
+    "message",
+    "oracle_reading",
+    "library_intelligence_revision",
+)
+SYNAPSE_SOURCE_SCHEMES: tuple[ResourceScheme, ...] = ("media", "page", "note_block", "highlight")
+SYNAPSE_TARGET_SCHEMES: tuple[ResourceScheme, ...] = ("media", "note_block")
+
+
+@dataclass(frozen=True, slots=True)
+class EdgeShapePolicy:
+    origin: EdgeOrigin
+    writer: str
+    allowed_kinds: tuple[EdgeKind, ...]
+    source_schemes: SchemeSet
+    target_schemes: SchemeSet
+    ordinal: Literal["forbidden", "citation_required"]
+    snapshot: Literal["forbidden", "citation_required", "synapse_required"]
+    source_order: Literal["forbidden", "required", "conversation_context_optional"]
+    target_order: Literal["forbidden"]
+    cleanup: str
+    search_activation: Literal["never", "allowlisted_only"]
+    rendering: str
+
+
+EDGE_SHAPE_POLICIES: dict[EdgeOrigin, EdgeShapePolicy] = {
+    "user": EdgeShapePolicy(
+        origin="user",
+        writer="resource_graph.edges public user-link API",
+        allowed_kinds=EDGE_KINDS,
+        source_schemes="any",
+        target_schemes="any",
+        ordinal="forbidden",
+        snapshot="forbidden",
+        source_order="conversation_context_optional",
+        target_order="forbidden",
+        cleanup="delete bare rows with either endpoint",
+        search_activation="allowlisted_only",
+        rendering="user connection",
+    ),
+    "citation": EdgeShapePolicy(
+        origin="citation",
+        writer="resource_graph.citations and conversation context graduation",
+        allowed_kinds=EDGE_KINDS,
+        source_schemes=(*CITATION_OUTPUT_SOURCE_SCHEMES, "conversation"),
+        target_schemes="any",
+        ordinal="citation_required",
+        snapshot="citation_required",
+        source_order="conversation_context_optional",
+        target_order="forbidden",
+        cleanup="delete with source; preserve target snapshots",
+        search_activation="allowlisted_only",
+        rendering="citation or context ref",
+    ),
+    "system": EdgeShapePolicy(
+        origin="system",
+        writer="resource_graph.context",
+        allowed_kinds=("context",),
+        source_schemes=("conversation",),
+        target_schemes="any",
+        ordinal="forbidden",
+        snapshot="forbidden",
+        source_order="conversation_context_optional",
+        target_order="forbidden",
+        cleanup="delete bare rows with either endpoint",
+        search_activation="allowlisted_only",
+        rendering="context ref",
+    ),
+    "note_body": EdgeShapePolicy(
+        origin="note_body",
+        writer="resource_graph.documents body sync",
+        allowed_kinds=("context",),
+        source_schemes=("page", "note_block"),
+        target_schemes="any",
+        ordinal="forbidden",
+        snapshot="forbidden",
+        source_order="forbidden",
+        target_order="forbidden",
+        cleanup="replace with parsed body refs",
+        search_activation="allowlisted_only",
+        rendering="note body ref",
+    ),
+    "highlight_note": EdgeShapePolicy(
+        origin="highlight_note",
+        writer="notes highlight attachment path",
+        allowed_kinds=("context",),
+        source_schemes=("highlight",),
+        target_schemes=("note_block",),
+        ordinal="forbidden",
+        snapshot="forbidden",
+        source_order="forbidden",
+        target_order="forbidden",
+        cleanup="delete with highlight or note block",
+        search_activation="allowlisted_only",
+        rendering="highlight note attachment",
+    ),
+    "note_containment": EdgeShapePolicy(
+        origin="note_containment",
+        writer="resource_graph.documents",
+        allowed_kinds=("context",),
+        source_schemes=("page", "note_block"),
+        target_schemes=("note_block",),
+        ordinal="forbidden",
+        snapshot="forbidden",
+        source_order="required",
+        target_order="forbidden",
+        cleanup="document graph commands",
+        search_activation="never",
+        rendering="document tree",
+    ),
+    "synapse": EdgeShapePolicy(
+        origin="synapse",
+        writer="services.synapse",
+        allowed_kinds=EDGE_KINDS,
+        source_schemes=SYNAPSE_SOURCE_SCHEMES,
+        target_schemes=SYNAPSE_TARGET_SCHEMES,
+        ordinal="forbidden",
+        snapshot="synapse_required",
+        source_order="forbidden",
+        target_order="forbidden",
+        cleanup="replace with scan; delete on dismissal",
+        search_activation="never",
+        rendering="suggestion",
+    ),
+}
+
+
+def validate_edge_shape(edge: EdgeCreate) -> None:
+    if edge.kind not in EDGE_KINDS:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST, f"Invalid edge kind {edge.kind!r}"
+        )
+    if edge.origin not in EDGE_ORIGINS:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST, f"Invalid edge origin {edge.origin!r}"
+        )
+    if edge.source == edge.target:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST, "An edge cannot relate a resource to itself"
+        )
+    if edge.target_order_key is not None:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Target order keys are reserved until multi-occurrence blocks ship",
+        )
+    for label, value in (
+        ("source_order_key", edge.source_order_key),
+        ("target_order_key", edge.target_order_key),
+    ):
+        if value is not None and not 1 <= len(value) <= 64:
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST, f"{label} must be 1-64 characters"
+            )
+    if edge.source_order_key is not None and not _allows_source_order(edge):
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Source order key is not valid for this edge shape",
+        )
+    if edge.origin == "citation":
+        _validate_citation(edge)
+        return
+    if edge.ordinal is not None:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST, "Only citation edges can carry ordinals"
+        )
+    if edge.snapshot is not None and edge.origin != "synapse":
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Only citation and synapse edges can carry snapshots",
+        )
+    if edge.origin == "synapse":
+        _validate_synapse(edge)
+        return
+
+    policy = EDGE_SHAPE_POLICIES[edge.origin]
+    if edge.kind not in policy.allowed_kinds:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST, f"{edge.origin} edges must use kind=context"
+        )
+    if not _scheme_allowed(edge.source.scheme, policy.source_schemes) or not _scheme_allowed(
+        edge.target.scheme, policy.target_schemes
+    ):
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, _shape_message(edge.origin))
+    if policy.source_order == "required" and edge.source_order_key is None:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST, "Containment edges require source_order_key"
+        )
+
+
+def _validate_citation(edge: EdgeCreate) -> None:
+    if edge.ordinal is None:
+        if edge.snapshot is not None:
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST,
+                "Only ordinal citation edges can carry citation snapshots",
+            )
+        if edge.kind != "context" or edge.source.scheme != "conversation":
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST,
+                "Bare citation edges must be conversation context refs",
+            )
+        return
+    if edge.snapshot is None:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Citation ordinal requires a snapshot",
+        )
+    if edge.source.scheme not in CITATION_OUTPUT_SOURCE_SCHEMES:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Citation ordinals must start from a generated output resource",
+        )
+    if edge.source_order_key is not None or edge.target_order_key is not None:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST, "Citation edges cannot carry order keys"
+        )
+    if edge.ordinal < 1:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Citation ordinal must be >= 1")
+
+
+def _validate_synapse(edge: EdgeCreate) -> None:
+    if edge.source.scheme not in SYNAPSE_SOURCE_SCHEMES:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Synapse edges must start from media, page, note_block, or highlight",
+        )
+    if edge.target.scheme not in SYNAPSE_TARGET_SCHEMES:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Synapse edges must target media or note_block",
+        )
+    if edge.snapshot is None:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Synapse edges require a rationale snapshot",
+        )
+    if not (edge.snapshot.excerpt or "").strip():
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Synapse snapshots require a non-empty excerpt",
+        )
+
+
+def _allows_source_order(edge: EdgeCreate) -> bool:
+    return edge.origin == "note_containment" or (
+        edge.origin in CONVERSATION_CONTEXT_SCOPE_ORIGINS
+        and edge.kind == SEARCH_SCOPE_EDGE_KIND
+        and edge.source.scheme == "conversation"
+        and edge.ordinal is None
+        and edge.snapshot is None
+    )
+
+
+def _scheme_allowed(scheme: ResourceScheme, allowed: SchemeSet) -> bool:
+    return allowed == "any" or scheme in allowed
+
+
+def _shape_message(origin: EdgeOrigin) -> str:
+    if origin == "note_containment":
+        return "Containment edges must connect page/note_block to note_block"
+    if origin == "highlight_note":
+        return "Highlight note edges must connect highlight to note_block"
+    if origin == "note_body":
+        return "Note body edges must start from page or note_block"
+    if origin == "system":
+        return "System edges must be conversation context refs"
+    return "Invalid edge shape"

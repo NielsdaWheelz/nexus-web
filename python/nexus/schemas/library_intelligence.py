@@ -27,7 +27,9 @@ class LibraryIntelligenceArtifactOut(LibraryIntelligenceModel):
     """The GET read-model: current-revision content + computed head status."""
 
     artifact_id: UUID | None = None
+    artifact_ref: str | None = None
     revision_id: UUID | None = None
+    revision_ref: str | None = None
     status: ArtifactStatus
     content_md: str = ""
     citations: list[CitationOut] = Field(default_factory=list)
@@ -39,22 +41,38 @@ class LibraryIntelligenceArtifactOut(LibraryIntelligenceModel):
 
 class LibraryIntelligenceGenerateOut(LibraryIntelligenceModel):
     artifact_id: UUID
+    artifact_ref: str
     revision_id: UUID
-    # The revision IS the run; ``run_id`` == ``revision_id`` (kept for the wire
-    # contract). There is no separate run identity.
-    run_id: UUID
+    revision_ref: str
 
 
 class LibraryIntelligenceRevisionSummaryOut(LibraryIntelligenceModel):
+    artifact_id: UUID
+    artifact_ref: str
     revision_id: UUID
+    revision_ref: str
     status: RevisionStatus
     created_at: datetime
     promoted_at: datetime | None = None
     is_current: bool
+    citation_count: int
 
 
 class LibraryIntelligenceRevisionsOut(LibraryIntelligenceModel):
     revisions: list[LibraryIntelligenceRevisionSummaryOut]
+
+
+class LibraryIntelligenceRevisionOut(LibraryIntelligenceModel):
+    artifact_id: UUID
+    artifact_ref: str
+    revision_id: UUID
+    revision_ref: str
+    status: RevisionStatus
+    content_md: str
+    citations: list[CitationOut] = Field(default_factory=list)
+    created_at: datetime
+    promoted_at: datetime | None = None
+    is_current: bool
 
 
 class LibraryIntelligenceRevisionEventOut(LibraryIntelligenceModel):

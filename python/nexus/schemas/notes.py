@@ -18,6 +18,8 @@ OBJECT_TYPES = Literal[
     "fragment",
     "contributor",
     "evidence_span",
+    "library_intelligence_artifact",
+    "library_intelligence_revision",
     "tag",
 ]
 OBJECT_TYPE_VALUES = frozenset(get_args(OBJECT_TYPES))

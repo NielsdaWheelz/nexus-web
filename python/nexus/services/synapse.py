@@ -64,6 +64,7 @@ from nexus.services.resource_graph.edges import (
     replace_edges_for_origin,
 )
 from nexus.services.resource_graph.highlight_notes import linked_note_blocks_for_highlights
+from nexus.services.resource_graph.policy import SYNAPSE_SOURCE_SCHEMES
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.resource_graph.resolve import assert_ref_visible
 from nexus.services.resource_graph.schemas import (
@@ -94,8 +95,6 @@ SYNAPSE_MAX_OUTPUT_TOKENS = 1000
 SYNAPSE_LLM_TIMEOUT_SECONDS = 45
 SYNAPSE_QUERY_CHAR_BUDGET = 800
 SYNAPSE_DOSSIER_CHAR_BUDGET = 12_000
-SYNAPSE_SOURCE_SCHEMES: tuple[ResourceScheme, ...] = ("media", "page", "note_block", "highlight")
-
 # The pinned model must exist in MODEL_CATALOG (code/catalog mismatch is a defect).
 require_catalog_model(SYNAPSE_PROVIDER, SYNAPSE_MODEL_NAME)
 

@@ -1266,6 +1266,60 @@ def test_object_ref_search_and_hydration_support_page_owned_chunks_and_spans(
 
 
 @pytest.mark.integration
+def test_object_ref_hydration_supports_library_intelligence_revision_routes(
+    db_session,
+    bootstrapped_user,
+):
+    library_id = create_test_library(db_session, bootstrapped_user, "ObjectRef LI")
+    artifact_id = db_session.execute(
+        text(
+            """
+            INSERT INTO library_intelligence_artifacts (library_id, user_id)
+            VALUES (:library_id, :user_id)
+            RETURNING id
+            """
+        ),
+        {"library_id": library_id, "user_id": bootstrapped_user},
+    ).scalar_one()
+    revision_id = db_session.execute(
+        text(
+            """
+            INSERT INTO library_intelligence_artifact_revisions (
+                artifact_id, content_md, covered_targets, status, promoted_at
+            )
+            VALUES (:artifact_id, 'Exact LI body.', '[]'::jsonb, 'ready', now())
+            RETURNING id
+            """
+        ),
+        {"artifact_id": artifact_id},
+    ).scalar_one()
+    db_session.execute(
+        text(
+            "UPDATE library_intelligence_artifacts "
+            "SET current_revision_id = :revision_id WHERE id = :artifact_id"
+        ),
+        {"revision_id": revision_id, "artifact_id": artifact_id},
+    )
+
+    artifact_ref = object_refs.hydrate_object_ref(
+        db_session,
+        bootstrapped_user,
+        ObjectRef(object_type="library_intelligence_artifact", object_id=artifact_id),
+    )
+    revision_ref = object_refs.hydrate_object_ref(
+        db_session,
+        bootstrapped_user,
+        ObjectRef(object_type="library_intelligence_revision", object_id=revision_id),
+    )
+
+    assert artifact_ref.route == f"/libraries/{library_id}?tab=intelligence"
+    assert revision_ref.route == (
+        f"/libraries/{library_id}?tab=intelligence&revision={revision_id}"
+    )
+    assert revision_ref.snippet == "Exact LI body."
+
+
+@pytest.mark.integration
 def test_shared_reader_can_attach_own_note_to_visible_highlight(db_session):
     author_id = create_test_user_id()
     reader_id = create_test_user_id()

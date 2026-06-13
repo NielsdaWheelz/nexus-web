@@ -4,37 +4,37 @@ import ItemCard from "@/components/items/ItemCard";
 import ActionMenu from "@/components/ui/ActionMenu";
 import type { ContextRefOut } from "@/lib/resourceGraph/contextRefs";
 import { resourceIconForUri } from "@/lib/resources/resourceKind";
-import styles from "./ConversationReferencesSurface.module.css";
+import styles from "./ConversationContextRefsSurface.module.css";
 
-export default function ConversationReferencesSurface({
-  references,
-  removeReference,
+export default function ConversationContextRefsSurface({
+  contextRefs,
+  removeContextRef,
   onOpenResource,
 }: {
-  references: ContextRefOut[];
-  removeReference: (edgeId: string) => Promise<void>;
+  contextRefs: ContextRefOut[];
+  removeContextRef: (edgeId: string) => Promise<void>;
   onOpenResource?: (uri: string) => void;
 }) {
-  if (references.length === 0) {
-    return <p className={styles.empty}>No references yet.</p>;
+  if (contextRefs.length === 0) {
+    return <p className={styles.empty}>No context yet.</p>;
   }
   return (
     <div className={styles.secondary}>
-      {references.map((reference) => {
-        const Icon = resourceIconForUri(reference.resource_ref);
+      {contextRefs.map((contextRef) => {
+        const Icon = resourceIconForUri(contextRef.resource_ref);
         return (
           <ItemCard
-            key={reference.id}
-            className={reference.missing ? styles.missing : undefined}
+            key={contextRef.id}
+            className={contextRef.missing ? styles.missing : undefined}
             content={{
               kind: "resource",
-              title: reference.label,
+              title: contextRef.label,
               icon: <Icon size={14} aria-hidden="true" />,
             }}
-            meta={reference.summary || undefined}
+            meta={contextRef.summary || undefined}
             onActivate={
-              onOpenResource && !reference.missing
-                ? () => onOpenResource(reference.resource_ref)
+              onOpenResource && !contextRef.missing
+                ? () => onOpenResource(contextRef.resource_ref)
                 : undefined
             }
             actions={
@@ -43,8 +43,8 @@ export default function ConversationReferencesSurface({
                   {
                     id: "open",
                     label: "Open",
-                    disabled: !onOpenResource || reference.missing,
-                    onSelect: () => onOpenResource?.(reference.resource_ref),
+                    disabled: !onOpenResource || contextRef.missing,
+                    onSelect: () => onOpenResource?.(contextRef.resource_ref),
                   },
                   {
                     id: "remove",
@@ -52,7 +52,7 @@ export default function ConversationReferencesSurface({
                     tone: "danger",
                     separatorBefore: true,
                     onSelect: () => {
-                      void removeReference(reference.id);
+                      void removeContextRef(contextRef.id);
                     },
                   },
                 ]}

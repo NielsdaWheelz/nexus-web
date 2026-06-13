@@ -32,7 +32,7 @@ export default function AssistantTrustInspector({
       tool.retrievals.filter((retrieval) => retrieval.included_in_prompt).length,
     0,
   );
-  const references = trustTrail.references_added.length;
+  const contextRefs = trustTrail.context_refs_added.length;
   const warnings = trustTrail.integrity_notices.length;
 
   return (
@@ -41,7 +41,7 @@ export default function AssistantTrustInspector({
         <span>
           {trustTrail.tool_calls.length} tools - {retrieved} retrieved - {selected}{" "}
           selected - {included} included - {trustTrail.citations.length} cited -{" "}
-          {references} references
+          {contextRefs} context refs
         </span>
         {warnings > 0 ? <strong>{warnings} notices</strong> : null}
       </summary>
@@ -162,22 +162,22 @@ export default function AssistantTrustInspector({
           </section>
         ) : null}
 
-        {trustTrail.references_added.length > 0 ? (
+        {trustTrail.context_refs_added.length > 0 ? (
           <section>
-            <h4>References</h4>
+            <h4>Context refs</h4>
             <ol className={styles.trustNestedList}>
-              {trustTrail.references_added.map((reference) => (
-                <li key={`${reference.chat_run_event_seq}:${reference.id}`}>
+              {trustTrail.context_refs_added.map((contextRef) => (
+                <li key={`${contextRef.chat_run_event_seq}:${contextRef.id}`}>
                   <div className={styles.trustLine}>
-                    <span>{reference.label || reference.resource_ref}</span>
+                    <span>{contextRef.label || contextRef.resource_ref}</span>
                     <span className={styles.trustFlags}>
-                      {reference.missing ? "missing" : "added"}
+                      {contextRef.missing ? "missing" : "added"}
                     </span>
                   </div>
                   <div className={styles.trustCode}>
-                    {reference.resource_ref}
-                    {reference.citation_edge_id
-                      ? ` - edge ${shortId(reference.citation_edge_id)}`
+                    {contextRef.resource_ref}
+                    {contextRef.citation_edge_id
+                      ? ` - edge ${shortId(contextRef.citation_edge_id)}`
                       : ""}
                   </div>
                 </li>

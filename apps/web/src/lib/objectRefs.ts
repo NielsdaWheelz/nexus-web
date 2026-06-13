@@ -12,6 +12,8 @@ export const OBJECT_TYPES = [
   "fragment",
   "contributor",
   "evidence_span",
+  "library_intelligence_artifact",
+  "library_intelligence_revision",
   "tag",
 ] as const;
 

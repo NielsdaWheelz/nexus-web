@@ -139,7 +139,10 @@ def test_note_object_membership_cells_admit_only_note_media_edge_origins(
     result = scope_filter_sql(scope_type, uuid4(), entity)
     assert not isinstance(result, ScopeUnsupported)
     sql = _squash(result[0])
+    assert "e.kind = 'context'" in sql
     assert "e.origin IN ('user', 'note_body', 'highlight_note')" in sql
+    assert "e.ordinal IS NULL" in sql
+    assert "note_containment" not in sql
     assert "synapse" not in sql
 
 
@@ -163,6 +166,27 @@ def test_highlight_conversation_cell_matches_context_edges() -> None:
     sql = _squash(result[0])
     assert "e.source_scheme = 'conversation' AND e.source_id = :scope_id" in sql
     assert "e.target_scheme = 'highlight' AND e.target_id = h.id" in sql
+    assert "e.kind = 'context'" in sql
+    assert "e.origin IN ('user', 'citation', 'system')" in sql
+    assert "e.ordinal IS NULL" in sql
+
+
+@pytest.mark.parametrize(
+    "entity",
+    ["media", "podcast", "content_chunk", "evidence_span", "contributor"],
+)
+def test_media_backed_conversation_cells_use_context_edges(entity: str) -> None:
+    result = scope_filter_sql("conversation", uuid4(), entity)
+    assert not isinstance(result, ScopeUnsupported)
+    sql = _squash(result[0])
+    assert "conversation_media" not in sql
+    assert "resource_edges e" in sql
+    assert "e.source_scheme = 'conversation'" in sql
+    assert "e.source_id = :scope_id" in sql
+    assert "e.target_scheme = 'media'" in sql
+    assert "e.kind = 'context'" in sql
+    assert "e.origin IN ('user', 'citation', 'system')" in sql
+    assert "e.ordinal IS NULL" in sql
 
 
 def test_share_semantics_cells_use_conversation_shares() -> None:

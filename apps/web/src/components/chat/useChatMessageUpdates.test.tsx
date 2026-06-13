@@ -43,7 +43,7 @@ function assistantMessage(): ConversationMessage {
       prompt: null,
       tool_calls: [],
       citations: [],
-      references_added: [],
+      context_refs_added: [],
       integrity_notices: [],
       created_at: "2026-06-09T00:00:00Z",
       updated_at: "2026-06-09T00:00:00Z",

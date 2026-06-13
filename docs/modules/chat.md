@@ -3,7 +3,7 @@
 ## Scope
 
 The chat module owns durable, branchable, streamed, retrieval-grounded conversation UX.
-It covers full conversation panes, reader-attached document chats, branch replies, references,
+It covers full conversation panes, reader-attached document chats, branch replies, context refs,
 assistant-answer selection forks, model/key-mode sends, optimistic run state, retries, and the
 frontend request contract for `/api/chat-runs`.
 
@@ -18,11 +18,11 @@ Frontend owners live under `apps/web/src/components/chat/*` and
 
 `useConversation` is the live chat engine. It owns history loading, create-on-send,
 optimistic run lifecycle, run resumption, message updates, retry state, branch state,
-conversation references, and selected leaf/path state.
+conversation context refs, and selected leaf/path state.
 
 `ChatSurface` owns transcript rendering and scroll behavior.
 
-`Conversation` is the full-chat pane adapter. It owns pane chrome, secondary references/forks
+`Conversation` is the full-chat pane adapter. It owns pane chrome, secondary context/forks
 surfaces, open-resource routing, and the full-chat composer target.
 
 `ReaderChatDetail` is the reader document-chat adapter. It binds a reader context to the
@@ -83,7 +83,7 @@ Callers still decide the active path target. `Conversation` knows active leaf/ne
 ## Assistant Answer Selection
 
 Assistant answer selection is branch-anchor context from a completed assistant message.
-It is not reader selection, not a citation, and not a conversation reference.
+It is not reader selection, not a citation, and not a conversation context ref.
 
 `useAssistantSelectionBranch` owns DOM selection capture for assistant answers:
 
@@ -127,7 +127,7 @@ keeps its own visual-viewport handling and must not migrate to `MobileSheet`
 Reader quote-to-chat is highlight-first. The reader creates or reuses a durable
 `highlight:<id>` reference, then sends transient `reader_selection` turn context.
 
-`reader_selection` is not a branch anchor. It is not persisted as a conversation reference and
+`reader_selection` is not a branch anchor. It is not persisted as a conversation context ref and
 is not cited. Backend services canonicalize quote text from the highlight row before prompt
 assembly.
 
@@ -154,7 +154,7 @@ ordinal lives on the edge, never on the telemetry row.
 
 Assistant message reads also carry a backend-built `trust_trail`. It is the
 durable inspector read model over `chat_runs`, prompt assemblies, tool calls,
-retrieval rows, candidate/rerank ledgers, citation edges, and reference-added
+retrieval rows, candidate/rerank ledgers, citation edges, and context-ref-added
 events. `message_document` is text-only; tool and retrieval disclosures render
 from `message.trust_trail`.
 

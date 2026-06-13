@@ -1,14 +1,14 @@
 "use client";
 
 import Button from "@/components/ui/Button";
-import ReferencingChatRow from "@/components/chat/ReferencingChatRow";
+import ContextRefChatRow from "@/components/chat/ContextRefChatRow";
 import type { ConversationListItem } from "@/lib/conversations/types";
 import { cx } from "@/lib/ui/cx";
-import styles from "./ReferenceChatList.module.css";
+import styles from "./ContextRefChatList.module.css";
 
-type ReferenceChatListDensity = "compact" | "comfortable";
+type ContextRefChatListDensity = "compact" | "comfortable";
 
-interface ReferenceChatListProps {
+interface ContextRefChatListProps {
   className: string;
   conversations: ConversationListItem[];
   isLoading: boolean;
@@ -16,10 +16,10 @@ interface ReferenceChatListProps {
   emptyActionLabel: string;
   onStartNewChat: () => void;
   onOpenChat: (conversationId: string) => void;
-  density?: ReferenceChatListDensity;
+  density?: ContextRefChatListDensity;
 }
 
-export default function ReferenceChatList({
+export default function ContextRefChatList({
   className,
   conversations,
   isLoading,
@@ -28,7 +28,7 @@ export default function ReferenceChatList({
   onStartNewChat,
   onOpenChat,
   density = "comfortable",
-}: ReferenceChatListProps) {
+}: ContextRefChatListProps) {
   if (isLoading) {
     return <div className={className} />;
   }
@@ -61,7 +61,7 @@ export default function ReferenceChatList({
       >
         {conversations.map((item) => (
           <li key={item.id}>
-            <ReferencingChatRow item={item} onTap={() => onOpenChat(item.id)} />
+            <ContextRefChatRow item={item} onTap={() => onOpenChat(item.id)} />
           </li>
         ))}
       </ul>

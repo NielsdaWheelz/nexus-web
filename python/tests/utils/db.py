@@ -99,32 +99,66 @@ def _delete_library_intelligence(session: Session, artifact_filter: str, value: 
 
     ``artifact_filter`` is a WHERE clause over ``library_intelligence_artifacts``
     (e.g. ``WHERE library_id = :value``). Order: null the circular pointer, drop
-    revision children (events), then revisions, then the head.
+    graph refs, revision children (events), then revisions, then the head.
     """
-    revision_filter = (
-        "revision_id IN (SELECT r.id FROM library_intelligence_artifact_revisions r "
-        f"JOIN library_intelligence_artifacts a ON a.id = r.artifact_id {artifact_filter})"
-    )
+    artifact_ids = [
+        row[0]
+        for row in session.execute(
+            text(f"SELECT id FROM library_intelligence_artifacts {artifact_filter}"),
+            {"value": value},
+        )
+    ]
+    if not artifact_ids:
+        return
+    revision_ids = [
+        row[0]
+        for row in session.execute(
+            text(
+                "SELECT id FROM library_intelligence_artifact_revisions "
+                "WHERE artifact_id = ANY(:artifact_ids)"
+            ),
+            {"artifact_ids": artifact_ids},
+        )
+    ]
+    for scheme, ids in (
+        ("library_intelligence_revision", revision_ids),
+        ("library_intelligence_artifact", artifact_ids),
+    ):
+        if not ids:
+            continue
+        session.execute(
+            text(
+                "DELETE FROM resource_edges "
+                "WHERE (source_scheme = :scheme AND source_id = ANY(:ids)) "
+                "   OR (target_scheme = :scheme AND target_id = ANY(:ids))"
+            ),
+            {"scheme": scheme, "ids": ids},
+        )
     session.execute(
         text(
-            f"UPDATE library_intelligence_artifacts SET current_revision_id = NULL {artifact_filter}"
+            "UPDATE library_intelligence_artifacts "
+            "SET current_revision_id = NULL WHERE id = ANY(:artifact_ids)"
         ),
-        {"value": value},
+        {"artifact_ids": artifact_ids},
     )
-    session.execute(
-        text(f"DELETE FROM library_intelligence_revision_events WHERE {revision_filter}"),
-        {"value": value},
-    )
+    if revision_ids:
+        session.execute(
+            text(
+                "DELETE FROM library_intelligence_revision_events "
+                "WHERE revision_id = ANY(:revision_ids)"
+            ),
+            {"revision_ids": revision_ids},
+        )
     session.execute(
         text(
-            "DELETE FROM library_intelligence_artifact_revisions WHERE artifact_id IN "
-            f"(SELECT id FROM library_intelligence_artifacts {artifact_filter})"
+            "DELETE FROM library_intelligence_artifact_revisions "
+            "WHERE artifact_id = ANY(:artifact_ids)"
         ),
-        {"value": value},
+        {"artifact_ids": artifact_ids},
     )
     session.execute(
-        text(f"DELETE FROM library_intelligence_artifacts {artifact_filter}"),
-        {"value": value},
+        text("DELETE FROM library_intelligence_artifacts WHERE id = ANY(:artifact_ids)"),
+        {"artifact_ids": artifact_ids},
     )
 
 

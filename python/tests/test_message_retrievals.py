@@ -191,7 +191,7 @@ def _seed_cited_run(
         ChatRunEvent(
             run_id=run.id,
             seq=2,
-            event_type="reference_added",
+            event_type="context_ref_added",
             payload={
                 "id": str(uuid4()),
                 "conversation_id": str(conversation_id),
@@ -332,8 +332,8 @@ def test_trust_trail_links_run_prompt_retrieval_citation_and_reference(
     assert len(trail.citations) == 1
     assert trail.citations[0].citation_edge_id == edge_id
     assert trail.citations[0].retrieval_id == retrieval_id
-    assert len(trail.references_added) == 1
-    assert trail.references_added[0].citation_edge_id == edge_id
+    assert len(trail.context_refs_added) == 1
+    assert trail.context_refs_added[0].citation_edge_id == edge_id
     assert trail.integrity_notices == []
 
 
@@ -472,7 +472,7 @@ def test_integrity_notices_are_deterministic(
         ChatRunEvent(
             run_id=run.id,
             seq=1,
-            event_type="reference_added",
+            event_type="context_ref_added",
             payload={
                 "id": str(uuid4()),
                 "conversation_id": str(conversation_id),

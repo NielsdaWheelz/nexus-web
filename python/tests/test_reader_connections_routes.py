@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy import text
 
+from nexus.services.reader_connections import READER_CONNECTION_ORIGINS
 from nexus.services.resource_graph.edges import create_edge
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_graph.schemas import CitationSnapshot, EdgeCreate
@@ -20,6 +21,12 @@ from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
 
 pytestmark = pytest.mark.integration
+
+
+def test_reader_connections_route_default_origin_policy_is_explicit():
+    from nexus.api.routes.reader import _edge_origins
+
+    assert _edge_origins(None) == READER_CONNECTION_ORIGINS
 
 
 def _bootstrap_user(auth_client, direct_db: DirectSessionManager) -> UUID:

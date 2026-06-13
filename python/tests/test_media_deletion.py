@@ -519,7 +519,7 @@ def test_delete_document_applies_graph_cleanup_two_rules(
                 ResourceEdge(
                     user_id=user_id,
                     kind="context",
-                    origin="citation",
+                    origin="user",
                     source_scheme="conversation",
                     source_id=conversation_id,
                     target_scheme="media",
@@ -641,6 +641,35 @@ def test_delete_library_applies_graph_cleanup_two_rules(
         conversation_id, message_id = create_test_conversation_with_message(
             session, user_id, content="Scopes the doomed library"
         )
+        artifact_id = session.execute(
+            text(
+                """
+                INSERT INTO library_intelligence_artifacts (library_id, user_id)
+                VALUES (:library_id, :user_id)
+                RETURNING id
+                """
+            ),
+            {"library_id": library_id, "user_id": user_id},
+        ).scalar_one()
+        revision_id = session.execute(
+            text(
+                """
+                INSERT INTO library_intelligence_artifact_revisions (
+                    artifact_id, content_md, covered_targets, status, promoted_at
+                )
+                VALUES (:artifact_id, 'Doomed revision [1].', '[]'::jsonb, 'ready', now())
+                RETURNING id
+                """
+            ),
+            {"artifact_id": artifact_id},
+        ).scalar_one()
+        session.execute(
+            text(
+                "UPDATE library_intelligence_artifacts "
+                "SET current_revision_id = :revision_id WHERE id = :artifact_id"
+            ),
+            {"revision_id": revision_id, "artifact_id": artifact_id},
+        )
 
         session.add_all(
             [
@@ -657,23 +686,11 @@ def test_delete_library_applies_graph_cleanup_two_rules(
                 ResourceEdge(
                     user_id=user_id,
                     kind="context",
-                    origin="citation",
+                    origin="user",
                     source_scheme="library",
                     source_id=library_id,
                     target_scheme="conversation",
                     target_id=conversation_id,
-                ),
-                # Cited edge SOURCED BY the library (rule 1): dies with its source.
-                ResourceEdge(
-                    user_id=user_id,
-                    kind="context",
-                    origin="citation",
-                    source_scheme="library",
-                    source_id=library_id,
-                    target_scheme="conversation",
-                    target_id=conversation_id,
-                    ordinal=1,
-                    snapshot={"title": "Doomed Library"},
                 ),
                 # Cited edge sourced from the surviving message that merely TARGETS
                 # the library (rule 1): must outlive the deleted target.
@@ -688,6 +705,37 @@ def test_delete_library_applies_graph_cleanup_two_rules(
                     ordinal=2,
                     snapshot={"title": "Doomed Library", "excerpt": "scoped"},
                 ),
+                # LI artifact/revision refs belong to the deleted library. Bare
+                # links touching them and citations sourced by the revision must die.
+                ResourceEdge(
+                    user_id=user_id,
+                    kind="context",
+                    origin="user",
+                    source_scheme="library_intelligence_artifact",
+                    source_id=artifact_id,
+                    target_scheme="conversation",
+                    target_id=conversation_id,
+                ),
+                ResourceEdge(
+                    user_id=user_id,
+                    kind="context",
+                    origin="user",
+                    source_scheme="conversation",
+                    source_id=conversation_id,
+                    target_scheme="library_intelligence_revision",
+                    target_id=revision_id,
+                ),
+                ResourceEdge(
+                    user_id=user_id,
+                    kind="context",
+                    origin="citation",
+                    source_scheme="library_intelligence_revision",
+                    source_id=revision_id,
+                    target_scheme="conversation",
+                    target_id=conversation_id,
+                    ordinal=3,
+                    snapshot={"title": "Doomed Revision", "excerpt": "revision scoped"},
+                ),
             ]
         )
         session.commit()
@@ -695,12 +743,22 @@ def test_delete_library_applies_graph_cleanup_two_rules(
     direct_db.register_cleanup("conversations", "id", conversation_id)
     direct_db.register_cleanup("messages", "conversation_id", conversation_id)
     direct_db.register_cleanup("resource_edges", "user_id", user_id)
+    direct_db.register_cleanup(
+        "library_intelligence_artifact_revisions", "artifact_id", artifact_id
+    )
+    direct_db.register_cleanup("library_intelligence_artifacts", "id", artifact_id)
 
     delete_response = auth_client.delete(f"/libraries/{library_id}", headers=auth_headers(user_id))
     assert delete_response.status_code == 204, delete_response.text
 
     with direct_db.session() as session:
         assert_no_dangling_bare_edges(session, ref=ResourceRef(scheme="library", id=library_id))
+        assert_no_dangling_bare_edges(
+            session, ref=ResourceRef(scheme="library_intelligence_artifact", id=artifact_id)
+        )
+        assert_no_dangling_bare_edges(
+            session, ref=ResourceRef(scheme="library_intelligence_revision", id=revision_id)
+        )
 
         surviving = session.execute(
             text(

@@ -501,6 +501,7 @@ class ResourceEdge(Base):
                 'highlight', 'page', 'note_block', 'fragment',
                 'conversation', 'message', 'oracle_reading',
                 'oracle_corpus_passage', 'library_intelligence_artifact',
+                'library_intelligence_revision',
                 'external_snapshot', 'contributor', 'podcast', 'tag'
             )
             """,
@@ -513,18 +514,106 @@ class ResourceEdge(Base):
                 'highlight', 'page', 'note_block', 'fragment',
                 'conversation', 'message', 'oracle_reading',
                 'oracle_corpus_passage', 'library_intelligence_artifact',
+                'library_intelligence_revision',
                 'external_snapshot', 'contributor', 'podcast', 'tag'
             )
             """,
             name="ck_resource_edges_target_scheme",
         ),
         CheckConstraint(
+            "NOT (source_scheme = target_scheme AND source_id = target_id)",
+            name="ck_resource_edges_no_self_edge",
+        ),
+        CheckConstraint(
             "source_order_key IS NULL OR char_length(source_order_key) BETWEEN 1 AND 64",
             name="ck_resource_edges_source_order_key_length",
         ),
         CheckConstraint(
-            "target_order_key IS NULL OR char_length(target_order_key) BETWEEN 1 AND 64",
-            name="ck_resource_edges_target_order_key_length",
+            """
+            source_order_key IS NULL
+            OR origin = 'note_containment'
+            OR (
+                kind = 'context'
+                AND origin IN ('user', 'citation', 'system')
+                AND source_scheme = 'conversation'
+                AND ordinal IS NULL
+                AND snapshot IS NULL
+            )
+            """,
+            name="ck_resource_edges_source_order_key_shape",
+        ),
+        CheckConstraint(
+            "target_order_key IS NULL",
+            name="ck_resource_edges_target_order_key_reserved",
+        ),
+        CheckConstraint(
+            """
+            origin != 'synapse'
+            OR (
+                snapshot IS NOT NULL
+                AND snapshot ? 'excerpt'
+                AND jsonb_typeof(snapshot->'excerpt') = 'string'
+                AND btrim(snapshot->>'excerpt') <> ''
+            )
+            """,
+            name="ck_resource_edges_synapse_snapshot_excerpt",
+        ),
+        CheckConstraint(
+            """
+            origin != 'citation'
+            OR (
+                ordinal IS NULL
+                AND kind = 'context'
+                AND source_scheme = 'conversation'
+                AND snapshot IS NULL
+            )
+            OR (
+                ordinal IS NOT NULL
+                AND source_scheme IN (
+                    'message', 'oracle_reading', 'library_intelligence_revision'
+                )
+            )
+            """,
+            name="ck_resource_edges_citation_shape",
+        ),
+        CheckConstraint(
+            """
+            origin != 'system'
+            OR (
+                kind = 'context'
+                AND source_scheme = 'conversation'
+                AND ordinal IS NULL
+                AND snapshot IS NULL
+            )
+            """,
+            name="ck_resource_edges_system_shape",
+        ),
+        CheckConstraint(
+            """
+            origin != 'note_body'
+            OR (
+                kind = 'context'
+                AND source_scheme IN ('page', 'note_block')
+                AND source_order_key IS NULL
+                AND target_order_key IS NULL
+                AND ordinal IS NULL
+                AND snapshot IS NULL
+            )
+            """,
+            name="ck_resource_edges_note_body_shape",
+        ),
+        CheckConstraint(
+            """
+            origin != 'synapse'
+            OR (
+                source_scheme IN ('media', 'page', 'note_block', 'highlight')
+                AND target_scheme IN ('media', 'note_block')
+                AND source_order_key IS NULL
+                AND target_order_key IS NULL
+                AND ordinal IS NULL
+            )
+            """,
+            name="ck_resource_edges_synapse_shape",
         ),
         CheckConstraint("ordinal >= 1", name="ck_resource_edges_ordinal_positive"),
         CheckConstraint(
@@ -614,15 +703,6 @@ class ResourceEdge(Base):
             postgresql_where=text("origin = 'note_containment' AND source_order_key IS NOT NULL"),
         ),
         Index(
-            "uq_resource_edges_containment_target_order",
-            "user_id",
-            "target_scheme",
-            "target_id",
-            "target_order_key",
-            unique=True,
-            postgresql_where=text("origin = 'note_containment' AND target_order_key IS NOT NULL"),
-        ),
-        Index(
             "uq_resource_edges_containment_target_once",
             "user_id",
             "target_scheme",
@@ -645,7 +725,6 @@ class ResourceEdge(Base):
             "origin",
             "target_scheme",
             "target_id",
-            "target_order_key",
             "id",
         ),
     )
@@ -3514,7 +3593,7 @@ class ChatRunEventType(str, PyEnum):
     tool_call = "tool_call"
     retrieval_result = "retrieval_result"
     citation_index = "citation_index"
-    reference_added = "reference_added"
+    context_ref_added = "context_ref_added"
     delta = "delta"
     done = "done"
 
@@ -3622,9 +3701,6 @@ class Conversation(Base):
     )
     shares: Mapped[list["ConversationShare"]] = relationship(
         "ConversationShare", back_populates="conversation", cascade="all, delete-orphan"
-    )
-    conversation_media: Mapped[list["ConversationMedia"]] = relationship(
-        "ConversationMedia", back_populates="conversation", cascade="all, delete-orphan"
     )
     prompt_assemblies: Mapped[list["ChatPromptAssembly"]] = relationship(
         "ChatPromptAssembly",
@@ -4739,7 +4815,7 @@ class ChatRunEvent(Base):
         CheckConstraint("seq >= 1", name="ck_chat_run_events_seq_positive"),
         CheckConstraint(
             "event_type IN ('meta', 'tool_call', 'retrieval_result', "
-            "'citation_index', 'reference_added', 'delta', 'done')",
+            "'citation_index', 'context_ref_added', 'delta', 'done')",
             name="ck_chat_run_events_event_type",
         ),
         UniqueConstraint("run_id", "seq", name="uix_chat_run_events_run_seq"),
@@ -5134,34 +5210,6 @@ class AuthHandoffCode(Base):
     )
 
     user: Mapped["User"] = relationship("User")
-
-
-class ConversationMedia(Base):
-    """ConversationMedia model - derived table linking conversations to media."""
-
-    __tablename__ = "conversation_media"
-
-    conversation_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("conversations.id", ondelete="CASCADE"),
-        primary_key=True,
-    )
-    media_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("media.id", ondelete="CASCADE"),
-        primary_key=True,
-    )
-    last_message_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    # Relationships
-    conversation: Mapped["Conversation"] = relationship(
-        "Conversation", back_populates="conversation_media"
-    )
-    media: Mapped["Media"] = relationship("Media")
 
 
 # =============================================================================

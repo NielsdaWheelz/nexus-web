@@ -473,13 +473,11 @@ def _promote_built_revision(
     Order inside one SERIALIZABLE tx (run_kit stays the SOLE finalizer): re-load
     the revision ORM, guard ``building``, ``mark_terminal(ready)`` FIRST (sets
     status + completed_at + emits ``done``), THEN write content/covered/promoted,
-    swap the artifact's citation edges (§5.5: citations key on the artifact and
-    move with ``current_revision_id``; this is the only promoting write path, so
-    draft and failed revisions never touch edges), and point the head at this
-    revision (last-promote-wins). A grounding drop that leaves a gapped ordinal
-    set is rejected by the dense-1..N citation contract and fails the revision
-    through the worker's exception handler. BYOK key-status feedback rides the
-    terminal write (chat precedent).
+    write the revision's citation edges, and point the head at this revision
+    (last-promote-wins). A grounding drop that leaves a gapped ordinal set is
+    rejected by the dense-1..N citation contract and fails the revision through
+    the worker's exception handler. BYOK key-status feedback rides the terminal
+    write (chat precedent).
     """
 
     def op() -> None:
@@ -511,13 +509,10 @@ def _promote_built_revision(
                 "revision_id": revision_id,
             },
         )
-        # Citations key on the artifact and swap atomically with content in this
-        # same tx (§5.5); this is the only promoting write path, so draft/failed
-        # revisions never touch edges.
         replace_citations_for_output(
             db,
             viewer_id=owner_id,
-            source=ResourceRef(scheme="library_intelligence_artifact", id=artifact_id),
+            source=ResourceRef(scheme="library_intelligence_revision", id=revision_id),
             citations=citations,
         )
         db.execute(

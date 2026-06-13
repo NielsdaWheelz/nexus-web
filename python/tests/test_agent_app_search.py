@@ -175,7 +175,6 @@ def test_execute_app_search_persists_retrieval_metadata(
         assert rerank_row[4] == run.context_chars
         assert rerank_row[5] == run.status
 
-    direct_db.register_cleanup("conversation_media", "conversation_id", conversation_id)
     direct_db.register_cleanup("fragments", "media_id", media_id)
     direct_db.register_cleanup("library_entries", "media_id", media_id)
     direct_db.register_cleanup("media", "id", media_id)
@@ -225,13 +224,13 @@ def test_execute_app_search_rejects_blank_explicit_scope(
     assert run.citations == []
 
 
-def test_li_artifact_reference_dropped_from_default_scope_resolution(
+def test_li_revision_reference_dropped_from_default_scope_resolution(
     db_session: Session,
     bootstrapped_user,
 ) -> None:
-    """The artifact reference is NOT a search scope; the library: ref carries retrieval.
+    """The LI revision reference is NOT a search scope; the library: ref carries retrieval.
 
-    With both an ``library_intelligence_artifact:`` and a ``library:`` reference and
+    With both a ``library_intelligence_revision:`` and a ``library:`` reference and
     no explicit scopes, default scope resolution keeps only the library URI.
     """
     from uuid import uuid4 as _uuid4
@@ -241,6 +240,7 @@ def test_li_artifact_reference_dropped_from_default_scope_resolution(
     conversation_id = create_test_conversation(db_session, bootstrapped_user)
     library_id = create_test_library(db_session, bootstrapped_user, "Scope Library")
     artifact_id = _uuid4()
+    revision_id = _uuid4()
     db_session.execute(
         text(
             """
@@ -250,7 +250,25 @@ def test_li_artifact_reference_dropped_from_default_scope_resolution(
         ),
         {"id": artifact_id, "library_id": library_id, "user_id": bootstrapped_user},
     )
-    add_context_edge(db_session, conversation_id, f"library_intelligence_artifact:{artifact_id}")
+    db_session.execute(
+        text(
+            """
+            INSERT INTO library_intelligence_artifact_revisions (
+                id, artifact_id, content_md, covered_targets, status, promoted_at
+            )
+            VALUES (:id, :artifact_id, 'Synthesis', '[]'::jsonb, 'ready', now())
+            """
+        ),
+        {"id": revision_id, "artifact_id": artifact_id},
+    )
+    db_session.execute(
+        text(
+            "UPDATE library_intelligence_artifacts "
+            "SET current_revision_id = :revision_id WHERE id = :artifact_id"
+        ),
+        {"revision_id": revision_id, "artifact_id": artifact_id},
+    )
+    add_context_edge(db_session, conversation_id, f"library_intelligence_revision:{revision_id}")
     add_context_edge(db_session, conversation_id, f"library:{library_id}")
     db_session.commit()
 
@@ -280,7 +298,7 @@ def test_default_scope_resolution_ignores_ordinal_citation_edges(
     record_citation(
         db_session,
         viewer_id=bootstrapped_user,
-        source=ResourceRef(scheme="conversation", id=conversation_id),
+        source=ResourceRef(scheme="message", id=uuid4()),
         target=ResourceRef(scheme="media", id=media_id),
         ordinal=1,
         kind="context",
@@ -304,6 +322,57 @@ def test_default_scope_resolution_ignores_ordinal_citation_edges(
     )
 
 
+def test_default_scope_resolution_ignores_synapse_and_non_context_edges(
+    db_session: Session,
+    bootstrapped_user,
+) -> None:
+    from nexus.services.agent_tools.app_search import InvalidScopeError, _resolve_scope_uris
+
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    library_id = create_test_library(db_session, bootstrapped_user, "Graph Scope Library")
+    synapse_media_id = create_searchable_media_in_library(
+        db_session, bootstrapped_user, library_id, title="Synapse-only source"
+    )
+    supports_media_id = create_searchable_media_in_library(
+        db_session, bootstrapped_user, library_id, title="Supports-only source"
+    )
+    db_session.execute(
+        text(
+            """
+            INSERT INTO resource_edges (
+                user_id, kind, origin, source_scheme, source_id, target_scheme, target_id
+            )
+            VALUES
+                (:user_id, 'context', 'synapse', 'conversation', :conversation_id,
+                 'media', :synapse_media_id),
+                (:user_id, 'supports', 'user', 'conversation', :conversation_id,
+                 'media', :supports_media_id)
+            """
+        ),
+        {
+            "user_id": bootstrapped_user,
+            "conversation_id": conversation_id,
+            "synapse_media_id": synapse_media_id,
+            "supports_media_id": supports_media_id,
+        },
+    )
+    db_session.commit()
+
+    resolved = _resolve_scope_uris(
+        db_session, viewer_id=bootstrapped_user, conversation_id=conversation_id, scopes=[]
+    )
+    assert resolved == []
+
+    for media_id in (synapse_media_id, supports_media_id):
+        with pytest.raises(InvalidScopeError):
+            _resolve_scope_uris(
+                db_session,
+                viewer_id=bootstrapped_user,
+                conversation_id=conversation_id,
+                scopes=[f"media:{media_id}"],
+            )
+
+
 def test_default_scope_resolution_uses_conversation_for_note_context(
     db_session: Session,
     bootstrapped_user,
@@ -325,6 +394,32 @@ def test_default_scope_resolution_uses_conversation_for_note_context(
 
     assert resolved == [f"conversation:{conversation_id}"], (
         f"page/note-only context must not fall back to global search; got {resolved}"
+    )
+
+
+def test_default_scope_resolution_uses_conversation_for_highlight_context(
+    db_session: Session,
+    bootstrapped_user,
+) -> None:
+    from nexus.services.agent_tools.app_search import _resolve_scope_uris
+
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    library_id = create_test_library(db_session, bootstrapped_user, "Highlight Scope Library")
+    media_id = create_searchable_media_in_library(
+        db_session, bootstrapped_user, library_id, title="Highlight scope doc"
+    )
+    highlight_id, _note_block_id = create_test_highlight_note(
+        db_session, bootstrapped_user, media_id, body="highlight-scoped note"
+    )
+    add_context_edge(db_session, conversation_id, f"highlight:{highlight_id}")
+    db_session.commit()
+
+    resolved = _resolve_scope_uris(
+        db_session, viewer_id=bootstrapped_user, conversation_id=conversation_id, scopes=[]
+    )
+
+    assert resolved == [f"conversation:{conversation_id}"], (
+        f"highlight-only context must not fall back to global search; got {resolved}"
     )
 
 
@@ -443,7 +538,6 @@ def test_execute_app_search_persists_normalized_executed_filters(
 
     direct_db.register_cleanup("contributors", "display_name", credited_name)
     direct_db.register_cleanup("contributor_aliases", "source", source)
-    direct_db.register_cleanup("conversation_media", "conversation_id", conversation_id)
     direct_db.register_cleanup("fragments", "media_id", media_id)
     direct_db.register_cleanup("library_entries", "media_id", media_id)
     direct_db.register_cleanup("media", "id", media_id)
@@ -688,7 +782,6 @@ def test_scoped_app_search_persists_no_results_as_empty_tool_result(
         ).one()
         assert tuple(retrieval_count) == (0, 0)
 
-    direct_db.register_cleanup("conversation_media", "conversation_id", conversation_id)
     direct_db.register_cleanup("fragments", "media_id", media_id)
     direct_db.register_cleanup("library_entries", "media_id", media_id)
     direct_db.register_cleanup("media", "id", media_id)
@@ -842,7 +935,6 @@ def test_execute_app_search_selects_highlight_result_as_prompt_evidence(
     direct_db.register_cleanup("media", "id", media_id)
     direct_db.register_cleanup("library_entries", "media_id", media_id)
     direct_db.register_cleanup("fragments", "media_id", media_id)
-    direct_db.register_cleanup("conversation_media", "conversation_id", conversation_id)
     direct_db.register_cleanup("highlights", "id", highlight_id)
     direct_db.register_cleanup("highlight_fragment_anchors", "highlight_id", highlight_id)
     direct_db.register_cleanup("pages", "user_id", user_id)
@@ -958,7 +1050,6 @@ def test_execute_app_search_cites_note_block_as_prompt_evidence(
     direct_db.register_cleanup("memberships", "library_id", library_id)
     direct_db.register_cleanup("conversations", "id", conversation_id)
     direct_db.register_cleanup("messages", "conversation_id", conversation_id)
-    direct_db.register_cleanup("conversation_media", "conversation_id", conversation_id)
     direct_db.register_cleanup("media", "id", media_id)
     direct_db.register_cleanup("library_entries", "media_id", media_id)
     direct_db.register_cleanup("fragments", "media_id", media_id)

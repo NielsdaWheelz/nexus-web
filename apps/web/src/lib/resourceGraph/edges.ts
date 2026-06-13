@@ -6,15 +6,19 @@
 import type { ApiPath } from "@/lib/api/client";
 import { apiFetch } from "@/lib/api/client";
 
-export type EdgeKind = "context" | "supports" | "contradicts";
-export type EdgeOrigin =
-  | "user"
-  | "citation"
-  | "system"
-  | "note_body"
-  | "highlight_note"
-  | "note_containment"
-  | "synapse";
+export const EDGE_KINDS = ["context", "supports", "contradicts"] as const;
+export type EdgeKind = (typeof EDGE_KINDS)[number];
+
+export const EDGE_ORIGINS = [
+  "user",
+  "citation",
+  "system",
+  "note_body",
+  "highlight_note",
+  "note_containment",
+  "synapse",
+] as const;
+export type EdgeOrigin = (typeof EDGE_ORIGINS)[number];
 
 export interface EdgeOut {
   id: string;

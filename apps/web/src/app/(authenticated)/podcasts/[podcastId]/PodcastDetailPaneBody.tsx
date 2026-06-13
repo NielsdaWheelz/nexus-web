@@ -476,7 +476,7 @@ export default function PodcastDetailPaneBody() {
           data: { id: string };
         }>("/api/conversations", {
           method: "POST",
-          body: JSON.stringify({ initial_references: [`media:${episode.id}`] }),
+          body: JSON.stringify({ initial_context_refs: [`media:${episode.id}`] }),
         });
         const route = `/conversations/${response.data.id}`;
         openInNewPane?.(route, episode.title);

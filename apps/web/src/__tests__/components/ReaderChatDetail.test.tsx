@@ -100,7 +100,7 @@ function message(
             prompt: null,
             tool_calls: [],
             citations: [],
-            references_added: [],
+            context_refs_added: [],
             integrity_notices: [],
             created_at: timestamp,
             updated_at: timestamp,
@@ -390,7 +390,7 @@ describe("ReaderChatDetail", () => {
       ).toBe(true);
     });
 
-    // The quote URI must never have been POSTed to the references endpoint.
+    // The quote URI must never have been POSTed to the context-refs endpoint.
     const quoteRefPosted = fetchMock.mock.calls.some(([input, init]) => {
       if (
         pathOf(input) !== `/api/conversations/${CID}/context-refs` ||

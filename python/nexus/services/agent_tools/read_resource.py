@@ -37,7 +37,7 @@ from nexus.services.media_document_map import (
     load_media_document,
     read_page_range,
 )
-from nexus.services.resource_graph.context import is_context_ref
+from nexus.services.resource_graph.context import admits_resource_for_conversation_read
 from nexus.services.resource_graph.refs import (
     ResourceRef,
     ResourceRefParseFailure,
@@ -56,13 +56,13 @@ READ_RESOURCE_TOOL_NAME = "read_resource"
 # Read-tool scheme policy. `library` is rejected with a search redirect (it is a
 # scope, not a body); the graph's other non-body schemes (oracle, external
 # snapshots, contributors, podcasts) are simply not readable here. `media` is
-# readable (full / too_large) and `library_intelligence_artifact` HAS a
-# canonical body (the current revision's content_md) even though it is not a
-# search scope — the scope tuple lives in `resource_graph.refs`.
+# readable (full / too_large) and Library Intelligence output refs have canonical
+# synthesis bodies even though they are not search scopes.
 _SCOPE_NOT_READABLE_SCHEMES: tuple[ResourceScheme, ...] = ("library",)
 _READABLE_SCHEMES: tuple[ResourceScheme, ...] = (
     "media",
     "library_intelligence_artifact",
+    "library_intelligence_revision",
     "oracle_reading",
     "evidence_span",
     "content_chunk",
@@ -83,7 +83,8 @@ READ_RESOURCE_TOOL_DEFINITION: dict[str, Any] = {
         "(PDF pages), 'fragment:UUID' (a section), 'highlight:UUID', 'evidence_span:UUID', "
         "'content_chunk:UUID', 'page:UUID', 'note_block:UUID', 'message:UUID', "
         "'conversation:UUID', 'library_intelligence_artifact:UUID' (a library's "
-        "synthesis), or 'oracle_reading:UUID' (a Black Forest Oracle reading). "
+        "current synthesis), 'library_intelligence_revision:UUID' (an exact "
+        "synthesis revision), or 'oracle_reading:UUID' (a Black Forest Oracle reading). "
         "Not valid for 'library:UUID' — that is a search scope; use "
         "app_search with scopes=[...]. Every result is labelled with a kind attribute."
     ),
@@ -123,6 +124,11 @@ class ReadResourceResult:
     citation_result_type: str | None = None
     citation_source_id: str | None = None
     error_code: str | None = None
+    library_ref: str | None = None
+    artifact_ref: str | None = None
+    revision_ref: str | None = None
+    revision_status: str | None = None
+    revision_is_current: bool | None = None
 
     @property
     def is_error(self) -> bool:
@@ -138,6 +144,18 @@ class ReadResourceResult:
             )
         n_attr = f' n="{n}"' if n is not None else ""
         kind_attr = f' kind="{_xml_attr(self.kind)}"' if self.kind else ""
+        metadata_attrs = []
+        if self.library_ref is not None:
+            metadata_attrs.append(f'library_ref="{_xml_attr(self.library_ref)}"')
+        if self.artifact_ref is not None:
+            metadata_attrs.append(f'artifact_ref="{_xml_attr(self.artifact_ref)}"')
+        if self.revision_ref is not None:
+            metadata_attrs.append(f'revision_ref="{_xml_attr(self.revision_ref)}"')
+        if self.revision_status is not None:
+            metadata_attrs.append(f'revision_status="{_xml_attr(self.revision_status)}"')
+        if self.revision_is_current is not None:
+            metadata_attrs.append(f'revision_is_current="{str(self.revision_is_current).lower()}"')
+        metadata_attr = f" {' '.join(metadata_attrs)}" if metadata_attrs else ""
         if self.quote is not None:
             inner = render_quote_block(
                 "quote",
@@ -148,10 +166,11 @@ class ReadResourceResult:
                 note=self.quote.note,
             )
             return (
-                f'<resource uri="{_xml_attr(self.uri)}"{n_attr}{kind_attr}>\n{inner}\n</resource>'
+                f'<resource uri="{_xml_attr(self.uri)}"{n_attr}{kind_attr}{metadata_attr}>'
+                f"\n{inner}\n</resource>"
             )
         return (
-            f'<resource uri="{_xml_attr(self.uri)}"{n_attr}{kind_attr}>'
+            f'<resource uri="{_xml_attr(self.uri)}"{n_attr}{kind_attr}{metadata_attr}>'
             f"<body>{xml_escape(self.body)}</body>"
             f"</resource>"
         )
@@ -171,10 +190,10 @@ def execute_read_resource(
             uri=uri,
             status="error",
             body=(
-                f"Resource {uri} is not in this conversation's references. "
+                f"Resource {uri} is not in this conversation's context refs. "
                 "Use app_search to find new sources first."
             ),
-            error_code="not_in_references",
+            error_code="not_in_context_refs",
         )
 
     if uri.startswith("page_range:"):
@@ -328,15 +347,38 @@ def _present_read(loaded: LoadedResource) -> ReadResourceResult:
             body=f"{loaded.message_role}:\n{loaded.body or ''}",
             kind="message",
         )
-    if scheme == "library_intelligence_artifact":
-        # The artifact's body IS the current revision's synthesis prose. NON-citable:
-        # its inline [N] markers reference the revision's own citations (rendered by
-        # the LI pane), not a get_search_result chip — so no citation_result_type.
+    if scheme in ("library_intelligence_artifact", "library_intelligence_revision"):
+        # LI synthesis prose is NON-citable here: inline [N] markers reference the
+        # revision's own citations, not a get_search_result chip.
+        library_ref = (
+            f"library:{loaded.related_library_id}"
+            if loaded.related_library_id is not None
+            else None
+        )
+        artifact_ref = (
+            f"library_intelligence_artifact:{loaded.related_artifact_id}"
+            if loaded.related_artifact_id is not None
+            else None
+        )
+        revision_ref = (
+            f"library_intelligence_revision:{loaded.related_revision_id}"
+            if loaded.related_revision_id is not None
+            else None
+        )
         return ReadResourceResult(
             uri=loaded.uri,
             status="complete",
             body=loaded.body or "",
-            kind="library_intelligence",
+            kind=(
+                "library_intelligence_revision"
+                if scheme == "library_intelligence_revision"
+                else "library_intelligence"
+            ),
+            library_ref=library_ref,
+            artifact_ref=artifact_ref,
+            revision_ref=revision_ref,
+            revision_status=loaded.related_revision_status,
+            revision_is_current=loaded.related_revision_is_current,
         )
     if scheme == "oracle_reading":
         # The reading's body is its question + motto/argument + interpretation. NON-citable
@@ -359,12 +401,14 @@ def _present_read(loaded: LoadedResource) -> ReadResourceResult:
 def _readable_in_conversation(db: Session, conversation_id: UUID, uri: str) -> bool:
     """A URI is readable when it is context, or its parent media is (gate O2)."""
     parsed = parse_resource_ref(uri)
-    if not isinstance(parsed, ResourceRefParseFailure) and is_context_ref(
+    if not isinstance(parsed, ResourceRefParseFailure) and admits_resource_for_conversation_read(
         db, conversation_id=conversation_id, target=parsed
     ):
         return True
     parent = _parent_media_ref(db, uri)
-    return parent is not None and is_context_ref(db, conversation_id=conversation_id, target=parent)
+    return parent is not None and admits_resource_for_conversation_read(
+        db, conversation_id=conversation_id, target=parent
+    )
 
 
 def _parent_media_ref(db: Session, uri: str) -> ResourceRef | None:

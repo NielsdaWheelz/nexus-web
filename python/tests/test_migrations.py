@@ -9,6 +9,7 @@ Do NOT run with: make test (these are excluded)
 
 import json
 import os
+import re
 import subprocess
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
@@ -1424,7 +1425,7 @@ class TestMigrationUpgradeDowngrade:
                 assert message_document["type"] == "message_document"
                 assert message_document["blocks"][0]["text"] == "find sources"
 
-                # reference_added remains a valid event_type at head; the dead
+                # context_ref_added remains a valid event_type at head; the dead
                 # verifier values claim/claim_evidence were dropped from the CHECK
                 # by migration 0142.
                 session.execute(
@@ -1432,7 +1433,7 @@ class TestMigrationUpgradeDowngrade:
                         """
                         INSERT INTO chat_run_events (run_id, seq, event_type, payload)
                         VALUES (
-                            :run_id, 2, 'reference_added',
+                            :run_id, 2, 'context_ref_added',
                             jsonb_build_object('tool_name', 'app_search')
                         )
                         """
@@ -9890,7 +9891,7 @@ class TestLibraryIntelligenceArtifactRewrite0142:
         assert "claim_evidence" not in constraint
         assert "'claim'" not in constraint
         assert "citation_index" in constraint
-        assert "reference_added" in constraint
+        assert "context_ref_added" in constraint
 
     def test_chat_runs_next_event_seq_column_and_check_are_gone(self, li_head_engine):
         with Session(li_head_engine) as session:
@@ -10681,7 +10682,6 @@ class TestMigration0148NotesPagesResourceGraphOrder:
                 "uq_resource_edges_citation_ordinal",
                 "uq_resource_edges_context_pair",
                 "uq_resource_edges_containment_source_order",
-                "uq_resource_edges_containment_target_order",
                 "uq_resource_edges_containment_target_once",
                 "ix_resource_edges_user_source",
                 "ix_resource_edges_user_target",
@@ -11776,7 +11776,15 @@ class TestMigration0149SynapseResonance:
                 session, "resource_edges", "ck_resource_edges_origin"
             )
             owner_check = self._constraint_def(session, "llm_calls", "ck_llm_calls_owner_kind")
-        for origin in ("user", "citation", "system", "note_body", "highlight_note", "synapse"):
+        for origin in (
+            "user",
+            "citation",
+            "system",
+            "note_body",
+            "highlight_note",
+            "note_containment",
+            "synapse",
+        ):
             assert f"'{origin}'" in origin_check, origin_check
         for owner_kind in (
             "chat_run",
@@ -11787,6 +11795,65 @@ class TestMigration0149SynapseResonance:
             "synapse_scan",
         ):
             assert f"'{owner_kind}'" in owner_check, owner_check
+
+    def test_resource_edge_vocab_checks_match_backend_literals_at_head(self, head_engine):
+        from nexus.services.resource_graph.refs import RESOURCE_SCHEMES
+        from nexus.services.resource_graph.schemas import EDGE_KINDS, EDGE_ORIGINS
+
+        with Session(head_engine) as session:
+            checks = {
+                name: self._constraint_def(session, "resource_edges", name)
+                for name in (
+                    "ck_resource_edges_kind",
+                    "ck_resource_edges_origin",
+                    "ck_resource_edges_source_scheme",
+                    "ck_resource_edges_target_scheme",
+                )
+            }
+
+        assert set(re.findall(r"'([^']+)'", checks["ck_resource_edges_kind"])) == set(EDGE_KINDS)
+        assert set(re.findall(r"'([^']+)'", checks["ck_resource_edges_origin"])) == set(
+            EDGE_ORIGINS
+        )
+        assert set(re.findall(r"'([^']+)'", checks["ck_resource_edges_source_scheme"])) == set(
+            RESOURCE_SCHEMES
+        )
+        assert set(re.findall(r"'([^']+)'", checks["ck_resource_edges_target_scheme"])) == set(
+            RESOURCE_SCHEMES
+        )
+
+    def test_resource_edge_scheme_checks_include_li_revision_at_head(self, head_engine):
+        user_id = uuid4()
+        source_id = uuid4()
+        target_id = uuid4()
+        with Session(head_engine) as session:
+            source_check = self._constraint_def(
+                session, "resource_edges", "ck_resource_edges_source_scheme"
+            )
+            target_check = self._constraint_def(
+                session, "resource_edges", "ck_resource_edges_target_scheme"
+            )
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.execute(
+                text(
+                    """
+                    INSERT INTO resource_edges (
+                        user_id, kind, origin, source_scheme, source_id,
+                        target_scheme, target_id
+                    )
+                    VALUES (
+                        :user_id, 'context', 'user',
+                        'library_intelligence_revision', :source_id,
+                        'library_intelligence_revision', :target_id
+                    )
+                    """
+                ),
+                {"user_id": user_id, "source_id": source_id, "target_id": target_id},
+            )
+            session.commit()
+
+        assert "'library_intelligence_revision'" in source_check, source_check
+        assert "'library_intelligence_revision'" in target_check, target_check
 
     def test_synapse_suppressions_shape_at_head(self, head_engine):
         """The dismissal memory exists with exact columns, five-column PK,
@@ -12401,3 +12468,400 @@ class TestMigration0155AssistantMessageTrustTrail:
             assert payload["citation_edge_id"] is None
         finally:
             reset_test_schema()
+
+
+class TestMigration0157ResourceEdgeDbParity:
+    """0157: resource_edges database CHECKs match the head edge policy."""
+
+    @pytest.fixture(scope="class")
+    def head_engine(self):
+        reset_test_schema()
+        result = run_alembic_command("upgrade head")
+        if result.returncode != 0:
+            pytest.fail(f"Migration upgrade failed: {result.stderr}")
+        engine = create_engine(get_test_database_url())
+        yield engine
+        engine.dispose()
+        reset_test_schema()
+
+    def test_resource_edge_parity_constraints_at_head(self, head_engine):
+        with Session(head_engine) as session:
+            constraints = set(
+                session.execute(
+                    text(
+                        """
+                        SELECT conname
+                        FROM pg_constraint
+                        WHERE conrelid = 'resource_edges'::regclass
+                        """
+                    )
+                ).scalars()
+            )
+            indexes = {
+                row[0]: row[1]
+                for row in session.execute(
+                    text(
+                        """
+                        SELECT indexname, indexdef
+                        FROM pg_indexes
+                        WHERE tablename = 'resource_edges'
+                        """
+                    )
+                ).fetchall()
+            }
+
+        assert {
+            "ck_resource_edges_no_self_edge",
+            "ck_resource_edges_source_order_key_shape",
+            "ck_resource_edges_target_order_key_reserved",
+            "ck_resource_edges_synapse_snapshot_excerpt",
+            "ck_resource_edges_citation_shape",
+            "ck_resource_edges_system_shape",
+            "ck_resource_edges_note_body_shape",
+            "ck_resource_edges_synapse_shape",
+        }.issubset(constraints)
+        assert "ck_resource_edges_target_order_key_length" not in constraints
+        assert "uq_resource_edges_containment_target_order" not in indexes
+        assert "target_order_key" not in indexes["ix_resource_edges_user_target"]
+
+    def test_resource_edge_parity_constraints_are_enforced_at_head(self, head_engine):
+        user_id = uuid4()
+        insert_edge = text(
+            """
+            INSERT INTO resource_edges (
+                user_id, kind, origin, source_scheme, source_id,
+                target_scheme, target_id, source_order_key, target_order_key,
+                ordinal, snapshot
+            )
+            VALUES (
+                :user_id, :kind, :origin, :source_scheme, :source_id,
+                :target_scheme, :target_id, :source_order_key, :target_order_key,
+                :ordinal, CAST(:snapshot AS jsonb)
+            )
+            """
+        )
+        base = {
+            "user_id": user_id,
+            "kind": "context",
+            "origin": "user",
+            "source_scheme": "page",
+            "source_id": uuid4(),
+            "target_scheme": "media",
+            "target_id": uuid4(),
+            "source_order_key": None,
+            "target_order_key": None,
+            "ordinal": None,
+            "snapshot": None,
+        }
+
+        with Session(head_engine) as session:
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.execute(
+                insert_edge,
+                {
+                    **base,
+                    "origin": "note_containment",
+                    "source_scheme": "page",
+                    "source_id": uuid4(),
+                    "target_scheme": "note_block",
+                    "target_id": uuid4(),
+                    "source_order_key": "0000000001",
+                },
+            )
+            for origin in ("user", "citation", "system"):
+                session.execute(
+                    insert_edge,
+                    {
+                        **base,
+                        "origin": origin,
+                        "source_scheme": "conversation",
+                        "source_id": uuid4(),
+                        "target_scheme": "media",
+                        "target_id": uuid4(),
+                        "source_order_key": f"ctx-{origin}",
+                    },
+                )
+            session.execute(
+                insert_edge,
+                {
+                    **base,
+                    "kind": "supports",
+                    "origin": "synapse",
+                    "source_id": uuid4(),
+                    "target_id": uuid4(),
+                    "snapshot": '{"excerpt": "Shared claim."}',
+                },
+            )
+            session.execute(
+                insert_edge,
+                {
+                    **base,
+                    "origin": "citation",
+                    "source_scheme": "message",
+                    "source_id": uuid4(),
+                    "target_scheme": "media",
+                    "target_id": uuid4(),
+                    "ordinal": 1,
+                    "snapshot": '{"excerpt": "Cited evidence."}',
+                },
+            )
+            session.commit()
+
+        same_id = uuid4()
+        cases = [
+            (
+                {
+                    "source_scheme": "page",
+                    "target_scheme": "page",
+                    "source_id": same_id,
+                    "target_id": same_id,
+                },
+                "ck_resource_edges_no_self_edge",
+            ),
+            ({"target_order_key": "reserved"}, "ck_resource_edges_target_order_key_reserved"),
+            ({"source_order_key": "bad"}, "ck_resource_edges_source_order_key_shape"),
+            (
+                {
+                    "origin": "note_body",
+                    "source_scheme": "conversation",
+                    "source_order_key": "bad",
+                },
+                "ck_resource_edges_note_body_shape",
+            ),
+            (
+                {
+                    "kind": "supports",
+                    "source_scheme": "conversation",
+                    "source_order_key": "bad",
+                },
+                "ck_resource_edges_source_order_key_shape",
+            ),
+            (
+                {"origin": "citation", "source_scheme": "page"},
+                "ck_resource_edges_citation_shape",
+            ),
+            (
+                {
+                    "origin": "citation",
+                    "source_scheme": "library_intelligence_artifact",
+                    "ordinal": 1,
+                    "snapshot": '{"excerpt": "Artifact head citation"}',
+                },
+                "ck_resource_edges_citation_shape",
+            ),
+            (
+                {
+                    "origin": "citation",
+                    "source_scheme": "conversation",
+                    "ordinal": 1,
+                    "snapshot": '{"excerpt": "Conversation citation"}',
+                },
+                "ck_resource_edges_citation_shape",
+            ),
+            (
+                {"origin": "system", "source_scheme": "page"},
+                "ck_resource_edges_system_shape",
+            ),
+            (
+                {"origin": "note_body", "source_scheme": "media"},
+                "ck_resource_edges_note_body_shape",
+            ),
+            (
+                {"origin": "synapse", "source_scheme": "conversation"},
+                "ck_resource_edges_synapse_shape",
+            ),
+            (
+                {"origin": "synapse", "target_scheme": "library_intelligence_revision"},
+                "ck_resource_edges_synapse_shape",
+            ),
+            (
+                {"kind": "supports", "origin": "synapse", "snapshot": '{"title": "No rationale"}'},
+                "ck_resource_edges_synapse_snapshot_excerpt",
+            ),
+            (
+                {"kind": "supports", "origin": "synapse", "snapshot": None},
+                "ck_resource_edges_synapse_snapshot_excerpt",
+            ),
+        ]
+        for override, expected_constraint in cases:
+            with Session(head_engine) as session:
+                with pytest.raises(IntegrityError) as exc_info:
+                    params = {
+                        **base,
+                        "source_id": uuid4(),
+                        "target_id": uuid4(),
+                        **override,
+                    }
+                    session.execute(
+                        insert_edge,
+                        params,
+                    )
+                    session.commit()
+                session.rollback()
+            assert expected_constraint in str(exc_info.value), (
+                f"expected {expected_constraint} for override {override!r}, got: {exc_info.value}"
+            )
+
+
+class TestMigration0158ContextRefAddedEventType:
+    """0158: chat-run replay uses context_ref_added at head."""
+
+    def test_0158_renames_reference_added_event_type(self):
+        reset_test_schema()
+        try:
+            result = run_alembic_command("upgrade 0157")
+            assert result.returncode == 0, f"upgrade to 0157 failed: {result.stderr}"
+
+            user_id = uuid4()
+            model_id = uuid4()
+            conversation_id = uuid4()
+            user_message_id = uuid4()
+            assistant_message_id = uuid4()
+            run_id = uuid4()
+            engine = create_engine(get_test_database_url())
+            try:
+                with Session(engine) as session:
+                    session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO models (id, provider, model_name, max_context_tokens)
+                            VALUES (:id, 'openai', 'migration-test', 100000)
+                            """
+                        ),
+                        {"id": model_id},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO conversations (id, owner_user_id, sharing, next_seq)
+                            VALUES (:id, :owner_user_id, 'private', 3)
+                            """
+                        ),
+                        {"id": conversation_id, "owner_user_id": user_id},
+                    )
+                    for message_id, seq, role, content in (
+                        (user_message_id, 1, "user", "Question"),
+                        (assistant_message_id, 2, "assistant", "Answer"),
+                    ):
+                        session.execute(
+                            text(
+                                """
+                                INSERT INTO messages (
+                                    id, conversation_id, seq, role, content, status,
+                                    parent_message_id, message_document
+                                )
+                                VALUES (
+                                    :id, :conversation_id, :seq, :role, :content, 'complete',
+                                    :parent_message_id,
+                                    '{"type": "message_document", "blocks": []}'::jsonb
+                                )
+                                """
+                            ),
+                            {
+                                "id": message_id,
+                                "conversation_id": conversation_id,
+                                "seq": seq,
+                                "role": role,
+                                "content": content,
+                                "parent_message_id": (
+                                    user_message_id if message_id == assistant_message_id else None
+                                ),
+                            },
+                        )
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO chat_runs (
+                                id, owner_user_id, conversation_id, user_message_id,
+                                assistant_message_id, idempotency_key, payload_hash, status,
+                                model_id, reasoning, key_mode
+                            )
+                            VALUES (
+                                :id, :owner_user_id, :conversation_id, :user_message_id,
+                                :assistant_message_id, 'migration-0158', 'hash', 'complete',
+                                :model_id, 'default', 'auto'
+                            )
+                            """
+                        ),
+                        {
+                            "id": run_id,
+                            "owner_user_id": user_id,
+                            "conversation_id": conversation_id,
+                            "user_message_id": user_message_id,
+                            "assistant_message_id": assistant_message_id,
+                            "model_id": model_id,
+                        },
+                    )
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO chat_run_events (run_id, seq, event_type, payload)
+                            VALUES (:run_id, 1, 'reference_added', '{}'::jsonb)
+                            """
+                        ),
+                        {"run_id": run_id},
+                    )
+                    session.commit()
+            finally:
+                engine.dispose()
+
+            result = run_alembic_command("upgrade 0158")
+            assert result.returncode == 0, f"upgrade to 0158 failed: {result.stderr}"
+
+            engine = create_engine(get_test_database_url())
+            try:
+                with Session(engine) as session:
+                    event_type = session.execute(
+                        text("SELECT event_type FROM chat_run_events WHERE run_id = :run_id"),
+                        {"run_id": run_id},
+                    ).scalar_one()
+                    constraint = session.execute(
+                        text(
+                            "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+                            "WHERE conname = 'ck_chat_run_events_event_type'"
+                        )
+                    ).scalar_one()
+                    with pytest.raises(IntegrityError) as exc_info:
+                        session.execute(
+                            text(
+                                """
+                                INSERT INTO chat_run_events (run_id, seq, event_type, payload)
+                                VALUES (:run_id, 2, 'reference_added', '{}'::jsonb)
+                                """
+                            ),
+                            {"run_id": run_id},
+                        )
+                        session.commit()
+                    session.rollback()
+            finally:
+                engine.dispose()
+
+            assert event_type == "context_ref_added"
+            assert "context_ref_added" in constraint
+            assert "reference_added" not in constraint
+            assert "ck_chat_run_events_event_type" in str(exc_info.value)
+        finally:
+            reset_test_schema()
+
+
+class TestMigration0159DropConversationMedia:
+    """0159: conversation context membership is no longer a table contract."""
+
+    @pytest.fixture(scope="class")
+    def head_engine(self):
+        reset_test_schema()
+        result = run_alembic_command("upgrade head")
+        if result.returncode != 0:
+            pytest.fail(f"Migration upgrade failed: {result.stderr}")
+        engine = create_engine(get_test_database_url())
+        yield engine
+        engine.dispose()
+        reset_test_schema()
+
+    def test_conversation_media_table_is_absent_at_head(self, head_engine):
+        with Session(head_engine) as session:
+            table_name = session.execute(
+                text("SELECT to_regclass('public.conversation_media')")
+            ).scalar_one()
+        assert table_name is None

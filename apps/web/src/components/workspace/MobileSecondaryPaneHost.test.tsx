@@ -4,11 +4,11 @@ import MobileSecondaryPaneHost from "@/components/workspace/MobileSecondaryPaneH
 
 const publication = {
   groupId: "conversation-context" as const,
-  defaultSurfaceId: "conversation-references" as const,
+  defaultSurfaceId: "conversation-context-refs" as const,
   surfaces: [
     {
-      id: "conversation-references" as const,
-      body: <button type="button">Reference action</button>,
+      id: "conversation-context-refs" as const,
+      body: <button type="button">Context ref action</button>,
     },
     { id: "conversation-forks" as const, body: <div>Forks body</div> },
   ],
@@ -16,7 +16,7 @@ const publication = {
 
 const secondary = {
   groupId: "conversation-context" as const,
-  activeSurfaceId: "conversation-references" as const,
+  activeSurfaceId: "conversation-context-refs" as const,
   widthPx: 320,
   visibility: "visible" as const,
 };
@@ -74,11 +74,11 @@ describe("MobileSecondaryPaneHost", () => {
     );
     screen.getByRole("button", { name: "Return target" }).focus();
 
-    const dialog = screen.getByRole("dialog", { name: "References" });
+    const dialog = screen.getByRole("dialog", { name: "Context" });
     expect(dialog).toHaveAttribute("aria-modal", "true");
     await waitFor(() => expect(document.body.style.overflow).toBe("hidden"));
     await waitFor(() =>
-      expect(screen.getByRole("tab", { name: "References" })).toHaveFocus(),
+      expect(screen.getByRole("tab", { name: "Context" })).toHaveFocus(),
     );
 
     fireEvent.keyDown(document, { key: "Escape" });
@@ -120,16 +120,16 @@ describe("MobileSecondaryPaneHost", () => {
       />,
     );
 
-    const referencesTab = screen.getByRole("tab", { name: "References" });
+    const contextRefsTab = screen.getByRole("tab", { name: "Context" });
     const forksTab = screen.getByRole("tab", { name: "Forks" });
-    expect(referencesTab).toHaveAttribute("tabIndex", "0");
+    expect(contextRefsTab).toHaveAttribute("tabIndex", "0");
     expect(forksTab).toHaveAttribute("tabIndex", "-1");
     expect(screen.getByRole("tabpanel")).toHaveAttribute(
       "aria-labelledby",
-      referencesTab.id,
+      contextRefsTab.id,
     );
 
-    fireEvent.keyDown(referencesTab, { key: "ArrowRight" });
+    fireEvent.keyDown(contextRefsTab, { key: "ArrowRight" });
     expect(onActiveSurfaceChange).toHaveBeenCalledWith(
       "secondary-1",
       "conversation-forks",

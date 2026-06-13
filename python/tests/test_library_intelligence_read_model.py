@@ -8,9 +8,11 @@ from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+from nexus.db.models import ResourceEdge
 from tests.factories import (
     add_library_member,
     create_test_library,
+    create_test_media_in_library,
 )
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
@@ -164,7 +166,7 @@ def test_generate_route_returns_202_and_revision_is_run(
     )
     assert response.status_code == 202, response.text
     data = response.json()["data"]
-    assert data["run_id"] == data["revision_id"]
+    assert "run_id" not in data
     assert UUID(data["artifact_id"])
 
     # Idempotency: replaying the header key returns the same revision.
@@ -194,6 +196,153 @@ def test_generate_route_returns_202_and_revision_is_run(
     assert missing.json()["error"]["code"] == "E_INVALID_REQUEST", missing.text
 
 
+def test_revision_routes_read_historical_citations_after_head_moves(
+    auth_client,
+    direct_db: DirectSessionManager,
+    engine: Engine,
+):
+    _require_library_intelligence_schema(engine)
+    _require_route(auth_client, "/libraries/{library_id}/intelligence/revisions", "GET")
+    _require_route(
+        auth_client,
+        "/libraries/{library_id}/intelligence/revisions/{revision_id}",
+        "GET",
+    )
+    _require_route(
+        auth_client,
+        "/libraries/{library_id}/intelligence/revisions/{revision_id}/promote",
+        "POST",
+    )
+    owner_id = create_test_user_id()
+    _bootstrap_user(auth_client, owner_id)
+
+    with direct_db.session() as session:
+        library_id = create_test_library(session, owner_id, "Revision Routes")
+        media_id = create_test_media_in_library(session, owner_id, library_id, title="Route Source")
+        artifact_id = session.execute(
+            text(
+                """
+                INSERT INTO library_intelligence_artifacts (library_id, user_id)
+                VALUES (:library_id, :user_id)
+                RETURNING id
+                """
+            ),
+            {"library_id": library_id, "user_id": owner_id},
+        ).scalar_one()
+        first_revision_id = session.execute(
+            text(
+                """
+                INSERT INTO library_intelligence_artifact_revisions (
+                    artifact_id, content_md, covered_targets, status, promoted_at
+                )
+                VALUES (:artifact_id, 'First body [1].', '[]'::jsonb, 'ready', now())
+                RETURNING id
+                """
+            ),
+            {"artifact_id": artifact_id},
+        ).scalar_one()
+        second_revision_id = session.execute(
+            text(
+                """
+                INSERT INTO library_intelligence_artifact_revisions (
+                    artifact_id, content_md, covered_targets, status, promoted_at
+                )
+                VALUES (:artifact_id, 'Second body [1].', '[]'::jsonb, 'ready', now())
+                RETURNING id
+                """
+            ),
+            {"artifact_id": artifact_id},
+        ).scalar_one()
+        session.execute(
+            text(
+                "UPDATE library_intelligence_artifacts "
+                "SET current_revision_id = :revision_id WHERE id = :artifact_id"
+            ),
+            {"revision_id": second_revision_id, "artifact_id": artifact_id},
+        )
+        session.add_all(
+            [
+                ResourceEdge(
+                    user_id=owner_id,
+                    kind="supports",
+                    origin="citation",
+                    source_scheme="library_intelligence_revision",
+                    source_id=first_revision_id,
+                    target_scheme="media",
+                    target_id=media_id,
+                    ordinal=1,
+                    snapshot={"title": "First Source", "excerpt": "first"},
+                ),
+                ResourceEdge(
+                    user_id=owner_id,
+                    kind="supports",
+                    origin="citation",
+                    source_scheme="library_intelligence_revision",
+                    source_id=second_revision_id,
+                    target_scheme="media",
+                    target_id=media_id,
+                    ordinal=1,
+                    snapshot={"title": "Second Source", "excerpt": "second"},
+                ),
+            ]
+        )
+        session.commit()
+
+    direct_db.register_cleanup("resource_edges", "user_id", owner_id)
+    direct_db.register_cleanup("media", "id", media_id)
+    direct_db.register_cleanup("libraries", "id", library_id)
+    direct_db.register_cleanup("memberships", "library_id", library_id)
+
+    revisions = auth_client.get(
+        f"/libraries/{library_id}/intelligence/revisions",
+        headers=auth_headers(owner_id),
+    )
+    assert revisions.status_code == 200, revisions.text
+    rows = revisions.json()["data"]["revisions"]
+    assert {row["revision_ref"] for row in rows} == {
+        f"library_intelligence_revision:{first_revision_id}",
+        f"library_intelligence_revision:{second_revision_id}",
+    }
+    assert {row["citation_count"] for row in rows} == {1}
+    assert {row["revision_id"]: row["is_current"] for row in rows} == {
+        str(first_revision_id): False,
+        str(second_revision_id): True,
+    }
+
+    historical = auth_client.get(
+        f"/libraries/{library_id}/intelligence/revisions/{first_revision_id}",
+        headers=auth_headers(owner_id),
+    )
+    assert historical.status_code == 200, historical.text
+    data = historical.json()["data"]
+    assert data["revision_ref"] == f"library_intelligence_revision:{first_revision_id}"
+    assert data["content_md"] == "First body [1]."
+    assert data["is_current"] is False
+    assert data["citations"][0]["snapshot"]["title"] == "First Source"
+
+    promoted = auth_client.post(
+        f"/libraries/{library_id}/intelligence/revisions/{first_revision_id}/promote",
+        headers=auth_headers(owner_id),
+    )
+    assert promoted.status_code == 200, promoted.text
+    assert promoted.json()["data"]["revision_ref"] == (
+        f"library_intelligence_revision:{first_revision_id}"
+    )
+    assert "run_id" not in promoted.json()["data"]
+
+    after = auth_client.get(
+        f"/libraries/{library_id}/intelligence/revisions/{second_revision_id}",
+        headers=auth_headers(owner_id),
+    )
+    assert after.status_code == 200, after.text
+    assert (
+        after.json()["data"]["revision_ref"]
+        == f"library_intelligence_revision:{second_revision_id}"
+    )
+    assert after.json()["data"]["is_current"] is False
+    assert after.json()["data"]["citations"][0]["snapshot"]["title"] == "Second Source"
+
+
 def test_chat_run_events_check_lacks_claim_values(db_session: Session, engine: Engine):
     _require_library_intelligence_schema(engine)
     constraint = db_session.execute(
@@ -205,7 +354,7 @@ def test_chat_run_events_check_lacks_claim_values(db_session: Session, engine: E
     assert "claim_evidence" not in constraint
     assert "'claim'" not in constraint
     assert "citation_index" in constraint
-    assert "reference_added" in constraint
+    assert "context_ref_added" in constraint
 
 
 def test_chat_runs_next_event_seq_column_is_gone(db_session: Session, engine: Engine):

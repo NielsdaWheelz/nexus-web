@@ -82,10 +82,10 @@ class TestCreateConversation:
         assert "created_at" in data
         assert "updated_at" in data
 
-    def test_create_conversation_with_initial_references_is_atomic(
+    def test_create_conversation_with_initial_context_refs_is_atomic(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """POST /conversations owns initial reference insertion in one service call."""
+        """POST /conversations owns initial context ref insertion in one service call."""
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
 
@@ -107,7 +107,7 @@ class TestCreateConversation:
         response = auth_client.post(
             "/conversations",
             headers=auth_headers(user_id),
-            json={"initial_references": [f"media:{media_id}"]},
+            json={"initial_context_refs": [f"media:{media_id}"]},
         )
 
         assert response.status_code == 201, response.text
@@ -129,16 +129,29 @@ class TestCreateConversation:
             ).all()
             assert [f"{scheme}:{tid}" for scheme, tid in rows] == [f"media:{media_id}"]
 
-    def test_create_conversation_with_artifact_and_library_refs_in_one_tx(
+    def test_create_conversation_rejects_initial_references_field(self, auth_client):
+        user_id = create_test_user_id()
+
+        response = auth_client.post(
+            "/conversations",
+            headers=auth_headers(user_id),
+            json={"initial_references": []},
+        )
+
+        assert response.status_code == 400, response.text
+        assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
+
+    def test_create_conversation_with_li_revision_and_library_refs_in_one_tx(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """AC-4: chat-on-artifact attaches the artifact + library refs atomically."""
+        """AC-4: chat-on-LI-revision attaches revision + library refs atomically."""
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
 
         with direct_db.session() as session:
             library_id = create_shared_library(session, user_id)
             artifact_id = uuid4()
+            revision_id = uuid4()
             session.execute(
                 text(
                     """
@@ -148,18 +161,37 @@ class TestCreateConversation:
                 ),
                 {"id": artifact_id, "library_id": library_id, "user_id": user_id},
             )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO library_intelligence_artifact_revisions (
+                        id, artifact_id, content_md, covered_targets, status, promoted_at
+                    )
+                    VALUES (
+                        :id, :artifact_id, 'Synthesis', '[]'::jsonb, 'ready', now()
+                    )
+                    """
+                ),
+                {"id": revision_id, "artifact_id": artifact_id},
+            )
+            session.execute(
+                text(
+                    "UPDATE library_intelligence_artifacts "
+                    "SET current_revision_id = :revision_id WHERE id = :artifact_id"
+                ),
+                {"revision_id": revision_id, "artifact_id": artifact_id},
+            )
             session.commit()
 
-        direct_db.register_cleanup("library_intelligence_artifacts", "id", artifact_id)
-        direct_db.register_cleanup("memberships", "library_id", library_id)
         direct_db.register_cleanup("libraries", "id", library_id)
+        direct_db.register_cleanup("memberships", "library_id", library_id)
 
-        artifact_uri = f"library_intelligence_artifact:{artifact_id}"
+        revision_uri = f"library_intelligence_revision:{revision_id}"
         library_uri = f"library:{library_id}"
         response = auth_client.post(
             "/conversations",
             headers=auth_headers(user_id),
-            json={"initial_references": [artifact_uri, library_uri]},
+            json={"initial_context_refs": [revision_uri, library_uri]},
         )
 
         assert response.status_code == 201, response.text
@@ -181,7 +213,7 @@ class TestCreateConversation:
                 {"conversation_id": conversation_id},
             ).all()
             assert [f"{scheme}:{tid}" for scheme, tid, _order_key in rows] == [
-                artifact_uri,
+                revision_uri,
                 library_uri,
             ], "Both refs must be inserted in one create-time transaction (AC-4)"
             assert [order_key for _scheme, _tid, order_key in rows] == [
@@ -204,7 +236,7 @@ class TestCreateConversation:
         response = auth_client.post(
             "/conversations",
             headers=auth_headers(user_id),
-            json={"initial_references": ["not-a-uri"]},
+            json={"initial_context_refs": ["not-a-uri"]},
         )
 
         assert response.status_code == 400, response.text

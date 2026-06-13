@@ -65,7 +65,7 @@ def list_conversations(
 class CreateConversationRequest(BaseModel):
     """Request body for POST /api/conversations."""
 
-    initial_references: list[str] | None = None
+    initial_context_refs: list[str] | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -78,17 +78,17 @@ def create_conversation(
 ) -> dict:
     """Create an empty private conversation.
 
-    If ``initial_references`` is supplied, each URI is added as a conversation
+    If ``initial_context_refs`` is supplied, each URI is added as a conversation
     context edge in order (validation + insert via the context service). On
     failure the surrounding request transaction rolls back.
 
     Returns 201 Created with the conversation object.
     """
-    initial_references = body.initial_references if body is not None else None
+    initial_context_refs = body.initial_context_refs if body is not None else None
     result = conversations_service.create_conversation(
         db=db,
         viewer_id=viewer.user_id,
-        initial_references=initial_references,
+        initial_context_refs=initial_context_refs,
     )
     return ok(result)
 
@@ -120,8 +120,8 @@ def delete_conversation(
 ) -> Response:
     """Delete a conversation.
 
-    Explicitly deletes its resource-graph edges, messages, conversation_media,
-    conversation_shares, and chat runs in the service layer.
+    Explicitly deletes its resource-graph edges, messages, conversation_shares,
+    and chat runs in the service layer.
 
     Errors:
         E_CONVERSATION_NOT_FOUND (404): Conversation doesn't exist or viewer is not owner.

@@ -139,7 +139,7 @@ from nexus.services.resource_graph.citations import record_citation
 from nexus.services.resource_graph.connections import query_connections
 from nexus.services.resource_graph.context import (
     add_context_ref_without_commit,
-    is_context_ref,
+    admits_resource_for_conversation_read,
 )
 from nexus.services.resource_graph.edges import delete_edge
 from nexus.services.resource_graph.refs import ResourceRef
@@ -882,7 +882,7 @@ def _emit_citation_index(db: Session, run: ChatRun) -> None:
 
     The entries carry ``citation_edge_id`` and the chip display fields; cited
     LOCAL resources not yet in the conversation context get an
-    ``origin='citation'`` context edge plus a ``reference_added`` event built
+    ``origin='citation'`` context edge plus a ``context_ref_added`` event built
     from the returned ContextRefOut (spec §5.1/§11.6).
     """
     message_ref = ResourceRef(scheme="message", id=run.assistant_message_id)
@@ -935,7 +935,9 @@ def _emit_citation_index(db: Session, run: ChatRun) -> None:
     for edge in edges:
         if edge.target_ref.scheme == "external_snapshot":
             continue
-        if is_context_ref(db, conversation_id=run.conversation_id, target=edge.target_ref):
+        if admits_resource_for_conversation_read(
+            db, conversation_id=run.conversation_id, target=edge.target_ref
+        ):
             continue
         try:
             context_ref = add_context_ref_without_commit(
@@ -953,7 +955,7 @@ def _emit_citation_index(db: Session, run: ChatRun) -> None:
         append_run_event(
             db,
             run,
-            "reference_added",
+            "context_ref_added",
             {
                 "id": str(context_ref.edge_id),
                 "conversation_id": str(context_ref.conversation_id),

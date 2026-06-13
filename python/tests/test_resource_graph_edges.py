@@ -34,7 +34,7 @@ from nexus.services.resource_graph.edges import (
     replace_edges_for_origin,
     repoint_edges,
 )
-from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.resource_graph.schemas import (
     CitationInput,
     CitationSnapshot,
@@ -258,11 +258,58 @@ def test_create_edge_rejects_ordinal_without_snapshot(db_session: Session, boots
         create_edge(db_session, viewer_id=bootstrapped_user, input=bad)
 
 
-def test_create_edge_allows_snapshot_on_bare_edge(db_session: Session, bootstrapped_user: UUID):
-    """A bare edge MAY carry a snapshot (ck_resource_edges_citation_has_snapshot is
-    ``ordinal IS NULL OR snapshot IS NOT NULL``): the synapse rationale rides in
-    ``snapshot.excerpt`` on ordinal-less edges (synapse spec D2)."""
+@pytest.mark.parametrize("source_scheme", ["conversation", "library_intelligence_artifact"])
+def test_create_edge_rejects_ordinal_citation_from_non_output_source(
+    db_session: Session, bootstrapped_user: UUID, source_scheme: str
+):
+    source = ResourceRef(scheme=cast(ResourceScheme, source_scheme), id=uuid4())
+    target = _media_ref(db_session, bootstrapped_user)
+    bad = EdgeCreate(
+        source=source,
+        target=target,
+        kind="context",
+        origin="citation",
+        ordinal=1,
+        snapshot=_SNAPSHOT,
+    )
+    with pytest.raises(InvalidRequestError):
+        create_edge(db_session, viewer_id=bootstrapped_user, input=bad)
+
+
+def test_create_edge_rejects_non_synapse_bare_snapshot(
+    db_session: Session, bootstrapped_user: UUID
+):
+    source = _page_ref(db_session, bootstrapped_user)
+    target = _media_ref(db_session, bootstrapped_user)
+    bad = EdgeCreate(
+        source=source,
+        target=target,
+        kind="context",
+        origin="user",
+        snapshot=_SNAPSHOT,
+    )
+    with pytest.raises(InvalidRequestError):
+        create_edge(db_session, viewer_id=bootstrapped_user, input=bad)
+
+
+def test_create_edge_rejects_bare_citation_snapshot(db_session: Session, bootstrapped_user: UUID):
     source = _message_ref(db_session, bootstrapped_user)
+    target = _media_ref(db_session, bootstrapped_user)
+    bad = EdgeCreate(
+        source=source,
+        target=target,
+        kind="context",
+        origin="citation",
+        snapshot=_SNAPSHOT,
+    )
+    with pytest.raises(InvalidRequestError):
+        create_edge(db_session, viewer_id=bootstrapped_user, input=bad)
+
+
+def test_create_edge_allows_synapse_snapshot_on_bare_edge(
+    db_session: Session, bootstrapped_user: UUID
+):
+    source = _page_ref(db_session, bootstrapped_user)
     target = _media_ref(db_session, bootstrapped_user)
     edge = create_edge(
         db_session,
@@ -274,6 +321,51 @@ def test_create_edge_allows_snapshot_on_bare_edge(db_session: Session, bootstrap
     assert edge.ordinal is None and edge.snapshot == _SNAPSHOT, (
         f"bare-edge snapshot must persist; got {edge}"
     )
+
+
+@pytest.mark.parametrize(
+    "snapshot",
+    [
+        CitationSnapshot(title="Missing rationale"),
+        CitationSnapshot(excerpt=" "),
+    ],
+)
+def test_create_edge_rejects_synapse_snapshot_without_excerpt(
+    db_session: Session, bootstrapped_user: UUID, snapshot: CitationSnapshot
+):
+    source = _page_ref(db_session, bootstrapped_user)
+    target = _media_ref(db_session, bootstrapped_user)
+    bad = EdgeCreate(
+        source=source,
+        target=target,
+        kind="context",
+        origin="synapse",
+        snapshot=snapshot,
+    )
+    with pytest.raises(InvalidRequestError):
+        create_edge(db_session, viewer_id=bootstrapped_user, input=bad)
+
+
+def test_create_edge_rejects_synapse_without_snapshot(db_session: Session, bootstrapped_user: UUID):
+    source = _page_ref(db_session, bootstrapped_user)
+    target = _media_ref(db_session, bootstrapped_user)
+    bad = EdgeCreate(source=source, target=target, kind="context", origin="synapse")
+    with pytest.raises(InvalidRequestError):
+        create_edge(db_session, viewer_id=bootstrapped_user, input=bad)
+
+
+def test_create_edge_rejects_synapse_target_outside_candidate_vocabulary(
+    db_session: Session, bootstrapped_user: UUID
+):
+    bad = EdgeCreate(
+        source=_page_ref(db_session, bootstrapped_user),
+        target=ResourceRef(scheme="library_intelligence_revision", id=uuid4()),
+        kind="context",
+        origin="synapse",
+        snapshot=_SNAPSHOT,
+    )
+    with pytest.raises(InvalidRequestError):
+        create_edge(db_session, viewer_id=bootstrapped_user, input=bad)
 
 
 def test_create_edge_rejects_non_positive_ordinal(db_session: Session, bootstrapped_user: UUID):
@@ -394,7 +486,7 @@ def test_machine_origin_dedup_is_directed_only(db_session: Session, bootstrapped
     b = _media_ref(db_session, bootstrapped_user)
     create_edge(db_session, viewer_id=bootstrapped_user, input=_bare(a, b, origin="user"))
     reverse = create_edge(
-        db_session, viewer_id=bootstrapped_user, input=_bare(b, a, origin="note_body")
+        db_session, viewer_id=bootstrapped_user, input=_bare(b, a, origin="synapse")
     )
     assert reverse.source == b and reverse.target == a, (
         "A reverse-direction machine edge must coexist with a user link"
@@ -476,6 +568,59 @@ def test_conversation_context_edges_allow_source_order_key(
 
     assert citation_context_edge.source_order_key == "0000000002"
 
+    system_context_edge = create_edge(
+        db_session,
+        viewer_id=bootstrapped_user,
+        input=EdgeCreate(
+            source=source,
+            target=_media_ref(db_session, bootstrapped_user, title="System Context"),
+            kind="context",
+            origin="system",
+            source_order_key="0000000003",
+        ),
+    )
+
+    assert system_context_edge.source_order_key == "0000000003"
+
+
+def test_conversation_source_order_key_rejects_non_context_origins(
+    db_session: Session, bootstrapped_user: UUID
+):
+    source = ResourceRef(
+        scheme="conversation",
+        id=create_test_conversation(db_session, bootstrapped_user),
+    )
+    target = _media_ref(db_session, bootstrapped_user)
+
+    for origin in ("note_body", "highlight_note", "note_containment", "synapse"):
+        bad = EdgeCreate(
+            source=source,
+            target=target,
+            kind="context",
+            origin=cast(EdgeOrigin, origin),
+            source_order_key="0000000001",
+        )
+        with pytest.raises(InvalidRequestError):
+            create_edge(db_session, viewer_id=bootstrapped_user, input=bad)
+
+
+def test_create_edge_rejects_unowned_origin_shapes(db_session: Session, bootstrapped_user: UUID):
+    page = _page_ref(db_session, bootstrapped_user)
+    media = _media_ref(db_session, bootstrapped_user)
+    conversation = ResourceRef(
+        scheme="conversation",
+        id=create_test_conversation(db_session, bootstrapped_user),
+    )
+
+    for edge in (
+        EdgeCreate(source=page, target=media, kind="context", origin="citation"),
+        EdgeCreate(source=page, target=media, kind="context", origin="system"),
+        EdgeCreate(source=media, target=page, kind="context", origin="note_body"),
+        EdgeCreate(source=conversation, target=media, kind="context", origin="synapse"),
+    ):
+        with pytest.raises(InvalidRequestError):
+            create_edge(db_session, viewer_id=bootstrapped_user, input=edge)
+
 
 def test_note_containment_requires_shape_and_source_order(
     db_session: Session, bootstrapped_user: UUID
@@ -535,6 +680,20 @@ def test_note_containment_requires_shape_and_source_order(
                 kind="context",
                 origin="note_containment",
                 source_order_key="0000000002",
+            ),
+        )
+
+    with pytest.raises(InvalidRequestError):
+        create_edge(
+            db_session,
+            viewer_id=bootstrapped_user,
+            input=EdgeCreate(
+                source=page,
+                target=_note_block_ref(db_session, bootstrapped_user, text="Reserved order"),
+                kind="context",
+                origin="note_containment",
+                source_order_key="0000000003",
+                target_order_key="0000000001",
             ),
         )
 

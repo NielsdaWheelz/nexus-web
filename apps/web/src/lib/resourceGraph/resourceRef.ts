@@ -23,6 +23,7 @@ export const RESOURCE_SCHEMES = [
   "oracle_reading",
   "oracle_corpus_passage",
   "library_intelligence_artifact",
+  "library_intelligence_revision",
   "external_snapshot",
   "contributor",
   "podcast",

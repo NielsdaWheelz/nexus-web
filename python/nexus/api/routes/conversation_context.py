@@ -1,8 +1,7 @@
 """Conversation context-ref routes (spec §10.1).
 
-Context refs are ``resource_edges`` rows sourced from the conversation; they
-replace the old ``conversation_references`` routes. Admission semantics live
-in ``nexus.services.resource_graph.context``.
+Context refs are ``resource_edges`` rows sourced from the conversation. Admission
+semantics live in ``nexus.services.resource_graph.context``.
 
 Routes:
 - GET    /conversations/{conversation_id}/context-refs

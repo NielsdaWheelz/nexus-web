@@ -1666,7 +1666,7 @@ class TestCitationEdgeWriteThrough:
     replace-by-ordinal on re-execution) and points the row at it.
     ``_emit_citation_index`` emits entries keyed by ``citation_edge_id`` and
     graduates cited LOCAL targets into ``origin='citation'`` context edges with
-    a ``reference_added`` event in the context-ref shape.
+    a ``context_ref_added`` event in the context-ref shape.
     """
 
     def _create_chat_run_row(
@@ -1980,11 +1980,11 @@ class TestCitationEdgeWriteThrough:
         assert event_types.count("citation_index") == 1, (
             f"citation_index must fire once for a cited run; got {event_types}"
         )
-        assert "reference_added" in event_types, (
-            f"reference_added must follow when a cited local target graduates; got {event_types}"
+        assert "context_ref_added" in event_types, (
+            f"context_ref_added must follow when a cited local target graduates; got {event_types}"
         )
-        assert event_types.index("reference_added") > event_types.index("citation_index"), (
-            "reference_added must be emitted AFTER citation_index"
+        assert event_types.index("context_ref_added") > event_types.index("citation_index"), (
+            "context_ref_added must be emitted AFTER citation_index"
         )
         citation_payload = next(row[1] for row in events if row[0] == "citation_index")
         entry = citation_payload["entries"][0]
@@ -2016,15 +2016,15 @@ class TestCitationEdgeWriteThrough:
         assert context_edge_count == 1, (
             "A cited local target must graduate into exactly one origin='citation' context edge"
         )
-        reference_payload = next(row[1] for row in events if row[0] == "reference_added")
+        reference_payload = next(row[1] for row in events if row[0] == "context_ref_added")
         assert reference_payload["resource_ref"] == f"content_chunk:{chunk_id}", (
-            f"reference_added carries the context-ref target; got {reference_payload}"
+            f"context_ref_added carries the context-ref target; got {reference_payload}"
         )
         assert reference_payload["citation_edge_id"] == str(edge_id)
         assert reference_payload["conversation_id"] == str(conversation_id)
         assert reference_payload["missing"] is False
         assert {"id", "label", "summary", "created_at"} <= set(reference_payload), (
-            f"reference_added payload must match the ContextRefOut shape; got {reference_payload}"
+            f"context_ref_added payload must match the ContextRefOut shape; got {reference_payload}"
         )
 
     def test_unselected_retrieval_mints_no_edge_and_no_events(
@@ -2089,7 +2089,7 @@ class TestCitationEdgeWriteThrough:
             event_count = session.execute(
                 text(
                     "SELECT COUNT(*) FROM chat_run_events WHERE run_id = :run_id "
-                    "AND event_type IN ('citation_index', 'reference_added')"
+                    "AND event_type IN ('citation_index', 'context_ref_added')"
                 ),
                 {"run_id": run_id},
             ).scalar_one()
@@ -2101,7 +2101,7 @@ class TestCitationEdgeWriteThrough:
                 {"tool_call_id": tool_call_id},
             ).scalar_one()
         assert edge_count == 0, "Unselected retrievals must not mint citation edges"
-        assert event_count == 0, "No citations → no citation_index / reference_added events"
+        assert event_count == 0, "No citations → no citation_index / context_ref_added events"
         assert cited_edge_id is None
 
     def test_web_search_citation_mints_external_snapshot(
@@ -2257,7 +2257,7 @@ class TestCitationEdgeWriteThrough:
             reference_events = session.execute(
                 text(
                     "SELECT COUNT(*) FROM chat_run_events WHERE run_id = :run_id "
-                    "AND event_type = 'reference_added'"
+                    "AND event_type = 'context_ref_added'"
                 ),
                 {"run_id": run_id},
             ).scalar_one()

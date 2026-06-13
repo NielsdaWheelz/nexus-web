@@ -98,7 +98,7 @@ def test_real_web_article_reingest_replaces_active_index_and_hides_stale_evidenc
     conversation_response = auth_client.post(
         "/conversations",
         headers=headers,
-        json={"initial_references": [f"media:{media_id}"]},
+        json={"initial_context_refs": [f"media:{media_id}"]},
     )
     assert conversation_response.status_code == 201, conversation_response.text
     conversation_id = conversation_response.json()["data"]["id"]

@@ -393,7 +393,8 @@ Add:
   - `source_order_key` null or 1..64 chars;
   - `target_order_key` null or 1..64 chars.
 - origin-specific validity checks:
-  - ordinal/snapshot payload is citation-only;
+  - ordinals are citation-only; snapshots are citation-only except the later
+    `origin=synapse` rationale snapshot carveout;
   - citation edges cannot carry order keys;
   - containment edges must be `kind=context`, `page|note_block -> note_block`,
     and have `source_order_key`;

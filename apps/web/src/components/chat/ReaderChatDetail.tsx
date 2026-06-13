@@ -17,7 +17,7 @@ interface ReaderChatDetailProps {
   mediaId: string;
   /** A highlight URI to attach to the conversation when the user sends. */
   pendingQuoteUri?: string | null;
-  /** Human-readable quote chip text for the pending highlight reference. */
+  /** Human-readable quote chip text for the pending highlight context ref. */
   pendingQuoteLabel?: string | null;
   /** The quoted passage as a bind-only turn anchor for the asking turn. */
   pendingReaderSelection?: ReaderSelectionInput | null;
@@ -36,7 +36,7 @@ interface ReaderChatDetailProps {
  * retry logic lives in the engine and the view — this adapter only owns the
  * header chrome and the local pending-quote chip.
  *
- * The conversation, the document reference, and any pending quote are
+ * The conversation, the document context ref, and any pending quote are
  * created/attached on the first send (via useConversation.resolveConversation),
  * never eagerly.
  */
@@ -56,10 +56,10 @@ export default function ReaderChatDetail({
   );
 
   // The pending-quote chip is the source of truth for the removable quote: the
-  // engine attaches exactly what the chip currently holds. The media reference
+  // engine attaches exactly what the chip currently holds. The media context ref
   // always attaches (it is not removable); the quote is the removable part, so
   // removing the chip drops the quote from what gets committed on send.
-  const [pendingReferences, setPendingReferences] = useState<
+  const [pendingContextRefs, setPendingContextRefs] = useState<
     Array<{ uri: string; label: string }>
   >(() =>
     pendingQuoteUri
@@ -67,20 +67,20 @@ export default function ReaderChatDetail({
       : [],
   );
 
-  const initialReferences = useMemo(
-    () => [`media:${mediaId}`, ...pendingReferences.map((ref) => ref.uri)],
-    [mediaId, pendingReferences],
+  const initialContextRefs = useMemo(
+    () => [`media:${mediaId}`, ...pendingContextRefs.map((ref) => ref.uri)],
+    [mediaId, pendingContextRefs],
   );
   const activePendingReaderSelection = useMemo(() => {
     if (!pendingQuoteUri) return null;
-    return pendingReferences.some((ref) => ref.uri === pendingQuoteUri)
+    return pendingContextRefs.some((ref) => ref.uri === pendingQuoteUri)
       ? pendingReaderSelection
       : null;
-  }, [pendingQuoteUri, pendingReaderSelection, pendingReferences]);
+  }, [pendingContextRefs, pendingQuoteUri, pendingReaderSelection]);
 
   const convo = useConversation({
     conversationId,
-    initialReferences,
+    initialContextRefs,
     branching: false,
   });
 
@@ -145,15 +145,15 @@ export default function ReaderChatDetail({
             parentMessageId={parentMessageId}
             readerContext={readerContext}
             readerSelection={activePendingReaderSelection}
-            pendingReferences={pendingReferences}
-            onRemovePendingReference={(uri) =>
-              setPendingReferences((prev) =>
+            pendingContextRefs={pendingContextRefs}
+            onRemovePendingContextRef={(uri) =>
+              setPendingContextRefs((prev) =>
                 prev.filter((ref) => ref.uri !== uri),
               )
             }
             onResolveConversation={convo.resolveConversation}
             onChatRunCreated={convo.onChatRunCreated}
-            onMessageSent={() => setPendingReferences([])}
+            onMessageSent={() => setPendingContextRefs([])}
             autoFocus
           />
         }

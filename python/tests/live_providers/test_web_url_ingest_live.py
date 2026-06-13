@@ -126,7 +126,7 @@ def test_live_web_url_ingest_indexes_real_article_evidence(auth_client, direct_d
     conversation_response = auth_client.post(
         "/conversations",
         headers=headers,
-        json={"initial_references": [f"media:{media_id}"]},
+        json={"initial_context_refs": [f"media:{media_id}"]},
     )
     assert conversation_response.status_code == 201, conversation_response.text
     conversation_id = conversation_response.json()["data"]["id"]

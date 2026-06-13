@@ -134,8 +134,7 @@ def add_context_edge(
 ) -> UUID:
     """Attach a bare context edge conversation->uri (test fixture).
 
-    Mirrors the retired ``insert_reference_if_absent`` citation write-through:
-    raw insert keyed by the pair, idempotent, no resolution or owner check.
+    Raw insert keyed by the pair: idempotent, no resolution or owner check.
     """
     ref = parse_resource_ref(uri)
     assert not isinstance(ref, ResourceRefParseFailure), f"malformed test uri: {uri!r}"

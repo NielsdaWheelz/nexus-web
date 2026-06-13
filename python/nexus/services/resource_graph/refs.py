@@ -26,6 +26,7 @@ ResourceScheme = Literal[
     "oracle_reading",
     "oracle_corpus_passage",
     "library_intelligence_artifact",
+    "library_intelligence_revision",
     "external_snapshot",
     "contributor",
     "podcast",
@@ -46,6 +47,7 @@ RESOURCE_SCHEMES: tuple[ResourceScheme, ...] = (
     "oracle_reading",
     "oracle_corpus_passage",
     "library_intelligence_artifact",
+    "library_intelligence_revision",
     "external_snapshot",
     "contributor",
     "podcast",
@@ -53,8 +55,8 @@ RESOURCE_SCHEMES: tuple[ResourceScheme, ...] = (
 )
 
 # The only schemes app_search may scope to (§5.1); `library` is a scope but is
-# never readable, and `library_intelligence_artifact` is readable but never a
-# scope — read policy lives with the read tool, scope policy here.
+# never readable, and Library Intelligence output resources are readable but
+# never scopes — read policy lives with the read tool, scope policy here.
 SEARCH_SCOPE_SCHEMES: tuple[ResourceScheme, ...] = ("media", "library")
 
 

@@ -55,7 +55,7 @@ function message(
             prompt: null,
             tool_calls: [],
             citations: [],
-            references_added: [],
+            context_refs_added: [],
             integrity_notices: [],
             created_at: base.created_at,
             updated_at: base.updated_at,

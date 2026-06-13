@@ -333,10 +333,6 @@ def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[s
     for ref in _destroyed_media_refs(db, media_id):
         cleanup.delete_edges_for_deleted_resource(db, ref=ref)
     db.execute(
-        text("DELETE FROM conversation_media WHERE media_id = :media_id"),
-        {"media_id": media_id},
-    )
-    db.execute(
         text("UPDATE message_retrievals SET media_id = NULL WHERE media_id = :media_id"),
         {"media_id": media_id},
     )
@@ -521,16 +517,6 @@ def _delete_viewer_media_state(db: Session, viewer_id: UUID, media_id: UUID) -> 
         cleanup.delete_edges_for_deleted_resource(
             db, ref=ResourceRef(scheme="highlight", id=highlight_id)
         )
-    db.execute(
-        text("""
-            DELETE FROM conversation_media cm
-            USING conversations c
-            WHERE cm.conversation_id = c.id
-              AND c.owner_user_id = :viewer_id
-              AND cm.media_id = :media_id
-        """),
-        {"viewer_id": viewer_id, "media_id": media_id},
-    )
     db.execute(
         text("""
             UPDATE message_retrievals mr

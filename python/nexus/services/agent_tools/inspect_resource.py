@@ -18,7 +18,7 @@ from xml.sax.saxutils import escape as xml_escape
 from sqlalchemy.orm import Session
 
 from nexus.services.media_document_map import MediaDocumentMap, get_media_document_map_for_viewer
-from nexus.services.resource_graph.context import is_context_ref
+from nexus.services.resource_graph.context import admits_resource_for_conversation_read
 from nexus.services.resource_graph.refs import ResourceRefParseFailure, parse_resource_ref
 
 INSPECT_RESOURCE_TOOL_NAME = "inspect_resource"
@@ -126,12 +126,12 @@ def execute_inspect_resource(
             "not_inspectable",
         )
 
-    if not is_context_ref(db, conversation_id=conversation_id, target=parsed):
+    if not admits_resource_for_conversation_read(db, conversation_id=conversation_id, target=parsed):
         return _error(
             uri,
-            f"Resource {uri} is not in this conversation's references. "
+            f"Resource {uri} is not in this conversation's context refs. "
             "Use app_search to find new sources first.",
-            "not_in_references",
+            "not_in_context_refs",
         )
 
     document_map = get_media_document_map_for_viewer(db, viewer_id, parsed.id)

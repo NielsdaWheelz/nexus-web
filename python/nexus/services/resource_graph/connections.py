@@ -271,6 +271,13 @@ def _owner_children(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> tuple[
                 ref.id,
             ),
         )
+    if ref.scheme == "library_intelligence_artifact":
+        return _child_refs(
+            db,
+            "library_intelligence_revision",
+            "SELECT id FROM library_intelligence_artifact_revisions WHERE artifact_id = :id",
+            ref.id,
+        )
     return ()
 
 
@@ -341,6 +348,23 @@ def _href_for_ref(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> str | No
             {"id": ref.id},
         )
         return f"/libraries/{library_id}?tab=intelligence" if library_id is not None else None
+    if ref.scheme == "library_intelligence_revision":
+        library_id = db.scalar(
+            text(
+                """
+                SELECT a.library_id
+                FROM library_intelligence_artifact_revisions r
+                JOIN library_intelligence_artifacts a ON a.id = r.artifact_id
+                WHERE r.id = :id
+                """
+            ),
+            {"id": ref.id},
+        )
+        return (
+            f"/libraries/{library_id}?tab=intelligence&revision={ref.id}"
+            if library_id is not None
+            else None
+        )
     return None
 
 

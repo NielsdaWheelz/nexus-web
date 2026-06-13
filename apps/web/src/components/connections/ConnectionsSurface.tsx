@@ -32,6 +32,7 @@ import {
   createUserEdge,
   deleteUserEdge,
   type EdgeKind,
+  type EdgeOrigin,
 } from "@/lib/resourceGraph/edges";
 import {
   queryConnections,
@@ -88,6 +89,15 @@ const SYNAPSE_SCANNABLE_TYPES = new Set<ObjectType>([
   "highlight",
 ]);
 
+const CONNECTION_PANEL_ORIGINS: EdgeOrigin[] = [
+  "user",
+  "note_body",
+  "highlight_note",
+  "citation",
+  "synapse",
+];
+const CONNECTION_PANEL_KINDS: EdgeKind[] = ["context", "supports", "contradicts"];
+
 export default function ConnectionsSurface({
   objectRef,
   onOpenRoute,
@@ -109,6 +119,10 @@ export default function ConnectionsSurface({
             refs: [selfRef],
             direction: "both",
             rollup: "owner",
+            filters: {
+              origins: CONNECTION_PANEL_ORIGINS,
+              kinds: CONNECTION_PANEL_KINDS,
+            },
             limit: 100,
           },
           { signal },

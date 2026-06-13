@@ -6,7 +6,7 @@
  * lifecycle/messages/branch state), and renders the shared `ChatSurface` view
  * (which owns scroll). This adapter only holds pane CHROME: title, the
  * chrome toolbar toggles and action menu, the
- * conversation-context secondary panes (references + forks), and the open-resource /
+ * conversation-context secondary panes (context refs + forks), and the open-resource /
  * reader-source navigation wiring.
  */
 
@@ -18,9 +18,9 @@ import Button from "@/components/ui/Button";
 import ChatComposer from "@/components/chat/ChatComposer";
 import ChatSurface from "@/components/chat/ChatSurface";
 import ConversationForksPanel from "@/components/chat/ConversationForksPanel";
-import ConversationReferencesSurface from "@/components/chat/ConversationReferencesSurface";
+import ConversationContextRefsSurface from "@/components/chat/ConversationContextRefsSurface";
 import { useConversation } from "@/components/chat/useConversation";
-import { useConversationReferences } from "@/lib/conversations/useConversationReferences";
+import { useConversationContextRefs } from "@/lib/conversations/useConversationContextRefs";
 import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
 import {
   hrefForReaderSourceTarget,
@@ -38,7 +38,7 @@ import {
   toFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
-import type { SSEReferenceAddedEvent } from "@/lib/api/sse/events";
+import type { SSEContextRefAddedEvent } from "@/lib/api/sse/events";
 import type { ContextRefOut } from "@/lib/resourceGraph/contextRefs";
 import type { BranchDraft } from "@/lib/conversations/types";
 import {
@@ -67,20 +67,20 @@ export default function Conversation() {
   const [deleting, setDeleting] = useState(false);
   const [branchFocusKey, setBranchFocusKey] = useState("");
 
-  // The references secondary surface is keyed off the engine's resolved id, but the engine
-  // needs onReferenceAdded before that id exists — break the ordering cycle with
+  // The context-ref secondary surface is keyed off the engine's resolved id, but the engine
+  // needs onContextRefAdded before that id exists — break the ordering cycle with
   // a stable callback that reads the live upsert/id through refs.
-  const upsertReferenceRef = useRef<
-    ((reference: ContextRefOut) => void) | null
+  const upsertContextRefRef = useRef<
+    ((contextRef: ContextRefOut) => void) | null
   >(null);
   const activeConversationIdRef = useRef<string | null>(conversationId);
 
-  const onReferenceAdded = useCallback(
-    (data: SSEReferenceAddedEvent["data"]) => {
+  const onContextRefAdded = useCallback(
+    (data: SSEContextRefAddedEvent["data"]) => {
       const activeId = activeConversationIdRef.current;
       if (activeId !== null && data.conversation_id !== activeId) return;
       // The SSE payload is already a ContextRefOut (the materialized context edge).
-      upsertReferenceRef.current?.(data);
+      upsertContextRefRef.current?.(data);
     },
     [],
   );
@@ -102,14 +102,14 @@ export default function Conversation() {
   const convo = useConversation({
     conversationId,
     branching: true,
-    onReferenceAdded,
+    onContextRefAdded,
     onConversationCreated,
   });
   activeConversationIdRef.current = convo.conversationId;
 
-  const { references, removeReference, upsertReference } =
-    useConversationReferences(convo.conversationId);
-  upsertReferenceRef.current = upsertReference;
+  const { contextRefs, removeContextRef, upsertContextRef } =
+    useConversationContextRefs(convo.conversationId);
+  upsertContextRefRef.current = upsertContextRef;
 
   const branch = convo.branch;
 
@@ -213,7 +213,7 @@ export default function Conversation() {
         openInNewPane?.(href);
       } catch (err) {
         if (handleUnauthenticatedApiError(err)) return;
-        console.error("Failed to open reference:", err);
+        console.error("Failed to open context ref:", err);
       }
     },
     [openInNewPane],
@@ -239,17 +239,17 @@ export default function Conversation() {
     secondaryPane?.visibility === "visible"
       ? secondaryPane.activeSurfaceId
       : null;
-  const referencesSurfaceActive =
-    activeChatSurface === "conversation-references";
+  const contextRefsSurfaceActive =
+    activeChatSurface === "conversation-context-refs";
   const forksSurfaceActive = activeChatSurface === "conversation-forks";
 
-  const toggleReferences = useCallback(() => {
-    if (referencesSurfaceActive) {
+  const toggleContextRefs = useCallback(() => {
+    if (contextRefsSurfaceActive) {
       closeSecondaryPane?.();
       return;
     }
-    requestSecondarySurface?.("conversation-references");
-  }, [closeSecondaryPane, referencesSurfaceActive, requestSecondarySurface]);
+    requestSecondarySurface?.("conversation-context-refs");
+  }, [closeSecondaryPane, contextRefsSurfaceActive, requestSecondarySurface]);
 
   const toggleForks = useCallback(() => {
     if (forksSurfaceActive) {
@@ -268,10 +268,10 @@ export default function Conversation() {
           variant="ghost"
           size="sm"
           leadingIcon={<Link2 size={16} aria-hidden="true" />}
-          onClick={toggleReferences}
-          aria-pressed={referencesSurfaceActive}
+          onClick={toggleContextRefs}
+          aria-pressed={contextRefsSurfaceActive}
         >
-          References
+          Context
         </Button>
         {showForksToggle ? (
           <Button
@@ -288,10 +288,10 @@ export default function Conversation() {
     ),
     [
       forksSurfaceActive,
-      referencesSurfaceActive,
+      contextRefsSurfaceActive,
       showForksToggle,
       toggleForks,
-      toggleReferences,
+      toggleContextRefs,
     ],
   );
 
@@ -300,15 +300,15 @@ export default function Conversation() {
   const secondaryDescriptor = useMemo(
     () => ({
       groupId: "conversation-context" as const,
-      defaultSurfaceId: "conversation-references" as const,
+      defaultSurfaceId: "conversation-context-refs" as const,
       surfaces: [
         {
-          id: "conversation-references" as const,
+          id: "conversation-context-refs" as const,
           body: (
             <div className={styles.chatSecondaryBody}>
-              <ConversationReferencesSurface
-                references={references}
-                removeReference={removeReference}
+              <ConversationContextRefsSurface
+                contextRefs={contextRefs}
+                removeContextRef={removeContextRef}
                 onOpenResource={handleOpenResource}
               />
             </div>
@@ -347,9 +347,9 @@ export default function Conversation() {
     [
       branch,
       convo.conversationId,
+      contextRefs,
       handleOpenResource,
-      references,
-      removeReference,
+      removeContextRef,
     ],
   );
   usePaneSecondary(secondaryDescriptor);

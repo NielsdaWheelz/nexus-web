@@ -62,9 +62,9 @@ const PANE_SECONDARY_SURFACE_DEFINITIONS = [
     iconId: "file-text",
   },
   {
-    id: "conversation-references",
+    id: "conversation-context-refs",
     groupId: "conversation-context",
-    title: "References",
+    title: "Context",
     iconId: "link-2",
   },
   {

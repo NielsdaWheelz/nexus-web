@@ -20,6 +20,13 @@ from sqlalchemy import text
 from nexus.db.models import ResourceEdge
 from nexus.schemas.notes import CreatePageRequest
 from nexus.services import notes
+from nexus.services.resource_graph.context import (
+    admits_resource_for_conversation_read,
+    batch_conversations_with_any_edge_to_ref,
+    list_conversations_with_any_edge_to_ref,
+    search_scope_refs_for_conversation,
+)
+from nexus.services.resource_graph.refs import ResourceRef
 from tests.factories import (
     create_test_conversation,
     create_test_media_in_library,
@@ -158,6 +165,199 @@ def test_add_context_ref_returns_resolved_payload_and_is_idempotent(
     assert len(rows) == 1, f"Idempotent add must leave one row; got {rows}"
 
 
+def test_add_context_ref_does_not_dedupe_non_context_edge(
+    auth_client, direct_db: DirectSessionManager
+):
+    user_id = _bootstrap_user(auth_client, direct_db)
+    headers = auth_headers(user_id)
+    media_id = _create_media(direct_db, user_id, title="Context API Doc")
+    with direct_db.session() as session:
+        conversation_id = create_test_conversation(session, user_id)
+        support_edge_id = session.execute(
+            text(
+                """
+                INSERT INTO resource_edges (
+                    user_id, kind, origin, source_scheme, source_id, target_scheme, target_id,
+                    ordinal, snapshot
+                )
+                VALUES (
+                    :user_id, 'supports', 'citation', 'conversation', :conversation_id,
+                    'media', :media_id, 1, '{"title": "supporting edge"}'::jsonb
+                )
+                RETURNING id
+                """
+            ),
+            {"user_id": user_id, "conversation_id": conversation_id, "media_id": media_id},
+        ).scalar_one()
+        session.commit()
+
+    target_ref = f"media:{media_id}"
+    attached = auth_client.post(
+        f"/conversations/{conversation_id}/context-refs",
+        headers=headers,
+        json={"resource_ref": target_ref},
+    )
+    assert attached.status_code == 201, attached.text
+    assert attached.json()["data"]["id"] != str(support_edge_id)
+
+    with direct_db.session() as session:
+        rows = session.execute(
+            text(
+                """
+                SELECT origin, kind, COUNT(*)
+                FROM resource_edges
+                WHERE source_scheme = 'conversation'
+                  AND source_id = :conversation_id
+                  AND target_scheme = 'media'
+                  AND target_id = :media_id
+                GROUP BY origin, kind
+                """
+            ),
+            {"conversation_id": conversation_id, "media_id": media_id},
+        ).all()
+    assert {(origin, kind): count for origin, kind, count in rows} == {
+        ("citation", "supports"): 1,
+        ("user", "context"): 1,
+    }
+
+
+def test_context_ref_surface_ignores_ordinal_citation_edges(
+    auth_client, direct_db: DirectSessionManager
+):
+    user_id = _bootstrap_user(auth_client, direct_db)
+    headers = auth_headers(user_id)
+    media_id = _create_media(direct_db, user_id, title="Citation-only Context Doc")
+    with direct_db.session() as session:
+        conversation_id = create_test_conversation(session, user_id)
+        citation_edge_id = session.execute(
+            text(
+                """
+                INSERT INTO resource_edges (
+                    user_id, kind, origin, source_scheme, source_id, target_scheme,
+                    target_id, ordinal, snapshot
+                )
+                VALUES (
+                    :user_id, 'context', 'citation', 'conversation', :conversation_id,
+                    'media', :media_id, 1, '{"title": "citation only"}'::jsonb
+                )
+                RETURNING id
+                """
+            ),
+            {"user_id": user_id, "conversation_id": conversation_id, "media_id": media_id},
+        ).scalar_one()
+        session.commit()
+
+    listing = auth_client.get(f"/conversations/{conversation_id}/context-refs", headers=headers)
+    assert listing.status_code == 200, listing.text
+    assert listing.json()["data"] == []
+
+    removed = auth_client.delete(
+        f"/conversations/{conversation_id}/context-refs/{citation_edge_id}", headers=headers
+    )
+    assert removed.status_code == 404, removed.text
+
+    attached = auth_client.post(
+        f"/conversations/{conversation_id}/context-refs",
+        headers=headers,
+        json={"resource_ref": f"media:{media_id}"},
+    )
+    assert attached.status_code == 201, attached.text
+
+    listing = auth_client.get(f"/conversations/{conversation_id}/context-refs", headers=headers)
+    assert [row["resource_ref"] for row in listing.json()["data"]] == [f"media:{media_id}"]
+
+    with direct_db.session() as session:
+        assert session.get(ResourceEdge, citation_edge_id) is not None
+
+
+def test_broad_read_admission_is_not_search_scope(
+    auth_client, direct_db: DirectSessionManager
+):
+    user_id = _bootstrap_user(auth_client, direct_db)
+    media_id = _create_media(direct_db, user_id, title="Broad Admission Doc")
+    with direct_db.session() as session:
+        conversation_id = create_test_conversation(session, user_id)
+        session.execute(
+            text(
+                """
+                INSERT INTO resource_edges (
+                    user_id, kind, origin, source_scheme, source_id, target_scheme, target_id,
+                    ordinal, snapshot
+                )
+                VALUES (
+                    :user_id, 'supports', 'citation', 'conversation', :conversation_id,
+                    'media', :media_id, 1, '{"title": "supporting edge"}'::jsonb
+                )
+                """
+            ),
+            {"user_id": user_id, "conversation_id": conversation_id, "media_id": media_id},
+        )
+        session.commit()
+
+    with direct_db.session() as session:
+        target = ResourceRef(scheme="media", id=media_id)
+        assert admits_resource_for_conversation_read(
+            session, conversation_id=conversation_id, target=target
+        )
+        page = list_conversations_with_any_edge_to_ref(session, viewer_id=user_id, target=target)
+        assert [conversation.id for conversation in page.conversations] == [conversation_id]
+        batch = batch_conversations_with_any_edge_to_ref(
+            session, viewer_id=user_id, targets=[media_id], target_scheme="media"
+        )
+        assert [conversation.id for conversation in batch[media_id]] == [conversation_id]
+        assert (
+            search_scope_refs_for_conversation(
+                session, viewer_id=user_id, conversation_id=conversation_id
+            )
+            == []
+        )
+
+
+def test_reverse_context_edge_lookup_requires_edge_owner(
+    auth_client, direct_db: DirectSessionManager
+):
+    owner_id = _bootstrap_user(auth_client, direct_db)
+    intruder_id = _bootstrap_user(auth_client, direct_db)
+    media_id = _create_media(direct_db, owner_id, title="Wrong Owner Edge Doc")
+    with direct_db.session() as session:
+        conversation_id = create_test_conversation(session, owner_id)
+        target = ResourceRef(scheme="media", id=media_id)
+        session.execute(
+            text(
+                """
+                INSERT INTO resource_edges (
+                    user_id, kind, origin, source_scheme, source_id, target_scheme, target_id
+                )
+                VALUES (
+                    :intruder_id, 'context', 'user', 'conversation', :conversation_id,
+                    'media', :media_id
+                )
+                """
+            ),
+            {
+                "intruder_id": intruder_id,
+                "conversation_id": conversation_id,
+                "media_id": media_id,
+            },
+        )
+        session.commit()
+
+    with direct_db.session() as session:
+        page = list_conversations_with_any_edge_to_ref(session, viewer_id=owner_id, target=target)
+        assert page.conversations == []
+        batch = batch_conversations_with_any_edge_to_ref(
+            session, viewer_id=owner_id, targets=[media_id], target_scheme="media"
+        )
+        assert batch == {}
+
+    response = auth_client.get(
+        f"/conversations?has_context_ref=media:{media_id}",
+        headers=auth_headers(owner_id),
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"] == []
+
+
 def test_add_context_ref_rejects_malformed_ref(auth_client, direct_db: DirectSessionManager):
     user_id = _bootstrap_user(auth_client, direct_db)
     with direct_db.session() as session:
@@ -238,7 +438,7 @@ def test_create_conversation_initial_context_refs_preserves_request_order(
     created = auth_client.post(
         "/conversations",
         headers=headers,
-        json={"initial_references": expected_refs},
+        json={"initial_context_refs": expected_refs},
     )
     assert created.status_code == 201, created.text
     conversation_id = created.json()["data"]["id"]

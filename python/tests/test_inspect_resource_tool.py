@@ -251,7 +251,7 @@ def test_inspect_resource_non_media_is_not_inspectable(
     assert result.error_code == "not_inspectable"
 
 
-def test_inspect_resource_media_not_in_references_errors(
+def test_inspect_resource_media_not_in_context_refs_errors(
     db_session: Session, bootstrapped_user: UUID
 ):
     conversation_id = create_test_conversation(db_session, bootstrapped_user)
@@ -267,4 +267,4 @@ def test_inspect_resource_media_not_in_references_errors(
     )
 
     assert result.is_error
-    assert result.error_code == "not_in_references"
+    assert result.error_code == "not_in_context_refs"

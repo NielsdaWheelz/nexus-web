@@ -30,7 +30,7 @@ export default function DocChatTab({
       className={styles.tab}
       density="compact"
       emptyActionLabel="Start new chat about this document"
-      emptyMessage="No chats reference this document yet."
+      emptyMessage="No chats use this document as context yet."
       listClassName={styles.scrollArea}
       resourceUri={resourceUri}
       onOpenChat={onOpenChat}

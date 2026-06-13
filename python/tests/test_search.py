@@ -50,9 +50,7 @@ from nexus.services.search.query import SearchQuery
 from nexus.services.semantic_chunks import build_text_embedding, to_pgvector_literal
 from nexus.services.transcript_segments import TranscriptSegmentInput
 from tests.factories import (
-    add_library_entry_only as seed_media_in_library,
-)
-from tests.factories import (
+    add_context_edge,
     add_library_member,
     add_media_to_library,
     create_normalized_fragment_highlight,
@@ -67,6 +65,9 @@ from tests.factories import (
     create_test_message,
     get_user_default_library,
     share_conversation_to_library,
+)
+from tests.factories import (
+    add_library_entry_only as seed_media_in_library,
 )
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
@@ -1007,7 +1008,14 @@ class TestSearchScopes:
         rebuild_page_content_index(session, page_id=page_id, reason="test")
 
     def _link_note_block_to_media(
-        self, session, *, user_id: UUID, note_block_id: UUID, media_id: UUID, origin: str = "user"
+        self,
+        session,
+        *,
+        user_id: UUID,
+        note_block_id: UUID,
+        media_id: UUID,
+        origin: str = "user",
+        kind: str = "context",
     ) -> None:
         """resource_edges note_block -> media (the §4.6 note `media:` scope cell)."""
         session.execute(
@@ -1017,7 +1025,7 @@ class TestSearchScopes:
                     user_id, kind, origin, source_scheme, source_id, target_scheme, target_id
                 )
                 VALUES (
-                    :user_id, 'context', :origin, 'note_block', :note_block_id,
+                    :user_id, :kind, :origin, 'note_block', :note_block_id,
                     'media', :media_id
                 )
                 """
@@ -1027,6 +1035,7 @@ class TestSearchScopes:
                 "note_block_id": note_block_id,
                 "media_id": media_id,
                 "origin": origin,
+                "kind": kind,
             },
         )
 
@@ -1078,6 +1087,68 @@ class TestSearchScopes:
         ids = {r["id"] for r in response.json()["results"] if r["type"] == "note_block"}
         assert str(in_block_id) in ids, f"expected in-scope note; got {response.json()['results']}"
         assert str(out_block_id) not in ids
+
+    def test_scope_media_filters_pages_via_context_edges(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        direct_db.register_cleanup("users", "id", user_id)
+        direct_db.register_cleanup("libraries", "owner_user_id", user_id)
+        direct_db.register_cleanup("memberships", "user_id", user_id)
+        direct_db.register_cleanup("pages", "user_id", user_id)
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        in_page_id, in_block_id = uuid4(), uuid4()
+        out_page_id, out_block_id = uuid4(), uuid4()
+        with direct_db.session() as session:
+            scoped_media = create_searchable_media(session, user_id, title="Page Scope Media")
+            self._seed_scope_note_block(
+                session,
+                user_id=user_id,
+                page_id=in_page_id,
+                note_block_id=in_block_id,
+                page_title="pagemediascopeprobe in-scope page",
+                body_text="plain in-scope body",
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO resource_edges (
+                        user_id, kind, origin, source_scheme, source_id,
+                        target_scheme, target_id
+                    )
+                    VALUES (
+                        :user_id, 'context', 'user', 'page', :page_id,
+                        'media', :media_id
+                    )
+                    """
+                ),
+                {"user_id": user_id, "page_id": in_page_id, "media_id": scoped_media},
+            )
+            self._seed_scope_note_block(
+                session,
+                user_id=user_id,
+                page_id=out_page_id,
+                note_block_id=out_block_id,
+                page_title="pagemediascopeprobe containment-only page",
+                body_text="plain out-of-scope body",
+            )
+            session.commit()
+
+        direct_db.register_cleanup("resource_edges", "source_id", in_page_id)
+        direct_db.register_cleanup("resource_edges", "target_id", in_page_id)
+        direct_db.register_cleanup("fragments", "media_id", scoped_media)
+        direct_db.register_cleanup("library_entries", "media_id", scoped_media)
+        direct_db.register_cleanup("media", "id", scoped_media)
+
+        response = auth_client.get(
+            f"/search?q=pagemediascopeprobe&kinds=notes&scope=media:{scoped_media}",
+            headers=auth_headers(user_id),
+        )
+        assert response.status_code == 200, response.text
+        ids = {r["id"] for r in response.json()["results"] if r["type"] == "page"}
+        assert str(in_page_id) in ids, f"expected in-scope page; got {response.json()['results']}"
+        assert str(out_page_id) not in ids
 
     def test_scope_media_ignores_note_citation_edges(
         self, auth_client, direct_db: DirectSessionManager
@@ -1194,6 +1265,50 @@ class TestSearchScopes:
         assert str(synapse_block_id) not in ids, (
             "a synapse-origin edge must not admit the note into media scope"
         )
+
+    def test_scope_media_ignores_non_context_note_edges(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        direct_db.register_cleanup("users", "id", user_id)
+        direct_db.register_cleanup("libraries", "owner_user_id", user_id)
+        direct_db.register_cleanup("memberships", "user_id", user_id)
+        direct_db.register_cleanup("pages", "user_id", user_id)
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        page_id, block_id = uuid4(), uuid4()
+        with direct_db.session() as session:
+            scoped_media = create_searchable_media(session, user_id, title="Kind Scope Media")
+            self._seed_scope_note_block(
+                session,
+                user_id=user_id,
+                page_id=page_id,
+                note_block_id=block_id,
+                page_title="Supports Edge Page",
+                body_text="noncontextedgescopeprobe note content",
+            )
+            self._link_note_block_to_media(
+                session,
+                user_id=user_id,
+                note_block_id=block_id,
+                media_id=scoped_media,
+                kind="supports",
+            )
+            session.commit()
+
+        direct_db.register_cleanup("resource_edges", "source_id", block_id)
+        direct_db.register_cleanup("resource_edges", "target_id", block_id)
+        direct_db.register_cleanup("fragments", "media_id", scoped_media)
+        direct_db.register_cleanup("library_entries", "media_id", scoped_media)
+        direct_db.register_cleanup("media", "id", scoped_media)
+
+        response = auth_client.get(
+            f"/search?q=noncontextedgescopeprobe&kinds=notes&scope=media:{scoped_media}",
+            headers=auth_headers(user_id),
+        )
+        assert response.status_code == 200, response.text
+        ids = {r["id"] for r in response.json()["results"] if r["type"] == "note_block"}
+        assert str(block_id) not in ids
 
     def test_scope_media_filters_notes_via_highlight_anchor(
         self, auth_client, direct_db: DirectSessionManager
@@ -1387,6 +1502,53 @@ class TestSearchScopes:
         ids = {r["id"] for r in response.json()["results"] if r["type"] == "note_block"}
         assert str(in_block_id) in ids, f"expected in-scope note; got {response.json()['results']}"
         assert str(out_block_id) not in ids
+
+    def test_scope_conversation_filters_pages_via_context_edges(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        direct_db.register_cleanup("users", "id", user_id)
+        direct_db.register_cleanup("libraries", "owner_user_id", user_id)
+        direct_db.register_cleanup("memberships", "user_id", user_id)
+        direct_db.register_cleanup("pages", "user_id", user_id)
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        in_page_id, in_block_id = uuid4(), uuid4()
+        out_page_id, out_block_id = uuid4(), uuid4()
+        with direct_db.session() as session:
+            conv_id = create_test_conversation(session, user_id)
+            self._seed_scope_note_block(
+                session,
+                user_id=user_id,
+                page_id=in_page_id,
+                note_block_id=in_block_id,
+                page_title="pageconversationscopeprobe in-scope page",
+                body_text="plain in-scope body",
+            )
+            add_context_edge(session, conv_id, f"page:{in_page_id}")
+            self._seed_scope_note_block(
+                session,
+                user_id=user_id,
+                page_id=out_page_id,
+                note_block_id=out_block_id,
+                page_title="pageconversationscopeprobe containment-only page",
+                body_text="plain out-of-scope body",
+            )
+            session.commit()
+
+        direct_db.register_cleanup("resource_edges", "source_id", conv_id)
+        direct_db.register_cleanup("resource_edges", "target_id", in_page_id)
+        direct_db.register_cleanup("messages", "conversation_id", conv_id)
+        direct_db.register_cleanup("conversations", "id", conv_id)
+
+        response = auth_client.get(
+            f"/search?q=pageconversationscopeprobe&kinds=notes&scope=conversation:{conv_id}",
+            headers=auth_headers(user_id),
+        )
+        assert response.status_code == 200, response.text
+        ids = {r["id"] for r in response.json()["results"] if r["type"] == "page"}
+        assert str(in_page_id) in ids, f"expected in-scope page; got {response.json()['results']}"
+        assert str(out_page_id) not in ids
 
     def test_scope_conversation_ignores_note_citation_edges(
         self, auth_client, direct_db: DirectSessionManager
@@ -2911,7 +3073,7 @@ class TestSearchConversationScope:
     def test_scope_conversation_searches_associated_media(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """Conversation scope includes media linked through conversation_media."""
+        """Conversation scope includes media attached by a graph context ref."""
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
 
@@ -2922,18 +3084,10 @@ class TestSearchConversationScope:
                 user_id,
                 title="Conversation Scoped Media Needle",
             )
-            session.execute(
-                text(
-                    """
-                    INSERT INTO conversation_media (conversation_id, media_id)
-                    VALUES (:conversation_id, :media_id)
-                    """
-                ),
-                {"conversation_id": conversation_id, "media_id": media_id},
-            )
+            add_context_edge(session, conversation_id, f"media:{media_id}")
             session.commit()
 
-        direct_db.register_cleanup("conversation_media", "conversation_id", conversation_id)
+        direct_db.register_cleanup("resource_edges", "source_id", conversation_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)

@@ -6,10 +6,11 @@ Implemented in `/home/niels/src/personal/nexus-web-current-only` on 2026-06-05.
 This document records the target contract and acceptance checklist.
 
 This is the hard cutover contract. The final implementation removes app-level
-versions, revisions, source versions, content hashes, content fingerprints, and
-runtime compatibility lanes from readable media, transcripts, search evidence,
-citations, generated library intelligence, Oracle corpus data, notes, and the
-frontend contracts that consume them.
+source versions, content hashes, content fingerprints, and runtime compatibility
+lanes from readable media, transcripts, search evidence, citations, Oracle corpus
+data, notes, and the frontend contracts that consume them. Generated Library
+Intelligence is the explicit carveout: its immutable revisions are durable output
+resources, while its cited source documents remain current-only.
 
 Existing production data is handled by destructive one-time migrations and
 repair commands. No permanent code path accepts both the old and new shapes.
@@ -90,7 +91,8 @@ In scope:
 - original PDF/EPUB file byte hashes and file-hash upload dedupe,
 - extracted EPUB resource byte hashes and immutable content-hash caching,
 - object search hashes and index versions,
-- library intelligence source-set and artifact versions,
+- library intelligence source-set/version identities, with generated synthesis
+  revisions as the explicit durable-work-product carveout,
 - Oracle corpus versions and prompt versions,
 - chat prompt block/provider request hashes and provider prompt-cache keys,
 - message document schema version markers,
@@ -132,7 +134,7 @@ classes of invariant and must remain unless their owning systems are redesigned.
 - No historical readable-document browsing.
 - No ability to replay a citation against old source text after replacement.
 - No ability to reproduce an old Oracle reading against an old corpus.
-- No ability to compare generated library intelligence artifacts over time.
+- No source-version replay for generated library intelligence citations.
 - No compatibility response fields for old frontend builds.
 - No migration-time branch that remains callable after the cutover.
 - No silent fallback from missing current evidence to raw source, old snapshots,
@@ -985,7 +987,7 @@ Cutover consolidation:
 Pre-cutover duplication:
 
 - library source-set versions,
-- library intelligence artifact versions,
+- historical library intelligence source snapshots,
 - library intelligence builds,
 - Oracle corpus versions,
 - Oracle reading prompt versions.
@@ -994,7 +996,7 @@ Cutover consolidation:
 
 - generated state is either current artifact data or operational build/event
   telemetry,
-- no generated subsystem owns addressable content versions.
+- no source-derived subsystem owns addressable content versions.
 
 ### Note projection identity
 
@@ -1393,7 +1395,8 @@ smoke appropriate to the release.
 - [x] Media files and EPUB resources have no persisted content hashes.
 - [x] Object search has no hashes or index versions.
 - [x] PDF extraction/highlight anchors have no version/fingerprint fields.
-- [x] Library intelligence has no source-set or artifact versions.
+- [x] Library intelligence has durable generated revisions but no source-set
+      replay/versioning.
 - [x] Oracle has no corpus versions or prompt versions.
 - [x] Old JSON fields are stripped.
 - [x] All old compatibility tests are deleted or rewritten.

@@ -29,7 +29,7 @@ from nexus.services.api_key_resolver import (
 )
 from nexus.services.conversation_branches import branch_anchor_for_message
 from nexus.services.rate_limit import get_rate_limiter
-from nexus.services.resource_graph.context import is_context_ref
+from nexus.services.resource_graph.context import admits_resource_for_conversation_read
 from nexus.services.resource_graph.refs import ResourceRef
 
 
@@ -158,8 +158,10 @@ def _validate_reader_selection(
         )
 
     highlight_ref = ResourceRef(scheme="highlight", id=reader_selection.highlight_id)
-    if not is_context_ref(db, conversation_id=conversation_id, target=highlight_ref):
+    if not admits_resource_for_conversation_read(
+        db, conversation_id=conversation_id, target=highlight_ref
+    ):
         raise ApiError(
             ApiErrorCode.E_INVALID_REQUEST,
-            "reader_selection highlight must be attached as a conversation reference",
+            "reader_selection highlight must be attached as a conversation context ref",
         )

@@ -32,6 +32,7 @@ vi.mock("@/lib/api/sse-client", () => ({
 const LIBRARY_ID = "lib-1";
 const ARTIFACT_ID = "artifact-1";
 const REVISION_ID = "rev-1";
+const REVISION_REF = `library_intelligence_revision:${REVISION_ID}`;
 const MEDIA_ID = "media-1";
 
 interface SseOptions {
@@ -108,10 +109,12 @@ const NOTE_CITATION = {
   snapshot: { title: "Notebook", excerpt: "the noted words" },
 };
 
-function artifact(
+ function artifact(
   overrides: Partial<{
     artifact_id: string | null;
+    artifact_ref: string | null;
     revision_id: string | null;
+    revision_ref: string | null;
     status: string;
     content_md: string;
     citations: unknown[];
@@ -121,7 +124,9 @@ function artifact(
 ) {
   return {
     artifact_id: ARTIFACT_ID,
+    artifact_ref: `library_intelligence_artifact:${ARTIFACT_ID}`,
     revision_id: REVISION_ID,
+    revision_ref: REVISION_REF,
     status: "current",
     content_md: "Synthesis prose [1].",
     citations: [CITATION],
@@ -133,7 +138,39 @@ function artifact(
 
 let getCalls: number;
 
-function stubFetch(artifactBody: ReturnType<typeof artifact>) {
+function revision(
+  overrides: Partial<{
+    artifact_id: string;
+    artifact_ref: string;
+    revision_id: string;
+    revision_ref: string;
+    status: string;
+    content_md: string;
+    citations: unknown[];
+    created_at: string;
+    promoted_at: string | null;
+    is_current: boolean;
+  }> = {},
+) {
+  return {
+    artifact_id: ARTIFACT_ID,
+    artifact_ref: `library_intelligence_artifact:${ARTIFACT_ID}`,
+    revision_id: "rev-2",
+    revision_ref: "library_intelligence_revision:rev-2",
+    status: "ready",
+    content_md: "Historical synthesis [1].",
+    citations: [CITATION],
+    created_at: "2026-01-02T03:04:05Z",
+    promoted_at: "2026-01-02T03:04:05Z",
+    is_current: false,
+    ...overrides,
+  };
+}
+
+function stubFetch(
+  artifactBody: ReturnType<typeof artifact>,
+  revisionBody?: ReturnType<typeof revision>,
+) {
   getCalls = 0;
   vi.stubGlobal(
     "fetch",
@@ -143,6 +180,13 @@ function stubFetch(artifactBody: ReturnType<typeof artifact>) {
       if (path === `/api/libraries/${LIBRARY_ID}/intelligence`) {
         getCalls += 1;
         return jsonResponse({ data: artifactBody });
+      }
+      if (
+        revisionBody &&
+        path ===
+          `/api/libraries/${LIBRARY_ID}/intelligence/revisions/${revisionBody.revision_id}`
+      ) {
+        return jsonResponse({ data: revisionBody });
       }
       if (
         path === `/api/libraries/${LIBRARY_ID}/intelligence/generate` &&
@@ -156,7 +200,6 @@ function stubFetch(artifactBody: ReturnType<typeof artifact>) {
           data: {
             artifact_id: ARTIFACT_ID,
             revision_id: REVISION_ID,
-            run_id: "run-1",
           },
         });
       }
@@ -166,7 +209,10 @@ function stubFetch(artifactBody: ReturnType<typeof artifact>) {
 }
 
 function renderPane(onOpenChat = vi.fn()) {
-  const href = `/libraries/${LIBRARY_ID}`;
+  return renderPaneAt(`/libraries/${LIBRARY_ID}`, onOpenChat);
+}
+
+function renderPaneAt(href: string, onOpenChat = vi.fn()) {
   const identity = resolvePaneRouteIdentity(href);
   const onNavigatePane = vi.fn();
   const onOpenInNewPane = vi.fn();
@@ -234,7 +280,9 @@ describe("LibraryIntelligencePane", () => {
       artifact({
         status: "unavailable",
         artifact_id: null,
+        artifact_ref: null,
         revision_id: null,
+        revision_ref: null,
         content_md: "",
         citations: [],
       }),
@@ -318,7 +366,9 @@ describe("LibraryIntelligencePane", () => {
         artifact({
           status: "unavailable",
           artifact_id: null,
+          artifact_ref: null,
           revision_id: null,
+          revision_ref: null,
           content_md: "",
           citations: [],
         }),
@@ -370,7 +420,9 @@ describe("LibraryIntelligencePane", () => {
       artifact({
         status: "unavailable",
         artifact_id: null,
+        artifact_ref: null,
         revision_id: null,
+        revision_ref: null,
         content_md: "",
         citations: [],
       }),
@@ -399,7 +451,9 @@ describe("LibraryIntelligencePane", () => {
       artifact({
         status: "unavailable",
         artifact_id: null,
+        artifact_ref: null,
         revision_id: null,
+        revision_ref: null,
         content_md: "",
         citations: [],
       }),
@@ -422,22 +476,38 @@ describe("LibraryIntelligencePane", () => {
     expect(await screen.findByText("Generation failed")).toBeVisible();
   });
 
-  it("enables the Chat button only with an artifact id and calls onOpenChat", async () => {
+  it("enables the Chat button only with a revision ref and calls onOpenChat", async () => {
     const user = userEvent.setup();
     stubFetch(artifact({ status: "current" }));
     const { onOpenChat } = renderPane();
     const chatButton = await screen.findByRole("button", { name: "Chat" });
     expect(chatButton).toBeEnabled();
     await user.click(chatButton);
-    expect(onOpenChat).toHaveBeenCalledWith(ARTIFACT_ID);
+    expect(onOpenChat).toHaveBeenCalledWith(REVISION_REF);
   });
 
-  it("disables the Chat button when there is no artifact id", async () => {
+  it("uses a selected historical revision body and revision ref", async () => {
+    const user = userEvent.setup();
+    const selectedRevision = revision();
+    stubFetch(artifact({ status: "current" }), selectedRevision);
+    const { onOpenChat } = renderPaneAt(
+      `/libraries/${LIBRARY_ID}?tab=intelligence&revision=${selectedRevision.revision_id}`,
+    );
+
+    expect(await screen.findByText(/Historical synthesis/)).toBeVisible();
+    expect(screen.queryByText("Current")).toBeNull();
+    await user.click(await screen.findByRole("button", { name: "Chat" }));
+    expect(onOpenChat).toHaveBeenCalledWith(selectedRevision.revision_ref);
+  });
+
+  it("disables the Chat button when there is no revision ref", async () => {
     stubFetch(
       artifact({
         status: "unavailable",
         artifact_id: null,
+        artifact_ref: null,
         revision_id: null,
+        revision_ref: null,
         content_md: "",
         citations: [],
       }),

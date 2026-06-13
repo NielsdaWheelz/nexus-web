@@ -5,11 +5,11 @@ import type { ApiPath } from "@/lib/api/client";
 import { useResource } from "@/lib/api/useResource";
 import type { ConversationListItem } from "@/lib/conversations/types";
 
-interface ChatsByReferenceResponse {
+interface ChatsByContextRefResponse {
   data: ConversationListItem[];
 }
 
-export function useChatsByReference(resourceUri: string | null): {
+export function useChatsByContextRef(resourceUri: string | null): {
   conversations: ConversationListItem[];
   isLoading: boolean;
 } {
@@ -20,7 +20,7 @@ export function useChatsByReference(resourceUri: string | null): {
         : null,
     [resourceUri],
   );
-  const conversationsResource = useResource<ChatsByReferenceResponse>({
+  const conversationsResource = useResource<ChatsByContextRefResponse>({
     cacheKey: conversationsPath,
     path: (path) => path as ApiPath,
   });

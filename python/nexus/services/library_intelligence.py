@@ -18,7 +18,6 @@ invalidation coupling.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import select, text
@@ -41,7 +40,6 @@ from nexus.schemas.library_intelligence import (
 from nexus.services import run_kit
 from nexus.services.resource_graph.citations import (
     build_citation_outs,
-    replace_citations_for_output,
 )
 from nexus.services.resource_graph.refs import ResourceRef
 
@@ -73,8 +71,7 @@ class ArtifactView:
     # Number of covered media that differ from the live set when ``status == "stale"``
     # (added, removed, or fingerprint-changed); ``None`` for every other status.
     stale_source_count: int | None = None
-    # The artifact's citation edges (§5.5: keyed on the artifact, swapped at
-    # promote). Empty until a revision has been promoted.
+    # The current revision's citation edges. Empty until a revision has been promoted.
     citations: list[CitationOut] = field(default_factory=list)
 
 
@@ -85,15 +82,6 @@ class RevisionRef:
     artifact_id: UUID
     revision_id: UUID
     status: str
-
-
-@dataclass(frozen=True)
-class RevisionSummary:
-    revision_id: UUID
-    status: str
-    created_at: datetime
-    promoted_at: datetime | None
-    is_current: bool
 
 
 # ---------- read: get_artifact + computed status (§5.4) ---------------------
@@ -141,12 +129,10 @@ def get_artifact(db: Session, *, viewer_id: UUID, library_id: UUID) -> ArtifactV
     head_status, stale_source_count = _compute_freshness(
         db, library_id=library_id, current_revision_id=current_revision_id
     )
-    # Citation edges are written with the artifact owner's user id at promote;
-    # any library member reads the same artifact-keyed set.
     citations = build_citation_outs(
         db,
         viewer_id=UUID(str(head["user_id"])),
-        source=ResourceRef(scheme="library_intelligence_artifact", id=artifact_id),
+        source=ResourceRef(scheme="library_intelligence_revision", id=current_revision_id),
     )
     return ArtifactView(
         artifact_id,
@@ -340,19 +326,18 @@ def _generate_artifact_core(
 # ---------- promote / restore -----------------------------------------------
 
 
-def promote_revision(db: Session, *, viewer_id: UUID, revision_id: UUID) -> None:
+def promote_revision(
+    db: Session, *, viewer_id: UUID, library_id: UUID, revision_id: UUID
+) -> ArtifactView:
     """Restore a prior ``ready`` revision as the head's current (last-wins).
 
-    Citations key on the artifact and swap atomically with its content inside
-    this transaction (§5.5). A restored revision's per-revision citations died
-    with the LI-private citation table (current-only doctrine), so the restore
-    replaces the artifact's citation set with the empty set — the restored prose
-    returns without citation chips until the next generate, instead of lying
-    with the superseded revision's chips.
+    Citations belong to revisions. Promotion only moves the artifact head.
     """
-    artifact_id, library_id, owner_id = _artifact_and_library_for_revision(
-        db, revision_id=revision_id
+    artifact_id, actual_library_id, _owner_id = _artifact_and_library_for_revision(
+        db, revision_id=revision_id, viewer_id=viewer_id
     )
+    if actual_library_id != library_id:
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Revision not found")
     _require_member(db, viewer_id, library_id)
 
     def op() -> None:
@@ -371,16 +356,6 @@ def promote_revision(db: Session, *, viewer_id: UUID, revision_id: UUID) -> None
             ),
             {"rev": revision_id},
         )
-        # The restored revision's per-revision citations died with the LI-private
-        # citation table; citations key on the artifact (§5.5) and swap with the
-        # head inside this transaction, so a restore replaces the set with the
-        # empty set rather than leaving the superseded revision's chips.
-        replace_citations_for_output(
-            db,
-            viewer_id=owner_id,
-            source=ResourceRef(scheme="library_intelligence_artifact", id=artifact_id),
-            citations=[],
-        )
         db.execute(
             text(
                 "UPDATE library_intelligence_artifacts "
@@ -391,51 +366,7 @@ def promote_revision(db: Session, *, viewer_id: UUID, revision_id: UUID) -> None
         db.commit()
 
     retry_serializable(db, "promote_revision", op)
-
-
-def list_revisions(db: Session, *, viewer_id: UUID, library_id: UUID) -> list[RevisionSummary]:
-    _require_member(db, viewer_id, library_id)
-    head = (
-        db.execute(
-            text(
-                "SELECT id, current_revision_id FROM library_intelligence_artifacts "
-                "WHERE library_id = :library_id"
-            ),
-            {"library_id": library_id},
-        )
-        .mappings()
-        .first()
-    )
-    if head is None:
-        return []
-    current = (
-        UUID(str(head["current_revision_id"])) if head["current_revision_id"] is not None else None
-    )
-    rows = (
-        db.execute(
-            text(
-                """
-                SELECT id, status, created_at, promoted_at
-                FROM library_intelligence_artifact_revisions
-                WHERE artifact_id = :artifact_id
-                ORDER BY created_at DESC, id DESC
-                """
-            ),
-            {"artifact_id": head["id"]},
-        )
-        .mappings()
-        .all()
-    )
-    return [
-        RevisionSummary(
-            revision_id=UUID(str(row["id"])),
-            status=str(row["status"]),
-            created_at=row["created_at"],
-            promoted_at=row["promoted_at"],
-            is_current=current is not None and UUID(str(row["id"])) == current,
-        )
-        for row in rows
-    ]
+    return get_artifact(db, viewer_id=viewer_id, library_id=library_id)
 
 
 # ---------- SSE handler dependencies ----------------------------------------

@@ -13,7 +13,7 @@ import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoun
 import {
   toChatSSEEvent,
   type SSEEvent,
-  type SSEReferenceAddedEvent,
+  type SSEContextRefAddedEvent,
 } from "@/lib/api/sse/events";
 import type { SseBackoffConfig } from "@/lib/api/sse-client";
 import { openGenerationRunStream } from "@/lib/api/useGenerationRun";
@@ -58,7 +58,7 @@ export function useChatRunTail({
   onFirstDelta,
   onRunDone,
   onConversationAvailable,
-  onReferenceAdded,
+  onContextRefAdded,
   shouldStartRun,
   shouldApplyRun,
 }: {
@@ -68,7 +68,7 @@ export function useChatRunTail({
   onFirstDelta?: (runId: string) => void;
   onRunDone?: (runId: string, status: TerminalRunStatus, errorCode: string | null) => void;
   onConversationAvailable?: (conversationId: string, runId: string) => void;
-  onReferenceAdded?: (data: SSEReferenceAddedEvent["data"]) => void;
+  onContextRefAdded?: (data: SSEContextRefAddedEvent["data"]) => void;
   shouldStartRun?: (target: RunVisibilityTarget) => boolean;
   shouldApplyRun?: (target: RunVisibilityTarget) => boolean;
 }) {
@@ -83,10 +83,10 @@ export function useChatRunTail({
     handleToolCall,
     handleToolResult,
     handleCitationIndex,
-    handleReferenceAdded,
+    handleContextRefAdded,
     handleDone,
     flushDeltas,
-  } = useChatMessageUpdates({ setMessages, onReferenceAdded });
+  } = useChatMessageUpdates({ setMessages, onContextRefAdded });
 
   const mergeRunMessages = useCallback(
     (
@@ -314,8 +314,8 @@ export function useChatRunTail({
                   if (!currentRunIsVisible()) break;
                   handleCitationIndex(currentAssistantId, event.data);
                   break;
-                case "reference_added":
-                  handleReferenceAdded(currentAssistantId, event.data);
+                case "context_ref_added":
+                  handleContextRefAdded(currentAssistantId, event.data);
                   break;
                 case "done":
                   streamDoneSeen = true;
@@ -417,7 +417,7 @@ export function useChatRunTail({
       handleToolCall,
       handleToolResult,
       handleCitationIndex,
-      handleReferenceAdded,
+      handleContextRefAdded,
       flushDeltas,
       mergeRunMessages,
       onFirstDelta,
