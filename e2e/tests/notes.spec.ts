@@ -53,10 +53,9 @@ interface HighlightsPayload {
   };
 }
 
-interface NotePageDocumentPayload {
+interface NotePagePayload {
   data: {
     id: string;
-    documentVersion: number;
     blocks: NoteBlockPayload[];
   };
 }
@@ -179,17 +178,13 @@ async function blockedExactsForFragment(
   return payload.data.highlights.map((highlight) => highlight.exact);
 }
 
-async function readNotePageDocument(page: Page, pageId: string) {
-  const response = await page.request.get(`/api/notes/pages/${pageId}/document`);
-  await expectOk(response, "Fetch note page document");
-  return ((await response.json()) as NotePageDocumentPayload).data;
+async function readNotePage(page: Page, pageId: string) {
+  const response = await page.request.get(`/api/notes/pages/${pageId}`);
+  await expectOk(response, "Fetch note page");
+  return ((await response.json()) as NotePagePayload).data;
 }
 
-async function readResourceGraphEdges(
-  page: Page,
-  ref: string,
-  origin = "note_containment"
-) {
+async function readResourceGraphEdges(page: Page, ref: string, origin = "user") {
   const response = await page.request.post("/api/resource-graph/connections/query", {
     data: {
       refs: [ref],
@@ -239,11 +234,11 @@ async function scrollHighlightIntoView(contentPane: Locator, highlightId: string
 }
 
 test.describe("notes cutover", () => {
-  test("persists page outline edits through the versioned graph document command", async ({
+  test("persists page outline edits through the resource surface command", async ({
     page,
   }, testInfo) => {
     test.slow();
-    const deviceId = workspaceE2eDeviceId(testInfo, "e2e-page-document");
+    const deviceId = workspaceE2eDeviceId(testInfo, "e2e-page-surface");
     const title = `E2E graph page ${Date.now()}`;
     const rootText = `E2E graph root ${Date.now()}`;
     const childText = `E2E graph child ${Date.now()}`;
@@ -256,7 +251,7 @@ test.describe("notes cutover", () => {
         headers: stateChangingApiHeaders(),
       });
       await expectOk(createResponse, "Create notes page");
-      const created = ((await createResponse.json()) as NotePageDocumentPayload).data;
+      const created = ((await createResponse.json()) as NotePagePayload).data;
       pageId = created.id;
 
       await gotoSinglePaneWorkspace(page, deviceId, `/pages/${pageId}`);
@@ -271,8 +266,8 @@ test.describe("notes cutover", () => {
 
       const saveResponse = page.waitForResponse(
         (response) =>
-          response.request().method() === "PATCH" &&
-          response.url().includes(`/api/notes/pages/${pageId}/document`) &&
+          response.request().method() === "PUT" &&
+          response.url().includes(`/api/notes/pages/${pageId}/surface`) &&
           response.ok(),
         { timeout: 20_000 }
       );
@@ -283,19 +278,16 @@ test.describe("notes cutover", () => {
         .poll(
           async () => {
             if (!pageId) return false;
-            const document = await readNotePageDocument(page, pageId);
-            const root = document.blocks.find((block) => block.bodyText === rootText);
-            return (
-              document.documentVersion > created.documentVersion &&
-              root?.children.some((child) => child.bodyText === childText) === true
-            );
+            const notePage = await readNotePage(page, pageId);
+            const root = notePage.blocks.find((block) => block.bodyText === rootText);
+            return root?.children.some((child) => child.bodyText === childText) === true;
           },
           { timeout: 20_000 }
         )
         .toBe(true);
 
-      const document = await readNotePageDocument(page, pageId);
-      const rootBlock = document.blocks.find((block) => block.bodyText === rootText);
+      const notePage = await readNotePage(page, pageId);
+      const rootBlock = notePage.blocks.find((block) => block.bodyText === rootText);
       expect(rootBlock, "Expected persisted root block").toBeTruthy();
       const childBlock = rootBlock?.children.find((block) => block.bodyText === childText);
       expect(childBlock, "Expected persisted nested child block").toBeTruthy();
@@ -305,7 +297,7 @@ test.describe("notes cutover", () => {
       expect(pageEdges).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
-            origin: "note_containment",
+            origin: "user",
             source_ref: `page:${pageId}`,
             target_ref: `note_block:${rootBlock.id}`,
             source_order_key: "0000000001",
@@ -317,7 +309,7 @@ test.describe("notes cutover", () => {
       expect(rootEdges).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
-            origin: "note_containment",
+            origin: "user",
             source_ref: `note_block:${rootBlock.id}`,
             target_ref: `note_block:${childBlock.id}`,
             source_order_key: "0000000001",
@@ -347,7 +339,7 @@ test.describe("notes cutover", () => {
           cleanupErrors.push(error);
         }
       }
-      throwE2eCleanupFailures("Page document graph command", productError, cleanupErrors);
+      throwE2eCleanupFailures("Page resource surface command", productError, cleanupErrors);
     }
   });
 

@@ -184,14 +184,14 @@ class TestWorkerMaintenanceConfiguration:
         assert settings.background_job_prune_schedule_seconds == 0
         assert settings.worker_allowed_job_kinds == (
             "ingest_media_source,enrich_metadata,chat_run,"
-            "library_intelligence_artifact_generate,media_unit_build,page_reindex_job,"
+            "library_intelligence_artifact_generate,media_unit_build,note_reindex_job,"
             "podcast_sync_subscription_job,podcast_reindex_semantic_job,"
             "backfill_default_library_closure_job,oracle_reading_generate,synapse_scan"
         )
 
     def test_user_facing_job_kinds_are_in_default_worker_allowlist(self):
         """A registered user-facing kind missing from the default allowlist would
-        sit queued forever in production (the page_reindex_job incident class)."""
+        sit queued forever in production (the note_reindex_job incident class)."""
         from nexus.config import DEFAULT_WORKER_ALLOWED_JOB_KINDS
         from nexus.jobs.registry import USER_FACING_JOB_KINDS
 

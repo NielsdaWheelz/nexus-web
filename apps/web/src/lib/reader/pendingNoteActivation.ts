@@ -3,36 +3,26 @@
 import type { NotePulseTarget } from "./pulseEvent";
 
 /**
- * App-level handoff for a note-citation activation that must survive the mount
- * of its target notes pane.
+ * App-level handoff for a note-citation activation that must survive the mount.
  *
  * Clicking a `[N]` note citation in chat dispatches a {@link NotePulseTarget}
- * for the already-open-on-this-page case, then navigates. When the cited page
- * is NOT already open, the target pane has not mounted its
- * `useNotePulseHighlight` listener yet, so the live event is lost. The activator
- * therefore also `set`s the target here before navigating; the target
- * `PagePaneBody` `consume`s it on mount (clearing it) and applies its own
- * scroll+pulse retry loop, which already tolerates the editor still mounting.
+ * for already-open surfaces, then navigates to `/notes/{blockId}`. The target
+ * pane may not have mounted its `useNotePulseHighlight` listener yet, so the
+ * activator also stores the target here for the note pane to consume.
  *
- * Keyed by `pageId` so an activation for one page is never consumed by an
- * unrelated page pane. Last-write-wins per page: only the most recent pending
- * activation matters, exactly like the reader's deferred-pulse ref.
+ * Keyed by `blockId` so activation follows note identity, not containment.
  */
-const pendingByPageId = new Map<string, NotePulseTarget>();
+const pendingByBlockId = new Map<string, NotePulseTarget>();
 
 export function setPendingNoteActivation(target: NotePulseTarget): void {
-  pendingByPageId.set(target.pageId, target);
+  pendingByBlockId.set(target.blockId, target);
 }
 
-/**
- * Take and clear the pending activation for `pageId`, if any. Returns `null`
- * when there is none so a later genuine same-pane pulse event still works.
- */
 export function consumePendingNoteActivation(
-  pageId: string,
+  blockId: string,
 ): NotePulseTarget | null {
-  const pending = pendingByPageId.get(pageId);
+  const pending = pendingByBlockId.get(blockId);
   if (!pending) return null;
-  pendingByPageId.delete(pageId);
+  pendingByBlockId.delete(blockId);
   return pending;
 }

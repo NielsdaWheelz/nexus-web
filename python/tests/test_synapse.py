@@ -38,7 +38,7 @@ from nexus.services.billing_entitlements import grant_entitlement_override
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.highlights import create_highlight_for_fragment
 from nexus.services.media_intelligence import run_media_unit_build
-from nexus.services.note_indexing import rebuild_page_content_index
+from nexus.services.note_indexing import rebuild_note_content_index
 from nexus.services.pdf_highlights import create_pdf_highlight
 from nexus.services.resource_graph.connections import query_connections
 from nexus.services.resource_graph.edges import (
@@ -48,6 +48,7 @@ from nexus.services.resource_graph.edges import (
 )
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_graph.schemas import (
+    CitationSnapshot,
     ConnectionFilters,
     ConnectionQuery,
     EdgeCreate,
@@ -61,7 +62,7 @@ from nexus.services.synapse import (
     run_synapse_scan,
     scan_status,
 )
-from nexus.tasks.page_reindex import page_reindex_job
+from nexus.tasks.note_reindex import note_reindex_job
 from tests.factories import (
     create_pdf_media_with_text,
     create_searchable_media,
@@ -256,8 +257,8 @@ class _DismissingRouter:
 # The factory derives the body from the title, so a shared title stem does it.
 _HL_STEM = "Spooky Entanglement Highlight Crucible"
 
-# Note dossiers are '<page title>\n\n<body>' (unquoted), so candidates just need
-# every lexeme of the stem sentence.
+# Note dossiers are the note body, so candidates just need every lexeme of the
+# stem sentence.
 _NOTE_BODY = "Resonance: spooky entanglement collapses distance."
 _NOTE_MEDIA_STEM = "Resonance Spooky Entanglement Collapses Distance"
 
@@ -290,10 +291,8 @@ def _add_note_page(
 ) -> tuple[UUID, list[UUID]]:
     """A page with one block per body, indexed synchronously (no worker runs).
 
-    Post-0148 a block's page membership and order are a ``note_containment``
-    edge (page → note_block) in ``resource_edges``, not NoteBlock columns; this
-    mirrors ``factories.create_test_highlight_note``. ``source_order_key`` is the
-    1-based, zero-padded position the 0148 backfill established.
+    A block's page membership and order are a user ordered-adjacency edge
+    (page -> note_block) in ``resource_edges``.
     """
     page = Page(id=uuid4(), user_id=user_id, title=title)
     db.add(page)
@@ -303,9 +302,7 @@ def _add_note_page(
         block = NoteBlock(
             id=uuid4(),
             user_id=user_id,
-            block_kind="bullet",
             body_pm_json={"type": "paragraph", "content": [{"type": "text", "text": body}]},
-            body_markdown=body,
             body_text=body,
         )
         db.add(block)
@@ -314,7 +311,7 @@ def _add_note_page(
                 id=uuid4(),
                 user_id=user_id,
                 kind="context",
-                origin="note_containment",
+                origin="user",
                 source_scheme="page",
                 source_id=page.id,
                 target_scheme="note_block",
@@ -324,7 +321,8 @@ def _add_note_page(
         )
         block_ids.append(block.id)
     db.flush()
-    rebuild_page_content_index(db, page_id=page.id, reason="test")
+    for block_id in block_ids:
+        rebuild_note_content_index(db, note_block_id=block_id, reason="test")
     db.commit()
     return page.id, block_ids
 
@@ -535,10 +533,10 @@ class TestRunSynapseScan:
             f"only the other page's block may resonate; got {targets}"
         )
         assert not targets & {f"note_block:{block_a}", f"note_block:{block_b}"}, (
-            "a page never resonates with its own blocks (AC7)"
+            "a page never resonates with directly linked blocks"
         )
 
-    def test_note_block_scan_excludes_self_and_page_siblings(self, db_session: Session) -> None:
+    def test_note_block_scan_excludes_self_not_page_siblings(self, db_session: Session) -> None:
         user_id = _seed_user(db_session)
         _page1, (source_block, sibling_block) = _add_note_page(
             db_session, user_id, title="Resonance", bodies=[_NOTE_BODY, _NOTE_BODY]
@@ -546,8 +544,8 @@ class TestRunSynapseScan:
         _page2, (other_block,) = _add_note_page(
             db_session, user_id, title="Resonance", bodies=[_NOTE_BODY]
         )
-        # Non-vacuity guard: the sibling's chunk matches the dossier query, so
-        # its absence below is the kin filter, not a retrieval miss (AC7).
+        # Non-vacuity guard: same-page membership is a graph edge, not implicit
+        # note kinship. The sibling should be retrievable and proposable.
         retrieved = search(
             db_session,
             user_id,
@@ -564,13 +562,10 @@ class TestRunSynapseScan:
 
         assert status == "ok"
         targets = _targets(_synapse_edges(db_session, user_id=user_id, ref=ref))
-        assert targets == {f"note_block:{other_block}"}, (
-            f"only the other page's block may resonate (AC7); got {targets}"
+        assert targets == {f"note_block:{sibling_block}", f"note_block:{other_block}"}, (
+            f"self must be excluded, but page siblings are ordinary graph items; got {targets}"
         )
-        assert f"note_block:{sibling_block}" not in targets
-        # The judge saw exactly one candidate: the identical-bodied sibling was
-        # retrieved (same lexemes) but excluded before rendering.
-        assert [len(lines) for lines in router.seen_lines] == [1]
+        assert [len(lines) for lines in router.seen_lines] == [2]
 
     def test_rescan_replace_sets_and_leaves_other_origins_untouched(
         self, db_session: Session
@@ -692,20 +687,28 @@ class TestRunSynapseScan:
         other_ref = ResourceRef(scheme="note_block", id=other_block)
         router = _SynapseRouter()
         assert _scan(db_session, user_id=user_id, ref=source_ref, router=router) == "ok"
-        [edge] = _synapse_edges(db_session, user_id=user_id, ref=source_ref)
+        edge = next(
+            edge
+            for edge in _synapse_edges(db_session, user_id=user_id, ref=source_ref)
+            if edge.target == other_ref
+        )
         assert edge.target == other_ref
 
         dismiss_synapse_edge(db_session, viewer_id=user_id, edge_id=edge.id)
 
-        assert _synapse_edges(db_session, user_id=user_id, ref=source_ref) == []
+        assert _targets(_synapse_edges(db_session, user_id=user_id, ref=source_ref)) == {
+            f"note_block:{sibling_block}"
+        }
         [suppression] = _suppression_rows(db_session, user_id)
         assert (suppression.source_id, suppression.target_id) == (source_block, other_block)
 
-        # Forward re-scan: the suppressed pair leaves zero candidates, so the
-        # judge is not consulted and the set replace-sets to empty (AC3).
+        # Forward re-scan: the suppressed pair stays excluded, but the page
+        # sibling remains an ordinary note candidate.
         assert _scan(db_session, user_id=user_id, ref=source_ref, router=router) == "ok"
-        assert _synapse_edges(db_session, user_id=user_id, ref=source_ref) == []
-        assert router.calls == 1, "no candidates may reach the judge after suppression"
+        assert _targets(_synapse_edges(db_session, user_id=user_id, ref=source_ref)) == {
+            f"note_block:{sibling_block}"
+        }
+        assert router.calls == 2
 
         # Reverse scan: the dismissed source is excluded too; the un-suppressed
         # page-sibling of the original source still resonates.
@@ -823,6 +826,7 @@ class TestRunSynapseScan:
                     target=ResourceRef(scheme="media", id=stale_target_id),
                     kind="context",
                     origin="synapse",
+                    snapshot=CitationSnapshot(title="Stale Target", excerpt="Prior rationale."),
                 )
             ],
         )
@@ -1042,24 +1046,27 @@ class TestSynapseTriggers:
             == []
         ), "SYNAPSE_ENABLED=false must turn the trigger into a no-op (AC10)"
 
-    def test_page_reindex_task_enqueues_one_scan(
+    def test_note_reindex_task_enqueues_one_scan(
         self, db_session: Session, bootstrapped_user: UUID
     ) -> None:
-        page_id, _blocks = _add_note_page(
+        _page_id, blocks = _add_note_page(
             db_session, bootstrapped_user, title="Task Page", bodies=["A reindexed body."]
         )
+        block_id = blocks[0]
 
         with patch(
-            "nexus.tasks.page_reindex.get_session_factory",
+            "nexus.tasks.note_reindex.get_session_factory",
             return_value=task_session_factory(db_session),
         ):
-            result = page_reindex_job(str(page_id))
+            result = note_reindex_job(str(block_id))
 
         assert result["status"] == "ready", f"got {result}"
         db_session.expire_all()
-        rows = _scan_job_rows(db_session, bootstrapped_user, ResourceRef(scheme="page", id=page_id))
+        rows = _scan_job_rows(
+            db_session, bootstrapped_user, ResourceRef(scheme="note_block", id=block_id)
+        )
         assert [row["status"] for row in rows] == ["pending"], f"got {rows}"
-        assert rows[0]["payload"]["reason"] == "page_reindex"
+        assert rows[0]["payload"]["reason"] == "note_reindex"
 
     def test_media_unit_promote_enqueues_one_scan(
         self, db_session: Session, bootstrapped_user: UUID, monkeypatch

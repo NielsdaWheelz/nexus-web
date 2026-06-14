@@ -50,7 +50,7 @@ from nexus.schemas.contributors import (
     ContributorWorkOut,
     FacetCount,
 )
-from nexus.schemas.notes import HydratedObjectRef
+from nexus.schemas.resource_items import HydratedObjectRef
 from nexus.services.chat_context_refs import contributor_is_referenced_in_persisted_context
 from nexus.services.contributor_taxonomy import (
     CONFIRMED_ALIAS_SOURCES,

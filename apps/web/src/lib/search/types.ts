@@ -85,8 +85,6 @@ export interface SearchFragmentResult extends SearchBaseResult {
 
 export interface SearchNoteBlockResult extends SearchBaseResult {
   type: "note_block";
-  page_id: string;
-  page_title: string;
   body_text: string;
   highlight_excerpt: string | null;
   locator: RetrievalLocator;
@@ -103,7 +101,6 @@ export interface SearchHighlightResult extends SearchBaseResult {
 
 export interface SearchPageResult extends SearchBaseResult {
   type: "page";
-  description: string | null;
 }
 
 export interface SearchMessageResult extends SearchBaseResult {

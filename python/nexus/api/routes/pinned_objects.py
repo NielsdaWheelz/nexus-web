@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
 from nexus.responses import ok, success_response
-from nexus.schemas.notes import (
+from nexus.schemas.resource_items import (
     CreatePinnedObjectRefRequest,
     ObjectRef,
     UpdatePinnedObjectRefRequest,

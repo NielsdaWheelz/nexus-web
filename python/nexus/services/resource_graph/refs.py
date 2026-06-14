@@ -54,11 +54,6 @@ RESOURCE_SCHEMES: tuple[ResourceScheme, ...] = (
     "tag",
 )
 
-# The only schemes app_search may scope to (§5.1); `library` is a scope but is
-# never readable, and Library Intelligence output resources are readable but
-# never scopes — read policy lives with the read tool, scope policy here.
-SEARCH_SCOPE_SCHEMES: tuple[ResourceScheme, ...] = ("media", "library")
-
 
 @dataclass(frozen=True, slots=True)
 class ResourceRef:

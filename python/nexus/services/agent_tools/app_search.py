@@ -41,11 +41,11 @@ from nexus.services.resource_graph.context import (
     conversation_has_note_search_scope_refs,
     search_scope_refs_for_conversation,
 )
-from nexus.services.resource_graph.policy import APP_SEARCH_SCOPE_TARGET_SCHEMES
 from nexus.services.resource_graph.refs import (
     ResourceRefParseFailure,
     parse_resource_ref,
 )
+from nexus.services.resource_items.capabilities import APP_SEARCH_SCOPE_SCHEMES
 from nexus.services.retrieval_citation import (
     RetrievalCitation,
     citation_from_search_result,
@@ -75,13 +75,14 @@ APP_SEARCH_TOOL_NAME = "app_search"
 APP_SEARCH_LIMIT = 8
 APP_SEARCH_SELECTED_LIMIT = 6
 APP_SEARCH_CONTEXT_CHARS = 16000
+APP_SEARCH_SCOPE_HINT = ", ".join(f"{scheme}:UUID" for scheme in APP_SEARCH_SCOPE_SCHEMES)
 
 APP_SEARCH_TOOL_DEFINITION: dict[str, Any] = {
     "name": APP_SEARCH_TOOL_NAME,
     "description": (
         "Search across your saved articles, books, podcasts, PDFs, highlights, "
         "and notes. By default, searches within the conversation's referenced "
-        "media and libraries. Pass scopes=['media:UUID', 'library:UUID'] to "
+        f"search scopes. Pass scopes using {APP_SEARCH_SCOPE_HINT} to "
         "narrow further."
     ),
     "parameters": {
@@ -92,9 +93,9 @@ APP_SEARCH_TOOL_DEFINITION: dict[str, Any] = {
                 "type": "array",
                 "items": {"type": "string"},
                 "description": (
-                    "Optional URI scopes ('media:UUID' or 'library:UUID') "
+                    f"Optional URI scopes ({APP_SEARCH_SCOPE_HINT}) "
                     "from this conversation's context refs. Defaults to all "
-                    "media/library context refs."
+                    "search-scope context refs."
                 ),
             },
         },
@@ -350,9 +351,9 @@ def _resolve_scope_uris(
         parsed = parse_resource_ref(uri)
         if (
             isinstance(parsed, ResourceRefParseFailure)
-            or parsed.scheme not in APP_SEARCH_SCOPE_TARGET_SCHEMES
+            or parsed.scheme not in APP_SEARCH_SCOPE_SCHEMES
         ):
-            raise InvalidScopeError(f"scope must be 'media:UUID' or 'library:UUID': {uri}")
+            raise InvalidScopeError(f"scope must be one of {APP_SEARCH_SCOPE_HINT}: {uri}")
         if uri not in allowed:
             raise InvalidScopeError(f"scope must be in conversation context: {uri}")
         seen.add(uri)
@@ -360,7 +361,7 @@ def _resolve_scope_uris(
     return resolved
 
 
-# Result types whose evidence lives in content_chunks (media-owned or page-owned), so a
+# Result types whose evidence lives in content_chunks (media-owned or note-owned), so a
 # scope can be "indexed but unmatched" vs "no indexed evidence". A named set keeps the
 # empty-status guard correct as chat planned_types evolve (chat plans content_chunk +
 # note_block; see chat_runs).
@@ -431,7 +432,7 @@ def _scoped_content_chunk_empty_status(
             )
         """
 
-    # Page-owned (note) evidence also makes a scope "indexed" (chat cites notes). Skip it
+    # Note-owned evidence also makes a scope "indexed" (chat cites notes). Skip it
     # whenever a media-only filter (format/author/role) is active, since notes can never
     # satisfy those — a filtered search legitimately has no note evidence.
     note_exists = ""
@@ -443,8 +444,8 @@ def _scoped_content_chunk_empty_status(
                 OR EXISTS (
                     SELECT 1
                     FROM content_chunks cc
-                    JOIN pages p ON p.id = cc.owner_id AND cc.owner_kind = 'page'
-                        AND p.user_id = :viewer_id
+                    JOIN note_blocks nb ON nb.id = cc.owner_id AND cc.owner_kind = 'note_block'
+                        AND nb.user_id = :viewer_id
                     JOIN content_index_states ncis ON ncis.owner_kind = cc.owner_kind
                         AND ncis.owner_id = cc.owner_id AND ncis.status = 'ready'
                     WHERE TRUE
@@ -856,7 +857,7 @@ def _render_media_block(db: Session, media_id: UUID) -> str | None:
 
 def _render_page_block(db: Session, viewer_id: UUID, page_id: UUID) -> str | None:
     row = db.execute(
-        text("SELECT user_id, title, description FROM pages WHERE id = :page_id"),
+        text("SELECT user_id, title FROM pages WHERE id = :page_id"),
         {"page_id": page_id},
     ).fetchone()
     if row is None or row[0] != viewer_id:
@@ -865,8 +866,6 @@ def _render_page_block(db: Session, viewer_id: UUID, page_id: UUID) -> str | Non
         '<app_search_result type="page">',
         f"<title>{xml_escape(row[1] or '')}</title>",
     ]
-    if row[2]:
-        lines.append(f"<description>{xml_escape(row[2])}</description>")
     lines.append("</app_search_result>")
     return "\n".join(lines)
 
@@ -878,16 +877,9 @@ def _render_note_block_block(db: Session, viewer_id: UUID, block_id: UUID) -> st
     ).fetchone()
     if row is None or row[0] != viewer_id:
         return None
-    from nexus.services.resource_graph import documents as graph_documents
-
-    try:
-        occurrence = graph_documents.find_block_occurrence(db, user_id=viewer_id, block_id=block_id)
-    except NotFoundError:
-        return None
     lines = [
         '<app_search_result type="note_block">',
         f"<content>{xml_escape(row[1] or '')}</content>",
-        f"<page_id>{occurrence.page_id}</page_id>",
         "</app_search_result>",
     ]
     return "\n".join(lines)
@@ -928,21 +920,38 @@ def _render_evidence_span_block(db: Session, viewer_id: UUID, evidence_span_id: 
     row = db.execute(
         text(
             """
-            SELECT es.owner_id AS media_id, es.span_text, es.citation_label, m.title
+            SELECT
+                es.owner_kind,
+                es.owner_id,
+                es.span_text,
+                es.citation_label,
+                m.title,
+                nb.user_id
             FROM evidence_spans es
-            JOIN media m ON m.id = es.owner_id AND es.owner_kind = 'media'
+            LEFT JOIN media m ON m.id = es.owner_id AND es.owner_kind = 'media'
+            LEFT JOIN note_blocks nb ON nb.id = es.owner_id AND es.owner_kind = 'note_block'
             WHERE es.id = :evidence_span_id
             """
         ),
         {"evidence_span_id": evidence_span_id},
     ).fetchone()
-    if row is None or not can_read_media(db, viewer_id, row[0]):
+    if row is None:
+        return None
+    if row[0] == "media":
+        if not can_read_media(db, viewer_id, row[1]):
+            return None
+        source = row[4] or ""
+    elif row[0] == "note_block":
+        if row[5] != viewer_id:
+            return None
+        source = "Note"
+    else:
         return None
     lines = [
         '<app_search_result type="evidence_span">',
-        f"<source>{xml_escape(row[3] or '')}</source>",
-        f"<citation_label>{xml_escape(row[2] or '')}</citation_label>",
-        f"<evidence_span>{xml_escape(row[1] or '')}</evidence_span>",
+        f"<source>{xml_escape(source)}</source>",
+        f"<citation_label>{xml_escape(row[3] or '')}</citation_label>",
+        f"<evidence_span>{xml_escape(row[2] or '')}</evidence_span>",
         "</app_search_result>",
     ]
     return "\n".join(lines)
@@ -968,7 +977,8 @@ def _render_content_chunk_context(
         text(
             """
             SELECT
-                cc.owner_id AS media_id,
+                cc.owner_kind,
+                cc.owner_id,
                 cc.chunk_text,
                 cc.summary_locator,
                 cc.source_kind,
@@ -976,38 +986,52 @@ def _render_content_chunk_context(
                 m.canonical_source_url,
                 es.id,
                 es.citation_label,
-                es.span_text
+                es.span_text,
+                nb.user_id
             FROM content_chunks cc
             JOIN evidence_spans es ON es.id = :evidence_span_id
                 AND es.owner_kind = cc.owner_kind AND es.owner_id = cc.owner_id
                 AND es.id = cc.primary_evidence_span_id
             JOIN content_index_states mcis ON mcis.owner_kind = cc.owner_kind AND mcis.owner_id = cc.owner_id
                 AND mcis.status = 'ready'
-            JOIN media m ON m.id = cc.owner_id AND cc.owner_kind = 'media'
+            LEFT JOIN media m ON m.id = cc.owner_id AND cc.owner_kind = 'media'
+            LEFT JOIN note_blocks nb ON nb.id = cc.owner_id AND cc.owner_kind = 'note_block'
             WHERE cc.id = :chunk_id
             """
         ),
         {"chunk_id": chunk_id, "evidence_span_id": evidence_span_id},
     ).fetchone()
-    if row is None or not can_read_media(db, viewer_id, row[0]):
+    if row is None:
+        return None
+    if row[0] == "media":
+        if not can_read_media(db, viewer_id, row[1]):
+            return None
+        source = row[5] or ""
+        url = row[6]
+    elif row[0] == "note_block":
+        if row[10] != viewer_id:
+            return None
+        source = "Note"
+        url = None
+    else:
         return None
 
     lines = [
         '<app_search_result type="content_chunk">',
-        f"<source>{xml_escape(row[4])}</source>",
-        f"<evidence_span_id>{row[6]}</evidence_span_id>",
-        f"<citation_label>{xml_escape(row[7])}</citation_label>",
+        f"<source>{xml_escape(source)}</source>",
+        f"<evidence_span_id>{row[7]}</evidence_span_id>",
+        f"<citation_label>{xml_escape(row[8])}</citation_label>",
     ]
-    if row[5]:
-        lines.append(f"<url>{xml_escape(row[5])}</url>")
-    locator = dict(row[2] or {})
+    if url:
+        lines.append(f"<url>{xml_escape(url)}</url>")
+    locator = dict(row[3] or {})
     timestamp = format_timestamp_ms(locator.get("t_start_ms"))
     if timestamp:
         lines.append(f"<timestamp>{timestamp}</timestamp>")
-    if row[3]:
-        lines.append(f"<source_kind>{xml_escape(str(row[3]))}</source_kind>")
+    if row[4]:
+        lines.append(f"<source_kind>{xml_escape(str(row[4]))}</source_kind>")
     _append_contributors_xml(lines, citation.contributors)
-    lines.append(f"<evidence_span>{xml_escape(row[8] or '')}</evidence_span>")
+    lines.append(f"<evidence_span>{xml_escape(row[9] or '')}</evidence_span>")
     _append_citation_source_xml(lines, citation)
     lines.append("</app_search_result>")
     return "\n".join(lines)

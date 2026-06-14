@@ -332,13 +332,9 @@ export function normalizeSearchResult(result: unknown): SearchApiResult | null {
       return {
         ...base,
         type: "page",
-        description:
-          typeof row.description === "string" ? row.description : null,
       };
     case "note_block":
       if (
-        typeof row.page_id !== "string" ||
-        typeof row.page_title !== "string" ||
         typeof row.body_text !== "string" ||
         !isRetrievalLocator(row.locator) ||
         !locatorMatchesSearchType("note_block", row.locator)
@@ -348,8 +344,6 @@ export function normalizeSearchResult(result: unknown): SearchApiResult | null {
       return {
         ...base,
         type: "note_block",
-        page_id: row.page_id,
-        page_title: row.page_title,
         body_text: row.body_text,
         highlight_excerpt:
           typeof row.highlight_excerpt === "string" ? row.highlight_excerpt : null,

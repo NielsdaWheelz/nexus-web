@@ -231,7 +231,6 @@ class PageRetrievalResultRef(BaseModel):
     source_label: str | None = None
     snippet: str
     deep_link: str
-    description: str | None = None
     context_ref: RetrievalContextRef
     locator: None = None
     media_id: None = None
@@ -253,8 +252,6 @@ class NoteBlockRetrievalResultRef(BaseModel):
     id: UUID | str
     result_type: Literal["note_block"]
     source_id: str
-    page_id: UUID | str
-    page_title: str
     body_text: str
     highlight_excerpt: str | None = None
     title: str
@@ -481,7 +478,6 @@ class EpubFragmentOffsetsLocator(BaseModel):
 
 class NoteBlockOffsetsLocator(BaseModel):
     type: Literal["note_block_offsets"]
-    page_id: UUID | str
     block_id: UUID | str
     start_offset: int = Field(ge=0)
     end_offset: int = Field(ge=0)

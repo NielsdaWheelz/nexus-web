@@ -197,7 +197,6 @@ def set_highlight_note(
         LinkedNoteBlockRef(
             note_block_id=block.id,
             body_pm_json=block.body_pm_json,
-            body_markdown=block.body_markdown,
             body_text=block.body_text,
         )
     )

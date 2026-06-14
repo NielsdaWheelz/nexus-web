@@ -60,7 +60,7 @@ function buildSourceMeta(result: SearchApiResult): string | null {
   }
 
   if (result.type === "note_block") {
-    return result.page_title;
+    return "note";
   }
 
   if (result.type === "highlight") {

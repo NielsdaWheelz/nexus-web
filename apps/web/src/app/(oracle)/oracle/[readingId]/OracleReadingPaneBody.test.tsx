@@ -364,7 +364,7 @@ describe("OracleReadingPaneBody", () => {
     expect(streamMocks.routerPush).toHaveBeenCalledWith("/media/media-1#fragment-fragment-1");
   });
 
-  it("renders and opens a note citation chip for page-owned evidence", async () => {
+  it("renders and opens a note citation chip for note-owned evidence", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (path: string) => {
@@ -390,7 +390,6 @@ describe("OracleReadingPaneBody", () => {
                     media_id: null,
                     locator: {
                       type: "note_block_offsets",
-                      page_id: "page-1",
                       block_id: "block-1",
                       start_offset: 0,
                       end_offset: 31,

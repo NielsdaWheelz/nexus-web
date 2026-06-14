@@ -1,8 +1,8 @@
 """Synapse resonance engine: the sole writer of ``origin='synapse'`` edges.
 
 A *scan* reads one source object's dossier (gathered from projections — the
-intelligence unit, the page's index chunks, a block's own body, a highlight's
-quote — never the note containment columns, spec D4), retrieves resonant
+    intelligence unit, a page title, a block's own body, a highlight's quote),
+retrieves resonant
 candidates from the whole corpus through ``search()``, asks a light-tier model
 which candidates *genuinely* illuminate the source, and replace-sets the
 source's ``(source, origin='synapse')`` edge set with the survivors — each
@@ -227,7 +227,6 @@ async def run_synapse_scan(
         candidates = _map_candidates(
             response.results,
             excluded=_excluded_refs(db, user_id=user_id, ref=ref, kin=dossier.kin_refs),
-            kin_page_id=dossier.kin_page_id,
         )
         if not candidates:
             # Current-only (D6): the engine currently sees nothing.
@@ -401,7 +400,6 @@ class _Dossier:
 
     text: str
     kin_refs: frozenset[ResourceRef]  # never-candidate refs (highlight's anchor media)
-    kin_page_id: UUID | None  # page whose blocks are siblings of the source (AC7)
     query: str | None = None  # retrieval-query override; None -> dossier head
 
 
@@ -431,7 +429,6 @@ def _media_dossier(db: Session, *, media_id: UUID) -> _Dossier | None:
     return _Dossier(
         text=f"{title}\n\n{unit.summary_md}\n\n{claims}"[:SYNAPSE_DOSSIER_CHAR_BUDGET],
         kin_refs=frozenset(),
-        kin_page_id=None,
     )
 
 
@@ -439,35 +436,9 @@ def _page_dossier(db: Session, *, page_id: UUID) -> _Dossier | None:
     title = db.execute(select(Page.title).where(Page.id == page_id)).scalar_one_or_none()
     if title is None:
         return None
-    chunk_texts = (
-        db.execute(
-            text(
-                """
-                SELECT cc.chunk_text
-                FROM content_chunks cc
-                JOIN content_index_states cis
-                  ON cis.owner_kind = cc.owner_kind
-                 AND cis.owner_id = cc.owner_id
-                 AND cis.status = 'ready'
-                WHERE cc.owner_kind = 'page' AND cc.owner_id = :page_id
-                ORDER BY cc.chunk_idx
-                """
-            ),
-            {"page_id": page_id},
-        )
-        .scalars()
-        .all()
-    )
-    if not chunk_texts:
-        return None
-    body = "\n\n".join(str(chunk) for chunk in chunk_texts)
     return _Dossier(
-        text=f"{title}\n\n{body}"[:SYNAPSE_DOSSIER_CHAR_BUDGET],
+        text=str(title)[:SYNAPSE_DOSSIER_CHAR_BUDGET],
         kin_refs=frozenset(),
-        kin_page_id=page_id,
-        # New note content appends at the page's end, so retrieve from the
-        # tail; the head-truncated dossier query would never surface it.
-        query=f"{title}\n\n{body[-SYNAPSE_QUERY_CHAR_BUDGET:]}",
     )
 
 
@@ -477,27 +448,9 @@ def _note_block_dossier(db: Session, *, user_id: UUID, block_id: UUID) -> _Dossi
     ).scalar_one_or_none()
     if block is None:
         return None
-    # The block's page comes from the index projection, not the containment
-    # columns (D4); a block not yet in the projection skips (consistent with
-    # the page dossier's no-ready-index skip) — scanning it now would run
-    # without sibling exclusion (AC7).
-    page_row = db.execute(
-        text(
-            "SELECT owner_id FROM content_chunks"
-            " WHERE owner_kind = 'page' AND summary_locator->>'note_block_id' = :block_id"
-            " ORDER BY owner_id LIMIT 1"
-        ),
-        {"block_id": str(block_id)},
-    ).scalar_one_or_none()
-    if page_row is None:
-        return None
-    page_id = UUID(str(page_row))
-    page_title = db.execute(select(Page.title).where(Page.id == page_id)).scalar_one_or_none()
-    head = f"{page_title}\n\n" if page_title else ""
     return _Dossier(
-        text=(head + block.body_text)[:SYNAPSE_DOSSIER_CHAR_BUDGET],
+        text=str(block.body_text or "")[:SYNAPSE_DOSSIER_CHAR_BUDGET],
         kin_refs=frozenset(),
-        kin_page_id=page_id,
     )
 
 
@@ -522,7 +475,6 @@ def _highlight_dossier(db: Session, *, user_id: UUID, highlight_id: UUID) -> _Do
     return _Dossier(
         text=source_text[:SYNAPSE_DOSSIER_CHAR_BUDGET],
         kin_refs=frozenset({ResourceRef(scheme="media", id=highlight.anchor_media_id)}),
-        kin_page_id=None,
     )
 
 
@@ -598,7 +550,6 @@ def _map_candidates(
     results: Sequence[SearchResultOut],
     *,
     excluded: set[ResourceRef],
-    kin_page_id: UUID | None,
 ) -> list[_SynapseCandidate]:
     """Map retrieval hits to deduped object-grain candidates, best score first.
 
@@ -618,11 +569,10 @@ def _map_candidates(
                 snippet=result.snippet.replace("<b>", "").replace("</b>", ""),
             )
         elif isinstance(result, SearchResultNoteBlockOut):
-            if kin_page_id is not None and result.page_id == kin_page_id:
-                continue  # page-sibling kin (AC7)
+            body = result.body_text.strip()
             candidate = _SynapseCandidate(
                 target=ResourceRef(scheme="note_block", id=result.id),
-                label=result.page_title,
+                label=body.splitlines()[0][:80] if body else "Note",
                 # Note bodies are unbounded; clamp to snippet scale.
                 snippet=result.body_text[:600],
             )

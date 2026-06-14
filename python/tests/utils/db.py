@@ -72,25 +72,19 @@ def _delete_owner_content(session: Session, *, owner_kind: str, owner_id: Any) -
     )
 
 
-def _delete_page_owned_content(
-    session: Session, *, page_filter: str, params: dict[str, Any]
+def _delete_note_owned_content(
+    session: Session, *, note_filter: str, params: dict[str, Any]
 ) -> None:
-    """Delete page-owned unified content for every page returned by ``page_filter``.
-
-    ``page_filter`` is a SELECT yielding page ids (e.g. the user's pages). Page note
-    content is keyed by (owner_kind='page', owner_id=<page id>). Children before parents,
-    then content_index_states.
-    """
-    page_ids = [row[0] for row in session.execute(text(page_filter), params)]
-    for page_id in page_ids:
-        _delete_owner_content(session, owner_kind="page", owner_id=page_id)
-    if page_ids:
+    note_ids = [row[0] for row in session.execute(text(note_filter), params)]
+    for note_id in note_ids:
+        _delete_owner_content(session, owner_kind="note_block", owner_id=note_id)
+    if note_ids:
         session.execute(
             text(
                 "DELETE FROM content_index_states "
-                "WHERE owner_kind = 'page' AND owner_id = ANY(:page_ids)"
+                "WHERE owner_kind = 'note_block' AND owner_id = ANY(:note_ids)"
             ),
-            {"page_ids": page_ids},
+            {"note_ids": note_ids},
         )
 
 
@@ -361,13 +355,9 @@ class DirectSessionManager:
                         ),
                         {"value": value},
                     )
-                    # Page-owned content lives in the unified content pipeline keyed by
-                    # (owner_kind='page', owner_id=<page id>); clear it for the user's pages
-                    # before the pages/users cascade. Children (embeddings, chunk parts)
-                    # before parents (chunks), then spans/blocks/index states.
-                    _delete_page_owned_content(
+                    _delete_note_owned_content(
                         session,
-                        page_filter="SELECT id FROM pages WHERE user_id = :value",
+                        note_filter="SELECT id FROM note_blocks WHERE user_id = :value",
                         params={"value": value},
                     )
                     session.execute(
@@ -388,11 +378,27 @@ class DirectSessionManager:
                         text("DELETE FROM billing_entitlement_overrides WHERE user_id = :value"),
                         {"value": value},
                     )
+                    session.execute(
+                        text("DELETE FROM resource_view_states WHERE user_id = :value"),
+                        {"value": value},
+                    )
                     # resource_edges / resource_external_snapshots /
                     # synapse_suppressions FK users.id with no cascade (provenance
                     # graph: cleanup is explicit application code).
                     session.execute(
                         text("DELETE FROM resource_edges WHERE user_id = :value"),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text("DELETE FROM resource_versions WHERE user_id = :value"),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text("DELETE FROM resource_mutations WHERE user_id = :value"),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text("DELETE FROM note_blocks WHERE user_id = :value"),
                         {"value": value},
                     )
                     session.execute(
@@ -969,90 +975,33 @@ class DirectSessionManager:
                         {"value": value},
                     )
                     session.execute(
-                        text("DELETE FROM page_document_mutations WHERE page_id = :value"),
+                        text(
+                            """
+                            DELETE FROM resource_mutations
+                            WHERE mutation_scope LIKE (
+                                'resource:page:' || CAST(:value AS text) || ':%'
+                            )
+                               OR mutation_scope = (
+                                   'resource_surface:page:' || CAST(:value AS text)
+                               )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM resource_versions
+                            WHERE resource_scheme = 'page' AND resource_id = :value
+                            """
+                        ),
                         {"value": value},
                     )
                     session.execute(
                         text(
                             """
                             DELETE FROM user_pinned_objects
-                            WHERE (object_type = 'page' AND object_id = :value)
-                               OR (object_type = 'note_block' AND object_id IN (
-                                    WITH RECURSIVE page_blocks(block_id) AS (
-                                        SELECT target_id
-                                        FROM resource_edges
-                                        WHERE origin = 'note_containment'
-                                          AND source_scheme = 'page'
-                                          AND source_id = :value
-                                          AND target_scheme = 'note_block'
-                                        UNION
-                                        SELECT child.target_id
-                                        FROM resource_edges child
-                                        JOIN page_blocks parent
-                                          ON child.source_scheme = 'note_block'
-                                         AND child.source_id = parent.block_id
-                                        WHERE child.origin = 'note_containment'
-                                          AND child.target_scheme = 'note_block'
-                                    )
-                                    SELECT block_id FROM page_blocks
-                                  ))
-                            """
-                        ),
-                        {"value": value},
-                    )
-                    # Page note content now lives in the unified content pipeline keyed by
-                    # (owner_kind='page', owner_id=<page id>).
-                    _delete_owner_content(session, owner_kind="page", owner_id=value)
-                    session.execute(
-                        text(
-                            "DELETE FROM content_index_states "
-                            "WHERE owner_kind = 'page' AND owner_id = :value"
-                        ),
-                        {"value": value},
-                    )
-                    session.execute(
-                        text(
-                            """
-                            DELETE FROM note_view_states
-                            WHERE (context_source_scheme = 'page' AND context_source_id = :value)
-                               OR target_block_id IN (
-                                    WITH RECURSIVE page_blocks(block_id) AS (
-                                        SELECT target_id
-                                        FROM resource_edges
-                                        WHERE origin = 'note_containment'
-                                          AND source_scheme = 'page'
-                                          AND source_id = :value
-                                          AND target_scheme = 'note_block'
-                                        UNION
-                                        SELECT child.target_id
-                                        FROM resource_edges child
-                                        JOIN page_blocks parent
-                                          ON child.source_scheme = 'note_block'
-                                         AND child.source_id = parent.block_id
-                                        WHERE child.origin = 'note_containment'
-                                          AND child.target_scheme = 'note_block'
-                                    )
-                                    SELECT block_id FROM page_blocks
-                                  )
-                               OR context_source_id IN (
-                                    WITH RECURSIVE page_blocks(block_id) AS (
-                                        SELECT target_id
-                                        FROM resource_edges
-                                        WHERE origin = 'note_containment'
-                                          AND source_scheme = 'page'
-                                          AND source_id = :value
-                                          AND target_scheme = 'note_block'
-                                        UNION
-                                        SELECT child.target_id
-                                        FROM resource_edges child
-                                        JOIN page_blocks parent
-                                          ON child.source_scheme = 'note_block'
-                                         AND child.source_id = parent.block_id
-                                        WHERE child.origin = 'note_containment'
-                                          AND child.target_scheme = 'note_block'
-                                    )
-                                    SELECT block_id FROM page_blocks
-                                  )
+                            WHERE object_type = 'page' AND object_id = :value
                             """
                         ),
                         {"value": value},
@@ -1060,26 +1009,9 @@ class DirectSessionManager:
                     session.execute(
                         text(
                             """
-                            DELETE FROM note_blocks
-                            WHERE id IN (
-                                WITH RECURSIVE page_blocks(block_id) AS (
-                                    SELECT target_id
-                                    FROM resource_edges
-                                    WHERE origin = 'note_containment'
-                                      AND source_scheme = 'page'
-                                      AND source_id = :value
-                                      AND target_scheme = 'note_block'
-                                    UNION
-                                    SELECT child.target_id
-                                    FROM resource_edges child
-                                    JOIN page_blocks parent
-                                      ON child.source_scheme = 'note_block'
-                                     AND child.source_id = parent.block_id
-                                    WHERE child.origin = 'note_containment'
-                                      AND child.target_scheme = 'note_block'
-                                )
-                                SELECT block_id FROM page_blocks
-                            )
+                            DELETE FROM resource_view_states
+                            WHERE (surface_scheme = 'page' AND surface_id = :value)
+                               OR (target_scheme = 'page' AND target_id = :value)
                             """
                         ),
                         {"value": value},
@@ -1088,45 +1020,7 @@ class DirectSessionManager:
                         text(
                             """
                             DELETE FROM resource_edges
-                            WHERE (source_scheme = 'note_block' AND source_id IN (
-                                    WITH RECURSIVE page_blocks(block_id) AS (
-                                        SELECT target_id
-                                        FROM resource_edges
-                                        WHERE origin = 'note_containment'
-                                          AND source_scheme = 'page'
-                                          AND source_id = :value
-                                          AND target_scheme = 'note_block'
-                                        UNION
-                                        SELECT child.target_id
-                                        FROM resource_edges child
-                                        JOIN page_blocks parent
-                                          ON child.source_scheme = 'note_block'
-                                         AND child.source_id = parent.block_id
-                                        WHERE child.origin = 'note_containment'
-                                          AND child.target_scheme = 'note_block'
-                                    )
-                                    SELECT block_id FROM page_blocks
-                                  ))
-                               OR (target_scheme = 'note_block' AND target_id IN (
-                                    WITH RECURSIVE page_blocks(block_id) AS (
-                                        SELECT target_id
-                                        FROM resource_edges
-                                        WHERE origin = 'note_containment'
-                                          AND source_scheme = 'page'
-                                          AND source_id = :value
-                                          AND target_scheme = 'note_block'
-                                        UNION
-                                        SELECT child.target_id
-                                        FROM resource_edges child
-                                        JOIN page_blocks parent
-                                          ON child.source_scheme = 'note_block'
-                                         AND child.source_id = parent.block_id
-                                        WHERE child.origin = 'note_containment'
-                                          AND child.target_scheme = 'note_block'
-                                    )
-                                    SELECT block_id FROM page_blocks
-                                  ))
-                               OR (source_scheme = 'page' AND source_id = :value)
+                            WHERE (source_scheme = 'page' AND source_id = :value)
                                OR (target_scheme = 'page' AND target_id = :value)
                             """
                         ),
@@ -1141,10 +1035,23 @@ class DirectSessionManager:
                     session.execute(
                         text(
                             """
-                            DELETE FROM page_document_mutations
-                            WHERE page_id IN (
-                                SELECT id FROM pages WHERE user_id = :value
-                            )
+                            DELETE FROM resource_mutations
+                            WHERE user_id = :value
+                              AND (
+                                  mutation_scope LIKE 'resource:page:%'
+                               OR mutation_scope LIKE 'resource:note_block:%'
+                               OR mutation_scope LIKE 'resource_surface:%'
+                              )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM resource_versions
+                            WHERE user_id = :value
+                              AND resource_scheme IN ('page', 'note_block')
                             """
                         ),
                         {"value": value},
@@ -1159,13 +1066,30 @@ class DirectSessionManager:
                         ),
                         {"value": value},
                     )
-                    # Page note content lives in the unified pipeline keyed by
-                    # (owner_kind='page', owner_id=<page id>); clear it for all the
-                    # user's pages.
-                    _delete_page_owned_content(
-                        session,
-                        page_filter="SELECT id FROM pages WHERE user_id = :value",
-                        params={"value": value},
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM resource_view_states
+                            WHERE user_id = :value
+                              AND (
+                                  surface_scheme = 'page'
+                               OR target_scheme = 'page'
+                               OR (
+                                  surface_scheme = 'note_block'
+                                  AND surface_id IN (
+                                      SELECT id FROM note_blocks WHERE user_id = :value
+                                  )
+                               )
+                               OR (
+                                  target_scheme = 'note_block'
+                                  AND target_id IN (
+                                      SELECT id FROM note_blocks WHERE user_id = :value
+                                  )
+                               )
+                              )
+                            """
+                        ),
+                        {"value": value},
                     )
                     session.execute(
                         text(
@@ -1180,38 +1104,58 @@ class DirectSessionManager:
                         ),
                         {"value": value},
                     )
+
+                if table == "note_blocks" and column == "id":
+                    _delete_owner_content(session, owner_kind="note_block", owner_id=value)
+                    session.execute(
+                        text(
+                            "DELETE FROM content_index_states "
+                            "WHERE owner_kind = 'note_block' AND owner_id = :value"
+                        ),
+                        {"value": value},
+                    )
                     session.execute(
                         text(
                             """
-                            DELETE FROM note_view_states
-                            WHERE user_id = :value
-                              AND (
-                                  target_block_id IN (
-                                      SELECT id FROM note_blocks WHERE user_id = :value
-                                  )
-                               OR context_source_id IN (
-                                      SELECT id FROM note_blocks WHERE user_id = :value
-                                  )
-                              )
+                            DELETE FROM resource_view_states
+                            WHERE (target_scheme = 'note_block' AND target_id = :value)
+                               OR (surface_scheme = 'note_block' AND surface_id = :value)
                             """
                         ),
                         {"value": value},
                     )
                     session.execute(
-                        text("DELETE FROM note_blocks WHERE user_id = :value"),
+                        text(
+                            """
+                            DELETE FROM resource_versions
+                            WHERE resource_scheme = 'note_block'
+                              AND resource_id = :value
+                            """
+                        ),
                         {"value": value},
                     )
-
-                if table == "note_blocks" and column == "id":
-                    # Note content is page-owned (owner_kind='page', owner_id=<page id>) in
-                    # the unified pipeline, so there are no per-note_block content rows to
-                    # clear here — only the pin entry that referenced this note_block.
                     session.execute(
                         text(
                             """
-                            DELETE FROM note_view_states
-                            WHERE target_block_id = :value
-                               OR context_source_id = :value
+                            DELETE FROM resource_mutations
+                            WHERE mutation_scope LIKE (
+                                'resource:note_block:' || CAST(:value AS text) || ':%'
+                            )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM resource_edges
+                            WHERE (ordinal IS NULL AND (
+                                    (source_scheme = 'note_block' AND source_id = :value)
+                                 OR (target_scheme = 'note_block' AND target_id = :value)
+                                  ))
+                               OR (ordinal IS NOT NULL
+                                   AND source_scheme = 'note_block'
+                                   AND source_id = :value)
                             """
                         ),
                         {"value": value},
@@ -1228,18 +1172,56 @@ class DirectSessionManager:
                     )
 
                 if table == "note_blocks" and column == "user_id":
+                    _delete_note_owned_content(
+                        session,
+                        note_filter="SELECT id FROM note_blocks WHERE user_id = :value",
+                        params={"value": value},
+                    )
                     session.execute(
                         text(
                             """
-                            DELETE FROM note_view_states
+                            DELETE FROM resource_view_states
                             WHERE user_id = :value
                               AND (
-                                  target_block_id IN (
+                                  target_id IN (
                                       SELECT id FROM note_blocks WHERE user_id = :value
                                   )
-                               OR context_source_id IN (
+                               OR surface_id IN (
                                       SELECT id FROM note_blocks WHERE user_id = :value
                                   )
+                              )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM resource_versions
+                            WHERE user_id = :value
+                              AND resource_scheme = 'note_block'
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM resource_mutations
+                            WHERE user_id = :value
+                              AND mutation_scope LIKE 'resource:note_block:%'
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM resource_edges
+                            WHERE user_id = :value
+                              AND (
+                                  source_scheme = 'note_block'
+                               OR target_scheme = 'note_block'
                               )
                             """
                         ),

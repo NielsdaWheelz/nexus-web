@@ -27,7 +27,6 @@ function readerTargetForCitation(c: CitationOut): ReaderSourceTarget | null {
     return {
       kind: "note",
       source: "message_retrieval",
-      page_id: c.locator.page_id,
       block_id: c.locator.block_id,
       start_offset: c.locator.start_offset,
       end_offset: c.locator.end_offset,

@@ -231,43 +231,19 @@ def _owner_children(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> tuple[
             ),
         )
     if ref.scheme == "page":
-        return (
-            *_child_refs(db, "note_block", _PAGE_NOTE_BLOCKS_SQL, ref.id, viewer_id=viewer_id),
-            *_child_refs(
-                db,
-                "evidence_span",
-                "SELECT id FROM evidence_spans WHERE owner_kind = 'page' AND owner_id = :id",
-                ref.id,
-            ),
-            *_child_refs(
-                db,
-                "content_chunk",
-                "SELECT id FROM content_chunks WHERE owner_kind = 'page' AND owner_id = :id",
-                ref.id,
-            ),
-        )
+        return (*_child_refs(db, "note_block", _PAGE_NOTE_BLOCKS_SQL, ref.id, viewer_id=viewer_id),)
     if ref.scheme == "note_block":
         return (
             *_child_refs(
                 db,
                 "evidence_span",
-                """
-                SELECT id
-                FROM evidence_spans
-                WHERE owner_kind = 'page'
-                  AND selector->>'note_block_id' = :id_text
-                """,
+                "SELECT id FROM evidence_spans WHERE owner_kind = 'note_block' AND owner_id = :id",
                 ref.id,
             ),
             *_child_refs(
                 db,
                 "content_chunk",
-                """
-                SELECT id
-                FROM content_chunks
-                WHERE owner_kind = 'page'
-                  AND summary_locator->>'note_block_id' = :id_text
-                """,
+                "SELECT id FROM content_chunks WHERE owner_kind = 'note_block' AND owner_id = :id",
                 ref.id,
             ),
         )
@@ -331,17 +307,17 @@ def _href_for_ref(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> str | No
             )
         if isinstance(locator, dict) and isinstance(locator.get("block_id"), str):
             return f"/notes/{locator['block_id']}"
-        page_id = db.scalar(
+        note_block_id = db.scalar(
             text(
                 f"""
                 SELECT owner_id
                 FROM {"content_chunks" if ref.scheme == "content_chunk" else "evidence_spans"}
-                WHERE id = :id AND owner_kind = 'page'
+                WHERE id = :id AND owner_kind = 'note_block'
                 """
             ),
             {"id": ref.id},
         )
-        return f"/pages/{page_id}" if page_id is not None else None
+        return f"/notes/{note_block_id}" if note_block_id is not None else None
     if ref.scheme == "library_intelligence_artifact":
         library_id = db.scalar(
             text("SELECT library_id FROM library_intelligence_artifacts WHERE id = :id"),
@@ -387,18 +363,20 @@ WITH RECURSIVE contained(id) AS (
     SELECT target_id
     FROM resource_edges
     WHERE user_id = :viewer_id
-      AND origin = 'note_containment'
+      AND origin = 'user'
       AND source_scheme = 'page'
       AND source_id = :id
       AND target_scheme = 'note_block'
+      AND source_order_key IS NOT NULL
     UNION
     SELECT e.target_id
     FROM resource_edges e
     JOIN contained c ON c.id = e.source_id
     WHERE e.user_id = :viewer_id
-      AND e.origin = 'note_containment'
+      AND e.origin = 'user'
       AND e.source_scheme = 'note_block'
       AND e.target_scheme = 'note_block'
+      AND e.source_order_key IS NOT NULL
 )
 SELECT id FROM contained
 """

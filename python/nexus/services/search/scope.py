@@ -10,10 +10,10 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_conversation, can_read_media, is_library_member
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
-from nexus.services.resource_graph.policy import (
-    CONVERSATION_CONTEXT_SCOPE_ORIGINS,
-    NOTE_MEDIA_SCOPE_ORIGINS,
-    SEARCH_SCOPE_EDGE_KIND,
+from nexus.services.resource_graph.policy import SEARCH_SCOPE_EDGE_KIND
+from nexus.services.resource_items.capabilities import (
+    CONVERSATION_CONTEXT_EDGE_ORIGINS,
+    NOTE_MEDIA_SEARCH_EDGE_ORIGINS,
 )
 from nexus.services.search.query import ScopeKind, SearchScope
 
@@ -118,12 +118,13 @@ UNSUPPORTED = ScopeUnsupported()
 
 ScopeFilter = tuple[str, dict[str, Any]] | ScopeUnsupported
 
+
 def _sql_values(values: tuple[str, ...]) -> str:
     return "(" + ", ".join(f"'{value}'" for value in values) + ")"
 
 
-NOTE_MEDIA_SCOPE_ORIGINS_SQL = _sql_values(NOTE_MEDIA_SCOPE_ORIGINS)
-CONVERSATION_CONTEXT_SCOPE_ORIGINS_SQL = _sql_values(CONVERSATION_CONTEXT_SCOPE_ORIGINS)
+NOTE_MEDIA_SEARCH_EDGE_ORIGINS_SQL = _sql_values(NOTE_MEDIA_SEARCH_EDGE_ORIGINS)
+CONVERSATION_CONTEXT_EDGE_ORIGINS_SQL = _sql_values(CONVERSATION_CONTEXT_EDGE_ORIGINS)
 
 
 def _media_context_ref_scope(media_id_sql: str) -> str:
@@ -135,7 +136,7 @@ def _media_context_ref_scope(media_id_sql: str) -> str:
                   AND e.target_scheme = 'media'
                   AND e.target_id = {media_id_sql}
                   AND e.kind = '{SEARCH_SCOPE_EDGE_KIND}'
-                  AND e.origin IN {CONVERSATION_CONTEXT_SCOPE_ORIGINS_SQL}
+                  AND e.origin IN {CONVERSATION_CONTEXT_EDGE_ORIGINS_SQL}
                   AND e.user_id = :viewer_id
                   AND e.ordinal IS NULL
             )
@@ -145,18 +146,16 @@ def _media_context_ref_scope(media_id_sql: str) -> str:
 def _note_object_scope(scheme: str, object_id_sql: str) -> dict[str, str | ScopeUnsupported]:
     """resource_edges-based scope for a page/note_block keyed on (scheme, object_id_sql).
 
-    Media/library cells accept only user/body/highlight-note note relationships
-    (the ``note_media_edge`` allowlist) — which by construction excludes both
-    machine-proposed ``synapse`` edges and structural ``note_containment`` edges,
-    so a machine guess never silently changes scoped retrieval. Conversation cells
-    accept only bare context refs from the conversation to the page/note block."""
+    Media/library cells accept only user and highlight-note relationships.
+    Conversation cells accept only bare context refs from the conversation to
+    the page/note block."""
     edge_match = (
         f"((e.source_scheme = '{scheme}' AND e.source_id = {object_id_sql}) "
         f"OR (e.target_scheme = '{scheme}' AND e.target_id = {object_id_sql}))"
     )
     note_media_edge = f"""
                   AND e.kind = '{SEARCH_SCOPE_EDGE_KIND}'
-                  AND e.origin IN {NOTE_MEDIA_SCOPE_ORIGINS_SQL}
+                  AND e.origin IN {NOTE_MEDIA_SEARCH_EDGE_ORIGINS_SQL}
                   AND e.user_id = :viewer_id
                   AND e.ordinal IS NULL
     """
@@ -197,7 +196,7 @@ def _note_object_scope(scheme: str, object_id_sql: str) -> dict[str, str | Scope
                   AND e.target_scheme = '{scheme}'
                   AND e.target_id = {object_id_sql}
                   AND e.kind = '{SEARCH_SCOPE_EDGE_KIND}'
-                  AND e.origin IN {CONVERSATION_CONTEXT_SCOPE_ORIGINS_SQL}
+                  AND e.origin IN {CONVERSATION_CONTEXT_EDGE_ORIGINS_SQL}
                   AND e.user_id = :viewer_id
                   AND e.ordinal IS NULL
             )
@@ -235,7 +234,7 @@ _SCOPE_MATRIX: dict[str, dict[str, str | ScopeUnsupported]] = {
                 SELECT 1
                 FROM podcast_episodes pe
                 WHERE pe.podcast_id = p.id
-                  AND {_media_context_ref_scope('pe.media_id')}
+                  AND {_media_context_ref_scope("pe.media_id")}
             )
         """,
     },
@@ -251,7 +250,7 @@ _SCOPE_MATRIX: dict[str, dict[str, str | ScopeUnsupported]] = {
         """,
         "conversation": f"""
             AND cc.owner_kind = 'media'
-            AND {_media_context_ref_scope('cc.owner_id')}
+            AND {_media_context_ref_scope("cc.owner_id")}
         """,
     },
     "fragment": {
@@ -275,11 +274,11 @@ _SCOPE_MATRIX: dict[str, dict[str, str | ScopeUnsupported]] = {
         """,
         "conversation": f"""
             AND es.owner_kind = 'media'
-            AND {_media_context_ref_scope('es.owner_id')}
+            AND {_media_context_ref_scope("es.owner_id")}
         """,
     },
     "page": _note_object_scope("page", "p.id"),
-    "note_block": _note_object_scope("note_block", "(cc.summary_locator->>'note_block_id')::uuid"),
+    "note_block": _note_object_scope("note_block", "cc.owner_id"),
     "highlight": {
         "media": "AND h.anchor_media_id = :scope_id",
         "library": """
@@ -298,7 +297,7 @@ _SCOPE_MATRIX: dict[str, dict[str, str | ScopeUnsupported]] = {
                   AND e.target_scheme = 'highlight'
                   AND e.target_id = h.id
                   AND e.kind = '{SEARCH_SCOPE_EDGE_KIND}'
-                  AND e.origin IN {CONVERSATION_CONTEXT_SCOPE_ORIGINS_SQL}
+                  AND e.origin IN {CONVERSATION_CONTEXT_EDGE_ORIGINS_SQL}
                   AND e.user_id = :viewer_id
                   AND e.ordinal IS NULL
             )
@@ -363,12 +362,12 @@ _SCOPE_MATRIX: dict[str, dict[str, str | ScopeUnsupported]] = {
             AND (
                 (
                     cc.media_id IS NOT NULL
-                    AND {_media_context_ref_scope('cc.media_id')}
+                    AND {_media_context_ref_scope("cc.media_id")}
                 )
                 OR cc.podcast_id IN (
                     SELECT pe.podcast_id
                     FROM podcast_episodes pe
-                    WHERE {_media_context_ref_scope('pe.media_id')}
+                    WHERE {_media_context_ref_scope("pe.media_id")}
                 )
             )
         """,

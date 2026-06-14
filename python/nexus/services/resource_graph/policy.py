@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from nexus.errors import ApiErrorCode, InvalidRequestError
-from nexus.services.resource_graph.refs import SEARCH_SCOPE_SCHEMES, ResourceScheme
+from nexus.services.resource_graph.refs import ResourceScheme
 from nexus.services.resource_graph.schemas import (
     EDGE_KINDS,
     EDGE_ORIGINS,
@@ -14,23 +14,14 @@ from nexus.services.resource_graph.schemas import (
     EdgeKind,
     EdgeOrigin,
 )
+from nexus.services.resource_items.capabilities import (
+    CITATION_OUTPUT_SOURCE_SCHEMES,
+    CONVERSATION_CONTEXT_EDGE_ORIGINS,
+)
 
 SchemeSet = tuple[ResourceScheme, ...] | Literal["any"]
 
 SEARCH_SCOPE_EDGE_KIND: EdgeKind = "context"
-NOTE_MEDIA_SCOPE_ORIGINS: tuple[EdgeOrigin, ...] = ("user", "note_body", "highlight_note")
-CONVERSATION_CONTEXT_SCOPE_ORIGINS: tuple[EdgeOrigin, ...] = ("user", "citation", "system")
-CONVERSATION_SCOPE_TARGET_SCHEMES: tuple[ResourceScheme, ...] = (
-    "page",
-    "note_block",
-    "highlight",
-)
-APP_SEARCH_SCOPE_TARGET_SCHEMES: tuple[ResourceScheme, ...] = SEARCH_SCOPE_SCHEMES
-CITATION_OUTPUT_SOURCE_SCHEMES: tuple[ResourceScheme, ...] = (
-    "message",
-    "oracle_reading",
-    "library_intelligence_revision",
-)
 SYNAPSE_SOURCE_SCHEMES: tuple[ResourceScheme, ...] = ("media", "page", "note_block", "highlight")
 SYNAPSE_TARGET_SCHEMES: tuple[ResourceScheme, ...] = ("media", "note_block")
 
@@ -44,7 +35,7 @@ class EdgeShapePolicy:
     target_schemes: SchemeSet
     ordinal: Literal["forbidden", "citation_required"]
     snapshot: Literal["forbidden", "citation_required", "synapse_required"]
-    source_order: Literal["forbidden", "required", "conversation_context_optional"]
+    source_order: Literal["forbidden", "optional", "conversation_context_optional"]
     target_order: Literal["forbidden"]
     cleanup: str
     search_activation: Literal["never", "allowlisted_only"]
@@ -54,13 +45,13 @@ class EdgeShapePolicy:
 EDGE_SHAPE_POLICIES: dict[EdgeOrigin, EdgeShapePolicy] = {
     "user": EdgeShapePolicy(
         origin="user",
-        writer="resource_graph.edges public user-link API",
+        writer="resource_graph.edges public user-link API and resource adjacency service",
         allowed_kinds=EDGE_KINDS,
         source_schemes="any",
         target_schemes="any",
         ordinal="forbidden",
         snapshot="forbidden",
-        source_order="conversation_context_optional",
+        source_order="optional",
         target_order="forbidden",
         cleanup="delete bare rows with either endpoint",
         search_activation="allowlisted_only",
@@ -96,9 +87,9 @@ EDGE_SHAPE_POLICIES: dict[EdgeOrigin, EdgeShapePolicy] = {
     ),
     "note_body": EdgeShapePolicy(
         origin="note_body",
-        writer="resource_graph.documents body sync",
+        writer="note body sync",
         allowed_kinds=("context",),
-        source_schemes=("page", "note_block"),
+        source_schemes=("note_block",),
         target_schemes="any",
         ordinal="forbidden",
         snapshot="forbidden",
@@ -121,20 +112,6 @@ EDGE_SHAPE_POLICIES: dict[EdgeOrigin, EdgeShapePolicy] = {
         cleanup="delete with highlight or note block",
         search_activation="allowlisted_only",
         rendering="highlight note attachment",
-    ),
-    "note_containment": EdgeShapePolicy(
-        origin="note_containment",
-        writer="resource_graph.documents",
-        allowed_kinds=("context",),
-        source_schemes=("page", "note_block"),
-        target_schemes=("note_block",),
-        ordinal="forbidden",
-        snapshot="forbidden",
-        source_order="required",
-        target_order="forbidden",
-        cleanup="document graph commands",
-        search_activation="never",
-        rendering="document tree",
     ),
     "synapse": EdgeShapePolicy(
         origin="synapse",
@@ -209,10 +186,6 @@ def validate_edge_shape(edge: EdgeCreate) -> None:
         edge.target.scheme, policy.target_schemes
     ):
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, _shape_message(edge.origin))
-    if policy.source_order == "required" and edge.source_order_key is None:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST, "Containment edges require source_order_key"
-        )
 
 
 def _validate_citation(edge: EdgeCreate) -> None:
@@ -270,8 +243,10 @@ def _validate_synapse(edge: EdgeCreate) -> None:
 
 
 def _allows_source_order(edge: EdgeCreate) -> bool:
-    return edge.origin == "note_containment" or (
-        edge.origin in CONVERSATION_CONTEXT_SCOPE_ORIGINS
+    if edge.origin == "user":
+        return edge.kind == "context" and edge.ordinal is None and edge.snapshot is None
+    return (
+        edge.origin in CONVERSATION_CONTEXT_EDGE_ORIGINS
         and edge.kind == SEARCH_SCOPE_EDGE_KIND
         and edge.source.scheme == "conversation"
         and edge.ordinal is None
@@ -284,12 +259,10 @@ def _scheme_allowed(scheme: ResourceScheme, allowed: SchemeSet) -> bool:
 
 
 def _shape_message(origin: EdgeOrigin) -> str:
-    if origin == "note_containment":
-        return "Containment edges must connect page/note_block to note_block"
     if origin == "highlight_note":
         return "Highlight note edges must connect highlight to note_block"
     if origin == "note_body":
-        return "Note body edges must start from page or note_block"
+        return "Note body edges must start from note_block"
     if origin == "system":
         return "System edges must be conversation context refs"
     return "Invalid edge shape"

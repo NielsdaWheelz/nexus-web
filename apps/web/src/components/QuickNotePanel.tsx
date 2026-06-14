@@ -5,12 +5,10 @@ import type { Node as ProseMirrorNode } from "prosemirror-model";
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
-  fetchNotePage,
   quickCaptureDailyNote,
-  saveNotePageDocument,
+  saveNoteBody,
   type NoteBlock,
 } from "@/lib/notes/api";
-import { planNoteBlockDeletion } from "@/lib/notes/pageDocumentPersistence";
 import { createRandomId } from "@/lib/createRandomId";
 import ProseMirrorOutlineEditor from "@/components/notes/ProseMirrorOutlineEditor";
 import {
@@ -37,7 +35,9 @@ export default function QuickNotePanel({ onClose }: { onClose: () => void }) {
   const resourceKey = "quick-note:daily";
   const [editorResetSerial, setEditorResetSerial] = useState(0);
   const [initialDoc, setInitialDoc] = useState(
-    () => readStoredNoteEditorDraft(resourceKey)?.doc ?? createEmptyOutlineDoc(createRandomId())
+    () =>
+      readStoredNoteEditorDraft(resourceKey)?.doc ??
+      createEmptyOutlineDoc(createRandomId()),
   );
   const editorResourceKey = `${resourceKey}:editor:${editorResetSerial}`;
   const currentDocRef = useRef<ProseMirrorNode | null>(null);
@@ -46,7 +46,7 @@ export default function QuickNotePanel({ onClose }: { onClose: () => void }) {
   const saveDoc = useCallback(
     async (
       doc: ProseMirrorNode,
-      { clientMutationId }: { clientMutationId: string }
+      { clientMutationId }: { clientMutationId: string },
     ) => {
       const block = firstOutlineBlockFromDoc(doc);
       const persisted = persistedBlockRef.current;
@@ -54,18 +54,11 @@ export default function QuickNotePanel({ onClose }: { onClose: () => void }) {
         return;
       }
       if (persisted && !noteBodyHasContent(block)) {
-        const page = await fetchNotePage(persisted.pageId);
-        const plan = planNoteBlockDeletion(page, persisted.id);
-        if (plan !== null) {
-          await saveNotePageDocument(page.id, {
-            clientMutationId,
-            baseDocumentVersion: page.documentVersion,
-            focusBlockId: null,
-            blocks: plan.blocks,
-            containment: plan.containment,
-            deletedBlockIds: plan.deletedBlockIds,
-          });
-        }
+        await saveNoteBody(persisted.id, {
+          clientMutationId,
+          baseVersion: persisted.versionByLane?.body ?? null,
+          bodyPmJson: firstOutlineBlockFromDoc(createEmptyOutlineDoc(persisted.id))!.bodyPmJson,
+        });
         persistedBlockRef.current = null;
         return;
       }
@@ -75,7 +68,7 @@ export default function QuickNotePanel({ onClose }: { onClose: () => void }) {
         bodyPmJson: block.bodyPmJson,
       });
     },
-    []
+    [],
   );
 
   const session = useNoteEditorSession({
@@ -83,7 +76,9 @@ export default function QuickNotePanel({ onClose }: { onClose: () => void }) {
     save: saveDoc,
     onError: (error) => {
       if (handleUnauthenticatedApiError(error)) return;
-      setFeedback(toFeedback(error, { fallback: "Quick note could not be added." }));
+      setFeedback(
+        toFeedback(error, { fallback: "Quick note could not be added." }),
+      );
     },
   });
   const {
@@ -109,7 +104,7 @@ export default function QuickNotePanel({ onClose }: { onClose: () => void }) {
       setFeedback(null);
       scheduleSessionSave(doc);
     },
-    [scheduleSessionSave]
+    [scheduleSessionSave],
   );
 
   const openToday = useCallback(() => {
@@ -125,7 +120,6 @@ export default function QuickNotePanel({ onClose }: { onClose: () => void }) {
           id: persisted.id,
           bodyPmJson: persisted.bodyPmJson,
           bodyText: persisted.bodyText,
-          blockKind: persisted.blockKind,
           collapsed: persisted.collapsed,
         })
       : createEmptyOutlineDoc(createRandomId());
@@ -155,7 +149,11 @@ export default function QuickNotePanel({ onClose }: { onClose: () => void }) {
             onBlurFlush={flushSession}
             onError={(error) => {
               if (handleUnauthenticatedApiError(error)) return;
-              setFeedback(toFeedback(error, { fallback: "Attachment could not be added." }));
+              setFeedback(
+                toFeedback(error, {
+                  fallback: "Attachment could not be added.",
+                }),
+              );
             }}
           />
         </div>

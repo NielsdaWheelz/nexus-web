@@ -3,7 +3,7 @@ import { isLocalDate } from "@/lib/localDate";
 import {
   fetchDailyNotePage,
   quickCaptureDailyNote,
-  saveNotePageDocument,
+  saveResourceSurface,
 } from "./api";
 
 function jsonResponse(body: unknown): Response {
@@ -25,41 +25,42 @@ describe("notes api", () => {
   });
 
   it("uses durable daily-note endpoints", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-      const url = new URL(String(input), "http://localhost");
-      if (url.pathname === "/api/notes/daily/2026-05-06") {
-        return jsonResponse({
-          data: {
-            localDate: "2026-05-06",
-            page: {
-              id: "page-today",
-              title: "May 6, 2026",
-              description: null,
-              documentVersion: 1,
-              blocks: [],
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async (input, init) => {
+        const url = new URL(String(input), "http://localhost");
+        if (url.pathname === "/api/notes/daily/2026-05-06") {
+          return jsonResponse({
+            data: {
+              localDate: "2026-05-06",
+              page: {
+                id: "page-today",
+                title: "May 6, 2026",
+                surface: null,
+                blocks: [],
+              },
             },
-          },
-        });
-      }
-      if (url.pathname === "/api/notes/quick-capture" && init?.method === "POST") {
-        const body = JSON.parse(String(init.body)) as Record<string, unknown>;
-        return jsonResponse({
-          data: {
-            id: "block-1",
-            page_id: "page-today",
-            parent_block_id: null,
-            order_key: "a",
-            block_kind: "bullet",
-            body_pm_json: body.body_pm_json ?? { type: "paragraph" },
-            body_markdown: "capture",
-            body_text: "capture",
-            collapsed: false,
-            children: [],
-          },
-        });
-      }
-      throw new Error(`Unexpected fetch call: ${url.pathname}`);
-    });
+          });
+        }
+        if (
+          url.pathname === "/api/notes/quick-capture" &&
+          init?.method === "POST"
+        ) {
+          const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+          return jsonResponse({
+            data: {
+              id: "block-1",
+              parent_block_id: null,
+              order_key: "a",
+              body_pm_json: body.body_pm_json ?? { type: "paragraph" },
+              body_text: "capture",
+              collapsed: false,
+              children: [],
+            },
+          });
+        }
+        throw new Error(`Unexpected fetch call: ${url.pathname}`);
+      });
 
     await expect(fetchDailyNotePage("2026-05-06")).resolves.toMatchObject({
       id: "page-today",
@@ -69,8 +70,11 @@ describe("notes api", () => {
         localDate: "2026-05-06",
         blockId: "block-client-1",
         clientMutationId: "mutation-client-1",
-        bodyMarkdown: "capture",
-      })
+        bodyPmJson: {
+          type: "paragraph",
+          content: [{ type: "text", text: "capture" }],
+        },
+      }),
     ).resolves.toMatchObject({ id: "block-1", bodyText: "capture" });
 
     expect(fetchMock).toHaveBeenCalledWith(
@@ -80,10 +84,13 @@ describe("notes api", () => {
         body: JSON.stringify({
           id: "block-client-1",
           client_mutation_id: "mutation-client-1",
-          body_markdown: "capture",
+          body_pm_json: {
+            type: "paragraph",
+            content: [{ type: "text", text: "capture" }],
+          },
           local_date: "2026-05-06",
         }),
-      })
+      }),
     );
 
     await expect(
@@ -91,8 +98,11 @@ describe("notes api", () => {
         localDate: "2026-05-06",
         blockId: "block-client-2",
         clientMutationId: "mutation-client-2",
-        bodyPmJson: { type: "paragraph", content: [{ type: "text", text: "capture" }] },
-      })
+        bodyPmJson: {
+          type: "paragraph",
+          content: [{ type: "text", text: "capture" }],
+        },
+      }),
     ).resolves.toMatchObject({ id: "block-1", bodyText: "capture" });
 
     expect(fetchMock).toHaveBeenCalledWith(
@@ -102,63 +112,68 @@ describe("notes api", () => {
         body: JSON.stringify({
           id: "block-client-2",
           client_mutation_id: "mutation-client-2",
-          body_pm_json: { type: "paragraph", content: [{ type: "text", text: "capture" }] },
+          body_pm_json: {
+            type: "paragraph",
+            content: [{ type: "text", text: "capture" }],
+          },
           local_date: "2026-05-06",
         }),
-      })
+      }),
     );
   });
 
-  it("sends the current document save shape", async () => {
-    let requestBody: Record<string, unknown> | null = null;
+  it("saves surfaces through resource item mutations", async () => {
+    const calls: Array<{ path: string; method: string; body: Record<string, unknown> | null }> =
+      [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = new URL(String(input), "http://localhost");
-      expect(url.pathname).toBe("/api/notes/pages/page-1/document");
-      expect(init?.method).toBe("PATCH");
-      requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
-      return jsonResponse({
-        data: {
-          clientMutationId: "mutation-1",
-          documentVersion: 2,
-          changedBlockIds: ["block-1"],
-          changedEdgeIds: ["edge-1"],
-          reindexJobId: null,
-          page: {
+      calls.push({
+        path: url.pathname,
+        method: init?.method ?? "GET",
+        body: init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : null,
+      });
+      if (url.pathname.endsWith("/body")) {
+        return jsonResponse({
+          data: { bodyPmJson: { type: "paragraph" }, bodyText: "body", versions: {} },
+        });
+      }
+      if (url.pathname.endsWith("/adjacency")) {
+        return jsonResponse({ data: { changedEdgeIds: ["edge-1"] } });
+      }
+      if (url.pathname === "/api/notes/pages/page-1") {
+        return jsonResponse({
+          data: {
             id: "page-1",
             title: "Page",
-            description: null,
-            documentVersion: 2,
+            surface: null,
             blocks: [
               {
                 id: "block-1",
-                page_id: "page-1",
                 parent_block_id: null,
                 order_key: "0000000001",
-                block_kind: "bullet",
                 body_pm_json: { type: "paragraph" },
-                body_markdown: "body",
                 body_text: "body",
                 collapsed: false,
                 children: [],
               },
             ],
           },
-        },
-      });
+        });
+      }
+      return jsonResponse({ data: {} });
     });
 
-    const result = await saveNotePageDocument("page-1", {
+    const result = await saveResourceSurface("page-1", {
       clientMutationId: "mutation-1",
-      baseDocumentVersion: 1,
+      baseVersions: [{ ref: "page:page-1", lane: "title", version: 1 }],
       focusBlockId: null,
       blocks: [
         {
           id: "block-1",
-          blockKind: "bullet",
           bodyPmJson: { type: "paragraph" },
         },
       ],
-      containment: [
+      adjacency: [
         {
           parent: { scheme: "page", id: "page-1" },
           children: [
@@ -173,61 +188,45 @@ describe("notes api", () => {
       deletedBlockIds: ["block-2"],
     });
 
-    expect(requestBody).toEqual({
+    expect(calls.map((call) => [call.method, call.path])).toEqual([
+      ["PATCH", "/api/resource-items/note_block%3Ablock-1/body"],
+      ["PUT", "/api/resource-items/page%3Apage-1/adjacency"],
+      ["GET", "/api/notes/pages/page-1"],
+    ]);
+    expect(calls[0]?.body).toEqual({
       client_mutation_id: "mutation-1",
-      base_document_version: 1,
-      title: null,
-      focus_block_id: null,
-      blocks: [
-        {
-          id: "block-1",
-          block_kind: "bullet",
-          body_pm_json: { type: "paragraph" },
-        },
-      ],
-      containment: [
-        {
-          parent: { scheme: "page", id: "page-1" },
-          children: [
-            {
-              block_id: "block-1",
-              source_order_key: "0000000001",
-              collapsed: false,
-            },
-          ],
-        },
-      ],
-      deleted_block_ids: ["block-2"],
+      base_versions: [],
+      body_pm_json: { type: "paragraph" },
+    });
+    expect(calls[1]?.body).toEqual({
+      client_mutation_id: "mutation-1",
+      base_versions: [],
+      ordered_targets: [{ ref: "note_block:block-1", source_order_key: "0000000001" }],
     });
     expect(result.page.blocks[0]?.id).toBe("block-1");
-    expect(result.documentVersion).toBe(2);
+    expect(result.changedEdgeIds).toEqual(["edge-1"]);
   });
 
   it("rejects legacy revision fields in note responses", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       jsonResponse({
         data: {
-          clientMutationId: "mutation-1",
-          documentVersion: 1,
-          page: {
-            id: "page-1",
-            title: "Page",
-            description: null,
-            documentVersion: 1,
-            revision: 7,
-            blocks: [],
-          },
+          id: "page-1",
+          title: "Page",
+          surface: null,
+          revision: 7,
+          blocks: [],
         },
       }),
     );
 
     await expect(
-      saveNotePageDocument("page-1", {
+      saveResourceSurface("page-1", {
         clientMutationId: "mutation-1",
-        baseDocumentVersion: 1,
+        baseVersions: [],
         focusBlockId: null,
         blocks: [],
-        containment: [],
+        adjacency: [],
         deletedBlockIds: [],
       }),
     ).rejects.toThrow("note page includes legacy artifact identity");

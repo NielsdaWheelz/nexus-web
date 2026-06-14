@@ -38,7 +38,6 @@ const noteRetrieval = {
   deep_link: null,
   locator: {
     type: "note_block_offsets",
-    page_id: "page-3",
     block_id: "block-9",
     start_offset: 4,
     end_offset: 19,
@@ -65,7 +64,6 @@ describe("readerTargetFromRetrieval", () => {
     expect(target).not.toBeNull();
     expect(target?.kind).toBe("note");
     if (target?.kind !== "note") throw new Error("expected note target");
-    expect(target.page_id).toBe("page-3");
     expect(target.block_id).toBe("block-9");
     expect(target.start_offset).toBe(4);
     expect(target.end_offset).toBe(19);

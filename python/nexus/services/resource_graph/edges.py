@@ -1,4 +1,4 @@
-"""The sole writer of ``resource_edges`` (spec §9.3, AC13).
+"""Validated writer for public links and owner-scoped machine edge sets.
 
 Transaction discipline (§9.0): every mutator flushes within the caller's
 transaction and never commits, so conversation create, chat-run citation
@@ -7,6 +7,8 @@ write-through, Oracle phase persistence, and the LI promote compose atomically.
 Dedup is explicit SELECT-then-write (database.md: no ``ON CONFLICT``): bare
 edges (``ordinal IS NULL``) are unique per viewer, origin, and directed endpoint
 pair. ``origin=user`` links additionally dedup both directions (undirected, §5.4).
+Ordered adjacency is owned by ``resource_graph.adjacency`` because it replaces a
+source's ordered occurrence set and view state together.
 """
 
 from __future__ import annotations
@@ -31,11 +33,17 @@ from nexus.services.resource_graph.schemas import (
     snapshot_from_jsonb,
     snapshot_to_jsonb,
 )
+from nexus.services.resource_items.capabilities import RESOURCE_ITEM_CAPABILITIES
 
 
 def create_edge(db: Session, *, viewer_id: UUID, input: EdgeCreate) -> EdgeOut:
     """Validate and insert one edge; flush-only. Duplicates are rejected."""
     _validate_edge_input(db, viewer_id=viewer_id, edge=input)
+    if input.origin == "user" and input.source_order_key is not None:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Ordered adjacency must be written through the resource adjacency service",
+        )
     if input.ordinal is None:
         if (
             _existing_bare_pair_id(
@@ -50,6 +58,7 @@ def create_edge(db: Session, *, viewer_id: UUID, input: EdgeCreate) -> EdgeOut:
             raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Edge already exists")
         if (
             input.origin == "user"
+            and input.source_order_key is None
             and _existing_bare_pair_id(
                 db,
                 viewer_id=viewer_id,
@@ -61,23 +70,13 @@ def create_edge(db: Session, *, viewer_id: UUID, input: EdgeCreate) -> EdgeOut:
         ):
             raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Edge already exists")
         if (
-            input.origin == "note_containment"
-            and _existing_containment_target_id(db, viewer_id=viewer_id, target=input.target)
-            is not None
-        ):
-            raise InvalidRequestError(
-                ApiErrorCode.E_INVALID_REQUEST,
-                "Note block already has a containment parent",
-            )
-        if (
-            input.origin == "note_containment"
-            and input.source_order_key is not None
+            input.source_order_key is not None
             and _existing_source_order_id(
                 db, viewer_id=viewer_id, source=input.source, order_key=input.source_order_key
             )
             is not None
         ):
-            raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Containment order exists")
+            raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Source order exists")
     elif (
         _existing_ordinal_id(db, viewer_id=viewer_id, source=input.source, ordinal=input.ordinal)
         is not None
@@ -255,6 +254,11 @@ def _endpoint_matches(scheme: str, resource_id: UUID, ref: ResourceRef) -> bool:
 def _validate_edge_input(db: Session, *, viewer_id: UUID, edge: EdgeCreate) -> None:
     """Boundary validation plus visibility checks for edge writes."""
     validate_edge_shape(edge)
+    if edge.origin == "user":
+        if not RESOURCE_ITEM_CAPABILITIES[edge.source.scheme].linkable:
+            raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Resource cannot be linked")
+        if not RESOURCE_ITEM_CAPABILITIES[edge.target.scheme].linkable:
+            raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Resource cannot be linked")
     # Missing targets are rejected unless the target is an external snapshot,
     # which exists to outlive whatever it captured (§7.3).
     if edge.target.scheme != "external_snapshot":
@@ -293,21 +297,8 @@ def _existing_source_order_id(
     return db.execute(
         select(ResourceEdge.id).where(
             ResourceEdge.user_id == viewer_id,
-            ResourceEdge.origin == "note_containment",
             _source_is(source),
             ResourceEdge.source_order_key == order_key,
-        )
-    ).scalar_one_or_none()
-
-
-def _existing_containment_target_id(
-    db: Session, *, viewer_id: UUID, target: ResourceRef
-) -> UUID | None:
-    return db.execute(
-        select(ResourceEdge.id).where(
-            ResourceEdge.user_id == viewer_id,
-            ResourceEdge.origin == "note_containment",
-            _target_is(target),
         )
     ).scalar_one_or_none()
 

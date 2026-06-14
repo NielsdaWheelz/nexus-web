@@ -79,13 +79,8 @@ export const useReaderPulseHighlight = readerPulseChannel.useSubscribe;
 
 export const NOTE_PULSE_HIGHLIGHT = "nexus:note-pulse-highlight";
 
-/**
- * Pulse target for a notes page: scroll the page editor to `blockId` and pulse
- * the `[startOffset, endOffset)` character range. The notes analog of
- * {@link ReaderPulseTarget}.
- */
+/** Pulse target for a note body range. */
 export interface NotePulseTarget {
-  pageId: string;
   blockId: string;
   startOffset: number;
   endOffset: number;
@@ -97,7 +92,6 @@ export interface NotePulseTarget {
 export function isNotePulseTarget(value: unknown): value is NotePulseTarget {
   if (!isRecord(value)) return false;
   return (
-    typeof value.pageId === "string" &&
     typeof value.blockId === "string" &&
     typeof value.startOffset === "number" &&
     typeof value.endOffset === "number" &&

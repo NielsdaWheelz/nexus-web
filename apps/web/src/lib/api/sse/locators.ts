@@ -58,7 +58,6 @@ export type RetrievalLocator =
     }
   | {
       type: "note_block_offsets";
-      page_id: string;
       block_id: string;
       start_offset: number;
       end_offset: number;
@@ -202,12 +201,10 @@ export function isRetrievalLocator(value: unknown): value is RetrievalLocator {
       return (
         hasOnlyKeys(value, [
           "type",
-          "page_id",
           "block_id",
           "start_offset",
           "end_offset",
         ]) &&
-        typeof value.page_id === "string" &&
         typeof value.block_id === "string" &&
         isValidOffsetRange(value)
       );

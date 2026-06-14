@@ -25,7 +25,6 @@ export const outlineSchema = new Schema({
       content: "block_body outline_block*",
       attrs: {
         id: {},
-        kind: { default: "bullet" },
         collapsed: { default: false },
       },
       defining: true,
@@ -36,7 +35,6 @@ export const outlineSchema = new Schema({
             if (!(dom instanceof HTMLElement)) return false;
             return {
               id: dom.getAttribute("data-note-block-id"),
-              kind: dom.getAttribute("data-note-block-kind") ?? "bullet",
               collapsed: dom.getAttribute("data-collapsed") === "true",
             };
           },
@@ -46,7 +44,6 @@ export const outlineSchema = new Schema({
         "li",
         {
           "data-note-block-id": node.attrs.id,
-          "data-note-block-kind": node.attrs.kind,
           "data-collapsed": node.attrs.collapsed ? "true" : "false",
         },
         [
@@ -271,12 +268,11 @@ function blockToNode(block: NoteBlock): ProseMirrorNode {
     paragraph = paragraphFromText(block.bodyText);
   }
 
-  return outlineBlock.create(
-    {
-      id: block.id,
-      kind: block.blockKind,
-      collapsed: block.collapsed,
-    },
+	  return outlineBlock.create(
+	    {
+	      id: block.id,
+	      collapsed: block.collapsed,
+	    },
     [paragraph, ...block.children.map(blockToNode)]
   );
 }
@@ -287,18 +283,17 @@ export function createEmptyOutlineDoc(blockId = "new-block"): ProseMirrorNode {
   if (!doc || !block) {
     throw new Error("Missing notes schema nodes");
   }
-  return doc.create(null, [
-    block.create({ id: blockId, kind: "bullet", collapsed: false }, [paragraphFromText("")]),
-  ]);
+	  return doc.create(null, [
+	    block.create({ id: blockId, collapsed: false }, [paragraphFromText("")]),
+	  ]);
 }
 
 export function createOutlineDocFromBlock(input: {
-  id: string;
-  bodyPmJson?: Record<string, unknown> | null;
-  bodyText?: string | null;
-  blockKind?: string | null;
-  collapsed?: boolean | null;
-}): ProseMirrorNode {
+	  id: string;
+	  bodyPmJson?: Record<string, unknown> | null;
+	  bodyText?: string | null;
+	  collapsed?: boolean | null;
+	}): ProseMirrorNode {
   const doc = outlineSchema.nodes.outline_doc;
   const block = outlineSchema.nodes.outline_block;
   if (!doc || !block) {
@@ -323,11 +318,10 @@ export function createOutlineDocFromBlock(input: {
 
   return doc.create(null, [
     block.create(
-      {
-        id: input.id,
-        kind: input.blockKind ?? "bullet",
-        collapsed: Boolean(input.collapsed),
-      },
+	      {
+	        id: input.id,
+	        collapsed: Boolean(input.collapsed),
+	      },
       [paragraph]
     ),
   ]);

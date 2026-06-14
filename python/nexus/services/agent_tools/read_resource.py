@@ -41,7 +41,6 @@ from nexus.services.resource_graph.context import admits_resource_for_conversati
 from nexus.services.resource_graph.refs import (
     ResourceRef,
     ResourceRefParseFailure,
-    ResourceScheme,
     parse_resource_ref,
 )
 from nexus.services.resource_graph.resolve import (
@@ -50,43 +49,21 @@ from nexus.services.resource_graph.resolve import (
     load_resource_batch,
     parent_media_id_for_read_pointer,
 )
+from nexus.services.resource_items.capabilities import (
+    CITABLE_RESOURCE_RESULT_TYPES,
+    READABLE_RESOURCE_SCHEMES,
+    SCOPE_ONLY_RESOURCE_SCHEMES,
+)
 
 READ_RESOURCE_TOOL_NAME = "read_resource"
-
-# Read-tool scheme policy. `library` is rejected with a search redirect (it is a
-# scope, not a body); the graph's other non-body schemes (oracle, external
-# snapshots, contributors, podcasts) are simply not readable here. `media` is
-# readable (full / too_large) and Library Intelligence output refs have canonical
-# synthesis bodies even though they are not search scopes.
-_SCOPE_NOT_READABLE_SCHEMES: tuple[ResourceScheme, ...] = ("library",)
-_READABLE_SCHEMES: tuple[ResourceScheme, ...] = (
-    "media",
-    "library_intelligence_artifact",
-    "library_intelligence_revision",
-    "oracle_reading",
-    "evidence_span",
-    "content_chunk",
-    "highlight",
-    "page",
-    "note_block",
-    "fragment",
-    "conversation",
-    "message",
-)
 
 READ_RESOURCE_TOOL_DEFINITION: dict[str, Any] = {
     "name": READ_RESOURCE_TOOL_NAME,
     "description": (
         "Fetch the exact text of a resource from <resources> in your system context, "
-        "or a read_uri that inspect_resource returned. Accepts 'media:UUID' (the whole "
-        "document if short, else a redirect to inspect_resource), 'page_range:MEDIA:a-b' "
-        "(PDF pages), 'fragment:UUID' (a section), 'highlight:UUID', 'evidence_span:UUID', "
-        "'content_chunk:UUID', 'page:UUID', 'note_block:UUID', 'message:UUID', "
-        "'conversation:UUID', 'library_intelligence_artifact:UUID' (a library's "
-        "current synthesis), 'library_intelligence_revision:UUID' (an exact "
-        "synthesis revision), or 'oracle_reading:UUID' (a Black Forest Oracle reading). "
-        "Not valid for 'library:UUID' — that is a search scope; use "
-        "app_search with scopes=[...]. Every result is labelled with a kind attribute."
+        "or a read_uri that inspect_resource returned. Scope resources are not "
+        "readable; use app_search with scopes=[...] for those. Every result is "
+        "labelled with a kind attribute."
     ),
     "parameters": {
         "type": "object",
@@ -216,7 +193,7 @@ def execute_read_resource(
             error_code="invalid_uri",
         )
 
-    if parsed.scheme in _SCOPE_NOT_READABLE_SCHEMES:
+    if parsed.scheme in SCOPE_ONLY_RESOURCE_SCHEMES:
         return ReadResourceResult(
             uri=uri,
             status="error",
@@ -227,7 +204,7 @@ def execute_read_resource(
             error_code="scope_not_readable",
         )
 
-    if parsed.scheme not in _READABLE_SCHEMES:
+    if parsed.scheme not in READABLE_RESOURCE_SCHEMES:
         return ReadResourceResult(
             uri=uri,
             status="error",
@@ -333,12 +310,16 @@ def _present_read(loaded: LoadedResource) -> ReadResourceResult:
             citation_result_type="fragment",
             citation_source_id=loaded.uri.partition(":")[2],
         )
+    citation_result_type = CITABLE_RESOURCE_RESULT_TYPES.get(scheme)
+    citation_source_id = loaded.uri.partition(":")[2] if citation_result_type is not None else None
     if scheme == "conversation":
         return ReadResourceResult(
             uri=loaded.uri,
             status="complete",
             body=f"{loaded.title}\nChat history with {loaded.message_count or 0} messages.",
             kind="conversation",
+            citation_result_type=citation_result_type,
+            citation_source_id=citation_source_id,
         )
     if scheme == "message":
         return ReadResourceResult(
@@ -346,6 +327,8 @@ def _present_read(loaded: LoadedResource) -> ReadResourceResult:
             status="complete",
             body=f"{loaded.message_role}:\n{loaded.body or ''}",
             kind="message",
+            citation_result_type=citation_result_type,
+            citation_source_id=citation_source_id,
         )
     if scheme in ("library_intelligence_artifact", "library_intelligence_revision"):
         # LI synthesis prose is NON-citable here: inline [N] markers reference the
@@ -392,7 +375,12 @@ def _present_read(loaded: LoadedResource) -> ReadResourceResult:
         )
     if scheme in ("evidence_span", "content_chunk", "page", "note_block"):
         return ReadResourceResult(
-            uri=loaded.uri, status="complete", body=loaded.body or "", kind=scheme
+            uri=loaded.uri,
+            status="complete",
+            body=loaded.body or "",
+            kind=scheme,
+            citation_result_type=citation_result_type,
+            citation_source_id=citation_source_id,
         )
     # media/library never reach here: media is handled before the loader, library rejected.
     raise AssertionError(f"Unreadable resource URI scheme reached read presenter: {scheme}")

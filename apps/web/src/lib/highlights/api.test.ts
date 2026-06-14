@@ -41,7 +41,6 @@ function highlight(
     linked_note_blocks: noteIds.map((noteId) => ({
       note_block_id: noteId,
       body_pm_json: { type: "paragraph" },
-      body_markdown: noteId,
       body_text: noteId,
     })),
   };
@@ -60,7 +59,6 @@ describe("media highlight note summary helpers", () => {
           data: {
             note_block_id: "note-1",
             body_pm_json: { type: "paragraph" },
-            body_markdown: "saved",
             body_text: "saved",
           },
         }),
@@ -100,7 +98,6 @@ describe("media highlight note summary helpers", () => {
     const next = patchHighlightLinkedNoteBlock(original, "highlight-1", {
       note_block_id: "note-1",
       body_pm_json: { type: "paragraph", content: [{ type: "text", text: "updated" }] },
-      body_markdown: "updated",
       body_text: "updated",
     });
 
@@ -112,7 +109,6 @@ describe("media highlight note summary helpers", () => {
           type: "paragraph",
           content: [{ type: "text", text: "updated" }],
         },
-        body_markdown: "updated",
         body_text: "updated",
       },
     ]);
@@ -124,7 +120,6 @@ describe("media highlight note summary helpers", () => {
     const next = patchHighlightLinkedNoteBlock(original, "highlight-1", {
       note_block_id: "note-created",
       body_pm_json: { type: "paragraph" },
-      body_markdown: "created",
       body_text: "created",
     });
 

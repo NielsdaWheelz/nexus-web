@@ -254,7 +254,6 @@ function StableNoteKeyHarness({
             const linkedNoteBlock = {
               note_block_id: createBlockId,
               body_pm_json: bodyPmJson,
-              body_markdown: "saved",
               body_text: "saved",
             };
             setLinkedNoteBlocks([linkedNoteBlock]);

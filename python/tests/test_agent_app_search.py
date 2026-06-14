@@ -14,7 +14,7 @@ from nexus.services.agent_tools.app_search import (
     render_retrieved_context_blocks,
 )
 from nexus.services.contributor_credits import replace_media_contributor_credits
-from nexus.services.note_indexing import rebuild_page_content_index
+from nexus.services.note_indexing import rebuild_note_content_index
 from nexus.services.retrieval_citation import RetrievalCitation
 from nexus.services.search import ALL_RESULT_TYPES
 from tests.factories import (
@@ -340,13 +340,14 @@ def test_default_scope_resolution_ignores_synapse_and_non_context_edges(
         text(
             """
             INSERT INTO resource_edges (
-                user_id, kind, origin, source_scheme, source_id, target_scheme, target_id
+                user_id, kind, origin, source_scheme, source_id, target_scheme, target_id,
+                snapshot
             )
             VALUES
-                (:user_id, 'context', 'synapse', 'conversation', :conversation_id,
-                 'media', :synapse_media_id),
+                (:user_id, 'context', 'synapse', 'media', :synapse_media_id,
+                 'media', :supports_media_id, '{"excerpt":"test rationale"}'::jsonb),
                 (:user_id, 'supports', 'user', 'conversation', :conversation_id,
-                 'media', :supports_media_id)
+                 'media', :supports_media_id, NULL)
             """
         ),
         {
@@ -947,7 +948,7 @@ def test_execute_app_search_cites_note_block_as_prompt_evidence(
 ) -> None:
     """AC-5: the AI cites your notes.
 
-    A page-owned note whose body matches the query is retrieved as a note_block result
+    A note-owned body matching the query is retrieved as a note_block result
     (chat plans content_chunk + note_block exactly like chat_runs.py), selected into the
     prompt, rendered via _render_note_block_block, and persisted with a /notes/{block_id}
     deep link.
@@ -1043,8 +1044,7 @@ def test_execute_app_search_cites_note_block_as_prompt_evidence(
 
     # Cleanup is LIFO (db.py: deleted in reverse of registration), so register parents
     # before children — users FIRST (deleted LAST) and the highlight_fragment_anchors LAST
-    # (deleted FIRST). The pages(user_id) handler cascades note_blocks + page-owned content
-    # + the note_blocks' resource_edges before deleting the pages themselves.
+    # (deleted FIRST). Note cleanup owns note bodies and note-owned content.
     direct_db.register_cleanup("users", "id", user_id)
     direct_db.register_cleanup("libraries", "id", library_id)
     direct_db.register_cleanup("memberships", "library_id", library_id)
@@ -1061,9 +1061,9 @@ def test_execute_app_search_cites_note_block_as_prompt_evidence(
 def test_scoped_app_search_with_only_indexed_notes_is_no_results(
     direct_db: DirectSessionManager,
 ) -> None:
-    """A scope that holds ONLY page-owned (note) ready evidence — no indexed media — and a
+    """A scope that holds ONLY note-owned ready evidence — no indexed media — and a
     query that matches nothing is no_results, not no_indexed_evidence. Proves the
-    page-owner union in _scoped_content_chunk_empty_status: a note in scope makes the scope
+    note-owner union in _scoped_content_chunk_empty_status: a note in scope makes the scope
     'indexed'. The note is put in scope for a media: URI via a note_block->media
     resource_edge (the §4.6 note_block scope cell).
     """
@@ -1112,7 +1112,7 @@ def test_scoped_app_search_with_only_indexed_notes_is_no_results(
             ),
             {"library_id": library_id, "media_id": media_id},
         )
-        # A page-owned note block indexed into the unified content pipeline (owner_kind=page).
+        # A note block indexed into the unified content pipeline.
         session.execute(
             text("INSERT INTO pages (id, user_id, title) VALUES (:page_id, :user_id, 'Notes')"),
             {"page_id": page_id, "user_id": user_id},
@@ -1121,18 +1121,17 @@ def test_scoped_app_search_with_only_indexed_notes_is_no_results(
             text(
                 """
                 INSERT INTO note_blocks (
-                    id, user_id, block_kind,
-                    body_pm_json, body_markdown, body_text
+                    id, user_id, body_pm_json, body_text
                 )
                 VALUES (
-                    :note_block_id, :user_id, 'bullet',
+                    :note_block_id, :user_id,
                     jsonb_build_object(
                         'type', 'paragraph',
                         'content', jsonb_build_array(
                             jsonb_build_object('type', 'text', 'text', CAST(:body_text AS text))
                         )
                     ),
-                    :body_text, :body_text
+                    :body_text
                 )
                 """
             ),
@@ -1150,16 +1149,28 @@ def test_scoped_app_search_with_only_indexed_notes_is_no_results(
                     target_id, source_order_key
                 )
                 VALUES (
-                    :user_id, 'context', 'note_containment', 'page', :page_id,
+                    :user_id, 'context', 'user', 'page', :page_id,
                     'note_block', :note_block_id, '0000000001'
                 )
                 """
             ),
             {"user_id": user_id, "page_id": page_id, "note_block_id": note_block_id},
         )
-        # Put the note in scope for media:{media_id} via a note_body edge note_block->media
-        # (the note_block §4.6 scope cell matches a resource_edges row touching BOTH the
-        # note_block and media:{media_id} at either endpoint — see _note_object_scope).
+        highlight_id = uuid4()
+        session.execute(
+            text(
+                """
+                INSERT INTO highlights (
+                    id, user_id, anchor_kind, anchor_media_id, color, exact, prefix, suffix
+                )
+                VALUES (
+                    :highlight_id, :user_id, 'fragment_offsets', :media_id,
+                    'yellow', 'exact', 'prefix', 'suffix'
+                )
+                """
+            ),
+            {"highlight_id": highlight_id, "user_id": user_id, "media_id": media_id},
+        )
         session.execute(
             text(
                 """
@@ -1167,13 +1178,14 @@ def test_scoped_app_search_with_only_indexed_notes_is_no_results(
                     user_id, kind, origin, source_scheme, source_id, target_scheme, target_id
                 )
                 VALUES (
-                    :user_id, 'context', 'note_body', 'note_block', :note_block_id, 'media', :media_id
+                    :user_id, 'context', 'highlight_note', 'highlight', :highlight_id,
+                    'note_block', :note_block_id
                 )
                 """
             ),
-            {"user_id": user_id, "note_block_id": note_block_id, "media_id": media_id},
+            {"user_id": user_id, "highlight_id": highlight_id, "note_block_id": note_block_id},
         )
-        rebuild_page_content_index(session, page_id=page_id, reason="test")
+        rebuild_note_content_index(session, note_block_id=note_block_id, reason="test")
         add_context_edge(session, conversation_id, f"media:{media_id}")
 
         run = execute_app_search(
@@ -1198,9 +1210,8 @@ def test_scoped_app_search_with_only_indexed_notes_is_no_results(
         assert 'status="no_indexed_evidence"' not in run.context_text
 
     # Cleanup is LIFO (db.py: deleted in reverse of registration), so register parents
-    # before children — users FIRST (deleted LAST). The pages(id) handler cascades the
-    # page's note_blocks + page-owned content + the note_block->media resource_edge before
-    # deleting the page, so it is registered after (deleted before) media/users.
+    # before children — users FIRST (deleted LAST). Note cleanup owns note content and
+    # resource_edges owns the note_block->media edge.
     direct_db.register_cleanup("users", "id", user_id)
     direct_db.register_cleanup("libraries", "id", library_id)
     direct_db.register_cleanup("memberships", "library_id", library_id)
@@ -1209,6 +1220,7 @@ def test_scoped_app_search_with_only_indexed_notes_is_no_results(
     direct_db.register_cleanup("resource_edges", "source_id", conversation_id)
     direct_db.register_cleanup("media", "id", media_id)
     direct_db.register_cleanup("library_entries", "media_id", media_id)
+    direct_db.register_cleanup("highlights", "user_id", user_id)
     direct_db.register_cleanup("resource_edges", "user_id", user_id)
     direct_db.register_cleanup("note_blocks", "id", note_block_id)
     direct_db.register_cleanup("pages", "id", page_id)
@@ -1265,7 +1277,7 @@ def test_scoped_app_search_with_no_indexed_media_or_notes_is_no_indexed_evidence
             ),
             {"library_id": library_id, "media_id": media_id},
         )
-        # A page-owned indexed note that exists but is NOT linked into this media scope, so
+        # An indexed note that exists but is NOT linked into this media scope, so
         # the note_block scope cell does not match it.
         session.execute(
             text("INSERT INTO pages (id, user_id, title) VALUES (:page_id, :user_id, 'Notes')"),
@@ -1275,18 +1287,17 @@ def test_scoped_app_search_with_no_indexed_media_or_notes_is_no_indexed_evidence
             text(
                 """
                 INSERT INTO note_blocks (
-                    id, user_id, block_kind,
-                    body_pm_json, body_markdown, body_text
+                    id, user_id, body_pm_json, body_text
                 )
                 VALUES (
-                    :note_block_id, :user_id, 'bullet',
+                    :note_block_id, :user_id,
                     jsonb_build_object(
                         'type', 'paragraph',
                         'content', jsonb_build_array(
                             jsonb_build_object('type', 'text', 'text', CAST(:body_text AS text))
                         )
                     ),
-                    :body_text, :body_text
+                    :body_text
                 )
                 """
             ),
@@ -1304,14 +1315,14 @@ def test_scoped_app_search_with_no_indexed_media_or_notes_is_no_indexed_evidence
                     target_id, source_order_key
                 )
                 VALUES (
-                    :user_id, 'context', 'note_containment', 'page', :page_id,
+                    :user_id, 'context', 'user', 'page', :page_id,
                     'note_block', :note_block_id, '0000000001'
                 )
                 """
             ),
             {"user_id": user_id, "page_id": page_id, "note_block_id": note_block_id},
         )
-        rebuild_page_content_index(session, page_id=page_id, reason="test")
+        rebuild_note_content_index(session, note_block_id=note_block_id, reason="test")
         add_context_edge(session, conversation_id, f"media:{media_id}")
 
         run = execute_app_search(
@@ -1335,8 +1346,7 @@ def test_scoped_app_search_with_no_indexed_media_or_notes_is_no_indexed_evidence
         assert 'status="no_indexed_evidence"' in run.context_text
 
     # Cleanup is LIFO (db.py: deleted in reverse of registration), so register parents
-    # before children — users FIRST (deleted LAST). The pages(id) handler cascades the
-    # page's note_blocks + page-owned content before deleting the page.
+    # before children — users FIRST (deleted LAST). Note cleanup owns note content.
     direct_db.register_cleanup("users", "id", user_id)
     direct_db.register_cleanup("libraries", "id", library_id)
     direct_db.register_cleanup("memberships", "library_id", library_id)

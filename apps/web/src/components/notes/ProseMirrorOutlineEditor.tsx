@@ -631,10 +631,7 @@ function insertMediaAttachment(
     const bodyTo = bodyFrom + body.nodeSize;
     view.dispatch(
       view.state.tr
-        .setNodeMarkup(blockPos, undefined, {
-          ...block.attrs,
-          kind: "embed",
-        })
+        .setNodeMarkup(blockPos, undefined, block.attrs)
         .replaceWith(bodyFrom, bodyTo, embed)
         .scrollIntoView()
     );
@@ -642,7 +639,7 @@ function insertMediaAttachment(
   }
 
   const attachmentBlock = outlineSchema.nodes.outline_block!.create(
-    { id: input.createBlockId(), kind: "embed", collapsed: false },
+    { id: input.createBlockId(), collapsed: false },
     [embed]
   );
   view.dispatch(view.state.tr.insert(blockPos + block.nodeSize, attachmentBlock).scrollIntoView());

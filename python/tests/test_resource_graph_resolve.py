@@ -120,8 +120,8 @@ def _make_span(db: Session, media_id: UUID, text: str = "Inline span body.") -> 
     return span.id
 
 
-def _make_page(db: Session, user_id: UUID, *, description: str = "Page body.") -> UUID:
-    page = Page(id=uuid4(), user_id=user_id, title="Test Page", description=description)
+def _make_page(db: Session, user_id: UUID, *, title: str = "Test Page") -> UUID:
+    page = Page(id=uuid4(), user_id=user_id, title=title)
     db.add(page)
     db.commit()
     return page.id
@@ -132,9 +132,7 @@ def _make_note_block(db: Session, user_id: UUID, *, body: str = "Note body.") ->
     block = NoteBlock(
         id=uuid4(),
         user_id=user_id,
-        block_kind="bullet",
         body_pm_json={"type": "paragraph", "content": [{"type": "text", "text": body}]},
-        body_markdown=body,
         body_text=body,
     )
     db.add(block)
@@ -143,7 +141,7 @@ def _make_note_block(db: Session, user_id: UUID, *, body: str = "Note body.") ->
         ResourceEdge(
             user_id=user_id,
             kind="context",
-            origin="note_containment",
+            origin="user",
             source_scheme="page",
             source_id=page_id,
             target_scheme="note_block",
@@ -857,21 +855,23 @@ def test_resolve_highlight_includes_linked_note(db_session: Session, bootstrappe
     )
 
 
-def test_resolve_page_owner_inlines_short_description(db_session: Session, bootstrapped_user: UUID):
-    page_id = _make_page(db_session, bootstrapped_user, description="Page description body.")
+def test_resolve_page_owner_inlines_title(db_session: Session, bootstrapped_user: UUID):
+    page_id = _make_page(db_session, bootstrapped_user, title="Page title body")
     resolved = _resolve(db_session, f"page:{page_id}", viewer_id=bootstrapped_user)
 
     assert not resolved.missing, f"Owner-resolved page should be visible; got {resolved}"
-    assert resolved.label == "Test Page", f"Page label should be the title; got {resolved.label}"
-    assert resolved.inline_body == "Page description body.", (
-        f"Short page descriptions should inline; got {resolved.inline_body!r}"
+    assert resolved.label == "Page title body", (
+        f"Page label should be the title; got {resolved.label}"
+    )
+    assert resolved.inline_body == "Page title body", (
+        f"Page prompt body is title-only; got {resolved.inline_body!r}"
     )
 
 
 def test_resolve_page_non_owner_returns_missing(db_session: Session, bootstrapped_user: UUID):
     other_user_id = uuid4()
     ensure_user_and_default_library(db_session, other_user_id)
-    page_id = _make_page(db_session, other_user_id, description="Private page.")
+    page_id = _make_page(db_session, other_user_id, title="Private page")
 
     resolved = _resolve(db_session, f"page:{page_id}", viewer_id=bootstrapped_user)
 
@@ -1161,7 +1161,7 @@ def test_resolve_batch_groups_by_scheme(db_session: Session, bootstrapped_user: 
     media_id = create_test_media_in_library(
         db_session, bootstrapped_user, library_id, title="Batch Source"
     )
-    page_id = _make_page(db_session, bootstrapped_user, description="Batch page.")
+    page_id = _make_page(db_session, bootstrapped_user, title="Batch page")
 
     uris = [
         f"media:{media_id}",

@@ -126,7 +126,9 @@ def execute_inspect_resource(
             "not_inspectable",
         )
 
-    if not admits_resource_for_conversation_read(db, conversation_id=conversation_id, target=parsed):
+    if not admits_resource_for_conversation_read(
+        db, conversation_id=conversation_id, target=parsed
+    ):
         return _error(
             uri,
             f"Resource {uri} is not in this conversation's context refs. "

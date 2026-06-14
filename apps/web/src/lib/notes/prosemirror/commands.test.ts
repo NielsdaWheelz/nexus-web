@@ -92,11 +92,11 @@ describe("notes ProseMirror commands", () => {
   it("lifts the first child when backspace is pressed at its start", () => {
     const doc = outlineSchema.nodes.outline_doc!.create(null, [
       outlineSchema.nodes.outline_block!.create(
-        { id: "parent", kind: "bullet", collapsed: false },
+        { id: "parent", collapsed: false },
         [
           outlineSchema.nodes.paragraph!.create(null, outlineSchema.text("parent")),
           outlineSchema.nodes.outline_block!.create(
-            { id: "child", kind: "bullet", collapsed: false },
+            { id: "child", collapsed: false },
             [outlineSchema.nodes.paragraph!.create(null, outlineSchema.text("child"))]
           ),
         ]
@@ -193,7 +193,7 @@ function outlineTexts(doc: ProseMirrorNode): string[] {
 function outlineJsonFromTexts(texts: string[]): Record<string, unknown> {
   const blocks = texts.map((text, index) =>
     outlineSchema.nodes.outline_block!.create(
-      { id: `block-${index + 1}`, kind: "bullet", collapsed: false },
+      { id: `block-${index + 1}`, collapsed: false },
       [outlineSchema.nodes.paragraph!.create(null, text ? outlineSchema.text(text) : null)]
     )
   );

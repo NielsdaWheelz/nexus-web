@@ -15,9 +15,10 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.db.models import Contributor, NoteBlock
+from nexus.db.models import Contributor, NoteBlock, ResourceEdge
 from nexus.errors import InvalidRequestError, NotFoundError
-from nexus.services.note_indexing import rebuild_page_content_index
+from nexus.services.note_indexing import rebuild_note_content_index
+from nexus.services.resource_graph import adjacency as graph_adjacency
 from nexus.services.resource_graph.citations import (
     build_citation_outs,
     record_citation,
@@ -119,9 +120,7 @@ def _note_block_ref(db: Session, user_id: UUID, *, text: str = "Block") -> Resou
     block = NoteBlock(
         id=uuid4(),
         user_id=user_id,
-        block_kind="bullet",
         body_pm_json={"type": "paragraph"},
-        body_markdown=text,
         body_text=text,
     )
     db.add(block)
@@ -135,46 +134,32 @@ def _message_ref(db: Session, user_id: UUID) -> ResourceRef:
 
 
 def _indexed_note_refs(db: Session, user_id: UUID) -> tuple[ResourceRef, ResourceRef, ResourceRef]:
-    page_id = _make_page(db, user_id)
     block = NoteBlock(
         id=uuid4(),
         user_id=user_id,
-        block_kind="bullet",
         body_pm_json={
             "type": "paragraph",
             "content": [{"type": "text", "text": "A cited note block for graph evidence."}],
         },
-        body_markdown="A cited note block for graph evidence.",
         body_text="A cited note block for graph evidence.",
     )
     db.add(block)
     db.flush()
-    create_edge(
-        db,
-        viewer_id=user_id,
-        input=EdgeCreate(
-            source=ResourceRef(scheme="page", id=page_id),
-            target=ResourceRef(scheme="note_block", id=block.id),
-            kind="context",
-            origin="note_containment",
-            source_order_key="0000000001",
-        ),
-    )
-    result = rebuild_page_content_index(db, page_id=page_id, reason="test")
-    assert result.status == "ready", f"expected indexed note page, got {result.status}"
+    result = rebuild_note_content_index(db, note_block_id=block.id, reason="test")
+    assert result.status == "ready", f"expected indexed note, got {result.status}"
     row = (
         db.execute(
             text(
                 """
                 SELECT id, primary_evidence_span_id
                 FROM content_chunks
-                WHERE owner_kind = 'page'
-                  AND owner_id = :page_id
+                WHERE owner_kind = 'note_block'
+                  AND owner_id = :note_block_id
                 ORDER BY chunk_idx ASC
                 LIMIT 1
                 """
             ),
-            {"page_id": page_id},
+            {"note_block_id": block.id},
         )
         .mappings()
         .one()
@@ -222,14 +207,13 @@ def test_create_edge_rejects_missing_source(db_session: Session, bootstrapped_us
         create_edge(db_session, viewer_id=bootstrapped_user, input=_bare(missing_source, target))
 
 
-def test_create_edge_allows_unresolvable_external_snapshot_target(
+def test_create_edge_rejects_user_link_to_external_snapshot_target(
     db_session: Session, bootstrapped_user: UUID
 ):
-    """external_snapshot targets are exempt from target resolution (§7.3)."""
     source = _page_ref(db_session, bootstrapped_user)
     target = ResourceRef(scheme="external_snapshot", id=uuid4())
-    edge = create_edge(db_session, viewer_id=bootstrapped_user, input=_bare(source, target))
-    assert edge.target == target, f"external_snapshot target must be accepted; got {edge}"
+    with pytest.raises(InvalidRequestError):
+        create_edge(db_session, viewer_id=bootstrapped_user, input=_bare(source, target))
 
 
 def test_create_edge_rejects_unknown_kind(db_session: Session, bootstrapped_user: UUID):
@@ -482,11 +466,19 @@ def test_user_link_dedup_checks_both_directions(db_session: Session, bootstrappe
 
 def test_machine_origin_dedup_is_directed_only(db_session: Session, bootstrapped_user: UUID):
     """The undirected check is user-link semantics; machine writers stay directed."""
-    a = _page_ref(db_session, bootstrapped_user)
+    a = _note_block_ref(db_session, bootstrapped_user)
     b = _media_ref(db_session, bootstrapped_user)
     create_edge(db_session, viewer_id=bootstrapped_user, input=_bare(a, b, origin="user"))
     reverse = create_edge(
-        db_session, viewer_id=bootstrapped_user, input=_bare(b, a, origin="synapse")
+        db_session,
+        viewer_id=bootstrapped_user,
+        input=EdgeCreate(
+            source=b,
+            target=a,
+            kind="context",
+            origin="synapse",
+            snapshot=_SNAPSHOT,
+        ),
     )
     assert reverse.source == b and reverse.target == a, (
         "A reverse-direction machine edge must coexist with a user link"
@@ -496,7 +488,7 @@ def test_machine_origin_dedup_is_directed_only(db_session: Session, bootstrapped
 def test_same_directed_pair_can_exist_under_different_origins(
     db_session: Session, bootstrapped_user: UUID
 ):
-    source = _page_ref(db_session, bootstrapped_user)
+    source = _note_block_ref(db_session, bootstrapped_user)
     target = _media_ref(db_session, bootstrapped_user)
     user_edge = create_edge(
         db_session, viewer_id=bootstrapped_user, input=_bare(source, target, origin="user")
@@ -531,7 +523,7 @@ def test_user_edges_reject_order_keys(db_session: Session, bootstrapped_user: UU
         )
 
 
-def test_conversation_context_edges_allow_source_order_key(
+def test_conversation_machine_context_edges_allow_source_order_key(
     db_session: Session, bootstrapped_user: UUID
 ):
     source = ResourceRef(
@@ -540,19 +532,18 @@ def test_conversation_context_edges_allow_source_order_key(
     )
     target = _media_ref(db_session, bootstrapped_user)
 
-    edge = create_edge(
-        db_session,
-        viewer_id=bootstrapped_user,
-        input=EdgeCreate(
-            source=source,
-            target=target,
-            kind="context",
-            origin="user",
-            source_order_key="0000000001",
-        ),
-    )
-
-    assert edge.source_order_key == "0000000001"
+    with pytest.raises(InvalidRequestError):
+        create_edge(
+            db_session,
+            viewer_id=bootstrapped_user,
+            input=EdgeCreate(
+                source=source,
+                target=target,
+                kind="context",
+                origin="user",
+                source_order_key="0000000001",
+            ),
+        )
 
     citation_context_edge = create_edge(
         db_session,
@@ -562,11 +553,11 @@ def test_conversation_context_edges_allow_source_order_key(
             target=_page_ref(db_session, bootstrapped_user),
             kind="context",
             origin="citation",
-            source_order_key="0000000002",
+            source_order_key="0000000001",
         ),
     )
 
-    assert citation_context_edge.source_order_key == "0000000002"
+    assert citation_context_edge.source_order_key == "0000000001"
 
     system_context_edge = create_edge(
         db_session,
@@ -576,11 +567,11 @@ def test_conversation_context_edges_allow_source_order_key(
             target=_media_ref(db_session, bootstrapped_user, title="System Context"),
             kind="context",
             origin="system",
-            source_order_key="0000000003",
+            source_order_key="0000000002",
         ),
     )
 
-    assert system_context_edge.source_order_key == "0000000003"
+    assert system_context_edge.source_order_key == "0000000002"
 
 
 def test_conversation_source_order_key_rejects_non_context_origins(
@@ -592,7 +583,7 @@ def test_conversation_source_order_key_rejects_non_context_origins(
     )
     target = _media_ref(db_session, bootstrapped_user)
 
-    for origin in ("note_body", "highlight_note", "note_containment", "synapse"):
+    for origin in ("note_body", "highlight_note", "synapse"):
         bad = EdgeCreate(
             source=source,
             target=target,
@@ -622,66 +613,36 @@ def test_create_edge_rejects_unowned_origin_shapes(db_session: Session, bootstra
             create_edge(db_session, viewer_id=bootstrapped_user, input=edge)
 
 
-def test_note_containment_requires_shape_and_source_order(
+def test_user_ordered_adjacency_allows_shared_target_and_rejects_target_order_key(
     db_session: Session, bootstrapped_user: UUID
 ):
     page = _page_ref(db_session, bootstrapped_user)
     other_page = _page_ref(db_session, bootstrapped_user)
     block = _note_block_ref(db_session, bootstrapped_user)
 
-    edge = create_edge(
+    edge_ids = graph_adjacency.replace_ordered_targets(
         db_session,
-        viewer_id=bootstrapped_user,
-        input=EdgeCreate(
-            source=page,
-            target=block,
-            kind="context",
-            origin="note_containment",
-            source_order_key="0000000001",
-        ),
+        user_id=bootstrapped_user,
+        source=page,
+        targets=[graph_adjacency.OrderedTarget(block, "0000000001")],
     )
+    edge = db_session.get(ResourceEdge, edge_ids[0])
+    assert edge is not None
 
     assert edge.source_order_key == "0000000001"
     assert edge.target_order_key is None
-    assert edge.origin == "note_containment"
+    assert edge.origin == "user"
 
-    with pytest.raises(InvalidRequestError):
-        create_edge(
-            db_session,
-            viewer_id=bootstrapped_user,
-            input=EdgeCreate(
-                source=other_page,
-                target=block,
-                kind="context",
-                origin="note_containment",
-                source_order_key="0000000001",
-            ),
-        )
-
-    with pytest.raises(InvalidRequestError):
-        create_edge(
-            db_session,
-            viewer_id=bootstrapped_user,
-            input=EdgeCreate(
-                source=page,
-                target=block,
-                kind="context",
-                origin="note_containment",
-            ),
-        )
-
-    with pytest.raises(InvalidRequestError):
-        create_edge(
-            db_session,
-            viewer_id=bootstrapped_user,
-            input=EdgeCreate(
-                source=block,
-                target=page,
-                kind="context",
-                origin="note_containment",
-                source_order_key="0000000002",
-            ),
-        )
+    shared_edge_ids = graph_adjacency.replace_ordered_targets(
+        db_session,
+        user_id=bootstrapped_user,
+        source=other_page,
+        targets=[graph_adjacency.OrderedTarget(block, "0000000001")],
+    )
+    shared = db_session.get(ResourceEdge, shared_edge_ids[0])
+    assert shared is not None
+    assert shared.target_scheme == block.scheme
+    assert shared.target_id == block.id
 
     with pytest.raises(InvalidRequestError):
         create_edge(
@@ -691,7 +652,7 @@ def test_note_containment_requires_shape_and_source_order(
                 source=page,
                 target=_note_block_ref(db_session, bootstrapped_user, text="Reserved order"),
                 kind="context",
-                origin="note_containment",
+                origin="user",
                 source_order_key="0000000003",
                 target_order_key="0000000001",
             ),
@@ -706,7 +667,7 @@ def test_note_containment_requires_shape_and_source_order(
 def test_replace_edges_for_origin_replaces_exactly_its_set(
     db_session: Session, bootstrapped_user: UUID
 ):
-    page = _page_ref(db_session, bootstrapped_user)
+    source = _note_block_ref(db_session, bootstrapped_user)
     a = _media_ref(db_session, bootstrapped_user, title="Ref A")
     b = _media_ref(db_session, bootstrapped_user, title="Ref B")
     c = _media_ref(db_session, bootstrapped_user, title="Ref C")
@@ -715,23 +676,23 @@ def test_replace_edges_for_origin_replaces_exactly_its_set(
     replace_edges_for_origin(
         db_session,
         viewer_id=bootstrapped_user,
-        source=page,
+        source=source,
         origin="note_body",
-        edges=[_bare(page, a, origin="note_body"), _bare(page, b, origin="note_body")],
+        edges=[_bare(source, a, origin="note_body"), _bare(source, b, origin="note_body")],
     )
     user_edge = create_edge(
-        db_session, viewer_id=bootstrapped_user, input=_bare(page, c, origin="user")
+        db_session, viewer_id=bootstrapped_user, input=_bare(source, c, origin="user")
     )
 
     replace_edges_for_origin(
         db_session,
         viewer_id=bootstrapped_user,
-        source=page,
+        source=source,
         origin="note_body",
-        edges=[_bare(page, b, origin="note_body"), _bare(page, d, origin="note_body")],
+        edges=[_bare(source, b, origin="note_body"), _bare(source, d, origin="note_body")],
     )
 
-    edges = _connection_edges(db_session, viewer_id=bootstrapped_user, ref=page)
+    edges = _connection_edges(db_session, viewer_id=bootstrapped_user, ref=source)
     by_origin: dict[str, set[UUID]] = {}
     for edge in edges:
         by_origin.setdefault(edge.origin, set()).add(edge.target.id)
@@ -747,21 +708,24 @@ def test_replace_edges_for_origin_replaces_exactly_its_set(
 def test_replace_edges_drops_self_target_member(db_session: Session, bootstrapped_user: UUID):
     """A machine-extracted set (e.g. a note body that refs its own block) must drop
     the self-target member, not raise or store a self-edge (§5.4)."""
-    page = _page_ref(db_session, bootstrapped_user)
+    source = _note_block_ref(db_session, bootstrapped_user)
     other = _media_ref(db_session, bootstrapped_user)
 
     created = replace_edges_for_origin(
         db_session,
         viewer_id=bootstrapped_user,
-        source=page,
+        source=source,
         origin="note_body",
-        edges=[_bare(page, page, origin="note_body"), _bare(page, other, origin="note_body")],
+        edges=[
+            _bare(source, source, origin="note_body"),
+            _bare(source, other, origin="note_body"),
+        ],
     )
 
     assert [edge.target.id for edge in created] == [other.id], (
         f"The self-target member must be dropped; only real targets remain; got {created}"
     )
-    edges = _connection_edges(db_session, viewer_id=bootstrapped_user, ref=page)
+    edges = _connection_edges(db_session, viewer_id=bootstrapped_user, ref=source)
     assert all(edge.source != edge.target for edge in edges), (
         f"No self-edge may be stored from a replace-set; got "
         f"{[(e.source.uri, e.target.uri) for e in edges]}"
@@ -771,22 +735,22 @@ def test_replace_edges_drops_self_target_member(db_session: Session, bootstrappe
 def test_replace_edges_keeps_pairs_owned_by_another_origin(
     db_session: Session, bootstrapped_user: UUID
 ):
-    page = _page_ref(db_session, bootstrapped_user)
+    source = _note_block_ref(db_session, bootstrapped_user)
     target = _media_ref(db_session, bootstrapped_user)
     user_edge = create_edge(
-        db_session, viewer_id=bootstrapped_user, input=_bare(page, target, origin="user")
+        db_session, viewer_id=bootstrapped_user, input=_bare(source, target, origin="user")
     )
 
     created = replace_edges_for_origin(
         db_session,
         viewer_id=bootstrapped_user,
-        source=page,
+        source=source,
         origin="note_body",
-        edges=[_bare(page, target, origin="note_body")],
+        edges=[_bare(source, target, origin="note_body")],
     )
 
     assert len(created) == 1, "A note_body edge is distinct from the user's explicit link"
-    edges = _connection_edges(db_session, viewer_id=bootstrapped_user, ref=page)
+    edges = _connection_edges(db_session, viewer_id=bootstrapped_user, ref=source)
     assert {(edge.origin, edge.id) for edge in edges} == {
         ("user", user_edge.id),
         ("note_body", created[0].id),
@@ -855,7 +819,7 @@ def test_cleanup_cited_edges_die_with_their_source(db_session: Session, bootstra
     )
 
 
-def test_citations_accept_page_owned_evidence_and_build_note_targets(
+def test_citations_accept_note_owned_evidence_and_build_note_targets(
     db_session: Session, bootstrapped_user: UUID
 ):
     message = _message_ref(db_session, bootstrapped_user)
@@ -904,42 +868,38 @@ def test_note_block_citation_locator_resolves_nested_block(
     parent = NoteBlock(
         id=uuid4(),
         user_id=bootstrapped_user,
-        block_kind="bullet",
         body_pm_json={"type": "paragraph", "content": [{"type": "text", "text": "Parent"}]},
-        body_markdown="Parent",
         body_text="Parent",
     )
     child = NoteBlock(
         id=uuid4(),
         user_id=bootstrapped_user,
-        block_kind="bullet",
         body_pm_json={"type": "paragraph", "content": [{"type": "text", "text": "Nested child"}]},
-        body_markdown="Nested child",
         body_text="Nested child",
     )
     db_session.add_all([parent, child])
     db_session.flush()
-    create_edge(
+    graph_adjacency.replace_ordered_targets(
         db_session,
-        viewer_id=bootstrapped_user,
-        input=EdgeCreate(
-            source=ResourceRef(scheme="page", id=page_id),
-            target=ResourceRef(scheme="note_block", id=parent.id),
-            kind="context",
-            origin="note_containment",
-            source_order_key="0000000001",
-        ),
+        user_id=bootstrapped_user,
+        source=ResourceRef(scheme="page", id=page_id),
+        targets=[
+            graph_adjacency.OrderedTarget(
+                ResourceRef(scheme="note_block", id=parent.id),
+                "0000000001",
+            )
+        ],
     )
-    create_edge(
+    graph_adjacency.replace_ordered_targets(
         db_session,
-        viewer_id=bootstrapped_user,
-        input=EdgeCreate(
-            source=ResourceRef(scheme="note_block", id=parent.id),
-            target=ResourceRef(scheme="note_block", id=child.id),
-            kind="context",
-            origin="note_containment",
-            source_order_key="0000000001",
-        ),
+        user_id=bootstrapped_user,
+        source=ResourceRef(scheme="note_block", id=parent.id),
+        targets=[
+            graph_adjacency.OrderedTarget(
+                ResourceRef(scheme="note_block", id=child.id),
+                "0000000001",
+            )
+        ],
     )
     record_citation(
         db_session,
@@ -962,7 +922,7 @@ def test_note_block_citation_locator_resolves_nested_block(
     locator = outs[0].locator.model_dump(mode="json") if outs[0].locator is not None else None
     assert locator is not None
     assert locator["type"] == "note_block_offsets"
-    assert locator["page_id"] == str(page_id)
+    assert "page_id" not in locator
     assert locator["block_id"] == str(child.id)
     assert locator["start_offset"] == 0
     assert locator["end_offset"] == len("Nested child")

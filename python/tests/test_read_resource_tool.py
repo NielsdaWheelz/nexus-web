@@ -476,9 +476,9 @@ def test_read_resource_highlight_returns_enriched_quote(
     )
 
 
-def test_read_resource_page_owner_returns_description(db_session: Session, bootstrapped_user: UUID):
+def test_read_resource_page_owner_returns_title(db_session: Session, bootstrapped_user: UUID):
     conversation_id = create_test_conversation(db_session, bootstrapped_user)
-    page_id = _make_page(db_session, bootstrapped_user, description="Page body for tool.")
+    page_id = _make_page(db_session, bootstrapped_user, title="Page title for tool.")
     uri = f"page:{page_id}"
     _admit_reference(db_session, conversation_id, uri)
 
@@ -487,7 +487,8 @@ def test_read_resource_page_owner_returns_description(db_session: Session, boots
     )
 
     assert not result.is_error
-    assert result.body == "Page body for tool."
+    assert result.body == "Page title for tool."
+    assert result.citation_result_type == "page"
 
 
 def test_read_resource_page_non_owner_returns_missing_error(
@@ -495,7 +496,7 @@ def test_read_resource_page_non_owner_returns_missing_error(
 ):
     other_user_id = uuid4()
     ensure_user_and_default_library(db_session, other_user_id)
-    page_id = _make_page(db_session, other_user_id, description="Private page.")
+    page_id = _make_page(db_session, other_user_id, title="Private page.")
     conversation_id = create_test_conversation(db_session, bootstrapped_user)
     uri = f"page:{page_id}"
     _admit_reference(db_session, conversation_id, uri)
@@ -520,6 +521,7 @@ def test_read_resource_note_block_owner_returns_body(db_session: Session, bootst
 
     assert not result.is_error
     assert result.body == "Body via read_resource."
+    assert result.citation_result_type == "note_block"
 
 
 def test_read_resource_message_returns_role_and_content(

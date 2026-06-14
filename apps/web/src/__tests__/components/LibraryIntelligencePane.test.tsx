@@ -100,7 +100,6 @@ const NOTE_CITATION = {
   media_id: null,
   locator: {
     type: "note_block_offsets",
-    page_id: "page-1",
     block_id: "block-1",
     start_offset: 0,
     end_offset: 10,
@@ -344,7 +343,6 @@ describe("LibraryIntelligencePane", () => {
       await user.click(citation);
       await waitFor(() => expect(pulses).toHaveLength(1));
       expect(pulses[0]).toMatchObject({
-        pageId: "page-1",
         blockId: "block-1",
         startOffset: 0,
         endOffset: 10,

@@ -5,8 +5,8 @@ import type { MessageRetrieval } from "./types";
  * A citation activation target. Discriminated on `kind`:
  *  - `media` — a span inside a media reader (PDF / EPUB / web / transcript …),
  *    located by `media_id` + a media `RetrievalLocator`.
- *  - `note` — a span inside a notes page, located by `page_id` / `block_id` and
- *    a character offset range. Notes are not media, so they have no `media_id`.
+ *  - `note` — a span inside a note block. Notes are not media, so they have
+ *    no `media_id`.
  */
 export type ReaderSourceTarget = MediaReaderTarget | NoteReaderTarget;
 
@@ -30,7 +30,6 @@ export interface MediaReaderTarget {
 export interface NoteReaderTarget {
   kind: "note";
   source: "message_retrieval";
-  page_id: string;
   block_id: string;
   start_offset: number;
   end_offset: number;
@@ -81,13 +80,12 @@ export function readerTargetFromRetrieval(
   }
   const locator = retrieval.locator!;
 
-  // Note-block citations carry no media_id; they are located inside a notes page.
+  // Note-block citations carry no media_id.
   if (retrieval.result_type === "note_block" || locator.type === "note_block_offsets") {
     if (locator.type !== "note_block_offsets") return null;
     return {
       kind: "note",
       source: "message_retrieval",
-      page_id: locator.page_id,
       block_id: locator.block_id,
       start_offset: locator.start_offset,
       end_offset: locator.end_offset,

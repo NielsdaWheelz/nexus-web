@@ -1,13 +1,11 @@
-"""Page and note-block service."""
+"""Page title and note body workflows."""
 
 from __future__ import annotations
 
 import hashlib
 import json
-import re
-from collections.abc import Callable
 from datetime import date, datetime
-from typing import Any, Literal, cast
+from typing import Any, cast
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -18,187 +16,43 @@ from sqlalchemy.orm import Session
 from nexus.db.errors import integrity_constraint_name
 from nexus.db.models import (
     DailyNotePage,
-    Highlight,
     NoteBlock,
     Page,
-    PageDocumentMutation,
     PinnedObjectRef,
+    ResourceEdge,
+    ResourceMutation,
 )
 from nexus.db.retries import retry_serializable
 from nexus.errors import ApiError, ApiErrorCode, ConflictError, NotFoundError
 from nexus.schemas.notes import (
-    NOTE_BLOCK_KINDS,
     CreatePageRequest,
     DailyNotePageOut,
     NoteBlockOut,
     NotePageOut,
     NotePageSummaryOut,
-    PageDocumentBlockRequest,
-    PageDocumentChildRequest,
-    PageDocumentContainmentRequest,
-    PageDocumentParentRef,
-    PatchPageDocumentRequest,
-    PatchPageDocumentResponse,
     QuickCaptureRequest,
     UpdatePageRequest,
-    is_object_type,
 )
-from nexus.services.content_indexing import IndexOwner, delete_content_index
+from nexus.services import note_bodies
 from nexus.services.highlight_access import get_highlight_for_visible_read_or_404
-from nexus.services.note_indexing import enqueue_page_reindex
-from nexus.services.resource_graph import documents as graph_documents
+from nexus.services.note_indexing import enqueue_note_reindex
+from nexus.services.resource_graph import adjacency as graph_adjacency
 from nexus.services.resource_graph import highlight_notes as graph_highlight_notes
-from nexus.services.resource_graph import tags as graph_tags
-from nexus.services.resource_graph.cleanup import delete_edges_for_deleted_resource
-from nexus.services.resource_graph.edges import create_edge
-from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
-from nexus.services.resource_graph.schemas import EdgeCreate
-
-_OBJECT_REF_MARKDOWN_RE = re.compile(
-    r"\[\[([a-z_]+):([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
-    r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12})(?:\|([^\]\n]*))?\]\]"
+from nexus.services.resource_graph.cleanup import (
+    delete_edges_for_deleted_resource,
+    delete_resource_protocol_state,
 )
+from nexus.services.resource_graph.edges import create_edge
+from nexus.services.resource_graph.refs import (
+    ResourceRef,
+    ResourceScheme,
+)
+from nexus.services.resource_graph.schemas import EdgeCreate
+from nexus.services.resource_items import surfaces, versions
 
-
-def pm_doc_from_text(text: str) -> dict[str, Any]:
-    paragraph: dict[str, Any] = {"type": "paragraph"}
-    if text:
-        paragraph["content"] = [{"type": "text", "text": text}]
-    return paragraph
-
-
-def pm_doc_from_markdown_projection(markdown: str) -> dict[str, Any]:
-    content: list[dict[str, Any]] = []
-    position = 0
-    for match in _OBJECT_REF_MARKDOWN_RE.finditer(markdown):
-        if match.start() > position:
-            _append_text_and_break_nodes(content, markdown[position : match.start()])
-        object_type = match.group(1)
-        if not is_object_type(object_type):
-            raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Object reference type is invalid")
-        content.append(
-            {
-                "type": "object_ref",
-                "attrs": {
-                    "objectType": object_type,
-                    "objectId": str(UUID(match.group(2))),
-                    "label": match.group(3) or f"{object_type}:{match.group(2)}",
-                },
-            }
-        )
-        position = match.end()
-    if position < len(markdown):
-        _append_text_and_break_nodes(content, markdown[position:])
-    return {"type": "paragraph", "content": content} if content else {"type": "paragraph"}
-
-
-def _append_text_and_break_nodes(content: list[dict[str, Any]], text_value: str) -> None:
-    for index, line in enumerate(text_value.split("\n")):
-        if index > 0:
-            content.append({"type": "hard_break"})
-        if line:
-            content.append({"type": "text", "text": line})
-
-
-def text_from_pm_json(value: object) -> str:
-    parts: list[str] = []
-
-    def visit(node: object) -> None:
-        if isinstance(node, list):
-            for child in node:
-                visit(child)
-            return
-        if not isinstance(node, dict):
-            return
-        if node.get("type") == "text" and isinstance(node.get("text"), str):
-            parts.append(str(node["text"]))
-        if node.get("type") in {"object_ref", "object_embed"} and isinstance(
-            node.get("attrs"), dict
-        ):
-            attrs = node["attrs"]
-            label = attrs.get("label") or f"{attrs.get('objectType')}:{attrs.get('objectId')}"
-            if isinstance(label, str):
-                parts.append(label)
-        if node.get("type") == "image" and isinstance(node.get("attrs"), dict):
-            alt = node["attrs"].get("alt")
-            if isinstance(alt, str):
-                parts.append(alt)
-        if node.get("type") == "hard_break":
-            parts.append("\n")
-        visit(node.get("content"))
-        if node.get("type") in {"paragraph", "heading", "blockquote", "code_block"}:
-            parts.append("\n")
-
-    visit(value)
-    return "\n".join(line.rstrip() for line in "".join(parts).splitlines()).strip()
-
-
-def markdown_from_pm_json(value: object) -> str:
-    def escape(text: str) -> str:
-        return "".join(f"\\{char}" if char in "\\`*_{}[]()#+-.!|>" else char for char in text)
-
-    def marked(text: str, marks: object) -> str:
-        if not isinstance(marks, list):
-            return text
-        rendered = text
-        for mark in marks:
-            if not isinstance(mark, dict):
-                continue
-            mark_type = mark.get("type")
-            if mark_type == "code":
-                rendered = "`" + rendered.replace("`", "\\`") + "`"
-            elif mark_type == "strong":
-                rendered = f"**{rendered}**"
-            elif mark_type == "em":
-                rendered = f"_{rendered}_"
-            elif mark_type == "strikethrough":
-                rendered = f"~~{rendered}~~"
-            elif mark_type == "link" and isinstance(mark.get("attrs"), dict):
-                href = mark["attrs"].get("href")
-                if isinstance(href, str) and href:
-                    rendered = f"[{rendered}]({href})"
-        return rendered
-
-    parts: list[str] = []
-
-    def visit(node: object) -> None:
-        if isinstance(node, list):
-            for child in node:
-                visit(child)
-            return
-        if not isinstance(node, dict):
-            return
-        node_type = node.get("type")
-        if node_type == "text" and isinstance(node.get("text"), str):
-            parts.append(marked(escape(node["text"]), node.get("marks")))
-            return
-        if node_type in {"object_ref", "object_embed"} and isinstance(node.get("attrs"), dict):
-            attrs = node["attrs"]
-            object_type = attrs.get("objectType")
-            object_id = attrs.get("objectId")
-            label = attrs.get("label")
-            if isinstance(object_type, str) and isinstance(object_id, str):
-                suffix = f"|{label}" if isinstance(label, str) and label else ""
-                prefix = "!" if node_type == "object_embed" else ""
-                parts.append(f"{prefix}[[{object_type}:{object_id}{suffix}]]")
-            return
-        if node_type == "image" and isinstance(node.get("attrs"), dict):
-            src = node["attrs"].get("src")
-            alt = node["attrs"].get("alt")
-            if isinstance(src, str) and src:
-                parts.append(f"![{escape(alt) if isinstance(alt, str) else ''}]({src})")
-            elif isinstance(alt, str):
-                parts.append(escape(alt))
-            return
-        if node_type == "hard_break":
-            parts.append("  \n")
-            return
-        visit(node.get("content"))
-        if node_type in {"paragraph", "heading", "blockquote", "code_block"}:
-            parts.append("\n")
-
-    visit(value)
-    return "\n".join(line.rstrip() for line in "".join(parts).splitlines()).strip()
+pm_doc_from_text = note_bodies.pm_doc_from_text
+pm_doc_from_markdown_projection = note_bodies.pm_doc_from_markdown_projection
+text_from_pm_json = note_bodies.text_from_pm_json
 
 
 def list_pages(db: Session, viewer_id: UUID) -> list[NotePageSummaryOut]:
@@ -211,13 +65,14 @@ def list_pages(db: Session, viewer_id: UUID) -> list[NotePageSummaryOut]:
 
 
 def create_page(db: Session, viewer_id: UUID, request: CreatePageRequest) -> NotePageOut:
-    page = Page(user_id=viewer_id, title=request.title, description=request.description)
+    page = Page(user_id=viewer_id, title=request.title)
     db.add(page)
     db.flush()
-    enqueue_page_reindex(db, page_id=page.id, reason="page_create")
+    versions.ensure_version(db, viewer_id=viewer_id, ref=_page_ref(page.id), lane="title")
+    versions.ensure_version(db, viewer_id=viewer_id, ref=_page_ref(page.id), lane="outgoing_edges")
     db.commit()
     db.refresh(page)
-    return _page_out(db, page)
+    return _page_out(db, viewer_id, page)
 
 
 def get_page_for_owner_or_404(db: Session, viewer_id: UUID, page_id: UUID) -> Page:
@@ -228,7 +83,7 @@ def get_page_for_owner_or_404(db: Session, viewer_id: UUID, page_id: UUID) -> Pa
 
 
 def get_page(db: Session, viewer_id: UUID, page_id: UUID) -> NotePageOut:
-    return _page_out(db, get_page_for_owner_or_404(db, viewer_id, page_id))
+    return _page_out(db, viewer_id, get_page_for_owner_or_404(db, viewer_id, page_id))
 
 
 def update_page(
@@ -238,309 +93,19 @@ def update_page(
     request: UpdatePageRequest,
 ) -> NotePageOut:
     page = get_page_for_owner_or_404(db, viewer_id, page_id)
-    changed = False
-    if request.title is not None and request.title != page.title:
+    if page.title != request.title:
         page.title = request.title
-        changed = True
-    if "description" in request.model_fields_set and request.description != page.description:
-        page.description = request.description
-        changed = True
-    if changed:
         page.updated_at = func.now()
-        enqueue_page_reindex(db, page_id=page.id, reason="page_update")
+        _bump_version(db, viewer_id, _page_ref(page.id), "title")
     db.commit()
     db.refresh(page)
-    return _page_out(db, page)
-
-
-def patch_page_document(
-    db: Session,
-    viewer_id: UUID,
-    page_id: UUID,
-    request: PatchPageDocumentRequest,
-    *,
-    after_apply: Callable[[], list[UUID]] | None = None,
-) -> PatchPageDocumentResponse:
-    return retry_serializable(
-        db,
-        "patch_page_document",
-        lambda: _patch_page_document_once(
-            db,
-            viewer_id,
-            page_id,
-            request,
-            after_apply=after_apply,
-        ),
-    )
-
-
-def _patch_page_document_once(
-    db: Session,
-    viewer_id: UUID,
-    page_id: UUID,
-    request: PatchPageDocumentRequest,
-    *,
-    after_apply: Callable[[], list[UUID]] | None = None,
-) -> PatchPageDocumentResponse:
-    request_hash = _page_document_request_hash(request)
-    page = db.scalar(select(Page).where(Page.id == page_id, Page.user_id == viewer_id))
-    if page is None:
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Page not found")
-
-    replay = db.scalar(
-        select(PageDocumentMutation).where(
-            PageDocumentMutation.user_id == viewer_id,
-            PageDocumentMutation.page_id == page.id,
-            PageDocumentMutation.client_mutation_id == request.client_mutation_id,
-        )
-    )
-    if replay is not None:
-        if replay.request_hash != request_hash:
-            raise ConflictError(
-                ApiErrorCode.E_IDEMPOTENCY_KEY_REPLAY_MISMATCH,
-                "Document mutation id was reused with a different request",
-            )
-        return PatchPageDocumentResponse.model_validate(replay.response_json)
-
-    if request.base_document_version != page.document_version:
-        latest_page = _page_out(db, page)
-        raise ConflictError(
-            ApiErrorCode.E_NOTE_CONFLICT,
-            "Page document version is stale",
-            details={
-                "latestDocument": {
-                    "documentVersion": page.document_version,
-                    "page": latest_page.model_dump(mode="json", by_alias=True),
-                }
-            },
-        )
-
-    document = graph_documents.load_page_document(db, user_id=viewer_id, page_id=page.id)
-    existing_nodes = {node.block.id: node for node in _flatten_document_nodes(document.roots)}
-    existing_blocks = {block_id: node.block for block_id, node in existing_nodes.items()}
-    existing_parent_by_id = {
-        block_id: None if node.parent.scheme == "page" else node.parent.id
-        for block_id, node in existing_nodes.items()
-    }
-    existing_order_by_id = {
-        block_id: node.source_order_key for block_id, node in existing_nodes.items()
-    }
-    existing_collapsed_by_id = {
-        block_id: node.collapsed for block_id, node in existing_nodes.items()
-    }
-    requested_by_id = {block.id: block for block in request.blocks}
-    requested_ids = set(requested_by_id)
-    deleted_ids = set(request.deleted_block_ids)
-
-    if request.focus_block_id is not None:
-        if (
-            request.focus_block_id not in requested_ids
-            and request.focus_block_id not in deleted_ids
-        ):
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Note block not found")
-
-    for block_id in request.deleted_block_ids:
-        if block_id not in existing_blocks:
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Note block not found")
-
-    for block_id in list(deleted_ids):
-        deleted_ids.update(
-            descendant_id
-            for descendant_id in _document_descendant_ids(existing_nodes[block_id])
-            if descendant_id in existing_blocks and descendant_id not in requested_ids
-        )
-    deleted_ids.update(set(existing_blocks) - requested_ids)
-
-    for patch in request.blocks:
-        block = existing_blocks.get(patch.id)
-        if block is None:
-            if db.get(NoteBlock, patch.id) is not None:
-                raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Note block id already exists")
-
-    requested_parent_by_id: dict[UUID, UUID | None] = {}
-    requested_order_by_id: dict[UUID, str] = {}
-    requested_collapsed_by_id: dict[UUID, bool] = {}
-    requested_children_by_parent: dict[ResourceRef, list[graph_documents.OrderedChildBlock]] = {}
-
-    for group in request.containment:
-        parent = ResourceRef(scheme=cast("ResourceScheme", group.parent.scheme), id=group.parent.id)
-        if parent.scheme == "page":
-            if parent.id != page.id:
-                raise ApiError(
-                    ApiErrorCode.E_INVALID_REQUEST, "Document root page does not match route"
-                )
-        elif parent.id not in requested_ids:
-            raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Parent must be in the document command")
-        requested_children_by_parent[parent] = [
-            graph_documents.OrderedChildBlock(
-                block_id=child.block_id,
-                source_order_key=child.source_order_key,
-            )
-            for child in group.children
-        ]
-        for child in group.children:
-            requested_parent_by_id[child.block_id] = None if parent.scheme == "page" else parent.id
-            requested_order_by_id[child.block_id] = child.source_order_key
-            requested_collapsed_by_id[child.block_id] = child.collapsed
-
-    for block_id, parent_id in requested_parent_by_id.items():
-        if parent_id == block_id:
-            raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Block cannot be moved under itself")
-
-    for block_id in requested_parent_by_id:
-        seen: set[UUID] = set()
-        parent_id = requested_parent_by_id[block_id]
-        while parent_id is not None:
-            if parent_id == block_id or parent_id in seen:
-                raise ApiError(
-                    ApiErrorCode.E_INVALID_REQUEST,
-                    "Block cannot be moved under one of its descendants",
-                )
-            seen.add(parent_id)
-            parent_id = requested_parent_by_id.get(parent_id)
-
-    def requested_parent_depth(block_id: UUID) -> int:
-        depth = 0
-        parent_id = requested_parent_by_id.get(block_id)
-        while parent_id is not None and parent_id in requested_by_id:
-            depth += 1
-            parent_id = requested_parent_by_id.get(parent_id)
-        return depth
-
-    title_changed = request.title is not None and request.title != page.title
-    changed_block_ids: set[UUID] = set(deleted_ids)
-    reindex_job_id: UUID | None = None
-    for block_id, patch in requested_by_id.items():
-        block = existing_blocks.get(block_id)
-        if block is None:
-            changed_block_ids.add(block_id)
-            continue
-        if (
-            patch.body_pm_json != block.body_pm_json
-            or patch.block_kind != block.block_kind
-            or requested_parent_by_id[block_id] != existing_parent_by_id[block_id]
-            or requested_order_by_id[block_id] != existing_order_by_id[block_id]
-            or requested_collapsed_by_id[block_id] != existing_collapsed_by_id[block_id]
-        ):
-            changed_block_ids.add(block_id)
-
-    changed = title_changed or bool(changed_block_ids)
-    changed_edge_ids: list[UUID] = []
-
-    try:
-        if changed:
-            if title_changed and request.title is not None:
-                page.title = request.title
-
-            for block_id in sorted(
-                (block_id for block_id in requested_by_id if block_id not in existing_blocks),
-                key=requested_parent_depth,
-            ):
-                patch = requested_by_id[block_id]
-                block = NoteBlock(
-                    id=patch.id,
-                    user_id=viewer_id,
-                    block_kind=patch.block_kind,
-                    body_pm_json=patch.body_pm_json,
-                    body_markdown=markdown_from_pm_json(patch.body_pm_json),
-                    body_text=text_from_pm_json(patch.body_pm_json),
-                )
-                db.add(block)
-                db.flush()
-                _sync_note_body_edges(db, viewer_id, block)
-
-            for block_id, patch in requested_by_id.items():
-                if block_id not in existing_blocks:
-                    continue
-                block = existing_blocks[block_id]
-                body_changed = patch.body_pm_json != block.body_pm_json
-                if body_changed:
-                    _set_block_body_pm_json(block, patch.body_pm_json)
-                    _sync_note_body_edges(db, viewer_id, block)
-                if patch.block_kind != block.block_kind:
-                    block.block_kind = patch.block_kind
-                if block_id in changed_block_ids:
-                    block.updated_at = func.now()
-
-            changed_edge_ids.extend(
-                graph_documents.apply_page_document_structure(
-                    db,
-                    user_id=viewer_id,
-                    previous_parents={node.parent for node in existing_nodes.values()},
-                    children_by_parent=requested_children_by_parent,
-                    collapsed_by_block_id=requested_collapsed_by_id,
-                    deleted_block_ids=deleted_ids,
-                )
-            )
-            for block_id in _document_delete_order(existing_parent_by_id, deleted_ids):
-                _delete_object_edges(db, "note_block", block_id)
-                db.execute(
-                    delete(PinnedObjectRef).where(
-                        PinnedObjectRef.user_id == viewer_id,
-                        PinnedObjectRef.object_type == "note_block",
-                        PinnedObjectRef.object_id == block_id,
-                    )
-                )
-                db.delete(existing_blocks[block_id])
-
-            if after_apply is not None:
-                changed_edge_ids.extend(after_apply())
-
-            page.updated_at = func.now()
-            page.document_version += 1
-            reindex_job_id = enqueue_page_reindex(db, page_id=page.id, reason="page_patch")
-
-        focused_block = None
-        if request.focus_block_id is not None and request.focus_block_id not in deleted_ids:
-            focused_block = get_note_block(db, viewer_id, request.focus_block_id)
-
-        response = PatchPageDocumentResponse(
-            client_mutation_id=request.client_mutation_id,
-            page=_page_out(db, page),
-            document_version=page.document_version,
-            changed_block_ids=sorted(changed_block_ids, key=str),
-            changed_edge_ids=changed_edge_ids,
-            reindex_job_id=reindex_job_id,
-            focused_block=focused_block,
-        )
-        db.add(
-            PageDocumentMutation(
-                user_id=viewer_id,
-                page_id=page.id,
-                client_mutation_id=request.client_mutation_id,
-                request_hash=request_hash,
-                base_document_version=request.base_document_version,
-                document_version=page.document_version,
-                response_json=response.model_dump(mode="json", by_alias=True),
-            )
-        )
-        db.commit()
-    except IntegrityError as exc:
-        db.rollback()
-        if _is_note_block_id_conflict(exc):
-            raise ConflictError(
-                ApiErrorCode.E_NOTE_CONFLICT, "Note block id already exists"
-            ) from exc
-        raise
-
-    return response
+    return _page_out(db, viewer_id, page)
 
 
 def delete_page(db: Session, viewer_id: UUID, page_id: UUID) -> None:
     page = get_page_for_owner_or_404(db, viewer_id, page_id)
-    block_ids = graph_documents.list_page_block_ids(db, user_id=viewer_id, page_id=page.id)
-    for block_id in block_ids:
-        _delete_object_edges(db, "note_block", block_id)
-        db.execute(
-            delete(PinnedObjectRef).where(
-                PinnedObjectRef.user_id == viewer_id,
-                PinnedObjectRef.object_type == "note_block",
-                PinnedObjectRef.object_id == block_id,
-            )
-        )
-    graph_documents.delete_view_state_for_blocks(db, user_id=viewer_id, block_ids=set(block_ids))
-    db.execute(delete(NoteBlock).where(NoteBlock.id.in_(block_ids)))
-    _delete_object_edges(db, "page", page.id)
+    ref = _page_ref(page.id)
+    delete_edges_for_deleted_resource(db, ref=ref)
     db.execute(
         delete(PinnedObjectRef).where(
             PinnedObjectRef.user_id == viewer_id,
@@ -554,13 +119,7 @@ def delete_page(db: Session, viewer_id: UUID, page_id: UUID) -> None:
             DailyNotePage.page_id == page.id,
         )
     )
-    db.execute(
-        delete(PageDocumentMutation).where(
-            PageDocumentMutation.user_id == viewer_id,
-            PageDocumentMutation.page_id == page.id,
-        )
-    )
-    delete_content_index(db, owner=IndexOwner("page", page_id))
+    delete_resource_protocol_state(db, viewer_id=viewer_id, ref=ref)
     db.delete(page)
     db.commit()
 
@@ -590,7 +149,7 @@ def get_daily_note(
     return DailyNotePageOut(
         local_date=local_date,
         time_zone=stored_time_zone,
-        page=_page_out(db, page),
+        page=_page_out(db, viewer_id, page),
     )
 
 
@@ -608,98 +167,57 @@ def quick_capture(
         local_date,
         time_zone=time_zone,
     )
-    block_id = request.id
-    body_pm_json = request.body_pm_json or pm_doc_from_text(request.body_markdown or "")
-    replay = db.scalar(
-        select(PageDocumentMutation).where(
-            PageDocumentMutation.user_id == viewer_id,
-            PageDocumentMutation.page_id == page.id,
-            PageDocumentMutation.client_mutation_id == request.client_mutation_id,
+    scope = f"resource:{_page_ref(page.id).uri}:quick_capture"
+    response = _replay_note_response(db, viewer_id, scope, request.client_mutation_id, request)
+    if response is not None:
+        return response
+
+    block = _upsert_note_body(db, viewer_id, request.id, request.body_pm_json)
+    source = _page_ref(page.id)
+    target = _note_ref(block.id)
+    if _ordered_edge_to_target(db, viewer_id, source, target) is None:
+        surface = surfaces.get_surface(db, viewer_id=viewer_id, source=source)
+        graph_adjacency.replace_ordered_targets(
+            db,
+            user_id=viewer_id,
+            source=source,
+            targets=[
+                graph_adjacency.OrderedTarget(
+                    target=ResourceRef(
+                        scheme=cast(ResourceScheme, item.target.scheme),
+                        id=item.target.id,
+                    ),
+                    source_order_key=item.source_order_key,
+                )
+                for item in surface.ordered_items
+            ]
+            + [
+                graph_adjacency.OrderedTarget(
+                    target=target,
+                    source_order_key=_next_order_key(db, viewer_id, source),
+                )
+            ],
         )
+        _bump_version(db, viewer_id, source, "outgoing_edges")
+    enqueue_note_reindex(db, note_block_id=block.id, reason="quick_capture")
+    response = NoteBlockOut(
+        id=block.id,
+        body_pm_json=block.body_pm_json,
+        body_text=block.body_text,
+        created_at=block.created_at,
+        updated_at=block.updated_at,
+        version_by_lane=versions.versions_for_ref(db, viewer_id=viewer_id, ref=_note_ref(block.id)),
     )
-    if replay is not None:
-        response = PatchPageDocumentResponse.model_validate(replay.response_json)
-        focused = response.focused_block
-        if focused is not None and focused.id == block_id and focused.body_pm_json == body_pm_json:
-            return focused
-        raise ConflictError(
-            ApiErrorCode.E_IDEMPOTENCY_KEY_REPLAY_MISMATCH,
-            "Quick capture mutation id was reused with a different request",
-        )
-
-    existing = db.get(NoteBlock, block_id)
-    if existing is not None:
-        if existing.user_id != viewer_id:
-            raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Note block id already exists")
-        try:
-            occurrence = graph_documents.find_block_occurrence(
-                db, user_id=viewer_id, block_id=block_id
-            )
-        except NotFoundError as exc:
-            raise ConflictError(
-                ApiErrorCode.E_NOTE_CONFLICT, "Note block id already exists"
-            ) from exc
-        if occurrence.page_id != page.id:
-            raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Note block id already exists")
-    document = graph_documents.load_page_document(db, user_id=viewer_id, page_id=page.id)
-    blocks: list[PageDocumentBlockRequest] = []
-    containment_by_parent: dict[ResourceRef, list[PageDocumentChildRequest]] = {}
-
-    def append_node(node: graph_documents.DocumentBlock) -> None:
-        node_body = body_pm_json if node.block.id == block_id else node.block.body_pm_json
-        blocks.append(
-            PageDocumentBlockRequest(
-                id=node.block.id,
-                block_kind=cast(NOTE_BLOCK_KINDS, node.block.block_kind),
-                body_pm_json=node_body,
-            )
-        )
-        containment_by_parent.setdefault(node.parent, []).append(
-            PageDocumentChildRequest(
-                block_id=node.block.id,
-                source_order_key=node.source_order_key,
-                collapsed=node.collapsed,
-            )
-        )
-        for child in node.children:
-            append_node(child)
-
-    for root in document.roots:
-        append_node(root)
-
-    if existing is None:
-        blocks.append(
-            PageDocumentBlockRequest(id=block_id, block_kind="bullet", body_pm_json=body_pm_json)
-        )
-        containment_by_parent.setdefault(ResourceRef(scheme="page", id=page.id), []).append(
-            PageDocumentChildRequest(
-                block_id=block_id,
-                source_order_key=f"{len(document.roots) + 1:010d}",
-                collapsed=False,
-            )
-        )
-
-    patch_page_document(
+    _record_mutation(
         db,
         viewer_id,
-        page.id,
-        PatchPageDocumentRequest(
-            client_mutation_id=request.client_mutation_id,
-            base_document_version=page.document_version,
-            title=None,
-            focus_block_id=block_id,
-            blocks=blocks,
-            containment=[
-                PageDocumentContainmentRequest(
-                    parent=_page_document_parent_ref(parent),
-                    children=children,
-                )
-                for parent, children in containment_by_parent.items()
-            ],
-            deleted_block_ids=[],
-        ),
+        scope,
+        request.client_mutation_id,
+        request,
+        response.model_dump(mode="json", by_alias=True),
     )
-    return get_note_block(db, viewer_id, block_id)
+    db.commit()
+    return response
 
 
 def get_note_block_for_owner_or_404(db: Session, viewer_id: UUID, block_id: UUID) -> NoteBlock:
@@ -710,12 +228,21 @@ def get_note_block_for_owner_or_404(db: Session, viewer_id: UUID, block_id: UUID
 
 
 def get_note_block(db: Session, viewer_id: UUID, block_id: UUID) -> NoteBlockOut:
-    occurrence = graph_documents.find_block_occurrence(db, user_id=viewer_id, block_id=block_id)
-    document = graph_documents.load_page_document(db, user_id=viewer_id, page_id=occurrence.page_id)
-    node = graph_documents.find_document_block(document, block_id)
-    if node is None:
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Note block not found")
-    return _document_block_out(node, occurrence.page_id)
+    block = get_note_block_for_owner_or_404(db, viewer_id, block_id)
+    return NoteBlockOut(
+        id=block.id,
+        body_pm_json=block.body_pm_json,
+        body_text=block.body_text,
+        created_at=block.created_at,
+        updated_at=block.updated_at,
+        version_by_lane=versions.versions_for_ref(db, viewer_id=viewer_id, ref=_note_ref(block.id)),
+    )
+
+
+def upsert_note_body_without_commit(
+    db: Session, viewer_id: UUID, block_id: UUID, body_pm_json: dict[str, Any]
+) -> NoteBlock:
+    return _upsert_note_body(db, viewer_id, block_id, body_pm_json)
 
 
 def set_highlight_note_body_pm_json(
@@ -727,80 +254,47 @@ def set_highlight_note_body_pm_json(
     body_pm_json: dict[str, Any],
     client_mutation_id: str,
 ) -> NoteBlockOut:
-    _get_visible_highlight_or_404(db, viewer_id, highlight_id)
+    get_highlight_for_visible_read_or_404(db, viewer_id, highlight_id)
+    request_payload = {"blockId": str(block_id), "bodyPmJson": body_pm_json}
+    scope = f"highlight_note:{highlight_id}"
+    replay = _replay_note_response(db, viewer_id, scope, client_mutation_id, request_payload)
+    if replay is not None:
+        return replay
 
-    existing = _first_highlight_note_block(db, viewer_id, highlight_id)
+    existing = graph_highlight_notes.first_note_block_for_highlight(db, viewer_id, highlight_id)
     if existing is not None and existing.id != block_id:
         raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Highlight note block id mismatch")
-    if existing is not None and existing.body_pm_json == body_pm_json:
-        return get_note_block(db, viewer_id, existing.id)
 
+    block = _upsert_note_body(db, viewer_id, block_id, body_pm_json)
     if existing is None:
-        if db.get(NoteBlock, block_id) is not None:
-            raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Note block id already exists")
-        page = _default_page(db, viewer_id)
-        document = graph_documents.load_page_document(db, user_id=viewer_id, page_id=page.id)
-        blocks, containment, deleted_block_ids = _page_document_command_from_document(
-            document,
-            append_root=(block_id, "bullet", body_pm_json),
-        )
-
-        def attach_highlight_note_edge() -> list[UUID]:
-            edge = create_edge(
-                db,
-                viewer_id=viewer_id,
-                input=EdgeCreate(
-                    source=ResourceRef(scheme="highlight", id=highlight_id),
-                    target=ResourceRef(scheme="note_block", id=block_id),
-                    kind="context",
-                    origin="highlight_note",
-                ),
-            )
-            return [edge.id]
-
-        result = patch_page_document(
+        create_edge(
             db,
-            viewer_id,
-            page.id,
-            PatchPageDocumentRequest(
-                client_mutation_id=client_mutation_id,
-                base_document_version=page.document_version,
-                title=None,
-                focus_block_id=block_id,
-                blocks=blocks,
-                containment=containment,
-                deleted_block_ids=deleted_block_ids,
+            viewer_id=viewer_id,
+            input=EdgeCreate(
+                source=ResourceRef(scheme="highlight", id=highlight_id),
+                target=_note_ref(block.id),
+                kind="context",
+                origin="highlight_note",
             ),
-            after_apply=attach_highlight_note_edge,
         )
-        if result.focused_block is not None:
-            return result.focused_block
-        return get_note_block(db, viewer_id, block_id)
-
-    occurrence = graph_documents.find_block_occurrence(db, user_id=viewer_id, block_id=existing.id)
-    page = get_page_for_owner_or_404(db, viewer_id, occurrence.page_id)
-    document = graph_documents.load_page_document(db, user_id=viewer_id, page_id=page.id)
-    blocks, containment, deleted_block_ids = _page_document_command_from_document(
-        document,
-        body_updates={existing.id: body_pm_json},
+    response = NoteBlockOut(
+        id=block.id,
+        body_pm_json=block.body_pm_json,
+        body_text=block.body_text,
+        created_at=block.created_at,
+        updated_at=block.updated_at,
+        version_by_lane=versions.versions_for_ref(db, viewer_id=viewer_id, ref=_note_ref(block.id)),
     )
-    result = patch_page_document(
+    _record_mutation(
         db,
         viewer_id,
-        page.id,
-        PatchPageDocumentRequest(
-            client_mutation_id=client_mutation_id,
-            base_document_version=page.document_version,
-            title=None,
-            focus_block_id=existing.id,
-            blocks=blocks,
-            containment=containment,
-            deleted_block_ids=deleted_block_ids,
-        ),
+        scope,
+        client_mutation_id,
+        request_payload,
+        response.model_dump(mode="json", by_alias=True),
     )
-    if result.focused_block is not None:
-        return result.focused_block
-    return get_note_block(db, viewer_id, existing.id)
+    db.commit()
+    return response
 
 
 def delete_highlight_note(
@@ -811,56 +305,35 @@ def delete_highlight_note(
     note_block_id: UUID | None,
     client_mutation_id: str,
 ) -> None:
-    _get_visible_highlight_or_404(db, viewer_id, highlight_id)
-
-    existing = _first_highlight_note_block(db, viewer_id, highlight_id)
+    get_highlight_for_visible_read_or_404(db, viewer_id, highlight_id)
+    existing = graph_highlight_notes.first_note_block_for_highlight(db, viewer_id, highlight_id)
     if existing is None:
         return
     if note_block_id is not None and existing.id != note_block_id:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Note block not found")
-
-    occurrence = graph_documents.find_block_occurrence(db, user_id=viewer_id, block_id=existing.id)
-    page = get_page_for_owner_or_404(db, viewer_id, occurrence.page_id)
-    document = graph_documents.load_page_document(db, user_id=viewer_id, page_id=page.id)
-    blocks, containment, deleted_block_ids = _page_document_command_from_document(
-        document,
-        delete_root_ids={existing.id},
+    ref = _note_ref(existing.id)
+    delete_edges_for_deleted_resource(db, ref=ref)
+    db.execute(
+        delete(PinnedObjectRef).where(
+            PinnedObjectRef.user_id == viewer_id,
+            PinnedObjectRef.object_type == "note_block",
+            PinnedObjectRef.object_id == existing.id,
+        )
     )
-    patch_page_document(
+    delete_resource_protocol_state(db, viewer_id=viewer_id, ref=ref)
+    db.delete(existing)
+    db.commit()
+
+
+def _upsert_note_body(
+    db: Session, viewer_id: UUID, block_id: UUID, body_pm_json: dict[str, Any]
+) -> NoteBlock:
+    return note_bodies.upsert_note_body(
         db,
-        viewer_id,
-        page.id,
-        PatchPageDocumentRequest(
-            client_mutation_id=client_mutation_id,
-            base_document_version=page.document_version,
-            title=None,
-            focus_block_id=None,
-            blocks=blocks,
-            containment=containment,
-            deleted_block_ids=deleted_block_ids,
-        ),
+        viewer_id=viewer_id,
+        block_id=block_id,
+        body_pm_json=body_pm_json,
     )
-
-
-def _default_page(db: Session, viewer_id: UUID) -> Page:
-    page = db.scalar(
-        select(Page).where(Page.user_id == viewer_id, Page.title == "Notes").order_by(Page.id.asc())
-    )
-    if page is not None:
-        return page
-    page = Page(user_id=viewer_id, title="Notes", description=None)
-    db.add(page)
-    db.flush()
-    enqueue_page_reindex(db, page_id=page.id, reason="page_create")
-    return page
-
-
-def _today_in_time_zone(time_zone: str) -> date:
-    try:
-        tz = ZoneInfo(time_zone)
-    except ZoneInfoNotFoundError as exc:
-        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "time_zone is invalid") from exc
-    return datetime.now(tz).date()
 
 
 def _resolve_daily_page_with_retry(
@@ -883,29 +356,21 @@ def _resolve_daily_page_with_retry(
             db.refresh(page)
         return page, stored_time_zone
 
-    # Daily-unique conflicts (a concurrent caller created the page) reload outside the
-    # SERIALIZABLE retry; each reload finds the winner's row.
     for attempt in range(3):
         try:
             return retry_serializable(db, "resolve_daily_page", op)
         except IntegrityError as exc:
             db.rollback()
-            if not _is_daily_unique_conflict(exc) or attempt == 2:
+            if (
+                integrity_constraint_name(exc)
+                not in {
+                    "uix_daily_note_pages_user_date",
+                    "uix_daily_note_pages_user_page",
+                }
+                or attempt == 2
+            ):
                 raise
     raise AssertionError("Daily note retry loop exhausted")
-
-
-def _is_daily_unique_conflict(exc: IntegrityError) -> bool:
-    constraint_name = integrity_constraint_name(exc)
-    return constraint_name in {
-        "uix_daily_note_pages_user_date",
-        "uix_daily_note_pages_user_page",
-    }
-
-
-def _is_note_block_id_conflict(exc: IntegrityError) -> bool:
-    constraint_name = integrity_constraint_name(exc)
-    return constraint_name == "note_blocks_pkey"
 
 
 def _resolve_daily_page_once(
@@ -927,10 +392,11 @@ def _resolve_daily_page_once(
     page = Page(
         user_id=viewer_id,
         title=f"{local_date.strftime('%B')} {local_date.day}, {local_date.year}",
-        description=None,
     )
     db.add(page)
     db.flush()
+    versions.ensure_version(db, viewer_id=viewer_id, ref=_page_ref(page.id), lane="title")
+    versions.ensure_version(db, viewer_id=viewer_id, ref=_page_ref(page.id), lane="outgoing_edges")
     db.add(
         DailyNotePage(
             user_id=viewer_id,
@@ -939,249 +405,147 @@ def _resolve_daily_page_once(
             page_id=page.id,
         )
     )
-    enqueue_page_reindex(db, page_id=page.id, reason="daily_page")
     return page, time_zone
 
 
-def _set_block_body_pm_json(block: NoteBlock, body_pm_json: dict[str, Any]) -> None:
-    block.body_pm_json = body_pm_json
-    block.body_markdown = markdown_from_pm_json(body_pm_json)
-    block.body_text = text_from_pm_json(body_pm_json)
-
-
-def _body_target_refs(db: Session, viewer_id: UUID, value: object) -> list[ResourceRef]:
-    """Distinct ``object_ref``/``object_embed``/``#tag`` targets in document order.
-
-    The references-vs-embeds distinction and positions are not stored: the body
-    itself knows where its refs sit, so the same ref twice in one body is one
-    target (§5.7).
-    """
-    refs: list[ResourceRef] = []
-    seen: set[str] = set()
-
-    def append_ref(ref: ResourceRef) -> None:
-        if ref.uri in seen:
-            return
-        seen.add(ref.uri)
-        refs.append(ref)
-
-    def visit(node: object, *, in_code: bool = False) -> None:
-        if isinstance(node, list):
-            for child in node:
-                visit(child, in_code=in_code)
-            return
-        if not isinstance(node, dict):
-            return
-        node_type = node.get("type")
-        if node_type == "text" and isinstance(node.get("text"), str) and not in_code:
-            for name in graph_tags.tag_names_from_text(str(node["text"])):
-                append_ref(graph_tags.ref_for_tag_name(db, viewer_id=viewer_id, name=name))
-        if node.get("type") in {"object_ref", "object_embed"} and isinstance(
-            node.get("attrs"), dict
-        ):
-            attrs = node["attrs"]
-            object_type = attrs.get("objectType")
-            object_id = attrs.get("objectId")
-            if isinstance(object_type, str) and isinstance(object_id, str):
-                # Validated bodies constrain objectType to OBJECT_TYPES, a
-                # subset of ResourceScheme.
-                ref = ResourceRef(scheme=cast("ResourceScheme", object_type), id=UUID(object_id))
-                append_ref(ref)
-        visit(node.get("content"), in_code=in_code or node_type == "code_block")
-
-    visit(value)
-    return refs
-
-
-def _sync_note_body_edges(db: Session, viewer_id: UUID, block: NoteBlock) -> None:
-    """Replace the block's ``origin=note_body`` edge set from its body refs (§5.7).
-
-    Replace-set scoping by ``(source, origin)`` means user links and the
-    highlight attachment are untouched by construction.
-    """
-    graph_documents.sync_block_body_edges(
-        db,
-        user_id=viewer_id,
-        block_id=block.id,
-        parsed_refs=_body_target_refs(db, viewer_id, block.body_pm_json),
-    )
-
-
-def _page_out(db: Session, page: Page) -> NotePageOut:
-    document = graph_documents.load_page_document(db, user_id=page.user_id, page_id=page.id)
+def _page_out(db: Session, viewer_id: UUID, page: Page) -> NotePageOut:
+    surface = graph_adjacency.load_page_surface(db, user_id=viewer_id, page_id=page.id)
     return NotePageOut(
         id=page.id,
         title=page.title,
-        description=page.description,
-        document_version=page.document_version,
         updated_at=page.updated_at,
-        blocks=[_document_block_out(node, page.id) for node in document.roots],
+        surface=surfaces.get_surface(db, viewer_id=viewer_id, source=_page_ref(page.id)),
+        blocks=[_surface_note_out(db, node, page.id) for node in surface.roots],
     )
 
 
-def _page_document_request_hash(request: PatchPageDocumentRequest) -> str:
-    payload = request.model_dump(mode="json", by_alias=True)
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
-
-
-def _document_block_out(node: graph_documents.DocumentBlock, page_id: UUID) -> NoteBlockOut:
+def _surface_note_out(
+    db: Session, node: graph_adjacency.SurfaceNote, page_id: UUID
+) -> NoteBlockOut:
     return NoteBlockOut(
         id=node.block.id,
         page_id=page_id,
         parent_block_id=node.parent.id if node.parent.scheme == "note_block" else None,
         order_key=node.source_order_key,
-        block_kind=cast(NOTE_BLOCK_KINDS, node.block.block_kind),
         body_pm_json=node.block.body_pm_json,
-        body_markdown=node.block.body_markdown,
         body_text=node.block.body_text,
         collapsed=node.collapsed,
-        children=[_document_block_out(child, page_id) for child in node.children],
+        children=[_surface_note_out(db, child, page_id) for child in node.children],
         created_at=node.block.created_at,
         updated_at=node.block.updated_at,
+        version_by_lane=versions.versions_for_ref(
+            db, viewer_id=node.block.user_id, ref=_note_ref(node.block.id)
+        ),
     )
 
 
-def _flatten_document_nodes(
-    nodes: list[graph_documents.DocumentBlock],
-) -> list[graph_documents.DocumentBlock]:
-    out: list[graph_documents.DocumentBlock] = []
-
-    def visit(node: graph_documents.DocumentBlock) -> None:
-        out.append(node)
-        for child in node.children:
-            visit(child)
-
-    for node in nodes:
-        visit(node)
-    return out
+def _today_in_time_zone(time_zone: str) -> date:
+    try:
+        return datetime.now(ZoneInfo(time_zone)).date()
+    except ZoneInfoNotFoundError as exc:
+        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "time_zone is invalid") from exc
 
 
-def _page_document_command_from_document(
-    document: graph_documents.PageDocument,
-    *,
-    body_updates: dict[UUID, dict[str, Any]] | None = None,
-    append_root: tuple[UUID, NOTE_BLOCK_KINDS, dict[str, Any]] | None = None,
-    delete_root_ids: set[UUID] | None = None,
-) -> tuple[list[PageDocumentBlockRequest], list[PageDocumentContainmentRequest], list[UUID]]:
-    updates = body_updates or {}
-    delete_roots = delete_root_ids or set()
-    existing_nodes = {node.block.id: node for node in _flatten_document_nodes(document.roots)}
-    for block_id in updates:
-        if block_id not in existing_nodes:
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Note block not found")
-    for block_id in delete_roots:
-        if block_id not in existing_nodes:
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Note block not found")
+def _append_text(content: list[dict[str, Any]], text_value: str) -> None:
+    for index, line in enumerate(text_value.split("\n")):
+        if index > 0:
+            content.append({"type": "hard_break"})
+        if line:
+            content.append({"type": "text", "text": line})
 
-    deleted_ids: set[UUID] = set()
-    for block_id in delete_roots:
-        deleted_ids.add(block_id)
-        deleted_ids.update(_document_descendant_ids(existing_nodes[block_id]))
 
-    blocks: list[PageDocumentBlockRequest] = []
-    containment_by_parent: dict[ResourceRef, list[PageDocumentChildRequest]] = {}
+def _page_ref(page_id: UUID) -> ResourceRef:
+    return ResourceRef(scheme="page", id=page_id)
 
-    def append_node(node: graph_documents.DocumentBlock) -> None:
-        if node.block.id in deleted_ids:
-            return
-        blocks.append(
-            PageDocumentBlockRequest(
-                id=node.block.id,
-                block_kind=cast(NOTE_BLOCK_KINDS, node.block.block_kind),
-                body_pm_json=updates.get(node.block.id, node.block.body_pm_json),
-            )
+
+def _note_ref(block_id: UUID) -> ResourceRef:
+    return ResourceRef(scheme="note_block", id=block_id)
+
+
+def _bump_version(db: Session, viewer_id: UUID, ref: ResourceRef, lane: str) -> None:
+    versions.bump_version(db, viewer_id=viewer_id, ref=ref, lane=lane)
+
+
+def _next_order_key(db: Session, viewer_id: UUID, source: ResourceRef) -> str:
+    last = db.scalar(
+        select(ResourceEdge.source_order_key)
+        .where(
+            ResourceEdge.user_id == viewer_id,
+            ResourceEdge.source_scheme == source.scheme,
+            ResourceEdge.source_id == source.id,
+            ResourceEdge.kind == "context",
+            ResourceEdge.origin == "user",
+            ResourceEdge.source_order_key.is_not(None),
         )
-        containment_by_parent.setdefault(node.parent, []).append(
-            PageDocumentChildRequest(
-                block_id=node.block.id,
-                source_order_key=node.source_order_key,
-                collapsed=node.collapsed,
-            )
+        .order_by(ResourceEdge.source_order_key.desc())
+        .limit(1)
+    )
+    return "0000000001" if last is None else f"{int(last) + 1:010d}"
+
+
+def _ordered_edge_to_target(
+    db: Session, viewer_id: UUID, source: ResourceRef, target: ResourceRef
+) -> ResourceEdge | None:
+    return db.scalar(
+        select(ResourceEdge).where(
+            ResourceEdge.user_id == viewer_id,
+            ResourceEdge.source_scheme == source.scheme,
+            ResourceEdge.source_id == source.id,
+            ResourceEdge.target_scheme == target.scheme,
+            ResourceEdge.target_id == target.id,
+            ResourceEdge.kind == "context",
+            ResourceEdge.origin == "user",
+            ResourceEdge.source_order_key.is_not(None),
         )
-        for child in node.children:
-            append_node(child)
+    )
 
-    for root in document.roots:
-        append_node(root)
 
-    if append_root is not None:
-        block_id, block_kind, body_pm_json = append_root
-        blocks.append(
-            PageDocumentBlockRequest(id=block_id, block_kind=block_kind, body_pm_json=body_pm_json)
+def _replay_note_response(
+    db: Session,
+    viewer_id: UUID,
+    scope: str,
+    client_mutation_id: str,
+    request_payload: object,
+) -> NoteBlockOut | None:
+    replay = db.scalar(
+        select(ResourceMutation).where(
+            ResourceMutation.user_id == viewer_id,
+            ResourceMutation.mutation_scope == scope,
+            ResourceMutation.client_mutation_id == client_mutation_id,
         )
-        root_ref = ResourceRef(scheme="page", id=document.page.id)
-        root_children = containment_by_parent.setdefault(root_ref, [])
-        root_children.append(
-            PageDocumentChildRequest(
-                block_id=block_id,
-                source_order_key=f"{len(root_children) + 1:010d}",
-                collapsed=False,
-            )
+    )
+    if replay is None:
+        return None
+    if replay.request_hash != _hash_payload(request_payload):
+        raise ConflictError(
+            ApiErrorCode.E_IDEMPOTENCY_KEY_REPLAY_MISMATCH,
+            "Resource mutation id was reused with a different request",
         )
+    return NoteBlockOut.model_validate(replay.response_json)
 
-    return (
-        blocks,
-        [
-            PageDocumentContainmentRequest(
-                parent=_page_document_parent_ref(parent),
-                children=children,
-            )
-            for parent, children in containment_by_parent.items()
-            if children
-        ],
-        sorted(delete_roots, key=str),
+
+def _record_mutation(
+    db: Session,
+    viewer_id: UUID,
+    scope: str,
+    client_mutation_id: str,
+    request_payload: object,
+    response_json: dict[str, object],
+) -> None:
+    db.add(
+        ResourceMutation(
+            user_id=viewer_id,
+            mutation_scope=scope,
+            client_mutation_id=client_mutation_id,
+            request_hash=_hash_payload(request_payload),
+            changed_lanes={scope: True},
+            response_json=response_json,
+        )
     )
 
 
-def _page_document_parent_ref(parent: ResourceRef) -> PageDocumentParentRef:
-    if parent.scheme not in {"page", "note_block"}:
-        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Document parent must be page or note_block")
-    return PageDocumentParentRef(
-        scheme=cast(Literal["page", "note_block"], parent.scheme),
-        id=parent.id,
-    )
-
-
-def _document_descendant_ids(node: graph_documents.DocumentBlock) -> list[UUID]:
-    ids: list[UUID] = []
-    for child in node.children:
-        ids.append(child.block.id)
-        ids.extend(_document_descendant_ids(child))
-    return ids
-
-
-def _document_delete_order(
-    parent_by_id: dict[UUID, UUID | None],
-    deleted_ids: set[UUID],
-) -> list[UUID]:
-    return sorted(
-        deleted_ids,
-        key=lambda block_id: _existing_block_depth(parent_by_id, block_id),
-        reverse=True,
-    )
-
-
-def _existing_block_depth(parent_by_id: dict[UUID, UUID | None], block_id: UUID) -> int:
-    depth = 0
-    parent_id = parent_by_id[block_id]
-    while parent_id is not None and parent_id in parent_by_id:
-        depth += 1
-        parent_id = parent_by_id[parent_id]
-    return depth
-
-
-def _delete_object_edges(db: Session, scheme: ResourceScheme, object_id: UUID) -> None:
-    delete_edges_for_deleted_resource(db, ref=ResourceRef(scheme=scheme, id=object_id))
-
-
-def _first_highlight_note_block(
-    db: Session, viewer_id: UUID, highlight_id: UUID
-) -> NoteBlock | None:
-    return graph_highlight_notes.first_note_block_for_highlight(
-        db, viewer_id=viewer_id, highlight_id=highlight_id
-    )
-
-
-def _get_visible_highlight_or_404(db: Session, viewer_id: UUID, highlight_id: UUID) -> Highlight:
-    return get_highlight_for_visible_read_or_404(db, viewer_id, highlight_id)
+def _hash_payload(payload: object) -> str:
+    if hasattr(payload, "model_dump"):
+        payload = payload.model_dump(mode="json", by_alias=True)
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()

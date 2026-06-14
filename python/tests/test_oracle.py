@@ -33,7 +33,7 @@ from nexus.services.billing_entitlements import grant_entitlement_override
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.content_indexing import rebuild_fragment_content_index
 from nexus.services.image_validation import ValidatedImage
-from nexus.services.note_indexing import rebuild_page_content_index
+from nexus.services.note_indexing import rebuild_note_content_index
 from nexus.services.oracle import (
     ORACLE_CANONICAL_PUBLIC_DOMAIN_WORK_SLUGS,
     ORACLE_REQUIRED_PUBLIC_DOMAIN_IMAGES,
@@ -1357,7 +1357,7 @@ def test_execute_reading_passage_event_carries_citation_for_user_media(
     assert by_phase["ascent"]["citation"] is None
 
 
-def test_execute_reading_page_owned_note_passage_carries_note_citation_out(
+def test_execute_reading_note_owned_passage_carries_note_citation_out(
     db_session: Session,
     oracle_schema,
 ) -> None:
@@ -1389,12 +1389,12 @@ def test_execute_reading_page_owned_note_passage_carries_note_citation_out(
     by_phase = {passage.phase: passage for passage in detail.passages}
     ordeal = by_phase["ordeal"]
     assert ordeal.source_kind == "user_media"
-    assert ordeal.citation is not None, "page-owned note evidence must render a citation chip"
+    assert ordeal.citation is not None, "note-owned evidence must render a citation chip"
     citation = ordeal.citation
     assert citation.media_id is None
     assert citation.locator is not None
     assert citation.locator.type == "note_block_offsets"
-    assert str(citation.locator.page_id) == str(page_id)
+    assert "page_id" not in citation.locator.model_dump(mode="json")
     assert str(citation.locator.block_id) == str(note_block_id)
     assert citation.target_ref.type == "evidence_span"
 
@@ -3070,11 +3070,7 @@ def _seed_ready_note(
     page_title: str,
     body_text: str,
 ) -> None:
-    """Insert a page + single note_block owned by ``user_id`` and index it into the
-    unified content pipeline (owner_kind='page'), yielding a ready content_index_states
-    row plus a content_embedding under current_transcript_embedding_model(). Mirrors the
-    note-block seeding used by the search tests (test_search._seed_note_block).
-    """
+    """Insert a page-linked note and index the note body."""
     db.execute(
         text("INSERT INTO pages (id, user_id, title) VALUES (:page_id, :user_id, :title)"),
         {"page_id": page_id, "user_id": user_id, "title": page_title},
@@ -3082,21 +3078,20 @@ def _seed_ready_note(
     db.execute(
         text(
             """
-            INSERT INTO note_blocks (
-                id, user_id, block_kind,
-                body_pm_json, body_markdown, body_text
-            )
-            VALUES (
-                :note_block_id, :user_id, 'bullet',
-                jsonb_build_object(
-                    'type', 'paragraph',
-                    'content', jsonb_build_array(
-                        jsonb_build_object('type', 'text', 'text', CAST(:body_text AS text))
-                    )
-                ),
-                :body_text, :body_text
-            )
-            """
+                INSERT INTO note_blocks (
+                id, user_id, body_pm_json, body_text
+                )
+                VALUES (
+                    :note_block_id, :user_id,
+                    jsonb_build_object(
+                        'type', 'paragraph',
+                        'content', jsonb_build_array(
+                            jsonb_build_object('type', 'text', 'text', CAST(:body_text AS text))
+                        )
+                    ),
+                    :body_text
+                )
+                """
         ),
         {
             "note_block_id": note_block_id,
@@ -3112,7 +3107,7 @@ def _seed_ready_note(
                 target_id, source_order_key
             )
             VALUES (
-                :user_id, 'context', 'note_containment', 'page', :page_id,
+                :user_id, 'context', 'user', 'page', :page_id,
                 'note_block', :note_block_id, '0000000001'
             )
             """
@@ -3120,9 +3115,9 @@ def _seed_ready_note(
         {"user_id": user_id, "page_id": page_id, "note_block_id": note_block_id},
     )
     db.flush()
-    result = rebuild_page_content_index(db, page_id=page_id, reason="test")
+    result = rebuild_note_content_index(db, note_block_id=note_block_id, reason="test")
     assert result.status == "ready", (
-        f"expected the seeded note index to be ready, got {result.status} for page {page_id}"
+        f"expected the seeded note index to be ready, got {result.status} for note {note_block_id}"
     )
 
 
@@ -3136,11 +3131,11 @@ _NOTE_BODY_TEXT = (
 )
 
 
-def test_retrieve_user_library_passages_includes_page_owned_notes(
+def test_retrieve_user_library_passages_includes_note_owned_notes(
     db_session: Session,
     oracle_schema,
 ) -> None:
-    """Oracle can cite your notes: a page-owned (owner_kind='page') note whose body
+    """Oracle can cite your notes: a note-owned note body whose
     embedding matches the oracle user-content retrieval query surfaces as a user-library
     candidate targeting the note's content-index row (§5.3) and tagged with the 'note'
     content source kind. This pins the AC-9 headline that note evidence joins media
@@ -3173,13 +3168,13 @@ def test_retrieve_user_library_passages_includes_page_owned_notes(
         query_embedding=query_embedding,
     )
 
-    note_target_ids = _owner_chunk_target_ids(db_session, "page", page_id)
+    note_target_ids = _owner_chunk_target_ids(db_session, "note_block", note_block_id)
     assert note_target_ids, "expected the seeded note to be indexed into content chunks"
     note_candidates = [
         candidate for candidate in candidates if candidate.target.id in note_target_ids
     ]
     assert note_candidates, (
-        "expected a page-owned note among the oracle user-library candidates "
+        "expected a note-owned note among the oracle user-library candidates "
         f"(oracle cites your notes); got targets {[c.target.uri for c in candidates]}"
     )
     note_candidate = note_candidates[0]
@@ -3189,8 +3184,8 @@ def test_retrieve_user_library_passages_includes_page_owned_notes(
     assert "note" in note_candidate.tags, (
         f"note candidate should carry the note content source kind tag, got {note_candidate.tags}"
     )
-    assert note_candidate.title == "Lantern Notebook", (
-        f"note candidate title should be the page title, got {note_candidate.title!r}"
+    assert note_candidate.title == "Note", (
+        f"note candidate title should be generic, got {note_candidate.title!r}"
     )
     assert note_candidate.source_kind == "user_media", (
         f"note candidate should be offered as a user_media candidate, got {note_candidate.source_kind}"
@@ -3218,7 +3213,7 @@ def test_viewer_has_searchable_user_content_counts_note_only_corpus(
     )
 
     assert _viewer_has_searchable_user_content(db_session, viewer_id=user_id), (
-        "indexed page-owned notes alone should activate Oracle user-content retrieval"
+        "indexed note-owned notes alone should activate Oracle user-content retrieval"
     )
 
 
@@ -3227,7 +3222,7 @@ def test_retrieve_user_content_keeps_note_when_id_collides_with_media(
     oracle_schema,
 ) -> None:
     """Owner-collision dedup (the load-bearing half of AC-9): a media-owned chunk and a
-    page-owned note chunk that share the SAME uuid value across the two owner keyspaces
+    note-owned chunk that share the SAME uuid value across the two owner keyspaces
     must BOTH survive dedup, because the dedup key is (owner_kind, owner_id) and not the
     bare id. Under the pre-cutover set[str] dedup the note would be dropped as a duplicate
     of the media id. We assert at both the embedding-row seam and the deduped
@@ -3242,13 +3237,13 @@ def test_retrieve_user_content_keeps_note_when_id_collides_with_media(
         title=_NOTE_BODY_TEXT,
     )
 
-    # Force the page id to equal the media id so the two owner keyspaces collide on the
+    # Force the note id to equal the media id so the two owner keyspaces collide on the
     # bare uuid; only an (owner_kind, owner_id) dedup keeps both.
-    note_block_id = uuid4()
+    note_block_id = media_id
     _seed_ready_note(
         db_session,
         user_id=user_id,
-        page_id=media_id,
+        page_id=uuid4(),
         note_block_id=note_block_id,
         page_title="Colliding Notebook",
         body_text=_NOTE_BODY_TEXT,
@@ -3266,8 +3261,8 @@ def test_retrieve_user_content_keeps_note_when_id_collides_with_media(
     owner_kinds_for_id = {
         str(row["owner_kind"]) for row in rows if str(row["media_id"]) == str(media_id)
     }
-    assert owner_kinds_for_id == {"media", "page"}, (
-        "both a media-owned and a page-owned chunk should share the colliding id at the "
+    assert owner_kinds_for_id == {"media", "note_block"}, (
+        "both a media-owned and a note-owned chunk should share the colliding id at the "
         f"embedding-row seam, got {owner_kinds_for_id} for id {media_id}"
     )
 
@@ -3279,17 +3274,17 @@ def test_retrieve_user_content_keeps_note_when_id_collides_with_media(
     )
     candidate_target_ids = {candidate.target.id for candidate in candidates}
     media_target_ids = _owner_chunk_target_ids(db_session, "media", media_id)
-    page_target_ids = _owner_chunk_target_ids(db_session, "page", media_id)
-    assert media_target_ids and page_target_ids, (
+    note_target_ids = _owner_chunk_target_ids(db_session, "note_block", note_block_id)
+    assert media_target_ids and note_target_ids, (
         "expected indexed chunks for both owner kinds sharing the colliding id, got "
-        f"media={media_target_ids} page={page_target_ids}"
+        f"media={media_target_ids} note={note_target_ids}"
     )
     assert candidate_target_ids & media_target_ids, (
         "the media-owned chunk must survive the (owner_kind, owner_id) dedup; got targets "
         f"{[c.target.uri for c in candidates]}"
     )
-    assert candidate_target_ids & page_target_ids, (
-        "the page-owned note chunk sharing the colliding id must survive the "
+    assert candidate_target_ids & note_target_ids, (
+        "the note-owned chunk sharing the colliding id must survive the "
         "(owner_kind, owner_id) dedup (the note is not dropped); got targets "
         f"{[c.target.uri for c in candidates]}"
     )

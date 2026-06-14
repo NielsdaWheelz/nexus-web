@@ -1056,17 +1056,21 @@ def _viewer_has_searchable_user_content(db: Session, *, viewer_id: UUID) -> bool
                     JOIN content_chunks cc ON cc.owner_kind = 'media' AND cc.owner_id = vm.media_id
                     WHERE btrim(cc.chunk_text) <> ''
                     LIMIT 1
-                )
-                OR EXISTS (
-                    SELECT 1
-                    FROM pages p
-                    JOIN content_index_states pcis ON pcis.owner_kind = 'page' AND pcis.owner_id = p.id
-                        AND pcis.status = 'ready'
-                    JOIN content_chunks cc ON cc.owner_kind = 'page' AND cc.owner_id = p.id
-                    WHERE p.user_id = :viewer_id
-                      AND btrim(cc.chunk_text) <> ''
-                    LIMIT 1
-                )
+                    )
+                    OR EXISTS (
+                        SELECT 1
+                        FROM note_blocks nb
+                        JOIN content_index_states ncis
+                          ON ncis.owner_kind = 'note_block'
+                         AND ncis.owner_id = nb.id
+                         AND ncis.status = 'ready'
+                        JOIN content_chunks cc
+                          ON cc.owner_kind = 'note_block'
+                         AND cc.owner_id = nb.id
+                        WHERE nb.user_id = :viewer_id
+                          AND btrim(cc.chunk_text) <> ''
+                        LIMIT 1
+                    )
                 """
             ),
             {"viewer_id": viewer_id},
@@ -1297,11 +1301,10 @@ def _retrieve_user_content_chunks_by_embedding(
                     cc.source_kind,
                     cc.heading_path,
                     cc.primary_evidence_span_id,
-                    COALESCE(m.title, pg.title, 'Untitled note') AS media_title,
+                    COALESCE(m.title, 'Note') AS media_title,
                     (1 - (ce.embedding_vector <=> qe.embedding)) AS semantic_score
                 FROM content_chunks cc
                 LEFT JOIN media m ON m.id = cc.owner_id AND cc.owner_kind = 'media'
-                LEFT JOIN pages pg ON pg.id = cc.owner_id AND cc.owner_kind = 'page'
                 JOIN content_index_states mcis ON mcis.owner_kind = cc.owner_kind AND mcis.owner_id = cc.owner_id
                     AND mcis.status = 'ready'
                 JOIN content_embeddings ce ON ce.chunk_id = cc.id
@@ -1314,8 +1317,8 @@ def _retrieve_user_content_chunks_by_embedding(
                   AND mcis.active_embedding_model = :query_embedding_model
                   AND (
                     (cc.owner_kind = 'media' AND cc.owner_id IN (SELECT media_id FROM visible_media))
-                    OR (cc.owner_kind = 'page' AND cc.owner_id IN (
-                        SELECT id FROM pages WHERE user_id = :viewer_id))
+                    OR (cc.owner_kind = 'note_block' AND cc.owner_id IN (
+                        SELECT id FROM note_blocks WHERE user_id = :viewer_id))
                   )
                 ORDER BY ce.embedding_vector <=> qe.embedding ASC, cc.id ASC
                 LIMIT 200
@@ -1350,7 +1353,7 @@ def _candidate_from_content_chunk_row(row: dict[str, Any], *, score: float) -> _
     # A media-owned chunk that grounds to an evidence span carries the canonical
     # in-reader jump in its snapshot (the chip's clickable href, mirroring LI
     # synthesis); the CitationOut lifts deep_link from this snapshot (G6).
-    # Page-owned note chunks resolve through CitationOut.locator instead of a
+    # Note-owned chunks resolve through CitationOut.locator instead of a
     # media deep link. Span-less chunks stay typographic.
     deep_link = (
         f"/media/{row['media_id']}#evidence-{span_id}"

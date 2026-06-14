@@ -42,8 +42,13 @@ from nexus.db.models import (
 from nexus.llm_catalog import MODEL_CATALOG
 from nexus.services.content_indexing import rebuild_fragment_content_index
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
-from nexus.services.note_indexing import rebuild_page_content_index
-from nexus.services.resource_graph.refs import ResourceRefParseFailure, parse_resource_ref
+from nexus.services.note_indexing import rebuild_note_content_index
+from nexus.services.resource_graph.refs import (
+    ResourceRef,
+    ResourceRefParseFailure,
+    parse_resource_ref,
+)
+from nexus.services.resource_items import versions
 
 # =============================================================================
 # Models
@@ -581,12 +586,21 @@ def create_test_highlight_note(
         page = Page(id=uuid4(), user_id=user_id, title="Notes")
         session.add(page)
         session.flush()
+    versions.ensure_version(
+        session, viewer_id=user_id, ref=ResourceRef(scheme="page", id=page.id), lane="title"
+    )
+    versions.ensure_version(
+        session,
+        viewer_id=user_id,
+        ref=ResourceRef(scheme="page", id=page.id),
+        lane="outgoing_edges",
+    )
     next_order = (
         len(
             session.scalars(
                 select(ResourceEdge.id).where(
                     ResourceEdge.user_id == user_id,
-                    ResourceEdge.origin == "note_containment",
+                    ResourceEdge.origin == "user",
                     ResourceEdge.source_scheme == "page",
                     ResourceEdge.source_id == page.id,
                 )
@@ -598,22 +612,32 @@ def create_test_highlight_note(
     note_block = NoteBlock(
         id=uuid4(),
         user_id=user_id,
-        block_kind="bullet",
         body_pm_json={
             "type": "paragraph",
             "content": [{"type": "text", "text": body}],
         },
-        body_markdown=body,
         body_text=body,
     )
     session.add(note_block)
     session.flush()
+    versions.ensure_version(
+        session,
+        viewer_id=user_id,
+        ref=ResourceRef(scheme="note_block", id=note_block.id),
+        lane="body",
+    )
+    versions.ensure_version(
+        session,
+        viewer_id=user_id,
+        ref=ResourceRef(scheme="note_block", id=note_block.id),
+        lane="outgoing_edges",
+    )
     session.add(
         ResourceEdge(
             id=uuid4(),
             user_id=user_id,
             kind="context",
-            origin="note_containment",
+            origin="user",
             source_scheme="page",
             source_id=page.id,
             target_scheme="note_block",
@@ -634,7 +658,7 @@ def create_test_highlight_note(
         )
     )
     session.flush()
-    rebuild_page_content_index(session, page_id=page.id, reason="factory")
+    rebuild_note_content_index(session, note_block_id=note_block.id, reason="factory")
     session.commit()
     return highlight.id, note_block.id
 

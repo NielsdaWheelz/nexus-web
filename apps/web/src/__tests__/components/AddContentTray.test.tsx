@@ -122,8 +122,6 @@ describe("AddContentTray", () => {
           data: {
             id: "page-new",
             title: "Untitled",
-            description: null,
-            document_version: 1,
             blocks: [],
           },
         });
@@ -135,9 +133,7 @@ describe("AddContentTray", () => {
             page_id: "page-today",
             parent_block_id: null,
             order_key: "a",
-            block_kind: "bullet",
             body_pm_json: { type: "paragraph" },
-            body_markdown: "captured text",
             body_text: "captured text",
             collapsed: false,
             children: [],

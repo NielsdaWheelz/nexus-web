@@ -26,7 +26,6 @@ EdgeOrigin = Literal[
     "system",
     "note_body",
     "highlight_note",
-    "note_containment",
     "synapse",
 ]
 

@@ -49,13 +49,11 @@ export default function NotesPaneBody() {
     try {
       const page = await createNotePage({ title: nextTitle });
       setPages((current) => [
-        {
-          id: page.id,
-          title: page.title,
-          description: page.description,
-          documentVersion: page.documentVersion,
-          updatedAt: page.updatedAt,
-        },
+	        {
+	          id: page.id,
+	          title: page.title,
+	          updatedAt: page.updatedAt,
+	        },
         ...current,
       ]);
       setTitle("");
@@ -107,10 +105,9 @@ export default function NotesPaneBody() {
               kind: "link",
               href: `/pages/${page.id}`,
               paneTitleHint: page.title,
-            }}
-            title={page.title}
-            description={page.description}
-          />
+	            }}
+	            title={page.title}
+	          />
         ))}
         </ResourceList>
       ) : null}

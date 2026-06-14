@@ -217,7 +217,7 @@ class User(Base):
 
 
 class Page(Base):
-    """User-owned note page."""
+    """Title-only page resource."""
 
     __tablename__ = "pages"
 
@@ -228,12 +228,10 @@ class Page(Base):
     )
     user_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
+        ForeignKey("users.id"),
         nullable=False,
     )
     title: Mapped[str] = mapped_column(Text, nullable=False)
-    description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    document_version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -247,64 +245,6 @@ class Page(Base):
 
     __table_args__ = (
         CheckConstraint("char_length(title) BETWEEN 1 AND 200", name="ck_pages_title_length"),
-        CheckConstraint("document_version >= 1", name="ck_pages_document_version_positive"),
-    )
-
-
-class PageDocumentMutation(Base):
-    """Idempotency ledger for versioned note document commands."""
-
-    __tablename__ = "page_document_mutations"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id"),
-        nullable=False,
-    )
-    page_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("pages.id"),
-        nullable=False,
-    )
-    client_mutation_id: Mapped[str] = mapped_column(Text, nullable=False)
-    request_hash: Mapped[str] = mapped_column(Text, nullable=False)
-    base_document_version: Mapped[int] = mapped_column(Integer, nullable=False)
-    document_version: Mapped[int] = mapped_column(Integer, nullable=False)
-    response_json: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        CheckConstraint(
-            "char_length(client_mutation_id) BETWEEN 1 AND 120",
-            name="ck_page_document_mutations_client_mutation_id_length",
-        ),
-        CheckConstraint(
-            "char_length(request_hash) = 64",
-            name="ck_page_document_mutations_request_hash_length",
-        ),
-        CheckConstraint(
-            "base_document_version >= 1",
-            name="ck_page_document_mutations_base_document_version_positive",
-        ),
-        CheckConstraint(
-            "document_version >= 1",
-            name="ck_page_document_mutations_document_version_positive",
-        ),
-        UniqueConstraint(
-            "user_id",
-            "page_id",
-            "client_mutation_id",
-            name="uix_page_document_mutations_client_id",
-        ),
     )
 
 
@@ -353,7 +293,7 @@ class DailyNotePage(Base):
 
 
 class NoteBlock(Base):
-    """Smallest editable note unit in a page or focused note pane."""
+    """Body-only note resource."""
 
     __tablename__ = "note_blocks"
 
@@ -367,9 +307,7 @@ class NoteBlock(Base):
         ForeignKey("users.id"),
         nullable=False,
     )
-    block_kind: Mapped[str] = mapped_column(Text, nullable=False, server_default="bullet")
     body_pm_json: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
-    body_markdown: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
     body_text: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
@@ -384,19 +322,15 @@ class NoteBlock(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "block_kind IN ('bullet', 'heading', 'todo', 'quote', 'code', 'image', 'embed')",
-            name="ck_note_blocks_kind",
-        ),
-        CheckConstraint(
             "jsonb_typeof(body_pm_json) = 'object'", name="ck_note_blocks_pm_json_object"
         ),
     )
 
 
-class NoteViewState(Base):
-    """User view state for one block occurrence in a page/block context."""
+class ResourceVersion(Base):
+    """Service-owned concurrency version for one resource lane."""
 
-    __tablename__ = "note_view_states"
+    __tablename__ = "resource_versions"
 
     id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
@@ -408,14 +342,11 @@ class NoteViewState(Base):
         ForeignKey("users.id"),
         nullable=False,
     )
-    context_source_scheme: Mapped[str] = mapped_column(Text, nullable=False)
-    context_source_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
-    target_block_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("note_blocks.id"),
-        nullable=False,
-    )
-    collapsed: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    resource_scheme: Mapped[str] = mapped_column(Text, nullable=False)
+    resource_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    lane: Mapped[str] = mapped_column(Text, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    content_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -429,15 +360,172 @@ class NoteViewState(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "context_source_scheme IN ('page', 'note_block')",
-            name="ck_note_view_states_context_source_scheme",
+            """
+            resource_scheme IN (
+                'media', 'library', 'evidence_span', 'content_chunk',
+                'highlight', 'page', 'note_block', 'fragment',
+                'conversation', 'message', 'oracle_reading',
+                'oracle_corpus_passage', 'library_intelligence_artifact',
+                'library_intelligence_revision',
+                'external_snapshot', 'contributor', 'podcast', 'tag'
+            )
+            """,
+            name="ck_resource_versions_resource_scheme",
+        ),
+        CheckConstraint(
+            "lane IN ('title', 'body', 'outgoing_edges')",
+            name="ck_resource_versions_lane",
+        ),
+        CheckConstraint("version >= 1", name="ck_resource_versions_version_positive"),
+        CheckConstraint(
+            "content_hash IS NULL OR char_length(content_hash) = 64",
+            name="ck_resource_versions_content_hash_length",
         ),
         UniqueConstraint(
             "user_id",
-            "context_source_scheme",
-            "context_source_id",
-            "target_block_id",
-            name="uix_note_view_states_occurrence",
+            "resource_scheme",
+            "resource_id",
+            "lane",
+            name="uix_resource_versions_lane",
+        ),
+    )
+
+
+class ResourceMutation(Base):
+    """Generic idempotency ledger for resource mutations."""
+
+    __tablename__ = "resource_mutations"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=False,
+    )
+    mutation_scope: Mapped[str] = mapped_column(Text, nullable=False)
+    client_mutation_id: Mapped[str] = mapped_column(Text, nullable=False)
+    request_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    changed_lanes: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    response_json: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "char_length(mutation_scope) BETWEEN 1 AND 300",
+            name="ck_resource_mutations_scope_length",
+        ),
+        CheckConstraint(
+            "char_length(client_mutation_id) BETWEEN 1 AND 120",
+            name="ck_resource_mutations_client_mutation_id_length",
+        ),
+        CheckConstraint(
+            "char_length(request_hash) = 64",
+            name="ck_resource_mutations_request_hash_length",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(changed_lanes) = 'object'",
+            name="ck_resource_mutations_changed_lanes_object",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(response_json) = 'object'",
+            name="ck_resource_mutations_response_json_object",
+        ),
+        UniqueConstraint(
+            "user_id",
+            "mutation_scope",
+            "client_mutation_id",
+            name="uix_resource_mutations_client_id",
+        ),
+    )
+
+
+class ResourceViewState(Base):
+    """Surface-specific view state for resource occurrences."""
+
+    __tablename__ = "resource_view_states"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=False,
+    )
+    surface_scheme: Mapped[str] = mapped_column(Text, nullable=False)
+    surface_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    edge_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("resource_edges.id"),
+        nullable=True,
+    )
+    target_scheme: Mapped[str | None] = mapped_column(Text, nullable=True)
+    target_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
+    state: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            """
+            surface_scheme IN (
+                'media', 'library', 'evidence_span', 'content_chunk',
+                'highlight', 'page', 'note_block', 'fragment',
+                'conversation', 'message', 'oracle_reading',
+                'oracle_corpus_passage', 'library_intelligence_artifact',
+                'library_intelligence_revision',
+                'external_snapshot', 'contributor', 'podcast', 'tag'
+            )
+            """,
+            name="ck_resource_view_states_surface_scheme",
+        ),
+        CheckConstraint(
+            """
+            target_scheme IS NULL OR target_scheme IN (
+                'media', 'library', 'evidence_span', 'content_chunk',
+                'highlight', 'page', 'note_block', 'fragment',
+                'conversation', 'message', 'oracle_reading',
+                'oracle_corpus_passage', 'library_intelligence_artifact',
+                'library_intelligence_revision',
+                'external_snapshot', 'contributor', 'podcast', 'tag'
+            )
+            """,
+            name="ck_resource_view_states_target_scheme",
+        ),
+        CheckConstraint(
+            "(target_scheme IS NULL) = (target_id IS NULL)",
+            name="ck_resource_view_states_target_pair",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(state) = 'object'",
+            name="ck_resource_view_states_state_object",
+        ),
+        Index(
+            "uix_resource_view_states_edge_occurrence",
+            "user_id",
+            "surface_scheme",
+            "surface_id",
+            "edge_id",
+            unique=True,
+            postgresql_where=text("edge_id IS NOT NULL"),
         ),
     )
 
@@ -489,7 +577,7 @@ class ResourceEdge(Base):
             """
             origin IN (
                 'user', 'citation', 'system', 'note_body', 'highlight_note',
-                'note_containment', 'synapse'
+                'synapse'
             )
             """,
             name="ck_resource_edges_origin",
@@ -531,10 +619,15 @@ class ResourceEdge(Base):
         CheckConstraint(
             """
             source_order_key IS NULL
-            OR origin = 'note_containment'
             OR (
                 kind = 'context'
-                AND origin IN ('user', 'citation', 'system')
+                AND origin = 'user'
+                AND ordinal IS NULL
+                AND snapshot IS NULL
+            )
+            OR (
+                kind = 'context'
+                AND origin IN ('citation', 'system')
                 AND source_scheme = 'conversation'
                 AND ordinal IS NULL
                 AND snapshot IS NULL
@@ -593,7 +686,7 @@ class ResourceEdge(Base):
             origin != 'note_body'
             OR (
                 kind = 'context'
-                AND source_scheme IN ('page', 'note_block')
+                AND source_scheme = 'note_block'
                 AND source_order_key IS NULL
                 AND target_order_key IS NULL
                 AND ordinal IS NULL
@@ -645,21 +738,6 @@ class ResourceEdge(Base):
         ),
         CheckConstraint(
             """
-            origin != 'note_containment'
-            OR (
-                kind = 'context'
-                AND source_scheme IN ('page', 'note_block')
-                AND target_scheme = 'note_block'
-                AND source_order_key IS NOT NULL
-                AND ordinal IS NULL
-                AND snapshot IS NULL
-                AND NOT (source_scheme = target_scheme AND source_id = target_id)
-            )
-            """,
-            name="ck_resource_edges_note_containment_shape",
-        ),
-        CheckConstraint(
-            """
             origin != 'highlight_note'
             OR (
                 kind = 'context'
@@ -694,26 +772,17 @@ class ResourceEdge(Base):
             postgresql_where=text("ordinal IS NULL"),
         ),
         Index(
-            "uq_resource_edges_containment_source_order",
+            "uq_resource_edges_source_order",
             "user_id",
             "source_scheme",
             "source_id",
             "source_order_key",
             unique=True,
-            postgresql_where=text("origin = 'note_containment' AND source_order_key IS NOT NULL"),
-        ),
-        Index(
-            "uq_resource_edges_containment_target_once",
-            "user_id",
-            "target_scheme",
-            "target_id",
-            unique=True,
-            postgresql_where=text("origin = 'note_containment'"),
+            postgresql_where=text("source_order_key IS NOT NULL"),
         ),
         Index(
             "ix_resource_edges_user_source",
             "user_id",
-            "origin",
             "source_scheme",
             "source_id",
             "source_order_key",
@@ -722,9 +791,9 @@ class ResourceEdge(Base):
         Index(
             "ix_resource_edges_user_target",
             "user_id",
-            "origin",
             "target_scheme",
             "target_id",
+            "created_at",
             "id",
         ),
     )
@@ -2590,7 +2659,10 @@ class ContentBlock(Base):
             "(extraction_confidence >= 0 AND extraction_confidence <= 1)",
             name="ck_content_blocks_extraction_confidence",
         ),
-        CheckConstraint("owner_kind IN ('media', 'page')", name="ck_content_blocks_owner_kind"),
+        CheckConstraint(
+            "owner_kind IN ('media', 'note_block')",
+            name="ck_content_blocks_owner_kind",
+        ),
         UniqueConstraint("owner_kind", "owner_id", "block_idx", name="uq_content_blocks_owner_idx"),
         Index("ix_content_blocks_owner_idx", "owner_kind", "owner_id", "block_idx"),
     )
@@ -2639,7 +2711,10 @@ class EvidenceSpan(Base):
             "resolver_kind IN ('web', 'epub', 'pdf', 'transcript', 'note')",
             name="ck_evidence_spans_resolver",
         ),
-        CheckConstraint("owner_kind IN ('media', 'page')", name="ck_evidence_spans_owner_kind"),
+        CheckConstraint(
+            "owner_kind IN ('media', 'note_block')",
+            name="ck_evidence_spans_owner_kind",
+        ),
         Index("ix_evidence_spans_owner", "owner_kind", "owner_id"),
     )
 
@@ -2684,7 +2759,10 @@ class ContentChunk(Base):
         CheckConstraint(
             "jsonb_typeof(summary_locator) = 'object'", name="ck_content_chunks_locator"
         ),
-        CheckConstraint("owner_kind IN ('media', 'page')", name="ck_content_chunks_owner_kind"),
+        CheckConstraint(
+            "owner_kind IN ('media', 'note_block')",
+            name="ck_content_chunks_owner_kind",
+        ),
         UniqueConstraint("owner_kind", "owner_id", "chunk_idx", name="uq_content_chunks_owner_idx"),
         Index("ix_content_chunks_owner_idx", "owner_kind", "owner_id", "chunk_idx"),
     )
@@ -2763,7 +2841,7 @@ class ContentEmbedding(Base):
 
 
 class ContentIndexState(Base):
-    """Active evidence index pointer for a content owner (media or page)."""
+    """Active evidence index pointer for a content owner."""
 
     __tablename__ = "content_index_states"
 
@@ -2792,7 +2870,8 @@ class ContentIndexState(Base):
     __table_args__ = (
         UniqueConstraint("owner_kind", "owner_id", name="uq_content_index_states_owner"),
         CheckConstraint(
-            "owner_kind IN ('media', 'page')", name="ck_content_index_states_owner_kind"
+            "owner_kind IN ('media', 'note_block')",
+            name="ck_content_index_states_owner_kind",
         ),
         CheckConstraint(
             "status IN ('pending', 'indexing', 'ready', 'no_text', 'ocr_required', 'failed')",

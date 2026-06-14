@@ -14,7 +14,7 @@ from nexus.auth.permissions import (
     visible_media_ids_cte_sql,
     visible_podcast_ids_cte_sql,
 )
-from nexus.db.models import NoteBlock, Page
+from nexus.db.models import NoteBlock
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.logging import get_logger
 from nexus.schemas.retrieval import retrieval_locator_json
@@ -28,7 +28,6 @@ from nexus.schemas.search import (
 from nexus.services import media_intelligence
 from nexus.services.contributors import resolve_canonical_contributor_ids
 from nexus.services.locator_resolver import locator_from_resolution, resolve_evidence_span
-from nexus.services.resource_graph import documents as graph_documents
 from nexus.services.search.constants import (
     CANDIDATES_PER_TYPE,
     MAX_LIMIT,
@@ -473,7 +472,7 @@ def get_search_result(
         row = db.execute(
             text(
                 """
-                SELECT id, title, description
+                SELECT id, title
                 FROM pages
                 WHERE id = :id
                   AND user_id = :viewer_id
@@ -487,8 +486,7 @@ def get_search_result(
             _RankedPageResult(
                 id=row[0],
                 title=row[1],
-                description=row[2],
-                snippet=_truncate_snippet(str(row[2] or row[1])),
+                snippet=_truncate_snippet(str(row[1])),
                 score=score,
             )
         )
@@ -500,26 +498,15 @@ def get_search_result(
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
         if not str(block.body_text or ""):
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
-        occurrence = graph_documents.find_block_occurrence(
-            db,
-            user_id=viewer_id,
-            block_id=block_id,
-        )
-        page = db.get(Page, occurrence.page_id)
-        if page is None or page.user_id != viewer_id:
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
         return _result_to_out(
             _RankedNoteBlockResult(
                 id=block.id,
                 snippet=_truncate_snippet(str(block.body_text or "")),
-                page_id=page.id,
-                page_title=page.title,
                 body_text=block.body_text,
                 score=score,
                 locator=retrieval_locator_json(
                     {
                         "type": "note_block_offsets",
-                        "page_id": str(page.id),
                         "block_id": str(block.id),
                         "start_offset": 0,
                         "end_offset": len(str(block.body_text or "")),
@@ -816,15 +803,17 @@ def get_search_result(
                     m.title,
                     m.published_date,
                     mcc.contributor_credits,
-                    p.title AS page_title,
-                    p.user_id AS page_user_id
+                    nb.user_id AS note_user_id
                 FROM evidence_spans es
                 LEFT JOIN media m ON m.id = es.owner_id AND es.owner_kind = 'media'
                 LEFT JOIN visible_media vm ON vm.media_id = es.owner_id
-                LEFT JOIN pages p ON p.id = es.owner_id AND es.owner_kind = 'page'
+                LEFT JOIN note_blocks nb ON nb.id = es.owner_id AND es.owner_kind = 'note_block'
                 LEFT JOIN media_contributor_credits mcc ON mcc.media_id = m.id
                 WHERE es.id = :id
-                  AND (vm.media_id IS NOT NULL OR p.user_id = :viewer_id)
+                  AND (
+                        vm.media_id IS NOT NULL
+                        OR nb.user_id = :viewer_id
+                      )
                 """
             ),
             {"viewer_id": viewer_id, "id": evidence_span_id},
@@ -838,8 +827,8 @@ def get_search_result(
         )
         _require_resolved_evidence(resolution)
         owner_kind = str(row[1])
-        source_kind = str(row[5] or "page") if owner_kind == "media" else "page"
-        source_title = str(row[6] if owner_kind == "media" else row[9])
+        source_kind = str(row[5] or "note") if owner_kind == "media" else owner_kind
+        source_title = str(row[6] if owner_kind == "media" else "Note")
         return _result_to_out(
             _RankedEvidenceSpanResult(
                 id=row[0],

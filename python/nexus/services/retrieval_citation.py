@@ -118,15 +118,10 @@ class RetrievalCitation:
                 "contributor_handle": self.result_ref["contributor_handle"],
             }
         if self.result_type == "page":
-            return {
-                **common,
-                "description": self.result_ref.get("description"),
-            }
+            return common
         if self.result_type == "note_block":
             return {
                 **common,
-                "page_id": self.result_ref["page_id"],
-                "page_title": self.result_ref["page_title"],
                 "body_text": self.result_ref["body_text"],
                 "highlight_excerpt": self.result_ref.get("highlight_excerpt"),
                 "locator": self.locator,

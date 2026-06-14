@@ -80,7 +80,6 @@ describe("toReaderCitationData", () => {
           media_id: null,
           locator: {
             type: "note_block_offsets",
-            page_id: "page-1",
             block_id: "block-1",
             start_offset: 3,
             end_offset: 19,
@@ -100,7 +99,6 @@ describe("toReaderCitationData", () => {
       target: {
         kind: "note",
         source: "message_retrieval",
-        page_id: "page-1",
         block_id: "block-1",
         start_offset: 3,
         end_offset: 19,

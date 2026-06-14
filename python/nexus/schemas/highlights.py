@@ -6,7 +6,7 @@ from uuid import UUID
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from nexus.schemas.notes import validate_note_body_pm_json
+from nexus.schemas.resource_items import validate_note_body_pm_json
 
 HIGHLIGHT_COLORS = Literal["yellow", "green", "blue", "pink", "purple"]
 
@@ -71,7 +71,6 @@ class LinkedNoteBlockRef(BaseModel):
 
     note_block_id: UUID
     body_pm_json: dict[str, object]
-    body_markdown: str
     body_text: str
 
 

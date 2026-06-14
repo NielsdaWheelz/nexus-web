@@ -3965,19 +3965,16 @@ class TestS2HighlightsNotesConstraints:
             session.execute(
                 text("""
                     INSERT INTO note_blocks (
-                        id, user_id, block_kind,
-                        body_pm_json, body_markdown, body_text
+                        id, user_id, body_pm_json, body_text
                     )
                     VALUES
                         (
-                            :note_a_id, :user_id, 'bullet',
-                            jsonb_build_object('type', 'paragraph'),
-                            '', ''
+                            :note_a_id, :user_id,
+                            jsonb_build_object('type', 'paragraph'), ''
                         ),
                         (
-                            :note_b_id, :user_id, 'bullet',
-                            jsonb_build_object('type', 'paragraph'),
-                            '', ''
+                            :note_b_id, :user_id,
+                            jsonb_build_object('type', 'paragraph'), ''
                         )
                 """),
                 {
@@ -3992,13 +3989,13 @@ class TestS2HighlightsNotesConstraints:
                         user_id, kind, origin, source_scheme, source_id,
                         target_scheme, target_id, source_order_key
                     )
-                    VALUES
+                        VALUES
                         (
-                            :user_id, 'context', 'note_containment',
+                            :user_id, 'context', 'user',
                             'page', :page_id, 'note_block', :note_a_id, '0000000001'
                         ),
                         (
-                            :user_id, 'context', 'note_containment',
+                            :user_id, 'context', 'user',
                             'page', :page_id, 'note_block', :note_b_id, '0000000002'
                         )
                 """),
@@ -8867,14 +8864,13 @@ class TestDurableSourceIngestMigrations:
 
 
 class TestMigration0143PolymorphicOwner:
-    """Notes/pages evidence unification: polymorphic content-index owner (0143/0144).
+    """Content indexing has polymorphic media/note owners at head.
 
     0143 generalizes content_blocks/content_chunks/evidence_spans/content_index_states
     from a single media_id to a polymorphic (owner_kind, owner_id), extends the
     source_kind/resolver_kind domains with 'note', renames
-    media_content_index_states -> content_index_states, and drops the never-finished
-    object_search substrate. 0144 adds the at-most-one-in-flight page reindex unique
-    index. These assertions run against the 0143/0144-upgraded HEAD schema.
+    media_content_index_states -> content_index_states, and drops object_search.
+    0160 removes page-owned note indexing; head accepts only media and note_block owners.
     """
 
     OWNER_TABLES = ("content_blocks", "content_chunks", "evidence_spans")
@@ -9058,7 +9054,7 @@ class TestMigration0143PolymorphicOwner:
             engine.dispose()
 
     def test_owner_kind_check_rejects_unknown_kind(self):
-        """(b) ck_<table>_owner_kind rejects owner_kind outside ('media', 'page')."""
+        """(b) ck_<table>_owner_kind rejects owner_kind outside media/note_block."""
         reset_test_schema()
         engine = create_engine(get_test_database_url())
         try:
@@ -9067,7 +9063,9 @@ class TestMigration0143PolymorphicOwner:
 
             owner_id = uuid4()
             with Session(engine) as session:
-                block_id = self._insert_minimal_block(session, owner_kind="page", owner_id=owner_id)
+                block_id = self._insert_minimal_block(
+                    session, owner_kind="note_block", owner_id=owner_id
+                )
                 session.commit()
 
                 # content_blocks
@@ -9133,12 +9131,14 @@ class TestMigration0143PolymorphicOwner:
 
             owner_id = uuid4()
             with Session(engine) as session:
-                block_id = self._insert_minimal_block(session, owner_kind="page", owner_id=owner_id)
+                block_id = self._insert_minimal_block(
+                    session, owner_kind="note_block", owner_id=owner_id
+                )
 
                 # content_chunks accepts source_kind='note'.
                 self._insert_minimal_chunk(
                     session,
-                    owner_kind="page",
+                    owner_kind="note_block",
                     owner_id=owner_id,
                     source_kind="note",
                     chunk_idx=0,
@@ -9146,7 +9146,7 @@ class TestMigration0143PolymorphicOwner:
                 # evidence_spans accepts resolver_kind='note'.
                 self._insert_minimal_span(
                     session,
-                    owner_kind="page",
+                    owner_kind="note_block",
                     owner_id=owner_id,
                     start_block_id=block_id,
                     end_block_id=block_id,
@@ -9158,7 +9158,7 @@ class TestMigration0143PolymorphicOwner:
                 with pytest.raises(IntegrityError) as exc_info:
                     self._insert_minimal_chunk(
                         session,
-                        owner_kind="page",
+                        owner_kind="note_block",
                         owner_id=owner_id,
                         source_kind="bogus_kind",
                         chunk_idx=1,
@@ -9171,7 +9171,7 @@ class TestMigration0143PolymorphicOwner:
                 with pytest.raises(IntegrityError) as exc_info:
                     self._insert_minimal_span(
                         session,
-                        owner_kind="page",
+                        owner_kind="note_block",
                         owner_id=owner_id,
                         start_block_id=block_id,
                         end_block_id=block_id,
@@ -9238,8 +9238,8 @@ class TestMigration0143PolymorphicOwner:
             reset_test_schema()
             engine.dispose()
 
-    def test_page_owner_scoped_delete_clears_note_evidence(self):
-        """(e) AC-4: owner-scoped delete drops page note evidence + nulls retrievals."""
+    def test_note_owner_scoped_delete_clears_note_evidence(self):
+        """(e) owner-scoped delete drops note evidence + nulls retrievals."""
         reset_test_schema()
         engine = create_engine(get_test_database_url())
         try:
@@ -9251,8 +9251,8 @@ class TestMigration0143PolymorphicOwner:
             user_message_id = uuid4()
             assistant_message_id = uuid4()
             tool_call_id = uuid4()
-            page_owner_id = uuid4()
-            # An unrelated media owner whose evidence must survive the page-scoped delete.
+            note_owner_id = uuid4()
+            # An unrelated media owner whose evidence must survive the note-scoped delete.
             other_owner_id = uuid4()
 
             with Session(engine) as session:
@@ -9312,24 +9312,24 @@ class TestMigration0143PolymorphicOwner:
                     },
                 )
 
-                # Page-owned note evidence: block -> span -> chunk -> part + embedding + state.
-                page_block_id = self._insert_minimal_block(
-                    session, owner_kind="page", owner_id=page_owner_id
+                # Note-owned evidence: block -> span -> chunk -> part + embedding + state.
+                note_block_id = self._insert_minimal_block(
+                    session, owner_kind="note_block", owner_id=note_owner_id
                 )
-                page_span_id = self._insert_minimal_span(
+                note_span_id = self._insert_minimal_span(
                     session,
-                    owner_kind="page",
-                    owner_id=page_owner_id,
-                    start_block_id=page_block_id,
-                    end_block_id=page_block_id,
+                    owner_kind="note_block",
+                    owner_id=note_owner_id,
+                    start_block_id=note_block_id,
+                    end_block_id=note_block_id,
                     resolver_kind="note",
                 )
-                page_chunk_id = self._insert_minimal_chunk(
+                note_chunk_id = self._insert_minimal_chunk(
                     session,
-                    owner_kind="page",
-                    owner_id=page_owner_id,
+                    owner_kind="note_block",
+                    owner_id=note_owner_id,
                     source_kind="note",
-                    primary_evidence_span_id=page_span_id,
+                    primary_evidence_span_id=note_span_id,
                 )
                 session.execute(
                     text(
@@ -9345,7 +9345,7 @@ class TestMigration0143PolymorphicOwner:
                         )
                         """
                     ),
-                    {"chunk_id": str(page_chunk_id), "block_id": str(page_block_id)},
+                    {"chunk_id": str(note_chunk_id), "block_id": str(note_block_id)},
                 )
                 session.execute(
                     text(
@@ -9361,7 +9361,7 @@ class TestMigration0143PolymorphicOwner:
                         """
                     ),
                     {
-                        "chunk_id": str(page_chunk_id),
+                        "chunk_id": str(note_chunk_id),
                         "embedding_vector": "[" + ",".join(["0"] * 256) + "]",
                     },
                 )
@@ -9369,13 +9369,13 @@ class TestMigration0143PolymorphicOwner:
                     text(
                         """
                         INSERT INTO content_index_states (owner_kind, owner_id, status)
-                        VALUES ('page', CAST(:owner_id AS uuid), 'ready')
+                        VALUES ('note_block', CAST(:owner_id AS uuid), 'ready')
                         """
                     ),
-                    {"owner_id": str(page_owner_id)},
+                    {"owner_id": str(note_owner_id)},
                 )
 
-                # A message_retrievals row pointing at the page-owned span.
+                # A message_retrievals row pointing at the note-owned span.
                 session.execute(
                     text(
                         """
@@ -9394,7 +9394,7 @@ class TestMigration0143PolymorphicOwner:
                     {
                         "tool_call_id": tool_call_id,
                         "source_id": str(uuid4()),
-                        "evidence_span_id": str(page_span_id),
+                        "evidence_span_id": str(note_span_id),
                     },
                 )
 
@@ -9433,11 +9433,11 @@ class TestMigration0143PolymorphicOwner:
                 )
                 session.commit()
 
-            # Run the owner-scoped delete sequence the application uses for a page
-            # (services/content_indexing.delete_content_index, owner_kind='page'):
+            # Run the owner-scoped delete sequence the application uses for a note
+            # (services/content_indexing.delete_content_index, owner_kind='note_block'):
             # null dangling retrievals first, then delete state/embeddings/parts/
             # chunks/spans/blocks for that owner.
-            params = {"owner_kind": "page", "owner_id": str(page_owner_id)}
+            params = {"owner_kind": "note_block", "owner_id": str(note_owner_id)}
             with Session(engine) as session:
                 session.execute(
                     text(
@@ -9538,25 +9538,25 @@ class TestMigration0143PolymorphicOwner:
                                 SELECT COUNT(*)
                                 FROM {table} t
                                 JOIN content_chunks cc ON cc.id = t.chunk_id
-                                WHERE cc.owner_kind = 'page'
+                                WHERE cc.owner_kind = 'note_block'
                                   AND cc.owner_id = CAST(:owner_id AS uuid)
                                 """
                             ),
-                            {"owner_id": str(page_owner_id)},
+                            {"owner_id": str(note_owner_id)},
                         ).scalar_one()
                     else:
                         residual = session.execute(
                             text(
                                 f"""
                                 SELECT COUNT(*) FROM {table}
-                                WHERE owner_kind = 'page'
+                                WHERE owner_kind = 'note_block'
                                   AND owner_id = CAST(:owner_id AS uuid)
                                 """
                             ),
-                            {"owner_id": str(page_owner_id)},
+                            {"owner_id": str(note_owner_id)},
                         ).scalar_one()
                     assert residual == 0, (
-                        f"Expected zero residual {table} rows for the deleted page owner, "
+                        f"Expected zero residual {table} rows for the deleted note owner, "
                         f"got {residual}"
                     )
 
@@ -9571,14 +9571,14 @@ class TestMigration0143PolymorphicOwner:
                     )
                 ).scalar_one()
                 assert survivor is not None, (
-                    "Media-owned retrieval evidence_span_id must survive the page-scoped delete"
+                    "Media-owned retrieval evidence_span_id must survive the note-scoped delete"
                 )
         finally:
             reset_test_schema()
             engine.dispose()
 
-    def test_page_reindex_inflight_index_present_at_head(self):
-        """(f) 0144 partial unique index uq_page_reindex_job_inflight exists at head."""
+    def test_note_reindex_inflight_index_present_at_head(self):
+        """Resource-native note indexing has one in-flight job per note at head."""
         reset_test_schema()
         engine = create_engine(get_test_database_url())
         try:
@@ -9593,25 +9593,25 @@ class TestMigration0143PolymorphicOwner:
                         FROM pg_index i
                         JOIN pg_class idx ON idx.oid = i.indexrelid
                         JOIN pg_class tbl ON tbl.oid = i.indrelid
-                        WHERE idx.relname = 'uq_page_reindex_job_inflight'
+                        WHERE idx.relname = 'uq_note_reindex_job_inflight'
                           AND tbl.relname = 'background_jobs'
                         """
                     )
                 ).fetchone()
 
             assert row is not None, (
-                "Expected 0144 index uq_page_reindex_job_inflight on background_jobs at head"
+                "Expected uq_note_reindex_job_inflight on background_jobs at head"
             )
             indisunique, predicate = row
             assert indisunique is True, (
-                f"uq_page_reindex_job_inflight must be unique. indisunique={indisunique}"
+                f"uq_note_reindex_job_inflight must be unique. indisunique={indisunique}"
             )
             assert predicate is not None, (
-                "uq_page_reindex_job_inflight must be a partial index (have a predicate)"
+                "uq_note_reindex_job_inflight must be a partial index (have a predicate)"
             )
             predicate_lower = predicate.lower()
-            assert "page_reindex_job" in predicate_lower, (
-                f"Expected partial predicate to scope to page_reindex_job. Predicate={predicate}"
+            assert "note_reindex_job" in predicate_lower, (
+                f"Expected partial predicate to scope to note_reindex_job. Predicate={predicate}"
             )
             assert "succeeded" in predicate_lower and "dead" in predicate_lower, (
                 f"Expected partial predicate to exclude terminal states. Predicate={predicate}"
@@ -10628,7 +10628,10 @@ class TestMigration0148NotesPagesResourceGraphOrder:
                 "parent_block_id",
                 "order_key",
                 "collapsed",
+                "block_kind",
+                "body_markdown",
             }.isdisjoint(note_block_columns)
+            assert {"id", "user_id", "body_pm_json", "body_text"}.issubset(note_block_columns)
 
             page_columns = {
                 row[0]
@@ -10641,15 +10644,26 @@ class TestMigration0148NotesPagesResourceGraphOrder:
                     )
                 ).fetchall()
             }
-            assert "document_version" in page_columns
+            assert {"id", "user_id", "title", "created_at", "updated_at"}.issubset(page_columns)
+            assert {"description", "document_version"}.isdisjoint(page_columns)
 
-            page_document_mutation_columns = {
+            assert not session.execute(
+                text(
+                    """
+                    SELECT 1
+                    FROM information_schema.tables
+                    WHERE table_name = 'page_document_mutations'
+                    """
+                )
+            ).fetchone()
+
+            resource_version_columns = {
                 row[0]
                 for row in session.execute(
                     text(
                         """
                         SELECT column_name FROM information_schema.columns
-                        WHERE table_name = 'page_document_mutations'
+                        WHERE table_name = 'resource_versions'
                         """
                     )
                 ).fetchall()
@@ -10657,14 +10671,36 @@ class TestMigration0148NotesPagesResourceGraphOrder:
             assert {
                 "id",
                 "user_id",
-                "page_id",
+                "resource_scheme",
+                "resource_id",
+                "lane",
+                "version",
+                "content_hash",
+                "created_at",
+                "updated_at",
+            }.issubset(resource_version_columns)
+
+            resource_mutation_columns = {
+                row[0]
+                for row in session.execute(
+                    text(
+                        """
+                        SELECT column_name FROM information_schema.columns
+                        WHERE table_name = 'resource_mutations'
+                        """
+                    )
+                ).fetchall()
+            }
+            assert {
+                "id",
+                "user_id",
+                "mutation_scope",
                 "client_mutation_id",
                 "request_hash",
-                "base_document_version",
-                "document_version",
+                "changed_lanes",
                 "response_json",
                 "created_at",
-            }.issubset(page_document_mutation_columns)
+            }.issubset(resource_mutation_columns)
 
             indexes = {
                 row[0]
@@ -10681,25 +10717,31 @@ class TestMigration0148NotesPagesResourceGraphOrder:
             assert {
                 "uq_resource_edges_citation_ordinal",
                 "uq_resource_edges_context_pair",
-                "uq_resource_edges_containment_source_order",
-                "uq_resource_edges_containment_target_once",
+                "uq_resource_edges_source_order",
                 "ix_resource_edges_user_source",
                 "ix_resource_edges_user_target",
             }.issubset(indexes)
+            assert {
+                "uq_resource_edges_containment_source_order",
+                "uq_resource_edges_containment_target_once",
+            }.isdisjoint(indexes)
 
-            page_document_mutation_indexes = {
+            resource_indexes = {
                 row[0]
                 for row in session.execute(
                     text(
                         """
                         SELECT indexname
                         FROM pg_indexes
-                        WHERE tablename = 'page_document_mutations'
+                        WHERE tablename IN ('resource_versions', 'resource_mutations')
                         """
                     )
                 ).fetchall()
             }
-            assert "uix_page_document_mutations_client_id" in page_document_mutation_indexes
+            assert {
+                "uix_resource_versions_lane",
+                "uix_resource_mutations_client_id",
+            }.issubset(resource_indexes)
 
             user_id = uuid4()
             source_id = uuid4()
@@ -10714,7 +10756,7 @@ class TestMigration0148NotesPagesResourceGraphOrder:
                             target_scheme, target_id
                         )
                         VALUES (
-                            :user_id, 'context', :origin, 'page', :source_id,
+                            :user_id, 'context', :origin, 'note_block', :source_id,
                             'media', :target_id
                         )
                         """
@@ -10737,7 +10779,7 @@ class TestMigration0148NotesPagesResourceGraphOrder:
                             target_scheme, target_id
                         )
                         VALUES (
-                            :user_id, 'context', 'user', 'page', :source_id,
+                            :user_id, 'context', 'user', 'note_block', :source_id,
                             'media', :target_id
                         )
                         """
@@ -10748,7 +10790,7 @@ class TestMigration0148NotesPagesResourceGraphOrder:
             session.rollback()
         assert "uq_resource_edges_context_pair" in str(exc_info.value)
 
-    def test_containment_order_is_unique_per_parent_at_head(self, head_engine):
+    def test_ordered_adjacency_order_is_unique_per_source_at_head(self, head_engine):
         with Session(head_engine) as session:
             user_id = uuid4()
             page_id = uuid4()
@@ -10763,7 +10805,7 @@ class TestMigration0148NotesPagesResourceGraphOrder:
                         target_scheme, target_id, source_order_key
                     )
                     VALUES (
-                        :user_id, 'context', 'note_containment', 'page', :page_id,
+                        :user_id, 'context', 'user', 'page', :page_id,
                         'note_block', :first_block_id, '0000000001'
                     )
                     """
@@ -10785,7 +10827,7 @@ class TestMigration0148NotesPagesResourceGraphOrder:
                             target_scheme, target_id, source_order_key
                         )
                         VALUES (
-                            :user_id, 'context', 'note_containment', 'page', :page_id,
+                            :user_id, 'context', 'user', 'page', :page_id,
                             'note_block', :second_block_id, '0000000001'
                         )
                         """
@@ -10798,9 +10840,9 @@ class TestMigration0148NotesPagesResourceGraphOrder:
                 )
                 session.flush()
             session.rollback()
-        assert "uq_resource_edges_containment_source_order" in str(exc_info.value)
+        assert "uq_resource_edges_source_order" in str(exc_info.value)
 
-    def test_containment_target_is_single_occurrence_at_head(self, head_engine):
+    def test_ordered_adjacency_target_can_be_shared_at_head(self, head_engine):
         with Session(head_engine) as session:
             user_id = uuid4()
             first_page_id = uuid4()
@@ -10815,36 +10857,45 @@ class TestMigration0148NotesPagesResourceGraphOrder:
                         target_scheme, target_id, source_order_key
                     )
                     VALUES (
-                        :user_id, 'context', 'note_containment', 'page', :page_id,
+                        :user_id, 'context', 'user', 'page', :page_id,
                         'note_block', :block_id, '0000000001'
                     )
                     """
                 ),
                 {"user_id": user_id, "page_id": first_page_id, "block_id": block_id},
             )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO resource_edges (
+                        user_id, kind, origin, source_scheme, source_id,
+                        target_scheme, target_id, source_order_key
+                    )
+                    VALUES (
+                        :user_id, 'context', 'user', 'page', :page_id,
+                        'note_block', :block_id, '0000000001'
+                    )
+                    """
+                ),
+                {"user_id": user_id, "page_id": second_page_id, "block_id": block_id},
+            )
             session.commit()
+            count = session.scalar(
+                text(
+                    """
+                    SELECT COUNT(*)
+                    FROM resource_edges
+                    WHERE user_id = :user_id
+                      AND target_scheme = 'note_block'
+                      AND target_id = :block_id
+                      AND source_order_key IS NOT NULL
+                    """
+                ),
+                {"user_id": user_id, "block_id": block_id},
+            )
+        assert count == 2
 
-            with pytest.raises(IntegrityError) as exc_info:
-                session.execute(
-                    text(
-                        """
-                        INSERT INTO resource_edges (
-                            user_id, kind, origin, source_scheme, source_id,
-                            target_scheme, target_id, source_order_key
-                        )
-                        VALUES (
-                            :user_id, 'context', 'note_containment', 'page', :page_id,
-                            'note_block', :block_id, '0000000001'
-                        )
-                        """
-                    ),
-                    {"user_id": user_id, "page_id": second_page_id, "block_id": block_id},
-                )
-                session.flush()
-            session.rollback()
-        assert "uq_resource_edges_containment_target_once" in str(exc_info.value)
-
-    def test_tags_and_note_view_states_exist_at_head(self, head_engine):
+    def test_tags_and_resource_view_states_exist_at_head(self, head_engine):
         with Session(head_engine) as session:
             view_state_columns = {
                 row[0]
@@ -10852,12 +10903,21 @@ class TestMigration0148NotesPagesResourceGraphOrder:
                     text(
                         """
                         SELECT column_name FROM information_schema.columns
-                        WHERE table_name = 'note_view_states'
+                        WHERE table_name = 'resource_view_states'
                         """
                     )
                 ).fetchall()
             }
-            assert {"id", "created_at", "updated_at"}.issubset(view_state_columns)
+            assert {
+                "id",
+                "user_id",
+                "surface_scheme",
+                "surface_id",
+                "edge_id",
+                "state",
+                "created_at",
+                "updated_at",
+            }.issubset(view_state_columns)
 
             user_id = uuid4()
             tag_id = uuid4()
@@ -10872,17 +10932,16 @@ class TestMigration0148NotesPagesResourceGraphOrder:
                 text(
                     """
                     INSERT INTO note_blocks (
-                        id, user_id, block_kind, body_pm_json, body_text
+                        id, user_id, body_pm_json, body_text
                     )
                     VALUES (
-                        :id, :user_id, 'bullet',
-                        '{"type":"paragraph"}'::jsonb, 'Block'
+                        :id, :user_id, '{"type":"paragraph"}'::jsonb, 'Block'
                     )
                     """
                 ),
                 {"id": block_id, "user_id": user_id},
             )
-            session.execute(
+            edge_id = session.execute(
                 text(
                     """
                     INSERT INTO resource_edges (
@@ -10890,13 +10949,14 @@ class TestMigration0148NotesPagesResourceGraphOrder:
                         target_scheme, target_id, source_order_key
                     )
                     VALUES (
-                        :user_id, 'context', 'note_containment', 'page', :page_id,
+                        :user_id, 'context', 'user', 'page', :page_id,
                         'note_block', :block_id, '0000000001'
                     )
+                    RETURNING id
                     """
                 ),
                 {"user_id": user_id, "page_id": page_id, "block_id": block_id},
-            )
+            ).scalar_one()
             session.execute(
                 text(
                     """
@@ -10909,14 +10969,22 @@ class TestMigration0148NotesPagesResourceGraphOrder:
             session.execute(
                 text(
                     """
-                    INSERT INTO note_view_states (
-                        user_id, context_source_scheme, context_source_id,
-                        target_block_id, collapsed
+                    INSERT INTO resource_view_states (
+                        user_id, surface_scheme, surface_id, edge_id,
+                        target_scheme, target_id, state
                     )
-                    VALUES (:user_id, 'page', :page_id, :block_id, true)
+                    VALUES (
+                        :user_id, 'page', :page_id, :edge_id,
+                        'note_block', :block_id, '{"collapsed": true}'::jsonb
+                    )
                     """
                 ),
-                {"user_id": user_id, "page_id": page_id, "block_id": block_id},
+                {
+                    "user_id": user_id,
+                    "page_id": page_id,
+                    "block_id": block_id,
+                    "edge_id": edge_id,
+                },
             )
             session.commit()
 
@@ -11566,7 +11634,7 @@ class TestMigration0148NotesPagesBackfill:
         finally:
             reset_test_schema()
 
-    def test_backfills_note_containment_and_collapsed_state(self):
+    def test_backfills_ordered_adjacency_and_resource_view_state(self):
         reset_test_schema()
         try:
             result = run_alembic_command("upgrade 0147")
@@ -11636,7 +11704,7 @@ class TestMigration0148NotesPagesBackfill:
                         SELECT target_id, source_order_key
                         FROM resource_edges
                         WHERE user_id = :user_id
-                          AND origin = 'note_containment'
+                          AND origin = 'user'
                           AND source_scheme = 'page'
                           AND source_id = :page_id
                         ORDER BY source_order_key ASC
@@ -11650,7 +11718,7 @@ class TestMigration0148NotesPagesBackfill:
                         SELECT target_id, source_order_key
                         FROM resource_edges
                         WHERE user_id = :user_id
-                          AND origin = 'note_containment'
+                          AND origin = 'user'
                           AND source_scheme = 'note_block'
                           AND source_id = :first_block_id
                         """
@@ -11660,8 +11728,9 @@ class TestMigration0148NotesPagesBackfill:
                 collapsed_rows = session.execute(
                     text(
                         """
-                        SELECT context_source_scheme, context_source_id, target_block_id, collapsed
-                        FROM note_view_states
+                        SELECT surface_scheme, surface_id, target_id,
+                               (state ->> 'collapsed')::boolean
+                        FROM resource_view_states
                         WHERE user_id = :user_id
                         """
                     ),
@@ -11782,7 +11851,6 @@ class TestMigration0149SynapseResonance:
             "system",
             "note_body",
             "highlight_note",
-            "note_containment",
             "synapse",
         ):
             assert f"'{origin}'" in origin_check, origin_check
@@ -12560,7 +12628,7 @@ class TestMigration0157ResourceEdgeDbParity:
                 insert_edge,
                 {
                     **base,
-                    "origin": "note_containment",
+                    "origin": "user",
                     "source_scheme": "page",
                     "source_id": uuid4(),
                     "target_scheme": "note_block",
@@ -12619,7 +12687,6 @@ class TestMigration0157ResourceEdgeDbParity:
                 "ck_resource_edges_no_self_edge",
             ),
             ({"target_order_key": "reserved"}, "ck_resource_edges_target_order_key_reserved"),
-            ({"source_order_key": "bad"}, "ck_resource_edges_source_order_key_shape"),
             (
                 {
                     "origin": "note_body",

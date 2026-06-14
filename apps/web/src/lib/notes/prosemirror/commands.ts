@@ -7,7 +7,6 @@ import { outlineSchema } from "@/lib/notes/prosemirror/schema";
 
 interface DraftBlock {
   id: string;
-  kind: string;
   collapsed: boolean;
   paragraph: ProseMirrorNode;
   children: DraftBlock[];
@@ -48,7 +47,6 @@ function readDraftBlocks(parent: ProseMirrorNode): DraftBlock[] {
         : emptyParagraph();
     blocks.push({
       id: String(node.attrs.id),
-      kind: String(node.attrs.kind ?? "bullet"),
       collapsed: Boolean(node.attrs.collapsed),
       paragraph,
       children: readDraftBlocks(node),
@@ -61,7 +59,6 @@ function writeDraftBlock(block: DraftBlock): ProseMirrorNode {
   return outlineSchema.nodes.outline_block!.create(
     {
       id: block.id,
-      kind: block.kind,
       collapsed: block.collapsed,
     },
     [block.paragraph, ...block.children.map(writeDraftBlock)]
@@ -187,7 +184,6 @@ export function splitOutlineBlock(createBlockId = defaultCreateBlockId): Command
     );
     const nextBlock: DraftBlock = {
       id: createBlockId(),
-      kind: block.kind,
       collapsed: false,
       paragraph: after,
       children: [],
@@ -408,7 +404,6 @@ function draftBlocksFromMarkdownList(
     const depth = Math.floor(match[1]!.replace(/\t/g, "  ").length / 2);
     const block: DraftBlock = {
       id: createBlockId(),
-      kind: "bullet",
       collapsed: false,
       paragraph: paragraphFromText(match[2]!.trim()),
       children: [],

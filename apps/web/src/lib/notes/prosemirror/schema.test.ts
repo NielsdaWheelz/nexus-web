@@ -6,10 +6,8 @@ describe("notes ProseMirror schema", () => {
   it("renders object embeds as clickable object refs inside outline blocks", () => {
     const block: NoteBlock = {
       id: "block-1",
-      pageId: "page-1",
       parentBlockId: null,
       orderKey: "a",
-      blockKind: "embed",
       bodyPmJson: {
         type: "object_embed",
         attrs: {
@@ -20,7 +18,6 @@ describe("notes ProseMirror schema", () => {
           displayMode: "compact",
         },
       },
-      bodyMarkdown: "",
       bodyText: "Embedded page",
       collapsed: false,
       children: [],
@@ -55,12 +52,9 @@ describe("notes ProseMirror schema", () => {
     const doc = noteBlocksToOutlineDoc([
       {
         id: "block-1",
-        pageId: "page-1",
         parentBlockId: null,
         orderKey: "a",
-        blockKind: "bullet",
         bodyPmJson: { type: "paragraph", content: [{ type: "text", text: "Hello" }] },
-        bodyMarkdown: "Hello",
         bodyText: "Hello",
         collapsed: false,
         children: [],

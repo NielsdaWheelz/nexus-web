@@ -27,9 +27,10 @@ def linked_note_blocks_for_highlights(
         .outerjoin(
             containment,
             (containment.user_id == ResourceEdge.user_id)
-            & (containment.origin == "note_containment")
+            & (containment.origin == "user")
             & (containment.target_scheme == "note_block")
-            & (containment.target_id == NoteBlock.id),
+            & (containment.target_id == NoteBlock.id)
+            & containment.source_order_key.is_not(None),
         )
         .where(
             ResourceEdge.user_id == viewer_id,

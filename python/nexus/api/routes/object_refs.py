@@ -11,7 +11,7 @@ from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.responses import success_response
-from nexus.schemas.notes import OBJECT_TYPES, ObjectRef, is_object_type
+from nexus.schemas.resource_items import OBJECT_TYPES, ObjectRef, is_object_type
 from nexus.services.object_refs import (
     hydrate_object_ref,
     search_object_refs,

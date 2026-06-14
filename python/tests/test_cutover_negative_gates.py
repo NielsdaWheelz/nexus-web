@@ -1010,6 +1010,7 @@ def test_resource_edge_durable_writes_stay_in_graph_owner():
         ),
         "db/models.py",
         "services/resource_graph/edges.py",
+        "services/resource_graph/adjacency.py",
         "services/resource_graph/cleanup.py",
     )
     assert not hits, f"direct resource_edges write outside resource_graph owner:\n{_fmt(hits)}"
@@ -1096,8 +1097,8 @@ def test_notes_pages_object_graph_old_note_structure_absent_in_production():
 
 
 def test_public_resource_graph_edge_create_does_not_accept_order_keys():
-    # Ordered containment is written by resource_graph.documents, not by the generic
-    # public edge API/client.
+    # Ordered adjacency is written by the resource adjacency service, not by the
+    # generic public edge API/client.
     schema_src = (_PY_ROOT / "schemas" / "resource_graph.py").read_text(encoding="utf-8")
     request_block = schema_src.split("class CreateEdgeRequest", 1)[1].split("\n\nclass ", 1)[0]
     assert "source_order_key" not in request_block

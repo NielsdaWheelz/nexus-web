@@ -22,11 +22,22 @@ from uuid import UUID
 from sqlalchemy import and_, delete, or_, select, tuple_
 from sqlalchemy.orm import Session
 
-from nexus.db.models import ResourceEdge, ResourceExternalSnapshot
+from nexus.db.models import (
+    ResourceEdge,
+    ResourceExternalSnapshot,
+    ResourceMutation,
+    ResourceVersion,
+    ResourceViewState,
+)
 from nexus.services.resource_graph.refs import ResourceRef
 
 
 def delete_edges_for_deleted_resource(db: Session, *, ref: ResourceRef) -> None:
+    bare_edge_ids = select(ResourceEdge.id).where(
+        ResourceEdge.ordinal.is_(None),
+        or_(_source_is(ref), _target_is(ref)),
+    )
+    db.execute(delete(ResourceViewState).where(ResourceViewState.edge_id.in_(bare_edge_ids)))
     # Rule 2: bare edges die with either endpoint.
     db.execute(
         delete(ResourceEdge).where(
@@ -59,6 +70,10 @@ def delete_edges_for_deleted_resources(db: Session, *, refs: Iterable[ResourceRe
         return
     source = tuple_(ResourceEdge.source_scheme, ResourceEdge.source_id).in_(pairs)
     target = tuple_(ResourceEdge.target_scheme, ResourceEdge.target_id).in_(pairs)
+    bare_edge_ids = select(ResourceEdge.id).where(
+        ResourceEdge.ordinal.is_(None), or_(source, target)
+    )
+    db.execute(delete(ResourceViewState).where(ResourceViewState.edge_id.in_(bare_edge_ids)))
     # Rule 2: bare edges die with either endpoint.
     db.execute(delete(ResourceEdge).where(ResourceEdge.ordinal.is_(None), or_(source, target)))
     # Rule 1: cited edges survive target deletion but die with their source.
@@ -69,6 +84,35 @@ def delete_edges_for_deleted_resources(db: Session, *, refs: Iterable[ResourceRe
     ).all()
     delete_orphaned_external_snapshots(
         db, snapshot_ids=[tid for scheme, tid in deleted if scheme == "external_snapshot"]
+    )
+
+
+def delete_resource_protocol_state(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> None:
+    db.execute(
+        delete(ResourceVersion).where(
+            ResourceVersion.user_id == viewer_id,
+            ResourceVersion.resource_scheme == ref.scheme,
+            ResourceVersion.resource_id == ref.id,
+        )
+    )
+    db.execute(
+        delete(ResourceViewState).where(
+            ResourceViewState.user_id == viewer_id,
+            (
+                (ResourceViewState.surface_scheme == ref.scheme)
+                & (ResourceViewState.surface_id == ref.id)
+            )
+            | (
+                (ResourceViewState.target_scheme == ref.scheme)
+                & (ResourceViewState.target_id == ref.id)
+            ),
+        )
+    )
+    db.execute(
+        delete(ResourceMutation).where(
+            ResourceMutation.user_id == viewer_id,
+            ResourceMutation.mutation_scope.like(f"resource:{ref.uri}:%"),
+        )
     )
 
 

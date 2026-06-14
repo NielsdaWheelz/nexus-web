@@ -342,13 +342,10 @@ describe("normalizeSearchResult happy-path adaptation", () => {
       media_kind: null,
       deep_link: "/notes/note-1",
       context_ref: { type: "note_block", id: "note-1" },
-      page_id: "page-1",
-      page_title: "Deep Work Notes",
       body_text: "note body text",
       highlight_excerpt: null,
       locator: {
         type: "note_block_offsets",
-        page_id: "page-1",
         block_id: "note-1",
         start_offset: 0,
         end_offset: 14,
@@ -358,7 +355,7 @@ describe("normalizeSearchResult happy-path adaptation", () => {
     expect(row).toMatchObject({
       type: "note_block",
       primaryText: "note body text",
-      sourceMeta: "Deep Work Notes",
+      sourceMeta: "note",
       noteBody: "note body text",
     });
   });
@@ -413,8 +410,6 @@ describe("normalizeSearchResult locator / type-mismatch rejections", () => {
         media_kind: null,
         deep_link: "/notes/note-1",
         context_ref: { type: "note_block", id: "note-1" },
-        page_id: "page-1",
-        page_title: "Notes",
         body_text: "note body text",
         highlight_excerpt: null,
         locator: {
@@ -506,7 +501,6 @@ describe("normalizeSearchResult locator / type-mismatch rejections", () => {
         context_ref: { type: "web_result", id: "retrieval-web-1" },
         locator: {
           type: "note_block_offsets",
-          page_id: "page-1",
           block_id: "note-1",
           start_offset: 0,
           end_offset: 14,

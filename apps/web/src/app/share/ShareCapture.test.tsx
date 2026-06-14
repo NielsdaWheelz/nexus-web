@@ -29,12 +29,9 @@ function parseJsonBody(init: RequestInit | undefined): Record<string, unknown> {
 function noteBlock() {
   return {
     id: "block-1",
-    page_id: "page-1",
     parent_block_id: null,
     order_key: "a0",
-    block_kind: "bullet",
     body_pm_json: {},
-    body_markdown: "plain note",
     body_text: "plain note",
     collapsed: false,
     children: [],
@@ -394,7 +391,10 @@ describe("ShareCapture", () => {
       expect.objectContaining({
         id: expect.stringMatching(UUID_RE),
         client_mutation_id: expect.stringMatching(/^share-note-mutation-/),
-        body_markdown: "plain note",
+        body_pm_json: {
+          type: "paragraph",
+          content: [{ type: "text", text: "plain note" }],
+        },
       }),
     );
     expect(screen.queryByRole("combobox", { name: "Library destinations" })).toBeNull();

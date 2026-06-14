@@ -17,7 +17,7 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy import text
 
-from nexus.db.models import ResourceEdge
+from nexus.db.models import NoteBlock, ResourceEdge
 from nexus.schemas.notes import CreatePageRequest
 from nexus.services import notes
 from nexus.services.resource_graph.context import (
@@ -33,7 +33,6 @@ from tests.factories import (
     get_user_default_library,
 )
 from tests.helpers import auth_headers, create_test_user_id
-from tests.note_document_helpers import create_block_via_document
 from tests.utils.db import DirectSessionManager
 
 pytestmark = pytest.mark.integration
@@ -270,9 +269,7 @@ def test_context_ref_surface_ignores_ordinal_citation_edges(
         assert session.get(ResourceEdge, citation_edge_id) is not None
 
 
-def test_broad_read_admission_is_not_search_scope(
-    auth_client, direct_db: DirectSessionManager
-):
+def test_broad_read_admission_is_not_search_scope(auth_client, direct_db: DirectSessionManager):
     user_id = _bootstrap_user(auth_client, direct_db)
     media_id = _create_media(direct_db, user_id, title="Broad Admission Doc")
     with direct_db.session() as session:
@@ -561,7 +558,7 @@ def test_create_edge_accepts_page_and_note_media_attachments(
     auth_client, direct_db: DirectSessionManager
 ):
     user_id = _bootstrap_user(auth_client, direct_db)
-    direct_db.register_cleanup("note_view_states", "user_id", user_id)
+    direct_db.register_cleanup("resource_view_states", "user_id", user_id)
     direct_db.register_cleanup("note_blocks", "user_id", user_id)
     direct_db.register_cleanup("pages", "user_id", user_id)
     media_id = _create_media(direct_db, user_id, title="Attached PDF")
@@ -571,22 +568,44 @@ def test_create_edge_accepts_page_and_note_media_attachments(
             user_id,
             CreatePageRequest(title="Attachment page"),
         )
-        block = create_block_via_document(
-            session,
-            user_id,
-            dict(page_id=page.id, body_markdown="Attach here"),
+        page_id = page.id
+        block = NoteBlock(
+            id=uuid4(),
+            user_id=user_id,
+            body_pm_json={
+                "type": "paragraph",
+                "content": [{"type": "text", "text": "Attach here"}],
+            },
+            body_text="Attach here",
         )
+        block_id = block.id
+        session.add(block)
+        session.flush()
+        session.add(
+            ResourceEdge(
+                id=uuid4(),
+                user_id=user_id,
+                kind="context",
+                origin="user",
+                source_scheme="page",
+                source_id=page_id,
+                target_scheme="note_block",
+                target_id=block_id,
+                source_order_key="0000000001",
+            )
+        )
+        session.commit()
 
     headers = auth_headers(user_id)
     page_response = auth_client.post(
         "/resource-graph/edges",
         headers=headers,
-        json={"source_ref": f"page:{page.id}", "target_ref": f"media:{media_id}"},
+        json={"source_ref": f"page:{page_id}", "target_ref": f"media:{media_id}"},
     )
     block_response = auth_client.post(
         "/resource-graph/edges",
         headers=headers,
-        json={"source_ref": f"note_block:{block.id}", "target_ref": f"media:{media_id}"},
+        json={"source_ref": f"note_block:{block_id}", "target_ref": f"media:{media_id}"},
     )
 
     assert page_response.status_code == 201, page_response.text

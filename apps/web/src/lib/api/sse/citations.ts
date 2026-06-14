@@ -162,8 +162,6 @@ type NoteBlockSearchCitationEventData = SearchCitationBase<
   "note_block",
   Extract<RetrievalLocator, { type: "note_block_offsets" }>
 > & {
-  page_id: string;
-  page_title: string;
   body_text: string;
   highlight_excerpt?: string | null;
 };
@@ -328,20 +326,13 @@ export function isSearchCitationEventData(
     case "fragment":
       return isSearchCitationBase(citation, "fragment", "fragment", []);
     case "page":
-      return (
-        isSearchCitationBase(citation, "page", "page", ["description"]) &&
-        isOptionalString(citation.description)
-      );
+      return isSearchCitationBase(citation, "page", "page", []);
     case "note_block":
       return (
         isSearchCitationBase(citation, "note_block", "note_block", [
-          "page_id",
-          "page_title",
           "body_text",
           "highlight_excerpt",
         ]) &&
-        typeof citation.page_id === "string" &&
-        typeof citation.page_title === "string" &&
         typeof citation.body_text === "string" &&
         isOptionalString(citation.highlight_excerpt)
       );

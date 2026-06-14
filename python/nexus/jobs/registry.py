@@ -45,7 +45,7 @@ USER_FACING_JOB_KINDS = (
     "chat_run",
     "library_intelligence_artifact_generate",
     "media_unit_build",
-    "page_reindex_job",
+    "note_reindex_job",
     "podcast_sync_subscription_job",
     "podcast_reindex_semantic_job",
     "backfill_default_library_closure_job",
@@ -142,13 +142,13 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             retry_delays_seconds=(60, 300, 900),
             lease_seconds=900,
         ),
-        "page_reindex_job": JobDefinition(
-            kind="page_reindex_job",
-            handler=_run_page_reindex,
+        "note_reindex_job": JobDefinition(
+            kind="note_reindex_job",
+            handler=_run_note_reindex,
             max_attempts=3,
             retry_delays_seconds=(60, 300, 900),
             lease_seconds=900,
-            dead_letter_handler=_dead_letter_page_reindex,
+            dead_letter_handler=_dead_letter_note_reindex,
         ),
         "podcast_active_subscription_poll_job": JobDefinition(
             kind="podcast_active_subscription_poll_job",
@@ -310,39 +310,39 @@ def _run_podcast_reindex_semantic(*, payload: Mapping[str, Any]) -> Mapping[str,
     )
 
 
-def _run_page_reindex(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
-    from nexus.tasks.page_reindex import page_reindex_job
+def _run_note_reindex(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    from nexus.tasks.note_reindex import note_reindex_job
 
-    return page_reindex_job(
-        page_id=str(payload["page_id"]),
+    return note_reindex_job(
+        note_block_id=str(payload["note_block_id"]),
         reason=str(payload.get("reason", "note_edit")),
         request_id=_optional_str(payload.get("request_id")),
     )
 
 
-def _dead_letter_page_reindex(db: Session, job: JobRow) -> None:
-    """Mark the page's content index 'failed' once reindex retries are exhausted.
+def _dead_letter_note_reindex(db: Session, job: JobRow) -> None:
+    """Mark the note's content index failed once reindex retries are exhausted.
 
     Runs inside the worker's dead-letter transaction (no commit here). Skips a
-    malformed page_id payload (the only non-retryable failure) so it cannot raise.
+    malformed note_block_id payload (the only non-retryable failure) so it cannot raise.
     """
     from uuid import UUID
 
     from nexus.errors import ApiErrorCode
     from nexus.services.content_indexing import IndexOwner, mark_content_index_failed
 
-    page_id = job.payload.get("page_id")
-    if not page_id:
+    note_block_id = job.payload.get("note_block_id")
+    if not note_block_id:
         return
     try:
-        owner_id = UUID(str(page_id))
+        owner_id = UUID(str(note_block_id))
     except (TypeError, ValueError):
         return
     mark_content_index_failed(
         db,
-        owner=IndexOwner("page", owner_id),
+        owner=IndexOwner("note_block", owner_id),
         failure_code=ApiErrorCode.E_INTERNAL.value,
-        failure_message=(job.last_error or "Page reindex exhausted retries.")[:1000],
+        failure_message=(job.last_error or "Note reindex exhausted retries.")[:1000],
     )
 
 

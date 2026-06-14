@@ -31,9 +31,6 @@ from nexus.errors import ApiErrorCode, ForbiddenError, InvalidRequestError, NotF
 from nexus.schemas.conversation import ConversationOut, PageInfo
 from nexus.services.resource_graph.edges import create_edge
 from nexus.services.resource_graph.policy import (
-    APP_SEARCH_SCOPE_TARGET_SCHEMES,
-    CONVERSATION_CONTEXT_SCOPE_ORIGINS,
-    CONVERSATION_SCOPE_TARGET_SCHEMES,
     SEARCH_SCOPE_EDGE_KIND,
 )
 from nexus.services.resource_graph.refs import (
@@ -42,6 +39,12 @@ from nexus.services.resource_graph.refs import (
 )
 from nexus.services.resource_graph.resolve import ResolvedResource, resolve_ref, resolve_refs
 from nexus.services.resource_graph.schemas import EdgeCreate, EdgeOrigin
+from nexus.services.resource_items.capabilities import (
+    APP_SEARCH_SCOPE_SCHEMES,
+    CONVERSATION_CONTEXT_EDGE_ORIGINS,
+    CONVERSATION_SEARCH_SCOPE_SCHEMES,
+    RESOURCE_ITEM_CAPABILITIES,
+)
 
 _DEFAULT_LIMIT = 50
 _MIN_LIMIT = 1
@@ -78,7 +81,7 @@ def list_context_refs(
                 ResourceEdge.source_scheme == "conversation",
                 ResourceEdge.source_id == conversation_id,
                 ResourceEdge.kind == "context",
-                ResourceEdge.origin.in_(CONVERSATION_CONTEXT_SCOPE_ORIGINS),
+                ResourceEdge.origin.in_(CONVERSATION_CONTEXT_EDGE_ORIGINS),
                 ResourceEdge.ordinal.is_(None),
             )
             .order_by(
@@ -113,6 +116,11 @@ def add_context_ref_without_commit(
     system origins share one attached-context slot for the same target.
     """
     _require_owner(db, viewer_id, conversation_id)
+    if not RESOURCE_ITEM_CAPABILITIES[target.scheme].attachable:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Resource cannot be attached to conversation context",
+        )
     resolved = resolve_ref(db, viewer_id=viewer_id, ref=target)
     if resolved.missing:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Resource not found")
@@ -123,7 +131,7 @@ def add_context_ref_without_commit(
             ResourceEdge.source_id == conversation_id,
             ResourceEdge.user_id == viewer_id,
             ResourceEdge.kind == "context",
-            ResourceEdge.origin.in_(CONVERSATION_CONTEXT_SCOPE_ORIGINS),
+            ResourceEdge.origin.in_(CONVERSATION_CONTEXT_EDGE_ORIGINS),
             ResourceEdge.target_scheme == target.scheme,
             ResourceEdge.target_id == target.id,
             ResourceEdge.ordinal.is_(None),
@@ -169,7 +177,7 @@ def remove_context_ref(
             ResourceEdge.source_id == conversation_id,
             ResourceEdge.user_id == viewer_id,
             ResourceEdge.kind == "context",
-            ResourceEdge.origin.in_(CONVERSATION_CONTEXT_SCOPE_ORIGINS),
+            ResourceEdge.origin.in_(CONVERSATION_CONTEXT_EDGE_ORIGINS),
             ResourceEdge.ordinal.is_(None),
         )
     ).scalar_one_or_none()
@@ -316,9 +324,9 @@ def search_scope_refs_for_conversation(
         .where(
             ResourceEdge.source_scheme == "conversation",
             ResourceEdge.source_id == conversation_id,
-            ResourceEdge.target_scheme.in_(APP_SEARCH_SCOPE_TARGET_SCHEMES),
+            ResourceEdge.target_scheme.in_(APP_SEARCH_SCOPE_SCHEMES),
             ResourceEdge.kind == SEARCH_SCOPE_EDGE_KIND,
-            ResourceEdge.origin.in_(CONVERSATION_CONTEXT_SCOPE_ORIGINS),
+            ResourceEdge.origin.in_(CONVERSATION_CONTEXT_EDGE_ORIGINS),
             ResourceEdge.user_id == viewer_id,
             ResourceEdge.ordinal.is_(None),
             Conversation.owner_user_id == viewer_id,
@@ -349,9 +357,9 @@ def conversation_has_note_search_scope_refs(
             .where(
                 ResourceEdge.source_scheme == "conversation",
                 ResourceEdge.source_id == conversation_id,
-                ResourceEdge.target_scheme.in_(CONVERSATION_SCOPE_TARGET_SCHEMES),
+                ResourceEdge.target_scheme.in_(CONVERSATION_SEARCH_SCOPE_SCHEMES),
                 ResourceEdge.kind == SEARCH_SCOPE_EDGE_KIND,
-                ResourceEdge.origin.in_(CONVERSATION_CONTEXT_SCOPE_ORIGINS),
+                ResourceEdge.origin.in_(CONVERSATION_CONTEXT_EDGE_ORIGINS),
                 ResourceEdge.user_id == viewer_id,
                 ResourceEdge.ordinal.is_(None),
                 Conversation.owner_user_id == viewer_id,
@@ -399,7 +407,7 @@ def _next_context_source_order_key(db: Session, *, viewer_id: UUID, conversation
             ResourceEdge.source_scheme == "conversation",
             ResourceEdge.source_id == conversation_id,
             ResourceEdge.kind == "context",
-            ResourceEdge.origin.in_(CONVERSATION_CONTEXT_SCOPE_ORIGINS),
+            ResourceEdge.origin.in_(CONVERSATION_CONTEXT_EDGE_ORIGINS),
             ResourceEdge.ordinal.is_(None),
             ResourceEdge.source_order_key.is_not(None),
         )

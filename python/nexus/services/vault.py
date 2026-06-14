@@ -1,7 +1,7 @@
 """Local Markdown vault export and sync.
 
 The vault is an editable projection. Media text and source files are rewritten
-from the server; highlight/page Markdown bodies are the local editing surface.
+from the server; page files render linked note items and highlight notes.
 """
 
 from __future__ import annotations
@@ -32,18 +32,19 @@ from nexus.db.models import (
     Page,
 )
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
-from nexus.schemas.notes import NOTE_BLOCK_KIND_VALUES, NOTE_BLOCK_KINDS, PatchPageDocumentRequest
 from nexus.services import notes as notes_service
 from nexus.services.highlights import (
     derive_exact_prefix_suffix,
     map_integrity_error,
     validate_offsets_or_400,
 )
+from nexus.services.note_indexing import enqueue_note_reindex
 from nexus.services.notes import delete_page, pm_doc_from_markdown_projection
-from nexus.services.resource_graph import documents as graph_documents
+from nexus.services.resource_graph import adjacency as graph_adjacency
 from nexus.services.resource_graph import highlight_notes as graph_highlight_notes
 from nexus.services.resource_graph.cleanup import delete_edges_for_deleted_resource
 from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.resource_items import versions
 from nexus.storage.client import StorageClientBase, get_storage_client
 from nexus.storage.paths import get_file_extension
 
@@ -66,13 +67,12 @@ class VaultSyncResult(TypedDict):
 class _ParsedPageBlock(TypedDict):
     id: UUID
     parent_id: UUID | None
-    kind: str
     body: str
 
 
 _BLOCK_MARKER_RE = re.compile(
     r"^<!-- nexus:block id=\"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
-    r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\" parent=\"([^\"]*)\" kind=\"([a-z_]+)\" -->$"
+    r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\" parent=\"([^\"]*)\" -->$"
 )
 _HIGHLIGHT_NOTE_MARKER_RE = re.compile(
     r"^<!-- nexus:highlight-note id=\"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-"
@@ -557,26 +557,19 @@ def _sync_page_content(
         return False, "Page title is required"
 
     if not page_handle:
-        page = Page(user_id=viewer_id, title=title[:200], description=None)
+        page = Page(user_id=viewer_id, title=title[:200])
         db.add(page)
         db.flush()
-        body_changed, conflict_reason, blocks, containment = _sync_page_body(
+        _ensure_page_versions(db, viewer_id, page.id)
+        body_changed, conflict_reason, changed_block_ids = _apply_page_body_from_vault(
             db, viewer_id, page, body
         )
         if conflict_reason is not None:
             db.rollback()
             return False, conflict_reason
-        if body_changed:
-            _patch_page_document_from_vault(
-                db,
-                viewer_id,
-                page,
-                title=page.title,
-                blocks=blocks,
-                containment=containment,
-            )
-        else:
-            db.commit()
+        for block_id in sorted(changed_block_ids, key=str):
+            enqueue_note_reindex(db, note_block_id=block_id, reason="vault_page_sync")
+        db.commit()
         return True, None
 
     try:
@@ -593,23 +586,33 @@ def _sync_page_content(
         delete_page(db, viewer_id, page.id)
         return True, None
 
-    body_changed, conflict_reason, blocks, containment = _sync_page_body(db, viewer_id, page, body)
+    body_changed, conflict_reason, changed_block_ids = _apply_page_body_from_vault(
+        db, viewer_id, page, body
+    )
     if conflict_reason is not None:
         return False, conflict_reason
     next_title = title[:200]
     title_changed = page.title != next_title
+    if title_changed:
+        page.title = next_title
+        page.updated_at = func.now()
+        _bump_resource_lane(db, viewer_id, ResourceRef(scheme="page", id=page.id), "title")
     if body_changed or title_changed:
-        _patch_page_document_from_vault(
-            db,
-            viewer_id,
-            page,
-            title=next_title,
-            blocks=blocks,
-            containment=containment,
-        )
-    else:
-        db.commit()
+        page.updated_at = func.now()
+    for block_id in sorted(changed_block_ids, key=str):
+        enqueue_note_reindex(db, note_block_id=block_id, reason="vault_page_sync")
+    db.commit()
     return True, None
+
+
+def _ensure_page_versions(db: Session, viewer_id: UUID, page_id: UUID) -> None:
+    ref = ResourceRef(scheme="page", id=page_id)
+    versions.ensure_version(db, viewer_id=viewer_id, ref=ref, lane="title")
+    versions.ensure_version(db, viewer_id=viewer_id, ref=ref, lane="outgoing_edges")
+
+
+def _bump_resource_lane(db: Session, viewer_id: UUID, ref: ResourceRef, lane: str) -> None:
+    versions.bump_version(db, viewer_id=viewer_id, ref=ref, lane=lane)
 
 
 def _load_vault_highlights(db: Session, viewer_id: UUID) -> list[Highlight]:
@@ -672,142 +675,174 @@ def _page_file(db: Session, page: Page) -> tuple[str, str]:
     return f"Pages/{slug}--{page_handle}.md", _write_frontmatter(metadata, body)
 
 
-def _sync_page_body(
+def _apply_page_body_from_vault(
     db: Session,
     viewer_id: UUID,
     page: Page,
     body: str,
-) -> tuple[bool, str | None, list[dict[str, Any]], list[dict[str, Any]]]:
+) -> tuple[bool, str | None, set[UUID]]:
     text_body = body.strip()
-    document = graph_documents.load_page_document(db, user_id=viewer_id, page_id=page.id)
-    nodes = _editable_page_nodes_from_document(db, viewer_id, document)
+    surface = graph_adjacency.load_page_surface(db, user_id=viewer_id, page_id=page.id)
+    nodes = _editable_page_nodes_from_surface(db, viewer_id, surface)
     current_body = _page_blocks_markdown(nodes).strip()
 
     parsed_blocks = _parse_marked_page_blocks(text_body)
     if parsed_blocks:
-        return _marked_page_patch_payload(document, nodes, parsed_blocks)
+        return _apply_marked_page_blocks(db, viewer_id, surface, nodes, parsed_blocks)
 
     if not nodes:
-        blocks, containment = _document_patch_payload(document)
-        if text_body:
-            block_id = uuid4()
-            blocks.append(
-                {
-                    "id": block_id,
-                    "block_kind": "bullet",
-                    "body_pm_json": _vault_body_pm_json(text_body),
-                }
-            )
-            root_ref = ResourceRef(scheme="page", id=page.id)
-            containment_by_parent = _containment_by_parent_from_payload(containment)
-            root_children = containment_by_parent.setdefault(root_ref, [])
-            root_children.append(
-                {"block_id": block_id, "source_order_key": "0000000000", "collapsed": False}
-            )
-            _renumber_child_payload(root_children)
-            containment = _containment_payload(containment_by_parent)
-        return text_body != current_body, None, blocks, containment
+        if not text_body:
+            return False, None, set()
+        block = notes_service.upsert_note_body_without_commit(
+            db, viewer_id, uuid4(), _vault_body_pm_json(text_body)
+        )
+        graph_adjacency.replace_ordered_targets(
+            db,
+            user_id=viewer_id,
+            source=ResourceRef(scheme="page", id=page.id),
+            targets=[
+                graph_adjacency.OrderedTarget(
+                    target=ResourceRef(scheme="note_block", id=block.id),
+                    source_order_key="0000000001",
+                )
+            ],
+        )
+        _bump_resource_lane(db, viewer_id, ResourceRef(scheme="page", id=page.id), "outgoing_edges")
+        return True, None, {block.id}
 
     flat_nodes = _flatten_page_nodes(nodes)
     if len(flat_nodes) == 1:
-        body_updates = (
-            {flat_nodes[0].block.id: _vault_body_pm_json(text_body)}
-            if text_body != current_body
-            else {}
+        if text_body == current_body:
+            return False, None, set()
+        notes_service.upsert_note_body_without_commit(
+            db, viewer_id, flat_nodes[0].block.id, _vault_body_pm_json(text_body)
         )
-        blocks, containment = _document_patch_payload(document, body_updates=body_updates)
-        return bool(body_updates), None, blocks, containment
+        return True, None, {flat_nodes[0].block.id}
 
     fallback_blocks = [part.strip() for part in re.split(r"\n{2,}", text_body) if part.strip()]
     if len(fallback_blocks) != len(nodes):
-        blocks, containment = _document_patch_payload(document)
         return (
             False,
             "Vault page sync needs exported block markers for this multi-block page",
-            blocks,
-            containment,
+            set(),
         )
-    body_updates = {
-        node.block.id: _vault_body_pm_json(block_body)
-        for node, block_body in zip(nodes, fallback_blocks, strict=True)
-        if block_body != _block_vault_body(node.block).strip()
-    }
-    blocks, containment = _document_patch_payload(document, body_updates=body_updates)
-    return bool(body_updates), None, blocks, containment
+
+    changed = False
+    changed_block_ids: set[UUID] = set()
+    for node, block_body in zip(nodes, fallback_blocks, strict=True):
+        if block_body == _block_vault_body(node.block).strip():
+            continue
+        notes_service.upsert_note_body_without_commit(
+            db, viewer_id, node.block.id, _vault_body_pm_json(block_body)
+        )
+        changed = True
+        changed_block_ids.add(node.block.id)
+    return changed, None, changed_block_ids
 
 
-def _patch_page_document_from_vault(
+def _apply_marked_page_blocks(
     db: Session,
     viewer_id: UUID,
-    page: Page,
-    *,
-    title: str | None,
-    blocks: list[dict[str, Any]],
-    containment: list[dict[str, Any]],
-    deleted_block_ids: list[UUID] | None = None,
-) -> None:
-    payload: dict[str, Any] = {
-        "page_id": page.id,
-        "title": title,
-        "blocks": blocks,
-        "containment": containment,
-        "deleted_block_ids": deleted_block_ids or [],
-    }
-    notes_service.patch_page_document(
-        db,
-        viewer_id,
-        page.id,
-        PatchPageDocumentRequest(
-            client_mutation_id=_vault_mutation_id("page", payload),
-            base_document_version=page.document_version,
-            title=title,
-            blocks=blocks,
-            containment=containment,
-            deleted_block_ids=deleted_block_ids or [],
-        ),
-    )
+    surface: graph_adjacency.PageSurface,
+    nodes: list[graph_adjacency.SurfaceNote],
+    parsed_blocks: list[_ParsedPageBlock],
+) -> tuple[bool, str | None, set[UUID]]:
+    current_nodes = _flatten_page_nodes(nodes)
+    blocks_by_id = {node.block.id: node.block for node in current_nodes}
+    parsed_ids = [parsed_block["id"] for parsed_block in parsed_blocks]
+    if len(set(parsed_ids)) != len(parsed_ids):
+        return False, "Vault page contains duplicate note block markers", set()
+    if set(parsed_ids) != set(blocks_by_id):
+        return False, "Vault page block markers must match the editable page blocks", set()
 
+    parsed_id_set = set(parsed_ids)
+    for parsed_block in parsed_blocks:
+        parent_id = parsed_block["parent_id"]
+        if (
+            parent_id is not None
+            and parent_id not in parsed_id_set
+            and parent_id not in blocks_by_id
+        ):
+            return False, "Vault page contains a note block parent that is not on this page", set()
 
-def _document_patch_payload(
-    document: graph_documents.PageDocument,
-    *,
-    body_updates: Mapping[UUID, dict[str, Any]] | None = None,
-    kind_updates: Mapping[UUID, NOTE_BLOCK_KINDS] | None = None,
-    containment_by_parent: Mapping[ResourceRef, list[dict[str, Any]]] | None = None,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    body_updates = body_updates or {}
-    kind_updates = kind_updates or {}
-    blocks: list[dict[str, Any]] = []
+    changed = False
+    changed_block_ids: set[UUID] = set()
+    for parsed_block in parsed_blocks:
+        block = blocks_by_id[parsed_block["id"]]
+        if _block_vault_body(block).strip() == parsed_block["body"]:
+            continue
+        notes_service.upsert_note_body_without_commit(
+            db, viewer_id, block.id, _vault_body_pm_json(parsed_block["body"])
+        )
+        changed = True
+        changed_block_ids.add(block.id)
 
-    def visit(node: graph_documents.DocumentBlock) -> None:
-        blocks.append(
+    current_by_parent = _children_by_parent_from_surface(surface)
+    desired_by_parent: dict[ResourceRef, list[dict[str, Any]]] = {}
+    collapsed_by_id = {node.block.id: node.collapsed for node in current_nodes}
+    page_ref = ResourceRef(scheme="page", id=surface.page.id)
+    for parsed_block in parsed_blocks:
+        parent = (
+            page_ref
+            if parsed_block["parent_id"] is None
+            else ResourceRef(scheme="note_block", id=parsed_block["parent_id"])
+        )
+        desired_by_parent.setdefault(parent, []).append(
             {
-                "id": node.block.id,
-                "block_kind": kind_updates.get(
-                    node.block.id,
-                    cast(NOTE_BLOCK_KINDS, node.block.block_kind),
-                ),
-                "body_pm_json": body_updates.get(node.block.id, node.block.body_pm_json),
+                "block_id": parsed_block["id"],
+                "source_order_key": "0000000000",
+                "collapsed": collapsed_by_id[parsed_block["id"]],
             }
         )
-        for child in node.children:
-            visit(child)
 
-    for root in document.roots:
-        visit(root)
+    for parent in set(current_by_parent) | set(desired_by_parent):
+        desired = desired_by_parent.get(parent, [])
+        inserted = False
+        next_children: list[dict[str, Any]] = []
+        for child in current_by_parent.get(parent, []):
+            if child["block_id"] in parsed_id_set:
+                if not inserted and desired:
+                    next_children.extend(desired)
+                    inserted = True
+                continue
+            next_children.append(child)
+        if desired and not inserted:
+            next_children.extend(desired)
+        _renumber_child_payload(next_children)
+        if next_children == current_by_parent.get(parent, []):
+            continue
+        graph_adjacency.replace_ordered_targets(
+            db,
+            user_id=viewer_id,
+            source=parent,
+            targets=[
+                graph_adjacency.OrderedTarget(
+                    target=ResourceRef(scheme="note_block", id=cast(UUID, child["block_id"])),
+                    source_order_key=cast(str, child["source_order_key"]),
+                )
+                for child in next_children
+            ],
+        )
+        for child in next_children:
+            graph_adjacency.set_collapsed(
+                db,
+                user_id=viewer_id,
+                parent=parent,
+                block_id=cast(UUID, child["block_id"]),
+                collapsed=cast(bool, child["collapsed"]),
+            )
+        _bump_resource_lane(db, viewer_id, parent, "outgoing_edges")
+        changed = True
+    return changed, None, changed_block_ids
 
-    return blocks, _containment_payload(
-        containment_by_parent or _containment_by_parent_from_document(document)
-    )
 
-
-def _containment_by_parent_from_document(
-    document: graph_documents.PageDocument,
+def _children_by_parent_from_surface(
+    surface: graph_adjacency.PageSurface,
 ) -> dict[ResourceRef, list[dict[str, Any]]]:
-    containment_by_parent: dict[ResourceRef, list[dict[str, Any]]] = {}
+    out: dict[ResourceRef, list[dict[str, Any]]] = {}
 
-    def visit(node: graph_documents.DocumentBlock) -> None:
-        containment_by_parent.setdefault(node.parent, []).append(
+    def visit(node: graph_adjacency.SurfaceNote) -> None:
+        out.setdefault(node.parent, []).append(
             {
                 "block_id": node.block.id,
                 "source_order_key": node.source_order_key,
@@ -817,35 +852,9 @@ def _containment_by_parent_from_document(
         for child in node.children:
             visit(child)
 
-    for root in document.roots:
+    for root in surface.roots:
         visit(root)
-    return containment_by_parent
-
-
-def _containment_by_parent_from_payload(
-    containment: Sequence[dict[str, Any]],
-) -> dict[ResourceRef, list[dict[str, Any]]]:
-    out: dict[ResourceRef, list[dict[str, Any]]] = {}
-    for group in containment:
-        parent_raw = cast(dict[str, Any], group["parent"])
-        parent = ResourceRef(
-            scheme=cast(str, parent_raw["scheme"]),
-            id=cast(UUID, parent_raw["id"]),
-        )
-        out[parent] = [dict(child) for child in cast(list[dict[str, Any]], group["children"])]
     return out
-
-
-def _containment_payload(
-    containment_by_parent: Mapping[ResourceRef, Sequence[dict[str, Any]]],
-) -> list[dict[str, Any]]:
-    return [
-        {
-            "parent": {"scheme": parent.scheme, "id": parent.id},
-            "children": list(children),
-        }
-        for parent, children in containment_by_parent.items()
-    ]
 
 
 def _renumber_child_payload(children: list[dict[str, Any]]) -> None:
@@ -863,30 +872,32 @@ def _vault_mutation_id(prefix: str, payload: Mapping[str, Any]) -> str:
     return f"vault-{prefix}-{digest}"
 
 
-def _editable_page_nodes(db: Session, viewer_id: UUID, page_id: UUID) -> list[object]:
-    document = graph_documents.load_page_document(db, user_id=viewer_id, page_id=page_id)
-    return _editable_page_nodes_from_document(db, viewer_id, document)
+def _editable_page_nodes(
+    db: Session, viewer_id: UUID, page_id: UUID
+) -> list[graph_adjacency.SurfaceNote]:
+    surface = graph_adjacency.load_page_surface(db, user_id=viewer_id, page_id=page_id)
+    return _editable_page_nodes_from_surface(db, viewer_id, surface)
 
 
-def _editable_page_nodes_from_document(
+def _editable_page_nodes_from_surface(
     db: Session,
     viewer_id: UUID,
-    document: graph_documents.PageDocument,
-) -> list[object]:
-    block_ids = document.block_ids
+    surface: graph_adjacency.PageSurface,
+) -> list[graph_adjacency.SurfaceNote]:
+    block_ids = surface.block_ids
     if not block_ids:
         return []
     highlight_note_ids = graph_highlight_notes.note_block_ids_with_highlight_notes(
         db, viewer_id=viewer_id, block_ids=block_ids
     )
 
-    def keep(nodes: list[graph_documents.DocumentBlock]) -> list[graph_documents.DocumentBlock]:
-        out: list[graph_documents.DocumentBlock] = []
+    def keep(nodes: list[graph_adjacency.SurfaceNote]) -> list[graph_adjacency.SurfaceNote]:
+        out: list[graph_adjacency.SurfaceNote] = []
         for node in nodes:
             if node.block.id in highlight_note_ids:
                 continue
             out.append(
-                graph_documents.DocumentBlock(
+                graph_adjacency.SurfaceNote(
                     block=node.block,
                     parent=node.parent,
                     source_order_key=node.source_order_key,
@@ -896,7 +907,7 @@ def _editable_page_nodes_from_document(
             )
         return out
 
-    return keep(document.roots)
+    return keep(surface.roots)
 
 
 def _block_vault_body(block: NoteBlock) -> str:
@@ -946,13 +957,13 @@ def _vault_markdown_from_pm_json(value: object) -> str:
     return "\n".join(line.rstrip() for line in "".join(parts).splitlines()).strip()
 
 
-def _page_blocks_markdown(nodes: list[object]) -> str:
+def _page_blocks_markdown(nodes: list[graph_adjacency.SurfaceNote]) -> str:
     sections: list[str] = []
 
-    def visit(node: object) -> None:
+    def visit(node: graph_adjacency.SurfaceNote) -> None:
         block = node.block
         parent = "" if node.parent.scheme == "page" else str(node.parent.id)
-        marker = f'<!-- nexus:block id="{block.id}" parent="{parent}" kind="{block.block_kind}" -->'
+        marker = f'<!-- nexus:block id="{block.id}" parent="{parent}" -->'
         body = _block_vault_body(block).strip()
         sections.append(f"{marker}\n{body}" if body else marker)
         for child in node.children:
@@ -964,10 +975,12 @@ def _page_blocks_markdown(nodes: list[object]) -> str:
     return "\n\n".join(sections)
 
 
-def _flatten_page_nodes(nodes: list[object]) -> list[object]:
-    out: list[object] = []
+def _flatten_page_nodes(
+    nodes: list[graph_adjacency.SurfaceNote],
+) -> list[graph_adjacency.SurfaceNote]:
+    out: list[graph_adjacency.SurfaceNote] = []
 
-    def visit(node: object) -> None:
+    def visit(node: graph_adjacency.SurfaceNote) -> None:
         out.append(node)
         for child in node.children:
             visit(child)
@@ -992,7 +1005,6 @@ def _parse_marked_page_blocks(body: str) -> list[_ParsedPageBlock]:
             {
                 "id": current["id"],
                 "parent_id": current["parent_id"],
-                "kind": current["kind"],
                 "body": "\n".join(current_body_lines).strip(),
             }
         )
@@ -1015,126 +1027,13 @@ def _parse_marked_page_blocks(body: str) -> list[_ParsedPageBlock]:
             )
         flush_current()
         parent_raw = match.group(2)
-        kind = match.group(3)
-        if kind not in NOTE_BLOCK_KIND_VALUES:
-            raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Vault page block kind is invalid")
         current = {
             "id": UUID(match.group(1)),
             "parent_id": UUID(parent_raw) if parent_raw else None,
-            "kind": kind,
         }
 
     flush_current()
     return parsed_blocks if saw_marker else []
-
-
-def _marked_page_patch_payload(
-    document: graph_documents.PageDocument,
-    nodes: list[object],
-    parsed_blocks: list[_ParsedPageBlock],
-) -> tuple[bool, str | None, list[dict[str, Any]], list[dict[str, Any]]]:
-    current_nodes = _flatten_page_nodes(nodes)
-    blocks_by_id = {node.block.id: node.block for node in current_nodes}
-    parent_by_id = {
-        node.block.id: None if node.parent.scheme == "page" else node.parent.id
-        for node in current_nodes
-    }
-    order_by_id = {node.block.id: node.source_order_key for node in current_nodes}
-    parsed_ids = [parsed_block["id"] for parsed_block in parsed_blocks]
-    if len(set(parsed_ids)) != len(parsed_ids):
-        blocks, containment = _document_patch_payload(document)
-        return False, "Vault page contains duplicate note block markers", blocks, containment
-
-    if set(parsed_ids) != set(blocks_by_id):
-        blocks, containment = _document_patch_payload(document)
-        return (
-            False,
-            "Vault page block markers must match the editable page blocks",
-            blocks,
-            containment,
-        )
-
-    parsed_id_set = set(parsed_ids)
-    for parsed_block in parsed_blocks:
-        parent_id = parsed_block["parent_id"]
-        if (
-            parent_id is not None
-            and parent_id not in parsed_id_set
-            and parent_id not in blocks_by_id
-        ):
-            blocks, containment = _document_patch_payload(document)
-            return (
-                False,
-                "Vault page contains a note block parent that is not on this page",
-                blocks,
-                containment,
-            )
-
-    body_updates: dict[UUID, dict[str, Any]] = {}
-    kind_updates: dict[UUID, NOTE_BLOCK_KINDS] = {}
-    desired_by_parent: dict[ResourceRef, list[dict[str, Any]]] = {}
-    collapsed_by_id = {node.block.id: node.collapsed for node in current_nodes}
-    for parsed_block in parsed_blocks:
-        block = blocks_by_id[parsed_block["id"]]
-        parent_id = parsed_block["parent_id"]
-        parent = (
-            ResourceRef(scheme="page", id=document.page.id)
-            if parent_id is None
-            else ResourceRef(scheme="note_block", id=parent_id)
-        )
-        body_updates[block.id] = _vault_body_pm_json(parsed_block["body"])
-        kind_updates[block.id] = cast(NOTE_BLOCK_KINDS, parsed_block["kind"])
-        desired_by_parent.setdefault(parent, []).append(
-            {
-                "block_id": block.id,
-                "source_order_key": "0000000000",
-                "collapsed": collapsed_by_id[block.id],
-            }
-        )
-
-    containment_by_parent = _containment_by_parent_from_document(document)
-    for parent in set(containment_by_parent) | set(desired_by_parent):
-        desired = desired_by_parent.get(parent, [])
-        inserted = False
-        next_children: list[dict[str, Any]] = []
-        for child in containment_by_parent.get(parent, []):
-            if child["block_id"] in parsed_id_set:
-                if not inserted and desired:
-                    next_children.extend(desired)
-                    inserted = True
-                continue
-            next_children.append(child)
-        if desired and not inserted:
-            next_children.extend(desired)
-        _renumber_child_payload(next_children)
-        containment_by_parent[parent] = next_children
-
-    next_parent_by_id: dict[UUID, UUID | None] = {}
-    next_order_by_id: dict[UUID, str] = {}
-    for parent, children in containment_by_parent.items():
-        parent_id = None if parent.scheme == "page" else parent.id
-        for child in children:
-            block_id = cast(UUID, child["block_id"])
-            next_parent_by_id[block_id] = parent_id
-            next_order_by_id[block_id] = cast(str, child["source_order_key"])
-
-    changed = any(
-        (
-            parent_by_id[block_id] != next_parent_by_id.get(block_id)
-            or order_by_id[block_id] != next_order_by_id.get(block_id)
-            or blocks_by_id[block_id].block_kind != kind_updates[block_id]
-            or _block_vault_body(blocks_by_id[block_id]).strip() != parsed_block["body"]
-        )
-        for parsed_block in parsed_blocks
-        for block_id in [parsed_block["id"]]
-    )
-    blocks, containment = _document_patch_payload(
-        document,
-        body_updates=body_updates,
-        kind_updates=kind_updates,
-        containment_by_parent=containment_by_parent,
-    )
-    return changed, None, blocks, containment
 
 
 def _page_body(db: Session, page: Page) -> str:
@@ -1240,32 +1139,11 @@ def _patch_existing_note_block_bodies_from_vault(
 ) -> None:
     if not body_by_block_id:
         return
-    occurrences = {
-        block_id: graph_documents.find_block_occurrence(db, user_id=viewer_id, block_id=block_id)
-        for block_id in body_by_block_id
-    }
-    page_ids = {occurrence.page_id for occurrence in occurrences.values()}
-    if len(page_ids) != 1:
-        raise ApiError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            "Vault highlight note markers must live on one page",
+    for block_id, body in body_by_block_id.items():
+        notes_service.upsert_note_body_without_commit(
+            db, viewer_id, block_id, _vault_body_pm_json(body)
         )
-    page = db.get(Page, next(iter(page_ids)))
-    if page is None or page.user_id != viewer_id:
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Page not found")
-    document = graph_documents.load_page_document(db, user_id=viewer_id, page_id=page.id)
-    body_updates = {
-        block_id: _vault_body_pm_json(body) for block_id, body in body_by_block_id.items()
-    }
-    blocks, containment = _document_patch_payload(document, body_updates=body_updates)
-    _patch_page_document_from_vault(
-        db,
-        viewer_id,
-        page,
-        title=None,
-        blocks=blocks,
-        containment=containment,
-    )
+        enqueue_note_reindex(db, note_block_id=block_id, reason="vault_highlight_note_sync")
 
 
 def _parse_marked_highlight_notes(body: str) -> list[tuple[UUID, str]]:

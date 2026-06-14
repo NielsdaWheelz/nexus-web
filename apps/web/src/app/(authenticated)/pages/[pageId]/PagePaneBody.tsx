@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+} from "react";
 import type { Node as ProseMirrorNode } from "prosemirror-model";
 import {
   FeedbackNotice,
@@ -31,7 +38,6 @@ import {
   type NotePulseTarget,
 } from "@/lib/reader/pulseEvent";
 import { escapeAttrValue } from "@/lib/highlights/escapeAttrValue";
-import { consumePendingNoteActivation } from "@/lib/reader/pendingNoteActivation";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { consumePendingNoteFocus } from "@/lib/notes/pendingNoteFocus";
 import {
@@ -41,22 +47,23 @@ import {
 import {
   fetchNoteBlock,
   fetchNotePage,
-  saveNotePageDocument,
+  saveResourceSurface,
   type NoteBlock,
   type NotePage,
+  type SaveResourceSurfaceInput,
 } from "@/lib/notes/api";
 import {
   draftBlocksById,
   deletedRootBlockIdsForPersistence,
   flatBlockIds,
   flatBlockParentIds,
-  pageDocumentBlocksFromDrafts,
-  pageDocumentContainmentFromDrafts,
+  resourceSurfaceBlocksFromDrafts,
+  resourceSurfaceAdjacencyFromDrafts,
   pageDraftMetadataFromStorage,
-  planPageDocumentSave,
+  planResourceSurfaceSave,
   readDraftBlocksForPersistence,
   type PersistedDraftBlock,
-} from "@/lib/notes/pageDocumentPersistence";
+} from "@/lib/notes/resourceSurfacePersistence";
 import {
   clearStoredNoteEditorDraft,
   readStoredNoteEditorDraft,
@@ -75,6 +82,36 @@ const NOTE_PULSE_CLASS = "nexus-note-pulse";
 const NOTE_PULSE_DURATION_MS = 2400;
 const NOTE_PULSE_RETRY_MS = 120;
 const NOTE_PULSE_MAX_ATTEMPTS = 25;
+
+function resourceBaseVersions(
+  page: NotePage | null | undefined,
+): SaveResourceSurfaceInput["baseVersions"] {
+  if (!page) return [];
+  const ref = `page:${page.id}`;
+  const lanes = page.surface?.source.versionByLane ?? {};
+  const out: SaveResourceSurfaceInput["baseVersions"] = [
+    { ref, lane: "title", version: lanes.title ?? 1 },
+    { ref, lane: "outgoing_edges", version: lanes.outgoing_edges ?? 1 },
+  ];
+  const visit = (blocks: NoteBlock[]) => {
+    for (const block of blocks) {
+      const blockRef = `note_block:${block.id}`;
+      out.push({
+        ref: blockRef,
+        lane: "body",
+        version: block.versionByLane?.body ?? 1,
+      });
+      out.push({
+        ref: blockRef,
+        lane: "outgoing_edges",
+        version: block.versionByLane?.outgoing_edges ?? 1,
+      });
+      visit(block.children);
+    }
+  };
+  visit(page.blocks);
+  return out;
+}
 
 export default function PagePaneBody({
   pageIdOverride,
@@ -101,20 +138,23 @@ export default function PagePaneBody({
   const [editorResetSerial, setEditorResetSerial] = useState(0);
   const [bodyFocusRequest, setBodyFocusRequest] = useState(0);
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
-  const [notePulseTarget, setNotePulseTarget] = useState<NotePulseEditorTarget | null>(null);
+  const [notePulseTarget, setNotePulseTarget] =
+    useState<NotePulseEditorTarget | null>(null);
   const saveScope = focusBlockId ? `block:${focusBlockId}` : `page:${pageId}`;
   const editorResourceKey = `${saveScope}:editor`;
   const renderedEditorResourceKey = `${editorResourceKey}:reset:${editorResetSerial}`;
   const initialPageKey =
     initialPage && initialPage.id === pageId
-      ? `initial:${initialPage.id}:${initialPage.documentVersion}:${initialPage.updatedAt ?? ""}`
+      ? `initial:${initialPage.id}:${initialPage.updatedAt ?? ""}`
       : "server";
   const editorLoadKey = `${saveScope}:load:${initialPageKey}`;
   const knownBlockIdsRef = useRef<Set<string>>(new Set());
   const knownBlockParentIdsRef = useRef<Map<string, string | null>>(new Map());
-  const knownBlockDraftsRef = useRef<Map<string, PersistedDraftBlock>>(new Map());
+  const knownBlockDraftsRef = useRef<Map<string, PersistedDraftBlock>>(
+    new Map(),
+  );
   const fullPageBlocksRef = useRef<NoteBlock[]>(initialPage?.blocks ?? []);
-  const pageDocumentVersionRef = useRef(initialPage?.documentVersion ?? 1);
+  const resourceBaseVersionsRef = useRef(resourceBaseVersions(initialPage));
   const focusedRootParentBlockIdRef = useRef<string | null>(null);
   const currentSaveScopeRef = useRef(saveScope);
   const editorLoadKeyRef = useRef(editorLoadKey);
@@ -149,7 +189,9 @@ export default function PagePaneBody({
       pulseId,
     });
     window.setTimeout(() => {
-      setNotePulseTarget((current) => (current?.pulseId === pulseId ? null : current));
+      setNotePulseTarget((current) =>
+        current?.pulseId === pulseId ? null : current,
+      );
     }, NOTE_PULSE_DURATION_MS);
 
     let attempts = 0;
@@ -176,31 +218,18 @@ export default function PagePaneBody({
     tryPulse();
   }, []);
 
-  // Live channel: handles the case where the cited page is already open in this
-  // pane when the citation is clicked.
+  // Live channel: handles the case where an already-open page contains the
+  // cited note.
   const onNotePulse = useCallback(
     (target: NotePulseTarget) => {
-      if (target.pageId !== pageId) return;
+      if (!page || !findBlock(page.blocks, target.blockId)) return;
       pulseNoteBlock(target);
     },
-    [pageId, pulseNoteBlock],
+    [page, pulseNoteBlock],
   );
   useNotePulseHighlight(onNotePulse);
 
-  // Cross-pane channel: when a citation click navigated to (or opened a new pane
-  // for) this page, the live pulse event fired before this listener mounted. The
-  // activator stashed the target keyed by page id; consume it here once the
-  // editor content is ready, then clear it so a later genuine same-pane pulse
-  // still works. `pulseNoteBlock`'s retry loop tolerates the editor still
-  // mounting, but gating on the loaded `page`/`initialDoc` avoids burning retries
-  // before the editor exists at all.
   const editorReady = page !== null && initialDoc !== null;
-  useEffect(() => {
-    if (!editorReady) return;
-    const pending = consumePendingNoteActivation(pageId);
-    if (!pending) return;
-    pulseNoteBlock(pending);
-  }, [editorReady, pageId, pulseNoteBlock]);
 
   useEffect(() => {
     if (!editorReady) return;
@@ -224,18 +253,21 @@ export default function PagePaneBody({
   editorLoadKeyRef.current = editorLoadKey;
 
   const saveDoc = useCallback(
-    async (doc: ProseMirrorNode, { clientMutationId }: { clientMutationId: string }) => {
+    async (
+      doc: ProseMirrorNode,
+      { clientMutationId }: { clientMutationId: string },
+    ) => {
       const scope = saveScope;
       const submittedTitle = normalizedPageTitle(titleDraftRef.current);
       const plan = focusBlockId
         ? (() => {
             const editedDrafts = readDraftBlocksForPersistence(
               doc,
-              focusedRootParentBlockIdRef.current
+              focusedRootParentBlockIdRef.current,
             );
             const editedIds = new Set(editedDrafts.map((block) => block.id));
             const fullDrafts = readDraftBlocksForPersistence(
-              noteBlocksToOutlineDoc(fullPageBlocksRef.current)
+              noteBlocksToOutlineDoc(fullPageBlocksRef.current),
             );
             const replacedIds = new Set(knownBlockIdsRef.current);
             const drafts = [
@@ -243,21 +275,21 @@ export default function PagePaneBody({
               ...editedDrafts,
             ];
             return {
-              blocks: pageDocumentBlocksFromDrafts(drafts),
-              containment: pageDocumentContainmentFromDrafts(drafts, pageId),
+              blocks: resourceSurfaceBlocksFromDrafts(drafts),
+              adjacency: resourceSurfaceAdjacencyFromDrafts(drafts, pageId),
               deletedBlockIds: deletedRootBlockIdsForPersistence(
                 replacedIds,
                 editedIds,
-                knownBlockParentIdsRef.current
+                knownBlockParentIdsRef.current,
               ),
               nextBlockIds: editedIds,
               nextBlockParentIds: new Map(
-                editedDrafts.map((block) => [block.id, block.parentBlockId])
+                editedDrafts.map((block) => [block.id, block.parentBlockId]),
               ),
               nextBlockDrafts: draftBlocksById(editedDrafts),
             };
           })()
-        : planPageDocumentSave({
+        : planResourceSurfaceSave({
             doc,
             pageId,
             rootParentBlockId: null,
@@ -265,19 +297,20 @@ export default function PagePaneBody({
             knownBlockParentIds: knownBlockParentIdsRef.current,
           });
 
-      const result = await saveNotePageDocument(pageId, {
+      const result = await saveResourceSurface(pageId, {
         clientMutationId,
-        baseDocumentVersion: pageDocumentVersionRef.current,
+        baseVersions: resourceBaseVersionsRef.current,
         title: submittedTitle,
         focusBlockId: focusBlockId ?? null,
         blocks: plan.blocks,
-        containment: plan.containment,
+        adjacency: plan.adjacency,
         deletedBlockIds: plan.deletedBlockIds,
       });
 
       if (currentSaveScopeRef.current === scope) {
-        const titleStillCurrent = normalizedPageTitle(titleDraftRef.current) === submittedTitle;
-        pageDocumentVersionRef.current = result.documentVersion;
+        const titleStillCurrent =
+          normalizedPageTitle(titleDraftRef.current) === submittedTitle;
+        resourceBaseVersionsRef.current = resourceBaseVersions(result.page);
         fullPageBlocksRef.current = result.page.blocks;
         persistedTitleRef.current = result.page.title;
         knownBlockIdsRef.current = plan.nextBlockIds;
@@ -291,13 +324,17 @@ export default function PagePaneBody({
           : { ...result.page, title: titleDraftRef.current };
         if (focusBlockId) {
           const focusedBlock = findBlock(visiblePage.blocks, focusBlockId);
-          setPage(focusedBlock ? { ...visiblePage, blocks: [focusedBlock] } : visiblePage);
+          setPage(
+            focusedBlock
+              ? { ...visiblePage, blocks: [focusedBlock] }
+              : visiblePage,
+          );
         } else {
           setPage(visiblePage);
         }
       }
     },
-    [focusBlockId, pageId, saveScope, setTitleDraftValue]
+    [focusBlockId, pageId, saveScope, setTitleDraftValue],
   );
 
   const draftMetadata = useCallback(() => {
@@ -330,8 +367,12 @@ export default function PagePaneBody({
     cacheKey: editorLoadKey,
     load: async () => {
       const loadedPage =
-        initialPage && initialPage.id === pageId ? initialPage : await fetchNotePage(pageId);
-      const focusedBlock = focusBlockId ? await fetchNoteBlock(focusBlockId) : null;
+        initialPage && initialPage.id === pageId
+          ? initialPage
+          : await fetchNotePage(pageId);
+      const focusedBlock = focusBlockId
+        ? await fetchNoteBlock(focusBlockId)
+        : null;
       return {
         loadKey: editorLoadKey,
         saveScope,
@@ -349,7 +390,7 @@ export default function PagePaneBody({
 
       try {
         const loadedPage = loaded.page;
-        pageDocumentVersionRef.current = loadedPage.documentVersion;
+        resourceBaseVersionsRef.current = resourceBaseVersions(loadedPage);
         fullPageBlocksRef.current = loadedPage.blocks;
         persistedTitleRef.current = loadedPage.title;
         if (!loaded.focusedBlock) {
@@ -357,7 +398,9 @@ export default function PagePaneBody({
           setTitleDraftValue(loadedPage.title);
           focusedRootParentBlockIdRef.current = null;
           knownBlockIdsRef.current = new Set(flatBlockIds(loadedPage.blocks));
-          knownBlockParentIdsRef.current = flatBlockParentIds(loadedPage.blocks);
+          knownBlockParentIdsRef.current = flatBlockParentIds(
+            loadedPage.blocks,
+          );
           const persistedDoc = loadedPage.blocks.length
             ? noteBlocksToOutlineDoc(loadedPage.blocks)
             : null;
@@ -370,13 +413,19 @@ export default function PagePaneBody({
             : null;
           if (storedDraft && storedMetadata) {
             knownBlockIdsRef.current = new Set(
-              storedMetadata.knownBlocks.map((block) => block.id)
+              storedMetadata.knownBlocks.map((block) => block.id),
             );
             knownBlockParentIdsRef.current = new Map(
-              storedMetadata.knownBlocks.map((block) => [block.id, block.parentBlockId])
+              storedMetadata.knownBlocks.map((block) => [
+                block.id,
+                block.parentBlockId,
+              ]),
             );
-            knownBlockDraftsRef.current = draftBlocksById(storedMetadata.knownBlocks);
-            focusedRootParentBlockIdRef.current = storedMetadata.focusedRootParentBlockId;
+            knownBlockDraftsRef.current = draftBlocksById(
+              storedMetadata.knownBlocks,
+            );
+            focusedRootParentBlockIdRef.current =
+              storedMetadata.focusedRootParentBlockId;
             setTitleDraftValue(storedMetadata.titleDraft);
             setPage({ ...loadedPage, title: storedMetadata.titleDraft });
             setEditorDoc(storedDraft.doc);
@@ -397,20 +446,34 @@ export default function PagePaneBody({
         knownBlockIdsRef.current = new Set(flatBlockIds([block]));
         knownBlockParentIdsRef.current = flatBlockParentIds([block]);
         const doc = noteBlocksToOutlineDoc([block]);
-        knownBlockDraftsRef.current = draftBlocksById(readDraftBlocksForPersistence(doc));
+        knownBlockDraftsRef.current = draftBlocksById(
+          readDraftBlocksForPersistence(doc),
+        );
         const storedDraft = readStoredNoteEditorDraft(loaded.saveScope);
         const storedMetadata = storedDraft
           ? pageDraftMetadataFromStorage(storedDraft.metadata)
           : null;
         if (storedDraft && storedMetadata) {
-          knownBlockIdsRef.current = new Set(storedMetadata.knownBlocks.map((item) => item.id));
-          knownBlockParentIdsRef.current = new Map(
-            storedMetadata.knownBlocks.map((item) => [item.id, item.parentBlockId])
+          knownBlockIdsRef.current = new Set(
+            storedMetadata.knownBlocks.map((item) => item.id),
           );
-          knownBlockDraftsRef.current = draftBlocksById(storedMetadata.knownBlocks);
-          focusedRootParentBlockIdRef.current = storedMetadata.focusedRootParentBlockId;
+          knownBlockParentIdsRef.current = new Map(
+            storedMetadata.knownBlocks.map((item) => [
+              item.id,
+              item.parentBlockId,
+            ]),
+          );
+          knownBlockDraftsRef.current = draftBlocksById(
+            storedMetadata.knownBlocks,
+          );
+          focusedRootParentBlockIdRef.current =
+            storedMetadata.focusedRootParentBlockId;
           setTitleDraftValue(storedMetadata.titleDraft);
-          setPage({ ...loadedPage, title: storedMetadata.titleDraft, blocks: [block] });
+          setPage({
+            ...loadedPage,
+            title: storedMetadata.titleDraft,
+            blocks: [block],
+          });
           setEditorDoc(storedDraft.doc);
           recoverSessionDraft(storedDraft);
           return;
@@ -421,10 +484,12 @@ export default function PagePaneBody({
         setEditorDoc(doc);
       } catch (error: unknown) {
         if (handleUnauthenticatedApiError(error)) return;
-        setFeedback(toFeedback(error, { fallback: "Note could not be loaded." }));
+        setFeedback(
+          toFeedback(error, { fallback: "Note could not be loaded." }),
+        );
       }
     },
-    [recoverSessionDraft, setEditorDoc, setTitleDraftValue]
+    [recoverSessionDraft, setEditorDoc, setTitleDraftValue],
   );
 
   const resetEditorToPersistedDocument = useCallback(() => {
@@ -442,7 +507,13 @@ export default function PagePaneBody({
         ? draftBlocksById(readDraftBlocksForPersistence(nextDoc))
         : new Map();
       setPage((current) =>
-        current ? { ...current, title: persistedTitleRef.current, blocks: focusedBlocks } : current
+        current
+          ? {
+              ...current,
+              title: persistedTitleRef.current,
+              blocks: focusedBlocks,
+            }
+          : current,
       );
       setTitleDraftValue(persistedTitleRef.current);
       setEditorDoc(nextDoc);
@@ -461,7 +532,9 @@ export default function PagePaneBody({
       : new Map();
     setTitleDraftValue(persistedTitleRef.current);
     setPage((current) =>
-      current ? { ...current, title: persistedTitleRef.current, blocks: fullBlocks } : current
+      current
+        ? { ...current, title: persistedTitleRef.current, blocks: fullBlocks }
+        : current,
     );
     setEditorDoc(nextDoc);
     setEditorResetSerial((current) => current + 1);
@@ -493,7 +566,11 @@ export default function PagePaneBody({
     }
 
     if (editorLoadResource.status === "error") {
-      setFeedback(toFeedback(editorLoadResource.error, { fallback: "Note could not be loaded." }));
+      setFeedback(
+        toFeedback(editorLoadResource.error, {
+          fallback: "Note could not be loaded.",
+        }),
+      );
     }
   }, [applyLoadedEditorResource, editorLoadResource]);
 
@@ -502,7 +579,7 @@ export default function PagePaneBody({
       currentDocRef.current = doc;
       scheduleSessionSave(doc);
     },
-    [scheduleSessionSave]
+    [scheduleSessionSave],
   );
 
   const onEditorBlurFlush = useCallback(
@@ -510,20 +587,22 @@ export default function PagePaneBody({
       currentDocRef.current = doc;
       flushSession(doc);
     },
-    [flushSession]
+    [flushSession],
   );
 
   const onTitleChange = useCallback(
     (event: ChangeEvent<HTMLInputElement>) => {
       const nextTitle = event.currentTarget.value;
       setTitleDraftValue(nextTitle);
-      setPage((current) => (current ? { ...current, title: nextTitle } : current));
+      setPage((current) =>
+        current ? { ...current, title: nextTitle } : current,
+      );
       const doc = currentDocRef.current;
       if (doc) {
         scheduleSessionSave(doc);
       }
     },
-    [scheduleSessionSave, setTitleDraftValue]
+    [scheduleSessionSave, setTitleDraftValue],
   );
 
   const flushTitle = useCallback(() => {
@@ -540,7 +619,7 @@ export default function PagePaneBody({
       if (openInNewPane) openInNewPaneCommand?.(href);
       else router.push(href);
     },
-    [openInNewPaneCommand, router]
+    [openInNewPaneCommand, router],
   );
 
   const openObject = useCallback(
@@ -552,14 +631,16 @@ export default function PagePaneBody({
         href = resolved?.route ?? null;
       } catch (error: unknown) {
         if (handleUnauthenticatedApiError(error)) return;
-        setFeedback(toFeedback(error, { fallback: "Linked object could not be opened." }));
+        setFeedback(
+          toFeedback(error, { fallback: "Linked object could not be opened." }),
+        );
         return;
       }
       if (!href) return;
       if (openInNewPane) openInNewPaneCommand?.(href);
       else router.push(href);
     },
-    [openInNewPaneCommand, router]
+    [openInNewPaneCommand, router],
   );
 
   const openRoute = useCallback(
@@ -567,7 +648,7 @@ export default function PagePaneBody({
       if (openInNewPane) openInNewPaneCommand?.(href);
       else router.push(href);
     },
-    [openInNewPaneCommand, router]
+    [openInNewPaneCommand, router],
   );
 
   const pinCurrentObject = useCallback(async () => {
@@ -583,8 +664,10 @@ export default function PagePaneBody({
       if (handleUnauthenticatedApiError(error)) return;
       toast.show(
         toFeedback(error, {
-          fallback: focusBlockId ? "Note could not be pinned." : "Page could not be pinned.",
-        })
+          fallback: focusBlockId
+            ? "Note could not be pinned."
+            : "Page could not be pinned.",
+        }),
       );
     }
   }, [focusBlockId, pinPageId, toast]);
@@ -606,7 +689,7 @@ export default function PagePaneBody({
         },
       },
     ],
-    [focusBlockId, pinCurrentObject, requestSecondarySurface]
+    [focusBlockId, pinCurrentObject, requestSecondarySurface],
   );
   usePaneChromeOverride({ options: paneOptions });
 
@@ -615,7 +698,7 @@ export default function PagePaneBody({
       objectType: focusBlockId ? ("note_block" as const) : ("page" as const),
       objectId: focusBlockId ?? pageId,
     }),
-    [focusBlockId, pageId]
+    [focusBlockId, pageId],
   );
   const secondaryDescriptor = useMemo(
     () => ({
@@ -624,11 +707,16 @@ export default function PagePaneBody({
       surfaces: [
         {
           id: "notes-connections" as const,
-          body: <ConnectionsSurface objectRef={backlinkObjectRef} onOpenRoute={openRoute} />,
+          body: (
+            <ConnectionsSurface
+              objectRef={backlinkObjectRef}
+              onOpenRoute={openRoute}
+            />
+          ),
         },
       ],
     }),
-    [backlinkObjectRef, openRoute]
+    [backlinkObjectRef, openRoute],
   );
   usePaneSecondary(secondaryDescriptor);
 
@@ -664,7 +752,9 @@ export default function PagePaneBody({
         focusRequest={bodyFocusRequest}
         onError={(error) => {
           if (handleUnauthenticatedApiError(error)) return;
-          setFeedback(toFeedback(error, { fallback: "Attachment could not be added." }));
+          setFeedback(
+            toFeedback(error, { fallback: "Attachment could not be added." }),
+          );
         }}
       />
     </div>

@@ -292,7 +292,7 @@ class TestListHighlights:
 
         direct_db.register_cleanup("pages", "user_id", user_id)
         direct_db.register_cleanup("note_blocks", "user_id", user_id)
-        direct_db.register_cleanup("note_view_states", "user_id", user_id)
+        direct_db.register_cleanup("resource_view_states", "user_id", user_id)
         direct_db.register_cleanup("resource_edges", "user_id", user_id)
         register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
@@ -528,7 +528,7 @@ class TestDeleteHighlight:
 
         direct_db.register_cleanup("pages", "user_id", user_id)
         direct_db.register_cleanup("note_blocks", "user_id", user_id)
-        direct_db.register_cleanup("note_view_states", "user_id", user_id)
+        direct_db.register_cleanup("resource_view_states", "user_id", user_id)
         direct_db.register_cleanup("resource_edges", "user_id", user_id)
         register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
@@ -1501,7 +1501,7 @@ class TestHighlightSharedRead:
 
         direct_db.register_cleanup("pages", "user_id", user_b)
         direct_db.register_cleanup("note_blocks", "user_id", user_b)
-        direct_db.register_cleanup("note_view_states", "user_id", user_b)
+        direct_db.register_cleanup("resource_view_states", "user_id", user_b)
         direct_db.register_cleanup("resource_edges", "user_id", user_b)
         register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("library_entries", "library_id", lib_id)

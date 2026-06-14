@@ -7,11 +7,7 @@ import pytest
 
 from nexus.errors import InvalidRequestError
 from nexus.services.resource_graph.policy import (
-    APP_SEARCH_SCOPE_TARGET_SCHEMES,
-    CITATION_OUTPUT_SOURCE_SCHEMES,
-    CONVERSATION_CONTEXT_SCOPE_ORIGINS,
     EDGE_SHAPE_POLICIES,
-    NOTE_MEDIA_SCOPE_ORIGINS,
     SEARCH_SCOPE_EDGE_KIND,
     SYNAPSE_SOURCE_SCHEMES,
     SYNAPSE_TARGET_SCHEMES,
@@ -36,16 +32,8 @@ def test_every_origin_has_one_policy_entry() -> None:
         assert policy.rendering
 
 
-def test_search_scope_policy_constants_are_explicit() -> None:
+def test_edge_shape_policy_constants_are_explicit() -> None:
     assert SEARCH_SCOPE_EDGE_KIND == "context"
-    assert NOTE_MEDIA_SCOPE_ORIGINS == ("user", "note_body", "highlight_note")
-    assert CONVERSATION_CONTEXT_SCOPE_ORIGINS == ("user", "citation", "system")
-    assert APP_SEARCH_SCOPE_TARGET_SCHEMES == ("media", "library")
-    assert CITATION_OUTPUT_SOURCE_SCHEMES == (
-        "message",
-        "oracle_reading",
-        "library_intelligence_revision",
-    )
     assert SYNAPSE_SOURCE_SCHEMES == ("media", "page", "note_block", "highlight")
     assert SYNAPSE_TARGET_SCHEMES == ("media", "note_block")
 

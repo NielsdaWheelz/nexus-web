@@ -12,7 +12,6 @@ from nexus.db.session import get_db
 from nexus.responses import ok, success_response
 from nexus.schemas.notes import (
     CreatePageRequest,
-    PatchPageDocumentRequest,
     QuickCaptureRequest,
     UpdatePageRequest,
 )
@@ -60,27 +59,6 @@ def update_page(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
     page = notes_service.update_page(db, viewer.user_id, page_id, request)
-    return ok(page, by_alias=True)
-
-
-@router.patch("/pages/{page_id}/document")
-def patch_page_document(
-    page_id: UUID,
-    request: PatchPageDocumentRequest,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict:
-    result = notes_service.patch_page_document(db, viewer.user_id, page_id, request)
-    return ok(result, by_alias=True)
-
-
-@router.get("/pages/{page_id}/document")
-def get_page_document(
-    page_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict:
-    page = notes_service.get_page(db, viewer.user_id, page_id)
     return ok(page, by_alias=True)
 
 

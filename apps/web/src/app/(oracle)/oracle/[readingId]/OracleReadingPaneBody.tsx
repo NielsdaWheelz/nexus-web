@@ -69,7 +69,7 @@ interface PassagePayload {
   marginalia_text: string;
   deep_link: string | null;
   // A server-built CitationOut for user-media passages with an evidence span;
-  // null for public-domain / page-owned / span-less passages.
+  // null for public-domain / span-less passages.
   citation: CitationOut | null;
 }
 

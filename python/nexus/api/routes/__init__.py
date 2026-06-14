@@ -40,6 +40,7 @@ from nexus.api.routes.podcast_transcripts import router as podcast_transcripts_r
 from nexus.api.routes.podcasts import router as podcasts_router
 from nexus.api.routes.reader import router as reader_router
 from nexus.api.routes.resource_graph import router as resource_graph_router
+from nexus.api.routes.resource_items import router as resource_items_router
 from nexus.api.routes.search import router as search_router
 from nexus.api.routes.stream import router as stream_router
 from nexus.api.routes.stream_tokens import router as stream_tokens_router
@@ -78,6 +79,7 @@ def create_api_router() -> APIRouter:
     api_router.include_router(notes_router)
     api_router.include_router(object_refs_router)
     api_router.include_router(pinned_objects_router)
+    api_router.include_router(resource_items_router)
     api_router.include_router(resource_graph_router)
     api_router.include_router(synapse_router)
     api_router.include_router(highlights_router)

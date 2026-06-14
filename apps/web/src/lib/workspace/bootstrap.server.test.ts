@@ -257,8 +257,6 @@ describe("loadWorkspaceBootstrap", () => {
             {
               id: NOTE_PAGE_ID,
               title: "Seeded page",
-              description: "",
-              document_version: 1,
               updated_at: "2026-01-01T00:00:00Z",
             },
           ],
@@ -272,8 +270,6 @@ describe("loadWorkspaceBootstrap", () => {
       {
         id: NOTE_PAGE_ID,
         title: "Seeded page",
-        description: null,
-        documentVersion: 1,
         updatedAt: "2026-01-01T00:00:00Z",
       },
     ]);

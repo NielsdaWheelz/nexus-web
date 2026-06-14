@@ -64,11 +64,11 @@ def resolve_evidence_span(
             evidence_span_id=evidence_span_id,
             row=row,
         )
-    if owner_kind == "page":
-        return _resolve_page_evidence_span(
+    if owner_kind == "note_block":
+        return _resolve_note_evidence_span(
             db,
             viewer_id=viewer_id,
-            page_id=owner_id,
+            note_block_id=owner_id,
             evidence_span_id=evidence_span_id,
             row=row,
         )
@@ -156,23 +156,17 @@ def _resolve_media_evidence_span(
     }
 
 
-def _resolve_page_evidence_span(
+def _resolve_note_evidence_span(
     db: Session,
     *,
     viewer_id: UUID,
-    page_id: UUID,
+    note_block_id: UUID,
     evidence_span_id: UUID,
     row: Any,
 ) -> dict[str, Any]:
-    """Resolve a page-owned (note) evidence span to a `/notes/{note_block_id}` deep link.
-
-    Notes live in `content_chunks`/`evidence_spans`/`content_blocks` with
-    `owner_kind='page'`, `owner_id=<page id>`, `resolver_kind='note'`. Ownership is the
-    page; the page belongs to a single user, so visibility is owner-equality.
-    """
     if str(row["resolver_kind"]) != "note":
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Evidence not found")
-    if not _can_read_page(db, viewer_id=viewer_id, page_id=page_id):
+    if not _can_read_note(db, viewer_id=viewer_id, note_block_id=note_block_id):
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Evidence not found")
 
     selector: dict[str, Any] = row["selector"] if isinstance(row["selector"], dict) else {}
@@ -190,7 +184,7 @@ def _resolve_page_evidence_span(
 
     return {
         "evidence_span_id": str(evidence_span_id),
-        "media_id": str(page_id),
+        "media_id": str(note_block_id),
         "citation_label": str(row["citation_label"]),
         "span_text": str(row["span_text"] or ""),
         "resolver": {
@@ -213,8 +207,8 @@ def _resolve_note_selector(
     """Build a note resolution from the start_block's `note_text` selector.
 
     The selector shape (also the chunk's `summary_locator`) is
-    ``{"kind":"note_text","note_block_id":<uuid>,"page_id":<uuid>,
-       "start_offset":int,"end_offset":int,"text_quote":{...}}``.
+    ``{"kind":"note_text","note_block_id":<uuid>,"start_offset":int,
+       "end_offset":int,"text_quote":{...}}``.
     """
     raw_text_quote = selector.get("text_quote")
     text_quote: dict[str, Any] = raw_text_quote if isinstance(raw_text_quote, dict) else {}
@@ -224,13 +218,11 @@ def _resolve_note_selector(
     text_quote_out = {"exact": exact, "prefix": prefix, "suffix": suffix}
 
     note_block_id = selector.get("note_block_id")
-    page_id = selector.get("page_id")
     start_offset = selector.get("start_offset")
     end_offset = selector.get("end_offset")
 
     resolved = (
         isinstance(note_block_id, str)
-        and isinstance(page_id, str)
         and isinstance(start_offset, int)
         and isinstance(end_offset, int)
         and start_offset >= 0
@@ -244,7 +236,6 @@ def _resolve_note_selector(
                 "kind": "note_text",
                 "evidence_span_id": str(evidence_span_id),
                 "note_block_id": note_block_id,
-                "page_id": page_id,
                 "start_offset": start_offset,
                 "end_offset": end_offset,
                 "text_quote": text_quote_out,
@@ -253,10 +244,10 @@ def _resolve_note_selector(
     return LocatorResolution(params={}, status="unresolved", highlight=None)
 
 
-def _can_read_page(db: Session, *, viewer_id: UUID, page_id: UUID) -> bool:
+def _can_read_note(db: Session, *, viewer_id: UUID, note_block_id: UUID) -> bool:
     row = db.execute(
-        text("SELECT user_id FROM pages WHERE id = :page_id"),
-        {"page_id": page_id},
+        text("SELECT user_id FROM note_blocks WHERE id = :note_block_id"),
+        {"note_block_id": note_block_id},
     ).first()
     return row is not None and row[0] == viewer_id
 
@@ -334,11 +325,9 @@ def locator_from_resolution(
             "text_quote_selector": quote_selector,
         }
     elif kind == "note":
-        # Page-owned (note) evidence. `media_id` here is the page id (the span owner).
         # `note_block_offsets` forbids extra keys, so no media_id/text_quote_selector.
         locator = {
             "type": "note_block_offsets",
-            "page_id": selector.get("page_id"),
             "block_id": selector.get("note_block_id"),
             "start_offset": selector.get("start_offset"),
             "end_offset": selector.get("end_offset"),

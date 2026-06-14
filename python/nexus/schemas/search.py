@@ -6,7 +6,7 @@ Search returns mixed typed results from different content types:
 - media (titles)
 - podcasts (titles/descriptions)
 - content chunks (indexed document evidence)
-- pages (titles/descriptions)
+- pages (titles)
 - note blocks (body)
 - messages (content)
 """
@@ -178,8 +178,6 @@ class SearchResultNoteBlockOut(SearchResultBaseOut):
 
     type: Literal["note_block"]
     id: UUID
-    page_id: UUID
-    page_title: str
     body_text: str
     highlight_excerpt: str | None = None
     locator: RetrievalLocator
@@ -212,7 +210,6 @@ class SearchResultPageOut(SearchResultBaseOut):
 
     type: Literal["page"]
     id: UUID
-    description: str | None = None
 
 
 class SearchResultMessageOut(SearchResultBaseOut):

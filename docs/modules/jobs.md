@@ -59,7 +59,7 @@ Exhausted retries dead-letter the row. Two kinds register a finalizer:
 
 - `chat_run` (`_dead_letter_chat_run`) writes an errored assistant message so the
   user sees a terminal failure.
-- `page_reindex_job` (`_dead_letter_page_reindex`) marks the page's content index
+- `note_reindex_job` (`_dead_letter_note_reindex`) marks the note's content index
   `failed` so a stranded reindex is observable instead of stuck `pending`.
 
 Other kinds have no finalizer; their failure is recorded on their own domain row.
@@ -74,12 +74,12 @@ stale reconciler plus manual API retry, not queue-level retries. This is
 deliberate: a handler that completed its work and recorded a domain failure has
 not crashed, so re-running it would be wasteful.
 
-## The allowlist invariant (`page_reindex_job` incident class)
+## The allowlist invariant (`note_reindex_job` incident class)
 
 The production worker only claims kinds in `WORKER_ALLOWED_JOB_KINDS`. A kind
 that is registered (with a dead-letter handler, even) but absent from the
 allowlist strands every job of that kind forever — the bug that left prod
-note/page edits unsearchable.
+note edits unsearchable.
 
 `USER_FACING_JOB_KINDS` (in `registry.py`) is the tuple of every non-periodic
 kind whose work a user directly observes. `test_config.py` asserts

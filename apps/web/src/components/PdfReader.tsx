@@ -86,12 +86,11 @@ export interface PdfHighlightOut {
   author_user_id: string;
   is_owner: boolean;
   linked_conversations?: { conversation_id: string; title: string }[];
-  linked_note_blocks?: {
-    note_block_id: string;
-    body_pm_json?: Record<string, unknown>;
-    body_markdown?: string;
-    body_text: string;
-  }[];
+	  linked_note_blocks?: {
+	    note_block_id: string;
+	    body_pm_json?: Record<string, unknown>;
+	    body_text: string;
+	  }[];
 }
 
 export interface PdfHighlightNavigationRequest {

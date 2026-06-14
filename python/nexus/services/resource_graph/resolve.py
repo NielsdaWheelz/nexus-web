@@ -35,7 +35,6 @@ from nexus.services.locator_resolver import locator_from_resolution, resolve_evi
 from nexus.services.media_document_map import load_media_document_summary
 from nexus.services.resource_graph.highlight_notes import linked_note_blocks_for_highlights
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
-from nexus.services.resource_graph.structure import find_block_occurrence
 
 INLINE_THRESHOLD_CHARS = 1500
 
@@ -207,7 +206,7 @@ def parent_media_id_for_read_pointer(
 
     ``fragments`` still carries an intrinsic ``media_id`` column. ``evidence_spans``
     and ``content_chunks`` are polymorphic over ``(owner_kind, owner_id)``; only
-    media-owned rows have a parent media id, so a page-owned span/chunk resolves to
+    media-owned rows have a parent media id, so a note-owned span/chunk resolves to
     ``NULL`` here and is correctly treated as non-readable in this context.
     """
     if scheme == "fragment":
@@ -232,7 +231,7 @@ def reader_target_for_citation_target(
     not the edge (D11), so it is recomputed here from the target's own anchoring using
     the single locator owner (``locator_resolver``), exactly as search and LI synthesis do.
 
-    Page-owned evidence returns ``(None, note_block_offsets)``. The frontend citation
+    Note-owned evidence returns ``(None, note_block_offsets)``. The frontend citation
     adapter treats that locator as a note activation target, not a media jump.
     """
     if target.scheme == "media":
@@ -288,7 +287,7 @@ def _reader_target_for_content_chunk(
     owner_kind = str(row["owner_kind"])
     if owner_kind == "media":
         return row["owner_id"], None
-    if owner_kind != "page" or not _page_visible(db, viewer_id=viewer_id, page_id=row["owner_id"]):
+    if owner_kind != "note_block":
         return None, None
     span_id = row["primary_evidence_span_id"]
     if span_id is not None:
@@ -298,32 +297,36 @@ def _reader_target_for_content_chunk(
             return None, None
         return None, locator_from_resolution(
             resolution,
-            media_id=UUID(str(row["owner_id"])),
-            media_kind="note",
-        )
+                media_id=UUID(str(row["owner_id"])),
+                media_kind="note",
+            )
     return None, _note_locator_from_summary_locator(row["summary_locator"])
 
 
 def _note_block_locator_for_block(
     db: Session, *, viewer_id: UUID, block_id: UUID
 ) -> dict[str, object] | None:
-    try:
-        occurrence = find_block_occurrence(
-            db,
-            user_id=viewer_id,
-            block_id=block_id,
-        )
-    except NotFoundError:
+    row = db.execute(
+        text(
+            """
+            SELECT body_text
+            FROM note_blocks
+            WHERE id = :block_id
+              AND user_id = :viewer_id
+            """
+        ),
+        {"viewer_id": viewer_id, "block_id": block_id},
+    ).first()
+    if row is None:
         return None
-    body = occurrence.block.body_text or ""
+    body = str(row[0] or "")
     if not body:
         return None
     return retrieval_locator_json(
-        {
-            "type": "note_block_offsets",
-            "page_id": str(occurrence.page_id),
-            "block_id": str(block_id),
-            "start_offset": 0,
+            {
+                "type": "note_block_offsets",
+                "block_id": str(block_id),
+                "start_offset": 0,
             "end_offset": len(body),
         }
     )
@@ -332,12 +335,10 @@ def _note_block_locator_for_block(
 def _note_locator_from_summary_locator(raw: object) -> dict[str, object] | None:
     locator = raw if isinstance(raw, dict) else {}
     note_block_id = locator.get("note_block_id")
-    page_id = locator.get("page_id")
     start_offset = locator.get("start_offset")
     end_offset = locator.get("end_offset")
     if (
         not isinstance(note_block_id, str)
-        or not isinstance(page_id, str)
         or not isinstance(start_offset, int)
         or not isinstance(end_offset, int)
     ):
@@ -345,22 +346,10 @@ def _note_locator_from_summary_locator(raw: object) -> dict[str, object] | None:
     return retrieval_locator_json(
         {
             "type": "note_block_offsets",
-            "page_id": page_id,
             "block_id": note_block_id,
             "start_offset": start_offset,
             "end_offset": end_offset,
         }
-    )
-
-
-def _page_visible(db: Session, *, viewer_id: UUID, page_id: UUID) -> bool:
-    return bool(
-        db.scalar(
-            text(
-                "SELECT EXISTS (SELECT 1 FROM pages WHERE id = :page_id AND user_id = :viewer_id)"
-            ),
-            {"page_id": page_id, "viewer_id": viewer_id},
-        )
     )
 
 
@@ -536,11 +525,10 @@ def _load_evidence_span(
                    es.span_text,
                    es.citation_label,
                    m.title AS media_title,
-                   p.title AS page_title,
-                   p.user_id AS page_user_id
+                   nb.user_id AS note_user_id
             FROM evidence_spans es
             LEFT JOIN media m ON m.id = es.owner_id AND es.owner_kind = 'media'
-            LEFT JOIN pages p ON p.id = es.owner_id AND es.owner_kind = 'page'
+            LEFT JOIN note_blocks nb ON nb.id = es.owner_id AND es.owner_kind = 'note_block'
             WHERE es.id = ANY(:ids)
             """
         ),
@@ -559,11 +547,11 @@ def _load_evidence_span(
                 out.append(_missing(ref.uri, "evidence_span"))
                 continue
             title = str(row[5])
-        elif owner_kind == "page":
-            if row[7] != viewer_id:
+        elif owner_kind == "note_block":
+            if row[6] != viewer_id:
                 out.append(_missing(ref.uri, "evidence_span"))
                 continue
-            title = str(row[6])
+            title = "Note"
         else:
             out.append(_missing(ref.uri, "evidence_span"))
             continue
@@ -591,11 +579,10 @@ def _load_content_chunk(
                    cc.owner_id,
                    cc.chunk_text,
                    m.title AS media_title,
-                   p.title AS page_title,
-                   p.user_id AS page_user_id
+                   nb.user_id AS note_user_id
             FROM content_chunks cc
             LEFT JOIN media m ON m.id = cc.owner_id AND cc.owner_kind = 'media'
-            LEFT JOIN pages p ON p.id = cc.owner_id AND cc.owner_kind = 'page'
+            LEFT JOIN note_blocks nb ON nb.id = cc.owner_id AND cc.owner_kind = 'note_block'
             WHERE cc.id = ANY(:ids)
             """
         ),
@@ -614,11 +601,11 @@ def _load_content_chunk(
                 out.append(_missing(ref.uri, "content_chunk"))
                 continue
             title = str(row[4])
-        elif owner_kind == "page":
-            if row[6] != viewer_id:
+        elif owner_kind == "note_block":
+            if row[5] != viewer_id:
                 out.append(_missing(ref.uri, "content_chunk"))
                 continue
-            title = str(row[5])
+            title = "Note"
         else:
             out.append(_missing(ref.uri, "content_chunk"))
             continue
@@ -682,7 +669,7 @@ def _load_highlight(
 def _load_page(db: Session, items: list[ResourceRef], *, viewer_id: UUID) -> list[LoadedResource]:
     ids = [ref.id for ref in items]
     rows = db.execute(
-        text("SELECT id, user_id, title, description FROM pages WHERE id = ANY(:ids)"),
+        text("SELECT id, user_id, title FROM pages WHERE id = ANY(:ids)"),
         {"ids": ids},
     ).fetchall()
     by_id = {row[0]: row for row in rows}
@@ -692,9 +679,8 @@ def _load_page(db: Session, items: list[ResourceRef], *, viewer_id: UUID) -> lis
         if row is None or row[1] != viewer_id:
             out.append(_missing(ref.uri, "page"))
             continue
-        out.append(
-            LoadedResource(uri=ref.uri, scheme="page", body=str(row[3] or ""), title=str(row[2]))
-        )
+        title = str(row[2])
+        out.append(LoadedResource(uri=ref.uri, scheme="page", title=title, body=title))
     return out
 
 
@@ -1134,7 +1120,14 @@ def _present(loaded: LoadedResource) -> ResolvedResource:
             loaded, label=f"{loaded.title} - chunk: {_first_line(loaded.body or '')[:80]}"
         )
     if scheme == "page":
-        return _read_resolved(loaded, label=loaded.title or "")
+        title = loaded.title or ""
+        return ResolvedResource(
+            uri=loaded.uri,
+            label=title,
+            summary=title,
+            inline_body=title,
+            fetch_hint=f'read_resource("{loaded.uri}")',
+        )
     if scheme == "note_block":
         return _read_resolved(loaded, label=_first_line(loaded.body or "")[:120] or "Note")
     if scheme == "fragment":

@@ -216,7 +216,7 @@ def _result_deep_link(result: InternalSearchResult) -> str:
     if isinstance(result, _RankedContentChunkResult):
         # Resolver always seeds params["evidence"] with the span id (see
         # locator_resolver.resolve_evidence_span); route is /media/<media_id> for
-        # media-owned chunks or /notes/<note_block_id> for page-owned (note) chunks.
+        # media-owned chunks or /notes/<note_block_id> for note-owned chunks.
         route = result.resolver.get("route")
         params = result.resolver.get("params")
         if not isinstance(route, str) or not route:
@@ -297,7 +297,7 @@ def _result_model_fields(result: InternalSearchResult) -> dict[str, Any]:
 
     if isinstance(result, _RankedNoteBlockResult):
         return {
-            "title": result.page_title,
+            "title": "Note",
             "source_label": "note",
             "media_id": None,
             "media_kind": None,
@@ -443,15 +443,12 @@ def _result_to_out(result: InternalSearchResult) -> SearchResultOut:
     if isinstance(result, _RankedPageResult):
         return SearchResultPageOut(
             type="page",
-            description=result.description,
             **base_payload,
         )
 
     if isinstance(result, _RankedNoteBlockResult):
         return SearchResultNoteBlockOut(
             type="note_block",
-            page_id=result.page_id,
-            page_title=result.page_title,
             body_text=result.body_text,
             highlight_excerpt=result.highlight_excerpt,
             locator=_required_locator("note_block", result.locator),

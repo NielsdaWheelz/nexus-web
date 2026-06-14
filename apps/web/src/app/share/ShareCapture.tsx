@@ -55,11 +55,11 @@ export default function ShareCapture({
 
     void (async () => {
       try {
-        await quickCaptureDailyNote({
-          blockId: quickCaptureBlockId.current,
-          clientMutationId: quickCaptureMutationId.current,
-          bodyMarkdown: trimmed,
-        });
+	        await quickCaptureDailyNote({
+	          blockId: quickCaptureBlockId.current,
+	          clientMutationId: quickCaptureMutationId.current,
+	          bodyPmJson: { type: "paragraph", content: [{ type: "text", text: trimmed }] },
+	        });
         setResults([
           {
             label: trimmed,

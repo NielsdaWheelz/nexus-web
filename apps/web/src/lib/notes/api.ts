@@ -4,162 +4,160 @@ import { assertNoTopLevelLegacyArtifactIdentityKey } from "@/lib/currentArtifact
 import { todayLocalDate } from "@/lib/localDate";
 import { isRecord } from "@/lib/validation";
 
-export type NoteBlockKind =
-  | "bullet"
-  | "heading"
-  | "todo"
-  | "quote"
-  | "code"
-  | "image"
-  | "embed";
-
-const NOTE_BLOCK_KINDS = new Set<string>([
-  "bullet",
-  "heading",
-  "todo",
-  "quote",
-  "code",
-  "image",
-  "embed",
-]);
-
 export interface NoteBlock {
   id: string;
-  pageId: string;
   parentBlockId: string | null;
-  orderKey: string;
-  blockKind: NoteBlockKind;
+  orderKey: string | null;
   bodyPmJson: Record<string, unknown>;
-  bodyMarkdown: string;
   bodyText: string;
   collapsed: boolean;
   children: NoteBlock[];
   createdAt?: string;
   updatedAt?: string;
+  versionByLane?: Record<string, number>;
 }
 
 export interface NotePageSummary {
   id: string;
   title: string;
-  description: string | null;
-  documentVersion: number;
   updatedAt?: string;
 }
 
+export interface ResourceItemCapabilities {
+  linkable: boolean;
+  attachable: boolean;
+  readable: "none" | "scope" | "body" | "media";
+  citableResultType: string | null;
+  appSearchScope: boolean;
+  conversationSearchScope: boolean;
+  promptRender: "none" | "label" | "inline_body" | "quote";
+  expandable: boolean;
+  adjacencySource: boolean;
+  adjacencyTarget: boolean;
+}
+
+export interface ResourceItem {
+  ref: string;
+  scheme: string;
+  id: string;
+  label: string;
+  summary: string;
+  route: string | null;
+  missing: boolean;
+  capabilities: ResourceItemCapabilities;
+  versionByLane: Record<string, number>;
+}
+
+export interface ResourceSurfaceItem {
+  edgeId: string;
+  target: ResourceItem;
+  sourceOrderKey: string;
+  viewState: Record<string, unknown> | null;
+}
+
+export interface ResourceSurface {
+  source: ResourceItem;
+  orderedItems: ResourceSurfaceItem[];
+}
+
 export interface NotePage extends NotePageSummary {
+  surface: ResourceSurface | null;
   blocks: NoteBlock[];
 }
 
-interface NotePagesResponse {
-  data: unknown;
-}
-
-interface NotePageResponse {
-  data: unknown;
-}
-
-interface DailyNotePageResponse {
-  data: unknown;
-}
-
-interface NoteBlockResponse {
-  data: unknown;
-}
-
-interface NotePageDocumentResponse {
-  data: unknown;
-}
-
-export interface SaveNotePageDocumentBlock {
-  id: string;
-  blockKind: NoteBlockKind;
-  bodyPmJson: Record<string, unknown>;
-}
-
-interface SaveNotePageDocumentParent {
-  scheme: "page" | "note_block";
-  id: string;
-}
-
-export interface SaveNotePageDocumentChild {
-  blockId: string;
-  sourceOrderKey: string;
-  collapsed: boolean;
-}
-
-export interface SaveNotePageDocumentContainment {
-  parent: SaveNotePageDocumentParent;
-  children: SaveNotePageDocumentChild[];
-}
-
-export interface SaveNotePageDocumentInput {
+export interface SaveResourceSurfaceInput {
   clientMutationId: string;
-  baseDocumentVersion: number;
+  baseVersions: Array<{
+    ref: string;
+    lane: "title" | "body" | "outgoing_edges";
+    version: number;
+  }>;
   title?: string | null;
   focusBlockId?: string | null;
-  blocks: SaveNotePageDocumentBlock[];
-  containment: SaveNotePageDocumentContainment[];
+  blocks: Array<{ id: string; bodyPmJson: Record<string, unknown> }>;
+  adjacency: Array<{
+    parent: { scheme: "page" | "note_block"; id: string };
+    children: Array<{
+      blockId: string;
+      sourceOrderKey: string;
+      collapsed: boolean;
+    }>;
+  }>;
   deletedBlockIds: string[];
 }
 
-export interface SaveNotePageDocumentResult {
+export interface SaveResourceSurfaceResult {
   page: NotePage;
+  versions: Record<string, Record<string, number>>;
   clientMutationId: string;
-  documentVersion: number;
   changedBlockIds: string[];
   changedEdgeIds: string[];
   reindexJobId: string | null;
+}
+
+export interface SaveNoteBodyInput {
+  clientMutationId: string;
+  baseVersion: number | null;
+  bodyPmJson: Record<string, unknown>;
+}
+
+interface ApiResponse {
+  data: unknown;
 }
 
 function browserTimeZone(): string {
   return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 }
 
-function requiredRecord(value: unknown, label: string): Record<string, unknown> {
+function requiredRecord(
+  value: unknown,
+  label: string,
+): Record<string, unknown> {
   if (!isRecord(value)) {
     throw new Error(`Notes API response is missing ${label}`);
   }
   return value;
 }
 
-export function isNoteBlockKind(value: unknown): value is NoteBlockKind {
-  return typeof value === "string" && NOTE_BLOCK_KINDS.has(value);
-}
-
-function normalizeBlockKind(value: unknown): NoteBlockKind {
-  if (!isNoteBlockKind(value)) {
-    throw new Error("Notes API response has invalid note block kind");
+function requiredString(value: unknown, label: string): string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`Notes API response is missing ${label}`);
   }
   return value;
 }
 
 export function normalizeBlock(raw: Record<string, unknown>): NoteBlock {
   assertNoTopLevelLegacyArtifactIdentityKey(raw, "note block");
+  const children = Array.isArray(raw.children) ? raw.children : [];
+  const versionByLane = isRecord(raw.versionByLane)
+    ? raw.versionByLane
+    : isRecord(raw.version_by_lane)
+      ? raw.version_by_lane
+      : {};
   return {
-    id: String(raw.id ?? ""),
-    pageId: String(raw.pageId ?? raw.page_id ?? ""),
+    id: requiredString(raw.id, "note block id"),
     parentBlockId:
       typeof raw.parentBlockId === "string"
         ? raw.parentBlockId
         : typeof raw.parent_block_id === "string"
           ? raw.parent_block_id
           : null,
-    orderKey: String(raw.orderKey ?? raw.order_key ?? ""),
-    blockKind: normalizeBlockKind(raw.blockKind ?? raw.block_kind ?? "bullet"),
-    bodyPmJson:
-      isRecord(raw.bodyPmJson)
-        ? raw.bodyPmJson
-        : isRecord(raw.body_pm_json)
-          ? raw.body_pm_json
-          : { type: "paragraph" },
-    bodyMarkdown: String(raw.bodyMarkdown ?? raw.body_markdown ?? ""),
+    orderKey:
+      typeof raw.orderKey === "string"
+        ? raw.orderKey
+        : typeof raw.order_key === "string"
+          ? raw.order_key
+          : null,
+    bodyPmJson: isRecord(raw.bodyPmJson)
+      ? raw.bodyPmJson
+      : isRecord(raw.body_pm_json)
+        ? raw.body_pm_json
+        : { type: "paragraph" },
     bodyText: String(raw.bodyText ?? raw.body_text ?? ""),
     collapsed: Boolean(raw.collapsed),
-    children: Array.isArray(raw.children)
-      ? raw.children.map((child) =>
-          normalizeBlock(requiredRecord(child, "note block child"))
-        )
-      : [],
+    children: children.map((child) =>
+      normalizeBlock(requiredRecord(child, "note block child")),
+    ),
     createdAt:
       typeof raw.createdAt === "string"
         ? raw.createdAt
@@ -172,22 +170,22 @@ export function normalizeBlock(raw: Record<string, unknown>): NoteBlock {
         : typeof raw.updated_at === "string"
           ? raw.updated_at
           : undefined,
+    versionByLane: Object.fromEntries(
+      Object.entries(versionByLane).map(([lane, version]) => [
+        lane,
+        Number(version),
+      ]),
+    ),
   };
 }
 
-export function normalizePageSummary(raw: Record<string, unknown>): NotePageSummary {
+export function normalizePageSummary(
+  raw: Record<string, unknown>,
+): NotePageSummary {
   assertNoTopLevelLegacyArtifactIdentityKey(raw, "note page");
   return {
-    id: String(raw.id ?? ""),
+    id: requiredString(raw.id, "note page id"),
     title: String(raw.title ?? "Untitled"),
-    description:
-      typeof raw.description === "string" && raw.description.trim()
-        ? raw.description
-        : null,
-    documentVersion: requiredPositiveInteger(
-      raw.documentVersion ?? raw.document_version,
-      "document version"
-    ),
     updatedAt:
       typeof raw.updatedAt === "string"
         ? raw.updatedAt
@@ -197,65 +195,139 @@ export function normalizePageSummary(raw: Record<string, unknown>): NotePageSumm
   };
 }
 
-function normalizePage(raw: Record<string, unknown>): NotePage {
+function normalizeResourceItem(raw: Record<string, unknown>): ResourceItem {
+  const capabilities = requiredRecord(
+    raw.capabilities,
+    "resource capabilities",
+  );
+  const versionByLane = isRecord(raw.versionByLane)
+    ? raw.versionByLane
+    : isRecord(raw.version_by_lane)
+      ? raw.version_by_lane
+      : {};
   return {
-    ...normalizePageSummary(raw),
-    blocks: Array.isArray(raw.blocks)
-      ? raw.blocks.map((block) =>
-          normalizeBlock(requiredRecord(block, "note page block"))
-        )
-      : [],
+    ref: requiredString(raw.ref, "resource ref"),
+    scheme: String(raw.scheme ?? ""),
+    id: requiredString(raw.id, "resource id"),
+    label: String(raw.label ?? ""),
+    summary: String(raw.summary ?? ""),
+    route: typeof raw.route === "string" ? raw.route : null,
+    missing: Boolean(raw.missing),
+    capabilities: {
+      linkable: Boolean(capabilities.linkable),
+      attachable: Boolean(capabilities.attachable),
+      readable: String(
+        capabilities.readable ?? "none",
+      ) as ResourceItemCapabilities["readable"],
+      citableResultType:
+        typeof capabilities.citableResultType === "string"
+          ? capabilities.citableResultType
+          : typeof capabilities.citable_result_type === "string"
+            ? capabilities.citable_result_type
+            : null,
+      appSearchScope: Boolean(
+        capabilities.appSearchScope ?? capabilities.app_search_scope,
+      ),
+      conversationSearchScope: Boolean(
+        capabilities.conversationSearchScope ??
+        capabilities.conversation_search_scope,
+      ),
+      promptRender: String(
+        capabilities.promptRender ?? capabilities.prompt_render ?? "none",
+      ) as ResourceItemCapabilities["promptRender"],
+      expandable: Boolean(capabilities.expandable),
+      adjacencySource: Boolean(
+        capabilities.adjacencySource ?? capabilities.adjacency_source,
+      ),
+      adjacencyTarget: Boolean(
+        capabilities.adjacencyTarget ?? capabilities.adjacency_target,
+      ),
+    },
+    versionByLane: Object.fromEntries(
+      Object.entries(versionByLane).map(([lane, version]) => [
+        lane,
+        Number(version),
+      ]),
+    ),
   };
 }
 
-function requiredString(value: unknown, label: string): string {
-  if (typeof value !== "string" || value.length === 0) {
-    throw new Error(`Notes API response is missing ${label}`);
-  }
-  return value;
+export function normalizeSurface(raw: unknown): ResourceSurface | null {
+  if (!isRecord(raw)) return null;
+  const items = Array.isArray(raw.orderedItems)
+    ? raw.orderedItems
+    : Array.isArray(raw.ordered_items)
+      ? raw.ordered_items
+      : [];
+  return {
+    source: normalizeResourceItem(requiredRecord(raw.source, "surface source")),
+    orderedItems: items.map((item) => {
+      const row = requiredRecord(item, "surface item");
+      return {
+        edgeId: requiredString(row.edgeId ?? row.edge_id, "surface edge id"),
+        target: normalizeResourceItem(
+          requiredRecord(row.target, "surface target"),
+        ),
+        sourceOrderKey: requiredString(
+          row.sourceOrderKey ?? row.source_order_key,
+          "surface order key",
+        ),
+        viewState: isRecord(row.viewState)
+          ? row.viewState
+          : isRecord(row.view_state)
+            ? row.view_state
+            : null,
+      };
+    }),
+  };
 }
 
-function requiredPositiveInteger(value: unknown, label: string): number {
-  const parsed = typeof value === "number" ? value : Number(value);
-  if (!Number.isInteger(parsed) || parsed < 1) {
-    throw new Error(`Notes API response is missing ${label}`);
-  }
-  return parsed;
+function normalizePage(raw: Record<string, unknown>): NotePage {
+  const blocks = Array.isArray(raw.blocks) ? raw.blocks : [];
+  return {
+    ...normalizePageSummary(raw),
+    surface: normalizeSurface(raw.surface),
+    blocks: blocks.map((block) =>
+      normalizeBlock(requiredRecord(block, "note page block")),
+    ),
+  };
 }
 
 export async function fetchNotePages(): Promise<NotePageSummary[]> {
-  const response = await apiFetch<NotePagesResponse>(
+  const response = await apiFetch<ApiResponse>(
     notePagesResource.clientPath({}),
-    { cache: "no-store" },
+    {
+      cache: "no-store",
+    },
   );
   const data = requiredRecord(response.data, "note pages response");
   if (!Array.isArray(data.pages)) {
     throw new Error("Notes API response is missing note pages");
   }
   return data.pages.map((page) =>
-    normalizePageSummary(requiredRecord(page, "note page summary"))
+    normalizePageSummary(requiredRecord(page, "note page summary")),
   );
 }
 
 export async function createNotePage(input: {
   title: string;
-  description?: string | null;
 }): Promise<NotePage> {
-  const response = await apiFetch<NotePageResponse>("/api/notes/pages", {
+  const response = await apiFetch<ApiResponse>("/api/notes/pages", {
     method: "POST",
-    body: JSON.stringify({
-      title: input.title,
-      description: input.description ?? null,
-    }),
+    body: JSON.stringify({ title: input.title }),
   });
   return normalizePage(requiredRecord(response.data, "note page"));
 }
 
-export async function fetchDailyNotePage(localDate = todayLocalDate()): Promise<NotePage> {
+export async function fetchDailyNotePage(
+  localDate = todayLocalDate(),
+): Promise<NotePage> {
   const params = new URLSearchParams({ time_zone: browserTimeZone() });
-  const response = await apiFetch<DailyNotePageResponse>(
-    `/api/notes/daily/${localDate}?${params.toString()}`,
-    { cache: "no-store" }
+  const response = await apiFetch<ApiResponse>(
+    `/api/notes/daily/${localDate}?${params}`,
+    {
+      cache: "no-store",
+    },
   );
   const data = requiredRecord(response.data, "daily note response");
   return normalizePage(requiredRecord(data.page, "daily note page"));
@@ -264,37 +336,26 @@ export async function fetchDailyNotePage(localDate = todayLocalDate()): Promise<
 export async function quickCaptureDailyNote(input: {
   blockId: string;
   clientMutationId: string;
-  bodyMarkdown?: string;
-  bodyPmJson?: Record<string, unknown>;
+  bodyPmJson: Record<string, unknown>;
   localDate?: string;
 }): Promise<NoteBlock> {
   const body: Record<string, unknown> = {
     id: input.blockId,
     client_mutation_id: input.clientMutationId,
+    body_pm_json: input.bodyPmJson,
   };
-  if (input.bodyMarkdown !== undefined) {
-    body.body_markdown = input.bodyMarkdown;
-  }
-  if (input.bodyPmJson !== undefined) {
-    body.body_pm_json = input.bodyPmJson;
-  }
   if (input.localDate !== undefined) {
     body.local_date = input.localDate;
   }
-  const response = await apiFetch<NoteBlockResponse>(
-    `/api/notes/quick-capture?${new URLSearchParams({
-      time_zone: browserTimeZone(),
-    }).toString()}`,
-    {
-      method: "POST",
-      body: JSON.stringify(body),
-    }
+  const response = await apiFetch<ApiResponse>(
+    `/api/notes/quick-capture?${new URLSearchParams({ time_zone: browserTimeZone() })}`,
+    { method: "POST", body: JSON.stringify(body) },
   );
   return normalizeBlock(requiredRecord(response.data, "note block"));
 }
 
 export async function fetchNotePage(pageId: string): Promise<NotePage> {
-  const response = await apiFetch<NotePageResponse>(`/api/notes/pages/${pageId}/document`, {
+  const response = await apiFetch<ApiResponse>(`/api/notes/pages/${pageId}`, {
     cache: "no-store",
   });
   return normalizePage(requiredRecord(response.data, "note page"));
@@ -302,64 +363,178 @@ export async function fetchNotePage(pageId: string): Promise<NotePage> {
 
 export async function updateNotePage(
   pageId: string,
-  updates: { title?: string; description?: string | null }
+  updates: { title: string },
 ): Promise<NotePage> {
-  const response = await apiFetch<NotePageResponse>(`/api/notes/pages/${pageId}`, {
-    method: "PATCH",
-    body: JSON.stringify(updates),
-  });
-  return normalizePage(requiredRecord(response.data, "note page"));
-}
-
-export async function saveNotePageDocument(
-  pageId: string,
-  input: SaveNotePageDocumentInput
-): Promise<SaveNotePageDocumentResult> {
-  const response = await apiFetch<NotePageDocumentResponse>(
-    `/api/notes/pages/${pageId}/document`,
+  const ref = `page:${pageId}`;
+  await apiFetch<ApiResponse>(
+    `/api/resource-items/${encodeURIComponent(ref)}/title`,
     {
       method: "PATCH",
       body: JSON.stringify({
-        client_mutation_id: input.clientMutationId,
-        base_document_version: input.baseDocumentVersion,
-        title: input.title ?? null,
-        focus_block_id: input.focusBlockId ?? null,
-        blocks: input.blocks.map((block) => ({
-          id: block.id,
-          block_kind: block.blockKind,
-          body_pm_json: block.bodyPmJson,
-        })),
-        containment: input.containment.map((group) => ({
-          parent: group.parent,
-          children: group.children.map((child) => ({
-            block_id: child.blockId,
-            source_order_key: child.sourceOrderKey,
-            collapsed: child.collapsed,
-          })),
-        })),
-        deleted_block_ids: input.deletedBlockIds,
+        client_mutation_id: createClientMutationId(),
+        base_versions: [],
+        title: updates.title,
       }),
-    }
+    },
   );
-  const data = requiredRecord(response.data, "note document response");
+  return fetchNotePage(pageId);
+}
+
+function createClientMutationId(): string {
+  return crypto.randomUUID();
+}
+
+function baseVersion(
+  input: SaveResourceSurfaceInput,
+  ref: string,
+  lane: "title" | "body" | "outgoing_edges",
+): number | null {
+  return (
+    input.baseVersions.find((base) => base.ref === ref && base.lane === lane)
+      ?.version ?? null
+  );
+}
+
+async function patchResourceTitle(
+  ref: string,
+  title: string,
+  clientMutationId: string,
+  version: number | null,
+): Promise<void> {
+  await apiFetch<ApiResponse>(`/api/resource-items/${encodeURIComponent(ref)}/title`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      client_mutation_id: clientMutationId,
+      base_versions: version === null ? [] : [{ ref, lane: "title", version }],
+      title,
+    }),
+  });
+}
+
+async function replaceResourceAdjacency(
+  ref: string,
+  input: SaveResourceSurfaceInput,
+  orderedTargets: Array<{ ref: string; sourceOrderKey: string }>,
+): Promise<string[]> {
+  const version = baseVersion(input, ref, "outgoing_edges");
+  const response = await apiFetch<ApiResponse>(
+    `/api/resource-items/${encodeURIComponent(ref)}/adjacency`,
+    {
+      method: "PUT",
+      body: JSON.stringify({
+        client_mutation_id: input.clientMutationId,
+        base_versions:
+          version === null ? [] : [{ ref, lane: "outgoing_edges", version }],
+        ordered_targets: orderedTargets.map((target) => ({
+          ref: target.ref,
+          source_order_key: target.sourceOrderKey,
+        })),
+      }),
+    },
+  );
+  const data = requiredRecord(response.data, "resource adjacency response");
+  return Array.isArray(data.changedEdgeIds)
+    ? data.changedEdgeIds.map((edgeId) => String(edgeId))
+    : [];
+}
+
+export async function saveResourceSurface(
+  pageId: string,
+  input: SaveResourceSurfaceInput,
+): Promise<SaveResourceSurfaceResult> {
+  const pageRef = `page:${pageId}`;
+  if (input.title !== undefined && input.title !== null) {
+    await patchResourceTitle(
+      pageRef,
+      input.title,
+      input.clientMutationId,
+      baseVersion(input, pageRef, "title"),
+    );
+  }
+
+  const changedBlockIds: string[] = [];
+  for (const block of input.blocks) {
+    const ref = `note_block:${block.id}`;
+    await saveNoteBody(block.id, {
+      clientMutationId: input.clientMutationId,
+      baseVersion: baseVersion(input, ref, "body"),
+      bodyPmJson: block.bodyPmJson,
+    });
+    changedBlockIds.push(block.id);
+  }
+
+  const changedEdgeIds = (
+    await Promise.all(
+      input.adjacency.map((group) =>
+        replaceResourceAdjacency(
+          `${group.parent.scheme}:${group.parent.id}`,
+          input,
+          group.children.map((child) => ({
+            ref: `note_block:${child.blockId}`,
+            sourceOrderKey: child.sourceOrderKey,
+          })),
+        ),
+      ),
+    )
+  ).flat();
+  const page = await fetchNotePage(pageId);
   return {
-    page: normalizePage(requiredRecord(data.page, "document page")),
-    clientMutationId: requiredString(data.clientMutationId, "document client mutation id"),
-    documentVersion: requiredPositiveInteger(data.documentVersion, "document version"),
-    changedBlockIds: Array.isArray(data.changedBlockIds)
-      ? data.changedBlockIds.map((blockId) => String(blockId))
-      : [],
-    changedEdgeIds: Array.isArray(data.changedEdgeIds)
-      ? data.changedEdgeIds.map((edgeId) => String(edgeId))
-      : [],
-    reindexJobId: typeof data.reindexJobId === "string" ? data.reindexJobId : null,
+    page,
+    versions: Object.fromEntries(
+      input.baseVersions.map((base) => [base.ref, { [base.lane]: base.version }]),
+    ),
+    clientMutationId: input.clientMutationId,
+    changedBlockIds,
+    changedEdgeIds,
+    reindexJobId: null,
   };
 }
 
 export async function fetchNoteBlock(blockId: string): Promise<NoteBlock> {
-  const response = await apiFetch<NoteBlockResponse>(
+  const response = await apiFetch<ApiResponse>(
     noteBlockResource.clientPath({ blockId }),
-    { cache: "no-store" },
+    {
+      cache: "no-store",
+    },
   );
   return normalizeBlock(requiredRecord(response.data, "note block"));
+}
+
+export async function saveNoteBody(
+  blockId: string,
+  input: SaveNoteBodyInput,
+): Promise<NoteBlock> {
+  const ref = `note_block:${blockId}`;
+  const response = await apiFetch<ApiResponse>(
+    `/api/resource-items/${encodeURIComponent(ref)}/body`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({
+        client_mutation_id: input.clientMutationId,
+        base_versions:
+          input.baseVersion === null
+            ? []
+            : [{ ref, lane: "body", version: input.baseVersion }],
+        body_pm_json: input.bodyPmJson,
+      }),
+    },
+  );
+  const data = requiredRecord(response.data, "resource body response");
+  return {
+    id: blockId,
+    parentBlockId: null,
+    orderKey: null,
+    bodyPmJson: requiredRecord(data.bodyPmJson, "note body"),
+    bodyText: String(data.bodyText ?? ""),
+    collapsed: false,
+    children: [],
+    versionByLane: Object.fromEntries(
+      Object.entries(
+        isRecord(data.versions) &&
+          isRecord(data.versions[ref])
+          ? data.versions[ref]
+          : {},
+      ).map(([lane, version]) => [lane, Number(version)]),
+    ),
+  };
 }

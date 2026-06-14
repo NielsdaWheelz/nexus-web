@@ -1,9 +1,8 @@
 """Note page and note-block retrievers over the unified content/evidence pipeline.
 
-A page is a content owner (`owner_kind='page'`); its note_blocks are content_chunks.
-Page-level results are lexical (title/description/daily-date); note-block results are
-hybrid (lexical ∪ semantic) over the same chunk machinery that serves documents
-(parallels library_content._search_content_chunks, owner-gated to the viewer's pages)."""
+A page is title-only. Note-block results are hybrid over the same chunk
+machinery that serves documents.
+"""
 
 from __future__ import annotations
 
@@ -37,8 +36,8 @@ from nexus.services.semantic_chunks import (
     transcript_embedding_provider_for_model,
 )
 
-# title/description/daily-date searchable text for a page, shared by rank + filter.
-_PAGE_TEXT = "p.title || ' ' || coalesce(p.description, '') || ' ' || p.daily_terms"
+# Page rows search only their own title. Linked content is indexed as note blocks.
+_PAGE_TEXT = "p.title"
 
 
 def _search_pages(
@@ -50,7 +49,7 @@ def _search_pages(
     scope_id: UUID | None,
     limit: int,
 ) -> list[InternalSearchResult]:
-    """Lexical page search over title + description + daily-note date (N7: no vectors)."""
+    """Lexical page search over title only."""
     if not q.strip():
         return []
     scope_clause = scope_filter_sql(scope_type, scope_id, "page")
@@ -71,25 +70,14 @@ def _search_pages(
             WITH owned_pages AS (
                 SELECT
                     p.id,
-                    p.title,
-                    p.description,
-                    COALESCE(
-                        to_char(dnp.local_date, 'YYYY-MM-DD') || ' '
-                        || trim(to_char(dnp.local_date, 'FMMonth FMDD, YYYY')),
-                        ''
-                    ) AS daily_terms
+                    p.title
                 FROM pages p
-                LEFT JOIN daily_note_pages dnp
-                  ON dnp.page_id = p.id
-                 AND dnp.user_id = :viewer_id
-                 AND dnp.deleted_at IS NULL
                 WHERE p.user_id = :viewer_id
             ),
             query_terms AS (SELECT websearch_to_tsquery('english', :query) AS tsq)
             SELECT
                 p.id,
                 p.title,
-                p.description,
                 ts_headline('english', {_PAGE_TEXT}, qt.tsq,
                     'MaxWords=50, MinWords=5, MaxFragments=1') AS snippet,
                 (
@@ -120,7 +108,6 @@ def _search_pages(
         _RankedPageResult(
             id=row["id"],
             title=row["title"],
-            description=row["description"],
             snippet=_truncate_snippet(str(row["snippet"] or row["title"])),
             score=_build_search_score(row["score"]),
         )
@@ -137,7 +124,7 @@ def _search_note_chunks(
     scope_id: UUID | None,
     limit: int,
 ) -> list[InternalSearchResult]:
-    """Hybrid note-block search over page-owned content chunks (one result per block)."""
+    """Hybrid note-block search over note-owned content chunks."""
     if not q.strip():
         return []
     scope_clause = scope_filter_sql(scope_type, scope_id, "note_block")
@@ -158,12 +145,11 @@ def _search_note_chunks(
         **scope_params,
     }
     eligible_chunks = f"""
-        owned_pages AS (SELECT id, title FROM pages WHERE user_id = :viewer_id),
+        owned_notes AS (SELECT id FROM note_blocks WHERE user_id = :viewer_id),
         eligible_chunks AS (
             SELECT
                 cc.id,
-                cc.owner_id AS page_id,
-                op.title AS page_title,
+                cc.owner_id AS note_block_id,
                 cc.chunk_text,
                 ts_headline('english', cc.chunk_text,
                     websearch_to_tsquery('english', :query),
@@ -174,7 +160,7 @@ def _search_note_chunks(
                 mcis.active_embedding_provider,
                 mcis.active_embedding_model
             FROM content_chunks cc
-            JOIN owned_pages op ON op.id = cc.owner_id AND cc.owner_kind = 'page'
+            JOIN owned_notes note ON note.id = cc.owner_id AND cc.owner_kind = 'note_block'
             JOIN content_index_states mcis
               ON mcis.owner_kind = cc.owner_kind
              AND mcis.owner_id = cc.owner_id
@@ -194,17 +180,15 @@ def _search_note_chunks(
             leading_ctes=f"""{eligible_chunks},
                 {query_embedding_cte_sql(embedding_dims)}""",
             embedding_dims=embedding_dims,
-            scored_passthrough_columns="""ec.page_id,
-                        ec.page_title,
+            scored_passthrough_columns="""ec.note_block_id,
                         ec.chunk_text,
                         ec.snippet,
                         ec.summary_locator,""",
-            final_select_columns="""page_id,
-                page_title,
+            final_select_columns="""note_block_id,
                 chunk_text,
                 snippet,
                 summary_locator,""",
-            order_by_id="page_id",
+            order_by_id="note_block_id",
             include_recency_decay=False,
         )
     else:
@@ -213,8 +197,7 @@ def _search_note_chunks(
                 {eligible_chunks},
                 lexical_candidates AS (
                     SELECT
-                        ec.page_id,
-                        ec.page_title,
+                        ec.note_block_id,
                         ec.chunk_text,
                         ec.snippet,
                         ec.summary_locator,
@@ -222,15 +205,15 @@ def _search_note_chunks(
                             AS lexical_score
                     FROM eligible_chunks ec
                     WHERE ec.chunk_text_tsv @@ websearch_to_tsquery('english', :query)
-                    ORDER BY lexical_score DESC, ec.page_id ASC
+                    ORDER BY lexical_score DESC, ec.note_block_id ASC
                     LIMIT :ann_limit
                 )
             SELECT
-                page_id, page_title, chunk_text, snippet, summary_locator,
+                note_block_id, chunk_text, snippet, summary_locator,
                 (0.20 * GREATEST(lexical_score, 0.0)) AS raw_score
             FROM lexical_candidates
             WHERE lexical_score > 0.0
-            ORDER BY raw_score DESC, page_id ASC
+            ORDER BY raw_score DESC, note_block_id ASC
             LIMIT :limit
         """
     rows = db.execute(text(query), params).mappings().all()
@@ -238,8 +221,7 @@ def _search_note_chunks(
     block_results: list[tuple[UUID, dict]] = []
     seen_blocks: set[UUID] = set()
     for row in rows:
-        locator_json = row["summary_locator"]
-        block_id = UUID(str(locator_json["note_block_id"]))
+        block_id = UUID(str(row["note_block_id"]))
         if block_id in seen_blocks:
             continue
         seen_blocks.add(block_id)
@@ -254,15 +236,12 @@ def _search_note_chunks(
             _RankedNoteBlockResult(
                 id=block_id,
                 snippet=_truncate_snippet(str(row["snippet"] or "")),
-                page_id=row["page_id"],
-                page_title=row["page_title"],
                 body_text=body_text,
                 score=_build_search_score(row["raw_score"]),
                 highlight_excerpt=excerpts.get(block_id),
                 locator=retrieval_locator_json(
                     {
                         "type": "note_block_offsets",
-                        "page_id": str(loc["page_id"]),
                         "block_id": str(loc["note_block_id"]),
                         "start_offset": int(loc["start_offset"]),
                         "end_offset": int(loc["end_offset"]),

@@ -57,6 +57,7 @@ from nexus.services.resource_graph.resolve import (
     ResolvedResource,
     resolve_ref,
 )
+from nexus.services.resource_items.capabilities import CITABLE_RESOURCE_RESULT_TYPES
 from nexus.services.retrieval_citation import RetrievalCitation, citation_from_search_result
 from nexus.services.search import get_search_result
 
@@ -527,20 +528,6 @@ def _build_reader_selection_block(
     )
 
 
-# A citable attached resource maps its URI scheme to the retrieval result_type
-# get_search_result understands. media/library (pointers) and conversation
-# (summary) carry no in-prompt citable content and are absent here.
-_CITABLE_RESULT_TYPE: dict[str, str] = {
-    "highlight": "highlight",
-    "evidence_span": "evidence_span",
-    "content_chunk": "content_chunk",
-    "fragment": "fragment",
-    "page": "page",
-    "note_block": "note_block",
-    "message": "message",
-}
-
-
 def _build_resources_block(
     db: Session,
     *,
@@ -611,7 +598,7 @@ def _materialize_attached_citation(
     parsed = parse_resource_ref(resource.uri)
     if isinstance(parsed, ResourceRefParseFailure):
         return None
-    result_type = _CITABLE_RESULT_TYPE.get(parsed.scheme)
+    result_type = CITABLE_RESOURCE_RESULT_TYPES.get(parsed.scheme)
     if result_type is None:
         return None
     try:

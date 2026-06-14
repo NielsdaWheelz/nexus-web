@@ -38,7 +38,7 @@ CHUNK_OVERLAP_TOKENS = 60
 class IndexOwner:
     """Polymorphic owner of a content index. Forward-compatible with ResourceRef."""
 
-    kind: Literal["media", "page"]
+    kind: Literal["media", "note_block"]
     id: UUID
 
 
@@ -128,8 +128,8 @@ def rebuild_content_index(
                 raise ValueError("Embedding dimensions do not match configured dimensions")
 
     now = datetime.now(UTC)
-    # Per-media single-writer via row lock; the 'page' path is serialized by the
-    # reindex job's dedupe key + lease, so it takes no lock (concurrency.md:13).
+    # Per-media single-writer via row lock; resource-item reindex jobs are
+    # serialized by their in-flight dedupe indexes.
     if owner.kind == "media":
         db.execute(
             text("SELECT id FROM media WHERE id = :owner_id FOR UPDATE"),
@@ -1231,14 +1231,13 @@ def _validate_note_selector(
     *,
     context: str,
 ) -> None:
-    for field in ("note_block_id", "page_id"):
-        value = selector.get(field)
-        if not isinstance(value, str):
-            raise ValueError(f"{context} {field} is required")
-        try:
-            UUID(value)
-        except ValueError:
-            raise ValueError(f"{context} {field} is invalid") from None
+    note_block_id = selector.get("note_block_id")
+    if not isinstance(note_block_id, str):
+        raise ValueError(f"{context} note_block_id is required")
+    try:
+        UUID(note_block_id)
+    except ValueError:
+        raise ValueError(f"{context} note_block_id is invalid") from None
     start_offset = selector.get("start_offset")
     end_offset = selector.get("end_offset")
     if not _is_int(start_offset) or not _is_int(end_offset):

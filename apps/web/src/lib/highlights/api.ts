@@ -8,7 +8,6 @@ import type { PdfHighlightQuad } from "@/lib/highlights/pdfTypes";
 export interface HighlightLinkedNoteBlock {
   note_block_id: string;
   body_pm_json?: Record<string, unknown>;
-  body_markdown?: string;
   body_text: string;
 }
 

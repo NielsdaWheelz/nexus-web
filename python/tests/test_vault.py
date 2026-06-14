@@ -18,11 +18,7 @@ from nexus.db.models import (
     ResourceEdge,
 )
 from nexus.services.notes import set_highlight_note_body_pm_json
-from nexus.services.resource_graph.documents import (
-    DocumentBlock,
-    find_block_occurrence,
-    load_page_document,
-)
+from nexus.services.resource_graph import adjacency as graph_adjacency
 from nexus.services.vault import export_vault, sync_vault
 from tests.factories import (
     add_media_to_library,
@@ -181,28 +177,11 @@ def test_vault_projects_multiple_highlight_notes_with_markers(
     )
     second_note = NoteBlock(
         user_id=bootstrapped_user,
-        block_kind="bullet",
         body_pm_json={"type": "paragraph", "content": [{"type": "text", "text": "Second note"}]},
-        body_markdown="Second note",
         body_text="Second note",
     )
     db_session.add(second_note)
     db_session.flush()
-    first_occurrence = find_block_occurrence(
-        db_session, user_id=bootstrapped_user, block_id=first_note.id
-    )
-    db_session.add(
-        ResourceEdge(
-            user_id=bootstrapped_user,
-            kind="context",
-            origin="note_containment",
-            source_scheme="page",
-            source_id=first_occurrence.page_id,
-            target_scheme="note_block",
-            target_id=second_note.id,
-            source_order_key="0000000002",
-        )
-    )
     db_session.add(
         ResourceEdge(
             user_id=bootstrapped_user,
@@ -517,25 +496,15 @@ def _highlight_note_body(session: Session, highlight_id: UUID) -> str | None:
 def _page_body(session: Session, page_id: UUID) -> str:
     page = session.get(Page, page_id)
     assert page is not None
-    document = load_page_document(session, user_id=page.user_id, page_id=page_id)
-    return "\n\n".join(_find_body(document.roots, block_id) for block_id in document.block_ids)
+    surface = graph_adjacency.load_page_surface(session, user_id=page.user_id, page_id=page_id)
+    return "\n\n".join(node.block.body_text for node in _surface_notes(surface.roots))
 
 
-def _find_body(nodes: list[DocumentBlock], block_id: UUID) -> str:
+def _surface_notes(
+    nodes: list[graph_adjacency.SurfaceNote],
+) -> list[graph_adjacency.SurfaceNote]:
+    out: list[graph_adjacency.SurfaceNote] = []
     for node in nodes:
-        if node.block.id == block_id:
-            return node.block.body_text
-        found = _maybe_find_body(node.children, block_id)
-        if found is not None:
-            return found
-    raise AssertionError(f"Missing block {block_id}")
-
-
-def _maybe_find_body(nodes: list[DocumentBlock], block_id: UUID) -> str | None:
-    for node in nodes:
-        if node.block.id == block_id:
-            return node.block.body_text
-        found = _maybe_find_body(node.children, block_id)
-        if found is not None:
-            return found
-    return None
+        out.append(node)
+        out.extend(_surface_notes(node.children))
+    return out

@@ -41,8 +41,6 @@ class _RankedPodcastResult:
 class _RankedNoteBlockResult:
     id: UUID
     snippet: str
-    page_id: UUID
-    page_title: str
     body_text: str
     score: _SearchScore
     highlight_excerpt: str | None = None
@@ -67,7 +65,6 @@ class _RankedHighlightResult:
 class _RankedPageResult:
     id: UUID
     title: str
-    description: str | None
     snippet: str
     score: _SearchScore
     result_type: Literal["page"] = "page"

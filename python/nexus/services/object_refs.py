@@ -35,7 +35,7 @@ from nexus.db.models import (
     Tag,
 )
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
-from nexus.schemas.notes import (
+from nexus.schemas.resource_items import (
     OBJECT_TYPES,
     HydratedObjectRef,
     ObjectRef,
@@ -95,7 +95,6 @@ def _hydrated_from_loaded(
             object_type="page",
             object_id=object_id,
             label=loaded.title or "",
-            snippet=loaded.body or None,
             route=f"/pages/{object_id}",
             icon="file-text",
         )
@@ -256,8 +255,7 @@ def _read_pointer_route(
         return f"/media/{media_id}"
     if _is_note_block_offsets(locator):
         return f"/notes/{locator['block_id']}"
-    page_id = _page_owner_id_for_read_pointer(db, scheme=scheme, resource_id=resource_id)
-    return f"/pages/{page_id}" if page_id is not None else None
+    return None
 
 
 def _is_note_block_offsets(locator: object) -> TypeGuard[_NoteBlockOffsetsLocatorPayload]:
@@ -266,27 +264,6 @@ def _is_note_block_offsets(locator: object) -> TypeGuard[_NoteBlockOffsetsLocato
         and locator.get("type") == "note_block_offsets"
         and isinstance(locator.get("block_id"), str)
         and bool(locator["block_id"])
-    )
-
-
-def _page_owner_id_for_read_pointer(
-    db: Session,
-    *,
-    scheme: Literal["content_chunk", "evidence_span"],
-    resource_id: UUID,
-) -> UUID | None:
-    table = "content_chunks" if scheme == "content_chunk" else "evidence_spans"
-    return db.scalar(
-        text(
-            f"""
-            SELECT p.id
-            FROM {table} source
-            JOIN pages p ON p.id = source.owner_id
-            WHERE source.id = :resource_id
-              AND source.owner_kind = 'page'
-            """
-        ),
-        {"resource_id": resource_id},
     )
 
 
@@ -311,7 +288,7 @@ def search_object_refs(
             select(Page.id)
             .where(
                 Page.user_id == viewer_id,
-                Page.title.ilike(pattern) | Page.description.ilike(pattern),
+                Page.title.ilike(pattern),
             )
             .order_by(Page.title.asc(), Page.id.asc())
             .limit(limit)
@@ -427,16 +404,13 @@ def search_object_refs(
                         UNION ALL
                         SELECT cc.id, cc.created_at
                         FROM content_chunks cc
-                        JOIN pages p ON p.id = cc.owner_id AND cc.owner_kind = 'page'
+                        JOIN note_blocks nb ON nb.id = cc.owner_id AND cc.owner_kind = 'note_block'
                         JOIN content_index_states cis
                           ON cis.owner_kind = cc.owner_kind
                          AND cis.owner_id = cc.owner_id
                          AND cis.status = 'ready'
-                        WHERE p.user_id = :viewer_id
-                          AND (
-                                cc.chunk_text ILIKE :pattern
-                                OR p.title ILIKE :pattern
-                              )
+                        WHERE nb.user_id = :viewer_id
+                          AND cc.chunk_text ILIKE :pattern
                      )
                 SELECT cc.id
                 FROM visible_chunks cc
@@ -609,16 +583,15 @@ def search_object_refs(
                         UNION ALL
                         SELECT es.id, es.created_at
                         FROM evidence_spans es
-                        JOIN pages p ON p.id = es.owner_id AND es.owner_kind = 'page'
+                        JOIN note_blocks nb ON nb.id = es.owner_id AND es.owner_kind = 'note_block'
                         JOIN content_index_states cis
                           ON cis.owner_kind = es.owner_kind
                          AND cis.owner_id = es.owner_id
                          AND cis.status = 'ready'
-                        WHERE p.user_id = :viewer_id
+                        WHERE nb.user_id = :viewer_id
                           AND (
                                 es.span_text ILIKE :pattern
                                 OR es.citation_label ILIKE :pattern
-                                OR p.title ILIKE :pattern
                               )
                      )
                 SELECT es.id

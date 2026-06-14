@@ -346,7 +346,7 @@ The tables group into these domains:
 **Retrieval index** — `content_blocks`, `evidence_spans`, `content_chunks`,
 `content_chunk_parts`, `content_embeddings` (PGVector 256),
 `content_index_states(owner_kind, owner_id)`, `media_transcript_states`.
-The index is owner-polymorphic: media-owned content and page-owned notes share
+The index is owner-polymorphic: media-owned content and note-owned bodies share
 the same chunk/span/embedding pipeline; notes no longer have a parallel
 `object_search` substrate.
 
@@ -365,15 +365,15 @@ current **library-intelligence** head/revision subgraph
 `contributor_aliases`, `contributor_external_ids`, `contributor_credits`,
 `contributor_identity_events` (audit trail).
 
-**Notes** — `pages`, `daily_note_pages`, `note_blocks` (block kind +
-ProseMirror JSON + markdown + text only), `note_view_states`, and
-`user_pinned_objects`. Page/block containment, order, inline note→object refs,
-highlight-note attachments, and backlinks are `resource_edges`, below — notes
-own no link table.
+**Notes** — `pages` (title only), `daily_note_pages`, `note_blocks`
+(ProseMirror JSON + generated text only), `resource_versions`,
+`resource_mutations`, `resource_view_states`, and `user_pinned_objects`.
+Page/note ordering, inline note-to-object refs, highlight-note attachments, and
+backlinks are `resource_edges`, below — notes own no link table.
 
 **Resource graph** — `resource_edges` (the single directed connection table:
 stance `kind`, writer `origin` (`user`, `citation`, `system`, `note_body`,
-`highlight_note`, `note_containment`, `synapse`), polymorphic `scheme`+`id`
+`highlight_note`, `synapse`), polymorphic `scheme`+`id`
 endpoints with no endpoint FKs, optional ordered-adjacency keys, citation
 `ordinal`+`snapshot`, and synapse rationale snapshots), `tags` (user-owned tag resources),
 `resource_external_snapshots` (stable targets for public web-search citations),
@@ -475,8 +475,8 @@ runs two loops:
   heartbeat thread, then commits a terminal/retry transition. Retries are bounded
   per-kind (`max_attempts`, `retry_delays_seconds`, `lease_seconds`); exhaustion
   dead-letters the row. Two kinds register a dead-letter finalizer: `chat_run`
-  writes an errored assistant message, and `page_reindex_job` marks the page's
-  content index `failed`.
+	  writes an errored assistant message, and `note_reindex_job` marks the note's
+	  content index `failed`.
 - **Scheduler loop**: enqueues periodic jobs into fixed time slots with
   deterministic dedupe keys, so exactly one job per slot survives across workers.
 
@@ -487,12 +487,12 @@ the registry's per-kind attempt/lease policy for `/health` deploy checks. The
 `WORKER_ALLOWED_JOB_KINDS` allowlist gates which kinds the production worker
 claims; `USER_FACING_JOB_KINDS ⊆ DEFAULT_WORKER_ALLOWED_JOB_KINDS` is asserted in
 `test_config.py` so a user-facing kind can never be stranded unallowlisted (the
-`page_reindex_job` incident class). See [modules/jobs.md](modules/jobs.md).
+	`note_reindex_job` incident class). See [modules/jobs.md](modules/jobs.md).
 
 Task catalog (each is a thin handler in `tasks/` that wraps a service):
 `ingest_media_source`, `enrich_metadata`, `chat_run`,
 `oracle_reading_generate`, `library_intelligence_artifact_generate`,
-`media_unit_build`, `page_reindex_job`, `podcast_sync_subscription_job`,
+	`media_unit_build`, `note_reindex_job`, `podcast_sync_subscription_job`,
 `podcast_reindex_semantic_job`, `podcast_active_subscription_poll_job`
 (periodic), `reconcile_stale_ingest_media_job` (periodic),
 `sync_gutenberg_catalog_job` (periodic), `prune_background_jobs_job`
@@ -577,8 +577,8 @@ result-type grid. The package owns one concern per module (`kinds`, `query`, `sc
 `embedding`, `ranking`, `projection`, `cursor`, `batch`, `retrievers/*`, `service`).
 
 - **Indexing** (`services/content_indexing.py`, `semantic_chunks.py`): text-bearing
-  media flows `fragment → content_blocks → chunks → embeddings`; page-owned
-  notes flow `note_block → content_blocks → chunks → embeddings` through
+  media flows `fragment → content_blocks → chunks → embeddings`; note bodies
+  flow `note_block → content_blocks → chunks → embeddings` through
   `services/note_indexing.py`. The current index state is tracked in
   `content_index_states(owner_kind, owner_id)` with the active embedding
   provider/model; rebuilds replace current blocks, chunks, spans, and embeddings
@@ -888,18 +888,17 @@ edits and merge.
 
 ### 8.7 Notes
 
-A block-based outliner (`services/notes.py`). `pages` (ordinary + daily) own
-document identity; `note_blocks` own only block content and kind. Page/block
-containment and sibling order live in `resource_edges` with
-`origin='note_containment'`; `source_order_key` is a dense recomputed `%010d`
-rank per parent. Collapsed state lives in `note_view_states`. Full outliner ops
-(create/update/split/merge/move, batched document patches, quick-capture into
-daily notes) project through `resource_graph.documents`. Inline
+A resource-native outliner (`services/notes.py`). `pages` (ordinary + daily)
+own only titles; `note_blocks` own only body content. Ordered page/note
+adjacency lives in `resource_edges` with `origin='user'`; `source_order_key` is
+the occurrence rank per source resource. Collapsed state lives in
+`resource_view_states`. Page-surface saves are UI conveniences over resource
+item body/title/version/mutation and ordered-adjacency services. Inline
 `object_ref`/`object_embed` nodes sync into `resource_edges` with
 `origin='note_body'` (`replace_edges_for_origin` keeps the block's edge set in
 step with its body); a note attached to a highlight is itself a `note_block`
-linked by an `origin='highlight_note'` edge. Every page/block is reindexed into
-the polymorphic content index via `note_indexing.enqueue_page_reindex`.
+	linked by an `origin='highlight_note'` edge. Note bodies are indexed directly as
+	`note_block` content owners via `note_indexing.enqueue_note_reindex`.
 Frontend: `components/notes/ProseMirrorOutlineEditor.tsx` +
 `lib/notes/prosemirror/*`.
 

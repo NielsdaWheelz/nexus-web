@@ -29,7 +29,7 @@ from pydantic import ValidationError
 from sqlalchemy import text
 
 from nexus.config import clear_settings_cache
-from nexus.db.models import Fragment, Page
+from nexus.db.models import Fragment
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.services.content_indexing import (
     IndexOwner,
@@ -39,7 +39,7 @@ from nexus.services.content_indexing import (
 )
 from nexus.services.contributor_credits import replace_media_contributor_credits
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
-from nexus.services.note_indexing import rebuild_page_content_index
+from nexus.services.note_indexing import rebuild_note_content_index
 from nexus.services.notes import get_daily_note
 from nexus.services.search import (
     get_search_result,
@@ -542,13 +542,12 @@ class TestBasicSearch:
         assert "source_version" not in note_row
         assert note_row["locator"] == {
             "type": "note_block_offsets",
-            "page_id": note_row["page_id"],
             "block_id": str(note_block_id),
             "start_offset": 0,
             "end_offset": len("My unique note about databases"),
         }
 
-        # D5/AC-10: pages match on title/description/daily-date, not block body, so a
+        # D5/AC-10: pages match on title/daily-date, not block body, so a
         # body-only query returns the matching note_block (above) but no page result.
         notes_response = auth_client.get(
             "/search?q=note+databases&kinds=notes",
@@ -930,7 +929,7 @@ class TestSearchScopes:
     # ------------------------------------------------------------------
     # AC-6: note-scope behavioral parity (§4.6 note cells, not just SQL shape).
     # For each of media:/library:/conversation: we seed an IN-scope note and an
-    # OUT-of-scope note (both indexed via rebuild_page_content_index) and assert
+    # OUT-of-scope note (both indexed as note resources) and assert
     # the scoped &kinds=notes search returns only the in-scope note_block.
     # ------------------------------------------------------------------
 
@@ -944,7 +943,7 @@ class TestSearchScopes:
         page_title: str,
         body_text: str,
     ) -> None:
-        """Insert a page + single note_block and index it as a page-owned content chunk."""
+        """Insert a page + single note_block and index the note body."""
         session.execute(
             text("INSERT INTO pages (id, user_id, title) VALUES (:page_id, :user_id, :title)"),
             {"page_id": page_id, "user_id": user_id, "title": page_title},
@@ -953,18 +952,17 @@ class TestSearchScopes:
             text(
                 """
                 INSERT INTO note_blocks (
-                    id, user_id, block_kind,
-                    body_pm_json, body_markdown, body_text
+                    id, user_id, body_pm_json, body_text
                 )
                 VALUES (
-                    :note_block_id, :user_id, 'bullet',
+                    :note_block_id, :user_id,
                     jsonb_build_object(
                         'type', 'paragraph',
                         'content', jsonb_build_array(
                             jsonb_build_object('type', 'text', 'text', CAST(:body_text AS text))
                         )
                     ),
-                    :body_text, :body_text
+                    :body_text
                 )
                 """
             ),
@@ -990,7 +988,7 @@ class TestSearchScopes:
                 VALUES (
                     :user_id,
                     'context',
-                    'note_containment',
+                    'user',
                     'page',
                     :page_id,
                     'note_block',
@@ -1005,7 +1003,7 @@ class TestSearchScopes:
                 "note_block_id": note_block_id,
             },
         )
-        rebuild_page_content_index(session, page_id=page_id, reason="test")
+        rebuild_note_content_index(session, note_block_id=note_block_id, reason="test")
 
     def _link_note_block_to_media(
         self,
@@ -1018,6 +1016,29 @@ class TestSearchScopes:
         kind: str = "context",
     ) -> None:
         """resource_edges note_block -> media (the §4.6 note `media:` scope cell)."""
+        if origin == "synapse":
+            session.execute(
+                text(
+                    """
+                    INSERT INTO resource_edges (
+                        user_id, kind, origin, source_scheme, source_id,
+                        target_scheme, target_id, snapshot
+                    )
+                    VALUES (
+                        :user_id, :kind, :origin, 'note_block', :note_block_id,
+                        'media', :media_id, '{"excerpt":"test rationale"}'::jsonb
+                    )
+                    """
+                ),
+                {
+                    "user_id": user_id,
+                    "note_block_id": note_block_id,
+                    "media_id": media_id,
+                    "origin": origin,
+                    "kind": kind,
+                },
+            )
+            return
         session.execute(
             text(
                 """
@@ -1150,7 +1171,7 @@ class TestSearchScopes:
         assert str(in_page_id) in ids, f"expected in-scope page; got {response.json()['results']}"
         assert str(out_page_id) not in ids
 
-    def test_scope_media_ignores_note_citation_edges(
+    def test_scope_media_ignores_note_body_edges(
         self, auth_client, direct_db: DirectSessionManager
     ):
         user_id = create_test_user_id()
@@ -1176,11 +1197,11 @@ class TestSearchScopes:
                     """
                     INSERT INTO resource_edges (
                         user_id, kind, origin, source_scheme, source_id, target_scheme,
-                        target_id, ordinal, snapshot
+                        target_id
                     )
                     VALUES (
-                        :user_id, 'context', 'citation', 'note_block', :note_block_id,
-                        'media', :media_id, 1, '{}'::jsonb
+                        :user_id, 'context', 'note_body', 'note_block', :note_block_id,
+                        'media', :media_id
                     )
                     """
                 ),
@@ -1562,7 +1583,7 @@ class TestSearchScopes:
 
         page_id, block_id = uuid4(), uuid4()
         with direct_db.session() as session:
-            conv_id = create_test_conversation(session, user_id)
+            conv_id, message_id = create_test_conversation_with_message(session, user_id)
             self._seed_scope_note_block(
                 session,
                 user_id=user_id,
@@ -1579,17 +1600,18 @@ class TestSearchScopes:
                         target_id, ordinal, snapshot
                     )
                     VALUES (
-                        :user_id, 'context', 'citation', 'conversation', :conversation_id,
-                        'note_block', :note_block_id, 1, '{}'::jsonb
+                        :user_id, 'context', 'citation', 'message', :message_id,
+                        'note_block', :note_block_id, 1, '{"excerpt":"cited note"}'::jsonb
                     )
                     """
                 ),
-                {"user_id": user_id, "conversation_id": conv_id, "note_block_id": block_id},
+                {"user_id": user_id, "message_id": message_id, "note_block_id": block_id},
             )
             session.commit()
 
-        direct_db.register_cleanup("resource_edges", "source_id", conv_id)
+        direct_db.register_cleanup("resource_edges", "source_id", message_id)
         direct_db.register_cleanup("resource_edges", "target_id", block_id)
+        direct_db.register_cleanup("messages", "conversation_id", conv_id)
         direct_db.register_cleanup("conversations", "id", conv_id)
 
         response = auth_client.get(
@@ -2597,7 +2619,6 @@ class TestSearchResultFormat:
         )
 
         assert result["type"] == "note_block"
-        assert result["page_title"] == "Notes"
         assert result["source_label"] == "note"
         assert result["highlight_excerpt"] == "test exact"
         assert result["body_text"] == note_body
@@ -2617,20 +2638,17 @@ class TestSearchResultFormat:
         with direct_db.session() as session:
             session.execute(
                 text("""
-                    INSERT INTO pages (id, user_id, title, description)
-                    VALUES (:page_id, :user_id, 'Garden Planning', 'Unique trellis page term')
+                    INSERT INTO pages (id, user_id, title)
+                    VALUES (:page_id, :user_id, 'Garden Planning')
                 """),
                 {"page_id": page_id, "user_id": user_id},
             )
-            page = session.get(Page, page_id)
-            assert page is not None
-            rebuild_page_content_index(session, page_id=page.id, reason="test")
             session.commit()
 
         direct_db.register_cleanup("pages", "id", page_id)
 
         response = auth_client.get(
-            "/search?q=trellis&kinds=notes",
+            "/search?q=garden&kinds=notes",
             headers=auth_headers(user_id),
         )
 
@@ -2642,7 +2660,7 @@ class TestSearchResultFormat:
         assert result is not None, f"Expected page {page_id} in results; got {data['results']}"
         assert result["type"] == "page"
         assert result["title"] == "Garden Planning"
-        assert result["description"] == "Unique trellis page term"
+        assert "description" not in result
         assert result["deep_link"] == f"/pages/{page_id}"
         assert result["context_ref"] == {"type": "page", "id": str(page_id)}
         assert "body_text" not in result
@@ -2657,8 +2675,7 @@ class TestSearchResultFormat:
         page_title: str,
         body_text: str,
     ) -> None:
-        """Insert a page + single note_block, then index it into the unified content
-        pipeline (owner_kind='page'), so the note_block is searchable as a content chunk."""
+        """Insert a page + single note_block, then index the note body."""
         session.execute(
             text("INSERT INTO pages (id, user_id, title) VALUES (:page_id, :user_id, :title)"),
             {"page_id": page_id, "user_id": user_id, "title": page_title},
@@ -2667,18 +2684,17 @@ class TestSearchResultFormat:
             text(
                 """
                 INSERT INTO note_blocks (
-                    id, user_id, block_kind,
-                    body_pm_json, body_markdown, body_text
+                    id, user_id, body_pm_json, body_text
                 )
                 VALUES (
-                    :note_block_id, :user_id, 'bullet',
+                    :note_block_id, :user_id,
                     jsonb_build_object(
                         'type', 'paragraph',
                         'content', jsonb_build_array(
                             jsonb_build_object('type', 'text', 'text', CAST(:body_text AS text))
                         )
                     ),
-                    :body_text, :body_text
+                    :body_text
                 )
                 """
             ),
@@ -2704,7 +2720,7 @@ class TestSearchResultFormat:
                 VALUES (
                     :user_id,
                     'context',
-                    'note_containment',
+                    'user',
                     'page',
                     :page_id,
                     'note_block',
@@ -2719,14 +2735,14 @@ class TestSearchResultFormat:
                 "note_block_id": note_block_id,
             },
         )
-        rebuild_page_content_index(session, page_id=page_id, reason="test")
+        rebuild_note_content_index(session, note_block_id=note_block_id, reason="test")
 
     def test_note_block_searchable_via_unified_content_pipeline(
         self,
         auth_client,
         direct_db: DirectSessionManager,
     ):
-        """A note_block indexed via rebuild_page_content_index is searchable; an
+        """A note_block indexed via rebuild_note_content_index is searchable; an
         unrelated query does not return it (hybrid lexical ∪ semantic over content
         chunks, with deterministic test embeddings)."""
         user_id = create_test_user_id()
@@ -2769,12 +2785,12 @@ class TestSearchResultFormat:
         unrelated_ids = {r["id"] for r in unrelated.json()["results"]}
         assert str(note_block_id) not in unrelated_ids
 
-    def test_page_reindex_deletes_stale_note_content(
+    def test_note_reindex_deletes_stale_note_content(
         self,
         auth_client,
         direct_db: DirectSessionManager,
     ):
-        """Re-running rebuild_page_content_index after editing a note body makes the new
+        """Re-running rebuild_note_content_index after editing a note body makes the new
         text searchable and removes the stale chunks (old text no longer matches)."""
         user_id = create_test_user_id()
         direct_db.register_cleanup("users", "id", user_id)
@@ -2811,7 +2827,6 @@ class TestSearchResultFormat:
                     """
                     UPDATE note_blocks
                     SET body_text = :body_text,
-                        body_markdown = :body_text,
                         body_pm_json = jsonb_build_object(
                             'type', 'paragraph',
                             'content', jsonb_build_array(
@@ -2826,7 +2841,7 @@ class TestSearchResultFormat:
                     "body_text": "freshreindexneedle replacement note content",
                 },
             )
-            rebuild_page_content_index(session, page_id=page_id, reason="test")
+            rebuild_note_content_index(session, note_block_id=note_block_id, reason="test")
             session.commit()
 
         fresh = auth_client.get(
@@ -2878,8 +2893,7 @@ class TestSearchResultFormat:
             )
             session.commit()
 
-        # Overwrite the page-owned note chunk's embedding with the probe token's vector,
-        # mirroring the media semantic-isolation test (same UPDATE shape, page owner).
+        # Overwrite the note-owned chunk embedding with the probe token's vector.
         _model, vector = build_text_embedding("vectoronlyprobe")
         with direct_db.session() as session:
             session.execute(
@@ -2889,10 +2903,10 @@ class TestSearchResultFormat:
                     SET embedding_vector = CAST(:embedding AS vector(256))
                     FROM content_chunks cc
                     WHERE cc.id = ce.chunk_id
-                      AND cc.owner_kind = 'page' AND cc.owner_id = :page_id
+                      AND cc.owner_kind = 'note_block' AND cc.owner_id = :note_block_id
                     """
                 ),
-                {"page_id": page_id, "embedding": to_pgvector_literal(vector)},
+                {"note_block_id": note_block_id, "embedding": to_pgvector_literal(vector)},
             )
             session.commit()
 
@@ -2919,8 +2933,7 @@ class TestSearchResultFormat:
         assert str(note_block_id) not in lexical_ids
 
     def test_page_searchable_by_title_token(self, auth_client, direct_db: DirectSessionManager):
-        """AC-2: a page is returned when a unique token lives only in its TITLE (no
-        description/body), exercising notes._search_pages title rank/match."""
+        """AC-2: a page is returned when a unique token lives only in its title."""
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
         page_id = uuid4()
@@ -2929,15 +2942,12 @@ class TestSearchResultFormat:
             session.execute(
                 text(
                     """
-                    INSERT INTO pages (id, user_id, title, description)
-                    VALUES (:page_id, :user_id, 'Zylotrope Planning', NULL)
+                    INSERT INTO pages (id, user_id, title)
+                    VALUES (:page_id, :user_id, 'Zylotrope Planning')
                     """
                 ),
                 {"page_id": page_id, "user_id": user_id},
             )
-            page = session.get(Page, page_id)
-            assert page is not None
-            rebuild_page_content_index(session, page_id=page.id, reason="test")
             session.commit()
 
         direct_db.register_cleanup("pages", "id", page_id)
@@ -2956,13 +2966,8 @@ class TestSearchResultFormat:
         assert result["type"] == "page"
         assert result["id"] == str(page_id)
 
-    def test_daily_page_searchable_by_date_terms(
-        self, auth_client, direct_db: DirectSessionManager
-    ):
-        """AC-2: a daily note page is returned when querying its date in either the ISO form
-        (to_char YYYY-MM-DD) or the human form (FMMonth FMDD, YYYY), exercising the LEFT JOIN
-        daily_note_pages + daily_terms path in notes._search_pages. The daily page is created
-        through the real notes service helper, not a hand-inserted daily_note_pages row."""
+    def test_daily_page_searchable_by_title(self, auth_client, direct_db: DirectSessionManager):
+        """A daily note page is returned when querying its title."""
         user_id = create_test_user_id()
         direct_db.register_cleanup("users", "id", user_id)
         direct_db.register_cleanup("libraries", "owner_user_id", user_id)
@@ -2975,23 +2980,8 @@ class TestSearchResultFormat:
         with direct_db.session() as session:
             daily = get_daily_note(session, user_id, local_date)
             page_id = daily.page.id
-            rebuild_page_content_index(session, page_id=page_id, reason="test")
             session.commit()
 
-        # ISO form: to_char(local_date, 'YYYY-MM-DD').
-        iso = auth_client.get(
-            "/search?q=2026-05-06&kinds=notes",
-            headers=auth_headers(user_id),
-        )
-        assert iso.status_code == 200, iso.text
-        iso_result = next((row for row in iso.json()["results"] if row["id"] == str(page_id)), None)
-        assert iso_result is not None, (
-            f"expected daily page {page_id} by ISO date; got {iso.json()['results']}"
-        )
-        assert iso_result["type"] == "page"
-        assert iso_result["id"] == str(page_id)
-
-        # Human form: trim(to_char(local_date, 'FMMonth FMDD, YYYY')) -> 'May 6, 2026'.
         human = auth_client.get(
             "/search?q=May+6,+2026&kinds=notes",
             headers=auth_headers(user_id),
@@ -4245,16 +4235,13 @@ class TestSearchTranscriptNavigation:
                     INSERT INTO note_blocks (
                         id,
                         user_id,
-                        block_kind,
                         body_pm_json,
-                        body_markdown,
                         body_text,
                         created_at
                     )
                     VALUES (
                         :note_block_id,
                         :user_id,
-                        'bullet',
                         jsonb_build_object(
                             'type',
                             'paragraph',
@@ -4268,7 +4255,6 @@ class TestSearchTranscriptNavigation:
                                 )
                             )
                         ),
-                        'anchor remap needle body text',
                         'anchor remap needle body text',
                         :now_ts
                     )
@@ -4297,7 +4283,7 @@ class TestSearchTranscriptNavigation:
                     VALUES (
                         :user_id,
                         'context',
-                        'note_containment',
+                        'user',
                         'page',
                         :page_id,
                         'note_block',
@@ -4346,9 +4332,7 @@ class TestSearchTranscriptNavigation:
                     "now_ts": now_ts,
                 },
             )
-            page = session.get(Page, page_id)
-            assert page is not None
-            rebuild_page_content_index(session, page_id=page.id, reason="test")
+            rebuild_note_content_index(session, note_block_id=note_block_id, reason="test")
             session.commit()
 
         direct_db.register_cleanup("pages", "id", page_id)

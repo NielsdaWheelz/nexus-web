@@ -108,7 +108,6 @@ def _web_offsets_locator(media_id: str | None = None) -> dict[str, object]:
 def _note_block_locator() -> dict[str, object]:
     return {
         "type": "note_block_offsets",
-        "page_id": str(uuid4()),
         "block_id": str(uuid4()),
         "start_offset": 1,
         "end_offset": 12,
@@ -196,8 +195,6 @@ def _app_result_ref(
     if result_type == "note_block":
         payload.update(
             {
-                "page_id": str(uuid4()),
-                "page_title": "Page",
                 "body_text": "Note body",
                 "locator": locator or _note_block_locator(),
             }
@@ -248,7 +245,6 @@ def test_retrieval_locator_json_accepts_documented_variants_and_rejects_unknown(
         retrieval_locator_json(
             {
                 "type": "note_block_offsets",
-                "page_id": str(uuid4()),
                 "block_id": str(uuid4()),
                 "start_offset": 0,
                 "end_offset": 5,
@@ -471,7 +467,7 @@ def test_retrieval_ref_json_rejects_page_source_version():
         "source_id": page_id,
         "title": "Page",
         "snippet": "Page body",
-        "deep_link": f"/notes/pages/{page_id}",
+        "deep_link": f"/pages/{page_id}",
         "context_ref": {"type": "page", "id": page_id},
     }
 
@@ -662,8 +658,6 @@ def _search_source(media_id: str | None = None) -> dict[str, object]:
         },
         {
             **_search_base("note_block"),
-            "page_id": str(uuid4()),
-            "page_title": "Page",
             "body_text": "Note body",
             "locator": _note_block_locator(),
         },
@@ -705,8 +699,6 @@ def test_search_result_out_requires_locator_for_locatable_rows(
         (
             {
                 **_search_base("note_block"),
-                "page_id": str(uuid4()),
-                "page_title": "Page",
                 "body_text": "Note body",
                 "locator": _note_block_locator(),
             },
@@ -733,10 +725,7 @@ def test_search_result_out_rejects_locator_type_drift(
 
 
 def test_search_result_out_rejects_page_source_version():
-    payload = {
-        **_search_base("page"),
-        "description": "Page description",
-    }
+    payload = _search_base("page")
 
     result = SEARCH_RESULT_ADAPTER.validate_python(payload)
     assert result.type == "page"

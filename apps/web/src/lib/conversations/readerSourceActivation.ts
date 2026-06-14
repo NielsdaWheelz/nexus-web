@@ -11,7 +11,6 @@ import { dispatchNotePulse, dispatchReaderPulse } from "@/lib/reader/pulseEvent"
 export function dispatchReaderSourceActivation(target: ReaderSourceTarget): void {
   if (target.kind === "note") {
     const notePulse = {
-      pageId: target.page_id,
       blockId: target.block_id,
       startOffset: target.start_offset,
       endOffset: target.end_offset,
