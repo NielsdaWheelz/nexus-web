@@ -162,7 +162,9 @@ def get_reader_document_map(
                 source_domain="navigation",
                 title=section.label,
                 anchor=anchor,
-                document_order_key=anchor.order_key if anchor else f"section:{section.ordinal:010d}",
+                document_order_key=anchor.order_key
+                if anchor
+                else f"section:{section.ordinal:010d}",
                 document_fraction=fraction,
                 target_status="container" if anchor else "unanchorable",
                 provenance={"owner": "reader_navigation"},

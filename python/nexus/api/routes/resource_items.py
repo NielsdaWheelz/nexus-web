@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
 from nexus.errors import ApiErrorCode, InvalidRequestError
-from nexus.responses import ok
+from nexus.responses import ok, success_response
 from nexus.schemas.resource_items import (
     ResourceBodyMutationRequest,
     ResourceSurfaceMutationRequest,
@@ -37,7 +37,7 @@ def resolve_resource_items(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    return ok(
+    return success_response(
         {
             "items": [
                 surfaces.resource_item_out(db, viewer_id=viewer.user_id, ref=_parse_ref(ref))

@@ -207,7 +207,7 @@ def set_collapsed(
             ResourceViewState.target_id == block_id,
         )
     )
-    state = {"collapsed": collapsed}
+    state: dict[str, object] = {"collapsed": collapsed}
     if row is None:
         db.add(
             ResourceViewState(

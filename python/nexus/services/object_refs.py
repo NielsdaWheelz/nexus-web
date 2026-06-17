@@ -157,6 +157,42 @@ def _hydrated_from_loaded(
             route=f"/podcasts/{object_id}",
             icon="podcast",
         )
+    if object_type == "library":
+        return HydratedObjectRef(
+            object_type="library",
+            object_id=object_id,
+            label=loaded.title or "",
+            snippet=loaded.body,
+            route=f"/libraries/{object_id}",
+            icon="library",
+        )
+    if object_type == "oracle_reading":
+        return HydratedObjectRef(
+            object_type="oracle_reading",
+            object_id=object_id,
+            label=loaded.title or "",
+            snippet=(loaded.body or "")[:300],
+            route=f"/oracle/{object_id}",
+            icon="sparkles",
+        )
+    if object_type == "oracle_corpus_passage":
+        return HydratedObjectRef(
+            object_type="oracle_corpus_passage",
+            object_id=object_id,
+            label=loaded.title or "",
+            snippet=(loaded.body or "")[:300],
+            route=None,
+            icon="quote",
+        )
+    if object_type == "external_snapshot":
+        return HydratedObjectRef(
+            object_type="external_snapshot",
+            object_id=object_id,
+            label=loaded.title or "",
+            snippet=loaded.body,
+            route=None,
+            icon="globe",
+        )
     if object_type == "content_chunk":
         route = _read_pointer_route(
             db,

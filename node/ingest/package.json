@@ -6,6 +6,10 @@
   "main": "ingest.mjs",
   "dependencies": {
     "@mozilla/readability": "^0.5.0",
-    "jsdom": "^24.0.0"
+    "jsdom": "^24.1.3"
+  },
+  "overrides": {
+    "form-data": "4.0.6",
+    "ws": "8.21.0"
   }
 }

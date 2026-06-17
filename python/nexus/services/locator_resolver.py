@@ -180,16 +180,16 @@ def _resolve_note_evidence_span(
 
     params: dict[str, str] = {"evidence": str(evidence_span_id)}
     params.update(resolution.params)
-    note_block_id = str(selector.get("note_block_id") or "")
+    route_note_block_id = str(selector.get("note_block_id") or note_block_id)
 
     return {
         "evidence_span_id": str(evidence_span_id),
-        "media_id": str(note_block_id),
+        "media_id": route_note_block_id,
         "citation_label": str(row["citation_label"]),
         "span_text": str(row["span_text"] or ""),
         "resolver": {
             "kind": "note",
-            "route": f"/notes/{note_block_id}",
+            "route": f"/notes/{route_note_block_id}",
             "params": params,
             "status": resolution.status,
             "selector": selector,

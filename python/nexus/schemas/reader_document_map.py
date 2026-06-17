@@ -62,15 +62,6 @@ class ReaderDocumentMapAnchorOut(ReaderConnectionAnchorOut):
 class ReaderDocumentMapItemBaseOut(BaseModel):
     id: str
     lens_ids: list[ReaderDocumentMapLensId]
-    kind: str
-    source_domain: Literal[
-        "navigation",
-        "highlight",
-        "reader_apparatus",
-        "resource_graph",
-        "chat",
-        "generated_citation",
-    ]
     title: str
     subtitle: str | None = None
     excerpt: str | None = None

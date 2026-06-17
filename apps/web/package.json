@@ -18,7 +18,7 @@
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
     "@supabase/ssr": "^0.10.2",
-    "@supabase/supabase-js": "^2.103.0",
+    "@supabase/supabase-js": "^2.108.2",
     "lucide-react": "^1.8.0",
     "next": "15.5.18",
     "pdfjs-dist": "^5.6.205",
@@ -41,15 +41,19 @@
     "@types/node": "^22.10.5",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^6.0.1",
-    "@vitest/browser": "^4.1.6",
-    "@vitest/browser-playwright": "^4.1.6",
+    "@vitejs/plugin-react": "^6.0.2",
+    "@vitest/browser": "^4.1.9",
+    "@vitest/browser-playwright": "^4.1.9",
     "csp_evaluator": "^1.1.8",
     "eslint": "^9.17.0",
     "eslint-config-next": "^15.5.16",
     "eslint-plugin-testing-library": "^7.16.2",
     "playwright": "^1.59.1",
     "typescript": "^6.0.2",
-    "vitest": "^4.1.6"
+    "vitest": "^4.1.9"
+  },
+  "overrides": {
+    "vite": "8.0.16",
+    "ws": "8.21.0"
   }
 }
