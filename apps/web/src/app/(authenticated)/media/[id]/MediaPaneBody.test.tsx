@@ -33,7 +33,7 @@ import MediaPaneBody from "./MediaPaneBody";
 
 const testState = vi.hoisted(() => ({
   apiFetch: vi.fn(),
-  mediaKind: "pdf" as "pdf" | "web_article" | "epub",
+  mediaKind: "pdf" as "pdf" | "web_article" | "epub" | "video",
   includeToc: false,
   isMobileViewport: false,
   fragmentHtml: "<p>Readable text.</p>",
@@ -108,6 +108,9 @@ vi.mock("@/lib/player/globalPlayer", () => ({
   useGlobalPlayer: () => ({
     seekToMs: vi.fn(),
     play: vi.fn(),
+    addToQueue: vi.fn(async () => {}),
+    queueItems: [],
+    currentTimeSeconds: 0,
   }),
 }));
 
@@ -1391,6 +1394,28 @@ describe("MediaPaneBody pane sizing", () => {
     expect(onRequestSecondarySurface).toHaveBeenCalledWith(
       "pane-1",
       "reader-contents",
+    );
+  });
+
+  it("requests the Document Map secondary from desktop transcript options", async () => {
+    testState.mediaKind = "video";
+    const { onRequestSecondarySurface, onSetPaneSecondary } = renderMediaPane();
+
+    await waitFor(() => {
+      const publication = latestSecondaryPublication(onSetPaneSecondary);
+      expect(publication?.surfaces.some((surface) => surface.id === "reader-highlights")).toBe(
+        true,
+      );
+    });
+
+    const documentMapOption = await getChromeOption("document-map");
+    expect(documentMapOption.label).toBe("Document Map");
+
+    documentMapOption.onSelect?.({ triggerEl: null });
+
+    expect(onRequestSecondarySurface).toHaveBeenCalledWith(
+      "pane-1",
+      "reader-highlights",
     );
   });
 

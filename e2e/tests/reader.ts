@@ -13,11 +13,23 @@ export async function openReaderSecondary(page: Page): Promise<Locator> {
   try {
     await expect(secondary).toBeVisible({ timeout: 5_000 });
   } catch {
-    const openButton = activePane
-      .getByRole("button", { name: "Open Document Map" })
+    const documentMapButton = activePane
+      .getByRole("button", { name: "Document Map" })
       .first();
-    await expect(openButton).toBeVisible({ timeout: 10_000 });
-    await openButton.click();
+    if (await documentMapButton.isVisible().catch(() => false)) {
+      await documentMapButton.click();
+    } else {
+      const optionsButton = activePane
+        .getByRole("button", { name: "Options" })
+        .first();
+      await expect(optionsButton).toBeVisible({ timeout: 10_000 });
+      await optionsButton.click();
+      const documentMapItem = page
+        .getByRole("menuitem", { name: "Document Map" })
+        .first();
+      await expect(documentMapItem).toBeVisible({ timeout: 10_000 });
+      await documentMapItem.click();
+    }
   }
 
   await expect(secondary).toBeVisible({ timeout: 10_000 });

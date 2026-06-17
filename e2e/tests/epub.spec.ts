@@ -878,7 +878,7 @@ test.describe("epub", () => {
       (await anchorLeaf.count()) === 0 ||
       !(await anchorLeaf.first().isVisible().catch(() => false))
     ) {
-      const contentsButton = activePane.getByRole("button", { name: "Contents" });
+      const contentsButton = activePane.getByRole("button", { name: "Document Map" });
       await expect(contentsButton).toBeVisible();
       await contentsButton.click();
       const contentsDialog = page.getByRole("dialog", { name: "Contents" });

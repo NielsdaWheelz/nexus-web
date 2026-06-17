@@ -4324,7 +4324,7 @@ export default function MediaPaneBody() {
       },
     ];
 
-    if (isMobileViewport && canRead) {
+    if ((isMobileViewport || isTranscriptMedia) && canRead) {
       readerOptions.push({
         id: "document-map",
         label: "Document Map",
@@ -4368,6 +4368,7 @@ export default function MediaPaneBody() {
     handleRetryMetadata,
     handleRetryProcessing,
     isMobileViewport,
+    isTranscriptMedia,
     isReflowableReader,
     loadLibraryPickerLibraries,
     media,
