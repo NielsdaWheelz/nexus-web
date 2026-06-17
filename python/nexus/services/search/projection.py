@@ -260,7 +260,9 @@ def _required_locator(
     raise AssertionError(f"{result_type} search result is missing locator")
 
 
-def _result_model_fields(db: Session, viewer_id: UUID, result: InternalSearchResult) -> dict[str, Any]:
+def _result_model_fields(
+    db: Session, viewer_id: UUID, result: InternalSearchResult
+) -> dict[str, Any]:
     context_ref = _result_context_ref(result)
     ref = _result_resource_ref(result)
     activation = resource_activation_for_ref(db, viewer_id=viewer_id, ref=ref)

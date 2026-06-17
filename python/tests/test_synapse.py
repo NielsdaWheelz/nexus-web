@@ -564,7 +564,9 @@ class TestRunSynapseScan:
             ),
         )
         retrieved_blocks = {
-            result.id for result in retrieved.results if getattr(result, "type", None) == "note_block"
+            result.id
+            for result in retrieved.results
+            if getattr(result, "type", None) == "note_block"
         }
         assert {source_block, sibling_block, other_block} <= retrieved_blocks, (
             f"corpus must be lexically retrievable; got {retrieved_blocks}"

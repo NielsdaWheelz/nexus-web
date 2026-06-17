@@ -80,9 +80,7 @@ def test_read_search_and_citation_capabilities_are_owned_together() -> None:
     assert {"media", "page", "note_block", "message"} <= readable
     assert resource_citation_result_type(_ref("highlight")) == "highlight"
     assert resource_citation_result_type(_ref("note_block")) == "note_block"
-    assert resource_citation_result_type(_ref("reader_apparatus_item")) == (
-        "reader_apparatus_item"
-    )
+    assert resource_citation_result_type(_ref("reader_apparatus_item")) == ("reader_apparatus_item")
     assert resource_citation_result_type(_ref("oracle_reading")) is None
     assert resource_can_own_ordered_adjacency(_ref("page")) is True
     assert resource_can_own_ordered_adjacency(_ref("note_block")) is True

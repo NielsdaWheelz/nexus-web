@@ -29,6 +29,7 @@ from nexus.auth.permissions import can_read_conversation
 from nexus.db.models import Conversation, ResourceEdge
 from nexus.errors import ApiErrorCode, ForbiddenError, InvalidRequestError, NotFoundError
 from nexus.schemas.conversation import ConversationOut, PageInfo
+from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.services.resource_graph.edges import create_edge
 from nexus.services.resource_graph.policy import (
     SEARCH_SCOPE_EDGE_KIND,
@@ -46,7 +47,6 @@ from nexus.services.resource_items.capabilities import (
     resource_can_attach,
 )
 from nexus.services.resource_items.routing import resource_activation_for_ref
-from nexus.schemas.resource_items import ResourceActivationOut
 
 _DEFAULT_LIMIT = 50
 _MIN_LIMIT = 1
@@ -141,7 +141,9 @@ def add_context_ref_without_commit(
         )
     ).scalar_one_or_none()
     if existing is not None:
-        return _context_ref_out(db, viewer_id=viewer_id, row=existing, target=target, resolved=resolved)
+        return _context_ref_out(
+            db, viewer_id=viewer_id, row=existing, target=target, resolved=resolved
+        )
 
     created = create_edge(
         db,

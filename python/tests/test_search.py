@@ -3531,9 +3531,7 @@ class TestReaderApparatusSearch:
             f"Expected apparatus search to succeed, got {response.status_code}: {response.text}"
         )
         result = next(
-            row
-            for row in response.json()["results"]
-            if row["type"] == "reader_apparatus_item"
+            row for row in response.json()["results"] if row["type"] == "reader_apparatus_item"
         )
         assert result["id"] == str(item_id)
         assert result["resource_ref"] == f"reader_apparatus_item:{item_id}"

@@ -56,8 +56,6 @@ function readerTargetForCitation(c: CitationOut): ReaderSourceTarget | null {
 
 export function toReaderCitationData(c: CitationOut): ReaderCitationData {
   const target = readerTargetForCitation(c);
-  const evidence_span_id =
-    c.target_ref.type === "evidence_span" && c.media_id ? c.target_ref.id : null;
   return {
     index: c.ordinal,
     color: readerCitationColorForIndex(c.ordinal),

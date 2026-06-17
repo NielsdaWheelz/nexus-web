@@ -18,8 +18,8 @@ from nexus.schemas.reader_apparatus import (
     ReaderApparatusLocatorStatus,
     ReaderApparatusResponse,
 )
-from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.schemas.resource_graph import EdgeKind, EdgeOrigin
+from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.services.resource_graph.schemas import ConnectionDirection
 
 ReaderDocumentMapLensId = Literal["contents", "highlights", "citations", "connections", "chat"]

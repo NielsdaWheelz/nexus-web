@@ -1241,7 +1241,9 @@ class TestChatRunTooling:
         apparatus_item_id = uuid4()
 
         def target(uri: str | None):
-            return _citation_target_ref(None, run=None, row={"result_ref": {"citation_target": uri}})
+            return _citation_target_ref(
+                None, run=None, row={"result_ref": {"citation_target": uri}}
+            )
 
         for uri in (
             f"evidence_span:{span_id}",

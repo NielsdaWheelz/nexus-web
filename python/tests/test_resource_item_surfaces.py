@@ -59,9 +59,7 @@ def test_resource_item_routes_use_product_paths(db_session: Session, bootstrappe
     )
 
 
-def test_external_snapshot_activates_as_external_url(
-    db_session: Session, bootstrapped_user: UUID
-):
+def test_external_snapshot_activates_as_external_url(db_session: Session, bootstrapped_user: UUID):
     snapshot_id = db_session.execute(
         text(
             """
@@ -86,9 +84,7 @@ def test_external_snapshot_activates_as_external_url(
     }
 
 
-def test_missing_resource_activation_fails_closed(
-    db_session: Session, bootstrapped_user: UUID
-):
+def test_missing_resource_activation_fails_closed(db_session: Session, bootstrapped_user: UUID):
     missing_id = uuid4()
 
     item = resource_item_out(

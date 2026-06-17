@@ -284,7 +284,7 @@ def get_search_result(
                 source=_build_search_source(row[0], row[2], row[1], row[4], row[3]),
                 score=score,
                 result_type=media_result_type,
-            )
+            ),
         )
 
     if result_type == "podcast":
@@ -315,7 +315,7 @@ def get_search_result(
                 contributors=_parse_contributor_credits(row[2]),
                 snippet=_truncate_snippet(str(row[1])),
                 score=score,
-            )
+            ),
         )
 
     if result_type == "contributor":
@@ -404,7 +404,7 @@ def get_search_result(
                     row[5],
                 ),
                 score=score,
-            )
+            ),
         )
 
     if result_type == "fragment":
@@ -474,7 +474,7 @@ def get_search_result(
                 score=score,
                 citation_label=f"fragment {int(row[1]) + 1}",
                 locator=locator,
-            )
+            ),
         )
 
     if result_type == "page":
@@ -500,7 +500,7 @@ def get_search_result(
                 title=row[1],
                 snippet=_truncate_snippet(str(row[1])),
                 score=score,
-            )
+            ),
         )
 
     if result_type == "note_block":
@@ -542,7 +542,7 @@ def get_search_result(
                 )
                 if block.body_text
                 else None,
-            )
+            ),
         )
 
     if result_type == "highlight":
@@ -683,7 +683,7 @@ def get_search_result(
                 score=score,
                 citation_label=f"highlight {str(row[0])[:8]}",
                 locator=locator,
-            )
+            ),
         )
 
     if result_type == "message":
@@ -726,7 +726,7 @@ def get_search_result(
                 )
                 if row[3]
                 else None,
-            )
+            ),
         )
 
     if result_type == "conversation":
@@ -753,7 +753,7 @@ def get_search_result(
                 title=str(row[1] or "Conversation"),
                 snippet=str(row[1] or "Conversation"),
                 score=score,
-            )
+            ),
         )
 
     if result_type == "reader_apparatus_item":
@@ -800,7 +800,7 @@ def get_search_result(
                 locator=dict(row[4]),
                 source=_build_search_source(row[5], row[6], row[7], row[9], row[8]),
                 score=score,
-            )
+            ),
         )
 
     if result_type == "web_result":
@@ -872,7 +872,7 @@ def get_search_result(
                 locator=result_ref["locator"],
                 selected=bool(row[15]),
                 score=score,
-            )
+            ),
         )
 
     if result_type == "evidence_span":
@@ -942,7 +942,7 @@ def get_search_result(
                     row[7] if owner_kind == "media" else None,
                 ),
                 score=score,
-            )
+            ),
         )
 
     raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, f"Invalid search type: {result_type}")
