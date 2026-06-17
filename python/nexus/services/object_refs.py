@@ -1,13 +1,12 @@
 """Hydration for universal object refs (pins, the note-editor picker, ref chips).
 
 Loading and permissions ride ``resource_graph.resolve`` — the single per-scheme
-data-access owner; only the route/icon presentation for these surfaces lives
-here."""
+data-access owner; only icon presentation for these surfaces lives here."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, TypedDict, TypeGuard, assert_never, cast
+from typing import assert_never, cast
 from uuid import UUID
 from xml.sax.saxutils import escape as xml_escape
 
@@ -46,14 +45,8 @@ from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.resource_graph.resolve import (
     LoadedResource,
     load_resource_batch,
-    parent_media_id_for_read_pointer,
-    reader_target_for_citation_target,
 )
-
-
-class _NoteBlockOffsetsLocatorPayload(TypedDict):
-    type: Literal["note_block_offsets"]
-    block_id: str
+from nexus.services.resource_items.capabilities import route_for_ref
 
 
 @dataclass(frozen=True)
@@ -82,19 +75,20 @@ def hydrate_object_ref(db: Session, viewer_id: UUID, ref: ObjectRef) -> Hydrated
 def _hydrated_from_loaded(
     db: Session, viewer_id: UUID, ref: ObjectRef, loaded: LoadedResource
 ) -> HydratedObjectRef:
-    """Map a visible :class:`LoadedResource` onto this surface's label/route/icon shape.
-
-    Parent media/conversation ids exist only as routes here, so they are looked
-    up locally; everything content-bearing comes from the loaded resource.
-    """
+    """Map a visible :class:`LoadedResource` onto this surface's label/icon shape."""
     object_type = ref.object_type
     object_id = ref.object_id
+    route = route_for_ref(
+        db,
+        viewer_id=viewer_id,
+        ref=ResourceRef(scheme=cast("ResourceScheme", object_type), id=object_id),
+    )
     if object_type == "page":
         return HydratedObjectRef(
             object_type="page",
             object_id=object_id,
             label=loaded.title or "",
-            route=f"/pages/{object_id}",
+            route=route,
             icon="file-text",
         )
     if object_type == "note_block":
@@ -104,7 +98,7 @@ def _hydrated_from_loaded(
             object_id=object_id,
             label=body.strip().splitlines()[0][:120] if body.strip() else "Note",
             snippet=body[:300],
-            route=f"/notes/{object_id}",
+            route=route,
             icon="list",
         )
     if object_type == "media":
@@ -113,18 +107,17 @@ def _hydrated_from_loaded(
             object_id=object_id,
             label=loaded.title or "",
             snippet=db.scalar(select(Media.description).where(Media.id == object_id)),
-            route=f"/media/{object_id}",
+            route=route,
             icon="book-open",
         )
     if object_type == "highlight":
         exact = loaded.quote.exact if loaded.quote is not None else ""
-        media_id = db.scalar(select(Highlight.anchor_media_id).where(Highlight.id == object_id))
         return HydratedObjectRef(
             object_type="highlight",
             object_id=object_id,
             label=exact[:120] or "Highlight",
             snippet=exact,
-            route=f"/media/{media_id}#highlight-{object_id}",
+            route=route,
             icon="highlighter",
         )
     if object_type == "conversation":
@@ -132,19 +125,17 @@ def _hydrated_from_loaded(
             object_type="conversation",
             object_id=object_id,
             label=loaded.title or "",
-            route=f"/conversations/{object_id}",
+            route=route,
             icon="messages-square",
         )
     if object_type == "message":
-        conversation_id, seq = db.execute(
-            select(Message.conversation_id, Message.seq).where(Message.id == object_id)
-        ).one()
+        seq = db.scalar(select(Message.seq).where(Message.id == object_id))
         return HydratedObjectRef(
             object_type="message",
             object_id=object_id,
             label=f"Message #{seq}",
             snippet=(loaded.body or "")[:300],
-            route=f"/conversations/{conversation_id}",
+            route=route,
             icon="message-square",
         )
     if object_type == "podcast":
@@ -153,7 +144,7 @@ def _hydrated_from_loaded(
             object_id=object_id,
             label=loaded.title or "",
             snippet=loaded.body,
-            route=f"/podcasts/{object_id}",
+            route=route,
             icon="podcast",
         )
     if object_type == "library":
@@ -162,7 +153,7 @@ def _hydrated_from_loaded(
             object_id=object_id,
             label=loaded.title or "",
             snippet=loaded.body,
-            route=f"/libraries/{object_id}",
+            route=route,
             icon="library",
         )
     if object_type == "oracle_reading":
@@ -171,7 +162,7 @@ def _hydrated_from_loaded(
             object_id=object_id,
             label=loaded.title or "",
             snippet=(loaded.body or "")[:300],
-            route=f"/oracle/{object_id}",
+            route=route,
             icon="sparkles",
         )
     if object_type == "oracle_corpus_passage":
@@ -180,7 +171,7 @@ def _hydrated_from_loaded(
             object_id=object_id,
             label=loaded.title or "",
             snippet=(loaded.body or "")[:300],
-            route=None,
+            route=route,
             icon="quote",
         )
     if object_type == "external_snapshot":
@@ -189,16 +180,10 @@ def _hydrated_from_loaded(
             object_id=object_id,
             label=loaded.title or "",
             snippet=loaded.body,
-            route=None,
+            route=route,
             icon="globe",
         )
     if object_type == "content_chunk":
-        route = _read_pointer_route(
-            db,
-            viewer_id=viewer_id,
-            scheme="content_chunk",
-            resource_id=object_id,
-        )
         return HydratedObjectRef(
             object_type="content_chunk",
             object_id=object_id,
@@ -208,22 +193,15 @@ def _hydrated_from_loaded(
             icon="text",
         )
     if object_type == "fragment":
-        media_id = parent_media_id_for_read_pointer(db, scheme=object_type, resource_id=object_id)
         return HydratedObjectRef(
             object_type="fragment",
             object_id=object_id,
             label=f"Fragment {(loaded.fragment_idx or 0) + 1}",
             snippet=(loaded.body or "")[:300],
-            route=f"/media/{media_id}#fragment-{object_id}",
+            route=route,
             icon="text",
         )
     if object_type == "evidence_span":
-        route = _read_pointer_route(
-            db,
-            viewer_id=viewer_id,
-            scheme="evidence_span",
-            resource_id=object_id,
-        )
         return HydratedObjectRef(
             object_type="evidence_span",
             object_id=object_id,
@@ -238,11 +216,7 @@ def _hydrated_from_loaded(
             object_id=object_id,
             label=f"Library Intelligence - {loaded.title or 'Library'}",
             snippet=(loaded.body or "")[:300],
-            route=(
-                f"/libraries/{loaded.related_library_id}?tab=intelligence"
-                if loaded.related_library_id is not None
-                else None
-            ),
+            route=route,
             icon="sparkles",
         )
     if object_type == "library_intelligence_revision":
@@ -251,47 +225,13 @@ def _hydrated_from_loaded(
             object_id=object_id,
             label=f"Library Intelligence revision - {loaded.title or 'Library'}",
             snippet=(loaded.body or "")[:300],
-            route=(
-                f"/libraries/{loaded.related_library_id}?tab=intelligence&revision={object_id}"
-                if loaded.related_library_id is not None
-                else None
-            ),
+            route=route,
             icon="sparkles",
         )
     if object_type == "contributor":
         # justify-defect: hydrate_object_ref handles contributors before loading.
         raise AssertionError("contributor refs hydrate through contributors service")
     assert_never(object_type)
-
-
-def _read_pointer_route(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    scheme: Literal["content_chunk", "evidence_span"],
-    resource_id: UUID,
-) -> str | None:
-    media_id, locator = reader_target_for_citation_target(
-        db,
-        viewer_id=viewer_id,
-        target=ResourceRef(scheme=scheme, id=resource_id),
-    )
-    if media_id is not None:
-        if scheme == "evidence_span":
-            return f"/media/{media_id}#evidence-{resource_id}"
-        return f"/media/{media_id}"
-    if _is_note_block_offsets(locator):
-        return f"/notes/{locator['block_id']}"
-    return None
-
-
-def _is_note_block_offsets(locator: object) -> TypeGuard[_NoteBlockOffsetsLocatorPayload]:
-    return (
-        isinstance(locator, dict)
-        and locator.get("type") == "note_block_offsets"
-        and isinstance(locator.get("block_id"), str)
-        and bool(locator["block_id"])
-    )
 
 
 def search_object_refs(

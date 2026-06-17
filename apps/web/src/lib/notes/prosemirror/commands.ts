@@ -1,9 +1,16 @@
 import { Fragment, type Node as ProseMirrorNode } from "prosemirror-model";
-import { Plugin, TextSelection, type Command, type EditorState } from "prosemirror-state";
+import {
+  Plugin,
+  TextSelection,
+  type Command,
+  type EditorState,
+} from "prosemirror-state";
 import { undo, redo } from "prosemirror-history";
 import { keymap } from "prosemirror-keymap";
 import { createRandomId } from "@/lib/createRandomId";
 import { outlineSchema } from "@/lib/notes/prosemirror/schema";
+import { isResourceScheme } from "@/lib/resourceGraph/resourceRef";
+import { resourceSchemeIsLinkable } from "@/lib/resources/resourceCapabilities.generated";
 
 interface DraftBlock {
   id: string;
@@ -18,7 +25,7 @@ interface CurrentBlock {
 }
 
 const OBJECT_REF_PATTERN =
-  /\[\[(page|note_block|media|highlight|conversation|message|podcast|content_chunk|fragment|contributor|evidence_span):([0-9a-fA-F-]{36})(?:\|([^\]]+))?\]\]/g;
+  /\[\[([a-z_]+):([0-9a-fA-F-]{36})(?:\|([^\]]+))?\]\]/g;
 
 function defaultCreateBlockId(): string {
   return createRandomId();
@@ -29,7 +36,10 @@ function emptyParagraph(): ProseMirrorNode {
 }
 
 function paragraphFromText(text: string): ProseMirrorNode {
-  return outlineSchema.nodes.paragraph!.create(null, text ? outlineSchema.text(text) : null);
+  return outlineSchema.nodes.paragraph!.create(
+    null,
+    text ? outlineSchema.text(text) : null,
+  );
 }
 
 function readDraftBlocks(parent: ProseMirrorNode): DraftBlock[] {
@@ -61,12 +71,15 @@ function writeDraftBlock(block: DraftBlock): ProseMirrorNode {
       id: block.id,
       collapsed: block.collapsed,
     },
-    [block.paragraph, ...block.children.map(writeDraftBlock)]
+    [block.paragraph, ...block.children.map(writeDraftBlock)],
   );
 }
 
 function writeDraftDoc(blocks: DraftBlock[]): ProseMirrorNode {
-  return outlineSchema.nodes.outline_doc!.create(null, blocks.map(writeDraftBlock));
+  return outlineSchema.nodes.outline_doc!.create(
+    null,
+    blocks.map(writeDraftBlock),
+  );
 }
 
 function findCurrentBlock(state: EditorState): CurrentBlock | null {
@@ -82,7 +95,7 @@ function findCurrentBlock(state: EditorState): CurrentBlock | null {
       id: String(node.attrs.id),
       paragraphOffset: Math.max(
         0,
-        Math.min($from.pos - paragraphStart, paragraph.content.size)
+        Math.min($from.pos - paragraphStart, paragraph.content.size),
       ),
     };
   }
@@ -103,14 +116,23 @@ function findPath(blocks: DraftBlock[], blockId: string): number[] | null {
   return null;
 }
 
-function mergeBodyNodes(first: ProseMirrorNode, second: ProseMirrorNode): ProseMirrorNode {
+function mergeBodyNodes(
+  first: ProseMirrorNode,
+  second: ProseMirrorNode,
+): ProseMirrorNode {
   if (first.type === second.type) {
     return first.copy(first.content.append(second.content));
   }
-  return outlineSchema.nodes.paragraph!.create(null, first.content.append(second.content));
+  return outlineSchema.nodes.paragraph!.create(
+    null,
+    first.content.append(second.content),
+  );
 }
 
-function listAtPath(blocks: DraftBlock[], pathToList: number[]): DraftBlock[] | null {
+function listAtPath(
+  blocks: DraftBlock[],
+  pathToList: number[],
+): DraftBlock[] | null {
   let list = blocks;
   for (const index of pathToList) {
     const block = list[index];
@@ -122,15 +144,23 @@ function listAtPath(blocks: DraftBlock[], pathToList: number[]): DraftBlock[] | 
   return list;
 }
 
-function paragraphSelection(doc: ProseMirrorNode, blockId: string, offset = 0): TextSelection {
+function paragraphSelection(
+  doc: ProseMirrorNode,
+  blockId: string,
+  offset = 0,
+): TextSelection {
   let selectionPos: number | null = null;
   doc.descendants((node, pos) => {
-    if (node.type !== outlineSchema.nodes.outline_block || node.attrs.id !== blockId) {
+    if (
+      node.type !== outlineSchema.nodes.outline_block ||
+      node.attrs.id !== blockId
+    ) {
       return true;
     }
     const paragraph = node.child(0);
     const paragraphPos = pos + 1;
-    selectionPos = paragraphPos + 1 + Math.max(0, Math.min(offset, paragraph.content.size));
+    selectionPos =
+      paragraphPos + 1 + Math.max(0, Math.min(offset, paragraph.content.size));
     return false;
   });
   return TextSelection.create(doc, selectionPos ?? 1);
@@ -141,7 +171,7 @@ function replaceDocWithDraft(
   dispatch: Parameters<Command>[1],
   blocks: DraftBlock[],
   selectionBlockId: string,
-  selectionOffset = 0
+  selectionOffset = 0,
 ): boolean {
   if (!dispatch) {
     return true;
@@ -150,13 +180,17 @@ function replaceDocWithDraft(
   const tr = state.tr.replaceWith(0, state.doc.content.size, nextDoc.content);
   dispatch(
     tr
-      .setSelection(paragraphSelection(tr.doc, selectionBlockId, selectionOffset))
-      .scrollIntoView()
+      .setSelection(
+        paragraphSelection(tr.doc, selectionBlockId, selectionOffset),
+      )
+      .scrollIntoView(),
   );
   return true;
 }
 
-export function splitOutlineBlock(createBlockId = defaultCreateBlockId): Command {
+export function splitOutlineBlock(
+  createBlockId = defaultCreateBlockId,
+): Command {
   return (state, dispatch) => {
     if (!state.selection.empty) {
       return false;
@@ -178,9 +212,14 @@ export function splitOutlineBlock(createBlockId = defaultCreateBlockId): Command
       return false;
     }
 
-    const before = block.paragraph.copy(block.paragraph.content.cut(0, current.paragraphOffset));
+    const before = block.paragraph.copy(
+      block.paragraph.content.cut(0, current.paragraphOffset),
+    );
     const after = block.paragraph.copy(
-      block.paragraph.content.cut(current.paragraphOffset, block.paragraph.content.size)
+      block.paragraph.content.cut(
+        current.paragraphOffset,
+        block.paragraph.content.size,
+      ),
     );
     const nextBlock: DraftBlock = {
       id: createBlockId(),
@@ -201,7 +240,9 @@ export const insertSoftBreak: Command = (state, dispatch) => {
     return false;
   }
   if (dispatch) {
-    dispatch(state.tr.replaceSelectionWith(hardBreak.create()).scrollIntoView());
+    dispatch(
+      state.tr.replaceSelectionWith(hardBreak.create()).scrollIntoView(),
+    );
   }
   return true;
 };
@@ -243,7 +284,13 @@ export const indentOutlineBlock: Command = (state, dispatch) => {
   }
   parentList[index - 1]!.children.push(block);
 
-  return replaceDocWithDraft(state, dispatch, blocks, current.id, current.paragraphOffset);
+  return replaceDocWithDraft(
+    state,
+    dispatch,
+    blocks,
+    current.id,
+    current.paragraphOffset,
+  );
 };
 
 export const outdentOutlineBlock: Command = (state, dispatch) => {
@@ -270,7 +317,13 @@ export const outdentOutlineBlock: Command = (state, dispatch) => {
   }
   parentOfParentList.splice(parentIndex + 1, 0, block);
 
-  return replaceDocWithDraft(state, dispatch, blocks, current.id, current.paragraphOffset);
+  return replaceDocWithDraft(
+    state,
+    dispatch,
+    blocks,
+    current.id,
+    current.paragraphOffset,
+  );
 };
 
 export const moveOutlineBlockUp: Command = (state, dispatch) => {
@@ -282,8 +335,17 @@ export const moveOutlineBlockUp: Command = (state, dispatch) => {
   if (!parentList || index <= 0) {
     return false;
   }
-  [parentList[index - 1], parentList[index]] = [parentList[index]!, parentList[index - 1]!];
-  return replaceDocWithDraft(state, dispatch, blocks, current.id, current.paragraphOffset);
+  [parentList[index - 1], parentList[index]] = [
+    parentList[index]!,
+    parentList[index - 1]!,
+  ];
+  return replaceDocWithDraft(
+    state,
+    dispatch,
+    blocks,
+    current.id,
+    current.paragraphOffset,
+  );
 };
 
 export const moveOutlineBlockDown: Command = (state, dispatch) => {
@@ -295,8 +357,17 @@ export const moveOutlineBlockDown: Command = (state, dispatch) => {
   if (!parentList || index >= parentList.length - 1) {
     return false;
   }
-  [parentList[index], parentList[index + 1]] = [parentList[index + 1]!, parentList[index]!];
-  return replaceDocWithDraft(state, dispatch, blocks, current.id, current.paragraphOffset);
+  [parentList[index], parentList[index + 1]] = [
+    parentList[index + 1]!,
+    parentList[index]!,
+  ];
+  return replaceDocWithDraft(
+    state,
+    dispatch,
+    blocks,
+    current.id,
+    current.paragraphOffset,
+  );
 };
 
 export const mergeOutlineBlockBackward: Command = (state, dispatch) => {
@@ -325,7 +396,13 @@ export const mergeOutlineBlockBackward: Command = (state, dispatch) => {
     previous.paragraph = mergeBodyNodes(previous.paragraph, block.paragraph);
     previous.children.push(...block.children);
     parentList.splice(index, 1);
-    return replaceDocWithDraft(state, dispatch, blocks, previous.id, selectionOffset);
+    return replaceDocWithDraft(
+      state,
+      dispatch,
+      blocks,
+      previous.id,
+      selectionOffset,
+    );
   }
 
   if (path.length <= 1) {
@@ -360,7 +437,11 @@ export const mergeOutlineBlockForward: Command = (state, dispatch) => {
   const parentList = listAtPath(blocks, path.slice(0, -1));
   const index = path[path.length - 1]!;
   const block = parentList?.[index];
-  if (!parentList || !block || current.paragraphOffset !== block.paragraph.content.size) {
+  if (
+    !parentList ||
+    !block ||
+    current.paragraphOffset !== block.paragraph.content.size
+  ) {
     return false;
   }
 
@@ -372,7 +453,13 @@ export const mergeOutlineBlockForward: Command = (state, dispatch) => {
     }
     block.paragraph = mergeBodyNodes(block.paragraph, next.paragraph);
     block.children.unshift(...next.children);
-    return replaceDocWithDraft(state, dispatch, blocks, block.id, selectionOffset);
+    return replaceDocWithDraft(
+      state,
+      dispatch,
+      blocks,
+      block.id,
+      selectionOffset,
+    );
   }
 
   const next = parentList[index + 1];
@@ -382,14 +469,23 @@ export const mergeOutlineBlockForward: Command = (state, dispatch) => {
   block.paragraph = mergeBodyNodes(block.paragraph, next.paragraph);
   block.children.push(...next.children);
   parentList.splice(index + 1, 1);
-  return replaceDocWithDraft(state, dispatch, blocks, block.id, selectionOffset);
+  return replaceDocWithDraft(
+    state,
+    dispatch,
+    blocks,
+    block.id,
+    selectionOffset,
+  );
 };
 
 function draftBlocksFromMarkdownList(
   text: string,
-  createBlockId: () => string
+  createBlockId: () => string,
 ): DraftBlock[] | null {
-  const lines = text.replace(/\r\n/g, "\n").split("\n").filter((line) => line.trim());
+  const lines = text
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .filter((line) => line.trim());
   if (lines.length === 0) {
     return null;
   }
@@ -422,7 +518,10 @@ function draftBlocksFromMarkdownList(
   return rootBlocks;
 }
 
-export function pasteMarkdownList(text: string, createBlockId = defaultCreateBlockId): Command {
+export function pasteMarkdownList(
+  text: string,
+  createBlockId = defaultCreateBlockId,
+): Command {
   const insertedBlocks = draftBlocksFromMarkdownList(text, createBlockId);
   return (state, dispatch) => {
     if (!insertedBlocks) {
@@ -449,22 +548,36 @@ export function pasteMarkdownList(text: string, createBlockId = defaultCreateBlo
     } else {
       parentList.splice(index + 1, 0, ...insertedBlocks);
     }
-    return replaceDocWithDraft(state, dispatch, blocks, insertedBlocks[0]!.id, 0);
+    return replaceDocWithDraft(
+      state,
+      dispatch,
+      blocks,
+      insertedBlocks[0]!.id,
+      0,
+    );
   };
 }
 
-export function createMarkdownPastePlugin(createBlockId = defaultCreateBlockId) {
+export function createMarkdownPastePlugin(
+  createBlockId = defaultCreateBlockId,
+) {
   return new Plugin({
     props: {
       handlePaste(view, event) {
         const text = event.clipboardData?.getData("text/plain") ?? "";
-        return pasteMarkdownList(text, createBlockId)(view.state, view.dispatch);
+        return pasteMarkdownList(text, createBlockId)(
+          view.state,
+          view.dispatch,
+        );
       },
     },
   });
 }
 
-export function createOutlineKeymap(createBlockId = defaultCreateBlockId, singleBlock = false) {
+export function createOutlineKeymap(
+  createBlockId = defaultCreateBlockId,
+  singleBlock = false,
+) {
   if (singleBlock) {
     return keymap({
       Enter: insertSoftBreak,
@@ -511,13 +624,27 @@ export function createObjectRefSyntaxPlugin() {
         let lastIndex = 0;
         for (const match of node.text.matchAll(OBJECT_REF_PATTERN)) {
           const index = match.index ?? 0;
-          if (index > lastIndex) {
-            nodes.push(outlineSchema.text(node.text.slice(lastIndex, index), node.marks));
-          }
           const objectType = match[1]!;
+          if (
+            !isResourceScheme(objectType) ||
+            !resourceSchemeIsLinkable(objectType)
+          ) {
+            continue;
+          }
+          if (index > lastIndex) {
+            nodes.push(
+              outlineSchema.text(node.text.slice(lastIndex, index), node.marks),
+            );
+          }
           const objectId = match[2]!.toLowerCase();
           const label = (match[3] ?? `${objectType}:${objectId}`).trim();
-          nodes.push(outlineSchema.nodes.object_ref!.create({ objectType, objectId, label }));
+          nodes.push(
+            outlineSchema.nodes.object_ref!.create({
+              objectType,
+              objectId,
+              label,
+            }),
+          );
           lastIndex = index + match[0].length;
         }
 
@@ -525,7 +652,9 @@ export function createObjectRefSyntaxPlugin() {
           return true;
         }
         if (lastIndex < node.text.length) {
-          nodes.push(outlineSchema.text(node.text.slice(lastIndex), node.marks));
+          nodes.push(
+            outlineSchema.text(node.text.slice(lastIndex), node.marks),
+          );
         }
         replacements.push({ from: pos, to: pos + node.nodeSize, nodes });
         return true;
@@ -537,7 +666,11 @@ export function createObjectRefSyntaxPlugin() {
 
       const tr = newState.tr;
       for (const replacement of replacements.reverse()) {
-        tr.replaceWith(replacement.from, replacement.to, Fragment.fromArray(replacement.nodes));
+        tr.replaceWith(
+          replacement.from,
+          replacement.to,
+          Fragment.fromArray(replacement.nodes),
+        );
       }
       return tr.docChanged ? tr : null;
     },

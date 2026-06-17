@@ -53,7 +53,6 @@ import {
   searchObjectRefs,
   type HydratedObjectRef,
   type ObjectRef,
-  type ObjectType,
 } from "@/lib/objectRefs";
 import styles from "./ConnectionsSurface.module.css";
 
@@ -81,14 +80,6 @@ function compareConnections(a: Connection, b: Connection): number {
   return b.createdAt.localeCompare(a.createdAt);
 }
 
-/** Schemes the Synapse engine accepts as scan sources (spec §5). */
-const SYNAPSE_SCANNABLE_TYPES = new Set<ObjectType>([
-  "media",
-  "page",
-  "note_block",
-  "highlight",
-]);
-
 const CONNECTION_PANEL_ORIGINS: EdgeOrigin[] = [
   "user",
   "note_body",
@@ -96,7 +87,11 @@ const CONNECTION_PANEL_ORIGINS: EdgeOrigin[] = [
   "citation",
   "synapse",
 ];
-const CONNECTION_PANEL_KINDS: EdgeKind[] = ["context", "supports", "contradicts"];
+const CONNECTION_PANEL_KINDS: EdgeKind[] = [
+  "context",
+  "supports",
+  "contradicts",
+];
 
 export default function ConnectionsSurface({
   objectRef,
@@ -150,7 +145,8 @@ export default function ConnectionsSurface({
             kind: connection.kind,
             origin: connection.origin,
             rationale:
-              connection.snapshot?.excerpt && typeof connection.snapshot.excerpt === "string"
+              connection.snapshot?.excerpt &&
+              typeof connection.snapshot.excerpt === "string"
                 ? connection.snapshot.excerpt
                 : null,
             createdAt: connection.created_at,
@@ -162,7 +158,11 @@ export default function ConnectionsSurface({
     setRefreshTick((value) => value + 1);
   }, []);
 
-  const scannable = SYNAPSE_SCANNABLE_TYPES.has(objectRef.objectType);
+  const scannable =
+    objectRef.objectType === "media" ||
+    objectRef.objectType === "page" ||
+    objectRef.objectType === "note_block" ||
+    objectRef.objectType === "highlight";
   const [scanVoice, setScanVoice] = useState<string | null>(null);
   const scanBaselineRef = useRef<number | null>(null);
   const connectionsCountRef = useRef(0);
@@ -190,10 +190,14 @@ export default function ConnectionsSurface({
   const scanning = scan.phase !== "idle";
 
   useEffect(() => {
-    if (connectionsResource.status !== "ready" || scanBaselineRef.current === null) {
+    if (
+      connectionsResource.status !== "ready" ||
+      scanBaselineRef.current === null
+    ) {
       return;
     }
-    const found = connectionsResource.data.data.length - scanBaselineRef.current;
+    const found =
+      connectionsResource.data.data.length - scanBaselineRef.current;
     scanBaselineRef.current = null;
     setScanVoice(
       found > 0
@@ -238,7 +242,9 @@ export default function ConnectionsSurface({
         <p className={styles.scanVoice}>{scanVoice}</p>
       ) : null}
       <ConnectionComposer selfRef={selfRef} onChanged={reloadConnections} />
-      {loading ? <FeedbackNotice severity="info" title="Loading connections..." /> : null}
+      {loading ? (
+        <FeedbackNotice severity="info" title="Loading connections..." />
+      ) : null}
       {!loading && error ? <FeedbackNotice feedback={error} /> : null}
       {!loading && !error && connections.length === 0 ? (
         <FeedbackNotice
@@ -263,7 +269,9 @@ export default function ConnectionsSurface({
                   type="button"
                   className={styles.linkButton}
                   disabled={connection.missing}
-                  onClick={(event) => openConnection(connection.href, event.shiftKey)}
+                  onClick={(event) =>
+                    openConnection(connection.href, event.shiftKey)
+                  }
                 >
                   <Icon size={14} aria-hidden="true" />
                   <span className={styles.connectionText}>
@@ -393,7 +401,9 @@ function ConnectionComposer({
       onChanged();
     } catch (err) {
       if (handleUnauthenticatedApiError(err)) return;
-      setFeedback(toFeedback(err, { fallback: "Connection could not be created." }));
+      setFeedback(
+        toFeedback(err, { fallback: "Connection could not be created." }),
+      );
     } finally {
       setSubmitting(false);
     }
@@ -424,7 +434,9 @@ function ConnectionComposer({
       onChanged();
     } catch (err) {
       if (handleUnauthenticatedApiError(err)) return;
-      setFeedback(toFeedback(err, { fallback: "Attachment could not be added." }));
+      setFeedback(
+        toFeedback(err, { fallback: "Attachment could not be added." }),
+      );
     } finally {
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
@@ -465,7 +477,9 @@ function ConnectionComposer({
               id={autocompleteId}
               objects={results}
               activeObjectKey={activeResultKey}
-              optionIdForObject={(object) => `${autocompleteId}-option-${objectRefKey(object)}`}
+              optionIdForObject={(object) =>
+                `${autocompleteId}-option-${objectRefKey(object)}`
+              }
               onActiveChange={setActiveResultKey}
               onPick={(object) => {
                 setSelected(object);
@@ -514,7 +528,9 @@ function ConnectionComposer({
           accept="application/pdf,application/epub+zip,.pdf,.epub"
           aria-label="Attach files"
           tabIndex={-1}
-          onChange={(event) => void attachFiles(Array.from(event.currentTarget.files ?? []))}
+          onChange={(event) =>
+            void attachFiles(Array.from(event.currentTarget.files ?? []))
+          }
         />
       </div>
       {feedback ? <FeedbackNotice feedback={feedback} /> : null}
@@ -542,7 +558,9 @@ function DeleteConnectionButton({
       onChanged();
     } catch (err) {
       if (handleUnauthenticatedApiError(err)) return;
-      setFeedback(toFeedback(err, { fallback: "Connection could not be deleted." }));
+      setFeedback(
+        toFeedback(err, { fallback: "Connection could not be deleted." }),
+      );
     } finally {
       setDeleting(false);
     }
@@ -590,7 +608,9 @@ function DismissConnectionButton({
       onChanged();
     } catch (err) {
       if (handleUnauthenticatedApiError(err)) return;
-      setFeedback(toFeedback(err, { fallback: "Connection could not be dismissed." }));
+      setFeedback(
+        toFeedback(err, { fallback: "Connection could not be dismissed." }),
+      );
     } finally {
       setDismissing(false);
     }
@@ -675,7 +695,9 @@ function useSynapseScan({
       } catch (err) {
         setPhase("idle");
         if (handleUnauthenticatedApiError(err)) return;
-        setFeedback(toFeedback(err, { fallback: "Scan status could not be checked." }));
+        setFeedback(
+          toFeedback(err, { fallback: "Scan status could not be checked." }),
+        );
       }
     },
   });

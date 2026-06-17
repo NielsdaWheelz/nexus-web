@@ -57,8 +57,9 @@ from nexus.services.resource_graph.resolve import (
     resolve_ref,
 )
 from nexus.services.resource_items.capabilities import (
-    CITABLE_RESOURCE_RESULT_TYPES,
-    RESOURCE_ITEM_CAPABILITIES,
+    resource_can_be_chat_subject,
+    resource_citation_result_type,
+    resource_prompt_render_policy,
 )
 from nexus.services.retrieval_citation import RetrievalCitation, citation_from_search_result
 from nexus.services.search import get_search_result
@@ -453,7 +454,7 @@ def _build_subject_block(
         scheme=cast(ResourceScheme, turn_context.subject_scheme),
         id=turn_context.subject_id,
     )
-    if RESOURCE_ITEM_CAPABILITIES[subject.scheme].chat_subject == "none":
+    if not resource_can_be_chat_subject(subject):
         raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Resource cannot be a chat subject")
     if not admits_resource_for_conversation_read(
         db,
@@ -617,7 +618,7 @@ def _materialize_attached_citation(
     parsed = parse_resource_ref(resource.uri)
     if isinstance(parsed, ResourceRefParseFailure):
         return None
-    result_type = CITABLE_RESOURCE_RESULT_TYPES.get(parsed.scheme)
+    result_type = resource_citation_result_type(parsed)
     if result_type is None:
         return None
     try:
@@ -646,7 +647,7 @@ def _render_resource(
     fetch_attr = xml_escape(resource.fetch_hint, {'"': "&quot;"})
     parsed = parse_resource_ref(resource.uri)
     if not isinstance(parsed, ResourceRefParseFailure):
-        compact = compact or RESOURCE_ITEM_CAPABILITIES[parsed.scheme].prompt_render in (
+        compact = compact or resource_prompt_render_policy(parsed) in (
             "label",
             "none",
         )

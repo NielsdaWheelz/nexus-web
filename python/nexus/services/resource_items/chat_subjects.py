@@ -11,7 +11,7 @@ from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.schemas.resource_items import ResourceItemOut
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_graph.resolve import load_resource_batch
-from nexus.services.resource_items.capabilities import RESOURCE_ITEM_CAPABILITIES
+from nexus.services.resource_items.capabilities import capability_for_ref, resource_can_attach
 from nexus.services.resource_items.surfaces import resource_item_out
 
 
@@ -38,7 +38,7 @@ def resolve_chat_subject(
     if requested_loaded.missing:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Resource not found")
 
-    requested_capability = RESOURCE_ITEM_CAPABILITIES[requested_ref.scheme]
+    requested_capability = capability_for_ref(requested_ref)
     if requested_capability.chat_subject == "none":
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST,
@@ -65,7 +65,7 @@ def resolve_chat_subject(
         if subject_loaded.missing:
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Resource not found")
 
-    subject_capability = RESOURCE_ITEM_CAPABILITIES[subject_ref.scheme]
+    subject_capability = capability_for_ref(subject_ref)
     if subject_capability.chat_subject == "none" or not subject_capability.attachable:
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST,
@@ -90,8 +90,7 @@ def resolve_chat_subject(
             continue
         seen.add(ref.uri)
         if ref != subject_ref:
-            capability = RESOURCE_ITEM_CAPABILITIES[ref.scheme]
-            if not capability.attachable:
+            if not resource_can_attach(ref):
                 raise InvalidRequestError(
                     ApiErrorCode.E_INVALID_REQUEST,
                     "Resource cannot be attached to conversation context",

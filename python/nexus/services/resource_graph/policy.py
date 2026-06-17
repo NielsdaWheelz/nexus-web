@@ -15,8 +15,9 @@ from nexus.services.resource_graph.schemas import (
     EdgeOrigin,
 )
 from nexus.services.resource_items.capabilities import (
-    CITATION_OUTPUT_SOURCE_SCHEMES,
     CONVERSATION_CONTEXT_EDGE_ORIGINS,
+    citation_output_source_schemes,
+    resource_can_be_citation_output_source,
 )
 
 SchemeSet = tuple[ResourceScheme, ...] | Literal["any"]
@@ -61,7 +62,7 @@ EDGE_SHAPE_POLICIES: dict[EdgeOrigin, EdgeShapePolicy] = {
         origin="citation",
         writer="resource_graph.citations and conversation context graduation",
         allowed_kinds=EDGE_KINDS,
-        source_schemes=(*CITATION_OUTPUT_SOURCE_SCHEMES, "conversation"),
+        source_schemes=(*citation_output_source_schemes(), "conversation"),
         target_schemes="any",
         ordinal="citation_required",
         snapshot="citation_required",
@@ -206,7 +207,7 @@ def _validate_citation(edge: EdgeCreate) -> None:
             ApiErrorCode.E_INVALID_REQUEST,
             "Citation ordinal requires a snapshot",
         )
-    if edge.source.scheme not in CITATION_OUTPUT_SOURCE_SCHEMES:
+    if not resource_can_be_citation_output_source(edge.source):
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST,
             "Citation ordinals must start from a generated output resource",

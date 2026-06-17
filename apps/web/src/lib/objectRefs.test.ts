@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { isObjectType, searchObjectRefs } from "./objectRefs";
+import { RESOURCE_SCHEMES } from "@/lib/resourceGraph/resourceRef";
+import { isObjectType, OBJECT_TYPES, searchObjectRefs } from "./objectRefs";
 
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -26,18 +27,26 @@ describe("object ref api", () => {
             },
           ],
         },
-      })
+      }),
     );
 
-    await expect(searchObjectRefs("sot", 4, { objectTypes: ["page"] })).resolves.toHaveLength(1);
+    await expect(
+      searchObjectRefs("sot", 4, { objectTypes: ["page"] }),
+    ).resolves.toHaveLength(1);
 
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/object-refs/search?q=sot&limit=4&type=page",
-      expect.objectContaining({ cache: "no-store" })
+      expect.objectContaining({ cache: "no-store" }),
     );
   });
 
   it("does not admit user graph tags as object types", () => {
     expect(isObjectType("tag")).toBe(false);
+  });
+
+  it("uses the resource scheme grammar for object types", () => {
+    expect([...OBJECT_TYPES]).toEqual([...RESOURCE_SCHEMES]);
+    expect(isObjectType("library")).toBe(true);
+    expect(isObjectType("external_snapshot")).toBe(true);
   });
 });

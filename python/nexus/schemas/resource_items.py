@@ -229,10 +229,15 @@ class ResourceItemCapabilitiesOut(BaseModel):
         )
     )
     readable: Literal["none", "scope", "body", "media"]
+    inspectable: Literal["none", "media_document_map"]
     citable_result_type: str | None = Field(
         None,
         validation_alias=AliasChoices("citable_result_type", "citableResultType"),
         serialization_alias="citableResultType",
+    )
+    citation_output_source: bool = Field(
+        validation_alias=AliasChoices("citation_output_source", "citationOutputSource"),
+        serialization_alias="citationOutputSource",
     )
     app_search_scope: bool = Field(
         validation_alias=AliasChoices("app_search_scope", "appSearchScope"),
@@ -253,6 +258,16 @@ class ResourceItemCapabilitiesOut(BaseModel):
     prompt_render: Literal["none", "label", "inline_body", "quote"] = Field(
         validation_alias=AliasChoices("prompt_render", "promptRender"),
         serialization_alias="promptRender",
+    )
+    expansion_policy: Literal[
+        "none",
+        "media_owned_reader_children",
+        "page_note_blocks",
+        "note_block_owned_evidence",
+        "library_intelligence_artifact_revisions",
+    ] = Field(
+        validation_alias=AliasChoices("expansion_policy", "expansionPolicy"),
+        serialization_alias="expansionPolicy",
     )
     expandable: bool
 

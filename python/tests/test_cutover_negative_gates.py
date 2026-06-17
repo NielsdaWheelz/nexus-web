@@ -1196,6 +1196,73 @@ def test_app_search_does_not_query_resource_edges_directly():
 
 
 # =============================================================================
+# Resource capability registry cutover — one capability owner, one route owner
+# =============================================================================
+
+_RESOURCE_CAPABILITY_OWNER_SUFFIXES = (
+    "services/resource_items/capabilities.py",
+    "services/resource_items/routing.py",
+)
+
+_RESOURCE_ROUTE_LITERAL = re.compile(
+    r"(?:return|route\s*=)\s*f?[\"']/"
+    r"(?:media|libraries|pages|notes|conversations|podcasts|oracle)/"
+)
+
+
+def _is_resource_capability_owner(hit: _Hit) -> bool:
+    return hit.path.endswith(_RESOURCE_CAPABILITY_OWNER_SUFFIXES)
+
+
+def test_resource_ref_route_builders_live_only_in_capability_owner():
+    hits: list[_Hit] = []
+    helper_pattern = re.compile(r"\bdef\s+(?:_?route_for_ref|_?href_for_ref|_read_pointer_route)\b")
+
+    for path in _iter_scan_files(_PY_ROOT):
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        if "ResourceRef" not in text:
+            continue
+        for line_no, line in enumerate(text.splitlines(), start=1):
+            if helper_pattern.search(line) or _RESOURCE_ROUTE_LITERAL.search(line):
+                hit = _Hit(path=path.as_posix(), line=line_no, text=line.strip())
+                if not _is_resource_capability_owner(hit):
+                    hits.append(hit)
+
+    assert not hits, (
+        "ResourceRef browser-route construction must have one backend owner "
+        "(resource_items.capabilities/routing); feature-local route builders "
+        f"fork routeability policy:\n{_fmt(hits)}"
+    )
+
+
+def test_local_resource_capability_lists_absent_outside_capability_owner():
+    backend_policy_lists = _grep(
+        r"\b(?:"
+        r"RESOURCE_ITEM_CAPABILITIES|READABLE_RESOURCE_SCHEMES|SCOPE_ONLY_RESOURCE_SCHEMES|"
+        r"APP_SEARCH_SCOPE_SCHEMES|CONVERSATION_SEARCH_SCOPE_SCHEMES|"
+        r"CITABLE_RESOURCE_RESULT_TYPES|CITATION_OUTPUT_SOURCE_SCHEMES|"
+        r"LINKABLE_RESOURCE_SCHEMES|ATTACHABLE_RESOURCE_SCHEMES|"
+        r"CHAT_SUBJECT_RESOURCE_SCHEMES"
+        r")\b\s*(?::|=)",
+        _PY_ROOT,
+    )
+    backend_hits = [hit for hit in backend_policy_lists if not _is_resource_capability_owner(hit)]
+
+    frontend_hits = _filtered(
+        r"\b(?:RESOURCE_SCHEME_OBJECT_TYPES|SCOPE_RE|SYNAPSE_SCANNABLE_TYPES)\b\s*(?::|=)",
+        _WEB_ROOT,
+        exclude=_FRONTEND_TEST,
+    )
+
+    hits = backend_hits + frontend_hits
+    assert not hits, (
+        "resource capability policy lists must not be hand-authored outside the "
+        "capability owner or its generated frontend projection:\n"
+        f"{_fmt(hits)}"
+    )
+
+
+# =============================================================================
 # Notes/pages object-graph cutover — storage/order belongs to resource_edges
 # =============================================================================
 

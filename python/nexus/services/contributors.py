@@ -1091,6 +1091,8 @@ def hydrate_contributor_object_ref(
     viewer_id: UUID,
     contributor_id: UUID,
 ) -> HydratedObjectRef:
+    from nexus.services.resource_items.capabilities import route_for_ref
+
     contributor = _load_visible_contributor_by_id(
         db,
         _canonical_contributor_id(db, contributor_id),
@@ -1102,7 +1104,9 @@ def hydrate_contributor_object_ref(
         object_id=contributor.id,
         label=contributor.display_name,
         snippet=contributor.disambiguation or contributor.sort_name,
-        route=f"/authors/{contributor.handle}",
+        route=route_for_ref(
+            db, viewer_id=viewer_id, ref=ResourceRef(scheme="contributor", id=contributor.id)
+        ),
         icon="user-round",
     )
 

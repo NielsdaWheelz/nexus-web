@@ -9,6 +9,8 @@ import {
   type MediaFormat,
   type SearchKind,
 } from "./kinds";
+import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
+import { resourceSchemeIsAppSearchScope } from "@/lib/resources/resourceCapabilities.generated";
 
 export type SearchChip =
   | { dim: "kind"; value: SearchKind }
@@ -22,7 +24,6 @@ export interface ParsedSearchInput {
   chips: SearchChip[];
 }
 
-const SCOPE_RE = /^(media|library|conversation):[^\s]+$/i;
 const OPERATOR_RE = /^(kind|format|author|role|in):(.+)$/i;
 
 function tokenize(raw: string): string[] {
@@ -73,10 +74,19 @@ function chipFor(operator: string, rawValue: string): SearchChip | null {
       return CONTRIBUTOR_ROLES.has(role) ? { dim: "role", value: role } : null;
     }
     case "in":
-      return SCOPE_RE.test(value) ? { dim: "scope", value } : null;
+      return isSearchScope(value) ? { dim: "scope", value } : null;
     default:
       return null;
   }
+}
+
+function isSearchScope(value: string): boolean {
+  const ref = parseResourceRef(value);
+  return (
+    ref !== null &&
+    (resourceSchemeIsAppSearchScope(ref.scheme) ||
+      ref.scheme === "conversation")
+  );
 }
 
 function dedupeChips(chips: SearchChip[]): SearchChip[] {

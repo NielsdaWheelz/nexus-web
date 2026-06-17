@@ -13,7 +13,10 @@ from nexus.db.models import NoteBlock, Page, ResourceEdge, ResourceViewState
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.services.resource_graph.cleanup import delete_edges_for_deleted_resources
 from nexus.services.resource_graph.refs import ResourceRef
-from nexus.services.resource_items.capabilities import RESOURCE_ITEM_CAPABILITIES
+from nexus.services.resource_items.capabilities import (
+    resource_can_be_ordered_adjacency_target,
+    resource_can_own_ordered_adjacency,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,7 +94,7 @@ def replace_ordered_targets(
     targets: Sequence[OrderedTarget],
 ) -> list[UUID]:
     _assert_source_visible(db, user_id=user_id, source=source)
-    if not RESOURCE_ITEM_CAPABILITIES[source.scheme].adjacency_source:
+    if not resource_can_own_ordered_adjacency(source):
         raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Resource cannot own ordered adjacency")
     seen_order: set[str] = set()
     for target in targets:
@@ -99,7 +102,7 @@ def replace_ordered_targets(
             raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Adjacent items need unique order keys")
         seen_order.add(target.source_order_key)
         _assert_target_visible(db, user_id=user_id, target=target.target)
-        if not RESOURCE_ITEM_CAPABILITIES[target.target.scheme].adjacency_target:
+        if not resource_can_be_ordered_adjacency_target(target.target):
             raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Resource cannot be an ordered target")
 
     old_edges = select(ResourceEdge.id).where(

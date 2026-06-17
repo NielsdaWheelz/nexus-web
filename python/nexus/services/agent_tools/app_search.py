@@ -45,7 +45,10 @@ from nexus.services.resource_graph.refs import (
     ResourceRefParseFailure,
     parse_resource_ref,
 )
-from nexus.services.resource_items.capabilities import APP_SEARCH_SCOPE_SCHEMES
+from nexus.services.resource_items.capabilities import (
+    app_search_scope_hint,
+    resource_can_be_app_search_scope,
+)
 from nexus.services.retrieval_citation import (
     RetrievalCitation,
     citation_from_search_result,
@@ -75,7 +78,7 @@ APP_SEARCH_TOOL_NAME = "app_search"
 APP_SEARCH_LIMIT = 8
 APP_SEARCH_SELECTED_LIMIT = 6
 APP_SEARCH_CONTEXT_CHARS = 16000
-APP_SEARCH_SCOPE_HINT = ", ".join(f"{scheme}:UUID" for scheme in APP_SEARCH_SCOPE_SCHEMES)
+APP_SEARCH_SCOPE_HINT = app_search_scope_hint()
 
 APP_SEARCH_TOOL_DEFINITION: dict[str, Any] = {
     "name": APP_SEARCH_TOOL_NAME,
@@ -349,9 +352,8 @@ def _resolve_scope_uris(
         if uri in seen:
             continue
         parsed = parse_resource_ref(uri)
-        if (
-            isinstance(parsed, ResourceRefParseFailure)
-            or parsed.scheme not in APP_SEARCH_SCOPE_SCHEMES
+        if isinstance(parsed, ResourceRefParseFailure) or not resource_can_be_app_search_scope(
+            parsed
         ):
             raise InvalidScopeError(f"scope must be one of {APP_SEARCH_SCOPE_HINT}: {uri}")
         if uri not in allowed:

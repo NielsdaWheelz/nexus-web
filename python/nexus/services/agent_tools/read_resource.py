@@ -50,9 +50,8 @@ from nexus.services.resource_graph.resolve import (
     parent_media_id_for_read_pointer,
 )
 from nexus.services.resource_items.capabilities import (
-    CITABLE_RESOURCE_RESULT_TYPES,
-    READABLE_RESOURCE_SCHEMES,
-    SCOPE_ONLY_RESOURCE_SCHEMES,
+    resource_citation_result_type,
+    resource_read_policy,
 )
 
 READ_RESOURCE_TOOL_NAME = "read_resource"
@@ -193,7 +192,8 @@ def execute_read_resource(
             error_code="invalid_uri",
         )
 
-    if parsed.scheme in SCOPE_ONLY_RESOURCE_SCHEMES:
+    read_policy = resource_read_policy(parsed)
+    if read_policy == "scope":
         return ReadResourceResult(
             uri=uri,
             status="error",
@@ -204,7 +204,7 @@ def execute_read_resource(
             error_code="scope_not_readable",
         )
 
-    if parsed.scheme not in READABLE_RESOURCE_SCHEMES:
+    if read_policy == "none":
         return ReadResourceResult(
             uri=uri,
             status="error",
@@ -212,7 +212,7 @@ def execute_read_resource(
             error_code="not_readable",
         )
 
-    if parsed.scheme == "media":
+    if read_policy == "media":
         return _read_media(db, viewer_id, parsed.id, uri)
 
     loaded = load_resource_batch(db, [parsed], viewer_id=viewer_id)[uri]
@@ -286,7 +286,8 @@ def _media_citation_result_type(kind: str) -> str:
 def _present_read(loaded: LoadedResource) -> ReadResourceResult:
     if loaded.missing:
         return _missing(loaded.uri)
-    scheme = loaded.scheme
+    parsed = _loaded_ref(loaded)
+    scheme = parsed.scheme
     if scheme == "highlight":
         quote = loaded.quote
         if quote is None:
@@ -298,8 +299,8 @@ def _present_read(loaded: LoadedResource) -> ReadResourceResult:
             body=quote.exact,
             kind="quote",
             quote=quote,
-            citation_result_type="highlight",
-            citation_source_id=loaded.uri.partition(":")[2],
+            citation_result_type=resource_citation_result_type(parsed),
+            citation_source_id=str(parsed.id),
         )
     if scheme == "fragment":
         return ReadResourceResult(
@@ -307,11 +308,11 @@ def _present_read(loaded: LoadedResource) -> ReadResourceResult:
             status="complete",
             body=loaded.body or "",
             kind="section",
-            citation_result_type="fragment",
-            citation_source_id=loaded.uri.partition(":")[2],
+            citation_result_type=resource_citation_result_type(parsed),
+            citation_source_id=str(parsed.id),
         )
-    citation_result_type = CITABLE_RESOURCE_RESULT_TYPES.get(scheme)
-    citation_source_id = loaded.uri.partition(":")[2] if citation_result_type is not None else None
+    citation_result_type = resource_citation_result_type(parsed)
+    citation_source_id = str(parsed.id) if citation_result_type is not None else None
     if scheme == "conversation":
         return ReadResourceResult(
             uri=loaded.uri,
@@ -384,6 +385,14 @@ def _present_read(loaded: LoadedResource) -> ReadResourceResult:
         )
     # media/library never reach here: media is handled before the loader, library rejected.
     raise AssertionError(f"Unreadable resource URI scheme reached read presenter: {scheme}")
+
+
+def _loaded_ref(loaded: LoadedResource) -> ResourceRef:
+    parsed = parse_resource_ref(loaded.uri)
+    if isinstance(parsed, ResourceRefParseFailure):
+        # justify-defect: loaded resources come from typed ResourceRef loader inputs.
+        raise AssertionError(f"Loaded resource has invalid URI {loaded.uri!r}")
+    return parsed
 
 
 def _readable_in_conversation(db: Session, conversation_id: UUID, uri: str) -> bool:

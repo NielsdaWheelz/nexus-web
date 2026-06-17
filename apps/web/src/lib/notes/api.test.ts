@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { isLocalDate } from "@/lib/localDate";
 import {
   fetchDailyNotePage,
+  normalizeSurface,
   quickCaptureDailyNote,
   saveResourceSurface,
 } from "./api";
@@ -123,18 +124,27 @@ describe("notes api", () => {
   });
 
   it("saves surfaces through resource item mutations", async () => {
-    const calls: Array<{ path: string; method: string; body: Record<string, unknown> | null }> =
-      [];
+    const calls: Array<{
+      path: string;
+      method: string;
+      body: Record<string, unknown> | null;
+    }> = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = new URL(String(input), "http://localhost");
       calls.push({
         path: url.pathname,
         method: init?.method ?? "GET",
-        body: init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : null,
+        body: init?.body
+          ? (JSON.parse(String(init.body)) as Record<string, unknown>)
+          : null,
       });
       if (url.pathname.endsWith("/body")) {
         return jsonResponse({
-          data: { bodyPmJson: { type: "paragraph" }, bodyText: "body", versions: {} },
+          data: {
+            bodyPmJson: { type: "paragraph" },
+            bodyText: "body",
+            versions: {},
+          },
         });
       }
       if (url.pathname.endsWith("/adjacency")) {
@@ -201,10 +211,36 @@ describe("notes api", () => {
     expect(calls[1]?.body).toEqual({
       client_mutation_id: "mutation-1",
       base_versions: [],
-      ordered_targets: [{ ref: "note_block:block-1", source_order_key: "0000000001" }],
+      ordered_targets: [
+        { ref: "note_block:block-1", source_order_key: "0000000001" },
+      ],
     });
     expect(result.page.blocks[0]?.id).toBe("block-1");
     expect(result.changedEdgeIds).toEqual(["edge-1"]);
+  });
+
+  it("normalizes resource item capability projection", () => {
+    const surface = normalizeSurface({
+      source: resourceItem("page", "page-1", { chat_subject: "readable" }),
+      ordered_items: [
+        {
+          edge_id: "edge-1",
+          target: resourceItem("library", "library-1", {
+            chat_subject: "scope",
+            prompt_render: "label",
+            readable: "scope",
+          }),
+          source_order_key: "0001",
+        },
+      ],
+    });
+
+    expect(surface?.source.capabilities.chatSubject).toBe("readable");
+    expect(surface?.orderedItems[0]?.target.capabilities).toMatchObject({
+      chatSubject: "scope",
+      promptRender: "label",
+      readable: "scope",
+    });
   });
 
   it("rejects legacy revision fields in note responses", async () => {
@@ -232,3 +268,34 @@ describe("notes api", () => {
     ).rejects.toThrow("note page includes legacy artifact identity");
   });
 });
+
+function resourceItem(
+  scheme: string,
+  id: string,
+  capabilities: Partial<Record<string, unknown>>,
+) {
+  return {
+    ref: `${scheme}:${id}`,
+    scheme,
+    id,
+    label: scheme,
+    summary: "",
+    route: null,
+    missing: false,
+    capabilities: {
+      linkable: true,
+      attachable: true,
+      chat_subject: "label",
+      readable: "body",
+      citable_result_type: null,
+      app_search_scope: false,
+      conversation_search_scope: false,
+      prompt_render: "inline_body",
+      expandable: false,
+      adjacency_source: false,
+      adjacency_target: true,
+      ...capabilities,
+    },
+    version_by_lane: {},
+  };
+}

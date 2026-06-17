@@ -7,14 +7,14 @@ from datetime import datetime
 from typing import Any, cast
 from uuid import UUID
 
-from sqlalchemy import and_, false, or_, select, text
+from sqlalchemy import and_, false, or_, select
 from sqlalchemy.orm import Session
 
 from nexus.db.models import ResourceEdge
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.services.resource_graph.citations import citation_reader_target_for_edge
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
-from nexus.services.resource_graph.resolve import reader_target_for_citation_target, resolve_refs
+from nexus.services.resource_graph.resolve import resolve_refs
 from nexus.services.resource_graph.schemas import (
     Connection,
     ConnectionCitation,
@@ -25,6 +25,7 @@ from nexus.services.resource_graph.schemas import (
     EdgeOrigin,
     snapshot_from_jsonb,
 )
+from nexus.services.resource_items.capabilities import expand_owned_child_refs, route_for_ref
 
 
 def query_connections(db: Session, *, viewer_id: UUID, query: ConnectionQuery) -> ConnectionPage:
@@ -130,7 +131,7 @@ def _hydrate_endpoints(
             ref=ref,
             label=item.label,
             description=item.summary or None,
-            href=None if item.missing else _href_for_ref(db, viewer_id=viewer_id, ref=ref),
+            href=None if item.missing else route_for_ref(db, viewer_id=viewer_id, ref=ref),
             missing=item.missing,
         )
         for ref, item in zip(refs.values(), resolved, strict=True)
@@ -201,147 +202,9 @@ def _expand_refs(
     for ref in refs:
         out.setdefault(ref.uri, ref)
         if rollup == "owner":
-            for child in _owner_children(db, viewer_id=viewer_id, ref=ref):
+            for child in expand_owned_child_refs(db, viewer_id=viewer_id, ref=ref):
                 out.setdefault(child.uri, child)
     return tuple(out.values())
-
-
-def _owner_children(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> tuple[ResourceRef, ...]:
-    if ref.scheme == "media":
-        return (
-            *_child_refs(
-                db,
-                "evidence_span",
-                "SELECT id FROM evidence_spans WHERE owner_kind = 'media' AND owner_id = :id",
-                ref.id,
-            ),
-            *_child_refs(
-                db,
-                "content_chunk",
-                "SELECT id FROM content_chunks WHERE owner_kind = 'media' AND owner_id = :id",
-                ref.id,
-            ),
-            *_child_refs(db, "fragment", "SELECT id FROM fragments WHERE media_id = :id", ref.id),
-            *_child_refs(
-                db,
-                "highlight",
-                "SELECT id FROM highlights WHERE user_id = :viewer_id AND anchor_media_id = :id",
-                ref.id,
-                viewer_id=viewer_id,
-            ),
-        )
-    if ref.scheme == "page":
-        return (*_child_refs(db, "note_block", _PAGE_NOTE_BLOCKS_SQL, ref.id, viewer_id=viewer_id),)
-    if ref.scheme == "note_block":
-        return (
-            *_child_refs(
-                db,
-                "evidence_span",
-                "SELECT id FROM evidence_spans WHERE owner_kind = 'note_block' AND owner_id = :id",
-                ref.id,
-            ),
-            *_child_refs(
-                db,
-                "content_chunk",
-                "SELECT id FROM content_chunks WHERE owner_kind = 'note_block' AND owner_id = :id",
-                ref.id,
-            ),
-        )
-    if ref.scheme == "library_intelligence_artifact":
-        return _child_refs(
-            db,
-            "library_intelligence_revision",
-            "SELECT id FROM library_intelligence_artifact_revisions WHERE artifact_id = :id",
-            ref.id,
-        )
-    return ()
-
-
-def _child_refs(
-    db: Session,
-    scheme: ResourceScheme,
-    sql: str,
-    parent_id: UUID,
-    *,
-    viewer_id: UUID | None = None,
-) -> tuple[ResourceRef, ...]:
-    params: dict[str, object] = {"id": parent_id, "id_text": str(parent_id)}
-    if viewer_id is not None:
-        params["viewer_id"] = viewer_id
-    return tuple(ResourceRef(scheme=scheme, id=row[0]) for row in db.execute(text(sql), params))
-
-
-def _href_for_ref(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> str | None:
-    if ref.scheme == "media":
-        return f"/media/{ref.id}"
-    if ref.scheme == "library":
-        return f"/libraries/{ref.id}"
-    if ref.scheme == "page":
-        return f"/pages/{ref.id}"
-    if ref.scheme == "note_block":
-        return f"/notes/{ref.id}"
-    if ref.scheme == "conversation":
-        return f"/conversations/{ref.id}"
-    if ref.scheme == "podcast":
-        return f"/podcasts/{ref.id}"
-    if ref.scheme == "message":
-        conversation_id = db.scalar(
-            text("SELECT conversation_id FROM messages WHERE id = :id"), {"id": ref.id}
-        )
-        return f"/conversations/{conversation_id}" if conversation_id is not None else None
-    if ref.scheme == "highlight":
-        media_id = db.scalar(
-            text("SELECT anchor_media_id FROM highlights WHERE id = :id"), {"id": ref.id}
-        )
-        return f"/media/{media_id}#highlight-{ref.id}" if media_id is not None else None
-    if ref.scheme == "fragment":
-        media_id = db.scalar(text("SELECT media_id FROM fragments WHERE id = :id"), {"id": ref.id})
-        return f"/media/{media_id}#fragment-{ref.id}" if media_id is not None else None
-    if ref.scheme in ("content_chunk", "evidence_span"):
-        media_id, locator = reader_target_for_citation_target(db, viewer_id=viewer_id, target=ref)
-        if media_id is not None:
-            return (
-                f"/media/{media_id}#evidence-{ref.id}"
-                if ref.scheme == "evidence_span"
-                else f"/media/{media_id}"
-            )
-        if isinstance(locator, dict) and isinstance(locator.get("block_id"), str):
-            return f"/notes/{locator['block_id']}"
-        note_block_id = db.scalar(
-            text(
-                f"""
-                SELECT owner_id
-                FROM {"content_chunks" if ref.scheme == "content_chunk" else "evidence_spans"}
-                WHERE id = :id AND owner_kind = 'note_block'
-                """
-            ),
-            {"id": ref.id},
-        )
-        return f"/notes/{note_block_id}" if note_block_id is not None else None
-    if ref.scheme == "library_intelligence_artifact":
-        library_id = db.scalar(
-            text("SELECT library_id FROM library_intelligence_artifacts WHERE id = :id"),
-            {"id": ref.id},
-        )
-        return f"/libraries/{library_id}?tab=intelligence" if library_id is not None else None
-    if ref.scheme == "library_intelligence_revision":
-        library_id = db.scalar(
-            text(
-                """
-                SELECT a.library_id
-                FROM library_intelligence_artifact_revisions r
-                JOIN library_intelligence_artifacts a ON a.id = r.artifact_id
-                WHERE r.id = :id
-                """
-            ),
-            {"id": ref.id},
-        )
-        return (
-            f"/libraries/{library_id}?tab=intelligence&revision={ref.id}"
-            if library_id is not None
-            else None
-        )
-    return None
 
 
 def _encode_cursor(edge: ResourceEdge) -> str:
@@ -356,27 +219,3 @@ def _decode_cursor(raw: str) -> tuple[datetime, UUID]:
         return datetime.fromisoformat(created_raw), UUID(edge_id_raw)
     except ValueError as exc:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid cursor") from exc
-
-
-_PAGE_NOTE_BLOCKS_SQL = """
-WITH RECURSIVE contained(id) AS (
-    SELECT target_id
-    FROM resource_edges
-    WHERE user_id = :viewer_id
-      AND origin = 'user'
-      AND source_scheme = 'page'
-      AND source_id = :id
-      AND target_scheme = 'note_block'
-      AND source_order_key IS NOT NULL
-    UNION
-    SELECT e.target_id
-    FROM resource_edges e
-    JOIN contained c ON c.id = e.source_id
-    WHERE e.user_id = :viewer_id
-      AND e.origin = 'user'
-      AND e.source_scheme = 'note_block'
-      AND e.target_scheme = 'note_block'
-      AND e.source_order_key IS NOT NULL
-)
-SELECT id FROM contained
-"""

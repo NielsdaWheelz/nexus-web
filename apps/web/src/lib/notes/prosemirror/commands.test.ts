@@ -12,7 +12,9 @@ import { outlineSchema } from "@/lib/notes/prosemirror/schema";
 
 describe("notes ProseMirror commands", () => {
   it("splits the current block at the cursor and preserves both text runs", () => {
-    const doc = outlineSchema.nodeFromJSON(outlineJsonFromTexts(["hello world"]));
+    const doc = outlineSchema.nodeFromJSON(
+      outlineJsonFromTexts(["hello world"]),
+    );
     const state = EditorState.create({
       schema: outlineSchema,
       doc,
@@ -20,9 +22,12 @@ describe("notes ProseMirror commands", () => {
     });
     let nextState = state;
 
-    const handled = splitOutlineBlock(() => "block-new")(state, (transaction) => {
-      nextState = state.apply(transaction);
-    });
+    const handled = splitOutlineBlock(() => "block-new")(
+      state,
+      (transaction) => {
+        nextState = state.apply(transaction);
+      },
+    );
 
     expect(handled).toBe(true);
     expect(outlineTexts(nextState.doc)).toEqual(["hello", " world"]);
@@ -38,7 +43,7 @@ describe("notes ProseMirror commands", () => {
     });
 
     const { state: nextState } = state.applyTransaction(
-      state.tr.insertText(`[[media:${objectId}|Media]]`, 6)
+      state.tr.insertText(`[[media:${objectId}|Media]]`, 6),
     );
     const refs: Array<Record<string, unknown>> = [];
     nextState.doc.descendants((node) => {
@@ -60,7 +65,7 @@ describe("notes ProseMirror commands", () => {
     });
 
     const { state: nextState } = state.applyTransaction(
-      state.tr.insertText(`[[contributor:${objectId}|Ada Lovelace]]`, 4)
+      state.tr.insertText(`[[contributor:${objectId}|Ada Lovelace]]`, 4),
     );
     const refs: Array<Record<string, unknown>> = [];
     nextState.doc.descendants((node) => {
@@ -69,7 +74,58 @@ describe("notes ProseMirror commands", () => {
       }
     });
 
-    expect(refs).toEqual([{ objectType: "contributor", objectId, label: "Ada Lovelace" }]);
+    expect(refs).toEqual([
+      { objectType: "contributor", objectId, label: "Ada Lovelace" },
+    ]);
+  });
+
+  it("turns linkable resource schemes into object-ref chips", () => {
+    const objectId = "33333333-3333-4333-8333-333333333333";
+    const doc = outlineSchema.nodeFromJSON(outlineJsonFromTexts(["in "]));
+    const state = EditorState.create({
+      schema: outlineSchema,
+      doc,
+      plugins: [createObjectRefSyntaxPlugin()],
+    });
+
+    const { state: nextState } = state.applyTransaction(
+      state.tr.insertText(`[[library:${objectId}|Library]]`, 4),
+    );
+    const refs: Array<Record<string, unknown>> = [];
+    nextState.doc.descendants((node) => {
+      if (node.type === outlineSchema.nodes.object_ref) {
+        refs.push(node.attrs);
+      }
+    });
+
+    expect(refs).toEqual([
+      { objectType: "library", objectId, label: "Library" },
+    ]);
+  });
+
+  it("leaves non-linkable resource schemes as text", () => {
+    const objectId = "44444444-4444-4444-8444-444444444444";
+    const doc = outlineSchema.nodeFromJSON(outlineJsonFromTexts(["see "]));
+    const state = EditorState.create({
+      schema: outlineSchema,
+      doc,
+      plugins: [createObjectRefSyntaxPlugin()],
+    });
+
+    const { state: nextState } = state.applyTransaction(
+      state.tr.insertText(`[[external_snapshot:${objectId}|Snapshot]]`, 6),
+    );
+    const refs: Array<Record<string, unknown>> = [];
+    nextState.doc.descendants((node) => {
+      if (node.type === outlineSchema.nodes.object_ref) {
+        refs.push(node.attrs);
+      }
+    });
+
+    expect(refs).toEqual([]);
+    expect(outlineTexts(nextState.doc)).toEqual([
+      `see [[external_snapshot:${objectId}|Snapshot]]`,
+    ]);
   });
 
   it("leaves user graph tag object-ref syntax as text", () => {
@@ -82,7 +138,7 @@ describe("notes ProseMirror commands", () => {
     });
 
     const { state: nextState } = state.applyTransaction(
-      state.tr.insertText(`[[tag:${objectId}|#sota]]`, 6)
+      state.tr.insertText(`[[tag:${objectId}|#sota]]`, 6),
     );
     const refs: Array<Record<string, unknown>> = [];
     nextState.doc.descendants((node) => {
@@ -92,11 +148,15 @@ describe("notes ProseMirror commands", () => {
     });
 
     expect(refs).toEqual([]);
-    expect(outlineTexts(nextState.doc)).toEqual([`see [[tag:${objectId}|#sota]]`]);
+    expect(outlineTexts(nextState.doc)).toEqual([
+      `see [[tag:${objectId}|#sota]]`,
+    ]);
   });
 
   it("merges a block backward at the start of the block", () => {
-    const doc = outlineSchema.nodeFromJSON(outlineJsonFromTexts(["alpha", " beta"]));
+    const doc = outlineSchema.nodeFromJSON(
+      outlineJsonFromTexts(["alpha", " beta"]),
+    );
     const state = EditorState.create({
       schema: outlineSchema,
       doc,
@@ -117,12 +177,20 @@ describe("notes ProseMirror commands", () => {
       outlineSchema.nodes.outline_block!.create(
         { id: "parent", collapsed: false },
         [
-          outlineSchema.nodes.paragraph!.create(null, outlineSchema.text("parent")),
+          outlineSchema.nodes.paragraph!.create(
+            null,
+            outlineSchema.text("parent"),
+          ),
           outlineSchema.nodes.outline_block!.create(
             { id: "child", collapsed: false },
-            [outlineSchema.nodes.paragraph!.create(null, outlineSchema.text("child"))]
+            [
+              outlineSchema.nodes.paragraph!.create(
+                null,
+                outlineSchema.text("child"),
+              ),
+            ],
           ),
-        ]
+        ],
       ),
     ]);
     const state = EditorState.create({
@@ -141,7 +209,9 @@ describe("notes ProseMirror commands", () => {
   });
 
   it("merges the next block forward at the end of the current block", () => {
-    const doc = outlineSchema.nodeFromJSON(outlineJsonFromTexts(["alpha", " beta"]));
+    const doc = outlineSchema.nodeFromJSON(
+      outlineJsonFromTexts(["alpha", " beta"]),
+    );
     const state = EditorState.create({
       schema: outlineSchema,
       doc,
@@ -167,12 +237,12 @@ describe("notes ProseMirror commands", () => {
     const ids = ["pasted-1", "pasted-2", "pasted-3"];
     let nextState = state;
 
-    const handled = pasteMarkdownList("- alpha\n  - beta\n- gamma", () => ids.shift()!)(
-      state,
-      (transaction) => {
-        nextState = state.apply(transaction);
-      }
-    );
+    const handled = pasteMarkdownList(
+      "- alpha\n  - beta\n- gamma",
+      () => ids.shift()!,
+    )(state, (transaction) => {
+      nextState = state.apply(transaction);
+    });
 
     expect(handled).toBe(true);
     expect(outlineTexts(nextState.doc)).toEqual(["alpha", "beta", "gamma"]);
@@ -180,10 +250,17 @@ describe("notes ProseMirror commands", () => {
   });
 });
 
-function selectionForBlock(doc: ProseMirrorNode, blockId: string, offset: number) {
+function selectionForBlock(
+  doc: ProseMirrorNode,
+  blockId: string,
+  offset: number,
+) {
   let selectionPos = 1;
   doc.descendants((node, pos) => {
-    if (node.type !== outlineSchema.nodes.outline_block || node.attrs.id !== blockId) {
+    if (
+      node.type !== outlineSchema.nodes.outline_block ||
+      node.attrs.id !== blockId
+    ) {
       return true;
     }
     selectionPos = pos + 2 + offset;
@@ -217,8 +294,13 @@ function outlineJsonFromTexts(texts: string[]): Record<string, unknown> {
   const blocks = texts.map((text, index) =>
     outlineSchema.nodes.outline_block!.create(
       { id: `block-${index + 1}`, collapsed: false },
-      [outlineSchema.nodes.paragraph!.create(null, text ? outlineSchema.text(text) : null)]
-    )
+      [
+        outlineSchema.nodes.paragraph!.create(
+          null,
+          text ? outlineSchema.text(text) : null,
+        ),
+      ],
+    ),
   );
   return outlineSchema.nodes.outline_doc!.create(null, blocks).toJSON();
 }

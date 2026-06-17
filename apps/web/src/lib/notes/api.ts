@@ -2,6 +2,13 @@ import { apiFetch } from "@/lib/api/client";
 import { noteBlockResource, notePagesResource } from "@/lib/api/resource";
 import { assertNoTopLevelLegacyArtifactIdentityKey } from "@/lib/currentArtifactIdentity";
 import { todayLocalDate } from "@/lib/localDate";
+import type {
+  ResourceChatSubjectMode,
+  ResourceExpansionPolicy,
+  ResourceInspectMode,
+  ResourcePromptRenderMode,
+  ResourceReadMode,
+} from "@/lib/resources/resourceCapabilities.generated";
 import { isRecord } from "@/lib/validation";
 
 export interface NoteBlock {
@@ -26,11 +33,15 @@ export interface NotePageSummary {
 export interface ResourceItemCapabilities {
   linkable: boolean;
   attachable: boolean;
-  readable: "none" | "scope" | "body" | "media";
+  chatSubject: ResourceChatSubjectMode;
+  readable: ResourceReadMode;
+  inspectable: ResourceInspectMode;
   citableResultType: string | null;
+  citationOutputSource: boolean;
   appSearchScope: boolean;
   conversationSearchScope: boolean;
-  promptRender: "none" | "label" | "inline_body" | "quote";
+  promptRender: ResourcePromptRenderMode;
+  expansionPolicy: ResourceExpansionPolicy;
   expandable: boolean;
   adjacencySource: boolean;
   adjacencyTarget: boolean;
@@ -216,15 +227,23 @@ function normalizeResourceItem(raw: Record<string, unknown>): ResourceItem {
     capabilities: {
       linkable: Boolean(capabilities.linkable),
       attachable: Boolean(capabilities.attachable),
-      readable: String(
-        capabilities.readable ?? "none",
-      ) as ResourceItemCapabilities["readable"],
+      chatSubject: String(
+        capabilities.chatSubject ?? capabilities.chat_subject ?? "none",
+      ) as ResourceChatSubjectMode,
+      readable: String(capabilities.readable ?? "none") as ResourceReadMode,
+      inspectable: String(
+        capabilities.inspectable ?? "none",
+      ) as ResourceInspectMode,
       citableResultType:
         typeof capabilities.citableResultType === "string"
           ? capabilities.citableResultType
           : typeof capabilities.citable_result_type === "string"
             ? capabilities.citable_result_type
             : null,
+      citationOutputSource: Boolean(
+        capabilities.citationOutputSource ??
+        capabilities.citation_output_source,
+      ),
       appSearchScope: Boolean(
         capabilities.appSearchScope ?? capabilities.app_search_scope,
       ),
@@ -234,7 +253,10 @@ function normalizeResourceItem(raw: Record<string, unknown>): ResourceItem {
       ),
       promptRender: String(
         capabilities.promptRender ?? capabilities.prompt_render ?? "none",
-      ) as ResourceItemCapabilities["promptRender"],
+      ) as ResourcePromptRenderMode,
+      expansionPolicy: String(
+        capabilities.expansionPolicy ?? capabilities.expansion_policy ?? "none",
+      ) as ResourceExpansionPolicy,
       expandable: Boolean(capabilities.expandable),
       adjacencySource: Boolean(
         capabilities.adjacencySource ?? capabilities.adjacency_source,
@@ -401,14 +423,18 @@ async function patchResourceTitle(
   clientMutationId: string,
   version: number | null,
 ): Promise<void> {
-  await apiFetch<ApiResponse>(`/api/resource-items/${encodeURIComponent(ref)}/title`, {
-    method: "PATCH",
-    body: JSON.stringify({
-      client_mutation_id: clientMutationId,
-      base_versions: version === null ? [] : [{ ref, lane: "title", version }],
-      title,
-    }),
-  });
+  await apiFetch<ApiResponse>(
+    `/api/resource-items/${encodeURIComponent(ref)}/title`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({
+        client_mutation_id: clientMutationId,
+        base_versions:
+          version === null ? [] : [{ ref, lane: "title", version }],
+        title,
+      }),
+    },
+  );
 }
 
 async function replaceResourceAdjacency(
@@ -481,7 +507,10 @@ export async function saveResourceSurface(
   return {
     page,
     versions: Object.fromEntries(
-      input.baseVersions.map((base) => [base.ref, { [base.lane]: base.version }]),
+      input.baseVersions.map((base) => [
+        base.ref,
+        { [base.lane]: base.version },
+      ]),
     ),
     clientMutationId: input.clientMutationId,
     changedBlockIds,
@@ -530,8 +559,7 @@ export async function saveNoteBody(
     children: [],
     versionByLane: Object.fromEntries(
       Object.entries(
-        isRecord(data.versions) &&
-          isRecord(data.versions[ref])
+        isRecord(data.versions) && isRecord(data.versions[ref])
           ? data.versions[ref]
           : {},
       ).map(([lane, version]) => [lane, Number(version)]),

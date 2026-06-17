@@ -16,20 +16,25 @@ describe("resourceKind", () => {
 
   it("uses the fallback icon for unknown schemes and malformed refs", () => {
     expect(resourceIconForScheme("unknown")).toBe(Link2);
-    expect(resourceIconForUri("unknown:11111111-1111-4111-8111-111111111111")).toBe(
-      Link2,
-    );
+    expect(
+      resourceIconForUri("unknown:11111111-1111-4111-8111-111111111111"),
+    ).toBe(Link2);
     expect(resourceIconForUri("not-a-ref")).toBe(Link2);
   });
 
-  it("maps openable resource schemes to object-ref types", () => {
+  it("maps linkable resource schemes to object-ref types", () => {
     expect(resourceObjectTypeForScheme("media")).toBe("media");
+    expect(resourceObjectTypeForScheme("library")).toBe("library");
     expect(resourceObjectTypeForScheme("evidence_span")).toBe("evidence_span");
     expect(resourceObjectTypeForScheme("content_chunk")).toBe("content_chunk");
+    expect(resourceObjectTypeForScheme("oracle_reading")).toBe(
+      "oracle_reading",
+    );
     expect(resourceObjectTypeForScheme("library_intelligence_revision")).toBe(
       "library_intelligence_revision",
     );
-    expect(resourceObjectTypeForScheme("library")).toBeNull();
+    expect(resourceObjectTypeForScheme("oracle_corpus_passage")).toBeNull();
+    expect(resourceObjectTypeForScheme("external_snapshot")).toBeNull();
   });
 
   it("treats user graph tags as unknown at runtime", () => {

@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from nexus.services.media_read_map import MediaReadMap, get_media_read_map_for_viewer
 from nexus.services.resource_graph.context import admits_resource_for_conversation_read
 from nexus.services.resource_graph.refs import ResourceRefParseFailure, parse_resource_ref
+from nexus.services.resource_items.capabilities import resource_inspect_policy
 
 INSPECT_RESOURCE_TOOL_NAME = "inspect_resource"
 
@@ -118,11 +119,13 @@ def execute_inspect_resource(
             )
         return _error(uri, f"Resource URI {uri} is malformed.", "invalid_uri")
 
-    if parsed.scheme != "media":
+    inspect_policy = resource_inspect_policy(parsed)
+    if inspect_policy != "media_document_map":
         return _error(
             uri,
-            f"inspect_resource only maps media documents, not '{parsed.scheme}'. "
-            "Pass a 'media:UUID' URI; use read_resource to read other resources.",
+            f"Resource {uri} has inspect policy '{inspect_policy}', so inspect_resource "
+            "cannot map it. Pass a media document URI; use read_resource to read other "
+            "resources.",
             "not_inspectable",
         )
 

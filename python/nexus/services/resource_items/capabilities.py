@@ -1,33 +1,55 @@
 """Closed resource item capability policy.
 
-`resource_graph.refs` owns identity grammar. This module owns item-level product
-facts: readability, search scopes, context search activation, and citable
-search-result mapping.
+`resource_graph.refs` owns identity grammar. This module owns item-level route,
+read, search, citation, prompt, attachment, and expansion policy.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, assert_never
+from urllib.parse import quote
+from uuid import UUID
 
-from nexus.services.resource_graph.refs import RESOURCE_SCHEMES, ResourceScheme
+from sqlalchemy import text
+from sqlalchemy.orm import Session
+
+from nexus.services.resource_graph.refs import RESOURCE_SCHEMES, ResourceRef, ResourceScheme
+from nexus.services.resource_graph.resolve import reader_target_for_citation_target
 from nexus.services.resource_graph.schemas import EdgeOrigin
+
+ResourceChatSubjectMode = Literal["none", "label", "scope", "readable", "quote", "generated_output"]
+ResourceReadMode = Literal["none", "scope", "body", "media"]
+ResourceInspectMode = Literal["none", "media_document_map"]
+ResourcePromptRenderMode = Literal["none", "label", "inline_body", "quote"]
+ResourceExpansionPolicy = Literal[
+    "none",
+    "media_owned_reader_children",
+    "page_note_blocks",
+    "note_block_owned_evidence",
+    "library_intelligence_artifact_revisions",
+]
 
 
 @dataclass(frozen=True, slots=True)
 class ResourceItemCapability:
     linkable: bool
     attachable: bool
-    chat_subject: Literal["none", "label", "scope", "readable", "quote", "generated_output"]
-    readable: Literal["none", "scope", "body", "media"]
+    chat_subject: ResourceChatSubjectMode
+    readable: ResourceReadMode
+    inspectable: ResourceInspectMode
     citable_result_type: str | None
     app_search_scope: bool
     conversation_search_scope: bool
     citation_output_source: bool
-    prompt_render: Literal["none", "label", "inline_body", "quote"]
-    expandable: bool
+    prompt_render: ResourcePromptRenderMode
+    expansion_policy: ResourceExpansionPolicy
     adjacency_source: bool
     adjacency_target: bool
+
+    @property
+    def expandable(self) -> bool:
+        return self.expansion_policy != "none"
 
 
 RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
@@ -36,12 +58,13 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         attachable=True,
         chat_subject="readable",
         readable="media",
+        inspectable="media_document_map",
         citable_result_type="media",
         app_search_scope=True,
         conversation_search_scope=False,
         citation_output_source=False,
         prompt_render="label",
-        expandable=False,
+        expansion_policy="media_owned_reader_children",
         adjacency_source=False,
         adjacency_target=True,
     ),
@@ -50,12 +73,13 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         attachable=True,
         chat_subject="scope",
         readable="scope",
+        inspectable="none",
         citable_result_type=None,
         app_search_scope=True,
         conversation_search_scope=False,
         citation_output_source=False,
         prompt_render="label",
-        expandable=False,
+        expansion_policy="none",
         adjacency_source=False,
         adjacency_target=True,
     ),
@@ -64,12 +88,13 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         attachable=True,
         chat_subject="readable",
         readable="body",
+        inspectable="none",
         citable_result_type="evidence_span",
         app_search_scope=False,
         conversation_search_scope=False,
         citation_output_source=False,
         prompt_render="inline_body",
-        expandable=False,
+        expansion_policy="none",
         adjacency_source=False,
         adjacency_target=True,
     ),
@@ -78,12 +103,13 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         attachable=True,
         chat_subject="readable",
         readable="body",
+        inspectable="none",
         citable_result_type="content_chunk",
         app_search_scope=False,
         conversation_search_scope=False,
         citation_output_source=False,
         prompt_render="inline_body",
-        expandable=False,
+        expansion_policy="none",
         adjacency_source=False,
         adjacency_target=True,
     ),
@@ -92,12 +118,13 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         attachable=True,
         chat_subject="quote",
         readable="body",
+        inspectable="none",
         citable_result_type="highlight",
         app_search_scope=False,
         conversation_search_scope=True,
         citation_output_source=False,
         prompt_render="quote",
-        expandable=False,
+        expansion_policy="none",
         adjacency_source=False,
         adjacency_target=True,
     ),
@@ -106,12 +133,13 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         attachable=True,
         chat_subject="readable",
         readable="body",
+        inspectable="none",
         citable_result_type="page",
         app_search_scope=False,
         conversation_search_scope=True,
         citation_output_source=False,
         prompt_render="inline_body",
-        expandable=False,
+        expansion_policy="page_note_blocks",
         adjacency_source=True,
         adjacency_target=True,
     ),
@@ -120,12 +148,13 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         attachable=True,
         chat_subject="readable",
         readable="body",
+        inspectable="none",
         citable_result_type="note_block",
         app_search_scope=False,
         conversation_search_scope=True,
         citation_output_source=False,
         prompt_render="inline_body",
-        expandable=False,
+        expansion_policy="note_block_owned_evidence",
         adjacency_source=True,
         adjacency_target=True,
     ),
@@ -134,12 +163,13 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         attachable=True,
         chat_subject="readable",
         readable="body",
+        inspectable="none",
         citable_result_type="fragment",
         app_search_scope=False,
         conversation_search_scope=False,
         citation_output_source=False,
         prompt_render="inline_body",
-        expandable=False,
+        expansion_policy="none",
         adjacency_source=False,
         adjacency_target=True,
     ),
@@ -148,12 +178,13 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         attachable=True,
         chat_subject="label",
         readable="body",
+        inspectable="none",
         citable_result_type=None,
         app_search_scope=False,
         conversation_search_scope=False,
         citation_output_source=False,
         prompt_render="label",
-        expandable=False,
+        expansion_policy="none",
         adjacency_source=False,
         adjacency_target=True,
     ),
@@ -162,12 +193,13 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         attachable=True,
         chat_subject="readable",
         readable="body",
+        inspectable="none",
         citable_result_type="message",
         app_search_scope=False,
         conversation_search_scope=False,
         citation_output_source=True,
         prompt_render="inline_body",
-        expandable=False,
+        expansion_policy="none",
         adjacency_source=False,
         adjacency_target=True,
     ),
@@ -176,12 +208,13 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         attachable=True,
         chat_subject="generated_output",
         readable="body",
+        inspectable="none",
         citable_result_type=None,
         app_search_scope=False,
         conversation_search_scope=False,
         citation_output_source=True,
         prompt_render="inline_body",
-        expandable=False,
+        expansion_policy="none",
         adjacency_source=False,
         adjacency_target=True,
     ),
@@ -190,12 +223,13 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         attachable=False,
         chat_subject="none",
         readable="none",
+        inspectable="none",
         citable_result_type=None,
         app_search_scope=False,
         conversation_search_scope=False,
         citation_output_source=False,
         prompt_render="none",
-        expandable=False,
+        expansion_policy="none",
         adjacency_source=False,
         adjacency_target=False,
     ),
@@ -204,12 +238,13 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         attachable=True,
         chat_subject="generated_output",
         readable="body",
+        inspectable="none",
         citable_result_type=None,
         app_search_scope=False,
         conversation_search_scope=False,
         citation_output_source=False,
         prompt_render="inline_body",
-        expandable=False,
+        expansion_policy="library_intelligence_artifact_revisions",
         adjacency_source=False,
         adjacency_target=True,
     ),
@@ -218,12 +253,13 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         attachable=True,
         chat_subject="generated_output",
         readable="body",
+        inspectable="none",
         citable_result_type=None,
         app_search_scope=False,
         conversation_search_scope=False,
         citation_output_source=True,
         prompt_render="inline_body",
-        expandable=False,
+        expansion_policy="none",
         adjacency_source=False,
         adjacency_target=True,
     ),
@@ -232,12 +268,13 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         attachable=False,
         chat_subject="none",
         readable="none",
+        inspectable="none",
         citable_result_type=None,
         app_search_scope=False,
         conversation_search_scope=False,
         citation_output_source=False,
         prompt_render="none",
-        expandable=False,
+        expansion_policy="none",
         adjacency_source=False,
         adjacency_target=False,
     ),
@@ -246,12 +283,13 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         attachable=True,
         chat_subject="label",
         readable="none",
+        inspectable="none",
         citable_result_type=None,
         app_search_scope=False,
         conversation_search_scope=False,
         citation_output_source=False,
         prompt_render="label",
-        expandable=False,
+        expansion_policy="none",
         adjacency_source=False,
         adjacency_target=True,
     ),
@@ -260,12 +298,13 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         attachable=True,
         chat_subject="label",
         readable="none",
+        inspectable="none",
         citable_result_type=None,
         app_search_scope=False,
         conversation_search_scope=False,
         citation_output_source=False,
         prompt_render="label",
-        expandable=False,
+        expansion_policy="none",
         adjacency_source=False,
         adjacency_target=True,
     ),
@@ -274,50 +313,268 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
 if set(RESOURCE_ITEM_CAPABILITIES) != set(RESOURCE_SCHEMES):
     raise AssertionError("Every ResourceScheme needs one resource item capability")
 
-READABLE_RESOURCE_SCHEMES: tuple[ResourceScheme, ...] = tuple(
-    scheme
-    for scheme, capability in RESOURCE_ITEM_CAPABILITIES.items()
-    if capability.readable in ("body", "media")
-)
-SCOPE_ONLY_RESOURCE_SCHEMES: tuple[ResourceScheme, ...] = tuple(
-    scheme
-    for scheme, capability in RESOURCE_ITEM_CAPABILITIES.items()
-    if capability.readable == "scope"
-)
-APP_SEARCH_SCOPE_SCHEMES: tuple[ResourceScheme, ...] = tuple(
-    scheme
-    for scheme, capability in RESOURCE_ITEM_CAPABILITIES.items()
-    if capability.app_search_scope
-)
-CONVERSATION_SEARCH_SCOPE_SCHEMES: tuple[ResourceScheme, ...] = tuple(
-    scheme
-    for scheme, capability in RESOURCE_ITEM_CAPABILITIES.items()
-    if capability.conversation_search_scope
-)
-CITABLE_RESOURCE_RESULT_TYPES: dict[ResourceScheme, str] = {
-    scheme: capability.citable_result_type
-    for scheme, capability in RESOURCE_ITEM_CAPABILITIES.items()
-    if capability.citable_result_type is not None
-}
-CITATION_OUTPUT_SOURCE_SCHEMES: tuple[ResourceScheme, ...] = tuple(
-    scheme
-    for scheme, capability in RESOURCE_ITEM_CAPABILITIES.items()
-    if capability.citation_output_source
-)
-LINKABLE_RESOURCE_SCHEMES: tuple[ResourceScheme, ...] = tuple(
-    scheme for scheme, capability in RESOURCE_ITEM_CAPABILITIES.items() if capability.linkable
-)
-ATTACHABLE_RESOURCE_SCHEMES: tuple[ResourceScheme, ...] = tuple(
-    scheme for scheme, capability in RESOURCE_ITEM_CAPABILITIES.items() if capability.attachable
-)
-CHAT_SUBJECT_RESOURCE_SCHEMES: tuple[ResourceScheme, ...] = tuple(
-    scheme
-    for scheme, capability in RESOURCE_ITEM_CAPABILITIES.items()
-    if capability.chat_subject != "none"
-)
+
+def capability_for_scheme(scheme: ResourceScheme) -> ResourceItemCapability:
+    return RESOURCE_ITEM_CAPABILITIES[scheme]
+
+
+def capability_for_ref(ref: ResourceRef) -> ResourceItemCapability:
+    return capability_for_scheme(ref.scheme)
+
+
+def resource_can_link(ref: ResourceRef) -> bool:
+    return capability_for_ref(ref).linkable
+
+
+def resource_can_attach(ref: ResourceRef) -> bool:
+    return capability_for_ref(ref).attachable
+
+
+def resource_can_be_chat_subject(ref: ResourceRef) -> bool:
+    return capability_for_ref(ref).chat_subject != "none"
+
+
+def resource_read_policy(ref: ResourceRef) -> ResourceReadMode:
+    return capability_for_ref(ref).readable
+
+
+def resource_inspect_policy(ref: ResourceRef) -> ResourceInspectMode:
+    return capability_for_ref(ref).inspectable
+
+
+def resource_prompt_render_policy(ref: ResourceRef) -> ResourcePromptRenderMode:
+    return capability_for_ref(ref).prompt_render
+
+
+def resource_citation_result_type(ref: ResourceRef) -> str | None:
+    return capability_for_ref(ref).citable_result_type
+
+
+def resource_can_be_citation_output_source(ref: ResourceRef) -> bool:
+    return capability_for_ref(ref).citation_output_source
+
+
+def resource_can_be_app_search_scope(ref: ResourceRef) -> bool:
+    return capability_for_ref(ref).app_search_scope
+
+
+def resource_can_activate_conversation_search_scope(ref: ResourceRef) -> bool:
+    return capability_for_ref(ref).conversation_search_scope
+
+
+def resource_can_own_ordered_adjacency(ref: ResourceRef) -> bool:
+    return capability_for_ref(ref).adjacency_source
+
+
+def resource_can_be_ordered_adjacency_target(ref: ResourceRef) -> bool:
+    return capability_for_ref(ref).adjacency_target
+
+
+def app_search_scope_schemes() -> tuple[ResourceScheme, ...]:
+    return tuple(
+        scheme
+        for scheme, capability in RESOURCE_ITEM_CAPABILITIES.items()
+        if capability.app_search_scope
+    )
+
+
+def conversation_search_scope_schemes() -> tuple[ResourceScheme, ...]:
+    return tuple(
+        scheme
+        for scheme, capability in RESOURCE_ITEM_CAPABILITIES.items()
+        if capability.conversation_search_scope
+    )
+
+
+def citation_output_source_schemes() -> tuple[ResourceScheme, ...]:
+    return tuple(
+        scheme
+        for scheme, capability in RESOURCE_ITEM_CAPABILITIES.items()
+        if capability.citation_output_source
+    )
+
+
+def app_search_scope_hint() -> str:
+    return ", ".join(f"{scheme}:UUID" for scheme in app_search_scope_schemes())
+
+
+def expandable_resource_schemes() -> tuple[ResourceScheme, ...]:
+    return tuple(
+        scheme for scheme, capability in RESOURCE_ITEM_CAPABILITIES.items() if capability.expandable
+    )
+
+
+def resource_expansion_policy(ref: ResourceRef) -> ResourceExpansionPolicy:
+    return capability_for_ref(ref).expansion_policy
+
+
+def route_for_ref(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> str | None:
+    if ref.scheme == "page":
+        return f"/pages/{ref.id}"
+    if ref.scheme == "note_block":
+        return f"/notes/{ref.id}"
+    if ref.scheme == "media":
+        return f"/media/{ref.id}"
+    if ref.scheme == "conversation":
+        return f"/conversations/{ref.id}"
+    if ref.scheme == "library":
+        return f"/libraries/{ref.id}"
+    if ref.scheme == "oracle_reading":
+        return f"/oracle/{ref.id}"
+    if ref.scheme == "podcast":
+        return f"/podcasts/{ref.id}"
+    if ref.scheme == "highlight":
+        media_id = db.scalar(
+            text("SELECT anchor_media_id FROM highlights WHERE id = :id"),
+            {"id": ref.id},
+        )
+        return f"/media/{media_id}#highlight-{ref.id}" if media_id is not None else None
+    if ref.scheme == "message":
+        conversation_id = db.scalar(
+            text("SELECT conversation_id FROM messages WHERE id = :id"),
+            {"id": ref.id},
+        )
+        return f"/conversations/{conversation_id}" if conversation_id is not None else None
+    if ref.scheme == "fragment":
+        media_id = db.scalar(text("SELECT media_id FROM fragments WHERE id = :id"), {"id": ref.id})
+        return f"/media/{media_id}#fragment-{ref.id}" if media_id is not None else None
+    if ref.scheme in ("content_chunk", "evidence_span"):
+        media_id, locator = reader_target_for_citation_target(db, viewer_id=viewer_id, target=ref)
+        if media_id is not None:
+            if ref.scheme == "evidence_span":
+                return f"/media/{media_id}#evidence-{ref.id}"
+            if isinstance(locator, dict) and isinstance(locator.get("fragment_id"), str):
+                return f"/media/{media_id}#fragment-{locator['fragment_id']}"
+            return f"/media/{media_id}"
+        if isinstance(locator, dict) and isinstance(locator.get("block_id"), str):
+            return f"/notes/{locator['block_id']}"
+    if ref.scheme == "library_intelligence_artifact":
+        library_id = db.scalar(
+            text("SELECT library_id FROM library_intelligence_artifacts WHERE id = :id"),
+            {"id": ref.id},
+        )
+        return f"/libraries/{library_id}?tab=intelligence" if library_id is not None else None
+    if ref.scheme == "library_intelligence_revision":
+        library_id = db.scalar(
+            text(
+                """
+                SELECT a.library_id
+                FROM library_intelligence_artifact_revisions r
+                JOIN library_intelligence_artifacts a ON a.id = r.artifact_id
+                WHERE r.id = :id
+                """
+            ),
+            {"id": ref.id},
+        )
+        return (
+            f"/libraries/{library_id}?tab=intelligence&revision={ref.id}"
+            if library_id is not None
+            else None
+        )
+    if ref.scheme == "contributor":
+        handle = db.scalar(text("SELECT handle FROM contributors WHERE id = :id"), {"id": ref.id})
+        return f"/authors/{quote(str(handle), safe='')}" if handle is not None else None
+    if ref.scheme in ("oracle_corpus_passage", "external_snapshot"):
+        return None
+    assert_never(ref.scheme)
+
+
+def expand_owned_child_refs(
+    db: Session, *, viewer_id: UUID, ref: ResourceRef
+) -> tuple[ResourceRef, ...]:
+    policy = resource_expansion_policy(ref)
+    if policy == "none":
+        return ()
+    if policy == "media_owned_reader_children":
+        return (
+            *_child_refs(
+                db,
+                "evidence_span",
+                "SELECT id FROM evidence_spans WHERE owner_kind = 'media' AND owner_id = :id",
+                ref.id,
+            ),
+            *_child_refs(
+                db,
+                "content_chunk",
+                "SELECT id FROM content_chunks WHERE owner_kind = 'media' AND owner_id = :id",
+                ref.id,
+            ),
+            *_child_refs(db, "fragment", "SELECT id FROM fragments WHERE media_id = :id", ref.id),
+            *_child_refs(
+                db,
+                "highlight",
+                "SELECT id FROM highlights WHERE user_id = :viewer_id AND anchor_media_id = :id",
+                ref.id,
+                viewer_id=viewer_id,
+            ),
+        )
+    if policy == "page_note_blocks":
+        return (*_child_refs(db, "note_block", _PAGE_NOTE_BLOCKS_SQL, ref.id, viewer_id=viewer_id),)
+    if policy == "note_block_owned_evidence":
+        return (
+            *_child_refs(
+                db,
+                "evidence_span",
+                "SELECT id FROM evidence_spans WHERE owner_kind = 'note_block' AND owner_id = :id",
+                ref.id,
+            ),
+            *_child_refs(
+                db,
+                "content_chunk",
+                "SELECT id FROM content_chunks WHERE owner_kind = 'note_block' AND owner_id = :id",
+                ref.id,
+            ),
+        )
+    if policy == "library_intelligence_artifact_revisions":
+        return _child_refs(
+            db,
+            "library_intelligence_revision",
+            "SELECT id FROM library_intelligence_artifact_revisions WHERE artifact_id = :id",
+            ref.id,
+        )
+    assert_never(policy)
+
+
+def _child_refs(
+    db: Session,
+    scheme: ResourceScheme,
+    sql: str,
+    parent_id: UUID,
+    *,
+    viewer_id: UUID | None = None,
+) -> tuple[ResourceRef, ...]:
+    params: dict[str, object] = {"id": parent_id}
+    if viewer_id is not None:
+        params["viewer_id"] = viewer_id
+    return tuple(ResourceRef(scheme=scheme, id=row[0]) for row in db.execute(text(sql), params))
+
 
 CONVERSATION_CONTEXT_EDGE_ORIGINS: tuple[EdgeOrigin, ...] = ("user", "citation", "system")
 NOTE_MEDIA_SEARCH_EDGE_ORIGINS: tuple[EdgeOrigin, ...] = (
     "user",
     "highlight_note",
 )
+
+
+_PAGE_NOTE_BLOCKS_SQL = """
+WITH RECURSIVE contained(id) AS (
+    SELECT target_id
+    FROM resource_edges
+    WHERE user_id = :viewer_id
+      AND origin = 'user'
+      AND source_scheme = 'page'
+      AND source_id = :id
+      AND target_scheme = 'note_block'
+      AND source_order_key IS NOT NULL
+    UNION
+    SELECT e.target_id
+    FROM resource_edges e
+    JOIN contained c ON c.id = e.source_id
+    WHERE e.user_id = :viewer_id
+      AND e.origin = 'user'
+      AND e.source_scheme = 'note_block'
+      AND e.target_scheme = 'note_block'
+      AND e.source_order_key IS NOT NULL
+)
+SELECT id FROM contained
+"""

@@ -1,23 +1,13 @@
 import { apiFetch } from "@/lib/api/client";
+import {
+  isResourceScheme,
+  RESOURCE_SCHEMES,
+  type ResourceScheme,
+} from "@/lib/resourceGraph/resourceRef";
 
-export const OBJECT_TYPES = [
-  "page",
-  "note_block",
-  "media",
-  "highlight",
-  "conversation",
-  "message",
-  "podcast",
-  "content_chunk",
-  "fragment",
-  "contributor",
-  "evidence_span",
-  "library_intelligence_artifact",
-  "library_intelligence_revision",
-] as const;
+export const OBJECT_TYPES = [...RESOURCE_SCHEMES] as const;
 
-export type ObjectType = (typeof OBJECT_TYPES)[number];
-const OBJECT_TYPE_SET = new Set<string>(OBJECT_TYPES);
+export type ObjectType = ResourceScheme;
 
 export interface ObjectRef {
   objectType: ObjectType;
@@ -47,10 +37,12 @@ function objectRefKey(ref: ObjectRef): string {
 }
 
 export function isObjectType(value: string): value is ObjectType {
-  return OBJECT_TYPE_SET.has(value);
+  return isResourceScheme(value);
 }
 
-export async function resolveObjectRefs(refs: ObjectRef[]): Promise<HydratedObjectRef[]> {
+export async function resolveObjectRefs(
+  refs: ObjectRef[],
+): Promise<HydratedObjectRef[]> {
   const params = new URLSearchParams();
   for (const ref of refs) {
     params.append("ref", objectRefKey(ref));
@@ -58,7 +50,7 @@ export async function resolveObjectRefs(refs: ObjectRef[]): Promise<HydratedObje
 
   const response = await apiFetch<ObjectRefsResolveResponse>(
     `/api/object-refs/resolve?${params.toString()}`,
-    { cache: "no-store" }
+    { cache: "no-store" },
   );
   return response.data.objects;
 }
@@ -66,7 +58,7 @@ export async function resolveObjectRefs(refs: ObjectRef[]): Promise<HydratedObje
 export async function searchObjectRefs(
   query: string,
   limit = 8,
-  options: ObjectRefSearchOptions = {}
+  options: ObjectRefSearchOptions = {},
 ): Promise<HydratedObjectRef[]> {
   const params = new URLSearchParams({
     q: query,
@@ -77,7 +69,7 @@ export async function searchObjectRefs(
   }
   const response = await apiFetch<ObjectRefsResolveResponse>(
     `/api/object-refs/search?${params.toString()}`,
-    { cache: "no-store", signal: options.signal }
+    { cache: "no-store", signal: options.signal },
   );
   return response.data.objects;
 }

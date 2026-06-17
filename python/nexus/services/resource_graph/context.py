@@ -40,10 +40,10 @@ from nexus.services.resource_graph.refs import (
 from nexus.services.resource_graph.resolve import ResolvedResource, resolve_ref, resolve_refs
 from nexus.services.resource_graph.schemas import EdgeCreate, EdgeOrigin
 from nexus.services.resource_items.capabilities import (
-    APP_SEARCH_SCOPE_SCHEMES,
     CONVERSATION_CONTEXT_EDGE_ORIGINS,
-    CONVERSATION_SEARCH_SCOPE_SCHEMES,
-    RESOURCE_ITEM_CAPABILITIES,
+    app_search_scope_schemes,
+    conversation_search_scope_schemes,
+    resource_can_attach,
 )
 
 _DEFAULT_LIMIT = 50
@@ -116,7 +116,7 @@ def add_context_ref_without_commit(
     system origins share one attached-context slot for the same target.
     """
     _require_owner(db, viewer_id, conversation_id)
-    if not RESOURCE_ITEM_CAPABILITIES[target.scheme].attachable:
+    if not resource_can_attach(target):
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST,
             "Resource cannot be attached to conversation context",
@@ -317,14 +317,14 @@ def batch_conversations_with_any_edge_to_ref(
 def search_scope_refs_for_conversation(
     db: Session, *, viewer_id: UUID, conversation_id: UUID
 ) -> list[ResourceRef]:
-    """The conversation's ``media:``/``library:`` edge targets, first-attached order."""
+    """The conversation's app-search scope edge targets, first-attached order."""
     rows = db.execute(
         select(ResourceEdge.target_scheme, ResourceEdge.target_id)
         .join(Conversation, Conversation.id == ResourceEdge.source_id)
         .where(
             ResourceEdge.source_scheme == "conversation",
             ResourceEdge.source_id == conversation_id,
-            ResourceEdge.target_scheme.in_(APP_SEARCH_SCOPE_SCHEMES),
+            ResourceEdge.target_scheme.in_(app_search_scope_schemes()),
             ResourceEdge.kind == SEARCH_SCOPE_EDGE_KIND,
             ResourceEdge.origin.in_(CONVERSATION_CONTEXT_EDGE_ORIGINS),
             ResourceEdge.user_id == viewer_id,
@@ -357,7 +357,7 @@ def conversation_has_note_search_scope_refs(
             .where(
                 ResourceEdge.source_scheme == "conversation",
                 ResourceEdge.source_id == conversation_id,
-                ResourceEdge.target_scheme.in_(CONVERSATION_SEARCH_SCOPE_SCHEMES),
+                ResourceEdge.target_scheme.in_(conversation_search_scope_schemes()),
                 ResourceEdge.kind == SEARCH_SCOPE_EDGE_KIND,
                 ResourceEdge.origin.in_(CONVERSATION_CONTEXT_EDGE_ORIGINS),
                 ResourceEdge.user_id == viewer_id,

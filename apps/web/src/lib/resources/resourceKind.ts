@@ -1,6 +1,6 @@
 /**
- * Display mapping for resource refs: scheme → icon and scheme → object-ref
- * type. Parsing/formatting and the scheme vocabulary are owned by
+ * Display mapping for resource refs: scheme -> icon. Parsing/formatting and
+ * the scheme vocabulary are owned by
  * `@/lib/resourceGraph/resourceRef` (AC17) — this module never splits a ref.
  */
 
@@ -27,6 +27,7 @@ import {
   parseResourceRef,
   type ResourceScheme,
 } from "@/lib/resourceGraph/resourceRef";
+import { resourceSchemeIsLinkable } from "./resourceCapabilities.generated";
 
 const RESOURCE_SCHEME_ICONS = {
   media: FileText,
@@ -48,26 +49,10 @@ const RESOURCE_SCHEME_ICONS = {
   podcast: Disc3,
 } satisfies Record<ResourceScheme, LucideIcon>;
 
-// Schemes that map to an openable object-ref type (`objectRefs.ts`). Schemes
-// without an entry (library, oracle_*, external_snapshot) are not object-ref-resolvable.
-const RESOURCE_SCHEME_OBJECT_TYPES: Partial<Record<ResourceScheme, ObjectType>> = {
-  media: "media",
-  evidence_span: "evidence_span",
-  content_chunk: "content_chunk",
-  highlight: "highlight",
-  page: "page",
-  note_block: "note_block",
-  fragment: "fragment",
-  conversation: "conversation",
-  message: "message",
-  library_intelligence_artifact: "library_intelligence_artifact",
-  library_intelligence_revision: "library_intelligence_revision",
-  contributor: "contributor",
-  podcast: "podcast",
-};
-
-export function resourceObjectTypeForScheme(scheme: ResourceScheme): ObjectType | null {
-  return RESOURCE_SCHEME_OBJECT_TYPES[scheme] ?? null;
+export function resourceObjectTypeForScheme(
+  scheme: ResourceScheme,
+): ObjectType | null {
+  return resourceSchemeIsLinkable(scheme) ? scheme : null;
 }
 
 export function resourceIconForUri(resourceRef: string): LucideIcon {
