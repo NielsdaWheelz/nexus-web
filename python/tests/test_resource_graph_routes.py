@@ -42,6 +42,7 @@ CONTEXT_REF_KEYS = {
     "id",
     "conversation_id",
     "resource_ref",
+    "activation",
     "label",
     "summary",
     "missing",
@@ -146,6 +147,12 @@ def test_add_context_ref_returns_resolved_payload_and_is_idempotent(
     )
     assert data["resource_ref"] == resource_ref
     assert data["conversation_id"] == str(conversation_id)
+    assert data["activation"] == {
+        "resource_ref": resource_ref,
+        "kind": "route",
+        "href": f"/media/{media_id}",
+        "unresolved_reason": None,
+    }
     assert "Context API Doc" in data["label"], f"Label should be hydrated; got {data['label']!r}"
     assert data["missing"] is False
 

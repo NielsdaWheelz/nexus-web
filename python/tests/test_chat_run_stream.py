@@ -471,6 +471,12 @@ class TestChatRunEventStream:
             "id": str(context_edge_id),
             "conversation_id": str(conversation_id),
             "resource_ref": resource_ref,
+            "activation": {
+                "resource_ref": resource_ref,
+                "kind": "route",
+                "href": f"/media/{uuid4()}#evidence-{uuid4()}",
+                "unresolved_reason": None,
+            },
             "label": "Chunk evidence",
             "summary": "A cited chunk.",
             "missing": False,

@@ -308,8 +308,8 @@ def test_anchored_highlight_is_numbered_and_persists_valid_row(direct_db: Direct
         assert row["cited_edge_id"] == edge.id, (
             f"Telemetry row must point at its citation edge; {row['cited_edge_id']} != {edge.id}"
         )
-        assert (edge.target_scheme, edge.target_id) == ("media", media_id), (
-            "A media-anchored highlight citation targets its media; got "
+        assert (edge.target_scheme, edge.target_id) == ("highlight", highlight_id), (
+            "A media-anchored highlight citation targets the highlight; got "
             f"{edge.target_scheme}:{edge.target_id}"
         )
         assert edge.snapshot is not None and edge.snapshot.get("result_type") == "highlight"
@@ -324,7 +324,7 @@ def test_anchored_highlight_is_numbered_and_persists_valid_row(direct_db: Direct
         assert [c.ordinal for c in rehydrated.citations] == [1], (
             f"assistant message GET must rehydrate its citation; got {rehydrated.citations}"
         )
-        assert rehydrated.citations[0].target_ref.type == "media"
+        assert rehydrated.citations[0].target_ref.type == "highlight"
 
         chat_runs._persist_attached_citations(session, run, ())
         assert _tool_calls(session, run.assistant_message_id) == []
@@ -487,7 +487,7 @@ def test_reexecution_with_fewer_citations_prunes_phantom_edges(direct_db: Direct
             f"The pruned row's phantom citation edge must be deleted; got "
             f"{[(e.ordinal, e.target_scheme, e.target_id) for e in surviving]}"
         )
-        assert (surviving[0].target_scheme, surviving[0].target_id) == ("media", first_media)
+        assert (surviving[0].target_scheme, surviving[0].target_id) == ("highlight", first_id)
         remaining_rows = _retrievals_under(session, tool_call_id)
         assert len(remaining_rows) == 1, (
             f"Only one telemetry row should survive; got {remaining_rows}"
@@ -557,8 +557,8 @@ def test_read_evidence_with_materializable_retrieval_persists_next_ordinal(
             f"The edge ordinal is the read's turn-global n; got {edges[0].ordinal}"
         )
         assert rows[0]["cited_edge_id"] == edges[0].id
-        assert (edges[0].target_scheme, edges[0].target_id) == ("media", media_id), (
-            f"Highlight evidence cites its media; got {edges[0].target_scheme}"
+        assert (edges[0].target_scheme, edges[0].target_id) == ("highlight", highlight_id), (
+            f"Highlight evidence cites its highlight; got {edges[0].target_scheme}"
         )
 
     _register_user_cleanup(direct_db, user_id)
@@ -615,7 +615,6 @@ def test_read_evidence_section_full_and_page_range_persist_citations(
         assert [read.citation_result_type for read in reads] == ["fragment", "media", "media"]
 
         run = _make_chat_run(session, conversation_id, user_id)
-        expected_target_media = [media_id, media_id, pdf_media_id]
         tool_call_ids: list[UUID] = []
         for offset, read in enumerate(reads):
             tool_call_id = _insert_read_tool_call(
@@ -647,8 +646,10 @@ def test_read_evidence_section_full_and_page_range_persist_citations(
             f"Each read consumes its own turn-global n; got {[edge.ordinal for edge in edges]}"
         )
         assert [(edge.target_scheme, edge.target_id) for edge in edges] == [
-            ("media", target) for target in expected_target_media
-        ], "Section/full/page_range evidence cites the anchoring media"
+            ("fragment", fragment_id),
+            ("media", media_id),
+            ("media", pdf_media_id),
+        ], "Section/full/page_range evidence cites the exact citable target"
 
     _register_user_cleanup(direct_db, user_id)
     direct_db.register_cleanup("conversations", "id", conversation_id)

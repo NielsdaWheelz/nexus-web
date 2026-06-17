@@ -1876,6 +1876,7 @@ class TestCitationEdgeWriteThrough:
                 "source_label": "Section 1",
                 "snippet": "chunk snippet",
                 "deep_link": "/media/deep-link",
+                "citation_target": f"content_chunk:{chunk_id}",
                 "citation_label": "Chunk title",
                 "context_ref": {"type": "content_chunk", "id": str(chunk_id)},
                 "evidence_span_id": None,
