@@ -14,7 +14,6 @@ export const OBJECT_TYPES = [
   "evidence_span",
   "library_intelligence_artifact",
   "library_intelligence_revision",
-  "tag",
 ] as const;
 
 export type ObjectType = (typeof OBJECT_TYPES)[number];

@@ -10895,7 +10895,7 @@ class TestMigration0148NotesPagesResourceGraphOrder:
             )
         assert count == 2
 
-    def test_tags_and_resource_view_states_exist_at_head(self, head_engine):
+    def test_resource_view_states_exist_at_head(self, head_engine):
         with Session(head_engine) as session:
             view_state_columns = {
                 row[0]
@@ -10920,7 +10920,6 @@ class TestMigration0148NotesPagesResourceGraphOrder:
             }.issubset(view_state_columns)
 
             user_id = uuid4()
-            tag_id = uuid4()
             page_id = uuid4()
             block_id = uuid4()
             session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
@@ -10960,15 +10959,6 @@ class TestMigration0148NotesPagesResourceGraphOrder:
             session.execute(
                 text(
                     """
-                    INSERT INTO tags (id, user_id, name, slug)
-                    VALUES (:id, :user_id, 'Project', 'project')
-                    """
-                ),
-                {"id": tag_id, "user_id": user_id},
-            )
-            session.execute(
-                text(
-                    """
                     INSERT INTO resource_view_states (
                         user_id, surface_scheme, surface_id, edge_id,
                         target_scheme, target_id, state
@@ -10987,20 +10977,6 @@ class TestMigration0148NotesPagesResourceGraphOrder:
                 },
             )
             session.commit()
-
-            with pytest.raises(IntegrityError) as exc_info:
-                session.execute(
-                    text(
-                        """
-                        INSERT INTO tags (user_id, name, slug)
-                        VALUES (:user_id, 'Project Again', 'project')
-                        """
-                    ),
-                    {"user_id": user_id},
-                )
-                session.flush()
-            session.rollback()
-        assert "uix_tags_user_slug" in str(exc_info.value)
 
 
 class TestMigration0151LlmProviderRuntimeCatalog:
@@ -11748,10 +11724,8 @@ class TestMigration0148NotesPagesBackfill:
             reset_test_schema()
 
 
-# The scannable resource-graph schemes as of 0147. synapse_suppressions mirrors
-# these — NOT a verbatim mirror of resource_edges post-0148, which adds 'tag' as a
-# 17th scheme: synapse never proposes a connection to or from a tag, so the
-# dismissal memory deliberately omits it.
+# The scannable resource-graph schemes. synapse_suppressions mirrors these, not
+# every resource_edges scheme ever introduced.
 RESOURCE_EDGE_SCHEMES = (
     "media",
     "library",
@@ -12932,3 +12906,428 @@ class TestMigration0159DropConversationMedia:
                 text("SELECT to_regclass('public.conversation_media')")
             ).scalar_one()
         assert table_name is None
+
+
+class TestMigration0163DropUserGraphTags:
+    """0163: user graph tags are removed from storage and scheme vocabularies."""
+
+    @pytest.fixture(scope="class")
+    def head_engine(self):
+        reset_test_schema()
+        result = run_alembic_command("upgrade head")
+        if result.returncode != 0:
+            pytest.fail(f"Migration upgrade failed: {result.stderr}")
+        engine = create_engine(get_test_database_url())
+        yield engine
+        engine.dispose()
+        reset_test_schema()
+
+    def _constraint_def(self, session, table: str, conname: str) -> str:
+        return session.execute(
+            text(
+                """
+                SELECT pg_get_constraintdef(oid)
+                FROM pg_constraint
+                WHERE conrelid = CAST(:table AS regclass) AND conname = :conname
+                """
+            ),
+            {"table": table, "conname": conname},
+        ).scalar_one()
+
+    def test_user_graph_tag_schema_absent_at_head(self, head_engine):
+        from nexus.services.resource_graph.refs import RESOURCE_SCHEMES
+
+        with Session(head_engine) as session:
+            assert session.scalar(text("SELECT to_regclass('public.tags')")) is None
+            checks = {
+                "resource_edges": (
+                    self._constraint_def(
+                        session, "resource_edges", "ck_resource_edges_source_scheme"
+                    ),
+                    self._constraint_def(
+                        session, "resource_edges", "ck_resource_edges_target_scheme"
+                    ),
+                ),
+                "resource_versions": (
+                    self._constraint_def(
+                        session,
+                        "resource_versions",
+                        "ck_resource_versions_resource_scheme",
+                    ),
+                ),
+                "resource_view_states": (
+                    self._constraint_def(
+                        session,
+                        "resource_view_states",
+                        "ck_resource_view_states_surface_scheme",
+                    ),
+                    self._constraint_def(
+                        session,
+                        "resource_view_states",
+                        "ck_resource_view_states_target_scheme",
+                    ),
+                ),
+                "chat_run_turn_contexts": (
+                    self._constraint_def(
+                        session,
+                        "chat_run_turn_contexts",
+                        "ck_chat_run_turn_contexts_requested_subject_scheme",
+                    ),
+                    self._constraint_def(
+                        session,
+                        "chat_run_turn_contexts",
+                        "ck_chat_run_turn_contexts_subject_scheme",
+                    ),
+                ),
+            }
+
+        for table, table_checks in checks.items():
+            for check in table_checks:
+                schemes = set(re.findall(r"'([^']+)'", check))
+                assert "tag" not in schemes, f"{table} still admits tag: {check}"
+                assert schemes == set(RESOURCE_SCHEMES), f"{table} drifted: {check}"
+
+    def test_0163_deletes_and_normalizes_existing_tag_data(self):
+        reset_test_schema()
+        try:
+            result = run_alembic_command("upgrade 0162")
+            assert result.returncode == 0, f"upgrade to 0162 failed: {result.stderr}"
+
+            user_id = uuid4()
+            model_id = uuid4()
+            page_id = uuid4()
+            block_id = uuid4()
+            tag_id = uuid4()
+            second_tag_id = uuid4()
+            tag_edge_id = uuid4()
+            conversation_id = uuid4()
+            run_delete_id = uuid4()
+            run_keep_id = uuid4()
+            message_ids = [uuid4(), uuid4(), uuid4(), uuid4()]
+
+            engine = create_engine(get_test_database_url())
+            try:
+                with Session(engine) as session:
+                    session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO models (id, provider, model_name, max_context_tokens)
+                            VALUES (:id, 'openai', 'migration-test', 100000)
+                            """
+                        ),
+                        {"id": model_id},
+                    )
+                    session.execute(
+                        text(
+                            "INSERT INTO pages (id, user_id, title) "
+                            "VALUES (:id, :user_id, 'Tagged page')"
+                        ),
+                        {"id": page_id, "user_id": user_id},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO tags (id, user_id, name, slug)
+                            VALUES
+                                (:tag_id, :user_id, 'SOTA', 'sota'),
+                                (:second_tag_id, :user_id, 'AI', 'ai')
+                            """
+                        ),
+                        {
+                            "tag_id": tag_id,
+                            "second_tag_id": second_tag_id,
+                            "user_id": user_id,
+                        },
+                    )
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO note_blocks (
+                                id, user_id, body_pm_json, body_text
+                            )
+                            VALUES (:id, :user_id, CAST(:body_pm_json AS jsonb), 'stale')
+                            """
+                        ),
+                        {
+                            "id": block_id,
+                            "user_id": user_id,
+                            "body_pm_json": json.dumps(
+                                {
+                                    "type": "paragraph",
+                                    "content": [
+                                        {"type": "text", "text": "before "},
+                                        {
+                                            "type": "object_ref",
+                                            "attrs": {
+                                                "objectType": "tag",
+                                                "objectId": str(tag_id),
+                                                "label": "stale label",
+                                            },
+                                        },
+                                        {"type": "text", "text": " after "},
+                                        {
+                                            "type": "object_ref",
+                                            "attrs": {
+                                                "object_type": "tag",
+                                                "object_id": str(second_tag_id),
+                                            },
+                                        },
+                                    ],
+                                }
+                            ),
+                        },
+                    )
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO resource_edges (
+                                id, user_id, kind, origin, source_scheme, source_id,
+                                target_scheme, target_id
+                            )
+                            VALUES (
+                                :id, :user_id, 'context', 'note_body', 'note_block', :block_id,
+                                'tag', :tag_id
+                            )
+                            """
+                        ),
+                        {
+                            "id": tag_edge_id,
+                            "user_id": user_id,
+                            "block_id": block_id,
+                            "tag_id": tag_id,
+                        },
+                    )
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO resource_versions (
+                                user_id, resource_scheme, resource_id, lane
+                            )
+                            VALUES (:user_id, 'tag', :tag_id, 'body')
+                            """
+                        ),
+                        {"user_id": user_id, "tag_id": tag_id},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO resource_view_states (
+                                user_id, surface_scheme, surface_id, edge_id,
+                                target_scheme, target_id, state
+                            )
+                            VALUES (
+                                :user_id, 'page', :page_id, :edge_id,
+                                'tag', :tag_id, '{"collapsed": true}'::jsonb
+                            )
+                            """
+                        ),
+                        {
+                            "user_id": user_id,
+                            "page_id": page_id,
+                            "edge_id": tag_edge_id,
+                            "tag_id": tag_id,
+                        },
+                    )
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO conversations (id, owner_user_id, sharing, next_seq)
+                            VALUES (:id, :owner_user_id, 'private', 5)
+                            """
+                        ),
+                        {"id": conversation_id, "owner_user_id": user_id},
+                    )
+                    for index, message_id, parent_message_id in (
+                        (1, message_ids[0], None),
+                        (2, message_ids[1], message_ids[0]),
+                        (3, message_ids[2], None),
+                        (4, message_ids[3], message_ids[2]),
+                    ):
+                        session.execute(
+                            text(
+                                """
+                                INSERT INTO messages (
+                                    id, conversation_id, seq, role, content, status,
+                                    parent_message_id, message_document
+                                )
+                                VALUES (
+                                    :id, :conversation_id, :seq, :role, :content,
+                                    'complete', :parent_message_id,
+                                    '{"type": "message_document", "blocks": []}'::jsonb
+                                )
+                                """
+                            ),
+                            {
+                                "id": message_id,
+                                "conversation_id": conversation_id,
+                                "seq": index,
+                                "role": "user" if index in {1, 3} else "assistant",
+                                "content": f"message {index}",
+                                "parent_message_id": parent_message_id,
+                            },
+                        )
+                    for run_id, user_message_id, assistant_message_id in (
+                        (run_delete_id, message_ids[0], message_ids[1]),
+                        (run_keep_id, message_ids[2], message_ids[3]),
+                    ):
+                        session.execute(
+                            text(
+                                """
+                                INSERT INTO chat_runs (
+                                    id, owner_user_id, conversation_id, user_message_id,
+                                    assistant_message_id, idempotency_key, payload_hash,
+                                    status, model_id, reasoning, key_mode
+                                )
+                                VALUES (
+                                    :id, :owner_user_id, :conversation_id, :user_message_id,
+                                    :assistant_message_id, :idempotency_key, 'hash',
+                                    'complete', :model_id, 'default', 'auto'
+                                )
+                                """
+                            ),
+                            {
+                                "id": run_id,
+                                "owner_user_id": user_id,
+                                "conversation_id": conversation_id,
+                                "user_message_id": user_message_id,
+                                "assistant_message_id": assistant_message_id,
+                                "idempotency_key": str(run_id),
+                                "model_id": model_id,
+                            },
+                        )
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO chat_run_turn_contexts (
+                                chat_run_id, requested_subject_scheme, requested_subject_id,
+                                subject_scheme, subject_id
+                            )
+                            VALUES (:run_id, 'tag', :tag_id, 'tag', :tag_id)
+                            """
+                        ),
+                        {"run_id": run_delete_id, "tag_id": tag_id},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO chat_run_turn_contexts (
+                                chat_run_id, requested_subject_scheme, requested_subject_id,
+                                subject_scheme, subject_id, subject_context_edge_id,
+                                reader_selection_media_id, reader_selection_highlight_id
+                            )
+                            VALUES (
+                                :run_id, 'tag', :tag_id, 'tag', :tag_id, :edge_id,
+                                :media_id, :highlight_id
+                            )
+                            """
+                        ),
+                        {
+                            "run_id": run_keep_id,
+                            "tag_id": tag_id,
+                            "edge_id": tag_edge_id,
+                            "media_id": uuid4(),
+                            "highlight_id": uuid4(),
+                        },
+                    )
+                    session.commit()
+            finally:
+                engine.dispose()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade to head failed: {result.stderr}"
+
+            engine = create_engine(get_test_database_url())
+            try:
+                with Session(engine) as session:
+                    assert session.scalar(text("SELECT to_regclass('public.tags')")) is None
+                    body_pm_json, body_text = session.execute(
+                        text("SELECT body_pm_json, body_text FROM note_blocks WHERE id = :id"),
+                        {"id": block_id},
+                    ).one()
+                    assert body_pm_json == {
+                        "type": "paragraph",
+                        "content": [
+                            {"type": "text", "text": "before "},
+                            {"type": "text", "text": "#SOTA"},
+                            {"type": "text", "text": " after "},
+                            {"type": "text", "text": "#AI"},
+                        ],
+                    }
+                    assert body_text == "before #SOTA after #AI"
+                    assert (
+                        session.scalar(
+                            text(
+                                """
+                            SELECT count(*) FROM resource_edges
+                            WHERE source_scheme = 'tag' OR target_scheme = 'tag'
+                            """
+                            )
+                        )
+                        == 0
+                    )
+                    assert (
+                        session.scalar(
+                            text(
+                                "SELECT count(*) FROM resource_versions WHERE resource_scheme = 'tag'"
+                            )
+                        )
+                        == 0
+                    )
+                    assert (
+                        session.scalar(
+                            text(
+                                """
+                            SELECT count(*) FROM resource_view_states
+                            WHERE surface_scheme = 'tag' OR target_scheme = 'tag'
+                            """
+                            )
+                        )
+                        == 0
+                    )
+                    assert (
+                        session.scalar(
+                            text(
+                                """
+                            SELECT count(*) FROM chat_run_turn_contexts
+                            WHERE requested_subject_scheme = 'tag'
+                               OR subject_scheme = 'tag'
+                            """
+                            )
+                        )
+                        == 0
+                    )
+                    assert (
+                        session.scalar(
+                            text(
+                                """
+                            SELECT count(*) FROM chat_run_turn_contexts
+                            WHERE chat_run_id = :run_id
+                            """
+                            ),
+                            {"run_id": run_delete_id},
+                        )
+                        == 0
+                    )
+                    kept = session.execute(
+                        text(
+                            """
+                            SELECT requested_subject_scheme, requested_subject_id,
+                                   subject_scheme, subject_id, subject_context_edge_id,
+                                   reader_selection_highlight_id
+                            FROM chat_run_turn_contexts
+                            WHERE chat_run_id = :run_id
+                            """
+                        ),
+                        {"run_id": run_keep_id},
+                    ).one()
+                    assert kept[0] is None
+                    assert kept[1] is None
+                    assert kept[2] is None
+                    assert kept[3] is None
+                    assert kept[4] is None
+                    assert kept[5] is not None
+            finally:
+                engine.dispose()
+        finally:
+            reset_test_schema()

@@ -32,7 +32,6 @@ from nexus.db.models import (
     NoteBlock,
     Page,
     PinnedObjectRef,
-    Tag,
 )
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.schemas.resource_items import (
@@ -259,14 +258,6 @@ def _hydrated_from_loaded(
             ),
             icon="sparkles",
         )
-    if object_type == "tag":
-        return HydratedObjectRef(
-            object_type="tag",
-            object_id=object_id,
-            label=loaded.title or "",
-            route=None,
-            icon="tag",
-        )
     if object_type == "contributor":
         # justify-defect: hydrate_object_ref handles contributors before loading.
         raise AssertionError("contributor refs hydrate through contributors service")
@@ -316,7 +307,6 @@ def search_object_refs(
         return []
 
     pattern = f"%{query}%"
-    tag_pattern = f"%{query.removeprefix('#')}%"
     results: list[HydratedObjectRef] = []
 
     if _search_includes(object_types, "page"):
@@ -350,22 +340,6 @@ def search_object_refs(
                     viewer_id,
                     ObjectRef(object_type="note_block", object_id=object_id),
                 )
-            )
-            if len(results) >= limit:
-                return results
-
-    if _search_includes(object_types, "tag"):
-        for object_id in db.scalars(
-            select(Tag.id)
-            .where(
-                Tag.user_id == viewer_id,
-                Tag.name.ilike(tag_pattern) | Tag.slug.ilike(tag_pattern),
-            )
-            .order_by(Tag.name.asc(), Tag.id.asc())
-            .limit(limit)
-        ):
-            results.append(
-                hydrate_object_ref(db, viewer_id, ObjectRef(object_type="tag", object_id=object_id))
             )
             if len(results) >= limit:
                 return results

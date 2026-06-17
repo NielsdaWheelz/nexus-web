@@ -12,7 +12,6 @@ single product-spine contract for durable resource connections:
 - containment;
 - backlinks and generic connections;
 - citations;
-- tags;
 - conversation context refs;
 - attachments;
 - highlight-note attachments;
@@ -35,7 +34,8 @@ shape in `resource_edges` or is not a durable connection.
 - `docs/cutovers/resource-provenance-graph-hard-cutover.md` - introduced one
   flat `resource_edges` table and killed sidecar relation vocabulary.
 - `docs/cutovers/notes-pages-object-graph-hard-cutover.md` - added ordered note
-  containment, `tag`, and explicit search-scope allowlists.
+  containment and explicit search-scope allowlists. Its tag-resource language
+  is superseded by `docs/cutovers/user-graph-tags-hard-cutover.md`.
 - `docs/cutovers/incoming-connections-reader-sidecar-hard-cutover.md` - made
   incoming reader connections a read model over `resource_edges`.
 - `docs/cutovers/search-intent-model-hard-cutover.md` - made
@@ -345,7 +345,6 @@ compile-time contract.
 | Page/block containment | `page|note_block -> note_block`, `kind=context`, `origin=note_containment`, `source_order_key` required | `resource_graph.documents` |
 | Backlinks and connection lists | read model over `resource_edges` with explicit filters | `resource_graph.connections` and caller surface policy |
 | Message/Oracle/LI citations | output resource -> cited target, `origin=citation`, ordinal + snapshot. For Library Intelligence, the durable output resource is the immutable artifact revision, not the mutable artifact head. | `resource_graph.citations` and feature writers |
-| Tags | `tag` resource targeted by `note_body` or `user` edges | `resource_graph.tags`, body sync, user link surface |
 | Conversation context refs | `conversation -> target`, `kind=context`, `origin=user|citation|system` | `resource_graph.context` |
 | Search scope from graph | explicit origin/kind/scheme/ordinal allowlists | `services/search/scope.py` |
 | Highlight note attachment | `highlight -> note_block`, `origin=highlight_note` | highlight-note service path |
@@ -464,12 +463,12 @@ Search:
 Purpose:
 
 - replace-set projection of durable refs parsed from note/page/block body
-  content, including inline refs, embeds, tags, and inline attachments.
+  content, including inline refs, embeds, and inline attachments.
 
 Shape:
 
 - source is `page` or `note_block`, usually `note_block` for block-local refs;
-- target is any visible supported resource, including `tag`;
+- target is any visible supported resource;
 - `kind='context'` unless the parser explicitly supports stance markup later;
 - no ordinal;
 - no snapshot;
@@ -710,7 +709,7 @@ Pages and note blocks compose with the graph like this:
 - page rows own identity/title;
 - note block rows own stable body identity;
 - containment edges own page/block tree shape and sibling order;
-- note-body edges own parsed refs, embeds, tags, and inline attachments;
+- note-body edges own parsed refs, embeds, and inline attachments;
 - highlight-note edges own highlight attachments;
 - note indexing consumes graph-backed containment and body refs as inputs;
 - search consumes only explicit allowlisted edge origins.
@@ -1115,7 +1114,7 @@ After this cutover:
 - every search behavior is default-deny and allowlisted;
 - containment is structural, but never search-admission by accident;
 - citations are renderable edges, not scope admission;
-- tags and attachments are edge patterns, not special stores;
+- attachments are edge patterns, not special stores;
 - conversation context refs are graph edges, not `conversation_media` or
   `conversation_references`;
 - frontend and backend graph vocabulary cannot drift silently;

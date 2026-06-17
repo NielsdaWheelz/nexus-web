@@ -12,7 +12,6 @@ from sqlalchemy.orm import Session
 from nexus.db.models import NoteBlock
 from nexus.errors import ApiError, ApiErrorCode, ConflictError
 from nexus.schemas.resource_items import is_object_type
-from nexus.services.resource_graph import tags as graph_tags
 from nexus.services.resource_graph.edges import replace_edges_for_origin
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.resource_graph.schemas import EdgeCreate
@@ -132,13 +131,13 @@ def sync_note_body_edges(db: Session, *, viewer_id: UUID, block: NoteBlock) -> N
         origin="note_body",
         edges=[
             EdgeCreate(source=source, target=target, kind="context", origin="note_body")
-            for target in _body_target_refs(db, viewer_id, block.body_pm_json)
+            for target in _body_target_refs(block.body_pm_json)
             if target != source
         ],
     )
 
 
-def _body_target_refs(db: Session, viewer_id: UUID, value: object) -> list[ResourceRef]:
+def _body_target_refs(value: object) -> list[ResourceRef]:
     refs: list[ResourceRef] = []
     seen: set[str] = set()
 
@@ -147,18 +146,15 @@ def _body_target_refs(db: Session, viewer_id: UUID, value: object) -> list[Resou
             seen.add(ref.uri)
             refs.append(ref)
 
-    def visit(node: object, *, in_code: bool = False) -> None:
+    def visit(node: object) -> None:
         if isinstance(node, list):
             for child in node:
-                visit(child, in_code=in_code)
+                visit(child)
             return
         if not isinstance(node, dict):
             return
         node_type = node.get("type")
-        if node_type == "text" and isinstance(node.get("text"), str) and not in_code:
-            for name in graph_tags.tag_names_from_text(str(node["text"])):
-                append_ref(graph_tags.ref_for_tag_name(db, viewer_id=viewer_id, name=name))
-        elif node_type in {"object_ref", "object_embed"} and isinstance(node.get("attrs"), dict):
+        if node_type in {"object_ref", "object_embed"} and isinstance(node.get("attrs"), dict):
             attrs = node["attrs"]
             object_type = attrs.get("objectType")
             object_id = attrs.get("objectId")
@@ -166,7 +162,7 @@ def _body_target_refs(db: Session, viewer_id: UUID, value: object) -> list[Resou
                 append_ref(
                     ResourceRef(scheme=cast(ResourceScheme, object_type), id=UUID(object_id))
                 )
-        visit(node.get("content"), in_code=in_code or node_type == "code_block")
+        visit(node.get("content"))
 
     visit(value)
     return refs

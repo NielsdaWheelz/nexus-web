@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { searchObjectRefs } from "./objectRefs";
+import { isObjectType, searchObjectRefs } from "./objectRefs";
 
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -19,21 +19,25 @@ describe("object ref api", () => {
         data: {
           objects: [
             {
-              objectType: "tag",
+              objectType: "page",
               objectId: "77777777-7777-4777-8777-777777777777",
-              label: "#SOTA",
-              route: null,
+              label: "SOTA",
+              route: "/pages/77777777-7777-4777-8777-777777777777",
             },
           ],
         },
       })
     );
 
-    await expect(searchObjectRefs("sot", 4, { objectTypes: ["tag"] })).resolves.toHaveLength(1);
+    await expect(searchObjectRefs("sot", 4, { objectTypes: ["page"] })).resolves.toHaveLength(1);
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/object-refs/search?q=sot&limit=4&type=tag",
+      "/api/object-refs/search?q=sot&limit=4&type=page",
       expect.objectContaining({ cache: "no-store" })
     );
+  });
+
+  it("does not admit user graph tags as object types", () => {
+    expect(isObjectType("tag")).toBe(false);
   });
 });

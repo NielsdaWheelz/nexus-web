@@ -54,7 +54,7 @@ interface ObjectRefTextRange {
   from: number;
   to: number;
   query: string;
-  filter: "all" | "page_note" | "tag";
+  filter: "all" | "page_note";
 }
 
 interface ObjectRefMenuState extends ObjectRefTextRange {
@@ -800,18 +800,6 @@ function objectRefTriggerFromState(state: EditorState): ObjectRefTextRange | nul
     };
   }
 
-  const tagMatch = /(^|\s)#([A-Za-z0-9][A-Za-z0-9_-]{0,79})$/.exec(textBefore);
-  if (tagMatch) {
-    const query = tagMatch[2]!.trim();
-    const tagIndex = tagMatch.index + tagMatch[1]!.length;
-    return {
-      from: $from.pos - ($from.parentOffset - tagIndex),
-      to: $from.pos,
-      query,
-      filter: "tag",
-    };
-  }
-
   const match = /(^|\s)@([A-Za-z0-9][A-Za-z0-9 _.'-]{0,79})$/.exec(textBefore);
   if (!match) {
     return null;
@@ -860,18 +848,12 @@ function filterObjectRefResults(
       (object) => object.objectType === "page" || object.objectType === "note_block"
     );
   }
-  if (filter === "tag") {
-    return objects.filter((object) => object.objectType === "tag");
-  }
   return objects;
 }
 
 function objectRefSearchOptions(filter: ObjectRefTextRange["filter"]): ObjectRefSearchOptions {
   if (filter === "page_note") {
     return { objectTypes: ["page", "note_block"] };
-  }
-  if (filter === "tag") {
-    return { objectTypes: ["tag"] };
   }
   return {};
 }

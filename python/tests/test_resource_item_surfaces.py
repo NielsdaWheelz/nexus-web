@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.db.models import Contributor, Tag
+from nexus.db.models import Contributor
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.resource_items.surfaces import resource_item_out
 from tests.factories import (
@@ -69,8 +69,7 @@ def test_generated_and_identity_resources_project_existing_routes(
         kind="person",
         status="verified",
     )
-    tag = Tag(id=uuid4(), user_id=bootstrapped_user, name="Routes", slug="routes")
-    db_session.add_all([contributor, tag])
+    db_session.add(contributor)
     db_session.flush()
 
     assert (
@@ -87,7 +86,6 @@ def test_generated_and_identity_resources_project_existing_routes(
     assert _route(db_session, bootstrapped_user, "contributor", contributor.id) == (
         "/authors/route-author"
     )
-    assert _route(db_session, bootstrapped_user, "tag", tag.id) is None
 
 
 def _route(db: Session, viewer_id: UUID, scheme: ResourceScheme, resource_id: UUID) -> str | None:

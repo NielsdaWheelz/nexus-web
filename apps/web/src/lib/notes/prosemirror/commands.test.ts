@@ -72,6 +72,29 @@ describe("notes ProseMirror commands", () => {
     expect(refs).toEqual([{ objectType: "contributor", objectId, label: "Ada Lovelace" }]);
   });
 
+  it("leaves user graph tag object-ref syntax as text", () => {
+    const objectId = "77777777-7777-4777-8777-777777777777";
+    const doc = outlineSchema.nodeFromJSON(outlineJsonFromTexts(["see "]));
+    const state = EditorState.create({
+      schema: outlineSchema,
+      doc,
+      plugins: [createObjectRefSyntaxPlugin()],
+    });
+
+    const { state: nextState } = state.applyTransaction(
+      state.tr.insertText(`[[tag:${objectId}|#sota]]`, 6)
+    );
+    const refs: Array<Record<string, unknown>> = [];
+    nextState.doc.descendants((node) => {
+      if (node.type === outlineSchema.nodes.object_ref) {
+        refs.push(node.attrs);
+      }
+    });
+
+    expect(refs).toEqual([]);
+    expect(outlineTexts(nextState.doc)).toEqual([`see [[tag:${objectId}|#sota]]`]);
+  });
+
   it("merges a block backward at the start of the block", () => {
     const doc = outlineSchema.nodeFromJSON(outlineJsonFromTexts(["alpha", " beta"]));
     const state = EditorState.create({

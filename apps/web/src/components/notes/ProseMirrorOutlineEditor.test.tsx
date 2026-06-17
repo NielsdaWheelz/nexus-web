@@ -244,7 +244,7 @@ describe("ProseMirrorOutlineEditor object refs", () => {
     expect(onOpenObject).toHaveBeenCalledWith("media", objectId, true);
   });
 
-  it("converts typed tag resource refs into object ref chips", async () => {
+  it("leaves typed tag resource refs as text", async () => {
     const user = userEvent.setup();
     const tagId = "77777777-7777-4777-8777-777777777777";
 
@@ -260,7 +260,8 @@ describe("ProseMirrorOutlineEditor object refs", () => {
     await user.click(editor);
     await user.keyboard(`[[[[tag:${tagId}|#sota]]`);
 
-    await screen.findByRole("link", { name: "Open #sota" });
+    expect(screen.queryByRole("link", { name: "Open #sota" })).toBeNull();
+    expect(editor).toHaveTextContent(`[[tag:${tagId}|#sota]]`);
   });
 
   it("inserts object refs from @ autocomplete", async () => {
@@ -349,24 +350,9 @@ describe("ProseMirrorOutlineEditor object refs", () => {
     });
   });
 
-  it("inserts tag refs from # autocomplete", async () => {
+  it("keeps hashtags as text without opening autocomplete", async () => {
     const user = userEvent.setup();
-    const tagId = "77777777-7777-4777-8777-777777777777";
-    const mediaId = "66666666-6666-4666-8666-666666666666";
-    const searchObjects = vi.fn(async (): Promise<HydratedObjectRef[]> => [
-      {
-        objectType: "media",
-        objectId: mediaId,
-        label: "SOTA Media",
-        route: `/media/${mediaId}`,
-      },
-      {
-        objectType: "tag",
-        objectId: tagId,
-        label: "#SOTA",
-        route: null,
-      },
-    ]);
+    const searchObjects = vi.fn(async (): Promise<HydratedObjectRef[]> => []);
 
     render(
       <ProseMirrorOutlineEditor
@@ -379,16 +365,10 @@ describe("ProseMirrorOutlineEditor object refs", () => {
     const editor = screen.getByRole("textbox", { name: "Notes outline" });
     await user.click(editor);
     await user.keyboard("#sot");
-    const option = await screen.findByRole("option", { name: /#SOTA/ });
 
-    expect(screen.queryByRole("option", { name: /SOTA Media/ })).toBeNull();
-
-    await user.click(option);
-
-    await screen.findByRole("link", { name: "Open #SOTA" });
-    await waitFor(() => {
-      expect(searchObjects).toHaveBeenLastCalledWith("sot", { objectTypes: ["tag"] });
-    });
+    expect(searchObjects).not.toHaveBeenCalled();
+    expect(screen.queryByRole("option")).toBeNull();
+    expect(editor).toHaveTextContent("#sot");
   });
 
   it("opens object ref autocomplete for selected text with Mod+K", async () => {

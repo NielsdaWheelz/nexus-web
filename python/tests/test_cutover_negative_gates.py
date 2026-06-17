@@ -110,6 +110,100 @@ def _fmt(hits: list[_Hit]) -> str:
 
 
 # =============================================================================
+# User graph tags hard cutover: tag resources must be ABSENT
+# =============================================================================
+
+
+_USER_GRAPH_TAG_DEAD_PATTERN = (
+    r"\bclass\s+Tag\(|__tablename__\s*=\s*['\"]tags['\"]|"
+    r"\bnexus\.services\.resource_graph\.tags\b|"
+    r"\bfrom nexus\.services\.resource_graph import tags\b|\bgraph_tags\.|"
+    r"\b(TAG_TEXT_RE|tag_names_from_text|ref_for_tag_name|uix_tags_user_slug)\b|"
+    r"\bfrom nexus\.db\.models import .*Tag\b|\bTag\.(?:id|user_id|name|slug)\b|"
+    r"\bselect\(Tag\)|\bTag\(|"
+    r"\b(?:FROM|JOIN|INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+tags\b|"
+    r"\bResourceRef\(\s*scheme\s*=\s*['\"]tag['\"]|\bscheme\s*==\s*['\"]tag['\"]|"
+    r"\bobject_type\s*==\s*['\"]tag['\"]|object\.objectType\s*===\s*['\"]tag['\"]|"
+    r"_search_includes\(object_types,\s*['\"]tag['\"]\)|"
+    r"objectTypes:\s*\[[^\]]*['\"]tag['\"]|filter:\s*['\"]tag['\"]|"
+    r"['\"]tag['\"]\s*:\s*ResourceItemCapability\("
+)
+
+
+def test_user_graph_tag_dead_symbols_absent():
+    hits = _filtered(
+        _USER_GRAPH_TAG_DEAD_PATTERN,
+        _PY_ROOT,
+        _WEB_ROOT,
+        _SCRIPTS_ROOT,
+        exclude=_FRONTEND_TEST,
+    )
+    assert not hits, f"user graph tag support still referenced:\n{_fmt(hits)}"
+
+
+def test_user_graph_tag_modules_absent():
+    rel_path = "python/nexus/services/resource_graph/tags.py"
+    assert not (_REPO_ROOT / rel_path).exists(), f"{rel_path} must be deleted"
+
+
+def test_user_graph_tag_registry_literals_absent():
+    cases = [
+        (
+            "python/nexus/services/resource_graph/refs.py",
+            "ResourceScheme = Literal[",
+            "]\n\nRESOURCE_SCHEMES",
+        ),
+        ("python/nexus/services/resource_graph/refs.py", "RESOURCE_SCHEMES:", ")\n\n"),
+        (
+            "apps/web/src/lib/resourceGraph/resourceRef.ts",
+            "export const RESOURCE_SCHEMES = [",
+            "] as const",
+        ),
+        ("apps/web/src/lib/objectRefs.ts", "export const OBJECT_TYPES = [", "] as const"),
+        (
+            "apps/web/src/lib/resources/resourceKind.ts",
+            "const RESOURCE_SCHEME_ICONS = {",
+            "} satisfies",
+        ),
+        (
+            "apps/web/src/lib/resources/resourceKind.ts",
+            "const RESOURCE_SCHEME_OBJECT_TYPES",
+            "\n};",
+        ),
+    ]
+    hits: list[_Hit] = []
+    for rel_path, start, end in cases:
+        path = _REPO_ROOT / rel_path
+        text = path.read_text(encoding="utf-8")
+        block = text.split(start, 1)[1].split(end, 1)[0]
+        if re.search(r"['\"]tag['\"]|\btag\s*:", block):
+            hits.append(_Hit(path.as_posix(), 1, "tag registry literal"))
+    assert not hits, f"user graph tag literal in registries:\n{_fmt(hits)}"
+
+
+def test_user_graph_tag_scheme_constraints_absent_from_models():
+    path = _PY_ROOT / "db" / "models.py"
+    text = path.read_text(encoding="utf-8")
+    hits: list[_Hit] = []
+    for match in re.finditer(r"CheckConstraint\((?P<body>[\s\S]*?)name=", text):
+        body = match.group("body")
+        if re.search(
+            r"\b(resource_scheme|surface_scheme|source_scheme|target_scheme|subject_scheme)\b",
+            body,
+        ) and re.search(r"['\"]tag['\"]", body):
+            hits.append(_Hit(path.as_posix(), text[: match.start()].count("\n") + 1, body.strip()))
+    assert not hits, f"user graph tag still allowed by scheme CHECKs:\n{_fmt(hits)}"
+
+
+def test_oracle_metadata_tags_remain_allowlisted():
+    models = (_PY_ROOT / "db" / "models.py").read_text(encoding="utf-8")
+    oracle = (_PY_ROOT / "services" / "oracle.py").read_text(encoding="utf-8")
+    assert "ck_oracle_passages_tags_array" in models
+    assert "ck_oracle_images_tags_array" in models
+    assert 'tags=[str(tag) for tag in row["tags"] or []]' in oracle
+
+
+# =============================================================================
 # Dropped LI tables / column-symbols must be ABSENT in production code
 # =============================================================================
 

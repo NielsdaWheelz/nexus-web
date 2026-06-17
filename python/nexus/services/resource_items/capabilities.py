@@ -269,20 +269,6 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         adjacency_source=False,
         adjacency_target=True,
     ),
-    "tag": ResourceItemCapability(
-        linkable=True,
-        attachable=True,
-        chat_subject="label",
-        readable="none",
-        citable_result_type=None,
-        app_search_scope=False,
-        conversation_search_scope=False,
-        citation_output_source=False,
-        prompt_render="label",
-        expandable=False,
-        adjacency_source=False,
-        adjacency_target=True,
-    ),
 }
 
 if set(RESOURCE_ITEM_CAPABILITIES) != set(RESOURCE_SCHEMES):

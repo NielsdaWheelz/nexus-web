@@ -375,7 +375,7 @@ backlinks are `resource_edges`, below — notes own no link table.
 stance `kind`, writer `origin` (`user`, `citation`, `system`, `note_body`,
 `highlight_note`, `synapse`), polymorphic `scheme`+`id`
 endpoints with no endpoint FKs, optional ordered-adjacency keys, citation
-`ordinal`+`snapshot`, and synapse rationale snapshots), `tags` (user-owned tag resources),
+`ordinal`+`snapshot`, and synapse rationale snapshots),
 `resource_external_snapshots` (stable targets for public web-search citations),
 and `oracle_reading_folios` (oracle-owned generated folio content referencing its
 citation edge). This subgraph is the single durable positive connection
@@ -600,7 +600,7 @@ result-type grid. The package owns one concern per module (`kinds`, `query`, `sc
   `evidence_span`, `content_chunk`, `highlight`, `page`, `note_block`, `fragment`,
   `conversation`, `message`, `oracle_reading`, `oracle_corpus_passage`,
   `library_intelligence_artifact`, `library_intelligence_revision`,
-  `external_snapshot`, `contributor`, `podcast`, `tag`)
+  `external_snapshot`, `contributor`, `podcast`)
   is the one persisted resource-identity vocabulary. The same ref identifies a
   resource everywhere: an edge endpoint, a citation target, an attached
   conversation context ref, a chat subject, and a read/inspect agent-tool

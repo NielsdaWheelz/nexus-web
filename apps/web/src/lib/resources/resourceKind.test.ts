@@ -26,10 +26,16 @@ describe("resourceKind", () => {
     expect(resourceObjectTypeForScheme("media")).toBe("media");
     expect(resourceObjectTypeForScheme("evidence_span")).toBe("evidence_span");
     expect(resourceObjectTypeForScheme("content_chunk")).toBe("content_chunk");
-    expect(resourceObjectTypeForScheme("tag")).toBe("tag");
     expect(resourceObjectTypeForScheme("library_intelligence_revision")).toBe(
       "library_intelligence_revision",
     );
     expect(resourceObjectTypeForScheme("library")).toBeNull();
+  });
+
+  it("treats user graph tags as unknown at runtime", () => {
+    expect(resourceIconForScheme("tag")).toBe(Link2);
+    expect(resourceIconForUri("tag:11111111-1111-4111-8111-111111111111")).toBe(
+      Link2,
+    );
   });
 });

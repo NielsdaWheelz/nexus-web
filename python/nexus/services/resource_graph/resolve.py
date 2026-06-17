@@ -186,8 +186,6 @@ def load_resource_batch(
             loaded = _load_contributor(db, items)
         elif scheme == "podcast":
             loaded = _load_podcast(db, items, viewer_id=viewer_id)
-        elif scheme == "tag":
-            loaded = _load_tag(db, items, viewer_id=viewer_id)
         else:
             assert_never(scheme)
         for entry in loaded:
@@ -703,23 +701,6 @@ def _load_note_block(
     return out
 
 
-def _load_tag(db: Session, items: list[ResourceRef], *, viewer_id: UUID) -> list[LoadedResource]:
-    ids = [ref.id for ref in items]
-    rows = db.execute(
-        text("SELECT id, user_id, name FROM tags WHERE id = ANY(:ids)"),
-        {"ids": ids},
-    ).fetchall()
-    by_id = {row[0]: row for row in rows}
-    out: list[LoadedResource] = []
-    for ref in items:
-        row = by_id.get(ref.id)
-        if row is None or row[1] != viewer_id:
-            out.append(_missing(ref.uri, "tag"))
-            continue
-        out.append(LoadedResource(uri=ref.uri, scheme="tag", title=f"#{row[2]}"))
-    return out
-
-
 def _load_fragment(
     db: Session, items: list[ResourceRef], *, viewer_id: UUID
 ) -> list[LoadedResource]:
@@ -1189,14 +1170,6 @@ def _present(loaded: LoadedResource) -> ResolvedResource:
             uri=loaded.uri,
             label=loaded.title or "",
             summary=_first_line(loaded.body or ""),
-            inline_body=None,
-            fetch_hint="",
-        )
-    if scheme == "tag":
-        return ResolvedResource(
-            uri=loaded.uri,
-            label=loaded.title or "",
-            summary="",
             inline_body=None,
             fetch_hint="",
         )

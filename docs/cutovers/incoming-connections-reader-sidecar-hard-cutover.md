@@ -100,8 +100,11 @@ locator, role, or target-resolution logic.
 
 ### 2.3 Notes and backlinks
 
-Notes already sync inline `object_ref`, `object_embed`, and `#tag` references
-into `resource_edges origin='note_body'` from the source `note_block:<id>`.
+Notes sync inline `object_ref` and `object_embed` references into
+`resource_edges origin='note_body'` from the source `note_block:<id>`.
+User graph tags were removed by
+`docs/cutovers/user-graph-tags-hard-cutover.md`; `#tag` text is not a graph
+edge.
 `NoteBacklinks` reads exact edges touching one object and renders the opposite
 endpoint.
 
@@ -885,9 +888,9 @@ rows unless they have real citation edges.
 The note editor remains the source of inline object-ref intent. Backend body
 sync remains the graph writer.
 
-`NoteBacklinks` is replaced by `ConnectionsSurface`. Existing `@`, `[[...]]`,
-and `#tag` interactions do not change, but their read side now uses
-`queryConnections`.
+`NoteBacklinks` is replaced by `ConnectionsSurface`. Existing `@` and `[[...]]`
+interactions keep the same write behavior and their read side now uses
+`queryConnections`. Plain `#tag` text is not a graph connection.
 
 ### 11.5 Highlights
 

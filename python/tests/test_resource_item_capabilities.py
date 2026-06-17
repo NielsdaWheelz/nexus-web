@@ -44,7 +44,6 @@ def test_read_search_and_citation_capabilities_are_owned_together() -> None:
         "library_intelligence_revision",
         "contributor",
         "podcast",
-        "tag",
     )
     assert CONVERSATION_SEARCH_SCOPE_SCHEMES == ("highlight", "page", "note_block")
     assert CITATION_OUTPUT_SOURCE_SCHEMES == (
@@ -61,6 +60,7 @@ def test_read_search_and_citation_capabilities_are_owned_together() -> None:
     assert "external_snapshot" not in LINKABLE_RESOURCE_SCHEMES
     assert "external_snapshot" not in ATTACHABLE_RESOURCE_SCHEMES
     assert "oracle_corpus_passage" not in LINKABLE_RESOURCE_SCHEMES
+    assert "tag" not in RESOURCE_ITEM_CAPABILITIES
     assert RESOURCE_ITEM_CAPABILITIES["external_snapshot"].adjacency_target is False
     assert RESOURCE_ITEM_CAPABILITIES["oracle_corpus_passage"].adjacency_target is False
 

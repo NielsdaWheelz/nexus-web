@@ -1,14 +1,14 @@
 # Resource Provenance Graph - Hard Cutover
 
-Status: BUILT — resource provenance graph landed; Rev 6 current-head amendment implemented
-Author: design synthesis, 2026-06-07. Rev 2: 2026-06-09 (13-agent survey + reviewer notes). Rev 3: 2026-06-09 — flat-table restructure: sidecars deleted, relation verbs killed, run telemetry and generated content evicted from the edge model. Rev 4: 2026-06-09 — column-justification pass: locators and `updated_at` dropped; `origin`/`ordinal`/`snapshot` pinned. Rev 5: 2026-06-10 — notes/pages graph amendment: ordered adjacency keys, `note_containment`, and `tag`. Rev 6: 2026-06-12 — `synapse` became a first-class edge origin with a required rationale snapshot; it is not a second graph.
+Status: BUILT — resource provenance graph landed; Rev 7 user-graph-tags amendment implemented
+Author: design synthesis, 2026-06-07. Rev 2: 2026-06-09 (13-agent survey + reviewer notes). Rev 3: 2026-06-09 — flat-table restructure: sidecars deleted, relation verbs killed, run telemetry and generated content evicted from the edge model. Rev 4: 2026-06-09 — column-justification pass: locators and `updated_at` dropped; `origin`/`ordinal`/`snapshot` pinned. Rev 5: 2026-06-10 — notes/pages graph amendment: ordered adjacency keys and `note_containment`; its first-class tag-resource language is superseded by `docs/cutovers/user-graph-tags-hard-cutover.md`. Rev 6: 2026-06-12 — `synapse` became a first-class edge origin with a required rationale snapshot; it is not a second graph. Rev 7: 2026-06-17 — user graph tags were removed: no `tags` table and no `tag:<id>` scheme.
 Type: hard cutover - greenfield, one-user prototype, no production data migration, no fallbacks, no backward compatibility, no compatibility shims
 
 Rev 3 changes: one flat `resource_edges` table replaces the base-plus-sidecar design (§8); the six workspace relation verbs are deleted — a code census showed they are machine writer-discriminators plus dead values, not user vocabulary, and the real job moves to an `origin` column (§1, §2.5, §5.4); `kind` collapses to the three stances `context | supports | contradicts` and `role` dies (§5, §8.1); `message_retrievals` + `message_retrieval_candidate_ledgers` are **no longer dropped** — they are chat run telemetry, not connections, and stay in the chat domain (§2.3, N7); Oracle marginalia moves to an oracle-owned `oracle_reading_folios` domain table pointing at its citation edge (§5.3, §8.3); deletion rules collapse to two (§9.6). Carried from Rev 2: sequencing gate (§0.1), concordance equivalence contract (§5.3), coverage-is-not-an-edge (§5.6, N8), transaction discipline (§9.0), contributor-merge repoint (§9.6), gate proofs (§17.0).
 
 Rev 4 changes: column-justification pass — every column must name the thing that breaks without it (§8.1). **Dropped:** `source_locator`/`target_locator` (position lives in the target grain: the graph points at `evidence_span`/`content_chunk`/`highlight`/`note_block` objects, which carry their own anchoring; residual jump precision is the snapshot `deep_link`) and `updated_at` (edges are create/delete-only rows — nothing updates). **Kept with pinned justification:** `origin` (writer ownership: note-body replace-set scoping, highlight-note precision, delete guards, `context_ref_added`), `ordinal` (the `[N]` in stored prose — data, not metadata), `snapshot` (the evidence-outlives-target invariant for citations, plus the later synapse rationale carveout). Dropping the ordinal/snapshot pair would not be flatter — it would move citations back into a second table.
 
-Rev 5 changes: `docs/cutovers/notes-pages-object-graph-hard-cutover.md` extends, rather than forks, this graph. Ordered document containment is a connection fact, so `source_order_key` and `target_order_key` live on `resource_edges`; they are adjacency-order keys, not citation locators. `origin=note_containment` is the sole writer for page/block containment edges. `scheme=tag` and the `tags` table add first-class tag resources. Bare-edge uniqueness is scoped by `(user_id, origin, source, target)` so a user edge, body-derived edge, highlight attachment, and containment edge can coexist over the same endpoints without clobbering each other.
+Rev 5 changes: `docs/cutovers/notes-pages-object-graph-hard-cutover.md` extends, rather than forks, this graph. Ordered document containment is a connection fact, so `source_order_key` and `target_order_key` live on `resource_edges`; they are adjacency-order keys, not citation locators. `origin=note_containment` is the sole writer for page/block containment edges. Bare-edge uniqueness is scoped by `(user_id, origin, source, target)` so a user edge, body-derived edge, highlight attachment, and containment edge can coexist over the same endpoints without clobbering each other. Its tag-resource language is historical only and is superseded by Rev 7.
 
 Rev 6 changes: `origin=synapse` is the resonance engine's sole positive-edge
 writer. Synapse edges may carry a bare display snapshot for rationale text, but
@@ -347,7 +347,6 @@ library_intelligence_revision
 external_snapshot
 contributor
 podcast
-tag
 ```
 
 Compatibility aliases are not kept. `span:` becomes `evidence_span:` and `chunk:` becomes `content_chunk:` in the final state. This is a hard cutover; all callers move. (`message_tool_call` from Rev 2 is dropped: tool calls no longer source edges — retrieval telemetry stays in its own table.)
@@ -373,7 +372,6 @@ ResourceScheme = Literal[
     "external_snapshot",
     "contributor",
     "podcast",
-    "tag",
 ]
 
 @dataclass(frozen=True, slots=True)

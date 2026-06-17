@@ -367,7 +367,7 @@ class ResourceVersion(Base):
                 'conversation', 'message', 'oracle_reading',
                 'oracle_corpus_passage', 'library_intelligence_artifact',
                 'library_intelligence_revision',
-                'external_snapshot', 'contributor', 'podcast', 'tag'
+                'external_snapshot', 'contributor', 'podcast'
             )
             """,
             name="ck_resource_versions_resource_scheme",
@@ -492,7 +492,7 @@ class ResourceViewState(Base):
                 'conversation', 'message', 'oracle_reading',
                 'oracle_corpus_passage', 'library_intelligence_artifact',
                 'library_intelligence_revision',
-                'external_snapshot', 'contributor', 'podcast', 'tag'
+                'external_snapshot', 'contributor', 'podcast'
             )
             """,
             name="ck_resource_view_states_surface_scheme",
@@ -505,7 +505,7 @@ class ResourceViewState(Base):
                 'conversation', 'message', 'oracle_reading',
                 'oracle_corpus_passage', 'library_intelligence_artifact',
                 'library_intelligence_revision',
-                'external_snapshot', 'contributor', 'podcast', 'tag'
+                'external_snapshot', 'contributor', 'podcast'
             )
             """,
             name="ck_resource_view_states_target_scheme",
@@ -590,7 +590,7 @@ class ResourceEdge(Base):
                 'conversation', 'message', 'oracle_reading',
                 'oracle_corpus_passage', 'library_intelligence_artifact',
                 'library_intelligence_revision',
-                'external_snapshot', 'contributor', 'podcast', 'tag'
+                'external_snapshot', 'contributor', 'podcast'
             )
             """,
             name="ck_resource_edges_source_scheme",
@@ -603,7 +603,7 @@ class ResourceEdge(Base):
                 'conversation', 'message', 'oracle_reading',
                 'oracle_corpus_passage', 'library_intelligence_artifact',
                 'library_intelligence_revision',
-                'external_snapshot', 'contributor', 'podcast', 'tag'
+                'external_snapshot', 'contributor', 'podcast'
             )
             """,
             name="ck_resource_edges_target_scheme",
@@ -796,41 +796,6 @@ class ResourceEdge(Base):
             "created_at",
             "id",
         ),
-    )
-
-
-class Tag(Base):
-    """User-owned tag resource."""
-
-    __tablename__ = "tags"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id"),
-        nullable=False,
-    )
-    name: Mapped[str] = mapped_column(Text, nullable=False)
-    slug: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        CheckConstraint("char_length(name) BETWEEN 1 AND 80", name="ck_tags_name_length"),
-        CheckConstraint("char_length(slug) BETWEEN 1 AND 100", name="ck_tags_slug_length"),
-        UniqueConstraint("user_id", "slug", name="uix_tags_user_slug"),
     )
 
 
@@ -4796,7 +4761,7 @@ class ChatRunTurnContext(Base):
             "'note_block', 'fragment', 'conversation', 'message', 'oracle_reading', "
             "'oracle_corpus_passage', 'library_intelligence_artifact', "
             "'library_intelligence_revision', 'external_snapshot', 'contributor', "
-            "'podcast', 'tag')",
+            "'podcast')",
             name="ck_chat_run_turn_contexts_requested_subject_scheme",
         ),
         CheckConstraint(
@@ -4805,7 +4770,7 @@ class ChatRunTurnContext(Base):
             "'note_block', 'fragment', 'conversation', 'message', 'oracle_reading', "
             "'oracle_corpus_passage', 'library_intelligence_artifact', "
             "'library_intelligence_revision', 'external_snapshot', 'contributor', "
-            "'podcast', 'tag')",
+            "'podcast')",
             name="ck_chat_run_turn_contexts_subject_scheme",
         ),
         Index("idx_chat_run_turn_contexts_subject", "subject_scheme", "subject_id"),

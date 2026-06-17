@@ -97,8 +97,6 @@ def _scheme_is_handled(scheme: ResourceScheme) -> bool:
         return True
     if scheme == "podcast":
         return True
-    if scheme == "tag":
-        return True
     assert_never(scheme)
 
 
@@ -123,6 +121,13 @@ def test_parse_rejects_old_aliases(old_scheme: str):
     assert parsed == ResourceRefParseFailure(raw=raw, reason="unsupported_scheme"), (
         f"Hard rename (D2): {old_scheme!r} must be an unsupported scheme; got {parsed}"
     )
+
+
+def test_parse_rejects_user_graph_tag_scheme():
+    raw = f"tag:{uuid4()}"
+    assert parse_resource_ref(raw) == ResourceRefParseFailure(raw=raw, reason="unsupported_scheme")
+    with pytest.raises(AssertionError, match="unsupported_scheme"):
+        assert_resource_ref(raw)
 
 
 @pytest.mark.parametrize(

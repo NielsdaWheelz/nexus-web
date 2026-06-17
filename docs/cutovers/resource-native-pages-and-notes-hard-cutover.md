@@ -53,7 +53,6 @@ page:<id>       title resource
 note_block:<id> body resource
 media:<id>      document/media resource
 highlight:<id>  quote resource
-tag:<id>        tag resource
 ...
 ```
 
@@ -65,8 +64,8 @@ backend must not encode "page owns note document" as a special aggregate.
 The Roam-style invariant:
 
 > A page is a titled node. A note is a bodied node. A page collecting notes is
-> just ordered outgoing edges. A note collecting pages, notes, media, highlights,
-> or tags is the same mechanism.
+> just ordered outgoing edges. A note collecting pages, notes, media, or
+> highlights is the same mechanism.
 
 ## SME Thesis
 
@@ -197,8 +196,8 @@ A resource item is an addressable thing with a `ResourceRef`.
 - no page ownership.
 
 Other resource schemes keep their existing intrinsic owners. This cutover does
-not fold media, libraries, highlights, messages, contributors, podcasts, tags,
-or generated artifacts into one table.
+not fold media, libraries, highlights, messages, contributors, podcasts, or
+generated artifacts into one table.
 
 ### Resource Edges
 
@@ -536,7 +535,7 @@ Rules:
   items.
 - Adding a note to a page creates or links a `note_block` item and writes an
   ordered `page -> note_block` edge.
-- Adding media, highlights, tags, pages, conversations, messages, or other
+- Adding media, highlights, pages, conversations, messages, or other
   supported refs to a page writes ordered outgoing edges when capability permits.
 - A page can appear inside another page or note like any other resource item.
 - Page search matches title only in this cutover.
@@ -546,9 +545,9 @@ Rules:
 
 - Creating a note creates a note item with one canonical body.
 - Editing a note changes only its body lane.
-- The note body can contain inline refs, embeds, tags, code, images, tasks, or
+- The note body can contain inline refs, embeds, code, images, tasks, or
   future editor constructs through the body schema.
-- Inline refs/embeds/tags replace-set `origin=note_body` edges from the note to
+- Inline refs/embeds replace-set `origin=note_body` edges from the note to
   referenced resources.
 - A note can also have explicit ordered outgoing adjacency independent of its
   inline body refs.
@@ -588,7 +587,7 @@ Immediate cutover:
 - `page` search: title only.
 - `note_block` search: body only.
 - `media`, `highlight`, `fragment`, `content_chunk`, `message`, `conversation`,
-  `contributor`, `tag`, and generated artifact search keep their existing owners
+  `contributor`, and generated artifact search keep their existing owners
   unless explicitly changed.
 - Attached page context does not implicitly search linked items.
 - Attached note context does not implicitly search linked items.
@@ -1073,7 +1072,7 @@ AC15. The same note can be linked from two pages without conflict.
 AC16. The same note can be linked from a page and a note without conflict.
 
 AC17. A page can link to a page, note, media item, highlight, conversation,
-message, tag, or other capability-allowed resource.
+message, or other capability-allowed resource.
 
 AC18. A note can link to the same capability-allowed targets.
 

@@ -6,7 +6,7 @@ IMPLEMENTATION - final page-document command path, public block mutation route
 cutover, graph-backed writing UX, and visible local draft recovery are in place.
 Validated against merged `main` after the resource provenance graph cutover. The
 graph/schema foundation, backend containment runtime, evidence/citation,
-note-only retrieval, graph-backed tags, quick capture, silent autosave, shared
+note-only retrieval, quick capture, silent autosave, shared
 editor-session persistence, low-chrome connections, graph-backed attachments,
 versioned local draft recovery, final versioned document command, highlight-note
 product route, and focused page-document E2E acceptance flow are in place.
@@ -20,9 +20,9 @@ Current hard-cutover state:
   persist through the versioned page-document command path; highlight notes
   write through `/api/highlights/{highlightId}/note`; quick-note empty-delete
   writes through the page document command helper.
-- `#tag` persistence exists through graph-backed body parsing, and the editor
-  now exposes first-class `#` autocomplete backed by type-filtered object-ref
-  search.
+- User graph tags were removed by
+  `docs/cutovers/user-graph-tags-hard-cutover.md`. `#tag` is plain note text;
+  the editor has no `#` autocomplete and note body sync creates no tag edges.
 - File attachments are graph-backed; URL-only paste in the writing surface now
   ingests URLs through the same media intake path and inserts media embeds.
 - Draft storage uses a strict versioned local envelope with durable sequence and
@@ -108,7 +108,6 @@ and new graph vocabulary:
 
 ```text
 origin += note_containment
-scheme += tag
 ```
 
 The base also needs one uniqueness correction before notes build on it:
@@ -132,7 +131,7 @@ strict graph:
 
 - page rows own page identity and title;
 - block rows own stable block identity and body;
-- `resource_edges` own containment, references, annotations, tags, attachments,
+- `resource_edges` own containment, references, annotations, attachments,
   citations, user links, and order;
 - projections own search, evidence, backlinks, and citation read models;
 - view state owns collapse/focus/pane behavior.
@@ -201,7 +200,6 @@ use `origin=note_containment` for page/block tree edges.
   - highlight note attachments;
   - user links;
   - citation edges;
-  - tags;
   - attachments.
 - Introduce one notes document capability inside the graph service layer:
   - ordered containment;
@@ -235,7 +233,7 @@ Frontend editor
   -> notes product API
     -> notes service
       -> resource_graph.documents  ordered page/block graph commands
-      -> resource_graph.edges      references, tags, attachments, highlight notes
+      -> resource_graph.edges      references, attachments, highlight notes
       -> note_indexing             content/evidence projections
 ```
 
@@ -258,8 +256,7 @@ Examples:
 - `content_chunk:<id>`;
 - `conversation:<id>`;
 - `message:<id>`;
-- `library:<id>`;
-- `tag:<id>`.
+- `library:<id>`.
 
 ### Page
 
@@ -279,7 +276,6 @@ It does not own:
 - block parentage;
 - sibling order;
 - backlinks;
-- tags;
 - attachments;
 - evidence rows.
 
@@ -388,7 +384,6 @@ Keep:
 Add:
 
 - `origin = 'note_containment'`;
-- `scheme = 'tag'`;
 - order-key length checks:
   - `source_order_key` null or 1..64 chars;
   - `target_order_key` null or 1..64 chars.
@@ -445,7 +440,7 @@ Use origins as writer/invariant owners:
 | Origin | Source | Target | Meaning |
 |---|---|---|---|
 | `note_containment` | `page` or `note_block` | `note_block` | ordered document containment |
-| `note_body` | `note_block` or `page` | any linkable resource | body-derived ref/tag/embed/attachment projection |
+| `note_body` | `note_block` or `page` | any linkable resource | body-derived ref/embed/attachment projection |
 | `highlight_note` | `highlight` | `note_block` | highlight's attached note |
 | `user` | any linkable resource | any linkable resource | explicit user link/assertion |
 | `citation` | output resource | cited target | rendered citation |
@@ -497,7 +492,7 @@ Rules:
 
 ### Reference Edges
 
-Inline block references, page references, object refs, tags, and inline
+Inline block references, page references, object refs, and inline
 attachments sync from parsed block bodies into `resource_edges`.
 
 For block-local body refs:
@@ -534,40 +529,13 @@ origin = highlight_note
 
 This is the product's annotation edge. Do not add `annotates` as a `kind`.
 
-### Tag Edges
+### User Graph Tags
 
-Tags are resources.
+Superseded by `docs/cutovers/user-graph-tags-hard-cutover.md`.
 
-Add a `tags` table in this cutover:
-
-```text
-id uuid primary key
-user_id uuid not null
-name text not null
-slug text not null
-created_at timestamptz not null default now()
-updated_at timestamptz not null default now()
-```
-
-Extend `ResourceScheme` with `tag`.
-
-Inline `#tag` creates:
-
-```text
-source = note_block:<block_id>
-target = tag:<tag_id>
-kind = context
-origin = note_body
-```
-
-Explicit page tags create:
-
-```text
-source = page:<page_id>
-target = tag:<tag_id>
-kind = context
-origin = user
-```
+Tags are not resources. There is no `tags` table, no `tag:<id>` ResourceRef
+scheme, no `#` autocomplete, and no note-body hashtag parser. A note containing
+`#sota` stores ordinary text only.
 
 ### Attachment Edges
 
@@ -909,12 +877,12 @@ transaction. It does not call public block mutation APIs.
 Object-ref search supports optional repeated `type=` filters:
 
 ```text
-GET /api/object-refs/search?q=sot&type=tag
+GET /api/object-refs/search?q=sot&type=page&type=note_block
 ```
 
-The editor uses this for `#` tag autocomplete and `[[` page/block autocomplete
-so correctness is owned by the search service rather than client-side result
-filtering.
+The editor uses this for `[[` page/block autocomplete so correctness is owned
+by the search service rather than client-side result filtering. User graph tags
+are not object-ref targets.
 
 ### Resource Graph API
 
@@ -994,10 +962,10 @@ Capture can create:
 - Page editor, quick capture, and highlight note capture share one persistence
   controller.
 
-### Links, Tags, Attachments
+### Links And Attachments
 
 - `[[` opens page/block/resource autocomplete.
-- `#` opens tag autocomplete.
+- `#` is plain text.
 - Pasted URLs resolve into resources or external snapshots when supported.
 - Dropped files become media resources and attach to the block/page.
 - Inline chips are lightweight and keyboard-editable.
@@ -1033,7 +1001,7 @@ Required changes:
 - Oracle's searchable-corpus gate counts indexed notes/pages as searchable
   corpus; a user with notes and no media still reaches retrieval.
 - Search scope cells use explicit origin/kind allowlists. Containment, body
-  refs, tags, attachments, user links, and citation edges must not accidentally
+  refs, attachments, user links, and citation edges must not accidentally
   satisfy the same scope predicate unless that relationship is intentionally
   allowed.
 - `agent_tools/app_search.py`, chat citation assembly, Oracle citation
@@ -1214,7 +1182,6 @@ Deliverables:
   - `source_order_key`;
   - `target_order_key`;
   - `origin=note_containment`;
-  - `scheme=tag`;
   - bare-pair uniqueness includes `user_id` and `origin`.
 
 ### Phase 1: Schema Hard Cut
@@ -1223,10 +1190,8 @@ Deliverables:
 
 - alter `resource_edges` to add order columns;
 - alter `resource_edges` origin check to include `note_containment`;
-- alter `resource_edges` scheme checks to include `tag`;
 - replace the base bare-pair unique index with an origin-aware one;
 - add containment order indexes and partial uniqueness;
-- create `tags`;
 - run a migration preflight over existing note trees:
   - reject cross-user parents;
   - reject page/block user mismatches;
@@ -1303,7 +1268,7 @@ Deliverables:
 - quick capture;
 - daily capture;
 - highlight annotation capture;
-- links/tags/attachments;
+- links/attachments;
 - visible local draft and failure recovery UI.
 
 ### Phase 7: Cleanup And Docs
@@ -1324,7 +1289,7 @@ Deliverables:
 - No `object_graph` service/package is introduced.
 - No `/api/object-graph` route is introduced.
 - `resource_edges` is the only persisted graph/link table for containment,
-  references, annotations, tags, attachments, user links, and citations.
+  references, annotations, attachments, user links, and citations.
 - `resource_edges` has `source_order_key` and `target_order_key`.
 - `resource_edges` has `origin=note_containment`.
 - The broad base bare-pair uniqueness is replaced with an origin-aware uniqueness
@@ -1374,7 +1339,7 @@ Deliverables:
 - Autosave is silent in the success path.
 - Draft recovery survives refresh until server commit succeeds and requires an
   explicit save/retry or discard decision when a local draft is recovered.
-- The editor supports indent, outdent, split, join, link, tag, and attach without
+- The editor supports indent, outdent, split, join, link, and attach without
   leaving the writing surface.
 - Frontend note DTOs may still carry graph-projected parent/page/order fields
   for the editor protocol, but no frontend path reads old `note_blocks`
@@ -1389,7 +1354,7 @@ Deliverables:
 - Citation adapters activate note/page citations instead of degrading them to
   plain hrefs.
 - Oracle availability works for a note-only corpus.
-- Search scope tests prove containment, body refs, tags, attachments, user links,
+- Search scope tests prove containment, body refs, attachments, user links,
   and citation edges only satisfy intended scope predicates.
 - Containment-only movement schedules reindex.
 - Stale object-search code paths are deleted.
@@ -1424,7 +1389,6 @@ Backend:
   - daily capture;
   - inline page refs;
   - inline block refs;
-  - tags;
   - attachments;
   - replace-set does not clobber user/highlight/citation/containment edges;
   - graph traversal indexing;
@@ -1433,7 +1397,7 @@ Backend:
 - `python/tests/test_oracle.py`
   - note-only availability and retrieval.
 - `python/tests/test_search.py`
-  - explicit origin/kind allowlists for note containment, note body refs, tags,
+  - explicit origin/kind allowlists for note containment, note body refs,
     attachments, user links, and citations.
 - `python/tests/test_agent_app_search.py`
   - default app-search scopes only use bare context refs;
@@ -1470,7 +1434,6 @@ Migration:
   - cycle defect;
   - inline refs;
   - highlight note;
-  - tags;
   - attachments.
 
 Grep/head assertions:
@@ -1575,7 +1538,8 @@ Grep/head assertions:
 - [x] Land order columns in the next migration after `0147`.
 - [x] Add `source_order_key` and `target_order_key` to `resource_edges`.
 - [x] Add `origin=note_containment`.
-- [x] Add `tag` scheme and `tags` table.
+- [x] Remove the historical `tag` scheme and `tags` table in
+      `docs/cutovers/user-graph-tags-hard-cutover.md`.
 - [x] Replace broad bare-pair uniqueness with origin-aware uniqueness.
 - [x] Replace origin-blind resource graph writer dedupe with origin-aware
       service checks.
@@ -1586,8 +1550,8 @@ Grep/head assertions:
 - [x] Implement `resource_graph.documents`.
 - [x] Replace notes tree mutation with resource graph document commands.
 - [x] Sync changed block body refs through `origin=note_body`.
-- [x] Sync inline `#tag` text into first-class `tag:` resources and
-      `origin=note_body` edges.
+- [x] Keep inline `#tag` text as plain text; note-body sync creates no tag
+      resources or tag edges.
 - [x] Adapt note indexing to containment traversal.
 - [x] Enforce single containment occurrence until transclusion carries occurrence
       ids end to end.
@@ -1614,9 +1578,7 @@ Grep/head assertions:
 - [x] Replace public `/api/notes/blocks` mutation clients/routes with product
       routes or document-command helpers. Keep only read-only
       `GET /api/notes/blocks/{blockId}` for resource resolution.
-- [x] Add first-class `#tag` autocomplete in the writing surface, backed by
-      type-filtered object-ref search so tag results are not starved by page or
-      block matches.
+- [x] Remove first-class `#tag` autocomplete from the writing surface.
 - [x] Resolve pasted URLs in the writing surface. URL-only paste uses the
       existing media URL intake path and inserts graph-backed media embeds;
       mixed prose still falls through to normal text/markdown paste to avoid
@@ -1668,7 +1630,7 @@ The follow-up audit gaps have been closed in code and tests:
   path is no longer used by the editor.
 - New-page focus is explicit and one-shot. Creation paths set a pending
   title/body focus handoff; existing page opens do not steal focus.
-- Object-ref/tag autocomplete now uses a proper editor/listbox combobox
+- Object-ref autocomplete now uses a proper editor/listbox combobox
   contract: stable listbox/option ids, `aria-activedescendant`, active option
   state, ArrowUp/ArrowDown/Home/End, Enter/Tab selection, and Escape dismissal.
 - `object_refs.py` searches and hydrates page-owned `content_chunk` and
@@ -1691,7 +1653,7 @@ Additional focused validation after these closures:
 ## Definition Of Done
 
 The cutover is done when a user can open a page, type nested bullets, link to
-objects, tag content, attach resources, annotate a highlight, leave the page,
+objects, attach resources, annotate a highlight, leave the page,
 return later, search the content, click a citation, and land on the exact block,
 with all page/block structure and cross-resource relationships persisted in
 `resource_edges`, and no runtime dependency on old note block parent/order/page

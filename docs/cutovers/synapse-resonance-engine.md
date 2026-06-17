@@ -435,10 +435,9 @@ anything:
 6. **`EdgeOrigin` unions** (BE `resource_graph/schemas.py`, FE `edges.ts`):
    seven members; order free (`EDGE_ORIGINS` derives).
 7. **`test_migrations.py`** tail conflict: keep 0148's classes first, then
-   the 0149 class; apply item 4's downgrade-target edit; decide whether
-   `synapse_suppressions`' scheme CHECKs adopt 0148's 17th scheme `'tag'`
-   (functionally optional — suppressions only ever hold scannable schemes —
-   but the "verbatim mirror" comments must then say "as of 0147").
+   the 0149 class; apply item 4's downgrade-target edit. 0148 historically
+   added a `tag` scheme; 0163 removes user graph tags, so current-head CHECKs
+   must exclude `tag`.
 8. **`test_synapse.py::_add_note_page`** constructs `NoteBlock(page_id=…,
    order_key=…, collapsed=…)` — columns 0148 deletes. Rewrite to bare
    `NoteBlock` + `origin='note_containment'` edges (copy the merged

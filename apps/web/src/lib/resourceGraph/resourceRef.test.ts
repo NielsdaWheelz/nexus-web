@@ -36,6 +36,10 @@ describe("resourceRef", () => {
     expect(parseResourceRef(`chunk:${UUID}`)).toBeNull();
   });
 
+  it("rejects user graph tag refs", () => {
+    expect(parseResourceRef(`tag:${UUID}`)).toBeNull();
+  });
+
   it("round-trips parse and format", () => {
     for (const scheme of RESOURCE_SCHEMES) {
       const ref = { scheme, id: UUID };
@@ -47,6 +51,7 @@ describe("resourceRef", () => {
     expect(isResourceScheme("media")).toBe(true);
     expect(isResourceScheme("oracle_corpus_passage")).toBe(true);
     expect(isResourceScheme("library_intelligence_revision")).toBe(true);
+    expect(isResourceScheme("tag")).toBe(false);
     expect(isResourceScheme("span")).toBe(false);
   });
 });

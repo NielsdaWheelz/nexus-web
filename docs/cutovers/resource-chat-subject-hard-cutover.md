@@ -25,8 +25,9 @@ ResourceRef
 
 `media:<id>` is one resource subject, not the special chat case. Notes,
 highlights, messages, Oracle readings, Library Intelligence revisions,
-libraries, contributors, and tags enter the same pipeline with scheme-specific
-capability decisions.
+libraries, and contributors enter the same pipeline with scheme-specific
+capability decisions. User graph tags are not chat subjects; they were removed
+by `docs/cutovers/user-graph-tags-hard-cutover.md`.
 
 ## Type
 
@@ -81,20 +82,20 @@ The existing system already has the hard primitives:
 - Oracle reading identity;
 - generic frontend `ResourceChatTab`.
 
-The professional move is not to add note chat, author chat, tag chat, and Oracle
-chat endpoints. The move is to make "chat subject" a typed first-class contract
+The professional move is not to add note chat, author chat, Oracle chat, and
+taxonomy-chat endpoints. The move is to make "chat subject" a typed first-class contract
 over `ResourceRef`, then collapse every surface to that contract.
 
 The wrong moves are:
 
 - keeping `reader_context` as the document-chat compatibility lane;
-- adding `document_id`, `note_id`, `author_id`, or `tag_id` fields to
+- adding `document_id`, `note_id`, or `author_id` fields to
   `/chat-runs`;
 - making every pane POST `/conversations` differently;
 - using object refs as the resource-chat source of truth;
 - treating linkable as readable, readable as searchable, or searchable as
   citable;
-- letting `tag` or `contributor` imply open graph traversal;
+- letting `contributor` imply open graph traversal;
 - using `message_retrievals` as subject storage;
 - using `library_intelligence_artifact:<id>` when the user means an exact
   generated output.
@@ -107,7 +108,7 @@ The wrong moves are:
   `ResourceRef` grammar and includes `media`, `library`, `highlight`,
   `page`, `note_block`, `conversation`, `message`, `oracle_reading`,
   `library_intelligence_artifact`, `library_intelligence_revision`,
-  `contributor`, `podcast`, and `tag`.
+  `contributor`, and `podcast`.
 - `apps/web/src/lib/resourceGraph/resourceRef.ts` mirrors that grammar on the
   frontend. No code outside it should split refs.
 - `python/nexus/services/resource_items/capabilities.py` already owns a closed
@@ -155,8 +156,7 @@ The wrong moves are:
   `resource_graph.edges`, and frontend resource helpers still contain or consume
   separate fragments of item behavior that must be driven by the capability
   owner.
-- `docs/architecture.md` documents the `ResourceRef` vocabulary but omits `tag`,
-  while live code includes it.
+- `docs/architecture.md` documents the `ResourceRef` vocabulary.
 
 ## Goals
 
@@ -196,9 +196,8 @@ readable generated outputs.
 G12. Map "author" product surfaces to `contributor:<id>`. Do not add an
 `author` scheme.
 
-G13. Make `tag:<id>` and `contributor:<id>` useful only through explicit
-capability and search-scope policy. No implicit traversal through arbitrary
-edges.
+G13. Make `contributor:<id>` useful only through explicit capability and
+search-scope policy. No implicit traversal through arbitrary edges.
 
 G14. Make context-ref opening route through resource item hydration, not object
 refs plus special cases.
@@ -220,7 +219,7 @@ N4. No backwards-compatible `reader_context` request field.
 
 N5. No document-chat wrapper kept as a production concept.
 
-N6. No open-ended graph traversal for tag, contributor, page, note, highlight,
+N6. No open-ended graph traversal for contributor, page, note, highlight,
 or message chat.
 
 N7. No `author:<id>` scheme.
@@ -254,7 +253,7 @@ In scope:
 - frontend request-body builder and composer API;
 - generic resource chat tab/detail/start adapter;
 - media, note block, highlight, message, Oracle reading, Library Intelligence,
-  library, contributor, and tag entrypoints;
+  library and contributor entrypoints;
 - context-ref opening through resource item routes;
 - docs and negative gates.
 
@@ -496,16 +495,6 @@ Rules:
 - Search scope: explicit contributor-scope SQL only. No graph traversal.
 - Prompt: label and summary.
 - Route: author/contributor route through resource item hydration.
-
-`tag:<id>`
-
-- Chat subject: yes.
-- Context ref: yes.
-- Readable: label only.
-- Search scope: explicit tag-scope SQL only. No graph traversal.
-- Prompt: label and summary.
-- Route: tag route if the product has one; otherwise open is disabled but chat
-  can still use the ref.
 
 `podcast:<id>`
 
@@ -904,7 +893,6 @@ Target scope schemes:
 
 - `media`: existing exact media scope.
 - `library`: existing library membership scope.
-- `tag`: explicit tag membership scope.
 - `contributor`: explicit contributor-credit scope.
 
 No other scheme becomes an `app_search` scope by being attached to a
@@ -1015,11 +1003,6 @@ Authors/contributors:
 - author panes derive `contributor:<id>` from loaded contributor data and use
   that ref. They do not build an `author:<handle>` ref.
 
-Tags:
-
-- tag surfaces use `tag:<id>` when the tag resource has a route or enough item
-  data to label the subject.
-
 Podcasts:
 
 - podcast surfaces wait for explicit product copy unless podcast-level subject
@@ -1035,8 +1018,7 @@ Backend:
 - expand `resource_items.surfaces._route_for_ref` or replace it with a public
   route owner that covers every openable `ResourceScheme`;
 - add routes for `oracle_reading`, `library_intelligence_artifact`,
-  `library_intelligence_revision`, `contributor`, and `tag` where product
-  routes exist;
+  `library_intelligence_revision`, and `contributor` where product routes exist;
 - return `route=None` when a resource is not openable.
 
 Frontend:
@@ -1112,10 +1094,10 @@ Rules:
 - if a message is citable, it must materialize through the same citable result
   path as every other attached citable resource.
 
-## Tag And Contributor Composition
+## Contributor Composition
 
-Tags and contributors are where a sloppy design would accidentally create open
-graph retrieval. This cutover must not do that.
+Contributors are where a sloppy design would accidentally create open graph
+retrieval. This cutover must not do that.
 
 `contributor:<id>`:
 
@@ -1125,14 +1107,7 @@ graph retrieval. This cutover must not do that.
 - search scope result set must be tested against media with and without that
   contributor.
 
-`tag:<id>`:
-
-- derives from the tag resource row;
-- can be a label subject;
-- can become an app-search scope only through explicit tag edge SQL;
-- search scope result set must be tested against tagged and untagged resources.
-
-Both:
+Contributor resource subjects:
 
 - no recursive traversal;
 - no "all connected things" query;
@@ -1149,8 +1124,7 @@ Both:
 - `docs/modules/reader-implementation.md` - update quote-to-chat wording:
   highlight subject plus `reader_selection`, no `reader_context`.
 - `docs/modules/reader-design-rationale.md` - same.
-- `docs/architecture.md` - add `tag` to ResourceRef list and document
-  `chat_subject` as a ResourceRef consumer.
+- `docs/architecture.md` - document `chat_subject` as a ResourceRef consumer.
 - `docs/cutovers/library-intelligence-revision-resource-identity-hard-cutover.md`
   - cross-link the subject behavior.
 
@@ -1215,9 +1189,9 @@ Both:
   - ensure generated output subjects present correct tool guidance.
 - `python/nexus/services/agent_tools/app_search.py`
   - keep scope validation capability-driven;
-  - add tag/contributor scopes with explicit search SQL.
+  - add contributor scopes with explicit search SQL.
 - `python/nexus/services/search/scope.py`
-  - implement any new explicit tag/contributor scope cells.
+  - implement any new explicit contributor scope cells.
 
 ### Backend Routes
 
@@ -1269,7 +1243,6 @@ Both:
   - `OracleReadingPaneBody.tsx`;
   - page/note panes;
   - author/contributor panes;
-  - tag surfaces;
   - message row/action components.
 
 ### Tests
@@ -1299,8 +1272,7 @@ Frontend:
 - delete/replace `DocChatTab.test.tsx`
 - replace `ReaderChatDetail.test.tsx`
 - `apps/web/src/components/chat/Conversation.test.tsx`
-- pane-specific tests for media, LI, Oracle, notes, messages, contributors,
-  and tags.
+- pane-specific tests for media, LI, Oracle, notes, messages, and contributors.
 
 E2E:
 
@@ -1309,7 +1281,7 @@ E2E:
 - LI revision chat pins the revision and attaches library;
 - Oracle reading chat opens and answers against the reading;
 - message chat action creates a subject run distinct from branch/retry;
-- tag/contributor chat retrieves only through explicit scope policy.
+- contributor chat retrieves only through explicit scope policy.
 
 ## Duplicate Patterns To Delete Or Consolidate
 
@@ -1439,12 +1411,7 @@ selection actions.
 
 AC19. Author chat uses `contributor:<id>`, never `author:<handle>`.
 
-AC20. Tag chat uses `tag:<id>` and retrieves only resources admitted by the
-explicit tag search scope.
-
 AC21. Contributor search scope is explicit SQL and tested.
-
-AC22. Tag search scope is explicit SQL and tested.
 
 AC23. `app_search` rejects any explicit scope whose scheme lacks
 `app_search_scope=True`.
@@ -1465,8 +1432,7 @@ AC28. Every `ResourceScheme` has an explicit `chat_subject` capability decision.
 AC29. Frontend/backend resource scheme and capability tests fail if a scheme is
 added without chat-subject policy.
 
-AC30. `docs/architecture.md` includes `tag` in the ResourceRef vocabulary and
-documents chat subjects as a ResourceRef consumer.
+AC30. `docs/architecture.md` documents chat subjects as a ResourceRef consumer.
 
 AC31. No production code path accepts `reader_context` as a backwards-compatible
 field.
@@ -1483,7 +1449,7 @@ AC32. No fallback alias from document chat to resource chat remains.
 2. Land subject resolver.
    - Add `resource_items.chat_subjects`.
    - Cover note, highlight, message, LI artifact/revision, Oracle reading,
-     library, contributor, tag, and rejects.
+     library, contributor, and rejects.
 
 3. Add durable run turn context.
    - Migration and model.
@@ -1505,7 +1471,7 @@ AC32. No fallback alias from document chat to resource chat remains.
 
 6. Update tools/search.
    - Keep `read_resource` capability-driven.
-   - Add explicit tag/contributor scopes.
+   - Add explicit contributor scopes.
    - Add search-scope matrix tests.
 
 7. Add resource item route coverage.
@@ -1580,7 +1546,7 @@ note-block resource chat
 library-intelligence revision chat
 oracle reading chat
 message subject chat
-tag/contributor explicit scope retrieval and denial of unscoped resources
+contributor explicit scope retrieval and denial of unscoped resources
 ```
 
 The final implementation is not complete until:

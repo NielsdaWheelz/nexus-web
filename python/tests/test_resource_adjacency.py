@@ -5,7 +5,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy.orm import Session
 
-from nexus.db.models import NoteBlock, Page, ResourceEdge, Tag
+from nexus.db.models import NoteBlock, Page, ResourceEdge
 from nexus.services.resource_graph import adjacency
 from nexus.services.resource_graph.refs import ResourceRef
 from tests.factories import (
@@ -102,8 +102,7 @@ def test_page_and_note_ordered_adjacency_accept_mixed_capability_targets(
     note_source = _note(db_session, bootstrapped_user, "note source")
     target_page = Page(user_id=bootstrapped_user, title="Target page")
     target_note = _note(db_session, bootstrapped_user, "target note")
-    tag = Tag(id=uuid4(), user_id=bootstrapped_user, name="Graph", slug="graph")
-    db_session.add_all([page_source, target_page, tag])
+    db_session.add_all([page_source, target_page])
     db_session.flush()
 
     library_id = get_user_default_library(db_session, bootstrapped_user)
@@ -124,7 +123,6 @@ def test_page_and_note_ordered_adjacency_accept_mixed_capability_targets(
         ResourceRef(scheme="highlight", id=highlight_id),
         ResourceRef(scheme="conversation", id=conversation_id),
         ResourceRef(scheme="message", id=message_id),
-        ResourceRef(scheme="tag", id=tag.id),
     ]
 
     for source in (
@@ -163,5 +161,4 @@ def test_page_and_note_ordered_adjacency_accept_mixed_capability_targets(
             "highlight",
             "conversation",
             "message",
-            "tag",
         ]
