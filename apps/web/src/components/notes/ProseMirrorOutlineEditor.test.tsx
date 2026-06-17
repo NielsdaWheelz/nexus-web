@@ -67,7 +67,7 @@ describe("ProseMirrorOutlineEditor object refs", () => {
           content: [
             {},
             {
-              attrs: { id: "attachment-block", kind: "embed" },
+              attrs: { id: "attachment-block" },
               content: [
                 {
                   type: "object_embed",
@@ -156,7 +156,7 @@ describe("ProseMirrorOutlineEditor object refs", () => {
           content: [
             {},
             {
-              attrs: { id: "url-attachment-block", kind: "embed" },
+              attrs: { id: "url-attachment-block" },
               content: [
                 {
                   type: "object_embed",
@@ -204,7 +204,7 @@ describe("ProseMirrorOutlineEditor object refs", () => {
         expect(lastDocJson(onDocChange)).toMatchObject({
           content: [
             {
-              attrs: { id: "block-1", kind: "bullet" },
+              attrs: { id: "block-1" },
               content: [
                 {
                   type: "paragraph",
@@ -522,7 +522,7 @@ function noteDoc(objectId: string) {
     }),
   ]);
   const block = outlineSchema.nodes.outline_block!.create(
-    { id: "block-1", kind: "bullet", collapsed: false },
+    { id: "block-1", collapsed: false },
     [paragraph]
   );
   return outlineSchema.nodes.outline_doc!.create(null, [block]);
@@ -535,10 +535,7 @@ function emptyDoc() {
 function textDoc(text: string) {
   const paragraph = outlineSchema.nodes.paragraph!.create();
   const body = text ? outlineSchema.nodes.paragraph!.create(null, outlineSchema.text(text)) : paragraph;
-  const block = outlineSchema.nodes.outline_block!.create(
-    { id: "block-1", kind: "bullet", collapsed: false },
-    [body]
-  );
+  const block = outlineSchema.nodes.outline_block!.create({ id: "block-1", collapsed: false }, [body]);
   return outlineSchema.nodes.outline_doc!.create(null, [block]);
 }
 
