@@ -98,6 +98,12 @@ const CITATION = {
   ordinal: 1,
   role: "context",
   target_ref: { type: "content_chunk", id: "chunk-1" },
+  activation: {
+    resourceRef: "content_chunk:chunk-1",
+    kind: "route",
+    href: `/media/${MEDIA_ID}#fragment-fragment-1`,
+    unresolvedReason: null,
+  },
   media_id: MEDIA_ID,
   locator: {
     type: "web_text_offsets",
@@ -114,6 +120,12 @@ const NOTE_CITATION = {
   ordinal: 1,
   role: "context",
   target_ref: { type: "evidence_span", id: "span-1" },
+  activation: {
+    resourceRef: "evidence_span:span-1",
+    kind: "route",
+    href: "/notes/block-1",
+    unresolvedReason: null,
+  },
   media_id: null,
   locator: {
     type: "note_block_offsets",

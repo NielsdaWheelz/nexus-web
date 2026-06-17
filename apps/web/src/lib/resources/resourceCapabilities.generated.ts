@@ -37,6 +37,13 @@ export interface ResourceCapabilityProjection {
   adjacencyTarget: boolean;
 }
 
+export const SYNAPSE_SOURCE_SCHEMES = [
+  "media",
+  "page",
+  "note_block",
+  "highlight",
+] as const satisfies readonly ResourceScheme[];
+
 // Static frontend projection of python/nexus/services/resource_items/capabilities.py.
 // apps/web/src/lib/resourceGraph/contractParity.test.ts keeps this aligned.
 export const RESOURCE_CAPABILITIES = {

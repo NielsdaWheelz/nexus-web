@@ -354,7 +354,7 @@ describe("AssistantMessage", () => {
     fireEvent.click(screen.getByRole("button", { name: /\[1\] Source title/ }));
     expect(onCitationActivate).toHaveBeenCalledWith(
       expect.objectContaining({
-        resourceRef: "media:22222222-2222-4222-8222-222222222222",
+        resourceRef: "content_chunk:33333333-3333-4333-8333-333333333333",
       }),
       expect.objectContaining({
         kind: "media",

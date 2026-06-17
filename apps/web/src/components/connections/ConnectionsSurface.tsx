@@ -47,7 +47,7 @@ import {
   hrefForResourceActivation,
   type ResourceActivation,
 } from "@/lib/resources/activation";
-import { RESOURCE_CAPABILITIES } from "@/lib/resources/resourceCapabilities.generated";
+import { SYNAPSE_SOURCE_SCHEMES } from "@/lib/resources/resourceCapabilities.generated";
 import { resourceIconForUri } from "@/lib/resources/resourceKind";
 import {
   dismissSynapseEdge,
@@ -169,7 +169,9 @@ export default function ConnectionsSurface({
     setRefreshTick((value) => value + 1);
   }, []);
 
-  const scannable = RESOURCE_CAPABILITIES[objectRef.objectType].adjacencySource;
+  const scannable = (SYNAPSE_SOURCE_SCHEMES as readonly string[]).includes(
+    objectRef.objectType,
+  );
   const [scanVoice, setScanVoice] = useState<string | null>(null);
   const scanBaselineRef = useRef<number | null>(null);
   const connectionsCountRef = useRef(0);

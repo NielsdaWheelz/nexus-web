@@ -3,7 +3,10 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { OBJECT_TYPES } from "@/lib/objectRefs";
-import { RESOURCE_CAPABILITIES } from "@/lib/resources/resourceCapabilities.generated";
+import {
+  RESOURCE_CAPABILITIES,
+  SYNAPSE_SOURCE_SCHEMES,
+} from "@/lib/resources/resourceCapabilities.generated";
 import { EDGE_KINDS, EDGE_ORIGINS } from "./edges";
 import { RESOURCE_SCHEMES } from "./resourceRef";
 
@@ -80,6 +83,13 @@ describe("frontend resource graph vocabulary", () => {
     );
     expect([...EDGE_ORIGINS]).toEqual(
       quotedValues(schemas, /EdgeOrigin = Literal\[([\s\S]*?)\]/),
+    );
+    const policy = readFileSync(
+      join(REPO_ROOT, "python/nexus/services/resource_graph/policy.py"),
+      "utf8",
+    );
+    expect([...SYNAPSE_SOURCE_SCHEMES]).toEqual(
+      quotedValues(policy, /SYNAPSE_SOURCE_SCHEMES:.*?=\s*\(([\s\S]*?)\)/),
     );
     expect([...OBJECT_TYPES]).toEqual([...RESOURCE_SCHEMES]);
   });

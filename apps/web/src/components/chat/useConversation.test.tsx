@@ -387,7 +387,23 @@ describe("useConversation", () => {
         path === "/api/conversations/conversation-1/context-refs" &&
         init?.method === "POST"
       ) {
-        return jsonResponse({ data: { id: "ref-1" } });
+        return jsonResponse({
+          data: {
+            id: "ref-1",
+            conversation_id: "conversation-1",
+            resource_ref: "media:44444444-4444-4444-8444-444444444444",
+            activation: {
+              resourceRef: "media:44444444-4444-4444-8444-444444444444",
+              kind: "route",
+              href: "/media/44444444-4444-4444-8444-444444444444",
+              unresolvedReason: null,
+            },
+            label: "Existing media",
+            summary: "Context",
+            missing: false,
+            created_at: "2026-06-03T00:00:00Z",
+          },
+        });
       }
       throw new Error(`Unexpected fetch: ${init?.method ?? "GET"} ${path}`);
     });
