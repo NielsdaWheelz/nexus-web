@@ -10,7 +10,13 @@ from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
 
 from nexus.config import clear_settings_cache
-from nexus.db.models import ChatRun, ChatRunTurnContext, ResourceEdge, ResourceExternalSnapshot
+from nexus.db.models import (
+    ChatRun,
+    ChatRunTurnContext,
+    NoteBlock,
+    ResourceEdge,
+    ResourceExternalSnapshot,
+)
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.schemas.conversation import NoBranchAnchorRequest
 from nexus.services.billing_entitlements import grant_entitlement_override
@@ -1704,9 +1710,10 @@ class TestCitationEdgeWriteThrough:
     ``_record_tool_citations`` mints one ``origin='citation'`` edge per selected
     retrieval (``source = message:<assistant_message_id>``, dense ordinals,
     replace-by-ordinal on re-execution) and points the row at it.
-    ``_emit_citation_index`` emits entries keyed by ``citation_edge_id`` and
-    graduates cited LOCAL targets into ``origin='citation'`` context edges with
-    a ``context_ref_added`` event in the context-ref shape.
+    ``_emit_citation_index`` emits backend-built citations keyed by
+    ``citation_edge_id`` and graduates cited LOCAL targets into
+    ``origin='citation'`` context edges with a ``context_ref_added`` event in the
+    context-ref shape.
     """
 
     def _create_chat_run_row(
@@ -2027,7 +2034,7 @@ class TestCitationEdgeWriteThrough:
             "context_ref_added must be emitted AFTER citation_index"
         )
         citation_payload = next(row[1] for row in events if row[0] == "citation_index")
-        entry = citation_payload["entries"][0]
+        item = citation_payload["citations"][0]
         with direct_db.session() as session:
             edge_id = session.execute(
                 text(
@@ -2036,13 +2043,16 @@ class TestCitationEdgeWriteThrough:
                 ),
                 {"amid": assistant_message_id},
             ).scalar_one()
-        assert entry["citation_edge_id"] == str(edge_id), (
-            f"citation_index entries are keyed by citation_edge_id; got {entry}"
+        assert item["citation_edge_id"] == str(edge_id), (
+            f"citation_index items are keyed by citation_edge_id; got {item}"
         )
-        assert entry["n"] == 1
-        assert entry["kind"] == "context"
-        assert entry["target_ref"] == {"type": "content_chunk", "id": str(chunk_id)}
-        assert entry["snapshot"] == {
+        citation = item["citation"]
+        assert citation["ordinal"] == 1
+        assert citation["role"] == "context"
+        assert citation["target_ref"] == {"type": "content_chunk", "id": str(chunk_id)}
+        assert citation["media_id"] == str(media_id)
+        assert citation["locator"] is None
+        assert citation["snapshot"] == {
             "title": "Chunk title",
             "excerpt": "chunk snippet",
             "section_label": "Section 1",
@@ -2051,8 +2061,8 @@ class TestCitationEdgeWriteThrough:
             # summary_md abstract (that enrichment is media-target-only); the strict
             # citation_index payload still serializes the field as null.
             "summary_md": None,
-        }, f"Entries carry the chip display snapshot; got {entry['snapshot']}"
-        assert entry["deep_link"] == "/media/deep-link"
+        }, f"CitationOut carries the chip display snapshot; got {citation['snapshot']}"
+        assert citation["deep_link"] == "/media/deep-link"
         assert context_edge_count == 1, (
             "A cited local target must graduate into exactly one origin='citation' context edge"
         )
@@ -2143,6 +2153,108 @@ class TestCitationEdgeWriteThrough:
         assert edge_count == 0, "Unselected retrievals must not mint citation edges"
         assert event_count == 0, "No citations → no citation_index / context_ref_added events"
         assert cited_edge_id is None
+
+    def test_emit_citation_index_streams_note_block_locator(
+        self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
+    ):
+        from nexus.db.models import ChatRun as ChatRunModel
+        from nexus.services.chat_runs import _emit_citation_index
+
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        body = "Note citation body"
+        with direct_db.session() as session:
+            model_id = create_test_model(session)
+            conversation_id = create_test_conversation(session, user_id)
+            user_message_id = create_test_message(session, conversation_id, 1, "user", "Ask")
+            assistant_message_id = create_test_message(
+                session,
+                conversation_id,
+                2,
+                "assistant",
+                "Answer [1].",
+                parent_message_id=user_message_id,
+            )
+            note = NoteBlock(
+                id=uuid4(),
+                user_id=user_id,
+                body_pm_json={
+                    "type": "paragraph",
+                    "content": [{"type": "text", "text": body}],
+                },
+                body_text=body,
+            )
+            session.add(note)
+            session.flush()
+            edge_id = uuid4()
+            session.add(
+                ResourceEdge(
+                    id=edge_id,
+                    user_id=user_id,
+                    kind="context",
+                    origin="citation",
+                    source_scheme="message",
+                    source_id=assistant_message_id,
+                    target_scheme="note_block",
+                    target_id=note.id,
+                    ordinal=1,
+                    snapshot={
+                        "title": "Research note",
+                        "excerpt": body,
+                        "result_type": "note_block",
+                        "deep_link": f"/notes/{note.id}",
+                    },
+                )
+            )
+            session.commit()
+            note_block_id = note.id
+
+        run_id = self._create_chat_run_row(
+            direct_db,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            user_message_id=user_message_id,
+            assistant_message_id=assistant_message_id,
+            model_id=model_id,
+        )
+        direct_db.register_cleanup("resource_edges", "user_id", user_id)
+        direct_db.register_cleanup("note_blocks", "id", note_block_id)
+        direct_db.register_cleanup("chat_run_events", "run_id", run_id)
+        direct_db.register_cleanup("chat_runs", "id", run_id)
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+
+        with direct_db.session() as session:
+            run = session.get(ChatRunModel, run_id)
+            assert run is not None, "Test setup must persist the chat run row"
+            _emit_citation_index(session, run)
+            session.commit()
+
+        with direct_db.session() as session:
+            citation_payload = session.execute(
+                text(
+                    "SELECT payload FROM chat_run_events WHERE run_id = :run_id "
+                    "AND event_type = 'citation_index'"
+                ),
+                {"run_id": run_id},
+            ).scalar_one()
+
+        assert "entries" not in citation_payload
+        item = citation_payload["citations"][0]
+        assert item["citation_edge_id"] == str(edge_id)
+        citation = item["citation"]
+        assert citation["ordinal"] == 1
+        assert citation["role"] == "context"
+        assert citation["target_ref"] == {"type": "note_block", "id": str(note_block_id)}
+        assert citation["media_id"] is None
+        assert citation["locator"] == {
+            "type": "note_block_offsets",
+            "block_id": str(note_block_id),
+            "start_offset": 0,
+            "end_offset": len(body),
+        }
+        assert citation["deep_link"] == f"/notes/{note_block_id}"
+        assert citation["snapshot"]["title"] == "Research note"
 
     def test_web_search_citation_mints_external_snapshot(
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
@@ -2310,10 +2422,10 @@ class TestCitationEdgeWriteThrough:
             ).scalar_one()
         assert context_edges == 0, "external_snapshot targets never become conversation context"
         assert reference_events == 0
-        entry = citation_payload["entries"][0]
-        assert entry["target_ref"]["type"] == "external_snapshot"
-        assert entry["deep_link"] == "https://example.com/1"
-        assert entry["snapshot"]["result_type"] == "web_result"
+        citation = citation_payload["citations"][0]["citation"]
+        assert citation["target_ref"]["type"] == "external_snapshot"
+        assert citation["deep_link"] == "https://example.com/1"
+        assert citation["snapshot"]["result_type"] == "web_result"
 
     def test_message_replay_builds_chips_and_trust_trail_from_edges_and_telemetry(
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema

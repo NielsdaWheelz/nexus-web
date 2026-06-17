@@ -575,9 +575,10 @@ async def test_attached_highlight_public_run_persists_citation_index_and_reader_
     )
     assert row.result_ref["result_type"] == "highlight"
     assert isinstance(citation_event, dict)
-    assert citation_event["entries"][0]["n"] == 1
-    assert citation_event["entries"][0]["citation_edge_id"] == str(row.cited_edge_id)
-    assert citation_event["entries"][0]["snapshot"]["result_type"] == "highlight"
+    item = citation_event["citations"][0]
+    assert item["citation"]["ordinal"] == 1
+    assert item["citation_edge_id"] == str(row.cited_edge_id)
+    assert item["citation"]["snapshot"]["result_type"] == "highlight"
 
 
 @pytest.mark.integration
@@ -673,13 +674,14 @@ async def test_document_summary_trace_inspects_then_reads_map_pointer(
     assert retrieval_row[1] is not None, "the cited read row must point at its citation edge"
     assert retrieval_row[2]["result_type"] == "media"
     assert isinstance(citation_event, dict)
-    assert citation_event["entries"][0]["n"] == 1
-    assert citation_event["entries"][0]["citation_edge_id"] == str(retrieval_row[1])
-    assert citation_event["entries"][0]["target_ref"] == {
+    item = citation_event["citations"][0]
+    assert item["citation"]["ordinal"] == 1
+    assert item["citation_edge_id"] == str(retrieval_row[1])
+    assert item["citation"]["target_ref"] == {
         "type": "media",
         "id": str(media_id),
     }
-    assert citation_event["entries"][0]["snapshot"]["result_type"] == "media"
+    assert item["citation"]["snapshot"]["result_type"] == "media"
 
 
 @pytest.mark.integration

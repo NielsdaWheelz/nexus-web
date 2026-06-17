@@ -23,6 +23,8 @@ import type {
   MediaReaderTarget,
   ReaderSourceTarget,
 } from "@/lib/conversations/readerTarget";
+import { dispatchReaderSourceActivation } from "@/lib/conversations/readerSourceActivation";
+import { isMediaRetrievalLocator, isRetrievalLocator } from "@/lib/api/sse/locators";
 import ReaderDocumentMapHighlightsLens from "@/components/reader/document-map/ReaderDocumentMapHighlightsLens";
 import ReaderDocumentMapConnectionsLens from "@/components/reader/document-map/ReaderDocumentMapConnectionsLens";
 import ReaderDocumentMapOverviewRail from "@/components/reader/ReaderDocumentMapOverviewRail";
@@ -95,7 +97,6 @@ import HoverPreview, {
 } from "@/components/ui/HoverPreview";
 import ActionMenu, { type ActionMenuOption } from "@/components/ui/ActionMenu";
 import LibraryMembershipPanel from "@/components/LibraryMembershipPanel";
-import { isRetrievalLocator } from "@/lib/api/sse/locators";
 import {
   getReaderDocumentMap,
   type ReaderDocumentMap,
@@ -4649,8 +4650,7 @@ export default function MediaPaneBody() {
   const handleReaderSourceActivate = useCallback(
     (target: ReaderSourceTarget) => {
       if (target.kind === "note") {
-        // A note citation is not media: open the notes pane (the page editor
-        // listens for the note pulse to scroll + pulse the cited block).
+        // A note citation is not media: open the notes pane.
         const route = target.href || `/notes/${target.block_id}`;
         openInNewPane?.(route, target.label ?? "Note");
         return;
@@ -4693,14 +4693,40 @@ export default function MediaPaneBody() {
 
   const handleActivateReaderConnectionTarget = useCallback(
     (row: ReaderConnectionRow) => {
-      const locator = row.anchor?.locator;
-      if (!locator || !isRetrievalLocator(locator) || locator.type === "note_block_offsets") {
+      const targetReader = row.connection.citation?.target_reader;
+      const targetLocator = targetReader?.locator;
+      if (
+        targetReader?.media_id === null &&
+        isRetrievalLocator(targetLocator) &&
+        targetLocator.type === "note_block_offsets"
+      ) {
+        const target: ReaderSourceTarget = {
+          kind: "note",
+          source: "message_retrieval",
+          block_id: targetLocator.block_id,
+          start_offset: targetLocator.start_offset,
+          end_offset: targetLocator.end_offset,
+          snippet: row.excerpt,
+          highlight_behavior: "pulse",
+          focus_behavior: "scroll_into_view",
+          label: row.connection.target.label ?? row.title,
+          href: row.connection.target.href ?? `/notes/${targetLocator.block_id}`,
+          evidence_id: row.connection.target.id,
+        };
+        dispatchReaderSourceActivation(target);
+        handleReaderSourceActivate(target);
         return;
       }
+
+      const locator = row.anchor?.locator;
+      if (!locator || !isRetrievalLocator(locator) || !isMediaRetrievalLocator(locator)) {
+        return;
+      }
+
       handleReaderSourceActivate({
         kind: "media",
         source: "message_retrieval",
-        media_id: id,
+        media_id: row.anchor?.media_id ?? id,
         locator,
         snippet: row.excerpt,
         highlight_behavior: "pulse",

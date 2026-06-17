@@ -2,52 +2,77 @@ import { describe, expect, it } from "vitest";
 import { toChatSSEEvent } from "./events";
 
 describe("toChatSSEEvent", () => {
-  // One citation edge as the backend emits it (chat_runs._emit_citation_index):
-  // the chip read-model fields, no media_id/locator (those are reconstructed only
-  // on the server-built MessageOut.citations; the SSE edge payload is the chip).
-  const entry = {
-    citation_edge_id: "11111111-1111-4111-8111-111111111111",
-    n: 1,
+  const citation = {
+    ordinal: 1,
+    role: "supports",
     target_ref: {
-      type: "evidence_span",
+      type: "note_block",
       id: "22222222-2222-4222-8222-222222222222",
     },
-    kind: "context",
-    deep_link: "/media/media-1#evidence-span-1",
+    media_id: null,
+    locator: {
+      type: "note_block_offsets",
+      block_id: "22222222-2222-4222-8222-222222222222",
+      start_offset: 0,
+      end_offset: 12,
+    },
+    deep_link: "/notes/22222222-2222-4222-8222-222222222222",
     snapshot: {
       title: "Source title",
       excerpt: "selected words",
       section_label: "Section",
-      result_type: "highlight",
+      result_type: "note_block",
     },
   };
 
-  it("parses citation index events as edge entries", () => {
+  const item = {
+    citation_edge_id: "11111111-1111-4111-8111-111111111111",
+    citation,
+  };
+
+  it("parses citation index events as backend-built citations", () => {
     expect(
       toChatSSEEvent("citation_index", {
         assistant_message_id: "msg-1",
-        entries: [entry],
+        citations: [item],
       }),
     ).toEqual({
       type: "citation_index",
-      data: { assistant_message_id: "msg-1", entries: [entry] },
+      data: { assistant_message_id: "msg-1", citations: [item] },
     });
   });
 
-  it("rejects an entry with an n below 1", () => {
+  it("rejects an old entries payload", () => {
     expect(() =>
       toChatSSEEvent("citation_index", {
         assistant_message_id: "msg-1",
-        entries: [{ ...entry, n: 0 }],
+        entries: [item],
       }),
     ).toThrow("Invalid SSE payload for citation_index");
   });
 
-  it("rejects an entry with an unknown target type", () => {
+  it("rejects a citation with an ordinal below 1", () => {
     expect(() =>
       toChatSSEEvent("citation_index", {
         assistant_message_id: "msg-1",
-        entries: [{ ...entry, target_ref: { type: "bogus", id: "x" } }],
+        citations: [{ ...item, citation: { ...citation, ordinal: 0 } }],
+      }),
+    ).toThrow("Invalid SSE payload for citation_index");
+  });
+
+  it("rejects a citation with an unknown target type", () => {
+    expect(() =>
+      toChatSSEEvent("citation_index", {
+        assistant_message_id: "msg-1",
+        citations: [
+          {
+            ...item,
+            citation: {
+              ...citation,
+              target_ref: { type: "bogus", id: "x" },
+            },
+          },
+        ],
       }),
     ).toThrow("Invalid SSE payload for citation_index");
   });
@@ -57,15 +82,15 @@ describe("toChatSSEEvent", () => {
       toChatSSEEvent("citation_index", {
         assistant_message_id: "msg-1",
         source_version: "old-source:v1",
-        entries: [],
+        citations: [],
       }),
     ).toThrow("Invalid SSE payload for citation_index");
 
-    // An edge entry carrying a legacy identity key is rejected (extra="forbid").
+    // An edge item carrying a legacy identity key is rejected (extra="forbid").
     expect(() =>
       toChatSSEEvent("citation_index", {
         assistant_message_id: "msg-1",
-        entries: [{ ...entry, transcript_version_id: "transcript-version-1" }],
+        citations: [{ ...item, transcript_version_id: "transcript-version-1" }],
       }),
     ).toThrow("Invalid SSE payload for citation_index");
   });

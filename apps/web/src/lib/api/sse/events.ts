@@ -10,17 +10,11 @@
  */
 
 import { isRecord } from "@/lib/validation";
-import { hasLegacyArtifactIdentityKey } from "@/lib/currentArtifactIdentity";
-import type {
-  CitationRole,
-  CitationSnapshot,
-  CitationTargetRef,
-  CitationTargetType,
-} from "@/lib/conversations/citationOut";
 import {
-  hasOnlyKeys,
-  isOptionalString,
-} from "./guards";
+  isCitationOut,
+  type CitationOut,
+} from "@/lib/conversations/citationOut";
+import { hasOnlyKeys, isOptionalString } from "./guards";
 import {
   isCitationEventData,
   type CitationEventData,
@@ -95,21 +89,17 @@ export interface SSERetrievalResultEvent {
   };
 }
 
-/** One citation edge: the `[n]` marker plus the chip's display fields. */
-export interface SSECitationIndexEntry {
+/** One citation edge carrying the backend-built citation read model. */
+export interface SSECitationIndexItem {
   citation_edge_id: string;
-  n: number;
-  target_ref: CitationTargetRef;
-  kind: CitationRole;
-  deep_link: string | null;
-  snapshot: CitationSnapshot;
+  citation: CitationOut;
 }
 
 export interface SSECitationIndexEvent {
   type: "citation_index";
   data: {
     assistant_message_id: string;
-    entries: SSECitationIndexEntry[];
+    citations: SSECitationIndexItem[];
   };
 }
 
@@ -289,92 +279,32 @@ function isChatToolStatus(value: unknown): value is ChatToolStatus {
 function parseCitationIndexData(data: unknown): SSECitationIndexEvent["data"] {
   if (
     !isRecord(data) ||
-    !hasOnlyKeys(data, ["assistant_message_id", "entries"]) ||
-    hasLegacyArtifactIdentityKey(data) ||
+    !hasOnlyKeys(data, ["assistant_message_id", "citations"]) ||
     typeof data.assistant_message_id !== "string" ||
-    !Array.isArray(data.entries)
+    !Array.isArray(data.citations)
   ) {
     throw new Error("Invalid SSE payload for citation_index");
   }
   return {
     assistant_message_id: data.assistant_message_id,
-    entries: data.entries.map(parseCitationIndexEntry),
+    citations: data.citations.map(parseCitationIndexItem),
   };
 }
 
-const CITATION_TARGET_TYPES: readonly CitationTargetType[] = [
-  "evidence_span",
-  "content_chunk",
-  "media",
-  "note_block",
-  "external_snapshot",
-  "oracle_corpus_passage",
-];
-const CITATION_KINDS: readonly CitationRole[] = [
-  "supports",
-  "contradicts",
-  "context",
-];
-
-function parseCitationIndexEntry(entry: unknown): SSECitationIndexEntry {
+function parseCitationIndexItem(item: unknown): SSECitationIndexItem {
   if (
-    !isRecord(entry) ||
-    !hasOnlyKeys(entry, [
-      "citation_edge_id",
-      "n",
-      "target_ref",
-      "kind",
-      "deep_link",
-      "snapshot",
-    ]) ||
-    hasLegacyArtifactIdentityKey(entry) ||
-    typeof entry.citation_edge_id !== "string" ||
-    typeof entry.n !== "number" ||
-    !Number.isInteger(entry.n) ||
-    entry.n < 1 ||
-    !isRecord(entry.target_ref) ||
-    !hasOnlyKeys(entry.target_ref, ["type", "id"]) ||
-    typeof entry.target_ref.id !== "string" ||
-    !CITATION_TARGET_TYPES.includes(entry.target_ref.type as CitationTargetType) ||
-    !CITATION_KINDS.includes(entry.kind as CitationRole) ||
-    !(entry.deep_link === null || typeof entry.deep_link === "string") ||
-    !isRecord(entry.snapshot) ||
-    !hasOnlyKeys(entry.snapshot, ["title", "excerpt", "section_label", "result_type"])
-  ) {
-    throw new Error("Invalid SSE payload for citation_index");
-  }
-  const title = entry.snapshot.title;
-  const excerpt = entry.snapshot.excerpt;
-  const sectionLabel = entry.snapshot.section_label;
-  const resultType = entry.snapshot.result_type;
-  if (
-    !isStringOrNull(title) ||
-    !isStringOrNull(excerpt) ||
-    !isStringOrNull(sectionLabel) ||
-    !isStringOrNull(resultType)
+    !isRecord(item) ||
+    !hasOnlyKeys(item, ["citation_edge_id", "citation"]) ||
+    typeof item.citation_edge_id !== "string" ||
+    !isCitationOut(item.citation) ||
+    item.citation.ordinal < 1
   ) {
     throw new Error("Invalid SSE payload for citation_index");
   }
   return {
-    citation_edge_id: entry.citation_edge_id,
-    n: entry.n,
-    target_ref: {
-      type: entry.target_ref.type as CitationTargetType,
-      id: entry.target_ref.id,
-    },
-    kind: entry.kind as CitationRole,
-    deep_link: entry.deep_link,
-    snapshot: {
-      title,
-      excerpt,
-      section_label: sectionLabel,
-      result_type: resultType,
-    },
+    citation_edge_id: item.citation_edge_id,
+    citation: item.citation,
   };
-}
-
-function isStringOrNull(value: unknown): value is string | null {
-  return typeof value === "string" || value === null;
 }
 
 function parseContextRefAddedData(

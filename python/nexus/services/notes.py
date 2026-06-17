@@ -9,6 +9,7 @@ from typing import Any, cast
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from pydantic import BaseModel
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -202,6 +203,8 @@ def quick_capture(
     enqueue_note_reindex(db, note_block_id=block.id, reason="quick_capture")
     response = NoteBlockOut(
         id=block.id,
+        parent_block_id=None,
+        order_key=None,
         body_pm_json=block.body_pm_json,
         body_text=block.body_text,
         created_at=block.created_at,
@@ -231,6 +234,8 @@ def get_note_block(db: Session, viewer_id: UUID, block_id: UUID) -> NoteBlockOut
     block = get_note_block_for_owner_or_404(db, viewer_id, block_id)
     return NoteBlockOut(
         id=block.id,
+        parent_block_id=None,
+        order_key=None,
         body_pm_json=block.body_pm_json,
         body_text=block.body_text,
         created_at=block.created_at,
@@ -266,6 +271,7 @@ def set_highlight_note_body_pm_json(
         raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Highlight note block id mismatch")
 
     block = _upsert_note_body(db, viewer_id, block_id, body_pm_json)
+    enqueue_note_reindex(db, note_block_id=block.id, reason="highlight_note")
     if existing is None:
         create_edge(
             db,
@@ -279,6 +285,8 @@ def set_highlight_note_body_pm_json(
         )
     response = NoteBlockOut(
         id=block.id,
+        parent_block_id=None,
+        order_key=None,
         body_pm_json=block.body_pm_json,
         body_text=block.body_text,
         created_at=block.created_at,
@@ -415,22 +423,19 @@ def _page_out(db: Session, viewer_id: UUID, page: Page) -> NotePageOut:
         title=page.title,
         updated_at=page.updated_at,
         surface=surfaces.get_surface(db, viewer_id=viewer_id, source=_page_ref(page.id)),
-        blocks=[_surface_note_out(db, node, page.id) for node in surface.roots],
+        blocks=[_surface_note_out(db, node) for node in surface.roots],
     )
 
 
-def _surface_note_out(
-    db: Session, node: graph_adjacency.SurfaceNote, page_id: UUID
-) -> NoteBlockOut:
+def _surface_note_out(db: Session, node: graph_adjacency.SurfaceNote) -> NoteBlockOut:
     return NoteBlockOut(
         id=node.block.id,
-        page_id=page_id,
         parent_block_id=node.parent.id if node.parent.scheme == "note_block" else None,
         order_key=node.source_order_key,
         body_pm_json=node.block.body_pm_json,
         body_text=node.block.body_text,
         collapsed=node.collapsed,
-        children=[_surface_note_out(db, child, page_id) for child in node.children],
+        children=[_surface_note_out(db, child) for child in node.children],
         created_at=node.block.created_at,
         updated_at=node.block.updated_at,
         version_by_lane=versions.versions_for_ref(
@@ -545,7 +550,7 @@ def _record_mutation(
 
 
 def _hash_payload(payload: object) -> str:
-    if hasattr(payload, "model_dump"):
+    if isinstance(payload, BaseModel):
         payload = payload.model_dump(mode="json", by_alias=True)
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()

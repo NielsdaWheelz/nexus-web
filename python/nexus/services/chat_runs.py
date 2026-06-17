@@ -136,7 +136,7 @@ from nexus.services.llm_ledger import LlmCallOwner, observed_generate_stream
 from nexus.services.prompt_budget import ContextBudgetError, estimate_tokens
 from nexus.services.rate_limit import get_rate_limiter
 from nexus.services.resource_graph import cleanup as graph_cleanup
-from nexus.services.resource_graph.citations import record_citation
+from nexus.services.resource_graph.citations import build_citation_outs, record_citation
 from nexus.services.resource_graph.connections import query_connections
 from nexus.services.resource_graph.context import (
     add_context_ref_without_commit,
@@ -886,10 +886,10 @@ def _tool_trace_event(
 def _emit_citation_index(db: Session, run: ChatRun) -> None:
     """Emit the message's citation set (from edges) + graduate cited local targets.
 
-    The entries carry ``citation_edge_id`` and the chip display fields; cited
-    LOCAL resources not yet in the conversation context get an
-    ``origin='citation'`` context edge plus a ``context_ref_added`` event built
-    from the returned ContextRefOut (spec §5.1/§11.6).
+    The citation_index event carries the graph-built ``CitationOut`` read model
+    plus ``citation_edge_id``. Cited local resources not yet in the conversation
+    context get an ``origin='citation'`` context edge plus a
+    ``context_ref_added`` event built from the returned ContextRefOut.
     """
     message_ref = ResourceRef(scheme="message", id=run.assistant_message_id)
     edges = []
@@ -914,29 +914,25 @@ def _emit_citation_index(db: Session, run: ChatRun) -> None:
     edges.sort(key=lambda edge: edge.ordinal or 0)
     if not edges:
         return
-    entries = []
-    for edge in edges:
-        assert edge.snapshot is not None, f"citation edge {edge.edge_id} lost its snapshot"
-        entries.append(
+    edge_id_by_ordinal = {edge.ordinal: edge.edge_id for edge in edges}
+    citations = []
+    for citation in build_citation_outs(db, viewer_id=run.owner_user_id, source=message_ref):
+        edge_id = edge_id_by_ordinal.get(citation.ordinal)
+        assert edge_id is not None, f"citation ordinal {citation.ordinal} lost its edge id"
+        citations.append(
             {
-                "citation_edge_id": str(edge.edge_id),
-                "n": edge.ordinal,
-                "target_ref": {"type": edge.target_ref.scheme, "id": str(edge.target_ref.id)},
-                "kind": edge.kind,
-                "deep_link": edge.snapshot.deep_link,
-                "snapshot": {
-                    "title": edge.snapshot.title,
-                    "excerpt": edge.snapshot.excerpt,
-                    "section_label": edge.snapshot.section_label,
-                    "result_type": edge.snapshot.result_type,
-                },
+                "citation_edge_id": str(edge_id),
+                "citation": citation.model_dump(mode="json"),
             }
         )
+    assert len(citations) == len(edges), (
+        f"citation read model count mismatch for message {run.assistant_message_id}"
+    )
     append_run_event(
         db,
         run,
         "citation_index",
-        {"assistant_message_id": str(run.assistant_message_id), "entries": entries},
+        {"assistant_message_id": str(run.assistant_message_id), "citations": citations},
     )
     for edge in edges:
         if edge.target_ref.scheme == "external_snapshot":

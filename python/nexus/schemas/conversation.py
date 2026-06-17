@@ -20,7 +20,7 @@ from pydantic import (
 )
 
 from nexus.llm_catalog import LLMKeyMode, ReasoningMode
-from nexus.schemas.citation import CitationOut, CitationRole, CitationSnapshot, CitationTargetRef
+from nexus.schemas.citation import CitationOut, CitationRole, CitationTargetRef
 from nexus.schemas.retrieval import RetrievalContextRef, RetrievalLocator, RetrievalResultRef
 from nexus.schemas.search import SEARCH_RESULT_TYPES
 
@@ -273,24 +273,20 @@ class ChatRunDoneEventPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class ChatRunCitationIndexEntry(BaseModel):
-    """One citation edge: the `[n]` marker plus the display fields the chip renders."""
+class ChatRunCitationIndexItem(BaseModel):
+    """One citation edge paired with the backend-built citation read model."""
 
     citation_edge_id: UUID
-    n: int = Field(ge=1)
-    target_ref: CitationTargetRef
-    kind: CitationRole
-    deep_link: str | None = None
-    snapshot: CitationSnapshot
+    citation: CitationOut
 
     model_config = ConfigDict(extra="forbid")
 
 
 class ChatRunCitationIndexEventPayload(BaseModel):
-    """Strict SSE payload mapping citation `[N]` markers to citation edges."""
+    """Strict SSE payload carrying backend-built citation read models."""
 
     assistant_message_id: UUID
-    entries: list[ChatRunCitationIndexEntry]
+    citations: list[ChatRunCitationIndexItem]
 
     model_config = ConfigDict(extra="forbid")
 

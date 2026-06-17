@@ -5,6 +5,7 @@ import { useState } from "react";
 import AssistantEvidenceDisclosure from "./AssistantEvidenceDisclosure";
 import { useChatMessageUpdates } from "./useChatMessageUpdates";
 import type { SSECitationIndexEvent } from "@/lib/api/sse/events";
+import type { CitationOut } from "@/lib/conversations/citationOut";
 import type { ConversationMessage } from "@/lib/conversations/types";
 
 const ASSISTANT_ID = "assistant-1";
@@ -51,51 +52,68 @@ function assistantMessage(): ConversationMessage {
   };
 }
 
-// Two edges: one supports/note_block with a deep link (renders as a link chip)
-// and one context/media without a deep link (renders as a plain chip).
-const TWO_ENTRY_EVENT: SSECitationIndexEvent["data"] = {
+const NOTE_CITATION: CitationOut = {
+  ordinal: 1,
+  role: "supports",
+  target_ref: { type: "note_block", id: NOTE_BLOCK_ID },
+  media_id: null,
+  locator: {
+    type: "note_block_offsets",
+    block_id: NOTE_BLOCK_ID,
+    start_offset: 0,
+    end_offset: 16,
+  },
+  deep_link: `/notes/${NOTE_BLOCK_ID}`,
+  snapshot: {
+    title: "Cited note",
+    excerpt: "the cited claim",
+    section_label: null,
+    result_type: null,
+  },
+};
+
+const MEDIA_CITATION: CitationOut = {
+  ordinal: 2,
+  role: "context",
+  target_ref: { type: "media", id: MEDIA_ID },
+  media_id: MEDIA_ID,
+  locator: {
+    type: "web_text_offsets",
+    media_id: MEDIA_ID,
+    fragment_id: "fragment-1",
+    start_offset: 20,
+    end_offset: 34,
+  },
+  deep_link: `/media/${MEDIA_ID}#fragment-1`,
+  snapshot: {
+    title: "Background source",
+    excerpt: null,
+    section_label: null,
+    result_type: null,
+  },
+};
+
+// Two backend-built citations: one note target and one media target.
+const TWO_CITATION_EVENT: SSECitationIndexEvent["data"] = {
   assistant_message_id: ASSISTANT_ID,
-  entries: [
-    {
-      citation_edge_id: "edge-1",
-      n: 1,
-      target_ref: { type: "note_block", id: NOTE_BLOCK_ID },
-      kind: "supports",
-      deep_link: "/notes/page-1#block",
-      snapshot: {
-        title: "Cited note",
-        excerpt: "the cited claim",
-        section_label: null,
-        result_type: null,
-      },
-    },
-    {
-      citation_edge_id: "edge-2",
-      n: 2,
-      target_ref: { type: "media", id: MEDIA_ID },
-      kind: "context",
-      deep_link: null,
-      snapshot: {
-        title: "Background source",
-        excerpt: null,
-        section_label: null,
-        result_type: null,
-      },
-    },
+  citations: [
+    { citation_edge_id: "edge-1", citation: NOTE_CITATION },
+    { citation_edge_id: "edge-2", citation: MEDIA_CITATION },
   ],
 };
 
-// A later index for the same message carrying only the first edge.
-const ONE_ENTRY_EVENT: SSECitationIndexEvent["data"] = {
+// A later index for the same message carrying only the first citation.
+const ONE_CITATION_EVENT: SSECitationIndexEvent["data"] = {
   assistant_message_id: ASSISTANT_ID,
-  entries: [TWO_ENTRY_EVENT.entries[0]],
+  citations: [TWO_CITATION_EVENT.citations[0]],
 };
 
 // Drives the real fold (useChatMessageUpdates.handleCitationIndex) over real
 // message state and renders the real disclosure. Each button dispatches a
 // citation_index event so the assertion is on what the user sees before vs.
 // after the event arrives. The list mirrors the folded read-model
-// (ordinal/kind/target) that flows to render, so we can assert n/kind/target.
+// (ordinal/role/target/locator) that flows to render, so we can assert the
+// backend-built locator survives the live fold.
 function CitationIndexHarness() {
   const [messages, setMessages] = useState<ConversationMessage[]>([
     assistantMessage(),
@@ -106,13 +124,13 @@ function CitationIndexHarness() {
     <div>
       <button
         type="button"
-        onClick={() => handleCitationIndex(ASSISTANT_ID, TWO_ENTRY_EVENT)}
+        onClick={() => handleCitationIndex(ASSISTANT_ID, TWO_CITATION_EVENT)}
       >
         Fold two
       </button>
       <button
         type="button"
-        onClick={() => handleCitationIndex(ASSISTANT_ID, ONE_ENTRY_EVENT)}
+        onClick={() => handleCitationIndex(ASSISTANT_ID, ONE_CITATION_EVENT)}
       >
         Fold one
       </button>
@@ -120,7 +138,14 @@ function CitationIndexHarness() {
       <ul aria-label="folded citations">
         {(message.citations ?? []).map((citation) => (
           <li key={citation.ordinal}>
-            {`${citation.ordinal}:${citation.role}:${citation.target_ref.type}:${citation.target_ref.id}`}
+            {[
+              citation.ordinal,
+              citation.role,
+              citation.target_ref.type,
+              citation.target_ref.id,
+              citation.media_id ?? "none",
+              citation.locator?.type ?? "none",
+            ].join(":")}
           </li>
         ))}
       </ul>
@@ -136,7 +161,7 @@ function foldedRows(): string[] {
 }
 
 describe("useChatMessageUpdates citation_index fold", () => {
-  it("folds a citation_index event into chips with the right n/kind/target", async () => {
+  it("folds a citation_index event into chips with backend-built citations", async () => {
     const user = userEvent.setup();
     render(<CitationIndexHarness />);
 
@@ -148,20 +173,21 @@ describe("useChatMessageUpdates citation_index fold", () => {
 
     await user.click(screen.getByRole("button", { name: "Fold two" }));
 
-    // The deep-linked supports edge renders as an actionable [1] link chip; the
-    // deep-link-less context edge renders as a plain [2] chip.
+    // The note citation stays actionable because its backend-built locator is
+    // stored directly instead of reconstructed with locator=null.
     const chip1 = await screen.findByRole("link", { name: "Open citation 1" });
     expect(chip1).toHaveTextContent("1");
-    expect(chip1).toHaveAttribute("href", "/notes/page-1#block");
+    expect(chip1).toHaveAttribute("href", `/notes/${NOTE_BLOCK_ID}`);
 
-    const chip2 = screen.getByLabelText("Citation 2");
+    const chip2 = screen.getByRole("link", { name: "Open citation 2" });
     expect(chip2).toHaveTextContent("2");
+    expect(chip2).toHaveAttribute("href", `/media/${MEDIA_ID}#fragment-1`);
 
-    // The folded read-model carries the right ordinal (n), role (kind), and
-    // target_ref for each edge, in order.
+    // The folded read-model carries the backend-built media_id and locator for
+    // each citation, in order.
     expect(foldedRows()).toEqual([
-      `1:supports:note_block:${NOTE_BLOCK_ID}`,
-      `2:context:media:${MEDIA_ID}`,
+      `1:supports:note_block:${NOTE_BLOCK_ID}:none:note_block_offsets`,
+      `2:context:media:${MEDIA_ID}:${MEDIA_ID}:web_text_offsets`,
     ]);
   });
 
@@ -173,16 +199,22 @@ describe("useChatMessageUpdates citation_index fold", () => {
     expect(
       await screen.findByRole("link", { name: "Open citation 1" }),
     ).toBeInTheDocument();
-    expect(screen.getByLabelText("Citation 2")).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Open citation 2" }),
+    ).toBeInTheDocument();
 
     // A later event with a single edge supersedes the prior read-model wholesale:
     // chip [2] disappears and only [1] remains.
     await user.click(screen.getByRole("button", { name: "Fold one" }));
 
-    expect(screen.queryByLabelText("Citation 2")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: "Open citation 2" }),
+    ).not.toBeInTheDocument();
     expect(
       screen.getByRole("link", { name: "Open citation 1" }),
     ).toBeInTheDocument();
-    expect(foldedRows()).toEqual([`1:supports:note_block:${NOTE_BLOCK_ID}`]);
+    expect(foldedRows()).toEqual([
+      `1:supports:note_block:${NOTE_BLOCK_ID}:none:note_block_offsets`,
+    ]);
   });
 });

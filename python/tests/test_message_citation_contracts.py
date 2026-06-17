@@ -5,15 +5,15 @@ built on the backend and rendered directly by the frontend. These tests pin the
 wire shapes without a database:
 
 - ``MessageOut.citations`` carries the server-built ``CitationOut`` read-model.
-- The ``citation_index`` SSE payload is ``{assistant_message_id, entries}`` where
-  each entry is a ``ChatRunCitationIndexEntry`` (``citation_edge_id`` + the ``[n]``
-  marker + the chip display fields). It is NOT ``{assistant_message_id, citations}``.
+- The ``citation_index`` SSE payload is ``{assistant_message_id, citations}`` where
+  each item is ``citation_edge_id`` + a backend-built ``CitationOut``. It is not
+  the old reduced ``entries`` shape.
 - ``CitationTargetRef.id`` is a UUID (every target is a ``resource_edges`` row);
   web results are snapshotted as ``external_snapshot`` targets, so there is no
   string-id ``web_result`` target type.
 
 The DB-backed read-model producer is exercised in ``test_message_citations.py``
-and the end-to-end ``entries`` SSE persistence in
+and the end-to-end ``citations`` SSE persistence in
 ``test_openai_reasoning_contracts.py``; these stay focused pure-schema contracts.
 """
 
@@ -28,8 +28,8 @@ from pydantic import ValidationError
 from nexus.schemas.citation import CitationOut, CitationSnapshot, CitationTargetRef
 from nexus.schemas.conversation import (
     AssistantTrustTrailOut,
-    ChatRunCitationIndexEntry,
     ChatRunCitationIndexEventPayload,
+    ChatRunCitationIndexItem,
     MessageOut,
     chat_run_event_payload_json,
 )
@@ -94,27 +94,31 @@ def test_web_result_result_ref_json_round_trips_through_validator() -> None:
     assert serialized["context_ref"] == {"type": "web_result", "id": "web:example"}
 
 
-def test_citation_index_payload_carries_entries() -> None:
-    """The citation_index payload is ``{assistant_message_id, entries}``.
-
-    Each entry pins one citation edge: ``citation_edge_id`` + the ``[n]`` marker
-    + the chip display fields (target_ref/kind/deep_link/snapshot).
-    """
+def test_citation_index_payload_carries_backend_built_citations() -> None:
+    """The citation_index payload wraps backend-built CitationOut objects."""
     amid = uuid4()
     edge_id = uuid4()
-    target_id = uuid4()
+    block_id = uuid4()
+    citation = CitationOut(
+        ordinal=1,
+        role="supports",
+        target_ref=CitationTargetRef(type="note_block", id=block_id),
+        media_id=None,
+        locator={
+            "type": "note_block_offsets",
+            "block_id": str(block_id),
+            "start_offset": 0,
+            "end_offset": 12,
+        },
+        deep_link="/notes/example",
+        snapshot=CitationSnapshot(title="Research note", result_type="note_block"),
+    )
     payload = {
         "assistant_message_id": str(amid),
-        "entries": [
-            ChatRunCitationIndexEntry(
+        "citations": [
+            ChatRunCitationIndexItem(
                 citation_edge_id=edge_id,
-                n=1,
-                target_ref=CitationTargetRef(type="content_chunk", id=target_id),
-                kind="supports",
-                deep_link="/media/x?chunk=1",
-                snapshot=CitationSnapshot(
-                    title="Doc", section_label="§2", result_type="content_chunk"
-                ),
+                citation=citation,
             ).model_dump(mode="json")
         ],
     }
@@ -122,52 +126,60 @@ def test_citation_index_payload_carries_entries() -> None:
     validated = chat_run_event_payload_json("citation_index", payload)
 
     assert validated["assistant_message_id"] == str(amid)
-    assert [e["n"] for e in validated["entries"]] == [1]
-    assert validated["entries"][0]["citation_edge_id"] == str(edge_id)
-    assert validated["entries"][0]["kind"] == "supports"
-    assert validated["entries"][0]["target_ref"] == {
-        "type": "content_chunk",
-        "id": str(target_id),
+    assert "entries" not in validated
+    item = validated["citations"][0]
+    assert item["citation_edge_id"] == str(edge_id)
+    assert item["citation"]["ordinal"] == 1
+    assert item["citation"]["role"] == "supports"
+    assert item["citation"]["target_ref"] == {"type": "note_block", "id": str(block_id)}
+    assert item["citation"]["media_id"] is None
+    assert item["citation"]["locator"] == {
+        "type": "note_block_offsets",
+        "block_id": str(block_id),
+        "start_offset": 0,
+        "end_offset": 12,
     }
-    assert validated["entries"][0]["snapshot"]["section_label"] == "§2"
+    assert item["citation"]["snapshot"]["title"] == "Research note"
 
 
-def test_citation_index_payload_rejects_legacy_citations_shape() -> None:
-    """The ``{assistant_message_id, citations:[...]}`` shape is gone (extra=forbid)."""
-    media_id = uuid4()
+def test_citation_index_payload_rejects_legacy_entries_shape() -> None:
+    """The reduced ``{assistant_message_id, entries:[...]}`` shape is gone."""
     with pytest.raises(ValidationError):
         ChatRunCitationIndexEventPayload.model_validate(
             {
                 "assistant_message_id": str(uuid4()),
-                "citations": [
-                    CitationOut(
-                        ordinal=1,
-                        role="context",
-                        target_ref=CitationTargetRef(type="media", id=media_id),
-                        media_id=media_id,
-                    ).model_dump(mode="json")
+                "entries": [
+                    {
+                        "citation_edge_id": str(uuid4()),
+                        "n": 1,
+                        "target_ref": {"type": "note_block", "id": str(uuid4())},
+                        "kind": "context",
+                        "snapshot": {"title": "Note"},
+                    }
                 ],
             }
         )
 
 
-def test_chat_run_citation_index_entry_requires_marker_and_snapshot() -> None:
-    """``ChatRunCitationIndexEntry`` exists; ``n`` is a 1-based marker, snapshot required."""
+def test_chat_run_citation_index_item_requires_citation_read_model() -> None:
+    """Citation index items require a nested CitationOut, not flattened chip fields."""
     edge_id = uuid4()
     target_id = uuid4()
-    entry = ChatRunCitationIndexEntry(
+    item = ChatRunCitationIndexItem(
         citation_edge_id=edge_id,
-        n=2,
-        target_ref=CitationTargetRef(type="note_block", id=target_id),
-        kind="context",
-        snapshot=CitationSnapshot(title="Note"),
+        citation=CitationOut(
+            ordinal=2,
+            role="context",
+            target_ref=CitationTargetRef(type="note_block", id=target_id),
+            snapshot=CitationSnapshot(title="Note"),
+        ),
     )
-    assert entry.n == 2
-    assert entry.deep_link is None
+    assert item.citation.ordinal == 2
+    assert item.citation.snapshot is not None
+    assert item.citation.snapshot.title == "Note"
 
-    # n is the [N] marker — 1-based, never 0.
     with pytest.raises(ValidationError):
-        ChatRunCitationIndexEntry(
+        ChatRunCitationIndexItem(
             citation_edge_id=edge_id,
             n=0,
             target_ref=CitationTargetRef(type="note_block", id=target_id),
@@ -175,13 +187,9 @@ def test_chat_run_citation_index_entry_requires_marker_and_snapshot() -> None:
             snapshot=CitationSnapshot(title="Note"),
         )
 
-    # snapshot is required (the chip always renders display fields).
     with pytest.raises(ValidationError):
-        ChatRunCitationIndexEntry(
+        ChatRunCitationIndexItem(
             citation_edge_id=edge_id,
-            n=1,
-            target_ref=CitationTargetRef(type="note_block", id=target_id),
-            kind="context",
         )
 
 

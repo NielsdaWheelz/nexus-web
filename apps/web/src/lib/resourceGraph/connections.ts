@@ -17,11 +17,13 @@ export interface ConnectionCitationOut {
   ordinal: number;
   role: EdgeKind;
   snapshot: Record<string, unknown>;
-  target_reader: {
-    media_id: string | null;
-    locator: Record<string, unknown> | null;
-  } | null;
+  target_reader: ConnectionReaderTargetOut | null;
   target_status: "current" | "missing" | "forbidden" | "unanchorable";
+}
+
+export interface ConnectionReaderTargetOut {
+  media_id: string | null;
+  locator: Record<string, unknown> | null;
 }
 
 export interface ConnectionOut {

@@ -34,6 +34,13 @@ _WEB_ROOT = _REPO_ROOT / "apps" / "web" / "src"
 # python/scripts (corpus seeds, e2e seed, migration helpers) is production-adjacent
 # code that the provenance-graph battery (§18.3) must also scrub.
 _SCRIPTS_ROOT = _REPO_ROOT / "python" / "scripts"
+_CURRENT_CITATION_CONTRACT_DOCS = (
+    _REPO_ROOT / "docs" / "architecture.md",
+    _REPO_ROOT / "docs" / "modules" / "chat.md",
+    _REPO_ROOT / "docs" / "modules" / "reader-implementation.md",
+    _REPO_ROOT / "docs" / "cutovers" / "notes-pages-evidence-unification-hard-cutover.md",
+    _REPO_ROOT / "docs" / "cutovers" / "generation-run-harness-hard-cutover.md",
+)
 
 # The post-split achieved line count of the artifact-head owner was 605. The gate
 # threshold is that count plus snug headroom (~15 lines) for small future edits,
@@ -821,8 +828,9 @@ def test_generation_harness_must_remain_symbols_present():
 #   2. lib/api/sse/citations.ts is NOT deleted (the spec mislabeled it as the
 #      citation_index validator). It validates the SURVIVING retrieval_result SSE
 #      event (tool-results display). The citation RENDER reconstruction — the
-#      messageToCitationOuts family + the 526-line CitationOut rebuild — IS deleted;
-#      citation_index now ships server-built CitationOut[]. We assert THAT instead.
+#      messageToCitationOuts family + the 526-line CitationOut rebuild — IS deleted.
+#      The live citation_index payload hard cutover is pinned separately; this
+#      gate only asserts the render reconstruction family stays absent.
 # =============================================================================
 
 # The shared transport primitives — minting a stream token and opening an SSE
@@ -859,12 +867,42 @@ def test_sse_transport_primitives_have_one_caller_not_per_surface():
 
 
 def test_citation_render_reconstruction_family_absent():
-    # Divergence 2: the FE-side CitationOut reconstruction is gone (server-built now).
+    # Divergence 2: the FE-side CitationOut render reconstruction family is gone.
     pattern = (
         r"messageToCitationOuts|citationIndexFromBlocks|targetRefFromRetrieval|retrievalBlocksOf"
     )
     hits = [hit for hit in _grep(pattern, _WEB_ROOT) if ".test." not in hit.path]
     assert not hits, f"FE citation-render reconstruction family still present:\n{_fmt(hits)}"
+
+
+def test_citation_snapshot_summary_md_is_schema_aligned():
+    backend_src = (_PY_ROOT / "schemas" / "citation.py").read_text(encoding="utf-8")
+    frontend_src = (_WEB_ROOT / "lib" / "conversations" / "citationOut.ts").read_text(
+        encoding="utf-8"
+    )
+
+    assert re.search(r"class CitationSnapshot\b[\s\S]*\bsummary_md\b", backend_src), (
+        "backend CitationSnapshot no longer exposes summary_md; update the frontend "
+        "CitationSnapshot guard and this gate together"
+    )
+    assert "summary_md?: string | null" in frontend_src, (
+        "frontend CitationSnapshot type is missing backend summary_md"
+    )
+    assert (
+        '"summary_md"' in frontend_src and "isOptionalString(value.summary_md)" in frontend_src
+    ), (
+        "frontend CitationSnapshot guard must allow backend summary_md and keep extra fields forbidden"
+    )
+
+
+def test_current_docs_do_not_put_page_id_in_public_note_block_offsets_locator():
+    hits = _grep(
+        r"note_block_offsets\.page_id|note_block_offsets[\"'][^`\n}]*[\"']page_id",
+        *_CURRENT_CITATION_CONTRACT_DOCS,
+    )
+    assert not hits, (
+        f"current-state docs must keep public note_block_offsets page-free:\n{_fmt(hits)}"
+    )
 
 
 def test_stream_events_with_reconnect_absent():

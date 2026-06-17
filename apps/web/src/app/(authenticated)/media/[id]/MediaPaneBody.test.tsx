@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useCallback, useState, type ReactNode } from "react";
 import {
   fireEvent,
   render,
@@ -23,8 +23,12 @@ import {
   type ReaderApparatusFixtureEntry,
 } from "@/lib/reader/__fixtures__/reader-apparatus";
 import type { WorkspaceAttachedSecondaryPaneState } from "@/lib/workspace/schema";
-import { READER_PULSE_HIGHLIGHT } from "@/lib/reader/pulseEvent";
+import {
+  NOTE_PULSE_HIGHLIGHT,
+  READER_PULSE_HIGHLIGHT,
+} from "@/lib/reader/pulseEvent";
 import type { ReaderApparatusResponse } from "@/lib/reader/apparatus";
+import type { ReaderConnectionPage } from "@/lib/reader/documentMap";
 import MediaPaneBody from "./MediaPaneBody";
 
 const testState = vi.hoisted(() => ({
@@ -36,6 +40,7 @@ const testState = vi.hoisted(() => ({
   fragmentCanonicalText: "",
   renderHtmlInMock: false,
   apparatusResponse: null as ReaderApparatusResponse | null,
+  documentMapConnections: null as ReaderConnectionPage | null,
   readerFocusMode: "off" as
     | "off"
     | "distraction_free"
@@ -318,6 +323,12 @@ function readerDocumentMapResponse() {
     apparatus.status === "ready" || apparatus.status === "partial"
       ? apparatus.items.length
       : 0;
+  const connections = testState.documentMapConnections ?? {
+    anchored: [],
+    unanchored: [],
+    next_cursor: null,
+  };
+  const connectionCount = connections.anchored.length + connections.unanchored.length;
   return {
     media_id: "media-1",
     media_kind: testState.mediaKind,
@@ -358,10 +369,10 @@ function readerDocumentMapResponse() {
       {
         id: "connections",
         label: "Connections",
-        status: "empty",
-        item_count: 0,
-        anchored_count: 0,
-        unanchored_count: 0,
+        status: connectionCount > 0 ? "ready" : "empty",
+        item_count: connectionCount,
+        anchored_count: connections.anchored.length,
+        unanchored_count: connections.unanchored.length,
       },
       {
         id: "chat",
@@ -389,7 +400,7 @@ function readerDocumentMapResponse() {
     navigation: null,
     highlights: [],
     apparatus,
-    connections: { anchored: [], unanchored: [], next_cursor: null },
+    connections,
     chat_threads: [],
     diagnostics: {
       omitted_item_counts: {},
@@ -501,9 +512,129 @@ async function getApparatusSurfaceBody(
   return body;
 }
 
+function noteTargetConnectionPage(): ReaderConnectionPage {
+  const noteBlockId = "33333333-3333-4333-8333-333333333333";
+  return {
+    anchored: [
+      {
+        id: "edge:edge-note:anchor:highlight",
+        connection: {
+          edge_id: "edge-note",
+          direction: "outgoing",
+          kind: "context",
+          origin: "highlight_note",
+          snapshot: null,
+          source_order_key: null,
+          target_order_key: null,
+          ordinal: null,
+          source_ref: "highlight:22222222-2222-4222-8222-222222222222",
+          target_ref: `note_block:${noteBlockId}`,
+          source: {
+            ref: "highlight:22222222-2222-4222-8222-222222222222",
+            scheme: "highlight",
+            id: "22222222-2222-4222-8222-222222222222",
+            label: "Current highlight",
+            description: null,
+            href: "/media/media-1#highlight-22222222-2222-4222-8222-222222222222",
+            missing: false,
+          },
+          target: {
+            ref: `note_block:${noteBlockId}`,
+            scheme: "note_block",
+            id: noteBlockId,
+            label: "Research note",
+            description: null,
+            href: `/notes/${noteBlockId}`,
+            missing: false,
+          },
+          other: {
+            ref: `note_block:${noteBlockId}`,
+            scheme: "note_block",
+            id: noteBlockId,
+            label: "Research note",
+            description: null,
+            href: `/notes/${noteBlockId}`,
+            missing: false,
+          },
+          citation: {
+            ordinal: 1,
+            role: "context",
+            snapshot: { excerpt: "Target note excerpt." },
+            target_reader: {
+              media_id: null,
+              locator: {
+                type: "note_block_offsets",
+                block_id: noteBlockId,
+                start_offset: 2,
+                end_offset: 18,
+              },
+            },
+            target_status: "current",
+          },
+          created_at: "2026-01-01T00:00:00Z",
+        },
+        anchor: {
+          ref: "highlight:22222222-2222-4222-8222-222222222222",
+          media_id: "media-1",
+          locator: {
+            type: "web_text_offsets",
+            media_id: "media-1",
+            fragment_id: "fragment-1",
+            start_offset: 0,
+            end_offset: 8,
+          },
+          page_number: null,
+          fragment_id: "fragment-1",
+          highlight_id: "22222222-2222-4222-8222-222222222222",
+          evidence_span_id: null,
+          order_key: "fragment:0000000000:0000000000",
+        },
+        source_category: "highlight_note",
+        title: "Research note",
+        subtitle: "highlight_note · context",
+        excerpt: "Target note excerpt.",
+        href: `/notes/${noteBlockId}`,
+      },
+    ],
+    unanchored: [],
+    next_cursor: null,
+  };
+}
+
+function PaneSecondaryTestHost({
+  onSetPaneSecondary,
+  renderSurfaceId,
+  children,
+}: {
+  onSetPaneSecondary: (next: PaneSecondaryPublication | null) => void;
+  renderSurfaceId?: string;
+  children: ReactNode;
+}) {
+  const [publication, setPublication] =
+    useState<PaneSecondaryPublication | null>(null);
+  const publish = useCallback(
+    (next: PaneSecondaryPublication | null) => {
+      onSetPaneSecondary(next);
+      setPublication(next);
+    },
+    [onSetPaneSecondary],
+  );
+  const secondaryBody = renderSurfaceId
+    ? (publication?.surfaces.find((surface) => surface.id === renderSurfaceId)
+        ?.body ?? null)
+    : null;
+  return (
+    <PaneSecondaryContext.Provider value={publish}>
+      {children}
+      {secondaryBody}
+    </PaneSecondaryContext.Provider>
+  );
+}
+
 function renderMediaPane(
   options: {
     secondaryPane?: WorkspaceAttachedSecondaryPaneState | null;
+    renderSecondarySurfaceId?: string;
   } = {},
 ) {
   const href = "/media/media-1";
@@ -536,11 +667,14 @@ function renderMediaPane(
         onRequestSecondarySurface={onRequestSecondarySurface}
         onCloseSecondaryPane={onCloseSecondaryPane}
       >
-        <PaneSecondaryContext.Provider value={onSetPaneSecondary}>
+        <PaneSecondaryTestHost
+          onSetPaneSecondary={onSetPaneSecondary}
+          renderSurfaceId={options.renderSecondarySurfaceId}
+        >
           <PaneFixedChromeContext.Provider value={onSetFixedChrome}>
             <MediaPaneBody />
           </PaneFixedChromeContext.Provider>
-        </PaneSecondaryContext.Provider>
+        </PaneSecondaryTestHost>
       </PaneRuntimeProvider>
     </FeedbackProvider>,
   );
@@ -565,6 +699,7 @@ describe("MediaPaneBody pane sizing", () => {
     testState.fragmentCanonicalText = "";
     testState.renderHtmlInMock = false;
     testState.apparatusResponse = null;
+    testState.documentMapConnections = null;
     testState.readerFocusMode = "off";
     paneShellMocks.usePaneChromeOverride.mockReset();
     paneShellMocks.usePaneMobileChromeController.mockClear();
@@ -1179,6 +1314,38 @@ describe("MediaPaneBody pane sizing", () => {
       ).toBe(false);
     } finally {
       window.removeEventListener(READER_PULSE_HIGHLIGHT, pulseHandler);
+    }
+  });
+
+  it("activates a document-map connection note target through the note pulse path", async () => {
+    testState.mediaKind = "web_article";
+    testState.includeToc = true;
+    testState.documentMapConnections = noteTargetConnectionPage();
+    const notePulseHandler = vi.fn();
+    window.addEventListener(NOTE_PULSE_HIGHLIGHT, notePulseHandler);
+    try {
+      renderMediaPane({ renderSecondarySurfaceId: "reader-connections" });
+
+      fireEvent.click(
+        await screen.findByRole("button", {
+          name: "Open target in reader for Research note",
+        }),
+      );
+
+      await waitFor(() => {
+        expect(notePulseHandler).toHaveBeenCalledTimes(1);
+      });
+      const event = notePulseHandler.mock.calls[0]?.[0] as CustomEvent;
+      expect(event.detail).toEqual({
+        blockId: "33333333-3333-4333-8333-333333333333",
+        startOffset: 2,
+        endOffset: 18,
+        snippet: "Target note excerpt.",
+        highlightBehavior: "pulse",
+        focusBehavior: "scroll_into_view",
+      });
+    } finally {
+      window.removeEventListener(NOTE_PULSE_HIGHLIGHT, notePulseHandler);
     }
   });
 

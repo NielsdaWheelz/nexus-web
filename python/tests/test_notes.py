@@ -4,7 +4,7 @@ from datetime import date
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import NoteBlock, Page, ResourceEdge, ResourceVersion
@@ -12,6 +12,12 @@ from nexus.schemas.notes import CreatePageRequest, QuickCaptureRequest
 from nexus.services import notes
 from nexus.services.resource_graph.adjacency import OrderedTarget, replace_ordered_targets
 from nexus.services.resource_graph.refs import ResourceRef
+from tests.factories import (
+    create_test_fragment,
+    create_test_highlight,
+    create_test_media_in_library,
+    get_user_default_library,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -126,3 +132,56 @@ def test_delete_page_leaves_linked_note_alive(
             ResourceEdge.source_id == page.id,
         )
     ).all()
+
+
+def test_set_highlight_note_body_enqueues_note_reindex(
+    db_session: Session,
+    bootstrapped_user: UUID,
+) -> None:
+    library_id = get_user_default_library(db_session, bootstrapped_user)
+    assert library_id is not None
+    media_id = create_test_media_in_library(db_session, bootstrapped_user, library_id)
+    fragment_id = create_test_fragment(db_session, media_id, content="highlight source text")
+    highlight_id = create_test_highlight(
+        db_session,
+        bootstrapped_user,
+        fragment_id,
+        exact="highlight",
+    )
+    block_id = uuid4()
+
+    block = notes.set_highlight_note_body_pm_json(
+        db_session,
+        bootstrapped_user,
+        highlight_id=highlight_id,
+        block_id=block_id,
+        body_pm_json=_paragraph("fresh highlight note"),
+        client_mutation_id="highlight-note-1",
+    )
+
+    assert block.id == block_id
+    index_state = db_session.execute(
+        text(
+            """
+            SELECT status, status_reason
+            FROM content_index_states
+            WHERE owner_kind = 'note_block' AND owner_id = :block_id
+            """
+        ),
+        {"block_id": block_id},
+    ).one()
+    assert index_state == ("pending", "highlight_note")
+    job_payload = db_session.execute(
+        text(
+            """
+            SELECT payload
+            FROM background_jobs
+            WHERE kind = 'note_reindex_job'
+              AND payload->>'note_block_id' = :block_id_text
+            ORDER BY created_at DESC
+            LIMIT 1
+            """
+        ),
+        {"block_id_text": str(block_id)},
+    ).scalar_one()
+    assert job_payload == {"note_block_id": str(block_id), "reason": "highlight_note"}

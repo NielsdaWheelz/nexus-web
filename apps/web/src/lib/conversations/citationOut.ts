@@ -26,6 +26,7 @@ export interface CitationSnapshot {
   excerpt?: string | null;
   section_label?: string | null;
   result_type?: string | null;
+  summary_md?: string | null;
 }
 
 export interface CitationOut {
@@ -72,11 +73,13 @@ function isCitationSnapshot(value: unknown): value is CitationSnapshot {
       "excerpt",
       "section_label",
       "result_type",
+      "summary_md",
     ]) &&
     isOptionalString(value.title) &&
     isOptionalString(value.excerpt) &&
     isOptionalString(value.section_label) &&
-    isOptionalString(value.result_type)
+    isOptionalString(value.result_type) &&
+    isOptionalString(value.summary_md)
   );
 }
 

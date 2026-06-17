@@ -19,7 +19,6 @@ import type {
   SSERetrievalResultEvent,
   SSEToolCallEvent,
 } from "@/lib/api/sse/events";
-import type { CitationOut } from "@/lib/conversations/citationOut";
 import { conversationMessageText } from "@/lib/conversations/types";
 import type {
   AssistantTrustTrail,
@@ -314,18 +313,7 @@ export function useChatMessageUpdates({
 
   const handleCitationIndex = useCallback(
     (assistantId: string, data: SSECitationIndexEvent["data"]) => {
-      // Edge entries are already the chip read-model: map them straight to the
-      // message's CitationOut[]. media_id/locator are absent (D11) — the jump is
-      // the snapshot deep_link plus the target grain.
-      const citations: CitationOut[] = data.entries.map((entry) => ({
-        ordinal: entry.n,
-        role: entry.kind,
-        target_ref: entry.target_ref,
-        media_id: null,
-        locator: null,
-        deep_link: entry.deep_link,
-        snapshot: entry.snapshot,
-      }));
+      const citations = data.citations.map((item) => item.citation);
       setMessages((prev) =>
         prev.map((m) => {
           if (m.id !== assistantId) return m;
@@ -335,14 +323,14 @@ export function useChatMessageUpdates({
             citations,
             trust_trail: {
               ...trail,
-              citations: data.entries.map((entry, index) => ({
-                citation_edge_id: entry.citation_edge_id,
-                ordinal: entry.n,
-                role: entry.kind,
-                target_ref: entry.target_ref,
+              citations: data.citations.map((item) => ({
+                citation_edge_id: item.citation_edge_id,
+                ordinal: item.citation.ordinal,
+                role: item.citation.role,
+                target_ref: item.citation.target_ref,
                 retrieval_id: null,
                 tool_call_id: null,
-                citation: citations[index],
+                citation: item.citation,
               })),
             },
           };

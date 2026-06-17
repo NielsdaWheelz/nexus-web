@@ -160,7 +160,7 @@ Block-level (stored in `content_blocks.locator`/`.selector`), mirroring `web_tex
   "start_offset": <int>, "end_offset": <int>,
   "text_quote": { "exact": "<block text>", "prefix": "", "suffix": "" } }
 ```
-Public retrieval locator (already defined — `NoteBlockOffsetsLocator`): `{ "type": "note_block_offsets", "page_id", "block_id", "start_offset", "end_offset" }`.
+Public retrieval locator (already defined — `NoteBlockOffsetsLocator`): `{ "type": "note_block_offsets", "block_id", "start_offset", "end_offset" }`. Current graph-built note citation activation is page-free; `page_id` remains only on the internal `note_text` selector above.
 
 **Single-block invariant (D10).** A `note_text` locator references exactly **one** `note_block`; it cannot represent a chunk spanning multiple blocks. This is enforced *by construction* via the chunker's anchor function: `content_indexing._same_locator_anchor` decides whether two adjacent blocks may share a chunk. For `web_text`/`epub_text` the anchor is `fragment_id`; for `note_text` the anchor is **`note_block_id`** — so two different note_blocks are never coalesced, and every note chunk lies within one block. A long note_block is still split into multiple single-block chunks by `_block_pieces` (420-token windows, 60 overlap), each carrying a sub-range `note_text` locator. We deliberately **forbid cross-block coalescing for notes** rather than invent a multi-block page selector (simpler, keeps every hit citeable to a specific block; D10).
 
@@ -212,7 +212,7 @@ Rewrite rule (uniform):
 
 ### 5.5 Retrievers
 - **New `search/retrievers/notes.py`** (replaces `objects.py`):
-  - `_search_note_chunks(...)`: the `_search_content_chunks` hybrid SQL with the owner gate swapped — `visible_media` → `owned_pages` (`SELECT id FROM pages WHERE user_id=:viewer_id`), `cc.owner_kind='page'`, join `content_index_states … status='ready'` on the owner. Project to `_RankedNoteBlockResult`: derive `note_block_offsets` locator from the chunk's primary block's `note_text` locator; `page_id`/`page_title` from the owning page; deep link `/notes/{block_id}`; reuse `min_semantic_similarity = CONTENT_CHUNK_MIN_SEMANTIC_SIMILARITY`.
+  - `_search_note_chunks(...)`: the `_search_content_chunks` hybrid SQL with the owner gate swapped — `visible_media` → visible note blocks, `cc.owner_kind='note_block'`, join `content_index_states … status='ready'` on the note block owner. Project to `_RankedNoteBlockResult`: derive a page-free `note_block_offsets` locator from the chunk's primary block's `note_text` locator; deep link `/notes/{block_id}`; reuse `min_semantic_similarity = CONTENT_CHUNK_MIN_SEMANTIC_SIMILARITY`.
   - `_search_pages(...)`: lexical title/daily-date match on `pages` (user-owned) → `_RankedPageResult`, deep link `/pages/{id}`. No embedding.
   - Share the chunk SQL builder with `library_content.py` (parameterized by owner gate) to avoid a third copy.
 - **`library_content.py`**: `_search_content_chunks` adds explicit `cc.owner_kind='media'`.
@@ -230,7 +230,7 @@ Add `page` and `note_block` cells to `_SCOPE_MATRIX`, porting the semantics of t
 **Backend.** `locator_resolver.resolve_evidence_span` (`:25`) currently routes everything to `/media/{media_id}` and dispatches `resolver_kind ∈ {web,epub,pdf,transcript}`. Generalize: read `owner_kind`/`owner_id` from the `evidence_spans` row and build the route from the owner (`/media/{id}` for media; `/notes/{block_id}` for notes); add `resolver_kind='note'` → `_resolve_note_selector` (returns the block id + offset range + `note_block_offsets` highlight params). It no longer requires a `media_id` argument.
 
 **Frontend — the strict fix is a target union, because `ReaderSourceTarget` hard-requires `media_id`** (`readerTarget.ts:4`) and `readerTargetFromRetrieval` returns `null` when `media_id` is absent (`readerTarget.ts:43`). A small href fallback would render a `[N]` that does not activate. Required changes:
-- Make `ReaderSourceTarget` a discriminated union: `MediaReaderTarget { kind:'media'; media_id; locator; evidence_span_id }` | `NoteReaderTarget { kind:'note'; page_id; block_id; start_offset; end_offset }`.
+- Make `ReaderSourceTarget` a discriminated union: `MediaReaderTarget { kind:'media'; media_id; locator; evidence_span_id }` | `NoteReaderTarget { kind:'note'; block_id; start_offset; end_offset }`.
 - `RetrievalLocator` (`@/lib/api/sse/locators`) union must include `note_block_offsets` (verify/add).
 - `readerTargetFromRetrieval`: branch on `result_type`/locator — note retrievals (`media_id===null`, `note_block_offsets`) build a `NoteReaderTarget`; `hrefForReaderTarget` gains a `note_block_offsets` → `/notes/{block_id}` branch.
 - **Offset-aware activation** in the notes pane (`/pages/[pageId]`, `/notes/[blockId]`): the citation jump must scroll to `block_id` and pulse the `[start_offset,end_offset)` range — parity with the reader's evidence pulse, not just navigation. This is new pane work (not a render no-op); `citations.ts` stays generic on `deep_link`/`result_type`.
