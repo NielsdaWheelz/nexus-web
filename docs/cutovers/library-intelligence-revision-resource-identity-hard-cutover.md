@@ -153,6 +153,12 @@ Starting chat from the Library Intelligence pane attaches:
 
 It does not attach the moving artifact head by default.
 
+Under the resource-chat subject contract
+(`docs/cutovers/resource-chat-subject-hard-cutover.md`), the chat run's
+`chat_subject` stores both the requested ref and the consumed ref in durable turn
+context. An artifact-head request is a latest alias; the consumed subject is the
+current `library_intelligence_revision:<revision_id>`.
+
 If a caller deliberately attaches `library_intelligence_artifact:<artifact_id>`,
 context assembly treats it as a latest/head resource and resolves the current
 revision before prompt assembly. The consumed revision ref is recorded in

@@ -3,7 +3,7 @@
 ## Scope
 
 The chat module owns durable, branchable, streamed, retrieval-grounded conversation UX.
-It covers full conversation panes, reader-attached document chats, branch replies, context refs,
+It covers full conversation panes, resource-subject chats, branch replies, context refs,
 assistant-answer selection forks, model/key-mode sends, optimistic run state, retries, and the
 frontend request contract for `/api/chat-runs`.
 
@@ -25,8 +25,9 @@ conversation context refs, and selected leaf/path state.
 `Conversation` is the full-chat pane adapter. It owns pane chrome, secondary context/forks
 surfaces, open-resource routing, and the full-chat composer target.
 
-`ReaderChatDetail` is the reader document-chat adapter. It binds a reader context to the
-same composer/send path without becoming a branch-anchor owner.
+`ResourceChatDetail` is the resource-chat adapter. It binds one
+`chat_subject.resource_ref` to the same composer/send path without becoming a
+branch-anchor owner.
 
 ## Scrollport Contract
 
@@ -50,7 +51,7 @@ popover; the mobile path presents through the shared `MobileSheet` primitive
 
 - `parent_message_id`
 - `branch_anchor`
-- `reader_context`
+- `chat_subject`
 - `reader_selection`
 - `key_mode`
 
@@ -67,8 +68,9 @@ Frontend branch drafts only use:
 - `assistant_message`
 - `assistant_selection`
 
-`reader_context` exists in the shared `BranchAnchor` union because backend responses can expose
-it, but the frontend composer must not create reader-context branch drafts.
+Resource subjects are not branch anchors. They are sent as
+`chat_subject.resource_ref` on `/api/chat-runs` and persisted as run turn
+context.
 
 `chatDraftKeyFor` is the single draft-key serializer. It produces:
 
@@ -125,11 +127,12 @@ keeps its own visual-viewport handling and must not migrate to `MobileSheet`
 ## Reader Quote-To-Chat Separation
 
 Reader quote-to-chat is highlight-first. The reader creates or reuses a durable
-`highlight:<id>` reference, then sends transient `reader_selection` turn context.
+`highlight:<id>` reference, sends it as the chat subject for quote-driven first
+turns, and includes `reader_selection` with media/highlight ids.
 
-`reader_selection` is not a branch anchor. It is not persisted as a conversation context ref and
-is not cited. Backend services canonicalize quote text from the highlight row before prompt
-assembly.
+`reader_selection` is not a branch anchor. It is persisted only as run turn
+identity, not as a conversation context ref, and is not cited. Backend services
+canonicalize quote text from the highlight row before prompt assembly.
 
 Assistant selection and reader selection compose in the same chat run body only as separate
 fields:

@@ -538,7 +538,7 @@ const READER_TOOLS_WITH_DOC_CHAT: PaneSecondaryPublication = {
   defaultSurfaceId: "reader-highlights",
   surfaces: [
     { id: "reader-highlights", body: <div>Highlights</div> },
-    { id: "reader-doc-chat", body: <div>Document chat</div> },
+    { id: "reader-resource-chat", body: <div>Resource chat</div> },
   ],
 };
 
@@ -699,7 +699,7 @@ describe("WorkspaceHost secondary publication validation", () => {
   it("repairs a persisted secondary surface to the published default when the active surface is unpublished", async () => {
     setPaneWithSecondary({
       groupId: "reader-tools",
-      activeSurfaceId: "reader-doc-chat",
+      activeSurfaceId: "reader-resource-chat",
     });
     hostMocks.secondaryPublication = READER_TOOLS_HIGHLIGHTS_ONLY;
 
@@ -723,7 +723,7 @@ describe("WorkspaceHost secondary publication validation", () => {
     hostMocks.openInNewPaneRequest = {
       href: MEDIA_HREF_1,
       titleHint: "Doc chat",
-      surfaceId: "reader-doc-chat",
+      surfaceId: "reader-resource-chat",
     };
 
     render(<WorkspaceHost />);
@@ -731,7 +731,7 @@ describe("WorkspaceHost secondary publication validation", () => {
     await waitFor(() => {
       expect(hostMocks.store.requestSecondarySurface).toHaveBeenCalledWith(
         "pane-1",
-        "reader-doc-chat",
+        "reader-resource-chat",
       );
     });
   });
@@ -741,7 +741,7 @@ describe("WorkspaceHost secondary publication validation", () => {
     hostMocks.openInNewPaneRequest = {
       href: MEDIA_HREF_1,
       titleHint: "Doc chat",
-      surfaceId: "reader-doc-chat",
+      surfaceId: "reader-resource-chat",
     };
 
     render(<WorkspaceHost />);

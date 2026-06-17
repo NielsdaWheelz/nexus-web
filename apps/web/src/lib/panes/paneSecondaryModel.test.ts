@@ -15,7 +15,7 @@ describe("paneSecondaryModel", () => {
     expect(getSecondaryGroupForSurface("reader-contents")).toBe("reader-tools");
     expect(getSecondaryGroupForSurface("reader-highlights")).toBe("reader-tools");
     expect(getSecondaryGroupForSurface("reader-apparatus")).toBe("reader-tools");
-    expect(getSecondaryGroupForSurface("reader-doc-chat")).toBe("reader-tools");
+    expect(getSecondaryGroupForSurface("reader-resource-chat")).toBe("reader-tools");
     expect(getSecondaryGroupForSurface("conversation-context-refs")).toBe(
       "conversation-context",
     );
@@ -37,7 +37,7 @@ describe("paneSecondaryModel", () => {
       title: "Citations",
       iconId: "quote",
     });
-    expect(getSecondarySurfaceDefinition("reader-doc-chat")).toMatchObject({
+    expect(getSecondarySurfaceDefinition("reader-resource-chat")).toMatchObject({
       groupId: "reader-tools",
       title: "Chat",
       iconId: "file-text",
@@ -52,7 +52,7 @@ describe("paneSecondaryModel", () => {
       "reader-highlights",
       "reader-apparatus",
       "reader-connections",
-      "reader-doc-chat",
+      "reader-resource-chat",
     ]);
     expect(getSecondarySurfaceIdsForGroup("conversation-context")).toEqual([
       "conversation-context-refs",

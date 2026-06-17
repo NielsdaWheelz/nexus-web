@@ -8,6 +8,7 @@ import { pluralize } from "@/lib/text/pluralize";
 import { useResource } from "@/lib/api/useResource";
 import { runSourceProcessingAction } from "@/lib/media/sourceActions";
 import { podcastResourceOptions } from "@/lib/actions/resourceActions";
+import { startResourceChat } from "@/lib/resources/resourceChat";
 import {
   usePaneParam,
   usePaneRuntime,
@@ -472,14 +473,8 @@ export default function PodcastDetailPaneBody() {
   const handleOpenEpisodeChat = useCallback(
     async (episode: PodcastEpisodeMedia) => {
       try {
-        const response = await apiFetch<{
-          data: { id: string };
-        }>("/api/conversations", {
-          method: "POST",
-          body: JSON.stringify({ initial_context_refs: [`media:${episode.id}`] }),
-        });
-        const route = `/conversations/${response.data.id}`;
-        openInNewPane?.(route, episode.title);
+        const conversationId = await startResourceChat(`media:${episode.id}`);
+        openInNewPane?.(`/conversations/${conversationId}`, episode.title);
       } catch (chatError) {
         if (handleUnauthenticatedApiError(chatError)) return;
         setError(

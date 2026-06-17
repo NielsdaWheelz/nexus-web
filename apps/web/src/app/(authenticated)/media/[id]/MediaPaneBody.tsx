@@ -16,8 +16,9 @@ import {
   type MouseEvent,
   type UIEvent,
 } from "react";
-import DocChatTab from "@/components/chat/DocChatTab";
-import ReaderChatDetail from "@/components/chat/ReaderChatDetail";
+import ResourceChatDetail from "@/components/chat/ResourceChatDetail";
+import ResourceChatTab from "@/components/chat/ResourceChatTab";
+import resourceChatStyles from "@/components/chat/ResourceChatTab.module.css";
 import type {
   MediaReaderTarget,
   ReaderSourceTarget,
@@ -382,7 +383,7 @@ function readerSurfaceForLens(lensId: ReaderDocumentMapLensId) {
     case "connections":
       return "reader-connections";
     case "chat":
-      return "reader-doc-chat";
+      return "reader-resource-chat";
   }
 }
 
@@ -770,14 +771,14 @@ export default function MediaPaneBody() {
   const [isCreating, setIsCreating] = useState(false);
   const [isMismatchDisabled, setIsMismatchDisabled] = useState(false);
   // A highlight URI parked for "quote to existing chat": the next chat the user
-  // picks (or creates) in the doc-chat list gets this attached as context.
+  // picks (or creates) in the resource-chat list gets this attached as context.
   const [pendingQuoteUri, setPendingQuoteUri] = useState<string | null>(null);
   const [pendingQuoteLabel, setPendingQuoteLabel] = useState<string | null>(
     null,
   );
   const [pendingQuoteSelection, setPendingQuoteSelection] =
     useState<ReaderSelectionInput | null>(null);
-  // When set, the doc-chat secondary surface shows this conversation inline (instead of
+  // When set, the resource-chat secondary surface shows this conversation inline (instead of
   // the chat list), with a link out to the full conversation pane.
   const [secondaryChat, setSecondaryChat] = useState<{
     conversationId: string | null;
@@ -785,7 +786,7 @@ export default function MediaPaneBody() {
     quoteLabel: string | null;
     readerSelection: ReaderSelectionInput | null;
   } | null>(null);
-  const docChatSurfaceActivatedRef = useRef(false);
+  const resourceChatSurfaceActivatedRef = useRef(false);
   const appliedRequestedReaderLocRef = useRef<string | null>(null);
   const selectionSnapshotRef = useRef<SelectionState | null>(null);
   const selectionSnapshotKeyRef = useRef<string | null>(null);
@@ -3394,18 +3395,18 @@ export default function MediaPaneBody() {
   // Chat secondary
   // ==========================================================================
 
-  const revealDocChatSecondary = useCallback(() => {
-    requestSecondarySurface?.("reader-doc-chat");
+  const revealResourceChatSecondary = useCallback(() => {
+    requestSecondarySurface?.("reader-resource-chat");
   }, [requestSecondarySurface]);
 
-  // Shift+G / button: reveal the doc-chat list, clearing any pending quote or open chat.
-  const openDocChat = useCallback(() => {
+  // Shift+G / button: reveal the resource-chat list, clearing any pending quote or open chat.
+  const openResourceChat = useCallback(() => {
     setPendingQuoteUri(null);
     setPendingQuoteLabel(null);
     setPendingQuoteSelection(null);
     setSecondaryChat(null);
-    revealDocChatSecondary();
-  }, [revealDocChatSecondary]);
+    revealResourceChatSecondary();
+  }, [revealResourceChatSecondary]);
 
   const quoteLabelForHighlightId = useCallback(
     (highlightId: string): string => {
@@ -3465,7 +3466,7 @@ export default function MediaPaneBody() {
       setPendingQuoteUri(null);
       setPendingQuoteLabel(null);
       setPendingQuoteSelection(null);
-      revealDocChatSecondary();
+      revealResourceChatSecondary();
     },
     [
       pendingQuoteUri,
@@ -3473,7 +3474,7 @@ export default function MediaPaneBody() {
       pendingQuoteSelection,
       quoteLabelForHighlightId,
       readerSelectionForHighlightId,
-      revealDocChatSecondary,
+      revealResourceChatSecondary,
     ],
   );
 
@@ -3495,14 +3496,14 @@ export default function MediaPaneBody() {
     setPendingQuoteUri(null);
     setPendingQuoteLabel(null);
     setPendingQuoteSelection(null);
-    revealDocChatSecondary();
+    revealResourceChatSecondary();
   }, [
     pendingQuoteUri,
     pendingQuoteLabel,
     pendingQuoteSelection,
     quoteLabelForHighlightId,
     readerSelectionForHighlightId,
-    revealDocChatSecondary,
+    revealResourceChatSecondary,
   ]);
 
   const handleOpenConversation = useCallback(
@@ -3789,7 +3790,7 @@ export default function MediaPaneBody() {
       ? "reader-highlights"
       : showApparatusPane
         ? "reader-apparatus"
-        : "reader-doc-chat";
+        : "reader-resource-chat";
   const documentMapSurfaceActive = activeReaderSecondarySurface !== null;
   const openDocumentMap = useCallback(() => {
     requestSecondarySurface?.(defaultDocumentMapSurface);
@@ -4107,18 +4108,18 @@ export default function MediaPaneBody() {
           ? readerSelectionForHighlight(highlightOverride)
           : readerSelectionForHighlightId(highlightId),
       });
-      revealDocChatSecondary();
+      revealResourceChatSecondary();
     },
     [
       quoteLabelForHighlightId,
       readerSelectionForHighlight,
       readerSelectionForHighlightId,
-      revealDocChatSecondary,
+      revealResourceChatSecondary,
     ],
   );
 
   // Quote a highlight into an existing chat: park the URI and reveal the
-  // doc-chat list so the user can pick which conversation to add it to.
+  // resource-chat list so the user can pick which conversation to add it to.
   const quoteHighlightToExtantChat = useCallback(
     (highlightId: string, highlightOverride?: MediaHighlight) => {
       setPendingQuoteUri(`highlight:${highlightId}`);
@@ -4132,38 +4133,38 @@ export default function MediaPaneBody() {
           ? readerSelectionForHighlight(highlightOverride)
           : readerSelectionForHighlightId(highlightId),
       );
-      revealDocChatSecondary();
+      revealResourceChatSecondary();
     },
     [
       quoteLabelForHighlightId,
       readerSelectionForHighlight,
       readerSelectionForHighlightId,
-      revealDocChatSecondary,
+      revealResourceChatSecondary,
     ],
   );
 
-  // Drop parked doc-chat state only after the doc-chat secondary has actually
+  // Drop parked resource-chat state only after the resource-chat secondary has actually
   // been visible once. Surface activation is host-owned and asynchronous; clearing
   // immediately after a request would discard a pending quote before the
   // requested secondary can render it.
   useEffect(() => {
-    const docChatVisible = activeReaderSecondarySurface === "reader-doc-chat";
-    if (docChatVisible) {
-      docChatSurfaceActivatedRef.current = true;
+    const resourceChatVisible = activeReaderSecondarySurface === "reader-resource-chat";
+    if (resourceChatVisible) {
+      resourceChatSurfaceActivatedRef.current = true;
       return;
     }
 
-    const hasDocChatDraft = pendingQuoteUri !== null || secondaryChat !== null;
-    if (!hasDocChatDraft) {
-      docChatSurfaceActivatedRef.current = false;
+    const hasResourceChatDraft = pendingQuoteUri !== null || secondaryChat !== null;
+    if (!hasResourceChatDraft) {
+      resourceChatSurfaceActivatedRef.current = false;
       return;
     }
 
-    if (!docChatSurfaceActivatedRef.current) {
+    if (!resourceChatSurfaceActivatedRef.current) {
       return;
     }
 
-    docChatSurfaceActivatedRef.current = false;
+    resourceChatSurfaceActivatedRef.current = false;
     setPendingQuoteUri(null);
     setPendingQuoteLabel(null);
     setPendingQuoteSelection(null);
@@ -4191,12 +4192,12 @@ export default function MediaPaneBody() {
       }
 
       event.preventDefault();
-      openDocChat();
+      openResourceChat();
     };
 
     document.addEventListener("keydown", handleChatShortcut);
     return () => document.removeEventListener("keydown", handleChatShortcut);
-  }, [openDocChat]);
+  }, [openResourceChat]);
 
   const isReflowableReader = canRead && !isPdf;
   const mediaHeaderMeta = useMemo(
@@ -4297,7 +4298,7 @@ export default function MediaPaneBody() {
         : undefined,
       onOpenChat: media
         ? () => {
-            openDocChat();
+            openResourceChat();
           }
         : undefined,
       onManageLibraries: ({ triggerEl }) => {
@@ -4369,7 +4370,7 @@ export default function MediaPaneBody() {
     isReflowableReader,
     loadLibraryPickerLibraries,
     media,
-    openDocChat,
+    openResourceChat,
     openInNewPane,
     readerProfile.theme,
     refreshSourceBusy,
@@ -5246,14 +5247,14 @@ export default function MediaPaneBody() {
       ),
     });
     surfaces.push({
-      id: "reader-doc-chat",
+      id: "reader-resource-chat",
       body: (
         <div className={styles.readerSecondaryBody}>
           {secondaryChat ? (
-            <ReaderChatDetail
+            <ResourceChatDetail
               key={`${secondaryChat.conversationId ?? "new"}:${secondaryChat.quoteUri ?? ""}`}
               conversationId={secondaryChat.conversationId}
-              mediaId={id}
+              subjectRef={`media:${id}`}
               pendingQuoteUri={secondaryChat.quoteUri}
               pendingQuoteLabel={secondaryChat.quoteLabel}
               pendingReaderSelection={secondaryChat.readerSelection}
@@ -5265,17 +5266,35 @@ export default function MediaPaneBody() {
               onReaderSourceActivate={handleReaderSourceActivate}
             />
           ) : (
-            <DocChatTab
-              mediaId={id}
+            <ResourceChatTab
+              className={resourceChatStyles.tab}
+              density="compact"
+              emptyActionLabel="Start new chat about this resource"
+              emptyMessage="No chats use this resource as context yet."
+              listClassName={resourceChatStyles.scrollArea}
+              resourceUri={`media:${id}`}
               onOpenChat={openChatInSecondary}
               onStartNewChat={startChatInSecondary}
-              pendingQuoteUri={pendingQuoteUri}
-              onPendingQuoteResolved={() => {
-                setPendingQuoteUri(null);
-                setPendingQuoteLabel(null);
-                setPendingQuoteSelection(null);
-              }}
-            />
+            >
+              {pendingQuoteUri ? (
+                <div className={resourceChatStyles.quoteBanner}>
+                  <span className={resourceChatStyles.quoteBannerText}>
+                    Choose a chat to add your quote, or start a new one.
+                  </span>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => {
+                      setPendingQuoteUri(null);
+                      setPendingQuoteLabel(null);
+                      setPendingQuoteSelection(null);
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              ) : null}
+            </ResourceChatTab>
           )}
         </div>
       ),

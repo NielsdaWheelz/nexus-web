@@ -60,8 +60,8 @@ READ_RESOURCE_TOOL_NAME = "read_resource"
 READ_RESOURCE_TOOL_DEFINITION: dict[str, Any] = {
     "name": READ_RESOURCE_TOOL_NAME,
     "description": (
-        "Fetch the exact text of a resource from <resources> in your system context, "
-        "or a read_uri that inspect_resource returned. Scope resources are not "
+        "Fetch the exact text of a resource from <subject> or <resources> in your "
+        "system context, or a read_uri that inspect_resource returned. Scope resources are not "
         "readable; use app_search with scopes=[...] for those. Every result is "
         "labelled with a kind attribute."
     ),

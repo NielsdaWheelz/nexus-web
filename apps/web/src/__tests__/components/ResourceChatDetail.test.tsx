@@ -1,7 +1,7 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import ReaderChatDetail from "@/components/chat/ReaderChatDetail";
+import ResourceChatDetail from "@/components/chat/ResourceChatDetail";
 import type { ConversationMessage } from "@/lib/conversations/types";
 
 // useChatRunTail is the SSE/streaming boundary; mock it so the engine's
@@ -163,7 +163,7 @@ function stubFetch(history: ConversationMessage[] = [userMessage, assistantMessa
   );
 }
 
-describe("ReaderChatDetail", () => {
+describe("ResourceChatDetail", () => {
   beforeEach(() => {
     tailMocks.tailChatRun.mockReset();
     tailMocks.abortAll.mockReset();
@@ -177,9 +177,9 @@ describe("ReaderChatDetail", () => {
 
   it("renders the conversation title from the conversation fetch", async () => {
     render(
-      <ReaderChatDetail
+      <ResourceChatDetail
         conversationId={CID}
-        mediaId={MEDIA_ID}
+        subjectRef={`media:${MEDIA_ID}`}
         onBack={vi.fn()}
         onOpenFullChat={vi.fn()}
       />,
@@ -194,9 +194,9 @@ describe("ReaderChatDetail", () => {
     const user = userEvent.setup();
     const onBack = vi.fn();
     render(
-      <ReaderChatDetail
+      <ResourceChatDetail
         conversationId={CID}
-        mediaId={MEDIA_ID}
+        subjectRef={`media:${MEDIA_ID}`}
         onBack={onBack}
         onOpenFullChat={vi.fn()}
       />,
@@ -212,9 +212,9 @@ describe("ReaderChatDetail", () => {
     const user = userEvent.setup();
     const onOpenFullChat = vi.fn();
     render(
-      <ReaderChatDetail
+      <ResourceChatDetail
         conversationId={CID}
-        mediaId={MEDIA_ID}
+        subjectRef={`media:${MEDIA_ID}`}
         onBack={vi.fn()}
         onOpenFullChat={onOpenFullChat}
       />,
@@ -229,9 +229,9 @@ describe("ReaderChatDetail", () => {
 
   it("renders the loaded user and assistant message text", async () => {
     render(
-      <ReaderChatDetail
+      <ResourceChatDetail
         conversationId={CID}
-        mediaId={MEDIA_ID}
+        subjectRef={`media:${MEDIA_ID}`}
         onBack={vi.fn()}
         onOpenFullChat={vi.fn()}
       />,
@@ -245,9 +245,9 @@ describe("ReaderChatDetail", () => {
 
   it("renders the composer textarea once models resolve", async () => {
     render(
-      <ReaderChatDetail
+      <ResourceChatDetail
         conversationId={CID}
-        mediaId={MEDIA_ID}
+        subjectRef={`media:${MEDIA_ID}`}
         onBack={vi.fn()}
         onOpenFullChat={vi.fn()}
       />,
@@ -260,9 +260,9 @@ describe("ReaderChatDetail", () => {
 
   it("renders a new chat without fetching history and hides open-in-full-chat", async () => {
     render(
-      <ReaderChatDetail
+      <ResourceChatDetail
         conversationId={null}
-        mediaId={MEDIA_ID}
+        subjectRef={`media:${MEDIA_ID}`}
         onBack={vi.fn()}
         onOpenFullChat={vi.fn()}
       />,
@@ -295,9 +295,9 @@ describe("ReaderChatDetail", () => {
 
   it("shows the pending quote chip in the composer", async () => {
     render(
-      <ReaderChatDetail
+      <ResourceChatDetail
         conversationId={CID}
-        mediaId={MEDIA_ID}
+        subjectRef={`media:${MEDIA_ID}`}
         pendingQuoteUri={QUOTE_URI}
         pendingReaderSelection={PENDING_SELECTION}
         onBack={vi.fn()}
@@ -360,9 +360,9 @@ describe("ReaderChatDetail", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     render(
-      <ReaderChatDetail
+      <ResourceChatDetail
         conversationId={CID}
-        mediaId={MEDIA_ID}
+        subjectRef={`media:${MEDIA_ID}`}
         pendingQuoteUri={QUOTE_URI}
         pendingReaderSelection={PENDING_SELECTION}
         onBack={vi.fn()}
@@ -408,6 +408,7 @@ describe("ReaderChatDetail", () => {
     expect(chatRunCall).toBeDefined();
     const body = JSON.parse(String(chatRunCall?.[1]?.body));
     expect(body).not.toHaveProperty("reader_selection");
+    expect(body.chat_subject).toEqual({ resource_ref: `media:${MEDIA_ID}` });
   });
 
   it("clears the pending quote chip after a successful send", async () => {
@@ -462,9 +463,9 @@ describe("ReaderChatDetail", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     render(
-      <ReaderChatDetail
+      <ResourceChatDetail
         conversationId={CID}
-        mediaId={MEDIA_ID}
+        subjectRef={`media:${MEDIA_ID}`}
         pendingQuoteUri={QUOTE_URI}
         pendingReaderSelection={PENDING_SELECTION}
         onBack={vi.fn()}
@@ -497,6 +498,7 @@ describe("ReaderChatDetail", () => {
     );
     expect(chatRunCall).toBeDefined();
     expect(JSON.parse(String(chatRunCall?.[1]?.body))).toMatchObject({
+      chat_subject: { resource_ref: QUOTE_URI },
       reader_selection: PENDING_SELECTION,
     });
     // ...and the chip clears afterward so it is not re-attached next send.
@@ -577,9 +579,9 @@ describe("ReaderChatDetail", () => {
 
     render(
       <div style={{ display: "flex", height: "240px" }}>
-        <ReaderChatDetail
+        <ResourceChatDetail
           conversationId={CID}
-          mediaId={MEDIA_ID}
+          subjectRef={`media:${MEDIA_ID}`}
           onBack={vi.fn()}
           onOpenFullChat={vi.fn()}
         />
@@ -602,7 +604,7 @@ describe("ReaderChatDetail", () => {
     const anchor = await within(scrollport).findByText("Second question");
 
     // The sent question pins to the top of the scrollport rather than staying at
-    // the bottom — the reader doc-chat now auto-scrolls like the full pane. We
+    // the bottom — inline resource chat now auto-scrolls like the full pane. We
     // measure in viewport space (getBoundingClientRect) so the assertion is
     // independent of the row's positioned offsetParent: the question's top must
     // land in the top region of the scrollport, not chased below the fold.

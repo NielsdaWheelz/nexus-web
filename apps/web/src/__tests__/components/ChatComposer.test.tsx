@@ -564,7 +564,7 @@ describe("ChatComposer", () => {
     expect(body).not.toHaveProperty("conversation_scope");
     expect(body).not.toHaveProperty("web_search");
     expect(body).not.toHaveProperty("singleton");
-    expect(body.reader_context).toBeNull();
+    expect(body).not.toHaveProperty("chat_subject");
   });
 
   it("keeps a stable-key draft when conversation identity changes", async () => {
@@ -589,7 +589,7 @@ describe("ChatComposer", () => {
     expect(message).toHaveValue("Draft during resolution");
   });
 
-  it("resolves the conversation on send and uses the resolved id with reader_context for a new doc-chat first message", async () => {
+  it("resolves the conversation on send and uses the resolved id with chat_subject for a new resource-chat first message", async () => {
     const user = userEvent.setup();
     const fetchMock = installChatComposerFetchMock();
     const onResolveConversation = vi.fn(async () => "resolved-id");
@@ -598,7 +598,7 @@ describe("ChatComposer", () => {
       <ChatComposer
         conversationId={null}
         onResolveConversation={onResolveConversation}
-        readerContext={{ media_id: "media-1", library_id: null }}
+        chatSubject={{ resource_ref: "media:media-1" }}
       />,
     );
 
@@ -622,10 +622,7 @@ describe("ChatComposer", () => {
 
     expect(body.conversation_id).toBe("resolved-id");
     expect(body).not.toHaveProperty("singleton");
-    expect(body.reader_context).toEqual({
-      media_id: "media-1",
-      library_id: null,
-    });
+    expect(body.chat_subject).toEqual({ resource_ref: "media:media-1" });
     expect(body).not.toHaveProperty("web_search");
     expect(body).not.toHaveProperty("conversation_scope");
   });

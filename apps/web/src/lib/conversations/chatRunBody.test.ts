@@ -10,7 +10,7 @@ const base = {
   keyMode: "auto" as const,
   branchDraft: null,
   parentMessageId: null,
-  readerContext: null,
+  chatSubject: null,
 };
 
 describe("buildChatRunBody", () => {
@@ -20,7 +20,7 @@ describe("buildChatRunBody", () => {
     expect("parent_message_id" in body).toBe(false);
     expect(body.key_mode).toBe("auto");
     expect(body.conversation_id).toBe("conv-1");
-    expect(body.reader_context).toBeNull();
+    expect(body).not.toHaveProperty("chat_subject");
   });
 
   it("anchors a plain continuation to the active assistant turn", () => {
@@ -110,12 +110,12 @@ describe("buildChatRunBody", () => {
     );
   });
 
-  it("forwards the reader context hint", () => {
+  it("forwards the chat subject when present", () => {
     const body = buildChatRunBody({
       ...base,
-      readerContext: { media_id: "m-1", library_id: null },
+      chatSubject: { resource_ref: "media:m-1" },
     });
-    expect(body.reader_context).toEqual({ media_id: "m-1", library_id: null });
+    expect(body.chat_subject).toEqual({ resource_ref: "media:m-1" });
   });
 
   it("forwards the reader selection anchor when present", () => {

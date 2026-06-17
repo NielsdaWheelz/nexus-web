@@ -168,7 +168,7 @@ describe("PaneShell", () => {
         bodyMode="standard"
         onResizePrimaryPane={() => {}}
         options={[
-          { id: "chat", label: "Chat about this document", onSelect: () => {} },
+          { id: "chat", label: "Chat about this resource", onSelect: () => {} },
           { id: "reader-settings", label: "Reader settings", href: "/settings/reader" },
           {
             id: "delete",
@@ -193,7 +193,7 @@ describe("PaneShell", () => {
       within(menu).getAllByRole("menuitem").map((item) => item.textContent?.trim())
     ).toEqual([
       "Copy pane link",
-      "Chat about this document",
+      "Chat about this resource",
       "Reader settings",
       "Delete document",
     ]);
@@ -391,8 +391,8 @@ describe("PaneShell", () => {
           body: <div>Highlights secondary</div>,
         },
         {
-          id: "reader-doc-chat" as const,
-          body: <div>Document chat secondary</div>,
+          id: "reader-resource-chat" as const,
+          body: <div>Resource chat secondary</div>,
         },
       ],
     };
@@ -433,7 +433,7 @@ describe("PaneShell", () => {
           id: "secondary-a",
           parentPrimaryPaneId: "pane-a",
           groupId: "reader-tools",
-          activeSurfaceId: "reader-doc-chat",
+          activeSurfaceId: "reader-resource-chat",
           widthPx: 360,
           visibility: "visible",
         }}
@@ -465,7 +465,7 @@ describe("PaneShell", () => {
           id: "secondary-a",
           parentPrimaryPaneId: "pane-a",
           groupId: "reader-tools",
-          activeSurfaceId: "reader-doc-chat",
+          activeSurfaceId: "reader-resource-chat",
           widthPx: 360,
           visibility: "collapsed",
         }}

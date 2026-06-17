@@ -12,7 +12,7 @@ from sqlalchemy.engine import Engine
 from nexus.config import clear_settings_cache
 from nexus.db.models import Model
 from nexus.llm_catalog import model_catalog_entry
-from nexus.schemas.conversation import ChatRunCreateRequest, ReaderSelectionRequest
+from nexus.schemas.conversation import ChatRunCreateRequest
 from nexus.services.billing_entitlements import grant_entitlement_override
 from nexus.services.chat_run_finalize import MAX_ASSISTANT_CONTENT_LENGTH, TRUNCATION_NOTICE
 from nexus.services.chat_runs import (
@@ -511,11 +511,7 @@ async def test_attached_highlight_public_run_persists_citation_index_and_reader_
             ),
             {"run_id": str(run_id)},
         ).scalar_one()
-    assert job_payload["reader_selection"] == {
-        **selection_payload,
-        "prefix": None,
-        "suffix": None,
-    }
+    assert job_payload == {"run_id": str(run_id)}
 
     router = _CapturingRouter(
         ModelChunk(
@@ -530,7 +526,6 @@ async def test_attached_highlight_public_run_persists_citation_index_and_reader_
             session,
             run_id=run_id,
             llm_router=router,
-            reader_selection=ReaderSelectionRequest(**selection_payload),
         )
 
     assert result == {"status": "complete"}

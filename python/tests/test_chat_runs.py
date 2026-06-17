@@ -10,7 +10,7 @@ from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
 
 from nexus.config import clear_settings_cache
-from nexus.db.models import ChatRun, ResourceEdge, ResourceExternalSnapshot
+from nexus.db.models import ChatRun, ChatRunTurnContext, ResourceEdge, ResourceExternalSnapshot
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.schemas.conversation import NoBranchAnchorRequest
 from nexus.services.billing_entitlements import grant_entitlement_override
@@ -952,6 +952,7 @@ class TestChatRunRequestSchema:
                 conversation_id=uuid4(),
                 parent_message_id=None,
                 branch_anchor=NoBranchAnchorRequest(),
+                chat_subject=None,
                 reader_selection=None,
                 content="hello",
                 model_id=uuid4(),
@@ -979,6 +980,7 @@ class TestChatRunRequestSchema:
                 conversation_id=uuid4(),
                 parent_message_id=None,
                 branch_anchor=NoBranchAnchorRequest(),
+                chat_subject=None,
                 reader_selection=None,
                 content="hello",
                 model_id=uuid4(),
@@ -1241,12 +1243,9 @@ class TestChatRunTooling:
                 is None
             ), f"non-canonical source_id {bad_source_id!r} must not mint an edge target"
 
-    def test_chat_run_reader_context_passes_to_prompt(
+    def test_chat_run_subject_persists_turn_context_and_job_payload(
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
     ):
-        """`reader_context.media_id` shows up in the chat_run job payload so the
-        worker can render the retrieval hint block; the request payload itself
-        ships the hint (without it becoming a hard filter)."""
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
         _seed_ai_plus_billing(direct_db, user_id)
@@ -1268,25 +1267,22 @@ class TestChatRunTooling:
         payload = _create_run_payload(
             model_id,
             conversation_id=str(conversation_id),
-            reader_context={"media_id": str(media_id), "library_id": str(library_id)},
+            chat_subject={"resource_ref": f"media:{media_id}"},
         )
         response = _post_chat_run(
             auth_client,
             user_id,
             payload,
-            idempotency_key="chat-run-reader-context-hint",
+            idempotency_key="chat-run-subject-media",
         )
         assert response.status_code == 200, (
-            f"Expected chat-run with reader_context to succeed, got "
+            f"Expected chat-run with chat_subject to succeed, got "
             f"{response.status_code}: {response.text}"
         )
         data = response.json()["data"]
         run_id = UUID(data["run"]["id"])
         _register_run_cleanup(direct_db, run_id)
 
-        # Behavior: the chat_run worker payload carries the reader_context, which
-        # is what tells the prompt assembler to render the reader_context_hint
-        # block (the model-prompt hint, not a hard filter).
         with direct_db.session() as session:
             job_payload = session.execute(
                 text(
@@ -1297,13 +1293,57 @@ class TestChatRunTooling:
                 ),
                 {"run_id": str(run_id)},
             ).scalar_one()
-        assert isinstance(job_payload, dict)
-        hint = job_payload.get("reader_context")
-        assert isinstance(hint, dict), (
-            f"Expected reader_context dict in chat_run job payload, got {job_payload!r}"
+            turn_context = session.get(ChatRunTurnContext, run_id)
+            context_edge_count = session.execute(
+                text(
+                    """
+                    SELECT COUNT(*) FROM resource_edges
+                    WHERE source_scheme = 'conversation'
+                      AND source_id = :conversation_id
+                      AND target_scheme = 'media'
+                      AND target_id = :media_id
+                      AND kind = 'context'
+                      AND origin = 'user'
+                      AND ordinal IS NULL
+                    """
+                ),
+                {"conversation_id": conversation_id, "media_id": media_id},
+            ).scalar_one()
+
+        assert job_payload == {"run_id": str(run_id)}
+        assert turn_context is not None
+        assert turn_context.requested_subject_scheme == "media"
+        assert turn_context.requested_subject_id == media_id
+        assert turn_context.subject_scheme == "media"
+        assert turn_context.subject_id == media_id
+        assert turn_context.subject_context_edge_id is not None
+        assert context_edge_count == 1
+
+    def test_chat_run_rejects_reader_context_field(
+        self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        _seed_ai_plus_billing(direct_db, user_id)
+        with direct_db.session() as session:
+            model_id = create_test_model(session)
+        create_resp = auth_client.post("/conversations", headers=auth_headers(user_id))
+        conversation_id = UUID(create_resp.json()["data"]["id"])
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+
+        response = _post_chat_run(
+            auth_client,
+            user_id,
+            _create_run_payload(
+                model_id,
+                conversation_id=str(conversation_id),
+                reader_context={"media_id": str(uuid4())},
+            ),
+            idempotency_key="chat-run-reader-context-rejected",
         )
-        assert hint.get("media_id") == str(media_id)
-        assert hint.get("library_id") == str(library_id)
+
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
 
 
 class TestChatResponseRetry:

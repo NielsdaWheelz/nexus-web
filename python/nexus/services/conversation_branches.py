@@ -67,9 +67,6 @@ def branch_anchor_for_message(
         payload = _validated_assistant_selection_anchor(parent_message, branch_anchor)
         return "assistant_selection", payload
 
-    if branch_anchor.kind == "reader_context":
-        return "reader_context", {"message_id": str(parent_message.id)}
-
     raise ApiError(ApiErrorCode.E_BRANCH_ANCHOR_INVALID, "Invalid branch anchor")
 
 

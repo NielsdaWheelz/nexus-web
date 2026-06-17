@@ -93,7 +93,7 @@ export function mediaResourceOptions(input: {
   if (input.onOpenChat) {
     options.push({
       id: "chat-about-media",
-      label: "Chat about this document",
+      label: "Chat about this resource",
       onSelect: input.onOpenChat,
     });
   }

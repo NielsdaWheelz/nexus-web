@@ -3593,7 +3593,6 @@ class BranchAnchorKind(str, PyEnum):
     none = "none"
     assistant_message = "assistant_message"
     assistant_selection = "assistant_selection"
-    reader_context = "reader_context"
 
 
 class LLMProvider(str, PyEnum):
@@ -4054,7 +4053,7 @@ class Message(Base):
             name="ck_messages_pending_only_assistant",
         ),
         CheckConstraint(
-            "branch_anchor_kind IN ('none', 'assistant_message', 'assistant_selection', 'reader_context')",
+            "branch_anchor_kind IN ('none', 'assistant_message', 'assistant_selection')",
             name="ck_messages_branch_anchor_kind",
         ),
         CheckConstraint(
@@ -4734,6 +4733,85 @@ class ChatRun(Base):
         uselist=False,
         cascade="all, delete-orphan",
     )
+    turn_context: Mapped["ChatRunTurnContext | None"] = relationship(
+        "ChatRunTurnContext",
+        back_populates="chat_run",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
+
+
+class ChatRunTurnContext(Base):
+    """Durable answer-determining turn anchors for one chat run."""
+
+    __tablename__ = "chat_run_turn_contexts"
+
+    chat_run_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("chat_runs.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    requested_subject_scheme: Mapped[str | None] = mapped_column(Text, nullable=True)
+    requested_subject_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
+    subject_scheme: Mapped[str | None] = mapped_column(Text, nullable=True)
+    subject_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
+    subject_context_edge_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("resource_edges.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    reader_selection_media_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=True
+    )
+    reader_selection_highlight_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "(requested_subject_scheme IS NULL) = (requested_subject_id IS NULL)",
+            name="ck_chat_run_turn_contexts_requested_subject_pair",
+        ),
+        CheckConstraint(
+            "(subject_scheme IS NULL) = (subject_id IS NULL)",
+            name="ck_chat_run_turn_contexts_subject_pair",
+        ),
+        CheckConstraint(
+            "(reader_selection_media_id IS NULL) = (reader_selection_highlight_id IS NULL)",
+            name="ck_chat_run_turn_contexts_reader_selection_pair",
+        ),
+        CheckConstraint(
+            "subject_id IS NOT NULL OR reader_selection_highlight_id IS NOT NULL",
+            name="ck_chat_run_turn_contexts_has_anchor",
+        ),
+        CheckConstraint(
+            "requested_subject_scheme IS NULL OR requested_subject_scheme IN ("
+            "'media', 'library', 'evidence_span', 'content_chunk', 'highlight', 'page', "
+            "'note_block', 'fragment', 'conversation', 'message', 'oracle_reading', "
+            "'oracle_corpus_passage', 'library_intelligence_artifact', "
+            "'library_intelligence_revision', 'external_snapshot', 'contributor', "
+            "'podcast', 'tag')",
+            name="ck_chat_run_turn_contexts_requested_subject_scheme",
+        ),
+        CheckConstraint(
+            "subject_scheme IS NULL OR subject_scheme IN ("
+            "'media', 'library', 'evidence_span', 'content_chunk', 'highlight', 'page', "
+            "'note_block', 'fragment', 'conversation', 'message', 'oracle_reading', "
+            "'oracle_corpus_passage', 'library_intelligence_artifact', "
+            "'library_intelligence_revision', 'external_snapshot', 'contributor', "
+            "'podcast', 'tag')",
+            name="ck_chat_run_turn_contexts_subject_scheme",
+        ),
+        Index("idx_chat_run_turn_contexts_subject", "subject_scheme", "subject_id"),
+    )
+
+    chat_run: Mapped["ChatRun"] = relationship("ChatRun", back_populates="turn_context")
+    subject_context_edge: Mapped["ResourceEdge | None"] = relationship("ResourceEdge")
 
 
 class ChatPromptAssembly(Base):

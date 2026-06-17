@@ -1,8 +1,7 @@
 import type { BranchAnchor } from "@/lib/conversations/types";
 
-export interface ReaderContextHintInput {
-  media_id: string | null;
-  library_id: string | null;
+export interface ChatSubjectInput {
+  resource_ref: string;
 }
 
 /** The exact passage the user is asking about — a bind-only turn anchor. */
@@ -22,6 +21,6 @@ export interface ChatRunCreateRequest {
   key_mode: "auto" | "byok_only" | "platform_only";
   parent_message_id?: string;
   branch_anchor?: BranchAnchor;
-  reader_context: ReaderContextHintInput | null;
+  chat_subject?: ChatSubjectInput | null;
   reader_selection?: ReaderSelectionInput | null;
 }

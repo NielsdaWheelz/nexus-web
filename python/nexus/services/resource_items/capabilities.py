@@ -18,6 +18,7 @@ from nexus.services.resource_graph.schemas import EdgeOrigin
 class ResourceItemCapability:
     linkable: bool
     attachable: bool
+    chat_subject: Literal["none", "label", "scope", "readable", "quote", "generated_output"]
     readable: Literal["none", "scope", "body", "media"]
     citable_result_type: str | None
     app_search_scope: bool
@@ -33,6 +34,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
     "media": ResourceItemCapability(
         linkable=True,
         attachable=True,
+        chat_subject="readable",
         readable="media",
         citable_result_type="media",
         app_search_scope=True,
@@ -46,6 +48,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
     "library": ResourceItemCapability(
         linkable=True,
         attachable=True,
+        chat_subject="scope",
         readable="scope",
         citable_result_type=None,
         app_search_scope=True,
@@ -59,6 +62,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
     "evidence_span": ResourceItemCapability(
         linkable=True,
         attachable=True,
+        chat_subject="readable",
         readable="body",
         citable_result_type="evidence_span",
         app_search_scope=False,
@@ -72,6 +76,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
     "content_chunk": ResourceItemCapability(
         linkable=True,
         attachable=True,
+        chat_subject="readable",
         readable="body",
         citable_result_type="content_chunk",
         app_search_scope=False,
@@ -85,6 +90,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
     "highlight": ResourceItemCapability(
         linkable=True,
         attachable=True,
+        chat_subject="quote",
         readable="body",
         citable_result_type="highlight",
         app_search_scope=False,
@@ -98,6 +104,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
     "page": ResourceItemCapability(
         linkable=True,
         attachable=True,
+        chat_subject="readable",
         readable="body",
         citable_result_type="page",
         app_search_scope=False,
@@ -111,6 +118,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
     "note_block": ResourceItemCapability(
         linkable=True,
         attachable=True,
+        chat_subject="readable",
         readable="body",
         citable_result_type="note_block",
         app_search_scope=False,
@@ -124,6 +132,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
     "fragment": ResourceItemCapability(
         linkable=True,
         attachable=True,
+        chat_subject="readable",
         readable="body",
         citable_result_type="fragment",
         app_search_scope=False,
@@ -137,6 +146,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
     "conversation": ResourceItemCapability(
         linkable=True,
         attachable=True,
+        chat_subject="label",
         readable="body",
         citable_result_type=None,
         app_search_scope=False,
@@ -150,6 +160,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
     "message": ResourceItemCapability(
         linkable=True,
         attachable=True,
+        chat_subject="readable",
         readable="body",
         citable_result_type="message",
         app_search_scope=False,
@@ -163,6 +174,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
     "oracle_reading": ResourceItemCapability(
         linkable=True,
         attachable=True,
+        chat_subject="generated_output",
         readable="body",
         citable_result_type=None,
         app_search_scope=False,
@@ -176,6 +188,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
     "oracle_corpus_passage": ResourceItemCapability(
         linkable=False,
         attachable=False,
+        chat_subject="none",
         readable="none",
         citable_result_type=None,
         app_search_scope=False,
@@ -189,6 +202,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
     "library_intelligence_artifact": ResourceItemCapability(
         linkable=True,
         attachable=True,
+        chat_subject="generated_output",
         readable="body",
         citable_result_type=None,
         app_search_scope=False,
@@ -202,6 +216,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
     "library_intelligence_revision": ResourceItemCapability(
         linkable=True,
         attachable=True,
+        chat_subject="generated_output",
         readable="body",
         citable_result_type=None,
         app_search_scope=False,
@@ -215,6 +230,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
     "external_snapshot": ResourceItemCapability(
         linkable=False,
         attachable=False,
+        chat_subject="none",
         readable="none",
         citable_result_type=None,
         app_search_scope=False,
@@ -228,6 +244,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
     "contributor": ResourceItemCapability(
         linkable=True,
         attachable=True,
+        chat_subject="label",
         readable="none",
         citable_result_type=None,
         app_search_scope=False,
@@ -241,6 +258,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
     "podcast": ResourceItemCapability(
         linkable=True,
         attachable=True,
+        chat_subject="label",
         readable="none",
         citable_result_type=None,
         app_search_scope=False,
@@ -254,6 +272,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
     "tag": ResourceItemCapability(
         linkable=True,
         attachable=True,
+        chat_subject="label",
         readable="none",
         citable_result_type=None,
         app_search_scope=False,
@@ -304,6 +323,11 @@ LINKABLE_RESOURCE_SCHEMES: tuple[ResourceScheme, ...] = tuple(
 )
 ATTACHABLE_RESOURCE_SCHEMES: tuple[ResourceScheme, ...] = tuple(
     scheme for scheme, capability in RESOURCE_ITEM_CAPABILITIES.items() if capability.attachable
+)
+CHAT_SUBJECT_RESOURCE_SCHEMES: tuple[ResourceScheme, ...] = tuple(
+    scheme
+    for scheme, capability in RESOURCE_ITEM_CAPABILITIES.items()
+    if capability.chat_subject != "none"
 )
 
 CONVERSATION_CONTEXT_EDGE_ORIGINS: tuple[EdgeOrigin, ...] = ("user", "citation", "system")

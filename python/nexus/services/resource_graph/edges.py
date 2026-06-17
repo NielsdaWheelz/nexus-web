@@ -39,7 +39,7 @@ from nexus.services.resource_items.capabilities import RESOURCE_ITEM_CAPABILITIE
 def create_edge(db: Session, *, viewer_id: UUID, input: EdgeCreate) -> EdgeOut:
     """Validate and insert one edge; flush-only. Duplicates are rejected."""
     _validate_edge_input(db, viewer_id=viewer_id, edge=input)
-    if input.origin == "user" and input.source_order_key is not None:
+    if input.origin == "user" and input.kind != "context" and input.source_order_key is not None:
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST,
             "Ordered adjacency must be written through the resource adjacency service",

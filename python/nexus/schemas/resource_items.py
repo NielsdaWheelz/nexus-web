@@ -222,6 +222,12 @@ def _validate_pm_child_types(node_type: str, child_types: list[str], *, path: st
 class ResourceItemCapabilitiesOut(BaseModel):
     linkable: bool
     attachable: bool
+    chat_subject: Literal["none", "label", "scope", "readable", "quote", "generated_output"] = (
+        Field(
+            validation_alias=AliasChoices("chat_subject", "chatSubject"),
+            serialization_alias="chatSubject",
+        )
+    )
     readable: Literal["none", "scope", "body", "media"]
     citable_result_type: str | None = Field(
         None,

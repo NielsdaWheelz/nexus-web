@@ -28,9 +28,6 @@ import {
 } from "@/lib/conversations/readerSourceActivation";
 import { conversationResourceOptions } from "@/lib/actions/resourceActions";
 import { chatDraftKeyFor } from "@/lib/conversations/chatDraftKey";
-import { resolveObjectRefs } from "@/lib/objectRefs";
-import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
-import { resourceObjectTypeForScheme } from "@/lib/resources/resourceKind";
 import { apiFetch } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
@@ -196,21 +193,13 @@ export default function Conversation() {
 
   const handleOpenResource = useCallback(
     async (uri: string) => {
-      const parsed = parseResourceRef(uri);
-      if (!parsed) return;
-      if (parsed.scheme === "library") {
-        openInNewPane?.(`/libraries/${parsed.id}`);
-        return;
-      }
-      const objectType = resourceObjectTypeForScheme(parsed.scheme);
-      if (!objectType) return;
       try {
-        const [resolved] = await resolveObjectRefs([
-          { objectType, objectId: parsed.id },
-        ]);
-        const href = resolved?.route;
+        const response = await apiFetch<{
+          data: { route: string | null; label: string };
+        }>(`/api/resource-items/${encodeURIComponent(uri)}`);
+        const href = response.data.route;
         if (!href) return;
-        openInNewPane?.(href);
+        openInNewPane?.(href, response.data.label);
       } catch (err) {
         if (handleUnauthenticatedApiError(err)) return;
         console.error("Failed to open context ref:", err);

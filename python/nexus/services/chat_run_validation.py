@@ -39,6 +39,7 @@ def validate_pre_phase(
     conversation_id: UUID,
     parent_message_id: UUID | None,
     branch_anchor: BranchAnchorRequest,
+    chat_subject: ResourceRef | None,
     reader_selection: ReaderSelectionRequest | None,
     content: str,
     model_id: UUID,
@@ -84,7 +85,7 @@ def validate_pre_phase(
         parent_message_id,
         branch_anchor,
     )
-    _validate_reader_selection(db, viewer_id, conversation_id, reader_selection)
+    _validate_reader_selection(db, viewer_id, conversation_id, reader_selection, chat_subject)
 
     return model
 
@@ -141,6 +142,7 @@ def _validate_reader_selection(
     viewer_id: UUID,
     conversation_id: UUID,
     reader_selection: ReaderSelectionRequest | None,
+    chat_subject: ResourceRef | None = None,
 ) -> None:
     """Ensure the turn selection is backed by a visible attached highlight."""
     if reader_selection is None:
@@ -158,6 +160,8 @@ def _validate_reader_selection(
         )
 
     highlight_ref = ResourceRef(scheme="highlight", id=reader_selection.highlight_id)
+    if chat_subject == highlight_ref:
+        return
     if not admits_resource_for_conversation_read(
         db, conversation_id=conversation_id, target=highlight_ref
     ):

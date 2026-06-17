@@ -12,6 +12,7 @@ import ReaderCitation from "@/components/ui/ReaderCitation";
 import { apiFetch } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { useGenerationRun } from "@/lib/api/useGenerationRun";
+import { startResourceChat } from "@/lib/resources/resourceChat";
 import type { CitationOut } from "@/lib/conversations/citationOut";
 import { toReaderCitationData } from "@/lib/conversations/citations";
 import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
@@ -528,16 +529,10 @@ export default function OracleReadingPaneBody({
   const openReadingChat = useCallback(async () => {
     setChatError(null);
     try {
-      const response = await apiFetch<{ data: { id: string } }>(
-        "/api/conversations",
-        {
-          method: "POST",
-          body: JSON.stringify({
-            initial_context_refs: [`oracle_reading:${readingId}`],
-          }),
-        },
+      const conversationId = await startResourceChat(
+        `oracle_reading:${readingId}`,
       );
-      router.push(`/conversations/${response.data.id}`);
+      router.push(`/conversations/${conversationId}`);
     } catch (error) {
       if (handleUnauthenticatedApiError(error)) return;
       setChatError(

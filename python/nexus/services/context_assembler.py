@@ -16,17 +16,15 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import can_read_conversation
 from nexus.db.models import (
     ChatRun,
+    ChatRunTurnContext,
     Conversation,
     Highlight,
-    Library,
-    Media,
     Message,
     MessageRetrieval,
     Model,
 )
-from nexus.errors import ApiErrorCode, NotFoundError
+from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.llm_catalog import model_max_context_tokens
-from nexus.schemas.conversation import ReaderContextHint, ReaderSelectionRequest
 from nexus.services.chat_prompt import (
     PromptPlan,
     build_llm_request_from_plan,
@@ -51,13 +49,17 @@ from nexus.services.resource_graph.context import (
 from nexus.services.resource_graph.refs import (
     ResourceRef,
     ResourceRefParseFailure,
+    ResourceScheme,
     parse_resource_ref,
 )
 from nexus.services.resource_graph.resolve import (
     ResolvedResource,
     resolve_ref,
 )
-from nexus.services.resource_items.capabilities import CITABLE_RESOURCE_RESULT_TYPES
+from nexus.services.resource_items.capabilities import (
+    CITABLE_RESOURCE_RESULT_TYPES,
+    RESOURCE_ITEM_CAPABILITIES,
+)
 from nexus.services.retrieval_citation import RetrievalCitation, citation_from_search_result
 from nexus.services.search import get_search_result
 
@@ -111,8 +113,6 @@ def assemble_chat_context(
     run: ChatRun,
     model: Model,
     max_output_tokens: int,
-    reader_context: ReaderContextHint | None = None,
-    reader_selection: ReaderSelectionRequest | None = None,
 ) -> ContextAssembly:
     """Assemble the provider-neutral chat request for a durable chat run."""
 
@@ -125,6 +125,7 @@ def assemble_chat_context(
 
     from nexus.services.conversation_branches import load_message_path
 
+    turn_context = db.get(ChatRunTurnContext, run.id)
     path_messages = load_message_path(
         db,
         conversation_id=conversation.id,
@@ -150,19 +151,18 @@ def assemble_chat_context(
     )
     mandatory_blocks: list[tuple[str, PromptBlock, Mapping[str, object]]] = []
 
-    reader_context_block = _build_reader_context_block(db, reader_context)
-    if reader_context_block is not None:
-        mandatory_blocks.append(
-            (
-                "reader_context_hint",
-                reader_context_block,
-                {"hint": "reader_context"},
-            )
-        )
+    subject_block, subject_metadata, subject_uri = _build_subject_block(
+        db,
+        turn_context,
+        viewer_id=run.owner_user_id,
+        conversation_id=conversation.id,
+    )
+    if subject_block is not None:
+        mandatory_blocks.append(("subject", subject_block, subject_metadata))
 
     reader_selection_block = _build_reader_selection_block(
         db,
-        reader_selection,
+        turn_context,
         viewer_id=run.owner_user_id,
         conversation_id=conversation.id,
     )
@@ -197,7 +197,12 @@ def assemble_chat_context(
         )
 
     resources_block, resources_metadata, attached_citations, resource_revision_refs = (
-        _build_resources_block(db, conversation_id=conversation.id, viewer_id=run.owner_user_id)
+        _build_resources_block(
+            db,
+            conversation_id=conversation.id,
+            viewer_id=run.owner_user_id,
+            subject_uri=subject_uri,
+        )
     )
 
     tool_call_events, retrieval_result_events = _load_tool_events(
@@ -434,55 +439,64 @@ def persist_prompt_assembly(db: Session, *, run: ChatRun, assembly: ContextAssem
     return
 
 
-def _build_reader_context_block(
+def _build_subject_block(
     db: Session,
-    reader_context: ReaderContextHint | None,
-) -> PromptBlock | None:
-    """Render the reader-context hint (the doc/library the viewer is reading).
+    turn_context: ChatRunTurnContext | None,
+    *,
+    viewer_id: UUID,
+    conversation_id: UUID,
+) -> tuple[PromptBlock | None, Mapping[str, object], str | None]:
+    if turn_context is None or turn_context.subject_id is None:
+        return None, {}, None
+    assert turn_context.subject_scheme is not None
+    subject = ResourceRef(
+        scheme=cast(ResourceScheme, turn_context.subject_scheme),
+        id=turn_context.subject_id,
+    )
+    if RESOURCE_ITEM_CAPABILITIES[subject.scheme].chat_subject == "none":
+        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Resource cannot be a chat subject")
+    if not admits_resource_for_conversation_read(
+        db,
+        conversation_id=conversation_id,
+        target=subject,
+    ):
+        raise ApiError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "chat_subject resource_ref must be attached to this conversation",
+        )
 
-    Reader context is a model hint, not a retrieval filter. The hint flows in
-    as a request-level parameter; titles are resolved here and discarded after
-    the prompt block is rendered.
-    """
-    if reader_context is None:
-        return None
-    media_id = reader_context.media_id
-    library_id = reader_context.library_id
-    if media_id is None and library_id is None:
-        return None
+    resource = resolve_ref(db, viewer_id=viewer_id, ref=subject)
+    if resource.missing:
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Resource not found")
 
-    media_title: str | None = None
-    library_name: str | None = None
-    if media_id is not None:
-        media_title = db.scalar(select(Media.title).where(Media.id == media_id))
-    if library_id is not None:
-        library_name = db.scalar(select(Library.name).where(Library.id == library_id))
-
-    fragments: list[str] = []
-    source_refs: list[Mapping[str, object]] = []
-    if media_title:
-        fragments.append(f'media "{xml_escape(media_title)}"')
-        source_refs.append({"type": "media", "id": str(media_id)})
-    if library_name:
-        fragments.append(f'library "{xml_escape(library_name)}"')
-        source_refs.append({"type": "library", "id": str(library_id)})
-    if not fragments:
-        return None
-
-    body = "The user is currently viewing " + " in ".join(fragments) + "."
-    text_block = "<reader_context_hint>\n" + body + "\n</reader_context_hint>"
-    return make_prompt_block(
-        block_id="reader_context_hint",
-        role="system",
-        lane="attached_context",
-        text=text_block,
-        source_refs=source_refs,
+    metadata: dict[str, object] = {"role": "subject", "resource_uri": resource.uri}
+    if turn_context.requested_subject_id is not None:
+        assert turn_context.requested_subject_scheme is not None
+        requested = ResourceRef(
+            scheme=cast(ResourceScheme, turn_context.requested_subject_scheme),
+            id=turn_context.requested_subject_id,
+        )
+        metadata["requested_resource_uri"] = requested.uri
+    if turn_context.subject_context_edge_id is not None:
+        metadata["context_edge_id"] = str(turn_context.subject_context_edge_id)
+    if resource.resolved_revision_ref is not None:
+        metadata["revision_uri"] = resource.resolved_revision_ref
+    return (
+        make_prompt_block(
+            block_id=f"subject:{resource.uri}",
+            role="system",
+            lane="attached_context",
+            text=_render_resource(resource, tag="subject"),
+            source_refs=[metadata],
+        ),
+        metadata,
+        resource.uri,
     )
 
 
 def _build_reader_selection_block(
     db: Session,
-    reader_selection: ReaderSelectionRequest | None,
+    turn_context: ChatRunTurnContext | None,
     *,
     viewer_id: UUID,
     conversation_id: UUID | None = None,
@@ -491,21 +505,24 @@ def _build_reader_selection_block(
     the viewer is asking "this"/"the quote" about. Never numbered, never a
     retrieval; the passage is cited through its attached `highlight:` reference.
     """
-    if reader_selection is None:
+    if turn_context is None or turn_context.reader_selection_highlight_id is None:
         return None
-    highlight = db.get(Highlight, reader_selection.highlight_id)
-    if highlight is None or highlight.anchor_media_id != reader_selection.media_id:
+    assert turn_context.reader_selection_media_id is not None
+    media_id = turn_context.reader_selection_media_id
+    highlight_id = turn_context.reader_selection_highlight_id
+    highlight = db.get(Highlight, highlight_id)
+    if highlight is None or highlight.anchor_media_id != media_id:
         return None
     if conversation_id is not None and not admits_resource_for_conversation_read(
         db,
         conversation_id=conversation_id,
-        target=ResourceRef(scheme="highlight", id=reader_selection.highlight_id),
+        target=ResourceRef(scheme="highlight", id=highlight_id),
     ):
         return None
     resource = resolve_ref(
         db,
         viewer_id=viewer_id,
-        ref=ResourceRef(scheme="highlight", id=reader_selection.highlight_id),
+        ref=ResourceRef(scheme="highlight", id=highlight_id),
     )
     if resource.missing or resource.quote is None:
         return None
@@ -522,8 +539,8 @@ def _build_reader_selection_block(
             source_label=quote.source_label,
         ),
         source_refs=[
-            {"type": "media", "id": str(reader_selection.media_id)},
-            {"type": "highlight", "id": str(reader_selection.highlight_id)},
+            {"type": "media", "id": str(media_id)},
+            {"type": "highlight", "id": str(highlight_id)},
         ],
     )
 
@@ -533,6 +550,7 @@ def _build_resources_block(
     *,
     conversation_id: UUID,
     viewer_id: UUID,
+    subject_uri: str | None = None,
 ) -> tuple[
     PromptBlock | None,
     Mapping[str, object],
@@ -548,11 +566,12 @@ def _build_resources_block(
     source_refs: list[Mapping[str, object]] = []
     for ctx in refs:
         citation = _materialize_attached_citation(db, ctx.resolved, viewer_id=viewer_id)
+        compact = ctx.target.uri == subject_uri
         if citation is None:
-            lines.append(_render_resource(ctx.resolved))
+            lines.append(_render_resource(ctx.resolved, compact=compact))
         else:
             citations.append(citation)
-            lines.append(_render_resource(ctx.resolved, n=len(citations)))
+            lines.append(_render_resource(ctx.resolved, n=len(citations), compact=compact))
         source_refs.append(
             {"type": "context_ref", "id": str(ctx.edge_id), "resource_uri": ctx.target.uri}
         )
@@ -612,19 +631,31 @@ def _materialize_attached_citation(
     return citation
 
 
-def _render_resource(resource: ResolvedResource, n: int | None = None) -> str:
+def _render_resource(
+    resource: ResolvedResource,
+    n: int | None = None,
+    *,
+    tag: Literal["resource", "subject"] = "resource",
+    compact: bool = False,
+) -> str:
     uri_attr = xml_escape(resource.uri, {'"': "&quot;"})
     if resource.missing:
-        return f'<resource uri="{uri_attr}" missing="true">resource unavailable</resource>'
+        return f'<{tag} uri="{uri_attr}" missing="true">resource unavailable</{tag}>'
     label_attr = xml_escape(resource.label, {'"': "&quot;"})
     summary_attr = xml_escape(resource.summary, {'"': "&quot;"})
     fetch_attr = xml_escape(resource.fetch_hint, {'"': "&quot;"})
-    n_attr = f' n="{n}"' if n is not None else ""
+    parsed = parse_resource_ref(resource.uri)
+    if not isinstance(parsed, ResourceRefParseFailure):
+        compact = compact or RESOURCE_ITEM_CAPABILITIES[parsed.scheme].prompt_render in (
+            "label",
+            "none",
+        )
+    n_attr = f' n="{n}"' if n is not None and not compact else ""
     open_tag = (
-        f'<resource uri="{uri_attr}"{n_attr} label="{label_attr}" '
+        f'<{tag} uri="{uri_attr}"{n_attr} label="{label_attr}" '
         f'summary="{summary_attr}" fetch_hint="{fetch_attr}">'
     )
-    if resource.quote is not None:
+    if not compact and resource.quote is not None:
         quote = resource.quote
         inner = render_quote_block(
             "quote",
@@ -634,11 +665,11 @@ def _render_resource(resource: ResolvedResource, n: int | None = None) -> str:
             source_label=quote.source_label,
             note=quote.note,
         )
-        return f"{open_tag}\n{inner}\n</resource>"
-    if resource.inline_body is None:
-        return f"{open_tag}</resource>"
+        return f"{open_tag}\n{inner}\n</{tag}>"
+    if compact or resource.inline_body is None:
+        return f"{open_tag}</{tag}>"
     body = xml_escape(resource.inline_body)
-    return f"{open_tag}\n<body>{body}</body>\n</resource>"
+    return f"{open_tag}\n<body>{body}</body>\n</{tag}>"
 
 
 def _render_branch_anchor_block(anchor: Mapping[str, object]) -> str:

@@ -157,7 +157,6 @@ function branchAnchorPreview(
   switch (anchor.kind) {
     case "none":
     case "assistant_message":
-    case "reader_context":
       return null;
     case "assistant_selection":
       return anchor.exact;

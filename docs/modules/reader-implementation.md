@@ -113,7 +113,7 @@ width; the workspace raises the PDF pane floor to that width.
 
 The Document Map overview rail is fixed primary-adjacent chrome: it changes rendered pane
 width without changing stored primary pane width. Reader highlights and
-document chat are Document Map secondary surfaces under
+resource chat are Document Map secondary surfaces under
 `docs/workspace-pane-system.md`; their width is independent from the
 primary reader width. Mobile panes ignore desktop runtime pane sizing and render
 at viewport width. Mobile workspace mode also suppresses fixed primary chrome,

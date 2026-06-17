@@ -14,7 +14,7 @@ import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoun
 import { createRandomId } from "@/lib/createRandomId";
 import { toFeedback } from "@/components/feedback/Feedback";
 import type {
-  ReaderContextHintInput,
+  ChatSubjectInput,
   ReaderSelectionInput,
 } from "@/lib/api/sse/requests";
 import { buildChatRunBody } from "@/lib/conversations/chatRunBody";
@@ -66,8 +66,8 @@ interface ChatComposerProps {
   pendingContextRefs?: Array<{ uri: string; label: string }>;
   /** Removes a pending context-ref chip before send. */
   onRemovePendingContextRef?: (uri: string) => void;
-  /** Reader context hint for the model (current media/library). Not a retrieval constraint. */
-  readerContext?: ReaderContextHintInput | null;
+  /** Primary resource this turn asks about. */
+  chatSubject?: ChatSubjectInput | null;
   /** The quoted passage as a bind-only turn anchor for the asking turn. */
   readerSelection?: ReaderSelectionInput | null;
   /** Blocks sending while caller-owned conversation state is not safe to continue. */
@@ -94,7 +94,7 @@ export default function ChatComposer({
   onResolveConversation,
   pendingContextRefs = [],
   onRemovePendingContextRef,
-  readerContext = null,
+  chatSubject = null,
   readerSelection = null,
   disabledReason,
 }: ChatComposerProps) {
@@ -157,7 +157,7 @@ export default function ChatComposer({
         keyMode: selectedKeyMode,
         branchDraft,
         parentMessageId,
-        readerContext,
+        chatSubject,
         readerSelection,
       });
 
@@ -189,7 +189,7 @@ export default function ChatComposer({
     modelSelectionReady,
     conversationId,
     onResolveConversation,
-    readerContext,
+    chatSubject,
     readerSelection,
     disabledReason,
     branchDraft,

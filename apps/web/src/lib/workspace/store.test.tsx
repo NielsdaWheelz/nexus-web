@@ -393,7 +393,7 @@ describe("WorkspaceStoreProvider", () => {
 
     act(() => {
       workspace().resizeSecondaryPane(secondaryPaneId, 9999);
-      workspace().setSecondarySurface(secondaryPaneId, "reader-doc-chat");
+      workspace().setSecondarySurface(secondaryPaneId, "reader-resource-chat");
       workspace().closeSecondaryPane(secondaryPaneId);
     });
 
@@ -404,7 +404,7 @@ describe("WorkspaceStoreProvider", () => {
       expect(primaryPane.primaryWidthPx).toBe(900);
       expect(secondaryPane).toMatchObject({
         groupId: "reader-tools",
-        activeSurfaceId: "reader-doc-chat",
+        activeSurfaceId: "reader-resource-chat",
         widthPx: 720,
         visibility: "collapsed",
       });
@@ -461,7 +461,7 @@ describe("WorkspaceStoreProvider", () => {
     // Resize, switch, and collapse pane A's secondary.
     act(() => {
       workspace().resizeSecondaryPane(paneASecondaryId, 680);
-      workspace().setSecondarySurface(paneASecondaryId, "reader-doc-chat");
+      workspace().setSecondarySurface(paneASecondaryId, "reader-resource-chat");
       workspace().closeSecondaryPane(paneASecondaryId);
     });
 
@@ -469,7 +469,7 @@ describe("WorkspaceStoreProvider", () => {
       expect(
         workspace().state.secondaryPanesById[paneASecondaryId],
       ).toMatchObject({
-        activeSurfaceId: "reader-doc-chat",
+        activeSurfaceId: "reader-resource-chat",
         widthPx: 680,
         visibility: "collapsed",
       });

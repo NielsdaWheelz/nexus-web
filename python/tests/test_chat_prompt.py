@@ -17,6 +17,7 @@ pytestmark = pytest.mark.unit
 def test_system_prompt_names_resources_and_strict_tools():
     prompt = render_system_prompt_block()
 
+    assert "<subject>" in prompt
     assert "<resources>" in prompt
     assert "<reader_selection>" in prompt
     assert "n attribute" in prompt

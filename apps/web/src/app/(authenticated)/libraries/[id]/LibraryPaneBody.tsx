@@ -32,6 +32,7 @@ import {
   mediaResourceOptions,
   podcastResourceOptions,
 } from "@/lib/actions/resourceActions";
+import { startResourceChat } from "@/lib/resources/resourceChat";
 import {
   BookOpen,
   FileText,
@@ -703,14 +704,8 @@ export default function LibraryPaneBody() {
   const handleOpenMediaChat = useCallback(
     async (media: LibraryMediaEntry) => {
       try {
-        const response = await apiFetch<{
-          data: { id: string };
-        }>("/api/conversations", {
-          method: "POST",
-          body: JSON.stringify({ initial_context_refs: [`media:${media.id}`] }),
-        });
-        const route = `/conversations/${response.data.id}`;
-        openInNewPane?.(route, media.title);
+        const conversationId = await startResourceChat(`media:${media.id}`);
+        openInNewPane?.(`/conversations/${conversationId}`, media.title);
       } catch (err) {
         if (handleUnauthenticatedApiError(err)) return;
         setError(
@@ -726,16 +721,10 @@ export default function LibraryPaneBody() {
   const handleOpenIntelligenceChat = useCallback(
     async (revisionRef: string) => {
       try {
-        const response = await apiFetch<{
-          data: { id: string };
-        }>("/api/conversations", {
-          method: "POST",
-          body: JSON.stringify({
-            initial_context_refs: [revisionRef, `library:${id}`],
-          }),
-        });
-        const route = `/conversations/${response.data.id}`;
-        openInNewPane?.(route, currentLibrary?.name);
+        const conversationId = await startResourceChat(revisionRef, [
+          `library:${id}`,
+        ]);
+        openInNewPane?.(`/conversations/${conversationId}`, currentLibrary?.name);
       } catch (err) {
         if (handleUnauthenticatedApiError(err)) return;
         setError(

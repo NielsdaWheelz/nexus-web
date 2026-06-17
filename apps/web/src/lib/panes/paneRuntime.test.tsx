@@ -64,7 +64,7 @@ function SecondaryCommandsOnMount() {
       throw new Error("Pane runtime missing");
     }
     runtime.requestSecondarySurface("reader-highlights");
-    runtime.setSecondarySurface("reader-doc-chat");
+    runtime.setSecondarySurface("reader-resource-chat");
     runtime.closeSecondaryPane();
   }, [runtime]);
   return null;
@@ -433,7 +433,7 @@ describe("PaneRuntimeProvider", () => {
       );
       expect(onSetSecondarySurface).toHaveBeenCalledWith(
         "secondary-1",
-        "reader-doc-chat",
+        "reader-resource-chat",
       );
       expect(onCloseSecondaryPane).toHaveBeenCalledWith("secondary-1");
     });

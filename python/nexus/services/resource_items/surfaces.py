@@ -3,9 +3,10 @@ from __future__ import annotations
 import hashlib
 import json
 from typing import cast
+from urllib.parse import quote
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import ResourceEdge, ResourceMutation, ResourceViewState
@@ -26,7 +27,11 @@ from nexus.services.resource_graph.refs import (
     ResourceScheme,
     parse_resource_ref,
 )
-from nexus.services.resource_graph.resolve import assert_ref_visible, resolve_ref
+from nexus.services.resource_graph.resolve import (
+    assert_ref_visible,
+    reader_target_for_citation_target,
+    resolve_ref,
+)
 from nexus.services.resource_items import versions
 from nexus.services.resource_items.capabilities import RESOURCE_ITEM_CAPABILITIES
 
@@ -167,11 +172,12 @@ def resource_item_out(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> Reso
         id=ref.id,
         label=resolved.label,
         summary=resolved.summary,
-        route=_route_for_ref(ref),
+        route=None if resolved.missing else _route_for_ref(db, viewer_id=viewer_id, ref=ref),
         missing=resolved.missing,
         capabilities=ResourceItemCapabilitiesOut(
             linkable=capability.linkable,
             attachable=capability.attachable,
+            chat_subject=capability.chat_subject,
             readable=capability.readable,
             citable_result_type=capability.citable_result_type,
             app_search_scope=capability.app_search_scope,
@@ -206,19 +212,72 @@ def _parse_ref_or_error(raw: str) -> ResourceRef:
     return parsed
 
 
-def _route_for_ref(ref: ResourceRef) -> str | None:
+def _route_for_ref(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> str | None:
     if ref.scheme == "page":
         return f"/pages/{ref.id}"
     if ref.scheme == "note_block":
         return f"/notes/{ref.id}"
     if ref.scheme == "media":
-        return f"/reader/{ref.id}"
+        return f"/media/{ref.id}"
     if ref.scheme == "conversation":
-        return f"/chat/{ref.id}"
-    if ref.scheme == "highlight":
-        return f"/highlights/{ref.id}"
+        return f"/conversations/{ref.id}"
     if ref.scheme == "library":
         return f"/libraries/{ref.id}"
+    if ref.scheme == "oracle_reading":
+        return f"/oracle/{ref.id}"
+    if ref.scheme == "podcast":
+        return f"/podcasts/{ref.id}"
+    if ref.scheme == "highlight":
+        media_id = db.scalar(
+            text("SELECT anchor_media_id FROM highlights WHERE id = :id"),
+            {"id": ref.id},
+        )
+        return f"/media/{media_id}#highlight-{ref.id}" if media_id is not None else None
+    if ref.scheme == "message":
+        conversation_id = db.scalar(
+            text("SELECT conversation_id FROM messages WHERE id = :id"),
+            {"id": ref.id},
+        )
+        return f"/conversations/{conversation_id}" if conversation_id is not None else None
+    if ref.scheme == "fragment":
+        media_id = db.scalar(text("SELECT media_id FROM fragments WHERE id = :id"), {"id": ref.id})
+        return f"/media/{media_id}#fragment-{ref.id}" if media_id is not None else None
+    if ref.scheme in ("content_chunk", "evidence_span"):
+        media_id, locator = reader_target_for_citation_target(db, viewer_id=viewer_id, target=ref)
+        if media_id is not None:
+            if ref.scheme == "evidence_span":
+                return f"/media/{media_id}#evidence-{ref.id}"
+            if isinstance(locator, dict) and isinstance(locator.get("fragment_id"), str):
+                return f"/media/{media_id}#fragment-{locator['fragment_id']}"
+            return f"/media/{media_id}"
+        if isinstance(locator, dict) and isinstance(locator.get("block_id"), str):
+            return f"/notes/{locator['block_id']}"
+    if ref.scheme == "library_intelligence_artifact":
+        library_id = db.scalar(
+            text("SELECT library_id FROM library_intelligence_artifacts WHERE id = :id"),
+            {"id": ref.id},
+        )
+        return f"/libraries/{library_id}?tab=intelligence" if library_id is not None else None
+    if ref.scheme == "library_intelligence_revision":
+        library_id = db.scalar(
+            text(
+                """
+                SELECT a.library_id
+                FROM library_intelligence_artifact_revisions r
+                JOIN library_intelligence_artifacts a ON a.id = r.artifact_id
+                WHERE r.id = :id
+                """
+            ),
+            {"id": ref.id},
+        )
+        return (
+            f"/libraries/{library_id}?tab=intelligence&revision={ref.id}"
+            if library_id is not None
+            else None
+        )
+    if ref.scheme == "contributor":
+        handle = db.scalar(text("SELECT handle FROM contributors WHERE id = :id"), {"id": ref.id})
+        return f"/authors/{quote(str(handle), safe='')}" if handle is not None else None
     return None
 
 

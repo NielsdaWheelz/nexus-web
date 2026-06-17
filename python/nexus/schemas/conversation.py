@@ -44,7 +44,6 @@ BRANCH_ANCHOR_KINDS = Literal[
     "none",
     "assistant_message",
     "assistant_selection",
-    "reader_context",
 ]
 BRANCH_ANCHOR_OFFSET_STATUSES = Literal["mapped", "unmapped"]
 CHAT_RUN_EVENT_TYPES = Literal[
@@ -198,6 +197,15 @@ class MessageRetrievalOut(BaseModel):
         return self
 
 
+class ChatRunMetaSubjectPayload(BaseModel):
+    requested_resource_ref: str
+    resource_ref: str
+    context_edge_id: UUID | None = None
+    companions: list[str] = Field(default_factory=list)
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class ChatRunMetaEventPayload(BaseModel):
     """Strict SSE payload emitted when a durable run is created."""
 
@@ -207,6 +215,7 @@ class ChatRunMetaEventPayload(BaseModel):
     assistant_message_id: UUID
     model_id: UUID
     provider: str = Field(min_length=1)
+    chat_subject: ChatRunMetaSubjectPayload | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -553,17 +562,10 @@ class AssistantSelectionBranchAnchorRequest(BaseModel):
         return self
 
 
-class ReaderContextBranchAnchorRequest(BaseModel):
-    kind: Literal["reader_context"]
-
-    model_config = ConfigDict(extra="forbid")
-
-
 BranchAnchorRequest = Annotated[
     NoBranchAnchorRequest
     | AssistantMessageBranchAnchorRequest
-    | AssistantSelectionBranchAnchorRequest
-    | ReaderContextBranchAnchorRequest,
+    | AssistantSelectionBranchAnchorRequest,
     Field(discriminator="kind"),
 ]
 
@@ -649,21 +651,12 @@ class RenameBranchRequest(BaseModel):
         return self
 
 
-class ReaderContextHint(BaseModel):
-    """Optional model-prompt hint identifying the doc/library the viewer is reading."""
-
-    media_id: UUID | None = None
-    library_id: UUID | None = None
-
-    model_config = ConfigDict(extra="forbid")
-
-
 class ReaderSelectionRequest(BaseModel):
     """The exact passage the viewer is asking about — a bind-only turn anchor.
 
-    Resolves pronouns ("this", "the quote"); never persisted and never itself
-    cited (the durable citable attachment is the `highlight:` reference). It is
-    answer-determining, so it joins the idempotency hash.
+    Resolves pronouns ("this", "the quote"); the durable turn identity is stored
+    as media/highlight ids and is never itself cited. The citable attachment is
+    the `highlight:` reference.
     """
 
     exact: str = Field(..., min_length=1, max_length=20000)
@@ -681,6 +674,12 @@ class ReaderSelectionRequest(BaseModel):
         return self
 
 
+class ChatSubjectRequest(BaseModel):
+    resource_ref: str = Field(..., min_length=1)
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class ChatRunCreateRequest(BaseModel):
     """Request schema for creating a durable chat run."""
 
@@ -691,7 +690,7 @@ class ChatRunCreateRequest(BaseModel):
     model_id: UUID
     reasoning: ReasoningMode
     key_mode: LLMKeyMode
-    reader_context: ReaderContextHint | None = None
+    chat_subject: ChatSubjectRequest | None = None
     reader_selection: ReaderSelectionRequest | None = None
 
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")

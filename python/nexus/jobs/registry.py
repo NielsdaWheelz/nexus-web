@@ -262,17 +262,7 @@ def _run_enrich_metadata(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | N
 def _run_chat_run(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
     from nexus.tasks.chat_run import chat_run
 
-    reader_context = payload.get("reader_context")
-    reader_context_payload = dict(reader_context) if isinstance(reader_context, Mapping) else None
-    reader_selection = payload.get("reader_selection")
-    reader_selection_payload = (
-        dict(reader_selection) if isinstance(reader_selection, Mapping) else None
-    )
-    return chat_run(
-        run_id=str(payload["run_id"]),
-        reader_context=reader_context_payload,
-        reader_selection=reader_selection_payload,
-    )
+    return chat_run(run_id=str(payload["run_id"]))
 
 
 def _dead_letter_chat_run(db: Session, job: JobRow) -> None:

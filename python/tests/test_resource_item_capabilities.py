@@ -6,6 +6,7 @@ from nexus.services.resource_graph.refs import RESOURCE_SCHEMES
 from nexus.services.resource_items.capabilities import (
     APP_SEARCH_SCOPE_SCHEMES,
     ATTACHABLE_RESOURCE_SCHEMES,
+    CHAT_SUBJECT_RESOURCE_SCHEMES,
     CITABLE_RESOURCE_RESULT_TYPES,
     CITATION_OUTPUT_SOURCE_SCHEMES,
     CONVERSATION_CONTEXT_EDGE_ORIGINS,
@@ -27,6 +28,24 @@ def test_every_resource_scheme_has_one_capability() -> None:
 def test_read_search_and_citation_capabilities_are_owned_together() -> None:
     assert SCOPE_ONLY_RESOURCE_SCHEMES == ("library",)
     assert APP_SEARCH_SCOPE_SCHEMES == ("media", "library")
+    assert CHAT_SUBJECT_RESOURCE_SCHEMES == (
+        "media",
+        "library",
+        "evidence_span",
+        "content_chunk",
+        "highlight",
+        "page",
+        "note_block",
+        "fragment",
+        "conversation",
+        "message",
+        "oracle_reading",
+        "library_intelligence_artifact",
+        "library_intelligence_revision",
+        "contributor",
+        "podcast",
+        "tag",
+    )
     assert CONVERSATION_SEARCH_SCOPE_SCHEMES == ("highlight", "page", "note_block")
     assert CITATION_OUTPUT_SOURCE_SCHEMES == (
         "message",
@@ -47,10 +66,12 @@ def test_read_search_and_citation_capabilities_are_owned_together() -> None:
 
 
 def test_every_resource_scheme_has_full_capability_decisions() -> None:
+    chat_subject_modes = {"none", "label", "scope", "readable", "quote", "generated_output"}
     prompt_render_modes = {"none", "label", "inline_body", "quote"}
     for scheme, capability in RESOURCE_ITEM_CAPABILITIES.items():
         assert isinstance(capability.linkable, bool), scheme
         assert isinstance(capability.attachable, bool), scheme
+        assert capability.chat_subject in chat_subject_modes, scheme
         assert capability.readable in {"none", "scope", "body", "media"}, scheme
         assert capability.citable_result_type is None or capability.citable_result_type, scheme
         assert isinstance(capability.app_search_scope, bool), scheme
@@ -61,6 +82,20 @@ def test_every_resource_scheme_has_full_capability_decisions() -> None:
         assert capability.expandable is False, scheme
         assert isinstance(capability.adjacency_source, bool), scheme
         assert isinstance(capability.adjacency_target, bool), scheme
+        if capability.chat_subject != "none":
+            assert capability.attachable is True, scheme
+        if capability.chat_subject == "scope":
+            assert capability.readable == "scope" or capability.app_search_scope, scheme
+        if capability.chat_subject == "readable":
+            assert capability.readable in {"body", "media"}, scheme
+        if capability.chat_subject == "quote":
+            assert capability.prompt_render == "quote", scheme
+        if capability.chat_subject == "label":
+            assert capability.prompt_render == "label", scheme
+        if capability.chat_subject == "generated_output":
+            assert capability.readable == "body", scheme
+            assert capability.prompt_render == "inline_body", scheme
+            assert capability.citable_result_type is None, scheme
 
 
 def test_edge_origin_search_admission_is_owned_with_item_capabilities() -> None:

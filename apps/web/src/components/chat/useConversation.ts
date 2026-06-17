@@ -4,7 +4,7 @@
  * useConversation — the single live-chat engine.
  *
  * Consolidates the message lifecycle for the conversation pane, new-chat route,
- * and reader document-chat: history load, resolve/create-on-send, optimistic
+ * and inline resource chat: history load, resolve/create-on-send, optimistic
  * seeding, retry, branch state, and context-ref fan-out. It has two history-load
  * modes selected by `branching`:
  *
@@ -185,7 +185,7 @@ export function useConversation(
   const locallyCreatedIdsRef = useRef<Set<string>>(new Set());
   // Context refs already attached to the current conversation (seeded at creation
   // or POSTed on a prior send), so a continuation send does not redundantly
-  // re-POST the permanent document context ref each time. Reset when the id changes.
+  // re-POST permanent context refs each time. Reset when the id changes.
   const attachedRefsRef = useRef<{ id: string | null; uris: Set<string> }>({
     id: null,
     uris: new Set(),
@@ -651,8 +651,8 @@ export function useConversation(
       if (!runData.user_message.parent_message_id) {
         setMessages([runData.user_message, runData.assistant_message]);
       }
-      // Linear mode (reader) is single-stream: abort the previous run before
-      // tailing the new one (mirrors the original ReaderChatDetail). Branching
+      // Linear mode is single-stream: abort the previous run before
+      // tailing the new one. Branching
       // mode intentionally allows concurrent branch runs, so it never aborts.
       if (!branching) abortAll();
       void tailChatRun(runData);

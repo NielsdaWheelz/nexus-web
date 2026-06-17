@@ -9,17 +9,13 @@ import { FeedbackNotice } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import type { ReaderSelectionInput } from "@/lib/api/sse/requests";
 import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
-import styles from "./ReaderChatDetail.module.css";
+import styles from "./ResourceChatDetail.module.css";
 
-interface ReaderChatDetailProps {
-  /** Existing conversation, or null for a chat not yet created (created on first send). */
+interface ResourceChatDetailProps {
   conversationId: string | null;
-  mediaId: string;
-  /** A highlight URI to attach to the conversation when the user sends. */
+  subjectRef: string;
   pendingQuoteUri?: string | null;
-  /** Human-readable quote chip text for the pending highlight context ref. */
   pendingQuoteLabel?: string | null;
-  /** The quoted passage as a bind-only turn anchor for the asking turn. */
   pendingReaderSelection?: ReaderSelectionInput | null;
   onBack: () => void;
   onOpenFullChat: (conversationId: string) => void;
@@ -29,36 +25,17 @@ interface ReaderChatDetailProps {
   ) => void;
 }
 
-/**
- * A conversation rendered inline inside the reader's document-chat secondary surface: a
- * compact header (back / title / open-in-full-chat) over the shared chat engine
- * (useConversation) and view (ChatSurface). All lifecycle, scroll, send and
- * retry logic lives in the engine and the view — this adapter only owns the
- * header chrome and the local pending-quote chip.
- *
- * The conversation, the document context ref, and any pending quote are
- * created/attached on the first send (via useConversation.resolveConversation),
- * never eagerly.
- */
-export default function ReaderChatDetail({
+export default function ResourceChatDetail({
   conversationId,
-  mediaId,
+  subjectRef,
   pendingQuoteUri = null,
   pendingQuoteLabel = null,
   pendingReaderSelection = null,
   onBack,
   onOpenFullChat,
   onReaderSourceActivate,
-}: ReaderChatDetailProps) {
-  const readerContext = useMemo(
-    () => ({ media_id: mediaId, library_id: null }),
-    [mediaId],
-  );
-
-  // The pending-quote chip is the source of truth for the removable quote: the
-  // engine attaches exactly what the chip currently holds. The media context ref
-  // always attaches (it is not removable); the quote is the removable part, so
-  // removing the chip drops the quote from what gets committed on send.
+}: ResourceChatDetailProps) {
+  // The chip list owns removable quote context.
   const [pendingContextRefs, setPendingContextRefs] = useState<
     Array<{ uri: string; label: string }>
   >(() =>
@@ -67,16 +44,29 @@ export default function ReaderChatDetail({
       : [],
   );
 
-  const initialContextRefs = useMemo(
-    () => [`media:${mediaId}`, ...pendingContextRefs.map((ref) => ref.uri)],
-    [mediaId, pendingContextRefs],
+  const quoteStillPending =
+    pendingQuoteUri !== null &&
+    pendingContextRefs.some((ref) => ref.uri === pendingQuoteUri);
+  const activeSubjectRef =
+    quoteStillPending && pendingQuoteUri ? pendingQuoteUri : subjectRef;
+  const chatSubject = useMemo(
+    () => ({ resource_ref: activeSubjectRef }),
+    [activeSubjectRef],
   );
-  const activePendingReaderSelection = useMemo(() => {
-    if (!pendingQuoteUri) return null;
-    return pendingContextRefs.some((ref) => ref.uri === pendingQuoteUri)
-      ? pendingReaderSelection
-      : null;
-  }, [pendingContextRefs, pendingQuoteUri, pendingReaderSelection]);
+  const initialContextRefs = useMemo(
+    () =>
+      Array.from(
+        new Set([
+          activeSubjectRef,
+          subjectRef,
+          ...pendingContextRefs.map((ref) => ref.uri),
+        ]),
+      ),
+    [activeSubjectRef, subjectRef, pendingContextRefs],
+  );
+  const activePendingReaderSelection = quoteStillPending
+    ? pendingReaderSelection
+    : null;
 
   const convo = useConversation({
     conversationId,
@@ -88,7 +78,7 @@ export default function ReaderChatDetail({
   const resolvedConversationId = convo.conversationId;
   const draftKey =
     conversationId === null && convo.messages.length === 0
-      ? `reader-doc:${mediaId}:new`
+      ? `resource:${activeSubjectRef}:new`
       : undefined;
 
   return (
@@ -143,7 +133,7 @@ export default function ReaderChatDetail({
             conversationId={convo.conversationId}
             draftKey={draftKey}
             parentMessageId={parentMessageId}
-            readerContext={readerContext}
+            chatSubject={chatSubject}
             readerSelection={activePendingReaderSelection}
             pendingContextRefs={pendingContextRefs}
             onRemovePendingContextRef={(uri) =>

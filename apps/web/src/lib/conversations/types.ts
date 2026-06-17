@@ -276,8 +276,7 @@ export interface ConversationMessagesResponse {
 type BranchAnchorKind =
   | "none"
   | "assistant_message"
-  | "assistant_selection"
-  | "reader_context";
+  | "assistant_selection";
 
 export type BranchAnchor =
   | { kind: "none" }
@@ -304,11 +303,6 @@ export type BranchAnchor =
       suffix: string | null;
       offset_status: "unmapped";
       client_selection_id: string;
-    }
-  | {
-      kind: "reader_context";
-      message_id?: string;
-      context_id?: string;
     };
 
 export interface BranchDraft {

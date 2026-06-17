@@ -1,7 +1,7 @@
 import type { BranchAnchor, BranchDraft } from "@/lib/conversations/types";
 import type {
+  ChatSubjectInput,
   ChatRunCreateRequest,
-  ReaderContextHintInput,
   ReaderSelectionInput,
 } from "@/lib/api/sse/requests";
 
@@ -19,7 +19,7 @@ export function buildChatRunBody(input: {
   keyMode: NonNullable<ChatRunCreateRequest["key_mode"]>;
   branchDraft: BranchDraft | null;
   parentMessageId: string | null;
-  readerContext: ReaderContextHintInput | null;
+  chatSubject: ChatSubjectInput | null;
   readerSelection?: ReaderSelectionInput | null;
 }): ChatRunCreateRequest {
   const replyParentMessageId =
@@ -44,7 +44,7 @@ export function buildChatRunBody(input: {
       ? { parent_message_id: replyParentMessageId }
       : {}),
     branch_anchor: branchAnchor,
-    reader_context: input.readerContext,
+    ...(input.chatSubject ? { chat_subject: input.chatSubject } : {}),
     ...(input.readerSelection
       ? { reader_selection: input.readerSelection }
       : {}),

@@ -56,7 +56,7 @@ const PANE_SECONDARY_SURFACE_DEFINITIONS = [
     iconId: "link-2",
   },
   {
-    id: "reader-doc-chat",
+    id: "reader-resource-chat",
     groupId: "reader-tools",
     title: "Chat",
     iconId: "file-text",

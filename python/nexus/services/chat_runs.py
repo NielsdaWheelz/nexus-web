@@ -34,6 +34,7 @@ from web_search_tool.types import WebSearchProvider
 from nexus.db.models import (
     ChatRun,
     ChatRunEvent,
+    ChatRunTurnContext,
     Conversation,
     Message,
     MessageToolCall,
@@ -56,7 +57,7 @@ from nexus.schemas.conversation import (
     BranchAnchorRequest,
     ChatRunEventOut,
     ChatRunResponse,
-    ReaderContextHint,
+    ChatSubjectRequest,
     ReaderSelectionRequest,
 )
 from nexus.services.agent_tools.app_search import (
@@ -142,12 +143,17 @@ from nexus.services.resource_graph.context import (
     admits_resource_for_conversation_read,
 )
 from nexus.services.resource_graph.edges import delete_edge
-from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.resource_graph.refs import (
+    ResourceRef,
+    ResourceRefParseFailure,
+    parse_resource_ref,
+)
 from nexus.services.resource_graph.schemas import (
     CitationSnapshot,
     ConnectionFilters,
     ConnectionQuery,
 )
+from nexus.services.resource_items.chat_subjects import resolve_chat_subject
 from nexus.services.retrieval_citation import (
     RetrievalCitation,
     citation_from_search_result,
@@ -974,7 +980,7 @@ def create_chat_run(
     *,
     viewer_id: UUID,
     conversation_id: UUID,
-    reader_context: ReaderContextHint | None,
+    chat_subject: ChatSubjectRequest | None,
     reader_selection: ReaderSelectionRequest | None,
     parent_message_id: UUID | None,
     branch_anchor: BranchAnchorRequest,
@@ -985,6 +991,13 @@ def create_chat_run(
     idempotency_key: str | None,
 ) -> ChatRunResponse:
     normalized_key = normalize_idempotency_key(idempotency_key)
+    requested_subject_ref = _parse_chat_subject(chat_subject)
+    resolved_subject = (
+        resolve_chat_subject(db, viewer_id=viewer_id, requested_ref=requested_subject_ref)
+        if requested_subject_ref is not None
+        else None
+    )
+    subject_ref = resolved_subject.subject_ref if resolved_subject is not None else None
 
     payload_hash = compute_payload_hash(
         content,
@@ -994,6 +1007,8 @@ def create_chat_run(
         conversation_id,
         parent_message_id,
         branch_anchor,
+        requested_subject_ref,
+        subject_ref,
         reader_selection,
     )
 
@@ -1024,6 +1039,7 @@ def create_chat_run(
         conversation_id,
         parent_message_id,
         branch_anchor,
+        subject_ref,
         reader_selection,
         content,
         model_id,
@@ -1039,6 +1055,29 @@ def create_chat_run(
             raise_if_payload_mismatch(existing, payload_hash, viewer_id, normalized_key)
             db.commit()
             return build_chat_run_response(db, viewer_id, existing)
+
+        subject_context_edge_id: UUID | None = None
+        if resolved_subject is not None:
+            for ref in resolved_subject.context_refs:
+                context_ref = add_context_ref_without_commit(
+                    db,
+                    viewer_id=viewer_id,
+                    conversation_id=conversation_id,
+                    target=ref,
+                    origin="user" if ref == resolved_subject.subject_ref else "system",
+                )
+                if ref == resolved_subject.subject_ref:
+                    subject_context_edge_id = context_ref.edge_id
+        if reader_selection is not None and (
+            resolved_subject is None or resolved_subject.subject_ref.scheme != "highlight"
+        ):
+            add_context_ref_without_commit(
+                db,
+                viewer_id=viewer_id,
+                conversation_id=conversation_id,
+                target=ResourceRef(scheme="highlight", id=reader_selection.highlight_id),
+                origin="user",
+            )
 
         prepared = prepare_messages(
             db,
@@ -1063,6 +1102,27 @@ def create_chat_run(
         )
         db.add(run)
         db.flush()
+        if subject_ref is not None or reader_selection is not None:
+            db.add(
+                ChatRunTurnContext(
+                    chat_run_id=run.id,
+                    requested_subject_scheme=(
+                        requested_subject_ref.scheme if requested_subject_ref else None
+                    ),
+                    requested_subject_id=requested_subject_ref.id
+                    if requested_subject_ref
+                    else None,
+                    subject_scheme=subject_ref.scheme if subject_ref else None,
+                    subject_id=subject_ref.id if subject_ref else None,
+                    subject_context_edge_id=subject_context_edge_id,
+                    reader_selection_media_id=(
+                        reader_selection.media_id if reader_selection is not None else None
+                    ),
+                    reader_selection_highlight_id=(
+                        reader_selection.highlight_id if reader_selection is not None else None
+                    ),
+                )
+            )
         append_run_event(
             db,
             run,
@@ -1074,12 +1134,26 @@ def create_chat_run(
                 "assistant_message_id": str(prepared.assistant_message.id),
                 "model_id": str(model.id),
                 "provider": model.provider,
+                "chat_subject": (
+                    {
+                        "requested_resource_ref": resolved_subject.requested_ref.uri,
+                        "resource_ref": resolved_subject.subject_ref.uri,
+                        "context_edge_id": (
+                            str(subject_context_edge_id)
+                            if subject_context_edge_id is not None
+                            else None
+                        ),
+                        "companions": [ref.uri for ref in resolved_subject.companion_refs],
+                    }
+                    if resolved_subject is not None
+                    else None
+                ),
             },
         )
         enqueue_job(
             db,
             kind="chat_run",
-            payload=_chat_run_job_payload(run.id, reader_context, reader_selection),
+            payload={"run_id": str(run.id)},
             priority=50,
             max_attempts=3,
             dedupe_key=f"chat_run:{run.id}",
@@ -1092,31 +1166,13 @@ def create_chat_run(
     return build_chat_run_response(db, viewer_id, run)
 
 
-def _chat_run_job_payload(
-    run_id: UUID,
-    reader_context: ReaderContextHint | None,
-    reader_selection: ReaderSelectionRequest | None,
-) -> dict[str, object]:
-    """Job payload for the chat_run worker.
-
-    Carries the request-only turn anchors (`reader_context`, `reader_selection`)
-    through to the worker so prompt assembly can render their blocks without a
-    dedicated `ChatRun` column. They are rendered and otherwise discarded; a
-    retry enqueues only `run_id` and renders without them (the quote still
-    reaches the model via the enriched `highlight:` reference).
-    """
-    payload: dict[str, object] = {"run_id": str(run_id)}
-    if reader_context is not None:
-        hint: dict[str, str] = {}
-        if reader_context.media_id is not None:
-            hint["media_id"] = str(reader_context.media_id)
-        if reader_context.library_id is not None:
-            hint["library_id"] = str(reader_context.library_id)
-        if hint:
-            payload["reader_context"] = hint
-    if reader_selection is not None:
-        payload["reader_selection"] = reader_selection.model_dump(mode="json")
-    return payload
+def _parse_chat_subject(chat_subject: ChatSubjectRequest | None) -> ResourceRef | None:
+    if chat_subject is None:
+        return None
+    parsed = parse_resource_ref(chat_subject.resource_ref)
+    if isinstance(parsed, ResourceRefParseFailure):
+        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "chat_subject.resource_ref is invalid")
+    return parsed
 
 
 def retry_failed_assistant_response(
@@ -1215,6 +1271,20 @@ def retry_failed_assistant_response(
         )
         db.add(run)
         db.flush()
+        source_turn_context = db.get(ChatRunTurnContext, source_run.id)
+        if source_turn_context is not None:
+            db.add(
+                ChatRunTurnContext(
+                    chat_run_id=run.id,
+                    requested_subject_scheme=source_turn_context.requested_subject_scheme,
+                    requested_subject_id=source_turn_context.requested_subject_id,
+                    subject_scheme=source_turn_context.subject_scheme,
+                    subject_id=source_turn_context.subject_id,
+                    subject_context_edge_id=source_turn_context.subject_context_edge_id,
+                    reader_selection_media_id=source_turn_context.reader_selection_media_id,
+                    reader_selection_highlight_id=source_turn_context.reader_selection_highlight_id,
+                )
+            )
         append_run_event(
             db,
             run,
@@ -1335,8 +1405,6 @@ async def execute_chat_run(
     run_id: UUID,
     llm_router: ChatRunModelRuntime,
     web_search_provider: WebSearchProvider | None = None,
-    reader_context: ReaderContextHint | None = None,
-    reader_selection: ReaderSelectionRequest | None = None,
 ) -> dict[str, str]:
     flow_id = str(run_id)
     set_flow_id(flow_id)
@@ -1346,8 +1414,6 @@ async def execute_chat_run(
             run_id=run_id,
             llm_router=llm_router,
             web_search_provider=web_search_provider,
-            reader_context=reader_context,
-            reader_selection=reader_selection,
         )
     except ApiError as exc:
         logger.warning(
@@ -1391,8 +1457,6 @@ async def _execute_chat_run(
     run_id: UUID,
     llm_router: ChatRunModelRuntime,
     web_search_provider: WebSearchProvider | None = None,
-    reader_context: ReaderContextHint | None = None,
-    reader_selection: ReaderSelectionRequest | None = None,
 ) -> dict[str, str]:
     run = db.get(ChatRun, run_id)
     if run is None:
@@ -1470,8 +1534,6 @@ async def _execute_chat_run(
                 run=run,
                 model=model,
                 max_output_tokens=max_output_tokens,
-                reader_context=reader_context,
-                reader_selection=reader_selection,
             )
             persist_prompt_assembly(db, run=run, assembly=assembly)
             reconcile_prompt_retrievals(db, run=run, assembly=assembly)

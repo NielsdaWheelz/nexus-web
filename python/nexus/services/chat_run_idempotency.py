@@ -14,6 +14,7 @@ from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
 from nexus.schemas.conversation import BranchAnchorRequest, ReaderSelectionRequest
 from nexus.services.redact import safe_kv
+from nexus.services.resource_graph.refs import ResourceRef
 
 logger = get_logger(__name__)
 
@@ -26,6 +27,8 @@ def compute_payload_hash(
     conversation_id: UUID,
     parent_message_id: UUID | None,
     branch_anchor: BranchAnchorRequest,
+    requested_chat_subject: ResourceRef | None,
+    chat_subject: ResourceRef | None,
     reader_selection: ReaderSelectionRequest | None,
 ) -> str:
     payload_anchor = branch_anchor.model_dump(mode="json")
@@ -41,9 +44,11 @@ def compute_payload_hash(
         if reader_selection is not None
         else None
     )
+    requested_subject = requested_chat_subject.uri if requested_chat_subject is not None else None
+    subject = chat_subject.uri if chat_subject is not None else None
     payload = (
         f"{conversation_id}|{parent_message_id}|{payload_anchor}|{content}|{model_id}|{reasoning}|"
-        f"{key_mode}|{selection}|"
+        f"{key_mode}|{requested_subject}|{subject}|{selection}|"
     )
     return hashlib.sha256(payload.encode()).hexdigest()
 

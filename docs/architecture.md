@@ -599,10 +599,11 @@ result-type grid. The package owns one concern per module (`kinds`, `query`, `sc
   `evidence_span`, `content_chunk`, `highlight`, `page`, `note_block`, `fragment`,
   `conversation`, `message`, `oracle_reading`, `oracle_corpus_passage`,
   `library_intelligence_artifact`, `library_intelligence_revision`,
-  `external_snapshot`, `contributor`, `podcast`)
+  `external_snapshot`, `contributor`, `podcast`, `tag`)
   is the one persisted resource-identity vocabulary. The same ref identifies a
   resource everywhere: an edge endpoint, a citation target, an attached
-  conversation context ref, and a read/inspect agent-tool argument. Parsing is
+  conversation context ref, a chat subject, and a read/inspect agent-tool
+  argument. Parsing is
   strict (canonical lowercase uuid) and returns a typed failure, never `None`.
   Hydration + permission checks live in `services/resource_graph/resolve.py` —
   `load_resource_batch` is the one place each scheme's read SQL + visibility gate

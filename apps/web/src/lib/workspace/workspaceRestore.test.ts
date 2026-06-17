@@ -168,7 +168,7 @@ describe("workspaceStatesEqual", () => {
   });
 
   it("returns false when top-level secondary state differs", () => {
-    const build = (activeSurfaceId: "reader-highlights" | "reader-doc-chat") =>
+    const build = (activeSurfaceId: "reader-highlights" | "reader-resource-chat") =>
       workspace({
         primaryPanes: [
           primary("pane-2", "/media/123", { attachedSecondaryPaneId: "secondary-1" }),
@@ -182,7 +182,7 @@ describe("workspaceStatesEqual", () => {
           }),
         },
       });
-    expect(workspaceStatesEqual(build("reader-highlights"), build("reader-doc-chat"))).toBe(
+    expect(workspaceStatesEqual(build("reader-highlights"), build("reader-resource-chat"))).toBe(
       false,
     );
   });

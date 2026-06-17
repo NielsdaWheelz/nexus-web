@@ -13,6 +13,7 @@ import pytest
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
+from nexus.db.models import ChatRunTurnContext
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.schemas.conversation import NoBranchAnchorRequest, ReaderSelectionRequest
 from nexus.services.chat_run_idempotency import compute_payload_hash
@@ -49,15 +50,13 @@ def test_reader_selection_renders_bind_block(db_session: Session, bootstrapped_u
     highlight_id = create_test_highlight(
         db_session, bootstrapped_user, fragment_id, exact="poolpah"
     )
-    selection = ReaderSelectionRequest(
-        exact="client text is ignored",
-        prefix="client prefix is ignored",
-        suffix="client suffix is ignored",
-        media_id=media_id,
-        highlight_id=highlight_id,
+    turn_context = ChatRunTurnContext(
+        chat_run_id=uuid4(),
+        reader_selection_media_id=media_id,
+        reader_selection_highlight_id=highlight_id,
     )
 
-    block = _build_reader_selection_block(db_session, selection, viewer_id=bootstrapped_user)
+    block = _build_reader_selection_block(db_session, turn_context, viewer_id=bootstrapped_user)
 
     assert block is not None
     text = block.text
@@ -82,11 +81,16 @@ def test_reader_selection_requires_attached_highlight_reference(
     selection = ReaderSelectionRequest(
         exact="quoted text", media_id=media_id, highlight_id=highlight_id
     )
+    turn_context = ChatRunTurnContext(
+        chat_run_id=uuid4(),
+        reader_selection_media_id=media_id,
+        reader_selection_highlight_id=highlight_id,
+    )
 
     assert (
         _build_reader_selection_block(
             db_session,
-            selection,
+            turn_context,
             viewer_id=bootstrapped_user,
             conversation_id=conversation_id,
         )
@@ -103,7 +107,7 @@ def test_reader_selection_requires_attached_highlight_reference(
     assert (
         _build_reader_selection_block(
             db_session,
-            selection,
+            turn_context,
             viewer_id=bootstrapped_user,
             conversation_id=conversation_id,
         )
@@ -120,6 +124,8 @@ def test_reader_selection_changes_idempotency_hash():
         "conversation_id": uuid4(),
         "parent_message_id": None,
         "branch_anchor": NoBranchAnchorRequest(),
+        "requested_chat_subject": None,
+        "chat_subject": None,
     }
     media_id = uuid4()
     highlight_id = uuid4()
@@ -146,3 +152,31 @@ def test_reader_selection_changes_idempotency_hash():
     assert none_hash != one_hash, "A selection must change the idempotency hash"
     assert one_hash == spoofed_text_hash, "Client quote hints are canonicalized from the row"
     assert one_hash != other_highlight_hash, "A different highlight must conflict, not replay"
+
+
+def test_chat_subject_changes_idempotency_hash():
+    common = {
+        "content": "summarize this",
+        "model_id": uuid4(),
+        "reasoning": "default",
+        "key_mode": "auto",
+        "conversation_id": uuid4(),
+        "parent_message_id": None,
+        "branch_anchor": NoBranchAnchorRequest(),
+        "reader_selection": None,
+    }
+    from nexus.services.resource_graph.refs import ResourceRef
+
+    none_hash = compute_payload_hash(
+        **common,
+        requested_chat_subject=None,
+        chat_subject=None,
+    )
+    subject = ResourceRef(scheme="media", id=uuid4())
+    media_hash = compute_payload_hash(
+        **common,
+        requested_chat_subject=subject,
+        chat_subject=subject,
+    )
+
+    assert none_hash != media_hash

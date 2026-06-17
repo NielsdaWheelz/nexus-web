@@ -9,7 +9,7 @@ const surfaces = [
   { id: "reader-highlights" as const, body: <div /> },
   { id: "reader-contents" as const, body: <div /> },
   { id: "reader-apparatus" as const, body: <div /> },
-  { id: "reader-doc-chat" as const, body: <div /> },
+  { id: "reader-resource-chat" as const, body: <div /> },
 ];
 
 describe("SecondarySurfaceTabs", () => {
@@ -18,15 +18,15 @@ describe("SecondarySurfaceTabs", () => {
       <SecondarySurfaceTabs
         baseId="base"
         surfaces={surfaces}
-        activeSurfaceId="reader-doc-chat"
+        activeSurfaceId="reader-resource-chat"
         onSelect={vi.fn()}
       />,
     );
 
     const highlights = screen.getByRole("tab", { name: "Highlights" });
-    const docChat = screen.getByRole("tab", { name: "Document chat" });
+    const resourceChat = screen.getByRole("tab", { name: "Chat" });
     expect(highlights).toHaveAttribute("tabIndex", "-1");
-    expect(docChat).toHaveAttribute("tabIndex", "0");
+    expect(resourceChat).toHaveAttribute("tabIndex", "0");
     expect(highlights.id).toBe(secondarySurfaceTabId("base", "reader-highlights"));
     expect(highlights).toHaveAttribute(
       "aria-controls",
@@ -40,15 +40,15 @@ describe("SecondarySurfaceTabs", () => {
       <SecondarySurfaceTabs
         baseId="base"
         surfaces={surfaces}
-        activeSurfaceId="reader-doc-chat"
+        activeSurfaceId="reader-resource-chat"
         onSelect={onSelect}
       />,
     );
 
-    const docChat = screen.getByRole("tab", { name: "Document chat" });
-    fireEvent.keyDown(docChat, { key: "End" });
-    expect(onSelect).toHaveBeenLastCalledWith("reader-doc-chat");
-    fireEvent.keyDown(docChat, { key: "Home" });
+    const resourceChat = screen.getByRole("tab", { name: "Chat" });
+    fireEvent.keyDown(resourceChat, { key: "End" });
+    expect(onSelect).toHaveBeenLastCalledWith("reader-resource-chat");
+    fireEvent.keyDown(resourceChat, { key: "Home" });
     expect(onSelect).toHaveBeenLastCalledWith("reader-highlights");
   });
 
@@ -66,6 +66,6 @@ describe("SecondarySurfaceTabs", () => {
     fireEvent.keyDown(screen.getByRole("tab", { name: "Highlights" }), {
       key: "ArrowLeft",
     });
-    expect(onSelect).toHaveBeenLastCalledWith("reader-doc-chat");
+    expect(onSelect).toHaveBeenLastCalledWith("reader-resource-chat");
   });
 });
