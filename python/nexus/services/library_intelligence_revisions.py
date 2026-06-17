@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import is_library_member
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas.citation import CitationOut
+from nexus.services.library_intelligence import coverage_counts
 from nexus.services.resource_graph.citations import build_citation_outs
 from nexus.services.resource_graph.refs import ResourceRef
 
@@ -26,6 +27,13 @@ class RevisionView:
     promoted_at: datetime | None
     is_current: bool
     citations: list[CitationOut]
+    source_count: int
+    covered_source_count: int
+    omitted_source_count: int
+    custom_instruction: str | None
+    model_provider: str | None
+    model_name: str | None
+    total_tokens: int | None
 
 
 @dataclass(frozen=True)
@@ -37,6 +45,13 @@ class RevisionSummary:
     promoted_at: datetime | None
     is_current: bool
     citation_count: int
+    source_count: int
+    covered_source_count: int
+    omitted_source_count: int
+    custom_instruction: str | None
+    model_provider: str | None
+    model_name: str | None
+    total_tokens: int | None
 
 
 def list_revisions(db: Session, *, viewer_id: UUID, library_id: UUID) -> list[RevisionSummary]:
@@ -62,15 +77,31 @@ def list_revisions(db: Session, *, viewer_id: UUID, library_id: UUID) -> list[Re
             text(
                 """
                 SELECT r.id, r.status, r.created_at, r.promoted_at,
+                       r.custom_instruction, r.covered_targets,
+                       lc.provider AS model_provider,
+                       lc.model_name AS model_name,
+                       lc.total_tokens AS total_tokens,
                        COUNT(e.id) AS citation_count
                 FROM library_intelligence_artifact_revisions r
+                LEFT JOIN LATERAL (
+                    SELECT provider, model_name, total_tokens
+                    FROM llm_calls
+                    WHERE owner_kind = 'li_revision'
+                      AND owner_id = r.id
+                      AND llm_operation = 'li_reduce'
+                      AND error_class IS NULL
+                    ORDER BY call_seq DESC
+                    LIMIT 1
+                ) lc ON true
                 LEFT JOIN resource_edges e
                   ON e.source_scheme = 'library_intelligence_revision'
                  AND e.source_id = r.id
                  AND e.origin = 'citation'
                  AND e.ordinal IS NOT NULL
                 WHERE r.artifact_id = :artifact_id
-                GROUP BY r.id, r.status, r.created_at, r.promoted_at
+                GROUP BY r.id, r.status, r.created_at, r.promoted_at,
+                         r.custom_instruction, r.covered_targets,
+                         lc.provider, lc.model_name, lc.total_tokens
                 ORDER BY created_at DESC, id DESC
                 """
             ),
@@ -79,18 +110,36 @@ def list_revisions(db: Session, *, viewer_id: UUID, library_id: UUID) -> list[Re
         .mappings()
         .all()
     )
-    return [
-        RevisionSummary(
-            artifact_id=UUID(str(head["id"])),
-            revision_id=UUID(str(row["id"])),
-            status=str(row["status"]),
-            created_at=row["created_at"],
-            promoted_at=row["promoted_at"],
-            is_current=current is not None and UUID(str(row["id"])) == current,
-            citation_count=int(row["citation_count"]),
+    summaries: list[RevisionSummary] = []
+    for row in rows:
+        source_count, covered_source_count, omitted_source_count = coverage_counts(
+            row["covered_targets"]
         )
-        for row in rows
-    ]
+        summaries.append(
+            RevisionSummary(
+                artifact_id=UUID(str(head["id"])),
+                revision_id=UUID(str(row["id"])),
+                status=str(row["status"]),
+                created_at=row["created_at"],
+                promoted_at=row["promoted_at"],
+                is_current=current is not None and UUID(str(row["id"])) == current,
+                citation_count=int(row["citation_count"]),
+                source_count=source_count,
+                covered_source_count=covered_source_count,
+                omitted_source_count=omitted_source_count,
+                custom_instruction=(
+                    str(row["custom_instruction"])
+                    if row["custom_instruction"] is not None
+                    else None
+                ),
+                model_provider=(
+                    str(row["model_provider"]) if row["model_provider"] is not None else None
+                ),
+                model_name=str(row["model_name"]) if row["model_name"] is not None else None,
+                total_tokens=int(row["total_tokens"]) if row["total_tokens"] is not None else None,
+            )
+        )
+    return summaries
 
 
 def get_revision(
@@ -102,9 +151,23 @@ def get_revision(
             text(
                 """
                 SELECT r.artifact_id, r.status, r.content_md, r.created_at,
-                       r.promoted_at, a.current_revision_id, a.user_id
+                       r.promoted_at, r.custom_instruction, r.covered_targets,
+                       lc.provider AS model_provider,
+                       lc.model_name AS model_name,
+                       lc.total_tokens AS total_tokens,
+                       a.current_revision_id, a.user_id
                 FROM library_intelligence_artifact_revisions r
                 JOIN library_intelligence_artifacts a ON a.id = r.artifact_id
+                LEFT JOIN LATERAL (
+                    SELECT provider, model_name, total_tokens
+                    FROM llm_calls
+                    WHERE owner_kind = 'li_revision'
+                      AND owner_id = r.id
+                      AND llm_operation = 'li_reduce'
+                      AND error_class IS NULL
+                    ORDER BY call_seq DESC
+                    LIMIT 1
+                ) lc ON true
                 WHERE r.id = :revision_id AND a.library_id = :library_id
                 """
             ),
@@ -120,6 +183,9 @@ def get_revision(
         viewer_id=UUID(str(row["user_id"])),
         source=ResourceRef(scheme="library_intelligence_revision", id=revision_id),
     )
+    source_count, covered_source_count, omitted_source_count = coverage_counts(
+        row["covered_targets"]
+    )
     return RevisionView(
         artifact_id=UUID(str(row["artifact_id"])),
         revision_id=revision_id,
@@ -131,6 +197,15 @@ def get_revision(
         if row["current_revision_id"] is not None
         else False,
         citations=citations,
+        source_count=source_count,
+        covered_source_count=covered_source_count,
+        omitted_source_count=omitted_source_count,
+        custom_instruction=(
+            str(row["custom_instruction"]) if row["custom_instruction"] is not None else None
+        ),
+        model_provider=str(row["model_provider"]) if row["model_provider"] is not None else None,
+        model_name=str(row["model_name"]) if row["model_name"] is not None else None,
+        total_tokens=int(row["total_tokens"]) if row["total_tokens"] is not None else None,
     )
 
 

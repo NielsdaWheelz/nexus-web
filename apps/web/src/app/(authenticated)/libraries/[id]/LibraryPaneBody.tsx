@@ -718,25 +718,6 @@ export default function LibraryPaneBody() {
     [openInNewPane],
   );
 
-  const handleOpenIntelligenceChat = useCallback(
-    async (revisionRef: string) => {
-      try {
-        const conversationId = await startResourceChat(revisionRef, [
-          `library:${id}`,
-        ]);
-        openInNewPane?.(`/conversations/${conversationId}`, currentLibrary?.name);
-      } catch (err) {
-        if (handleUnauthenticatedApiError(err)) return;
-        setError(
-          toFeedback(err, {
-            fallback: "Failed to open library chat",
-          }),
-        );
-      }
-    },
-    [currentLibrary?.name, id, openInNewPane],
-  );
-
   const handleReorderEntries = (nextEntries: LibraryEntry[]) => {
     if (!currentLibrary || currentLibrary.role !== "admin") {
       return;
@@ -799,17 +780,12 @@ export default function LibraryPaneBody() {
             surfaces: [
               {
                 id: "library-intelligence" as const,
-                body: (
-                  <LibraryIntelligencePane
-                    libraryId={id}
-                    onOpenChat={handleOpenIntelligenceChat}
-                  />
-                ),
+                body: <LibraryIntelligencePane libraryId={id} />,
               },
             ],
           }
         : null,
-    [currentLibrary, handleOpenIntelligenceChat, id],
+    [currentLibrary, id],
   );
   usePaneSecondary(secondaryDescriptor);
 

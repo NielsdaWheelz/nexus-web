@@ -34,7 +34,7 @@ export function useLibraryIntelligenceStream({
 }): {
   building: boolean;
   progress: string | null;
-  generate: () => Promise<void>;
+  generate: (instruction?: string | null) => Promise<void>;
   subscribe: (revisionId: string) => Promise<void>;
 } {
   const [building, setBuilding] = useState(false);
@@ -83,7 +83,7 @@ export function useLibraryIntelligenceStream({
     if (phase !== "failed") return;
     setBuilding(false);
     setRevisionId(null);
-    onErrorRef.current(new Error("Library intelligence stream failed"));
+    onErrorRef.current(new Error("Library dossier stream failed"));
   }, [phase]);
 
   const subscribe = useCallback(async (nextRevisionId: string) => {
@@ -91,13 +91,21 @@ export function useLibraryIntelligenceStream({
     setRevisionId(nextRevisionId);
   }, []);
 
-  const generate = useCallback(async () => {
+  const generate = useCallback(async (instruction?: string | null) => {
     const idempotency_key = createRandomId("li-gen");
+    const trimmedInstruction = instruction?.trim() ?? "";
+    const request: RequestInit = {
+      method: "POST",
+      headers: { "Idempotency-Key": idempotency_key },
+    };
+    if (trimmedInstruction.length > 0) {
+      request.body = JSON.stringify({ instruction: trimmedInstruction });
+    }
     let res: GenerateResponse;
     try {
       res = await apiFetch<GenerateResponse>(
         `/api/libraries/${libraryId}/intelligence/generate`,
-        { method: "POST", headers: { "Idempotency-Key": idempotency_key } },
+        request,
       );
     } catch (err) {
       if (handleUnauthenticatedApiError(err)) return;

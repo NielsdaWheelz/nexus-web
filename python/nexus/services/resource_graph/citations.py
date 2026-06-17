@@ -9,6 +9,7 @@ is the single numbering owner and the single backend ``CitationOut`` producer;
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping, Sequence
 from typing import cast
 from uuid import UUID
@@ -40,6 +41,9 @@ from nexus.services.resource_graph.schemas import (
     EdgeOut,
     snapshot_from_jsonb,
 )
+
+_MARKDOWN_CITATION_MARKER_RE = re.compile(r"\[(\d+)\](?!\()")
+_MARKDOWN_LINKED_CITATION_MARKER_RE = re.compile(r"\[(\d+)\]\(")
 
 
 def record_citation(
@@ -79,12 +83,7 @@ def replace_citations_for_output(
     Ordinals must be dense (1..N): the ``[N]`` markers in the stored prose depend
     on them.
     """
-    ordinals = sorted(citation.ordinal for citation in citations)
-    if ordinals != list(range(1, len(ordinals) + 1)):
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            f"Citation ordinals must be dense 1..{len(ordinals)}; got {ordinals}",
-        )
+    _dense_citation_ordinals(citations)
     return replace_edges_for_origin(
         db,
         viewer_id=viewer_id,
@@ -102,6 +101,32 @@ def replace_citations_for_output(
             for citation in citations
         ],
     )
+
+
+def validate_generated_markdown_citations(
+    content_md: str,
+    citations: Sequence[CitationInput],
+) -> None:
+    """Validate generated prose markers against the citation-edge input set."""
+    citation_ordinals = _dense_citation_ordinals(citations)
+    linked_marker_ordinals = sorted(
+        {int(match.group(1)) for match in _MARKDOWN_LINKED_CITATION_MARKER_RE.finditer(content_md)}
+    )
+    if linked_marker_ordinals:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Generated markdown citation markers must be plain [N] markers, not links; "
+            f"linked_markers={linked_marker_ordinals}",
+        )
+    marker_ordinals = sorted(
+        {int(match.group(1)) for match in _MARKDOWN_CITATION_MARKER_RE.finditer(content_md)}
+    )
+    if marker_ordinals != citation_ordinals:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Generated markdown citation markers must match citation ordinals exactly; "
+            f"markers={marker_ordinals}, citations={citation_ordinals}",
+        )
 
 
 def build_citation_outs(db: Session, *, viewer_id: UUID, source: ResourceRef) -> list[CitationOut]:
@@ -257,6 +282,16 @@ def concordant_sources(
         )
         for row in rows
     ]
+
+
+def _dense_citation_ordinals(citations: Sequence[CitationInput]) -> list[int]:
+    ordinals = sorted(citation.ordinal for citation in citations)
+    if ordinals != list(range(1, len(ordinals) + 1)):
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            f"Citation ordinals must be dense 1..{len(ordinals)}; got {ordinals}",
+        )
+    return ordinals
 
 
 def _citation_out(

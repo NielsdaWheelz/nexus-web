@@ -14,8 +14,8 @@ library->media expansion, whose single owner is ``library_intelligence``.
 
 **Grounding by construction (AC-2).** The reduce is offered an ordered list of
 unit claims (each carrying its evidence span); it cites a claim only by integer
-``claim_index``. After the call, out-of-range indices are dropped, so a citation
-can only point at an existing resolvable span.
+``claim_index``. After the call, out-of-range indices are dropped, and citation
+marker parity prevents prose that still references them from promoting.
 """
 
 from __future__ import annotations
@@ -36,6 +36,7 @@ from nexus.db.retries import retry_serializable
 from nexus.errors import (
     ApiError,
     ApiErrorCode,
+    InvalidRequestError,
     NotFoundError,
     api_error_code_for_model_call,
     exception_error_detail,
@@ -60,7 +61,10 @@ from nexus.services.media_intelligence import (
 )
 from nexus.services.prompt_budget import estimate_tokens
 from nexus.services.rate_limit import get_rate_limiter
-from nexus.services.resource_graph.citations import replace_citations_for_output
+from nexus.services.resource_graph.citations import (
+    replace_citations_for_output,
+    validate_generated_markdown_citations,
+)
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_graph.schemas import CitationInput, CitationSnapshot, EdgeKind
 from nexus.services.structured_synthesis import (
@@ -114,6 +118,7 @@ async def run_artifact_generation(db: Session, *, revision_id: UUID, llm: ModelR
     if revision is None or revision.status != "building":
         return
     artifact_id = revision.artifact_id
+    custom_instruction = revision.custom_instruction
     library_id, owner_id = _artifact_library_and_owner(db, artifact_id=artifact_id)
 
     try:
@@ -154,7 +159,7 @@ async def run_artifact_generation(db: Session, *, revision_id: UUID, llm: ModelR
                 await run_media_unit_build(db, media_id=media_id, llm=llm)
         _emit_progress(db, revision_id=revision_id, message="Reading sources")
 
-        candidates = _gather_candidates(db, media_ids=media_ids)
+        candidates, coverage_by_media = _gather_candidates(db, media_ids=media_ids)
         if not candidates:
             _fail_revision(
                 db,
@@ -165,7 +170,7 @@ async def run_artifact_generation(db: Session, *, revision_id: UUID, llm: ModelR
             return
         _emit_progress(db, revision_id=revision_id, message="Synthesizing the library overview")
 
-        request = _build_reduce_request(candidates)
+        request = _build_reduce_request(candidates, custom_instruction=custom_instruction)
         if resolved_key.mode == "platform":
             estimated_tokens = (
                 estimate_tokens("\n".join(turn.content for turn in request.messages))
@@ -236,7 +241,24 @@ async def run_artifact_generation(db: Session, *, revision_id: UUID, llm: ModelR
         db.commit()
         grounded = _map_li_citations(result.value, candidates)
         citations = _materialize_citations(db, owner_id=owner_id, grounded=grounded)
-        covered = _build_covered_targets(db, media_ids=media_ids)
+        try:
+            validate_generated_markdown_citations(result.value.content_md, citations)
+        except InvalidRequestError as exc:
+            logger.warning(
+                "library_intelligence.citation_parity_failure",
+                revision_id=str(revision_id),
+                error_detail=exc.message,
+            )
+            _fail_revision(
+                db,
+                revision_id=revision_id,
+                error_code=ApiErrorCode.E_LLM_BAD_REQUEST.value,
+                error_detail=exc.message,
+            )
+            return
+        covered = _build_covered_targets(
+            db, media_ids=media_ids, coverage_by_media=coverage_by_media
+        )
         _promote_built_revision(
             db,
             revision_id=revision_id,
@@ -311,7 +333,8 @@ def _map_li_citations(
     model cannot cite a claim it was not given — ``global_index`` equals list
     position by construction). The model's emitted ``ordinal`` is kept (the
     prose ``[N]`` references it); a duplicate ordinal collision keeps the first
-    and drops the rest. Roles other than the three allowed map to ``context``.
+    and drops the rest. Marker parity later rejects any prose that still exposes
+    a dropped ordinal. Roles other than the three allowed map to ``context``.
     """
     pairs = (
         ground_indices(
@@ -348,21 +371,25 @@ def _map_li_citations(
 # ---------- internal: candidates / persistence ------------------------------
 
 
-def _gather_candidates(db: Session, *, media_ids: list[UUID]) -> list[_Candidate]:
-    """Flatten every ready unit's claims into an indexed candidate list (R1 cap)."""
+def _gather_candidates(
+    db: Session, *, media_ids: list[UUID]
+) -> tuple[list[_Candidate], dict[UUID, str]]:
+    """Flatten ready unit claims and record source-level coverage."""
     candidates: list[_Candidate] = []
+    coverage_by_media: dict[UUID, str] = {}
     used_chars = 0
-    truncated = False
     for media_id in media_ids:
         unit = get_media_unit(db, media_id=media_id)
-        if not isinstance(unit, MediaUnit):
+        if not isinstance(unit, MediaUnit) or not unit.claims:
+            coverage_by_media[media_id] = "no_ready_unit"
             continue
+        media_chars = sum(len(claim.claim_text) + len(unit.summary_md) for claim in unit.claims)
+        if candidates and used_chars + media_chars > LI_REDUCE_INPUT_CHAR_BUDGET:
+            coverage_by_media[media_id] = "omitted_budget"
+            continue
+        coverage_by_media[media_id] = "included"
+        used_chars += media_chars
         for claim in unit.claims:
-            piece = len(claim.claim_text) + len(unit.summary_md)
-            if used_chars + piece > LI_REDUCE_INPUT_CHAR_BUDGET and candidates:
-                truncated = True
-                break
-            used_chars += piece
             candidates.append(
                 _Candidate(
                     global_index=len(candidates),
@@ -372,15 +399,15 @@ def _gather_candidates(db: Session, *, media_ids: list[UUID]) -> list[_Candidate
                     summary_md=unit.summary_md,
                 )
             )
-        if truncated:
-            break
-    if truncated:
+    omitted = sum(1 for coverage in coverage_by_media.values() if coverage != "included")
+    if omitted:
         logger.warning(
-            "library_intelligence.reduce_truncated",
+            "library_intelligence.partial_coverage",
             kept=len(candidates),
+            omitted_sources=omitted,
             char_budget=LI_REDUCE_INPUT_CHAR_BUDGET,
         )
-    return candidates
+    return candidates, coverage_by_media
 
 
 def _materialize_citations(
@@ -427,7 +454,9 @@ def _materialize_citations(
     return citations
 
 
-def _build_covered_targets(db: Session, *, media_ids: list[UUID]) -> list[dict[str, object]]:
+def _build_covered_targets(
+    db: Session, *, media_ids: list[UUID], coverage_by_media: dict[UUID, str]
+) -> list[dict[str, object]]:
     """Snapshot every resolved library media's current content fingerprint.
 
     Records ALL resolved media (even those without a unit -> fingerprint null), so
@@ -452,6 +481,7 @@ def _build_covered_targets(db: Session, *, media_ids: list[UUID]) -> list[dict[s
             "kind": "media",
             "id": str(media_id),
             "fingerprint": fingerprints.get(str(media_id)),
+            "coverage": coverage_by_media.get(media_id, "no_ready_unit"),
         }
         for media_id in media_ids
     ]
@@ -601,17 +631,22 @@ _LI_SYSTEM_PROMPT = build_synthesis_prompt(
 )
 
 
-def _build_reduce_request(candidates: list[_Candidate]) -> ModelCall:
+def _build_reduce_request(
+    candidates: list[_Candidate], *, custom_instruction: str | None
+) -> ModelCall:
     rendered = "\n\n".join(
         f"[{c.global_index}] (media {c.media_id})\nsummary: {c.summary_md}\nclaim: {c.claim_text}"
         for c in candidates
+    )
+    extra_user_block = (
+        f"CUSTOM INSTRUCTION:\n{custom_instruction}" if custom_instruction is not None else None
     )
     return build_synthesis_request(
         provider=LI_PROVIDER,
         system_prompt=_LI_SYSTEM_PROMPT,
         candidates_header="UNIT CLAIMS",
         rendered_candidates=rendered,
-        extra_user_block=None,
+        extra_user_block=extra_user_block,
         model_name=LI_MODEL_NAME,
         max_tokens=LI_MAX_OUTPUT_TOKENS,
     )

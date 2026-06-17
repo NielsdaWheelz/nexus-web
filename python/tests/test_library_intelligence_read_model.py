@@ -42,6 +42,7 @@ _REMOVED_INTELLIGENCE_TABLES = {
 }
 
 _NEW_HEAD_COLUMNS = {"current_revision_id", "user_id"}
+_NEW_REVISION_COLUMNS = {"custom_instruction"}
 _REMOVED_HEAD_COLUMNS = {
     "artifact_kind",
     "status",
@@ -63,6 +64,10 @@ def _require_library_intelligence_schema(engine: Engine) -> None:
     head_columns = {col["name"] for col in inspector.get_columns("library_intelligence_artifacts")}
     assert _NEW_HEAD_COLUMNS.issubset(head_columns), head_columns
     assert _REMOVED_HEAD_COLUMNS.isdisjoint(head_columns), head_columns
+    revision_columns = {
+        col["name"] for col in inspector.get_columns("library_intelligence_artifact_revisions")
+    }
+    assert _NEW_REVISION_COLUMNS.issubset(revision_columns), revision_columns
 
 
 def _require_route(client, path: str, method: str) -> None:
@@ -140,6 +145,12 @@ def test_unavailable_artifact_for_member_without_head(
     assert data["artifact_id"] is None
     assert data["revision_id"] is None
     assert data["citations"] == []
+    assert data["citation_count"] == 0
+    assert data["source_count"] == 0
+    assert data["covered_source_count"] == 0
+    assert data["omitted_source_count"] == 0
+    assert data["model_provider"] is None
+    assert data["model_name"] is None
     assert outsider_response.status_code in {403, 404}, outsider_response.text
 
 
@@ -162,34 +173,64 @@ def test_generate_route_returns_202_and_revision_is_run(
 
     response = auth_client.post(
         f"/libraries/{library_id}/intelligence/generate",
+        json={"instruction": "  focus on source tensions  "},
         headers={**auth_headers(owner_id), "Idempotency-Key": "route-token-1"},
     )
     assert response.status_code == 202, response.text
     data = response.json()["data"]
     assert "run_id" not in data
     assert UUID(data["artifact_id"])
+    with direct_db.session() as session:
+        stored_instruction = session.execute(
+            text(
+                "SELECT custom_instruction FROM library_intelligence_artifact_revisions "
+                "WHERE id = :revision_id"
+            ),
+            {"revision_id": UUID(data["revision_id"])},
+        ).scalar_one()
+    assert stored_instruction == "focus on source tensions"
 
     # Idempotency: replaying the header key returns the same revision.
     again = auth_client.post(
         f"/libraries/{library_id}/intelligence/generate",
+        json={"instruction": "try to overwrite"},
         headers={**auth_headers(owner_id), "Idempotency-Key": "route-token-1"},
     )
     assert again.status_code == 202, again.text
     assert again.json()["data"]["revision_id"] == data["revision_id"]
+    with direct_db.session() as session:
+        replay_instruction = session.execute(
+            text(
+                "SELECT custom_instruction FROM library_intelligence_artifact_revisions "
+                "WHERE id = :revision_id"
+            ),
+            {"revision_id": UUID(data["revision_id"])},
+        ).scalar_one()
+    assert replay_instruction == "focus on source tensions"
 
-    # A different key forks a fresh draft; the body field is gone (hard cutover).
+    # A different key forks a fresh ordinary-regenerate draft when instruction is blank.
     forked = auth_client.post(
         f"/libraries/{library_id}/intelligence/generate",
+        json={"instruction": "   "},
         headers={**auth_headers(owner_id), "Idempotency-Key": "route-token-2"},
     )
     assert forked.status_code == 202, forked.text
     assert forked.json()["data"]["revision_id"] != data["revision_id"]
+    with direct_db.session() as session:
+        forked_instruction = session.execute(
+            text(
+                "SELECT custom_instruction FROM library_intelligence_artifact_revisions "
+                "WHERE id = :revision_id"
+            ),
+            {"revision_id": UUID(forked.json()["data"]["revision_id"])},
+        ).scalar_one()
+    assert forked_instruction is None
 
     # The header is required: a body-only request is rejected (the app maps
     # request-validation failures to 400 E_INVALID_REQUEST).
     missing = auth_client.post(
         f"/libraries/{library_id}/intelligence/generate",
-        json={"idempotency_key": "route-token-3"},
+        json={"instruction": "focus on missing header"},
         headers=auth_headers(owner_id),
     )
     assert missing.status_code == 400, missing.text
@@ -304,6 +345,10 @@ def test_revision_routes_read_historical_citations_after_head_moves(
         f"library_intelligence_revision:{second_revision_id}",
     }
     assert {row["citation_count"] for row in rows} == {1}
+    assert {row["source_count"] for row in rows} == {0}
+    assert {row["covered_source_count"] for row in rows} == {0}
+    assert {row["omitted_source_count"] for row in rows} == {0}
+    assert {row["model_provider"] for row in rows} == {None}
     assert {row["revision_id"]: row["is_current"] for row in rows} == {
         str(first_revision_id): False,
         str(second_revision_id): True,
@@ -319,6 +364,9 @@ def test_revision_routes_read_historical_citations_after_head_moves(
     assert data["content_md"] == "First body [1]."
     assert data["is_current"] is False
     assert data["citations"][0]["snapshot"]["title"] == "First Source"
+    assert data["citation_count"] == 1
+    assert data["source_count"] == 0
+    assert data["model_provider"] is None
 
     promoted = auth_client.post(
         f"/libraries/{library_id}/intelligence/revisions/{first_revision_id}/promote",

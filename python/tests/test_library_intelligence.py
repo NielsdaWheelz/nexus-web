@@ -23,6 +23,8 @@ from nexus.services.library_intelligence import (
     promote_revision,
 )
 from nexus.services.library_intelligence_reduce import (
+    LI_MODEL_NAME,
+    LI_PROVIDER,
     LI_REDUCE_INPUT_CHAR_BUDGET,
     _Candidate,
     _GroundedCitation,
@@ -253,9 +255,11 @@ class _ReduceRouter:
             ],
         }
         self.calls = 0
+        self.user_messages: list[str] = []
 
-    async def generate(self, _request, *, key, timeout_s):
+    async def generate(self, request, *, key, timeout_s):
         self.calls += 1
+        self.user_messages.extend(turn.content for turn in request.messages if turn.role == "user")
         return ModelResponse(
             text=json.dumps(self._payload),
             usage=None,
@@ -581,6 +585,54 @@ class TestGenerateReduce:
         assert [(row.call_seq, row.llm_operation) for row in rows] == [(1, "li_reduce")], (
             f"expected one li_reduce row, got {[(r.call_seq, r.llm_operation) for r in rows]}"
         )
+        assert view.model_provider == LI_PROVIDER
+        assert view.model_name == LI_MODEL_NAME
+
+    def test_budget_omissions_are_reported(self, db_session: Session, monkeypatch) -> None:
+        owner_id = _create_owner(db_session)
+        library_id = create_test_library(db_session, owner_id, "Budget Library")
+        first_media_id = _ready_unit_media(db_session, owner_id, library_id, title="Included")
+        second_media_id = _ready_unit_media(db_session, owner_id, library_id, title="Omitted")
+        monkeypatch.setattr(
+            "nexus.services.library_intelligence_reduce.LI_REDUCE_INPUT_CHAR_BUDGET",
+            1,
+        )
+
+        router = _ReduceRouter(content_md="Included claim [1].", citations=[(1, 0, "supports")])
+        revision_id = _drive_generation(
+            db_session, owner_id=owner_id, library_id=library_id, token="t1", router=router
+        )
+
+        view = get_artifact(db_session, viewer_id=owner_id, library_id=library_id)
+        assert view.status == "current"
+        assert view.source_count == 2
+        assert view.covered_source_count == 1
+        assert view.omitted_source_count == 1
+        revision = get_revision(
+            db_session,
+            viewer_id=owner_id,
+            library_id=library_id,
+            revision_id=revision_id,
+        )
+        assert revision.source_count == 2
+        assert revision.covered_source_count == 1
+        assert revision.omitted_source_count == 1
+        assert (
+            list_revisions(db_session, viewer_id=owner_id, library_id=library_id)[
+                0
+            ].omitted_source_count
+            == 1
+        )
+        covered = db_session.execute(
+            text(
+                "SELECT covered_targets FROM library_intelligence_artifact_revisions WHERE id = :r"
+            ),
+            {"r": revision_id},
+        ).scalar_one()
+        assert {record["id"]: record["coverage"] for record in covered} == {
+            str(first_media_id): "included",
+            str(second_media_id): "omitted_budget",
+        }
 
     def test_reduce_repair_round_ledgers_two_li_revision_calls(self, db_session: Session) -> None:
         owner_id = _create_owner(db_session)
@@ -690,7 +742,7 @@ class TestGenerateReduce:
         assert view.revision_id == revision_id
         assert len(view.citations) == 1, "the inline-built unit's claim must ground a citation"
 
-    def test_out_of_range_citation_dropped_end_to_end(self, db_session: Session) -> None:
+    def test_visible_marker_for_dropped_citation_fails_revision(self, db_session: Session) -> None:
         owner_id = _create_owner(db_session)
         library_id = create_test_library(db_session, owner_id, "Drop Library")
         _ready_unit_media(db_session, owner_id, library_id, title="Only Source")
@@ -699,12 +751,30 @@ class TestGenerateReduce:
             content_md="[1] keep [2] drop",
             citations=[(1, 0, "supports"), (2, 50, "supports")],
         )
-        _drive_generation(
+        revision_id = _drive_generation(
             db_session, owner_id=owner_id, library_id=library_id, token="t1", router=router
         )
+        revision = db_session.execute(
+            text(
+                "SELECT status, error_code, error_detail "
+                "FROM library_intelligence_artifact_revisions WHERE id = :r"
+            ),
+            {"r": revision_id},
+        ).one()
+        assert revision.status == "failed"
+        assert revision.error_code == "E_LLM_BAD_REQUEST"
+        assert "markers=[1, 2], citations=[1]" in revision.error_detail
+        assert _done_payload(db_session, revision_id=revision_id) == {
+            "status": "failed",
+            "error_code": "E_LLM_BAD_REQUEST",
+            "revision_id": str(revision_id),
+        }
         view = get_artifact(db_session, viewer_id=owner_id, library_id=library_id)
-        assert [c.ordinal for c in view.citations] == [1], (
-            f"the ungrounded citation must be dropped; got {view.citations}"
+        assert view.status == "failed"
+        assert view.revision_id is None
+        assert view.citations == []
+        assert _citation_edges(db_session, "library_intelligence_revision", revision_id) == [], (
+            "a marker/citation parity failure must not write ready citation edges"
         )
 
 
@@ -851,7 +921,7 @@ class TestPodcastExpansion:
             db_session, owner_id, podcast_id, title="Episode One"
         )
 
-        router = _ReduceRouter(content_md="Overview [1].", citations=[(1, 0, "supports")])
+        router = _ReduceRouter(content_md="Overview.", citations=[])
         revision_id = _drive_generation(
             db_session, owner_id=owner_id, library_id=library_id, token="t1", router=router
         )
@@ -941,6 +1011,56 @@ class TestRevisionsAndPromote:
         assert prior["status"] == "ready"
         assert prior["promoted_at"] is not None
 
+    def test_instructionful_generate_stores_metadata_and_prompts_reduce(
+        self, db_session: Session
+    ) -> None:
+        owner_id = _create_owner(db_session)
+        library_id = create_test_library(db_session, owner_id, "Instruction Library")
+        _ready_unit_media(db_session, owner_id, library_id, title="Source")
+
+        instruction = "focus on cross-source tensions"
+        ref = generate_artifact(
+            db_session,
+            viewer_id=owner_id,
+            library_id=library_id,
+            idempotency_key="instruction-1",
+            instruction=f"  {instruction}  ",
+        )
+        stored = db_session.execute(
+            text(
+                "SELECT custom_instruction FROM library_intelligence_artifact_revisions "
+                "WHERE id = :revision_id"
+            ),
+            {"revision_id": ref.revision_id},
+        ).scalar_one()
+        assert stored == instruction
+
+        router = _ReduceRouter(
+            content_md="Instructional synthesis [1]",
+            citations=[(1, 0, "supports")],
+        )
+        asyncio.run(run_artifact_generation(db_session, revision_id=ref.revision_id, llm=router))
+        assert any(
+            f"CUSTOM INSTRUCTION:\n{instruction}" in message for message in router.user_messages
+        ), f"reduce prompt did not include instruction; user turns: {router.user_messages!r}"
+
+        db_session.expire_all()
+        view = get_artifact(db_session, viewer_id=owner_id, library_id=library_id)
+        assert view.revision_id == ref.revision_id
+        assert view.custom_instruction == instruction
+        assert view.source_count == 1
+        revision = get_revision(
+            db_session,
+            viewer_id=owner_id,
+            library_id=library_id,
+            revision_id=ref.revision_id,
+        )
+        assert revision.custom_instruction == instruction
+        assert revision.source_count == 1
+        summaries = list_revisions(db_session, viewer_id=owner_id, library_id=library_id)
+        assert summaries[0].custom_instruction == instruction
+        assert summaries[0].source_count == 1
+
     def test_promote_restores_prior_revision(self, db_session: Session) -> None:
         owner_id = _create_owner(db_session)
         library_id = create_test_library(db_session, owner_id, "Restore Library")
@@ -988,12 +1108,28 @@ class TestRevisionsAndPromote:
         owner_id = _create_owner(db_session)
         library_id = create_test_library(db_session, owner_id, "Token Library")
         first = generate_artifact(
-            db_session, viewer_id=owner_id, library_id=library_id, idempotency_key="same"
+            db_session,
+            viewer_id=owner_id,
+            library_id=library_id,
+            idempotency_key="same",
+            instruction="first instruction",
         )
         second = generate_artifact(
-            db_session, viewer_id=owner_id, library_id=library_id, idempotency_key="same"
+            db_session,
+            viewer_id=owner_id,
+            library_id=library_id,
+            idempotency_key="same",
+            instruction="second instruction",
         )
         assert second.revision_id == first.revision_id
+        stored = db_session.execute(
+            text(
+                "SELECT custom_instruction FROM library_intelligence_artifact_revisions "
+                "WHERE id = :revision_id"
+            ),
+            {"revision_id": first.revision_id},
+        ).scalar_one()
+        assert stored == "first instruction"
         job_count = db_session.execute(
             text(
                 "SELECT COUNT(*) FROM background_jobs "
@@ -1005,9 +1141,21 @@ class TestRevisionsAndPromote:
         assert job_count == 1
         # A different idempotency key forks a fresh draft.
         third = generate_artifact(
-            db_session, viewer_id=owner_id, library_id=library_id, idempotency_key="other"
+            db_session,
+            viewer_id=owner_id,
+            library_id=library_id,
+            idempotency_key="other",
+            instruction="   ",
         )
         assert third.revision_id != first.revision_id
+        blank_stored = db_session.execute(
+            text(
+                "SELECT custom_instruction FROM library_intelligence_artifact_revisions "
+                "WHERE id = :revision_id"
+            ),
+            {"revision_id": third.revision_id},
+        ).scalar_one()
+        assert blank_stored is None
 
 
 @pytest.mark.integration

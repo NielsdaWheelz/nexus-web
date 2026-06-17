@@ -20,6 +20,9 @@ const streamMocks = vi.hoisted(() => ({
   fetchStreamToken: vi.fn(),
   sseClientDirect: vi.fn(() => vi.fn()),
 }));
+const resourceChatMocks = vi.hoisted(() => ({
+  props: [] as Array<{ subjectRef: string; onBack: () => void }>,
+}));
 
 vi.mock("@/lib/api/streamToken", () => ({
   fetchStreamToken: streamMocks.fetchStreamToken,
@@ -27,6 +30,20 @@ vi.mock("@/lib/api/streamToken", () => ({
 
 vi.mock("@/lib/api/sse-client", () => ({
   sseClientDirect: streamMocks.sseClientDirect,
+}));
+
+vi.mock("@/components/chat/ResourceChatDetail", () => ({
+  default: (props: { subjectRef: string; onBack: () => void }) => {
+    resourceChatMocks.props.push(props);
+    return (
+      <section role="region" aria-label="Dossier chat">
+        <span>{props.subjectRef}</span>
+        <button type="button" onClick={props.onBack}>
+          Back to dossier
+        </button>
+      </section>
+    );
+  },
 }));
 
 const LIBRARY_ID = "lib-1";
@@ -108,7 +125,7 @@ const NOTE_CITATION = {
   snapshot: { title: "Notebook", excerpt: "the noted words" },
 };
 
- function artifact(
+function artifact(
   overrides: Partial<{
     artifact_id: string | null;
     artifact_ref: string | null;
@@ -118,6 +135,14 @@ const NOTE_CITATION = {
     content_md: string;
     citations: unknown[];
     stale_source_count: number | null;
+    citation_count: number | null;
+    source_count: number | null;
+    covered_source_count: number | null;
+    omitted_source_count: number | null;
+    custom_instruction: string | null;
+    model_provider: string | null;
+    model_name: string | null;
+    total_tokens: number | null;
     build: { revision_id: string; status: string } | null;
   }> = {},
 ) {
@@ -130,6 +155,14 @@ const NOTE_CITATION = {
     content_md: "Synthesis prose [1].",
     citations: [CITATION],
     stale_source_count: null,
+    citation_count: 1,
+    source_count: 1,
+    covered_source_count: 1,
+    omitted_source_count: 0,
+    custom_instruction: null,
+    model_provider: null,
+    model_name: null,
+    total_tokens: null,
     build: null,
     ...overrides,
   };
@@ -149,6 +182,14 @@ function revision(
     created_at: string;
     promoted_at: string | null;
     is_current: boolean;
+    citation_count: number | null;
+    source_count: number | null;
+    covered_source_count: number | null;
+    omitted_source_count: number | null;
+    custom_instruction: string | null;
+    model_provider: string | null;
+    model_name: string | null;
+    total_tokens: number | null;
   }> = {},
 ) {
   return {
@@ -162,6 +203,55 @@ function revision(
     created_at: "2026-01-02T03:04:05Z",
     promoted_at: "2026-01-02T03:04:05Z",
     is_current: false,
+    citation_count: 1,
+    source_count: 1,
+    covered_source_count: 1,
+    omitted_source_count: 0,
+    custom_instruction: null,
+    model_provider: null,
+    model_name: null,
+    total_tokens: null,
+    ...overrides,
+  };
+}
+
+function revisionSummary(
+  overrides: Partial<{
+    artifact_id: string;
+    artifact_ref: string;
+    revision_id: string;
+    revision_ref: string;
+    status: string;
+    created_at: string;
+    promoted_at: string | null;
+    is_current: boolean;
+    citation_count: number;
+    source_count: number | null;
+    covered_source_count: number | null;
+    omitted_source_count: number | null;
+    custom_instruction: string | null;
+    model_provider: string | null;
+    model_name: string | null;
+    total_tokens: number | null;
+  }> = {},
+) {
+  return {
+    artifact_id: ARTIFACT_ID,
+    artifact_ref: `library_intelligence_artifact:${ARTIFACT_ID}`,
+    revision_id: REVISION_ID,
+    revision_ref: REVISION_REF,
+    status: "ready",
+    created_at: "2026-01-02T03:04:05Z",
+    promoted_at: "2026-01-02T03:04:05Z",
+    is_current: true,
+    citation_count: 1,
+    source_count: 1,
+    covered_source_count: 1,
+    omitted_source_count: 0,
+    custom_instruction: null,
+    model_provider: null,
+    model_name: null,
+    total_tokens: null,
     ...overrides,
   };
 }
@@ -169,6 +259,10 @@ function revision(
 function stubFetch(
   artifactBody: ReturnType<typeof artifact>,
   revisionBody?: ReturnType<typeof revision>,
+  options: {
+    expectedInstruction?: string;
+    revisions?: Array<ReturnType<typeof revisionSummary>>;
+  } = {},
 ) {
   getCalls = 0;
   vi.stubGlobal(
@@ -188,13 +282,27 @@ function stubFetch(
         return jsonResponse({ data: revisionBody });
       }
       if (
+        path === `/api/libraries/${LIBRARY_ID}/intelligence/revisions` &&
+        method === "GET"
+      ) {
+        return jsonResponse({
+          data: { revisions: options.revisions ?? [revisionSummary()] },
+        });
+      }
+      if (
         path === `/api/libraries/${LIBRARY_ID}/intelligence/generate` &&
         method === "POST"
       ) {
         // idempotency_key now travels as an Idempotency-Key header, not a body
         // field — regression-lock the header convention.
         expect(headerOf(input, init, "Idempotency-Key")).toMatch(/^li-gen/);
-        expect(init?.body ?? null).toBeNull();
+        if (options.expectedInstruction === undefined) {
+          expect(init?.body ?? null).toBeNull();
+        } else {
+          expect(init?.body).toBe(
+            JSON.stringify({ instruction: options.expectedInstruction }),
+          );
+        }
         return jsonResponse({
           data: {
             artifact_id: ARTIFACT_ID,
@@ -207,11 +315,11 @@ function stubFetch(
   );
 }
 
-function renderPane(onOpenChat = vi.fn()) {
-  return renderPaneAt(`/libraries/${LIBRARY_ID}`, onOpenChat);
+function renderPane() {
+  return renderPaneAt(`/libraries/${LIBRARY_ID}`);
 }
 
-function renderPaneAt(href: string, onOpenChat = vi.fn()) {
+function renderPaneAt(href: string) {
   const identity = resolvePaneRouteIdentity(href);
   const onNavigatePane = vi.fn();
   const onOpenInNewPane = vi.fn();
@@ -231,10 +339,10 @@ function renderPaneAt(href: string, onOpenChat = vi.fn()) {
       onGoBackPane={vi.fn()}
       onGoForwardPane={vi.fn()}
     >
-      <LibraryIntelligencePane libraryId={LIBRARY_ID} onOpenChat={onOpenChat} />
+      <LibraryIntelligencePane libraryId={LIBRARY_ID} />
     </PaneRuntimeProvider>,
   );
-  return { onNavigatePane, onOpenChat, onOpenInNewPane };
+  return { onNavigatePane, onOpenInNewPane };
 }
 
 describe("LibraryIntelligencePane", () => {
@@ -246,6 +354,7 @@ describe("LibraryIntelligencePane", () => {
     });
     streamMocks.sseClientDirect.mockReset();
     streamMocks.sseClientDirect.mockReturnValue(vi.fn());
+    resourceChatMocks.props = [];
   });
 
   afterEach(() => {
@@ -255,8 +364,44 @@ describe("LibraryIntelligencePane", () => {
   it("shows the Current status and renders the synthesis prose", async () => {
     stubFetch(artifact({ status: "current" }));
     renderPane();
+    expect(await screen.findByRole("heading", { name: "Dossier" })).toBeVisible();
     expect(await screen.findByText("Current")).toBeVisible();
+    expect(await screen.findByText("1 citation")).toBeVisible();
     expect(await screen.findByText(/Synthesis prose/)).toBeVisible();
+  });
+
+  it("shows optional source, instruction, and model metadata when supplied", async () => {
+    stubFetch(
+      artifact({
+        status: "current",
+        source_count: 3,
+        covered_source_count: 3,
+        custom_instruction: "Focus on unresolved claims",
+        model_provider: "openai",
+        model_name: "gpt-5",
+      }),
+    );
+    renderPane();
+    expect(await screen.findByText("3 sources covered")).toBeVisible();
+    expect(await screen.findByText("openai/gpt-5")).toBeVisible();
+    expect(
+      await screen.findByText("Instruction: Focus on unresolved claims"),
+    ).toBeVisible();
+  });
+
+  it("shows omitted source coverage instead of hiding budget omissions", async () => {
+    stubFetch(
+      artifact({
+        status: "current",
+        source_count: 4,
+        covered_source_count: 3,
+        omitted_source_count: 1,
+      }),
+    );
+    renderPane();
+    expect(
+      await screen.findByText("3 of 4 sources covered (1 omitted)"),
+    ).toBeVisible();
   });
 
   it("shows the stale source count and a Regenerate button when stale", async () => {
@@ -288,10 +433,10 @@ describe("LibraryIntelligencePane", () => {
     );
     renderPane();
     expect(
-      await screen.findByText("No intelligence has been generated yet."),
+      await screen.findByText("No dossier has been generated yet."),
     ).toBeVisible();
     expect(
-      await screen.findByRole("button", { name: "Generate" }),
+      await screen.findByRole("button", { name: "Generate Dossier" }),
     ).toBeVisible();
   });
 
@@ -300,6 +445,22 @@ describe("LibraryIntelligencePane", () => {
     renderPane();
     expect(await screen.findByRole("alert")).toHaveTextContent("Failed");
     expect(await screen.findByRole("button", { name: "Retry" })).toBeVisible();
+  });
+
+  it("passes a trimmed optional instruction when regenerating", async () => {
+    const user = userEvent.setup();
+    stubFetch(artifact({ status: "current" }), undefined, {
+      expectedInstruction: "Focus on unresolved claims",
+    });
+    renderPane();
+    await user.type(
+      await screen.findByLabelText("Dossier instruction"),
+      "  Focus on unresolved claims  ",
+    );
+    await user.click(await screen.findByRole("button", { name: "Regenerate" }));
+    await waitFor(() =>
+      expect(streamMocks.sseClientDirect).toHaveBeenCalledTimes(1),
+    );
   });
 
   it("renders a citation that dispatches a reader pulse when clicked", async () => {
@@ -374,7 +535,7 @@ describe("LibraryIntelligencePane", () => {
       const user = userEvent.setup();
       renderPane();
       const generateButton = await screen.findByRole("button", {
-        name: "Generate",
+        name: "Generate Dossier",
       });
       const initialCalls = getCalls;
       await user.click(generateButton);
@@ -428,7 +589,7 @@ describe("LibraryIntelligencePane", () => {
     const user = userEvent.setup();
     renderPane();
     const generateButton = await screen.findByRole("button", {
-      name: "Generate",
+      name: "Generate Dossier",
     });
     await user.click(generateButton);
     await waitFor(() =>
@@ -459,7 +620,7 @@ describe("LibraryIntelligencePane", () => {
     const user = userEvent.setup();
     renderPane();
     const generateButton = await screen.findByRole("button", {
-      name: "Generate",
+      name: "Generate Dossier",
     });
     await user.click(generateButton);
     await waitFor(() =>
@@ -474,28 +635,57 @@ describe("LibraryIntelligencePane", () => {
     expect(await screen.findByText("Generation failed")).toBeVisible();
   });
 
-  it("enables the Chat button only with a revision ref and calls onOpenChat", async () => {
+  it("opens resource chat with the current revision ref", async () => {
     const user = userEvent.setup();
     stubFetch(artifact({ status: "current" }));
-    const { onOpenChat } = renderPane();
+    renderPane();
     const chatButton = await screen.findByRole("button", { name: "Chat" });
     expect(chatButton).toBeEnabled();
     await user.click(chatButton);
-    expect(onOpenChat).toHaveBeenCalledWith(REVISION_REF);
+    expect(await screen.findByRole("region", { name: "Dossier chat" })).toBeVisible();
+    expect(resourceChatMocks.props.at(-1)?.subjectRef).toBe(REVISION_REF);
   });
 
   it("uses a selected historical revision body and revision ref", async () => {
     const user = userEvent.setup();
     const selectedRevision = revision();
     stubFetch(artifact({ status: "current" }), selectedRevision);
-    const { onOpenChat } = renderPaneAt(
+    renderPaneAt(
       `/libraries/${LIBRARY_ID}?tab=intelligence&revision=${selectedRevision.revision_id}`,
     );
 
     expect(await screen.findByText(/Historical synthesis/)).toBeVisible();
     expect(screen.queryByText("Current")).toBeNull();
     await user.click(await screen.findByRole("button", { name: "Chat" }));
-    expect(onOpenChat).toHaveBeenCalledWith(selectedRevision.revision_ref);
+    expect(resourceChatMocks.props.at(-1)?.subjectRef).toBe(
+      selectedRevision.revision_ref,
+    );
+  });
+
+  it("shows revision history metadata when supplied", async () => {
+    const user = userEvent.setup();
+    stubFetch(artifact({ status: "current" }), undefined, {
+      revisions: [
+        revisionSummary({
+          citation_count: 2,
+          source_count: 4,
+          covered_source_count: 4,
+          custom_instruction: "Focus on budget risk",
+          model_provider: "openai",
+          model_name: "gpt-5",
+        }),
+      ],
+    });
+    renderPane();
+    await user.click(
+      await screen.findByRole("button", { name: "Dossier history" }),
+    );
+    expect(await screen.findByText(/2 citations/)).toBeVisible();
+    expect(await screen.findByText(/4 sources covered/)).toBeVisible();
+    expect(await screen.findByText(/openai\/gpt-5/)).toBeVisible();
+    expect(
+      await screen.findByText(/Instruction: Focus on budget risk/),
+    ).toBeVisible();
   });
 
   it("disables the Chat button when there is no revision ref", async () => {

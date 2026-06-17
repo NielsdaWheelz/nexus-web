@@ -23,6 +23,10 @@ class LibraryIntelligenceBuildOut(LibraryIntelligenceModel):
     status: RevisionStatus
 
 
+class LibraryIntelligenceGenerateRequest(LibraryIntelligenceModel):
+    instruction: str | None = Field(default=None, max_length=4000)
+
+
 class LibraryIntelligenceArtifactOut(LibraryIntelligenceModel):
     """The GET read-model: current-revision content + computed head status."""
 
@@ -33,6 +37,14 @@ class LibraryIntelligenceArtifactOut(LibraryIntelligenceModel):
     status: ArtifactStatus
     content_md: str = ""
     citations: list[CitationOut] = Field(default_factory=list)
+    citation_count: int = 0
+    source_count: int = 0
+    covered_source_count: int = 0
+    omitted_source_count: int = 0
+    custom_instruction: str | None = None
+    model_provider: str | None = None
+    model_name: str | None = None
+    total_tokens: int | None = None
     build: LibraryIntelligenceBuildOut | None = None
     # Set only when ``status == "stale"``: the number of sources that changed
     # (added, removed, or re-ingested) since the current revision was built.
@@ -56,6 +68,13 @@ class LibraryIntelligenceRevisionSummaryOut(LibraryIntelligenceModel):
     promoted_at: datetime | None = None
     is_current: bool
     citation_count: int
+    source_count: int
+    covered_source_count: int
+    omitted_source_count: int
+    custom_instruction: str | None = None
+    model_provider: str | None = None
+    model_name: str | None = None
+    total_tokens: int | None = None
 
 
 class LibraryIntelligenceRevisionsOut(LibraryIntelligenceModel):
@@ -70,6 +89,14 @@ class LibraryIntelligenceRevisionOut(LibraryIntelligenceModel):
     status: RevisionStatus
     content_md: str
     citations: list[CitationOut] = Field(default_factory=list)
+    source_count: int
+    covered_source_count: int
+    omitted_source_count: int
+    citation_count: int
+    custom_instruction: str | None = None
+    model_provider: str | None = None
+    model_name: str | None = None
+    total_tokens: int | None = None
     created_at: datetime
     promoted_at: datetime | None = None
     is_current: bool

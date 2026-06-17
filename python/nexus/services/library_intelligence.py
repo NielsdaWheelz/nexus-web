@@ -68,6 +68,13 @@ class ArtifactView:
     status: ArtifactStatus
     content_md: str
     build: RevisionBuild | None
+    source_count: int = 0
+    covered_source_count: int = 0
+    omitted_source_count: int = 0
+    custom_instruction: str | None = None
+    model_provider: str | None = None
+    model_name: str | None = None
+    total_tokens: int | None = None
     # Number of covered media that differ from the live set when ``status == "stale"``
     # (added, removed, or fingerprint-changed); ``None`` for every other status.
     stale_source_count: int | None = None
@@ -125,9 +132,38 @@ def get_artifact(db: Session, *, viewer_id: UUID, library_id: UUID) -> ArtifactV
         status: ArtifactStatus = "failed" if latest == "failed" else "unavailable"
         return ArtifactView(artifact_id, None, status, "", None)
 
-    content_md = _revision_content_md(db, revision_id=current_revision_id)
+    revision_row = (
+        db.execute(
+            text(
+                """
+                SELECT r.content_md, r.custom_instruction, r.covered_targets,
+                       lc.provider AS model_provider,
+                       lc.model_name AS model_name,
+                       lc.total_tokens AS total_tokens
+                FROM library_intelligence_artifact_revisions r
+                LEFT JOIN LATERAL (
+                    SELECT provider, model_name, total_tokens
+                    FROM llm_calls
+                    WHERE owner_kind = 'li_revision'
+                      AND owner_id = r.id
+                      AND llm_operation = 'li_reduce'
+                      AND error_class IS NULL
+                    ORDER BY call_seq DESC
+                    LIMIT 1
+                ) lc ON true
+                WHERE r.id = :revision_id
+                """
+            ),
+            {"revision_id": current_revision_id},
+        )
+        .mappings()
+        .one()
+    )
     head_status, stale_source_count = _compute_freshness(
         db, library_id=library_id, current_revision_id=current_revision_id
+    )
+    source_count, covered_source_count, omitted_source_count = coverage_counts(
+        revision_row["covered_targets"]
     )
     citations = build_citation_outs(
         db,
@@ -138,11 +174,48 @@ def get_artifact(db: Session, *, viewer_id: UUID, library_id: UUID) -> ArtifactV
         artifact_id,
         current_revision_id,
         head_status,
-        content_md,
+        str(revision_row["content_md"] or ""),
         build,
+        source_count=source_count,
+        covered_source_count=covered_source_count,
+        omitted_source_count=omitted_source_count,
+        custom_instruction=(
+            str(revision_row["custom_instruction"])
+            if revision_row["custom_instruction"] is not None
+            else None
+        ),
+        model_provider=(
+            str(revision_row["model_provider"])
+            if revision_row["model_provider"] is not None
+            else None
+        ),
+        model_name=(
+            str(revision_row["model_name"]) if revision_row["model_name"] is not None else None
+        ),
+        total_tokens=(
+            int(revision_row["total_tokens"]) if revision_row["total_tokens"] is not None else None
+        ),
         stale_source_count=stale_source_count,
         citations=citations,
     )
+
+
+def coverage_counts(covered_targets: object) -> tuple[int, int, int]:
+    """Return (source_count, covered_source_count, omitted_source_count)."""
+    if not isinstance(covered_targets, list):
+        return 0, 0, 0
+    source_count = 0
+    covered_source_count = 0
+    omitted_source_count = 0
+    for record in covered_targets:
+        if not isinstance(record, dict) or record.get("kind") != "media":
+            continue
+        source_count += 1
+        if record.get("coverage") in (None, "included"):
+            covered_source_count += 1
+        else:
+            omitted_source_count += 1
+    return source_count, covered_source_count, omitted_source_count
 
 
 def _compute_freshness(
@@ -223,7 +296,12 @@ def _covered_media_fingerprints(db: Session, *, revision_id: UUID) -> dict[str, 
 
 
 def generate_artifact(
-    db: Session, *, viewer_id: UUID, library_id: UUID, idempotency_key: str
+    db: Session,
+    *,
+    viewer_id: UUID,
+    library_id: UUID,
+    idempotency_key: str,
+    instruction: str | None = None,
 ) -> RevisionRef:
     """Find-or-create the head + an idempotency-keyed draft revision; enqueue.
 
@@ -232,10 +310,15 @@ def generate_artifact(
     re-enqueuing.
     """
     _require_member(db, viewer_id, library_id)
+    custom_instruction = instruction.strip() if instruction and instruction.strip() else None
 
     def op() -> RevisionRef:
         ref = _generate_artifact_core(
-            db, viewer_id=viewer_id, library_id=library_id, idempotency_key=idempotency_key
+            db,
+            viewer_id=viewer_id,
+            library_id=library_id,
+            idempotency_key=idempotency_key,
+            custom_instruction=custom_instruction,
         )
         db.commit()
         return ref
@@ -244,7 +327,12 @@ def generate_artifact(
 
 
 def _generate_artifact_core(
-    db: Session, *, viewer_id: UUID, library_id: UUID, idempotency_key: str
+    db: Session,
+    *,
+    viewer_id: UUID,
+    library_id: UUID,
+    idempotency_key: str,
+    custom_instruction: str | None,
 ) -> RevisionRef:
     # Find-or-create the stable head (explicit SELECT then INSERT/UPDATE; the
     # SERIALIZABLE retry loop in generate_artifact owns concurrent races).
@@ -296,13 +384,21 @@ def _generate_artifact_core(
                 text(
                     """
                     INSERT INTO library_intelligence_artifact_revisions (
-                        artifact_id, content_md, covered_targets, status, idempotency_key
+                        artifact_id, content_md, covered_targets, status,
+                        idempotency_key, custom_instruction
                     )
-                    VALUES (:artifact_id, '', '[]'::jsonb, 'building', :idempotency_key)
+                    VALUES (
+                        :artifact_id, '', '[]'::jsonb, 'building',
+                        :idempotency_key, :custom_instruction
+                    )
                     RETURNING id
                     """
                 ),
-                {"artifact_id": artifact_id, "idempotency_key": idempotency_key},
+                {
+                    "artifact_id": artifact_id,
+                    "idempotency_key": idempotency_key,
+                    "custom_instruction": custom_instruction,
+                },
             ).scalar_one()
         )
     )
@@ -428,18 +524,19 @@ def resolve_library_media_ids(db: Session, *, library_id: UUID) -> list[UUID]:
         db.execute(
             text(
                 """
-                SELECT DISTINCT media_id FROM (
-                    SELECT le.media_id AS media_id
+                SELECT media_id FROM (
+                    SELECT le.position AS position, le.media_id AS media_id
                     FROM library_entries le
                     WHERE le.library_id = :library_id AND le.media_id IS NOT NULL
                     UNION
-                    SELECT pe.media_id AS media_id
+                    SELECT le.position AS position, pe.media_id AS media_id
                     FROM library_entries le
                     JOIN podcast_episodes pe ON pe.podcast_id = le.podcast_id
                     WHERE le.library_id = :library_id AND le.podcast_id IS NOT NULL
                 ) expanded
                 WHERE media_id IS NOT NULL
-                ORDER BY media_id
+                GROUP BY media_id
+                ORDER BY MIN(position), media_id
                 """
             ),
             {"library_id": library_id},
@@ -500,14 +597,6 @@ def _latest_revision_status(db: Session, *, artifact_id: UUID) -> str | None:
         ),
         {"artifact_id": artifact_id},
     ).scalar_one_or_none()
-
-
-def _revision_content_md(db: Session, *, revision_id: UUID) -> str:
-    content = db.execute(
-        text("SELECT content_md FROM library_intelligence_artifact_revisions WHERE id = :rev"),
-        {"rev": revision_id},
-    ).scalar_one_or_none()
-    return str(content or "")
 
 
 def _artifact_and_library_for_revision(

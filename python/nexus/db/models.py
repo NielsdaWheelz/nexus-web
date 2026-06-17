@@ -1955,6 +1955,7 @@ class LibraryIntelligenceArtifactRevision(Base):
     content_md: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
     covered_targets: Mapped[list[dict[str, object]]] = mapped_column(JSONB, nullable=False)
     status: Mapped[str] = mapped_column(Text, nullable=False)
+    custom_instruction: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
     idempotency_key: Mapped[str | None] = mapped_column(Text, nullable=True)

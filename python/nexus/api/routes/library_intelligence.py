@@ -3,7 +3,7 @@
 from typing import Annotated, cast
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Body, Depends, Header
 from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
@@ -13,6 +13,7 @@ from nexus.schemas.library_intelligence import (
     LibraryIntelligenceArtifactOut,
     LibraryIntelligenceBuildOut,
     LibraryIntelligenceGenerateOut,
+    LibraryIntelligenceGenerateRequest,
     LibraryIntelligenceRevisionOut,
     LibraryIntelligenceRevisionsOut,
     LibraryIntelligenceRevisionSummaryOut,
@@ -51,6 +52,14 @@ def _artifact_out(
         status=view.status,
         content_md=view.content_md,
         citations=view.citations,
+        citation_count=len(view.citations),
+        source_count=view.source_count,
+        covered_source_count=view.covered_source_count,
+        omitted_source_count=view.omitted_source_count,
+        custom_instruction=view.custom_instruction,
+        model_provider=view.model_provider,
+        model_name=view.model_name,
+        total_tokens=view.total_tokens,
         build=build,
         stale_source_count=view.stale_source_count,
     )
@@ -74,12 +83,14 @@ def generate_library_intelligence(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
     idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=256)],
+    body: Annotated[LibraryIntelligenceGenerateRequest | None, Body()] = None,
 ) -> dict:
     ref = library_intelligence_service.generate_artifact(
         db,
         viewer_id=viewer.user_id,
         library_id=library_id,
         idempotency_key=idempotency_key,
+        instruction=body.instruction if body is not None else None,
     )
     return ok(
         LibraryIntelligenceGenerateOut(
@@ -113,6 +124,13 @@ def list_library_intelligence_revisions(
                     promoted_at=revision.promoted_at,
                     is_current=revision.is_current,
                     citation_count=revision.citation_count,
+                    source_count=revision.source_count,
+                    covered_source_count=revision.covered_source_count,
+                    omitted_source_count=revision.omitted_source_count,
+                    custom_instruction=revision.custom_instruction,
+                    model_provider=revision.model_provider,
+                    model_name=revision.model_name,
+                    total_tokens=revision.total_tokens,
                 )
                 for revision in revisions
             ]
@@ -139,6 +157,14 @@ def get_library_intelligence_revision(
             status=cast("RevisionStatus", view.status),
             content_md=view.content_md,
             citations=view.citations,
+            source_count=view.source_count,
+            covered_source_count=view.covered_source_count,
+            omitted_source_count=view.omitted_source_count,
+            citation_count=len(view.citations),
+            custom_instruction=view.custom_instruction,
+            model_provider=view.model_provider,
+            model_name=view.model_name,
+            total_tokens=view.total_tokens,
             created_at=view.created_at,
             promoted_at=view.promoted_at,
             is_current=view.is_current,

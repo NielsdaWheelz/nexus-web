@@ -18,13 +18,17 @@ repair commands. No permanent code path accepts both the old and new shapes.
 ## Summary
 
 Nexus is a one-user prototype. It does not need to preserve alternate historical
-versions of readable content, transcripts, generated intelligence, indexed
-evidence, or source-derived projections. The target state is:
+versions of readable content, transcripts, indexed evidence, or source-derived
+projections. Generated Library Intelligence revisions are the explicit
+durable-work-product carveout; their cited source documents remain current-only.
+The target state is:
 
 - one current readable artifact per media item,
 - one current transcript per transcript-bearing media item,
 - one current search/evidence projection per media item,
-- one current generated intelligence artifact per library and artifact kind,
+- one current generated intelligence head per library and artifact kind, with
+  immutable Library Intelligence revisions only where a generated work product
+  needs durable identity,
 - one current Oracle corpus,
 - one current note document shape,
 - raw source preserved where it already exists,
@@ -173,11 +177,16 @@ last-write-wins within the single-user product. If collaborative editing returns
 later, it must be introduced as a new explicit edit-session/concurrency
 capability, not by reviving generic `revision` columns.
 
-### Generated intelligence is current presentation
+### Generated intelligence heads are current presentation
 
-Library intelligence and Oracle readings are current generated presentation, not
-durable release artifacts. Builds and events may remain as operational logs, but
-they do not define addressable artifact versions.
+Library Intelligence exposes one current generated presentation per library by
+default, but its immutable revisions are durable generated-output resources.
+Those revisions preserve the generated markdown and graph citation edges; they
+do not preserve historical source projections or guarantee old reader locators
+after source replacement.
+
+Oracle readings remain current generated presentations plus operational logs
+under their own module contract. They do not define source-version replay.
 
 ## Target behavior
 
