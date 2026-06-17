@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
+from pydantic import ValidationError
 from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
 
@@ -18,7 +19,7 @@ from nexus.db.models import (
     ResourceExternalSnapshot,
 )
 from nexus.errors import ApiError, ApiErrorCode
-from nexus.schemas.conversation import NoBranchAnchorRequest
+from nexus.schemas.conversation import NoBranchAnchorRequest, chat_run_event_payload_json
 from nexus.services.billing_entitlements import grant_entitlement_override
 from nexus.services.chat_run_validation import validate_pre_phase
 from nexus.services.chat_runs import (
@@ -175,6 +176,42 @@ def _post_retry(auth_client, user_id: UUID, assistant_message_id: UUID, idempote
     )
 
 
+def _assert_chat_run_meta_payload(
+    payload: dict,
+    *,
+    run_id: UUID,
+    conversation_id: UUID,
+    user_message_id: UUID,
+    assistant_message_id: UUID,
+    model_id: UUID,
+    chat_subject: dict | None,
+) -> None:
+    assert payload == {
+        "run_id": str(run_id),
+        "conversation_id": str(conversation_id),
+        "user_message_id": str(user_message_id),
+        "assistant_message_id": str(assistant_message_id),
+        "model_id": str(model_id),
+        "provider": "openai",
+        "chat_subject": chat_subject,
+    }
+
+
+def test_chat_run_meta_payload_requires_chat_subject_key():
+    with pytest.raises(ValidationError):
+        chat_run_event_payload_json(
+            "meta",
+            {
+                "run_id": str(uuid4()),
+                "conversation_id": str(uuid4()),
+                "user_message_id": str(uuid4()),
+                "assistant_message_id": str(uuid4()),
+                "model_id": str(uuid4()),
+                "provider": "openai",
+            },
+        )
+
+
 class TestChatRunCreate:
     def test_missing_idempotency_key_returns_400(
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
@@ -258,7 +295,15 @@ class TestChatRunCreate:
             ).scalar_one()
 
         assert [(row.seq, row.event_type) for row in event_rows] == [(1, "meta")]
-        assert event_rows[0].payload["conversation_id"] == str(conversation_id)
+        _assert_chat_run_meta_payload(
+            event_rows[0].payload,
+            run_id=run_id,
+            conversation_id=conversation_id,
+            user_message_id=UUID(data["user_message"]["id"]),
+            assistant_message_id=UUID(data["assistant_message"]["id"]),
+            model_id=model_id,
+            chat_subject=None,
+        )
         assert job_count == 1, f"Expected one chat_run background job for run {run_id}"
 
     def test_chat_run_resends_after_failed_leaf_with_explicit_parent(
@@ -1299,6 +1344,16 @@ class TestChatRunTooling:
                 ),
                 {"run_id": str(run_id)},
             ).scalar_one()
+            meta_payload = session.execute(
+                text(
+                    """
+                    SELECT payload FROM chat_run_events
+                    WHERE run_id = :run_id
+                      AND event_type = 'meta'
+                    """
+                ),
+                {"run_id": run_id},
+            ).scalar_one()
             turn_context = session.get(ChatRunTurnContext, run_id)
             context_edge_count = session.execute(
                 text(
@@ -1318,6 +1373,20 @@ class TestChatRunTooling:
 
         assert job_payload == {"run_id": str(run_id)}
         assert turn_context is not None
+        _assert_chat_run_meta_payload(
+            meta_payload,
+            run_id=run_id,
+            conversation_id=conversation_id,
+            user_message_id=UUID(data["user_message"]["id"]),
+            assistant_message_id=UUID(data["assistant_message"]["id"]),
+            model_id=model_id,
+            chat_subject={
+                "requested_resource_ref": f"media:{media_id}",
+                "resource_ref": f"media:{media_id}",
+                "context_edge_id": str(turn_context.subject_context_edge_id),
+                "companions": [],
+            },
+        )
         assert turn_context.requested_subject_scheme == "media"
         assert turn_context.requested_subject_id == media_id
         assert turn_context.subject_scheme == "media"
@@ -1438,6 +1507,17 @@ class TestChatResponseRetry:
                 ),
                 {"run_id": retry_run_id},
             ).scalar_one()
+            meta_payload = session.execute(
+                text(
+                    """
+                    SELECT payload
+                    FROM chat_run_events
+                    WHERE run_id = :run_id
+                      AND event_type = 'meta'
+                    """
+                ),
+                {"run_id": retry_run_id},
+            ).scalar_one()
             job_count = session.execute(
                 text(
                     """
@@ -1453,6 +1533,15 @@ class TestChatResponseRetry:
         assert failed_status == "error"
         assert active_leaf_id == retry_assistant_id
         assert meta_count == 1
+        _assert_chat_run_meta_payload(
+            meta_payload,
+            run_id=retry_run_id,
+            conversation_id=conversation_id,
+            user_message_id=retry_user_id,
+            assistant_message_id=retry_assistant_id,
+            model_id=model_id,
+            chat_subject=None,
+        )
         assert job_count == 1
 
     def test_retry_failed_followup_response_creates_sibling_under_same_parent(

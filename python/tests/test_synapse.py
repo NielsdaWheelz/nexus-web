@@ -1060,6 +1060,8 @@ class TestSynapseTriggers:
         ):
             result = note_reindex_job(str(block_id))
 
+        json.dumps(result)
+        assert result["owner"] == {"kind": "note_block", "id": str(block_id)}
         assert result["status"] == "ready", f"got {result}"
         db_session.expire_all()
         rows = _scan_job_rows(

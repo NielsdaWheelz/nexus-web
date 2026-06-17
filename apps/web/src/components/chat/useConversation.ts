@@ -118,8 +118,10 @@ interface UseConversation {
   loadOlder: () => Promise<void>;
   loading: boolean;
   error: FeedbackContent | null;
-  /** Last complete assistant turn — the default reply/continuation parent. */
+  /** Complete assistant leaf — the default reply/continuation parent. */
   replyParentMessageId: string | null;
+  /** Caller-facing reason to block sends until an existing chat is safe to continue. */
+  sendDisabledReason: string | null;
 
   // identity
   conversationId: string | null;
@@ -827,17 +829,47 @@ export function useConversation(
     switchableLeafIds,
   ]);
 
-  // The default continuation reply parent: the last complete assistant turn in
-  // the rendered transcript. One owner for both adapters' composer wiring.
+  // The default continuation reply parent: only the complete assistant leaf of
+  // the rendered transcript. Older complete assistants are not safe continuation
+  // parents while a newer turn is pending, failed, or user-only.
   const replyParentMessageId = useMemo(() => {
-    for (let index = messages.length - 1; index >= 0; index -= 1) {
-      const message = messages[index];
-      if (message.role === "assistant" && message.status === "complete") {
-        return message.id;
-      }
-    }
+    const leaf = messages[messages.length - 1];
+    if (leaf?.role === "assistant" && leaf.status === "complete") return leaf.id;
     return null;
   }, [messages]);
+
+  const sendDisabledReason = useMemo(() => {
+    if (!conversationId) return null;
+    if (loading) return "Loading conversation history before sending.";
+    if (messages.length === 0) return null;
+    if (
+      messages.some(
+        (message) => message.role === "assistant" && message.status === "pending",
+      )
+    ) {
+      return "Wait for the assistant response to finish before sending.";
+    }
+    if (branchDraft) {
+      return messages.some(
+        (message) =>
+          message.id === branchDraft.parentMessageId &&
+          message.role === "assistant" &&
+          message.status === "complete",
+      )
+        ? null
+        : "Choose a complete assistant response before sending.";
+    }
+    if (!replyParentMessageId) {
+      return "Wait for a complete assistant response before sending.";
+    }
+    return null;
+  }, [
+    branchDraft,
+    conversationId,
+    loading,
+    messages,
+    replyParentMessageId,
+  ]);
 
   return {
     messages,
@@ -846,6 +878,7 @@ export function useConversation(
     loading,
     error,
     replyParentMessageId,
+    sendDisabledReason,
     conversationId,
     title,
     resolveConversation,

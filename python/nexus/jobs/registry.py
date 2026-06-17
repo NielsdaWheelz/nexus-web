@@ -36,9 +36,9 @@ class JobDefinition:
 
 # Non-periodic kinds whose work a user directly observes (ingest progress, chat/
 # oracle/intelligence output, search indexing, subscription sync, shared-library
-# backfill). Every kind here must be claimable by the production worker:
-# test_config.py asserts this tuple is a subset of
-# config.DEFAULT_WORKER_ALLOWED_JOB_KINDS.
+# backfill). Every kind here must be claimable by the production worker.
+# test_config.py asserts this tuple is a subset of the default allowlist and that
+# the default allowlist contains only registered kinds.
 USER_FACING_JOB_KINDS = (
     "ingest_media_source",
     "enrich_metadata",

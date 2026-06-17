@@ -1292,6 +1292,7 @@ def retry_failed_assistant_response(
                 "assistant_message_id": str(assistant_retry_message.id),
                 "model_id": str(model.id),
                 "provider": model.provider,
+                "chat_subject": None,
             },
         )
         enqueue_job(

@@ -1,6 +1,5 @@
 """Worker job handler for note body content indexing."""
 
-from dataclasses import asdict
 from uuid import UUID
 
 from nexus.db.models import NoteBlock
@@ -35,7 +34,15 @@ def note_reindex_job(
 
     db = get_session_factory()()
     try:
-        result = asdict(rebuild_note_content_index(db, note_block_id=block_id, reason=reason))
+        index_result = rebuild_note_content_index(db, note_block_id=block_id, reason=reason)
+        result = {
+            "owner": {
+                "kind": index_result.owner.kind,
+                "id": str(index_result.owner.id),
+            },
+            "status": index_result.status,
+            "chunk_count": index_result.chunk_count,
+        }
         block = db.get(NoteBlock, block_id)
         if block is not None:
             synapse.queue_synapse_scan(

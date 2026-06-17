@@ -30,6 +30,41 @@ describe("toChatSSEEvent", () => {
     citation,
   };
 
+  it("parses backend-shaped meta events", () => {
+    const data = {
+      run_id: "11111111-1111-4111-8111-111111111111",
+      conversation_id: "22222222-2222-4222-8222-222222222222",
+      user_message_id: "33333333-3333-4333-8333-333333333333",
+      assistant_message_id: "44444444-4444-4444-8444-444444444444",
+      model_id: "55555555-5555-4555-8555-555555555555",
+      provider: "openai",
+      chat_subject: {
+        requested_resource_ref: "highlight:66666666-6666-4666-8666-666666666666",
+        resource_ref: "note_block:77777777-7777-4777-8777-777777777777",
+        context_edge_id: "88888888-8888-4888-8888-888888888888",
+        companions: ["media:99999999-9999-4999-8999-999999999999"],
+      },
+    };
+
+    expect(toChatSSEEvent("meta", data)).toEqual({ type: "meta", data });
+    expect(toChatSSEEvent("meta", { ...data, chat_subject: null })).toEqual({
+      type: "meta",
+      data: { ...data, chat_subject: null },
+    });
+  });
+
+  it("rejects the old five-key meta shape", () => {
+    expect(() =>
+      toChatSSEEvent("meta", {
+        conversation_id: "22222222-2222-4222-8222-222222222222",
+        user_message_id: "33333333-3333-4333-8333-333333333333",
+        assistant_message_id: "44444444-4444-4444-8444-444444444444",
+        model_id: "55555555-5555-4555-8555-555555555555",
+        provider: "openai",
+      }),
+    ).toThrow("Invalid SSE payload for meta");
+  });
+
   it("parses citation index events as backend-built citations", () => {
     expect(
       toChatSSEEvent("citation_index", {

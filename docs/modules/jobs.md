@@ -82,12 +82,14 @@ allowlist strands every job of that kind forever — the bug that left prod
 note edits unsearchable.
 
 `USER_FACING_JOB_KINDS` (in `registry.py`) is the tuple of every non-periodic
-kind whose work a user directly observes. `test_config.py` asserts
+kind whose work a user directly observes. Tests assert the default allowlist is a
+subset of the runtime registry and that
 `USER_FACING_JOB_KINDS ⊆ DEFAULT_WORKER_ALLOWED_JOB_KINDS`, so the class of bug
 becomes unrepresentable: adding a user-facing kind without allowlisting it fails
-CI. The allowlist literal lives in six lockstep places (`config.py`, two
-`deploy/env/env-prod-worker*`, `sync-env.sh`, and two tests); changing it means
-changing all six (see [deployment.md](../../deployment.md)).
+CI, and a typo in the default allowlist fails before a worker can start. The
+allowlist literal still lives in runtime/env owners (`config.py`,
+`deploy/env/env-prod-worker*`, and `sync-env.sh`); tests read those owners rather
+than copy the literal again.
 
 ## SERIALIZABLE retries (`db/retries.py`)
 

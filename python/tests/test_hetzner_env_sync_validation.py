@@ -1,22 +1,21 @@
 """Hetzner env sync validates required production provider values locally."""
 
+import re
 import stat
 import subprocess
 from pathlib import Path
 
 import pytest
 
+from nexus.config import DEFAULT_WORKER_ALLOWED_JOB_KINDS
+
 pytestmark = pytest.mark.unit
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _SYNC_ENV_SCRIPT = _REPO_ROOT / "deploy" / "hetzner" / "sync-env.sh"
+_WORKER_ENV_LOCAL = _REPO_ROOT / "deploy" / "env" / "env-prod-worker"
 _WORKER_ENV_EXAMPLE = _REPO_ROOT / "deploy" / "env" / "env-prod-worker.example"
-_SAFE_WORKER_ALLOWED_JOB_KINDS = (
-    "ingest_media_source,enrich_metadata,chat_run,"
-    "library_intelligence_artifact_generate,media_unit_build,note_reindex_job,"
-    "podcast_sync_subscription_job,podcast_reindex_semantic_job,"
-    "backfill_default_library_closure_job,oracle_reading_generate,synapse_scan"
-)
+_SAFE_WORKER_ALLOWED_JOB_KINDS = DEFAULT_WORKER_ALLOWED_JOB_KINDS
 
 _SHARED_ENV = {
     "NEXUS_ENV": "prod",
@@ -57,6 +56,13 @@ _WORKER_ENV = {
 
 def _write_env(path: Path, values: dict[str, str]) -> None:
     path.write_text("".join(f"{key}={value}\n" for key, value in values.items()))
+
+
+def _read_env_value(path: Path, key: str) -> str | None:
+    for line in path.read_text().splitlines():
+        if line.startswith(f"{key}="):
+            return line.split("=", 1)[1]
+    return None
 
 
 def _fake_bin(directory: Path, name: str) -> None:
@@ -119,6 +125,7 @@ def test_hetzner_sync_accepts_x_api_bearer_token(tmp_path: Path):
     result = _run_sync(shared_env, backend_env, worker_env, fake_bin_dir)
 
     assert "missing or empty" not in result.stderr
+    assert "scp must not run" in result.stderr
 
 
 def test_hetzner_sync_rejects_unsafe_worker_allowlist(tmp_path: Path):
@@ -150,14 +157,35 @@ def test_worker_env_example_matches_safe_allowlist():
     READMEs, so a stale ``WORKER_ALLOWED_JOB_KINDS`` here makes ``sync-env.sh``
     abort with "is not the safe production allowlist".
     """
-    example_value: str | None = None
-    for line in _WORKER_ENV_EXAMPLE.read_text().splitlines():
-        if line.startswith("WORKER_ALLOWED_JOB_KINDS="):
-            example_value = line.split("=", 1)[1]
-            break
+    example_value = _read_env_value(_WORKER_ENV_EXAMPLE, "WORKER_ALLOWED_JOB_KINDS")
 
     assert example_value is not None, f"WORKER_ALLOWED_JOB_KINDS not found in {_WORKER_ENV_EXAMPLE}"
     assert example_value == _SAFE_WORKER_ALLOWED_JOB_KINDS
+
+
+def test_local_worker_env_matches_safe_allowlist_when_present():
+    """Local ignored env is what operators actually sync from this checkout."""
+    if not _WORKER_ENV_LOCAL.exists():
+        pytest.skip(f"{_WORKER_ENV_LOCAL} is not present")
+
+    local_value = _read_env_value(_WORKER_ENV_LOCAL, "WORKER_ALLOWED_JOB_KINDS")
+
+    assert local_value is not None, f"WORKER_ALLOWED_JOB_KINDS not found in {_WORKER_ENV_LOCAL}"
+    assert local_value == _SAFE_WORKER_ALLOWED_JOB_KINDS
+
+
+def test_sync_env_script_safe_allowlist_matches_config_default():
+    match = re.search(
+        r'^SAFE_WORKER_ALLOWED_JOB_KINDS="([^"]*)"',
+        _SYNC_ENV_SCRIPT.read_text(),
+        re.MULTILINE,
+    )
+    script_value = match.group(1) if match else None
+
+    assert script_value is not None, (
+        f"SAFE_WORKER_ALLOWED_JOB_KINDS not found in {_SYNC_ENV_SCRIPT}"
+    )
+    assert script_value == _SAFE_WORKER_ALLOWED_JOB_KINDS
 
 
 def test_hetzner_sync_rejects_removed_x_expansion_knob(tmp_path: Path):

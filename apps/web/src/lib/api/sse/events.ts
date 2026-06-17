@@ -24,11 +24,18 @@ import {
 interface SSEMetaEvent {
   type: "meta";
   data: {
+    run_id: string;
     conversation_id: string;
     user_message_id: string;
     assistant_message_id: string;
     model_id: string;
     provider: string;
+    chat_subject: {
+      requested_resource_ref: string;
+      resource_ref: string;
+      context_edge_id: string | null;
+      companions: string[];
+    } | null;
   };
 }
 
@@ -131,23 +138,47 @@ function parseMetaData(data: unknown): SSEMetaEvent["data"] {
   if (
     !isRecord(data) ||
     !hasOnlyKeys(data, [
+      "run_id",
       "conversation_id",
       "user_message_id",
       "assistant_message_id",
       "model_id",
       "provider",
+      "chat_subject",
     ]) ||
+    typeof data.run_id !== "string" ||
     typeof data.conversation_id !== "string" ||
     typeof data.user_message_id !== "string" ||
     typeof data.assistant_message_id !== "string" ||
     typeof data.model_id !== "string" ||
-    typeof data.provider !== "string"
+    typeof data.provider !== "string" ||
+    (data.chat_subject !== null && !isMetaSubject(data.chat_subject))
   ) {
     throw new Error("Invalid SSE payload for meta");
   }
   // justify-type-assertion: the guard above exhaustively validated every
   // field of the meta payload.
   return data as SSEMetaEvent["data"];
+}
+
+function isMetaSubject(
+  data: unknown,
+): data is SSEMetaEvent["data"]["chat_subject"] {
+  return (
+    isRecord(data) &&
+    hasOnlyKeys(data, [
+      "requested_resource_ref",
+      "resource_ref",
+      "context_edge_id",
+      "companions",
+    ]) &&
+    typeof data.requested_resource_ref === "string" &&
+    typeof data.resource_ref === "string" &&
+    (data.context_edge_id === null ||
+      typeof data.context_edge_id === "string") &&
+    Array.isArray(data.companions) &&
+    data.companions.every((item) => typeof item === "string")
+  );
 }
 
 function parseDeltaData(data: unknown): SSEDeltaEvent["data"] {

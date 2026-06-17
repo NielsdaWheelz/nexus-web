@@ -215,7 +215,7 @@ class ChatRunMetaEventPayload(BaseModel):
     assistant_message_id: UUID
     model_id: UUID
     provider: str = Field(min_length=1)
-    chat_subject: ChatRunMetaSubjectPayload | None = None
+    chat_subject: ChatRunMetaSubjectPayload | None
 
     model_config = ConfigDict(extra="forbid")
 

@@ -2,6 +2,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import ResourceChatDetail from "@/components/chat/ResourceChatDetail";
+import type { ChatRunCreateRequest } from "@/lib/api/sse/requests";
 import type { ConversationMessage } from "@/lib/conversations/types";
 
 // useChatRunTail is the SSE/streaming boundary; mock it so the engine's
@@ -133,9 +134,8 @@ const assistantMessage = message(
 );
 
 function stubFetch(history: ConversationMessage[] = [userMessage, assistantMessage]) {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (input: RequestInfo | URL) => {
+  const fetchMock = vi.fn(
+    async (input: RequestInfo | URL, _init?: RequestInit) => {
       const path = pathOf(input);
       if (path === "/api/models") {
         return jsonResponse({ data: MODELS });
@@ -159,8 +159,10 @@ function stubFetch(history: ConversationMessage[] = [userMessage, assistantMessa
         });
       }
       throw new Error(`Unexpected fetch call: ${path}`);
-    }),
+    },
   );
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
 }
 
 describe("ResourceChatDetail", () => {
@@ -256,6 +258,185 @@ describe("ResourceChatDetail", () => {
     expect(
       await screen.findByRole("textbox", { name: "Ask anything" }),
     ).toBeVisible();
+  });
+
+  it("blocks sends while an existing response is still pending", async () => {
+    const user = userEvent.setup();
+    const fetchMock = stubFetch([
+      message("user-1", 1, "user", "What is in this document?"),
+      message("assistant-1", 2, "assistant", "", "user-1", "pending"),
+    ]);
+
+    render(
+      <ResourceChatDetail
+        conversationId={CID}
+        subjectRef={`media:${MEDIA_ID}`}
+        onBack={vi.fn()}
+        onOpenFullChat={vi.fn()}
+      />,
+    );
+
+    expect(
+      await screen.findByText(
+        "Wait for the assistant response to finish before sending.",
+      ),
+    ).toBeVisible();
+    const sendButton = screen.getByRole("button", { name: "Send message" });
+    expect(sendButton).toBeDisabled();
+
+    await user.type(screen.getByRole("textbox", { name: "Ask anything" }), "Hi");
+
+    expect(
+      fetchMock.mock.calls.some(
+        ([input, init]) =>
+          pathOf(input) === "/api/chat-runs" && init?.method === "POST",
+      ),
+    ).toBe(false);
+  });
+
+  it("disables the composer while existing resource chat history is loading", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = pathOf(input);
+        const method = init?.method ?? "GET";
+        if (path === "/api/models") {
+          return jsonResponse({ data: MODELS });
+        }
+        if (path === `/api/conversations/${CID}` && method === "GET") {
+          return jsonResponse({
+            data: {
+              id: CID,
+              title: "My chat title",
+              sharing: "private",
+              message_count: 2,
+              created_at: timestamp,
+              updated_at: timestamp,
+            },
+          });
+        }
+        if (path === `/api/conversations/${CID}/messages` && method === "GET") {
+          return new Promise<Response>(() => {});
+        }
+        throw new Error(`Unexpected fetch call: ${method} ${path}`);
+      }),
+    );
+
+    render(
+      <ResourceChatDetail
+        conversationId={CID}
+        subjectRef={`media:${MEDIA_ID}`}
+        onBack={vi.fn()}
+        onOpenFullChat={vi.fn()}
+      />,
+    );
+
+    expect(
+      await screen.findByText("Loading conversation history before sending."),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+  });
+
+  it("sends existing resource chat continuations with an assistant parent anchor", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = pathOf(input);
+        const method = init?.method ?? "GET";
+        if (path === "/api/models") {
+          return jsonResponse({ data: MODELS });
+        }
+        if (path === `/api/conversations/${CID}` && method === "GET") {
+          return jsonResponse({
+            data: {
+              id: CID,
+              title: "My chat title",
+              sharing: "private",
+              message_count: 2,
+              created_at: timestamp,
+              updated_at: timestamp,
+            },
+          });
+        }
+        if (path === `/api/conversations/${CID}/messages` && method === "GET") {
+          return jsonResponse({
+            data: [userMessage, assistantMessage],
+            page: { before_cursor: null },
+          });
+        }
+        if (
+          path === `/api/conversations/${CID}/context-refs` &&
+          method === "POST"
+        ) {
+          return jsonResponse({ data: {} });
+        }
+        if (path === "/api/chat-runs" && method === "POST") {
+          const body = JSON.parse(String(init?.body)) as ChatRunCreateRequest;
+          return jsonResponse({
+            data: {
+              conversation: { id: CID, title: "My chat title" },
+              user_message: message(
+                "user-2",
+                3,
+                "user",
+                body.content,
+                body.parent_message_id ?? null,
+              ),
+              assistant_message: message(
+                "assistant-2",
+                4,
+                "assistant",
+                "",
+                "user-2",
+                "pending",
+              ),
+            },
+          });
+        }
+        throw new Error(`Unexpected fetch call: ${method} ${path}`);
+      },
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <ResourceChatDetail
+        conversationId={CID}
+        subjectRef={`media:${MEDIA_ID}`}
+        onBack={vi.fn()}
+        onOpenFullChat={vi.fn()}
+      />,
+    );
+
+    expect(await screen.findByText("Here is the answer.")).toBeVisible();
+
+    const textbox = await screen.findByRole("textbox", { name: "Ask anything" });
+    await user.type(textbox, "Follow up");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(
+          ([input, init]) =>
+            pathOf(input) === "/api/chat-runs" && init?.method === "POST",
+        ),
+      ).toBe(true);
+    });
+
+    const chatRunCall = fetchMock.mock.calls.find(
+      ([input, init]) =>
+        pathOf(input) === "/api/chat-runs" && init?.method === "POST",
+    );
+    const body = JSON.parse(String(chatRunCall?.[1]?.body)) as ChatRunCreateRequest;
+    expect(body).toMatchObject({
+      conversation_id: CID,
+      content: "Follow up",
+      parent_message_id: "assistant-1",
+      branch_anchor: {
+        kind: "assistant_message",
+        message_id: "assistant-1",
+      },
+      chat_subject: { resource_ref: `media:${MEDIA_ID}` },
+    });
   });
 
   it("renders a new chat without fetching history and hides open-in-full-chat", async () => {
@@ -597,6 +778,16 @@ describe("ResourceChatDetail", () => {
     const textbox = await screen.findByRole("textbox", { name: "Ask anything" });
     await user.type(textbox, "Second question");
     await user.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => {
+      expect(
+        vi.mocked(fetch).mock.calls.some(
+          ([input, init]) =>
+            pathOf(input) === "/api/chat-runs" &&
+            init?.method === "POST" &&
+            JSON.parse(String(init.body)).parent_message_id === "assistant-1",
+        ),
+      ).toBe(true);
+    });
 
     // The new user message is seeded and rendered. Scope the query to the
     // scrollport so it resolves the message row, not the composer textarea (which

@@ -3,7 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
-from nexus.config import Settings
+from nexus.config import DEFAULT_WORKER_ALLOWED_JOB_KINDS, Settings
 
 pytestmark = pytest.mark.unit
 
@@ -182,21 +182,27 @@ class TestWorkerMaintenanceConfiguration:
         assert settings.ingest_reconcile_schedule_seconds == 0
         assert settings.sync_gutenberg_catalog_schedule_seconds == 0
         assert settings.background_job_prune_schedule_seconds == 0
-        assert settings.worker_allowed_job_kinds == (
-            "ingest_media_source,enrich_metadata,chat_run,"
-            "library_intelligence_artifact_generate,media_unit_build,note_reindex_job,"
-            "podcast_sync_subscription_job,podcast_reindex_semantic_job,"
-            "backfill_default_library_closure_job,oracle_reading_generate,synapse_scan"
-        )
+        assert settings.worker_allowed_job_kinds == DEFAULT_WORKER_ALLOWED_JOB_KINDS
 
-    def test_user_facing_job_kinds_are_in_default_worker_allowlist(self):
+    def test_default_worker_allowlist_matches_registry_and_user_facing_jobs(self):
         """A registered user-facing kind missing from the default allowlist would
-        sit queued forever in production (the note_reindex_job incident class)."""
-        from nexus.config import DEFAULT_WORKER_ALLOWED_JOB_KINDS
-        from nexus.jobs.registry import USER_FACING_JOB_KINDS
+        sit queued forever in production (the note_reindex_job incident class).
 
-        allowed = set(DEFAULT_WORKER_ALLOWED_JOB_KINDS.split(","))
+        An allowlisted kind missing from the registry is just as bad: the worker
+        refuses to start instead of claiming any production jobs.
+        """
+        from nexus.jobs.registry import USER_FACING_JOB_KINDS, get_default_registry
+
+        allowed = {
+            kind.strip() for kind in DEFAULT_WORKER_ALLOWED_JOB_KINDS.split(",") if kind.strip()
+        }
+        registered = set(get_default_registry())
+        unknown = allowed - registered
         missing = set(USER_FACING_JOB_KINDS) - allowed
+        assert not unknown, (
+            "DEFAULT_WORKER_ALLOWED_JOB_KINDS contains kinds absent from the registry; "
+            f"production workers would fail startup: {sorted(unknown)}"
+        )
         assert not missing, (
             "User-facing job kinds missing from DEFAULT_WORKER_ALLOWED_JOB_KINDS; "
             f"production workers would never claim them: {sorted(missing)}"

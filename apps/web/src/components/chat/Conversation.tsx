@@ -349,19 +349,11 @@ export default function Conversation() {
 
   const error = convo.error ?? deleteError;
 
-  // Existing-route load gating: a bare conversation id (not the `new` route)
-  // shows a full-pane loading notice while /tree is pending and a not-found/error
-  // notice when it fails. Neither state renders a composer. The `new` route
-  // (conversationId === null) always renders the empty composer below.
-  if (conversationId !== null && convo.messages.length === 0) {
-    if (convo.loading) {
-      return (
-        <FeedbackNotice severity="info">Loading conversation...</FeedbackNotice>
-      );
-    }
-    if (convo.error) {
-      return <FeedbackNotice feedback={convo.error} />;
-    }
+  // Existing-route error gating: a not-found/error state without history cannot
+  // safely render a continuation composer. Loading stays on the normal chat
+  // surface so the composer can show its disabled reason.
+  if (conversationId !== null && convo.messages.length === 0 && convo.error) {
+    return <FeedbackNotice feedback={convo.error} />;
   }
 
   return (
@@ -373,6 +365,11 @@ export default function Conversation() {
             ref={convo.scrollRef}
             messages={convo.messages}
             historyLoading={convo.loading}
+            emptyState={
+              convo.loading ? (
+                <FeedbackNotice severity="info">Loading conversation...</FeedbackNotice>
+              ) : null
+            }
             onReaderSourceActivate={handleReaderSourceActivate}
             forkOptionsByParentId={branch?.forkOptionsByParentId}
             switchableLeafIds={branch?.switchableLeafIds}
@@ -392,6 +389,7 @@ export default function Conversation() {
                 draftKey={composerDraftKey}
                 branchDraft={branchDraft}
                 parentMessageId={activeReplyParentMessageId}
+                disabledReason={convo.sendDisabledReason ?? undefined}
                 onResolveConversation={convo.resolveConversation}
                 onChatRunCreated={convo.onChatRunCreated}
                 onClearBranchDraft={

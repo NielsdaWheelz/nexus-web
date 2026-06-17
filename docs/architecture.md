@@ -485,9 +485,10 @@ handler + policy. Claim is atomic, so the worker scales horizontally even though
 single instance is single-concurrency. `get_task_contract_version()` fingerprints
 the registry's per-kind attempt/lease policy for `/health` deploy checks. The
 `WORKER_ALLOWED_JOB_KINDS` allowlist gates which kinds the production worker
-claims; `USER_FACING_JOB_KINDS ⊆ DEFAULT_WORKER_ALLOWED_JOB_KINDS` is asserted in
-`test_config.py` so a user-facing kind can never be stranded unallowlisted (the
-	`note_reindex_job` incident class). See [modules/jobs.md](modules/jobs.md).
+claims; tests assert the default allowlist has no unknown registry kinds and
+that `USER_FACING_JOB_KINDS ⊆ DEFAULT_WORKER_ALLOWED_JOB_KINDS`, so a typo stops
+startup in CI and a user-facing kind can never be stranded unallowlisted (the
+`note_reindex_job` incident class). See [modules/jobs.md](modules/jobs.md).
 
 Task catalog (each is a thin handler in `tasks/` that wraps a service):
 `ingest_media_source`, `enrich_metadata`, `chat_run`,

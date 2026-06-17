@@ -133,6 +133,7 @@ export default function ResourceChatDetail({
             conversationId={convo.conversationId}
             draftKey={draftKey}
             parentMessageId={parentMessageId}
+            disabledReason={convo.sendDisabledReason ?? undefined}
             chatSubject={chatSubject}
             readerSelection={activePendingReaderSelection}
             pendingContextRefs={pendingContextRefs}

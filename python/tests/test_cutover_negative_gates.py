@@ -762,20 +762,24 @@ def test_every_catalog_model_offers_default_reasoning():
 
 
 # =============================================================================
-# AC-6 — USER_FACING_JOB_KINDS ⊆ DEFAULT_WORKER_ALLOWED_JOB_KINDS
+# AC-6 — DEFAULT_WORKER_ALLOWED_JOB_KINDS has no unknown kinds and covers
+# USER_FACING_JOB_KINDS
 #
 # The authoritative guard already lives in test_config.py
-# (test_user_facing_job_kinds_are_allowlisted). It is restated here as a §14 gate
-# so the negative-gate suite is self-contained; both must hold.
+# (test_default_worker_allowlist_matches_registry_and_user_facing_jobs). It is
+# restated here as a §14 gate so the negative-gate suite is self-contained; both
+# must hold.
 # =============================================================================
 
 
-def test_user_facing_job_kinds_subset_of_worker_allowlist():
+def test_worker_allowlist_kinds_match_registry_and_user_facing_jobs():
     from nexus.config import DEFAULT_WORKER_ALLOWED_JOB_KINDS
-    from nexus.jobs.registry import USER_FACING_JOB_KINDS
+    from nexus.jobs.registry import USER_FACING_JOB_KINDS, get_default_registry
 
     allowed = {kind.strip() for kind in DEFAULT_WORKER_ALLOWED_JOB_KINDS.split(",") if kind.strip()}
+    unknown = allowed - set(get_default_registry())
     missing = set(USER_FACING_JOB_KINDS) - allowed
+    assert not unknown, f"worker allowlist kinds not in the registry: {sorted(unknown)}"
     assert not missing, f"user-facing job kinds not in the worker allowlist: {sorted(missing)}"
 
 

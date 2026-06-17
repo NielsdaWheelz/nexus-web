@@ -775,9 +775,148 @@ describe("Conversation", () => {
     });
   });
 
-  it("shows a loading notice with no composer while /tree is pending for an existing conversation", async () => {
+  it("sends an existing non-empty conversation with the complete assistant leaf as parent", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = pathOf(input);
+      const method = init?.method ?? "GET";
+      if (path === "/api/conversations/conversation-1/tree") {
+        return jsonResponse({ data: treeResponse() });
+      }
+      if (path === "/api/conversations/conversation-1/context-refs") {
+        return jsonResponse({ data: [] });
+      }
+      if (path === "/api/models") {
+        return jsonResponse({ data: MODELS });
+      }
+      if (path === "/api/chat-runs" && method === "GET") {
+        return jsonResponse({ data: [] });
+      }
+      if (path === "/api/chat-runs" && method === "POST") {
+        const body = JSON.parse(String(init?.body)) as ChatRunCreateRequest;
+        const followUpUser = message(
+          "follow-up-user",
+          7,
+          "user",
+          body.content,
+          body.parent_message_id ?? null,
+        );
+        const followUpAssistant = message(
+          "follow-up-assistant",
+          8,
+          "assistant",
+          "",
+          followUpUser.id,
+          "pending",
+        );
+        return jsonResponse({
+          data: {
+            run: {
+              id: "follow-up-run",
+              status: "running",
+              conversation_id: body.conversation_id,
+              user_message_id: followUpUser.id,
+              assistant_message_id: followUpAssistant.id,
+              model_id: body.model_id,
+              reasoning: body.reasoning,
+              key_mode: body.key_mode ?? "auto",
+              cancel_requested_at: null,
+              started_at: timestamp,
+              completed_at: null,
+              error_code: null,
+              created_at: timestamp,
+              updated_at: timestamp,
+            },
+            conversation: treeResponse().conversation,
+            user_message: followUpUser,
+            assistant_message: followUpAssistant,
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${method} ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderPane();
+
+    expect(await screen.findByText("Answer A")).toBeVisible();
+    expect(
+      await screen.findByRole("button", { name: /gpt-5 mini.*default/i }),
+    ).toBeInTheDocument();
+
+    const input = screen.getByRole("textbox", { name: "Ask anything" });
+    await user.click(input);
+    await user.keyboard("Continue from the leaf");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(
+          ([callInput, callInit]) =>
+            pathOf(callInput) === "/api/chat-runs" &&
+            callInit?.method === "POST",
+        ),
+      ).toBe(true);
+    });
+
+    const chatRunCall = fetchMock.mock.calls.find(
+      ([callInput, callInit]) =>
+        pathOf(callInput) === "/api/chat-runs" &&
+        callInit?.method === "POST",
+    );
+    const body = JSON.parse(String(chatRunCall?.[1]?.body)) as ChatRunCreateRequest;
+    expect(body).toMatchObject({
+      conversation_id: "conversation-1",
+      content: "Continue from the leaf",
+      parent_message_id: "branch-a-assistant",
+      branch_anchor: {
+        kind: "assistant_message",
+        message_id: "branch-a-assistant",
+      },
+    });
+  });
+
+  it("disables existing conversation sends while the assistant leaf is pending", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = pathOf(input);
+      const method = init?.method ?? "GET";
+      if (path === "/api/conversations/conversation-1/tree") {
+        return jsonResponse({
+          data: treeResponse({ selected: "b", branchBStatus: "pending" }),
+        });
+      }
+      if (path === "/api/conversations/conversation-1/context-refs") {
+        return jsonResponse({ data: [] });
+      }
+      if (path === "/api/models") {
+        return jsonResponse({ data: MODELS });
+      }
+      if (path === "/api/chat-runs" && method === "GET") {
+        return jsonResponse({ data: [activeBranchBRun()] });
+      }
+      throw new Error(`Unexpected fetch call: ${method} ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderPane();
+
+    expect(
+      await screen.findByText(
+        "Wait for the assistant response to finish before sending.",
+      ),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+    expect(
+      fetchMock.mock.calls.filter(
+        ([input, init]) =>
+          pathOf(input) === "/api/chat-runs" && init?.method === "POST",
+      ),
+    ).toHaveLength(0);
+  });
+
+  it("shows a disabled composer while /tree is pending for an existing conversation", async () => {
     // /tree never resolves: the existing route must show the loading notice and
-    // withhold the composer (no Send button) until history loads.
+    // keep the composer blocked until history proves a safe parent.
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const path = pathOf(input);
       if (path === "/api/models") {
@@ -799,10 +938,11 @@ describe("Conversation", () => {
     renderPane();
 
     expect(await screen.findByText("Loading conversation...")).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Send message" })).toBeNull();
     expect(
-      screen.queryByRole("textbox", { name: "Ask anything" }),
-    ).toBeNull();
+      await screen.findByText("Loading conversation history before sending."),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+    expect(screen.getByRole("textbox", { name: "Ask anything" })).toBeVisible();
   });
 
   it("shows a not-found/error notice with no composer when /tree 404s", async () => {
