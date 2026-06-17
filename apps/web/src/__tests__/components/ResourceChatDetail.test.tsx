@@ -124,6 +124,31 @@ const PENDING_SELECTION = {
   media_id: MEDIA_ID,
   highlight_id: HID,
 };
+
+function contextRefResponse(resourceRef: string): Response {
+  const [scheme, id] = resourceRef.split(":");
+  return jsonResponse({
+    data: {
+      id: `ref-${id}`,
+      conversation_id: CID,
+      resource_ref: resourceRef,
+      activation: {
+        resourceRef,
+        kind: "route",
+        href:
+          scheme === "media"
+            ? `/media/${id}`
+            : `/media/${MEDIA_ID}#highlight-${id}`,
+        unresolvedReason: null,
+      },
+      label: scheme === "media" ? "Source media" : "Selected quote",
+      summary: "Context",
+      missing: false,
+      created_at: timestamp,
+    },
+  });
+}
+
 const userMessage = message("user-1", 1, "user", "What is in this document?");
 const assistantMessage = message(
   "assistant-1",
@@ -368,7 +393,9 @@ describe("ResourceChatDetail", () => {
           path === `/api/conversations/${CID}/context-refs` &&
           method === "POST"
         ) {
-          return jsonResponse({ data: {} });
+          return contextRefResponse(
+            JSON.parse(String(init?.body)).resource_ref as string,
+          );
         }
         if (path === "/api/chat-runs" && method === "POST") {
           const body = JSON.parse(String(init?.body)) as ChatRunCreateRequest;
@@ -517,7 +544,9 @@ describe("ResourceChatDetail", () => {
           path === `/api/conversations/${CID}/context-refs` &&
           method === "POST"
         ) {
-          return jsonResponse({ data: {} });
+          return contextRefResponse(
+            JSON.parse(String(init?.body)).resource_ref as string,
+          );
         }
         if (path === "/api/chat-runs" && method === "POST") {
           return jsonResponse({
@@ -620,7 +649,9 @@ describe("ResourceChatDetail", () => {
           path === `/api/conversations/${CID}/context-refs` &&
           method === "POST"
         ) {
-          return jsonResponse({ data: {} });
+          return contextRefResponse(
+            JSON.parse(String(init?.body)).resource_ref as string,
+          );
         }
         if (path === "/api/chat-runs" && method === "POST") {
           return jsonResponse({
@@ -743,7 +774,9 @@ describe("ResourceChatDetail", () => {
           path === `/api/conversations/${CID}/context-refs` &&
           method === "POST"
         ) {
-          return jsonResponse({ data: {} });
+          return contextRefResponse(
+            JSON.parse(String(init?.body)).resource_ref as string,
+          );
         }
         if (path === "/api/chat-runs" && method === "POST") {
           return jsonResponse({
