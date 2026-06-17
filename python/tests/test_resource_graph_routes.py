@@ -29,6 +29,7 @@ from nexus.services.resource_graph.context import (
 from nexus.services.resource_graph.refs import ResourceRef
 from tests.factories import (
     create_test_conversation,
+    create_test_conversation_with_message,
     create_test_media_in_library,
     get_user_default_library,
 )
@@ -164,12 +165,13 @@ def test_add_context_ref_returns_resolved_payload_and_is_idempotent(
     assert len(rows) == 1, f"Idempotent add must leave one row; got {rows}"
 
 
-def test_add_context_ref_does_not_dedupe_non_context_edge(
+def test_add_context_ref_does_not_touch_non_context_edge_to_same_target(
     auth_client, direct_db: DirectSessionManager
 ):
     user_id = _bootstrap_user(auth_client, direct_db)
     headers = auth_headers(user_id)
     media_id = _create_media(direct_db, user_id, title="Context API Doc")
+    source_media_id = _create_media(direct_db, user_id, title="Supporting Source")
     with direct_db.session() as session:
         conversation_id = create_test_conversation(session, user_id)
         support_edge_id = session.execute(
@@ -180,13 +182,13 @@ def test_add_context_ref_does_not_dedupe_non_context_edge(
                     ordinal, snapshot
                 )
                 VALUES (
-                    :user_id, 'supports', 'citation', 'conversation', :conversation_id,
-                    'media', :media_id, 1, '{"title": "supporting edge"}'::jsonb
+                    :user_id, 'supports', 'synapse', 'media', :source_media_id,
+                    'media', :media_id, NULL, '{"excerpt": "supporting edge"}'::jsonb
                 )
                 RETURNING id
                 """
             ),
-            {"user_id": user_id, "conversation_id": conversation_id, "media_id": media_id},
+            {"user_id": user_id, "source_media_id": source_media_id, "media_id": media_id},
         ).scalar_one()
         session.commit()
 
@@ -205,17 +207,15 @@ def test_add_context_ref_does_not_dedupe_non_context_edge(
                 """
                 SELECT origin, kind, COUNT(*)
                 FROM resource_edges
-                WHERE source_scheme = 'conversation'
-                  AND source_id = :conversation_id
-                  AND target_scheme = 'media'
+                WHERE target_scheme = 'media'
                   AND target_id = :media_id
                 GROUP BY origin, kind
                 """
             ),
-            {"conversation_id": conversation_id, "media_id": media_id},
+            {"media_id": media_id},
         ).all()
     assert {(origin, kind): count for origin, kind, count in rows} == {
-        ("citation", "supports"): 1,
+        ("synapse", "supports"): 1,
         ("user", "context"): 1,
     }
 
@@ -227,7 +227,9 @@ def test_context_ref_surface_ignores_ordinal_citation_edges(
     headers = auth_headers(user_id)
     media_id = _create_media(direct_db, user_id, title="Citation-only Context Doc")
     with direct_db.session() as session:
-        conversation_id = create_test_conversation(session, user_id)
+        conversation_id, message_id = create_test_conversation_with_message(
+            session, user_id, role="assistant"
+        )
         citation_edge_id = session.execute(
             text(
                 """
@@ -236,13 +238,13 @@ def test_context_ref_surface_ignores_ordinal_citation_edges(
                     target_id, ordinal, snapshot
                 )
                 VALUES (
-                    :user_id, 'context', 'citation', 'conversation', :conversation_id,
+                    :user_id, 'context', 'citation', 'message', :message_id,
                     'media', :media_id, 1, '{"title": "citation only"}'::jsonb
                 )
                 RETURNING id
                 """
             ),
-            {"user_id": user_id, "conversation_id": conversation_id, "media_id": media_id},
+            {"user_id": user_id, "message_id": message_id, "media_id": media_id},
         ).scalar_one()
         session.commit()
 
@@ -282,8 +284,8 @@ def test_broad_read_admission_is_not_search_scope(auth_client, direct_db: Direct
                     ordinal, snapshot
                 )
                 VALUES (
-                    :user_id, 'supports', 'citation', 'conversation', :conversation_id,
-                    'media', :media_id, 1, '{"title": "supporting edge"}'::jsonb
+                    :user_id, 'supports', 'user', 'conversation', :conversation_id,
+                    'media', :media_id, NULL, NULL
                 )
                 """
             ),

@@ -497,7 +497,7 @@ def test_integrity_notices_are_deterministic(
         "selected_retrieval_missing_citation",
         "candidate_inclusion_mismatch",
         "prompt_retrieval_missing",
-        "reference_missing_citation",
+        "context_ref_missing_citation",
     ]
 
 

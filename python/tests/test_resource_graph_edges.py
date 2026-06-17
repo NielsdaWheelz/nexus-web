@@ -505,9 +505,22 @@ def test_same_directed_pair_can_exist_under_different_origins(
     }
 
 
-def test_user_edges_reject_order_keys(db_session: Session, bootstrapped_user: UUID):
+def test_user_context_edges_allow_source_order_key(db_session: Session, bootstrapped_user: UUID):
     source = _page_ref(db_session, bootstrapped_user)
     target = _media_ref(db_session, bootstrapped_user)
+
+    edge = create_edge(
+        db_session,
+        viewer_id=bootstrapped_user,
+        input=EdgeCreate(
+            source=source,
+            target=target,
+            kind="context",
+            origin="user",
+            source_order_key="0000000001",
+        ),
+    )
+    assert edge.source_order_key == "0000000001"
 
     with pytest.raises(InvalidRequestError):
         create_edge(
@@ -515,15 +528,15 @@ def test_user_edges_reject_order_keys(db_session: Session, bootstrapped_user: UU
             viewer_id=bootstrapped_user,
             input=EdgeCreate(
                 source=source,
-                target=target,
-                kind="context",
+                target=_media_ref(db_session, bootstrapped_user, title="Ordered Stance"),
+                kind="supports",
                 origin="user",
-                source_order_key="0000000001",
+                source_order_key="0000000002",
             ),
         )
 
 
-def test_conversation_machine_context_edges_allow_source_order_key(
+def test_conversation_context_edges_allow_source_order_key(
     db_session: Session, bootstrapped_user: UUID
 ):
     source = ResourceRef(
@@ -532,18 +545,18 @@ def test_conversation_machine_context_edges_allow_source_order_key(
     )
     target = _media_ref(db_session, bootstrapped_user)
 
-    with pytest.raises(InvalidRequestError):
-        create_edge(
-            db_session,
-            viewer_id=bootstrapped_user,
-            input=EdgeCreate(
-                source=source,
-                target=target,
-                kind="context",
-                origin="user",
-                source_order_key="0000000001",
-            ),
-        )
+    user_context_edge = create_edge(
+        db_session,
+        viewer_id=bootstrapped_user,
+        input=EdgeCreate(
+            source=source,
+            target=target,
+            kind="context",
+            origin="user",
+            source_order_key="0000000001",
+        ),
+    )
+    assert user_context_edge.source_order_key == "0000000001"
 
     citation_context_edge = create_edge(
         db_session,
@@ -553,11 +566,11 @@ def test_conversation_machine_context_edges_allow_source_order_key(
             target=_page_ref(db_session, bootstrapped_user),
             kind="context",
             origin="citation",
-            source_order_key="0000000001",
+            source_order_key="0000000002",
         ),
     )
 
-    assert citation_context_edge.source_order_key == "0000000001"
+    assert citation_context_edge.source_order_key == "0000000002"
 
     system_context_edge = create_edge(
         db_session,
@@ -567,11 +580,11 @@ def test_conversation_machine_context_edges_allow_source_order_key(
             target=_media_ref(db_session, bootstrapped_user, title="System Context"),
             kind="context",
             origin="system",
-            source_order_key="0000000002",
+            source_order_key="0000000003",
         ),
     )
 
-    assert system_context_edge.source_order_key == "0000000002"
+    assert system_context_edge.source_order_key == "0000000003"
 
 
 def test_conversation_source_order_key_rejects_non_context_origins(
