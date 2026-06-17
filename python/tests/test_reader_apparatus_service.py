@@ -4,9 +4,13 @@ import pytest
 from sqlalchemy import text
 
 from nexus.db.models import Fragment, Media, MediaKind, ProcessingStatus
-from nexus.errors import ApiError
+from nexus.errors import ApiError, ApiErrorCode
 from nexus.services.media_deletion import delete_document_media_if_unreferenced
-from nexus.services.reader_apparatus import replace_media_apparatus, source_fingerprint
+from nexus.services.reader_apparatus import (
+    get_media_apparatus,
+    replace_media_apparatus,
+    source_fingerprint,
+)
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
 
@@ -22,6 +26,11 @@ def _add_media_to_default_library(auth_client, user_id: UUID, media_id: UUID) ->
         headers=auth_headers(user_id),
     )
     assert response.status_code in (200, 201)
+
+
+def _get_apparatus_data(direct_db: DirectSessionManager, user_id: UUID, media_id: UUID):
+    with direct_db.session() as session:
+        return get_media_apparatus(session, user_id, media_id).model_dump(mode="json")
 
 
 def _create_media(session, *, kind: str = MediaKind.web_article.value) -> tuple[UUID, UUID]:
@@ -157,13 +166,7 @@ def test_get_reader_apparatus_returns_source_authored_items(auth_client, direct_
     _register_cleanup(direct_db, media_id)
     _add_media_to_default_library(auth_client, user_id, media_id)
 
-    response = auth_client.get(
-        f"/media/{media_id}/apparatus",
-        headers=auth_headers(user_id),
-    )
-
-    assert response.status_code == 200
-    data = response.json()["data"]
+    data = _get_apparatus_data(direct_db, user_id, media_id)
     assert data["status"] == "ready"
     assert data["capabilities"]["has_inline_markers"] is True
     assert [item["kind"] for item in data["items"]] == ["footnote_ref", "footnote"]
@@ -248,13 +251,7 @@ def test_get_reader_apparatus_returns_sidenotes_and_target_only_margin_notes(
     _register_cleanup(direct_db, media_id)
     _add_media_to_default_library(auth_client, user_id, media_id)
 
-    response = auth_client.get(
-        f"/media/{media_id}/apparatus",
-        headers=auth_headers(user_id),
-    )
-
-    assert response.status_code == 200
-    data = response.json()["data"]
+    data = _get_apparatus_data(direct_db, user_id, media_id)
     assert data["status"] == "ready"
     assert {item["kind"] for item in data["items"]} == {
         "sidenote",
@@ -278,13 +275,9 @@ def test_get_reader_apparatus_missing_state_fails_loudly(auth_client, direct_db)
     _register_cleanup(direct_db, media_id)
     _add_media_to_default_library(auth_client, user_id, media_id)
 
-    response = auth_client.get(
-        f"/media/{media_id}/apparatus",
-        headers=auth_headers(user_id),
-    )
-
-    assert response.status_code == 500
-    assert response.json()["error"]["code"] == "E_READER_APPARATUS_STATE_MISSING"
+    with pytest.raises(ApiError) as exc:
+        _get_apparatus_data(direct_db, user_id, media_id)
+    assert exc.value.code == ApiErrorCode.E_READER_APPARATUS_STATE_MISSING
 
 
 def test_get_reader_apparatus_returns_empty_failed_and_unsupported_states(auth_client, direct_db):
@@ -306,12 +299,7 @@ def test_get_reader_apparatus_returns_empty_failed_and_unsupported_states(auth_c
 
         _register_cleanup(direct_db, media_id)
         _add_media_to_default_library(auth_client, user_id, media_id)
-        response = auth_client.get(
-            f"/media/{media_id}/apparatus",
-            headers=auth_headers(user_id),
-        )
-        assert response.status_code == 200
-        data = response.json()["data"]
+        data = _get_apparatus_data(direct_db, user_id, media_id)
         seen_statuses.append(data["status"])
         assert data["items"] == []
         assert data["edges"] == []
@@ -322,9 +310,7 @@ def test_get_reader_apparatus_returns_empty_failed_and_unsupported_states(auth_c
 
     _register_cleanup(direct_db, media_id)
     _add_media_to_default_library(auth_client, user_id, media_id)
-    response = auth_client.get(f"/media/{media_id}/apparatus", headers=auth_headers(user_id))
-    assert response.status_code == 200
-    data = response.json()["data"]
+    data = _get_apparatus_data(direct_db, user_id, media_id)
     seen_statuses.append(data["status"])
     assert data["items"] == []
     assert data["edges"] == []
@@ -354,13 +340,7 @@ def test_get_reader_apparatus_returns_partial_state_with_valid_rows(auth_client,
     _register_cleanup(direct_db, media_id)
     _add_media_to_default_library(auth_client, user_id, media_id)
 
-    response = auth_client.get(
-        f"/media/{media_id}/apparatus",
-        headers=auth_headers(user_id),
-    )
-
-    assert response.status_code == 200
-    data = response.json()["data"]
+    data = _get_apparatus_data(direct_db, user_id, media_id)
     assert data["status"] == "partial"
     assert data["diagnostics"] == {"missing_targets": ["fn1"]}
     assert [item["stable_key"] for item in data["items"]] == ["probable-marker"]
@@ -393,12 +373,9 @@ def test_get_reader_apparatus_masks_invisible_media(auth_client, direct_db):
     _register_cleanup(direct_db, media_id)
     _add_media_to_default_library(auth_client, owner_id, media_id)
 
-    response = auth_client.get(
-        f"/media/{media_id}/apparatus",
-        headers=auth_headers(outsider_id),
-    )
-
-    assert response.status_code == 404
+    with pytest.raises(ApiError) as exc:
+        _get_apparatus_data(direct_db, outsider_id, media_id)
+    assert exc.value.code == ApiErrorCode.E_MEDIA_NOT_FOUND
 
 
 def test_replace_reader_apparatus_replaces_rows_and_rejects_invalid_empty_state(direct_db):

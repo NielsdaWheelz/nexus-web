@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   getSecondaryGroupForSurface,
+  getSecondaryGroupDefinition,
   getSecondarySurfaceDefinition,
   getSecondarySurfaceIdsForGroup,
   getSecondaryWidthPolicy,
@@ -11,10 +12,10 @@ import {
 
 describe("paneSecondaryModel", () => {
   it("maps secondary surfaces to their owning groups", () => {
+    expect(getSecondaryGroupForSurface("reader-contents")).toBe("reader-tools");
     expect(getSecondaryGroupForSurface("reader-highlights")).toBe("reader-tools");
     expect(getSecondaryGroupForSurface("reader-apparatus")).toBe("reader-tools");
     expect(getSecondaryGroupForSurface("reader-doc-chat")).toBe("reader-tools");
-    expect(getSecondaryGroupForSurface("reader-contents")).toBe("reader-tools");
     expect(getSecondaryGroupForSurface("conversation-context-refs")).toBe(
       "conversation-context",
     );
@@ -25,6 +26,7 @@ describe("paneSecondaryModel", () => {
   });
 
   it("owns surface metadata in one place", () => {
+    expect(getSecondaryGroupDefinition("reader-tools").title).toBe("Document Map");
     expect(getSecondarySurfaceDefinition("reader-contents")).toMatchObject({
       groupId: "reader-tools",
       title: "Contents",
@@ -35,16 +37,21 @@ describe("paneSecondaryModel", () => {
       title: "Citations",
       iconId: "quote",
     });
+    expect(getSecondarySurfaceDefinition("reader-doc-chat")).toMatchObject({
+      groupId: "reader-tools",
+      title: "Chat",
+      iconId: "file-text",
+    });
     expect(getSecondarySurfaceDefinition("conversation-forks")).toMatchObject({
       groupId: "conversation-context",
       title: "Forks",
       iconId: "git-branch",
     });
     expect(getSecondarySurfaceIdsForGroup("reader-tools")).toEqual([
-      "reader-highlights",
       "reader-contents",
-      "reader-connections",
+      "reader-highlights",
       "reader-apparatus",
+      "reader-connections",
       "reader-doc-chat",
     ]);
     expect(getSecondarySurfaceIdsForGroup("conversation-context")).toEqual([

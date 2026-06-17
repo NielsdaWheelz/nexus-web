@@ -8,7 +8,7 @@ export interface WorkspaceSecondaryWidthPolicy {
 
 const PANE_SECONDARY_GROUP_BASE = {
   "reader-tools": {
-    title: "Reader tools",
+    title: "Document Map",
     width: { defaultWidthPx: 360, minWidthPx: 280, maxWidthPx: 720 },
   },
   "conversation-context": {
@@ -32,22 +32,16 @@ export type WorkspaceSecondaryGroupId = keyof typeof PANE_SECONDARY_GROUP_BASE;
 
 const PANE_SECONDARY_SURFACE_DEFINITIONS = [
   {
-    id: "reader-highlights",
-    groupId: "reader-tools",
-    title: "Highlights",
-    iconId: "highlighter",
-  },
-  {
     id: "reader-contents",
     groupId: "reader-tools",
     title: "Contents",
     iconId: "list-tree",
   },
   {
-    id: "reader-connections",
+    id: "reader-highlights",
     groupId: "reader-tools",
-    title: "Connections",
-    iconId: "link-2",
+    title: "Highlights",
+    iconId: "highlighter",
   },
   {
     id: "reader-apparatus",
@@ -56,9 +50,15 @@ const PANE_SECONDARY_SURFACE_DEFINITIONS = [
     iconId: "quote",
   },
   {
+    id: "reader-connections",
+    groupId: "reader-tools",
+    title: "Connections",
+    iconId: "link-2",
+  },
+  {
     id: "reader-doc-chat",
     groupId: "reader-tools",
-    title: "Document chat",
+    title: "Chat",
     iconId: "file-text",
   },
   {

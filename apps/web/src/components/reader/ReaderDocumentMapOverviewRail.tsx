@@ -11,39 +11,41 @@ import {
 } from "react";
 import { ListOrdered } from "lucide-react";
 import Button from "@/components/ui/Button";
-import HighlightSnippet from "@/components/ui/HighlightSnippet";
 import HoverPreview, {
   HOVER_PREVIEW_DELAY_MS,
 } from "@/components/ui/HoverPreview";
 import { clamp } from "@/lib/clamp";
+import type {
+  ReaderDocumentMapLensId,
+  ReaderDocumentMapMarker,
+} from "@/lib/reader/documentMap";
 import { cx } from "@/lib/ui/cx";
 import { nextRovingIndexForKey } from "@/lib/ui/rovingIndex";
-import { type PositionedHighlight } from "./overviewPositions";
 import { findScrollParent } from "./useAnchoredReaderProjection";
-import styles from "./ReaderOverviewRuler.module.css";
+import styles from "./ReaderDocumentMapOverviewRail.module.css";
 
-export const OVERVIEW_TICK_MIN_GAP_PX = 14;
+export const DOCUMENT_MAP_MARKER_MIN_GAP_PX = 14;
 
-interface ReaderOverviewRulerProps {
-  positioned: PositionedHighlight[];
+interface ReaderDocumentMapOverviewRailProps {
+  markers: ReaderDocumentMapMarker[];
   contentRef: RefObject<HTMLElement | null>;
   documentSpan: { start: number; end: number };
-  onActivateHighlight: (highlightId: string) => void;
-  onOpenHighlights: () => void;
+  onActivateMarker: (itemId: string, lensId: ReaderDocumentMapLensId) => void;
+  onOpenMap: () => void;
 }
 
 interface Cluster {
   center: number;
-  members: PositionedHighlight[];
+  members: ReaderDocumentMapMarker[];
 }
 
-export default function ReaderOverviewRuler({
-  positioned,
+export default function ReaderDocumentMapOverviewRail({
+  markers,
   contentRef,
   documentSpan,
-  onActivateHighlight,
-  onOpenHighlights,
-}: ReaderOverviewRulerProps) {
+  onActivateMarker,
+  onOpenMap,
+}: ReaderDocumentMapOverviewRailProps) {
   const trackRef = useRef<HTMLDivElement | null>(null);
   const hoverDelayRef = useRef<number | null>(null);
   const scrollFrameRef = useRef<number | null>(null);
@@ -156,21 +158,20 @@ export default function ReaderOverviewRuler({
     };
   }, [scrollState, documentSpan]);
 
-  // positioned is sorted ascending by position; merge ticks whose centers fall
-  // within OVERVIEW_TICK_MIN_GAP_PX so every cluster has a clickable hit band.
+  // Merge nearby markers so every cluster has a usable hit band.
   const clusters = useMemo<Cluster[]>(() => {
     const out: Cluster[] = [];
-    for (const item of positioned) {
+    for (const item of markers) {
       const center = item.position * trackHeight;
       const last = out[out.length - 1];
-      if (last && center - last.center < OVERVIEW_TICK_MIN_GAP_PX) {
+      if (last && center - last.center < DOCUMENT_MAP_MARKER_MIN_GAP_PX) {
         last.members.push(item);
         continue;
       }
       out.push({ center, members: [item] });
     }
     return out;
-  }, [positioned, trackHeight]);
+  }, [markers, trackHeight]);
 
   useEffect(() => {
     if (activeIndex > clusters.length - 1) {
@@ -201,10 +202,10 @@ export default function ReaderOverviewRuler({
     (index: number) => {
       const primary = clusters[index]?.members[0];
       if (primary) {
-        onActivateHighlight(primary.highlight.id);
+        onActivateMarker(primary.item_id, primary.lens_id);
       }
     },
-    [clusters, onActivateHighlight],
+    [clusters, onActivateMarker],
   );
 
   const handleKeyDown = useCallback(
@@ -241,18 +242,18 @@ export default function ReaderOverviewRuler({
 
   return (
     <div
-      className={styles.ruler}
-      data-testid="reader-overview-ruler"
+      className={styles.rail}
+      data-testid="reader-document-map-overview-rail"
       role="region"
-      aria-label="Highlights overview"
+      aria-label="Document Map overview"
     >
       <div className={styles.openSlot}>
         <Button
           variant="ghost"
           size="sm"
           iconOnly
-          aria-label="Open highlights pane"
-          onClick={onOpenHighlights}
+          aria-label="Open Document Map"
+          onClick={onOpenMap}
         >
           <ListOrdered size={14} aria-hidden="true" />
         </Button>
@@ -262,12 +263,12 @@ export default function ReaderOverviewRuler({
         className={styles.track}
         role="toolbar"
         aria-orientation="vertical"
-        aria-label="Highlights"
+        aria-label="Document Map markers"
         onKeyDown={handleKeyDown}
       >
         <div
           className={styles.band}
-          data-testid="reader-overview-band"
+          data-testid="reader-document-map-band"
           style={{
             top: `${viewportBand.start * trackHeight}px`,
             height: `${(viewportBand.end - viewportBand.start) * trackHeight}px`,
@@ -281,19 +282,19 @@ export default function ReaderOverviewRuler({
           const stacked = cluster.members.length > 1;
           return (
             <button
-              key={primary.highlight.id}
+              key={primary.id}
               type="button"
               className={cx(styles.tick, stacked && styles.tickStacked)}
               style={{
                 top: `${cluster.center}px`,
-                background: `var(--highlight-${primary.highlight.color})`,
+                background: markerColor(primary),
               }}
-              data-testid={`reader-overview-tick-${primary.highlight.id}`}
+              data-testid={`reader-document-map-marker-${primary.id}`}
               tabIndex={index === activeIndex ? 0 : -1}
               aria-label={
                 stacked
-                  ? `${cluster.members.length} highlights`
-                  : primary.highlight.exact
+                  ? `${cluster.members.length} Document Map markers`
+                  : primary.label
               }
               onClick={() => activate(index)}
               onPointerEnter={(event) => {
@@ -323,34 +324,38 @@ export default function ReaderOverviewRuler({
   );
 }
 
-function ClusterPreview({ members }: { members: PositionedHighlight[] }) {
+function markerColor(marker: ReaderDocumentMapMarker): string {
+  if (marker.tone === "highlight") return "var(--highlight-yellow)";
+  if (marker.tone === "citation") return "var(--highlight-purple)";
+  if (marker.tone === "connection") return "var(--highlight-blue)";
+  if (marker.tone === "chat") return "var(--highlight-green)";
+  if (marker.tone === "warning") return "var(--highlight-pink)";
+  return "var(--edge-strong)";
+}
+
+function ClusterPreview({ members }: { members: ReaderDocumentMapMarker[] }) {
   if (members.length >= 4) {
-    return <p className={styles.previewCount}>{members.length} highlights</p>;
+    return <p className={styles.previewCount}>{members.length} markers</p>;
   }
 
   if (members.length > 1) {
     return (
       <ul className={styles.previewStack}>
-        {members.map(({ highlight }) => (
-          <li key={highlight.id}>
-            <HighlightSnippet exact={highlight.exact} color={highlight.color} compact />
+        {members.map((marker) => (
+          <li key={marker.id}>
+            <strong>{marker.label}</strong>
+            {marker.preview ? <span>{marker.preview}</span> : null}
           </li>
         ))}
       </ul>
     );
   }
 
-  const { highlight } = members[0]!;
-  const note = highlight.linked_note_blocks?.[0]?.body_text;
+  const marker = members[0]!;
   return (
     <div className={styles.previewRich}>
-      <HighlightSnippet
-        exact={highlight.exact}
-        prefix={highlight.prefix}
-        suffix={highlight.suffix}
-        color={highlight.color}
-      />
-      {note ? <p className={styles.previewNote}>{note}</p> : null}
+      <strong>{marker.label}</strong>
+      {marker.preview ? <p className={styles.previewNote}>{marker.preview}</p> : null}
     </div>
   );
 }

@@ -3,7 +3,7 @@
 The chat pipeline uses this tool to let the model fetch the exact text of a
 resource. Data access is shared with prompt assembly through
 :mod:`nexus.services.resource_graph.resolve` (per-scheme bodies) and
-:mod:`nexus.services.media_document_map` (media documents); this module only
+:mod:`nexus.services.media_read_map` (media documents); this module only
 presents the result, labelling every read with an explicit ``kind``:
 
 - ``quote``       — a highlight's passage (prefix/exact/suffix + source + note).
@@ -32,7 +32,7 @@ from xml.sax.saxutils import escape as xml_escape
 from sqlalchemy.orm import Session
 
 from nexus.services.chat_quote import render_quote_block
-from nexus.services.media_document_map import (
+from nexus.services.media_read_map import (
     READ_DOCUMENT_MAX_CHARS,
     load_media_document,
     read_page_range,

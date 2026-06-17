@@ -23,7 +23,7 @@ Desktop mode:
 - enables `usePaneCanvas` in desktop mode
 - renders edge fades only from desktop canvas edge state
 - allows desktop-attached secondary panes
-- allows fixed primary chrome such as the reader overview ruler
+- allows fixed primary chrome such as the reader Document Map overview rail
 - mounts pane resize handles
 
 Mobile mode:
@@ -79,4 +79,4 @@ Fixed primary chrome is desktop-only. Pane bodies may publish fixed chrome, but
 mobile workspace mode makes that publication inert for desktop fixed-chrome
 rendering.
 
-The reader overview ruler is fixed primary chrome and remains desktop-only.
+The reader Document Map overview rail is fixed primary chrome and remains desktop-only.

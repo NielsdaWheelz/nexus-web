@@ -1,11 +1,11 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ReaderConnectionRow } from "@/lib/media/readerConnections";
+import type { ReaderConnectionRow } from "@/lib/reader/documentMap";
 import type {
   ConnectionEndpointOut,
   ConnectionOut,
 } from "@/lib/resourceGraph/connections";
-import ReaderConnectionsSurface from "./ReaderConnectionsSurface";
+import ReaderDocumentMapConnectionsLens from "./ReaderDocumentMapConnectionsLens";
 
 const MEDIA_ID = "11111111-1111-4111-8111-111111111111";
 const MESSAGE_ID = "22222222-2222-4222-8222-222222222222";
@@ -75,7 +75,7 @@ function row(overrides: Partial<ReaderConnectionRow> = {}): ReaderConnectionRow 
   };
 }
 
-describe("ReaderConnectionsSurface", () => {
+describe("ReaderDocumentMapConnectionsLens", () => {
   beforeEach(() => {
     vi.stubGlobal(
       "ResizeObserver",
@@ -96,7 +96,7 @@ describe("ReaderConnectionsSurface", () => {
     const onActivateTarget = vi.fn();
     const item = row();
     render(
-      <ReaderConnectionsSurface
+      <ReaderDocumentMapConnectionsLens
         rows={[item]}
         loading={false}
         error={null}
@@ -117,7 +117,7 @@ describe("ReaderConnectionsSurface", () => {
 
   it("shows non-jumpable citation status without a target button", () => {
     render(
-      <ReaderConnectionsSurface
+      <ReaderDocumentMapConnectionsLens
         rows={[
           row({
             anchor: null,

@@ -2844,12 +2844,12 @@ class TestFromUrlRemoteFiles:
         assert result["status"] == "success"
 
         response = auth_client.get(
-            f"/media/{media_id}/apparatus",
+            f"/media/{media_id}/document-map",
             headers=auth_headers(user_id),
         )
 
         assert response.status_code == 200, response.text
-        data = response.json()["data"]
+        data = response.json()["data"]["apparatus"]
         assert data["media_kind"] == "pdf"
         assert data["status"] == "ready"
         assert data["capabilities"]["has_sidecar_items"] is True
@@ -2951,12 +2951,12 @@ class TestFromUrlRemoteFiles:
         assert storage.get_object(build_storage_path(media_id, "pdf")) == pdf_bytes
 
         response = auth_client.get(
-            f"/media/{media_id}/apparatus",
+            f"/media/{media_id}/document-map",
             headers=auth_headers(user_id),
         )
 
         assert response.status_code == 200, response.text
-        data = response.json()["data"]
+        data = response.json()["data"]["apparatus"]
         assert data["media_kind"] == "pdf"
         assert data["status"] == "empty"
         assert data["items"] == []

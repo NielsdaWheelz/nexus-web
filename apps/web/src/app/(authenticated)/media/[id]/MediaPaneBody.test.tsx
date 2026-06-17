@@ -24,6 +24,7 @@ import {
 } from "@/lib/reader/__fixtures__/reader-apparatus";
 import type { WorkspaceAttachedSecondaryPaneState } from "@/lib/workspace/schema";
 import { READER_PULSE_HIGHLIGHT } from "@/lib/reader/pulseEvent";
+import type { ReaderApparatusResponse } from "@/lib/reader/apparatus";
 import MediaPaneBody from "./MediaPaneBody";
 
 const testState = vi.hoisted(() => ({
@@ -34,7 +35,7 @@ const testState = vi.hoisted(() => ({
   fragmentHtml: "<p>Readable text.</p>",
   fragmentCanonicalText: "",
   renderHtmlInMock: false,
-  apparatusResponse: null as unknown,
+  apparatusResponse: null as ReaderApparatusResponse | null,
   readerFocusMode: "off" as
     | "off"
     | "distraction_free"
@@ -205,20 +206,19 @@ vi.mock("@/components/HtmlRenderer", () => ({
   },
 }));
 
-vi.mock("@/components/reader/ReaderHighlightsSurface", () => ({
+vi.mock("@/components/reader/document-map/ReaderDocumentMapHighlightsLens", () => ({
   default: () => <div>Highlights secondary</div>,
 }));
 
-vi.mock("@/components/reader/ReaderOverviewRuler", () => ({
-  OVERVIEW_RULER_WIDTH_PX: 28,
-  default: ({ onOpenHighlights }: { onOpenHighlights: () => void }) => (
-    <button type="button" onClick={onOpenHighlights}>
-      Open highlights
+vi.mock("@/components/reader/ReaderDocumentMapOverviewRail", () => ({
+  default: ({ onOpenMap }: { onOpenMap: () => void }) => (
+    <button type="button" onClick={onOpenMap}>
+      Open Document Map
     </button>
   ),
 }));
 
-const OVERVIEW_RULER_WIDTH_PX = 28;
+const DOCUMENT_MAP_OVERVIEW_RAIL_WIDTH_PX = 28;
 const READER_SHELL_REPRESENTATIVE_ROW_FIXTURE_IDS = [
   "html-distill-gp-full",
   "html-numinous-ttft-full",
@@ -285,6 +285,116 @@ function mediaResponse() {
       can_search: true,
       can_play: false,
       can_download_file: false,
+    },
+  };
+}
+
+function apparatusResponse(): ReaderApparatusResponse {
+  return (
+    testState.apparatusResponse ?? {
+      media_id: "media-1",
+      media_kind: testState.mediaKind,
+      status: "empty",
+      extractor_version: "reader_apparatus_v1",
+      source_fingerprint: "sha256:test",
+      capabilities: {
+        has_inline_markers: false,
+        has_sidecar_items: false,
+        supports_hover_preview: false,
+        supports_jump_to_marker: false,
+        supports_jump_to_target: false,
+        has_probable_items: false,
+      },
+      items: [],
+      edges: [],
+      diagnostics: {},
+    }
+  );
+}
+
+function readerDocumentMapResponse() {
+  const apparatus = apparatusResponse();
+  const citationCount =
+    apparatus.status === "ready" || apparatus.status === "partial"
+      ? apparatus.items.length
+      : 0;
+  return {
+    media_id: "media-1",
+    media_kind: testState.mediaKind,
+    title: "Reader fixture",
+    status: "ready",
+    source_version: {
+      media_updated_at: "2026-01-01T00:00:00Z",
+      content_fingerprint: null,
+      apparatus_source_fingerprint: apparatus.source_fingerprint,
+      graph_max_updated_at: null,
+      highlights_max_updated_at: null,
+    },
+    lenses: [
+      {
+        id: "contents",
+        label: "Contents",
+        status: "ready",
+        item_count: 1,
+        anchored_count: 1,
+        unanchored_count: 0,
+      },
+      {
+        id: "highlights",
+        label: "Highlights",
+        status: "empty",
+        item_count: 0,
+        anchored_count: 0,
+        unanchored_count: 0,
+      },
+      {
+        id: "citations",
+        label: "Citations",
+        status: citationCount > 0 ? apparatus.status : "empty",
+        item_count: citationCount,
+        anchored_count: citationCount,
+        unanchored_count: 0,
+      },
+      {
+        id: "connections",
+        label: "Connections",
+        status: "empty",
+        item_count: 0,
+        anchored_count: 0,
+        unanchored_count: 0,
+      },
+      {
+        id: "chat",
+        label: "Chat",
+        status: "empty",
+        item_count: 0,
+        anchored_count: 0,
+        unanchored_count: 0,
+      },
+    ],
+    items: [],
+    markers: [
+      {
+        id: "marker:contents:section-1",
+        item_id: "section:section-1",
+        lens_id: "contents",
+        lane: "contents",
+        position: 0.5,
+        status: "container",
+        tone: "neutral",
+        label: "Section 1",
+        preview: null,
+      },
+    ],
+    navigation: null,
+    highlights: [],
+    apparatus,
+    connections: { anchored: [], unanchored: [], next_cursor: null },
+    chat_threads: [],
+    diagnostics: {
+      omitted_item_counts: {},
+      partial_lenses: [],
+      owner_warnings: [],
     },
   };
 }
@@ -495,27 +605,8 @@ describe("MediaPaneBody pane sizing", () => {
           page_list: [],
         });
       }
-      if (path === "/api/media/media-1/apparatus") {
-        return jsonResponse(
-          testState.apparatusResponse ?? {
-            media_id: "media-1",
-            media_kind: testState.mediaKind,
-            status: "empty",
-            extractor_version: "reader_apparatus_v1",
-            source_fingerprint: "sha256:test",
-            capabilities: {
-              has_inline_markers: false,
-              has_sidecar_items: false,
-              supports_hover_preview: false,
-              supports_jump_to_marker: false,
-              supports_jump_to_target: false,
-              has_probable_items: false,
-            },
-            items: [],
-            edges: [],
-            diagnostics: {},
-          },
-        );
+      if (path === "/api/media/media-1/document-map") {
+        return jsonResponse(readerDocumentMapResponse());
       }
       if (path === "/api/media/media-1/sections/section-1") {
         return jsonResponse({
@@ -573,8 +664,8 @@ describe("MediaPaneBody pane sizing", () => {
       await waitFor(() => {
         expect(onSetFixedChrome).toHaveBeenCalledWith(
           expect.objectContaining({
-            id: "reader-overview-ruler",
-            widthPx: OVERVIEW_RULER_WIDTH_PX,
+            id: "reader-document-map-overview-rail",
+            widthPx: DOCUMENT_MAP_OVERVIEW_RAIL_WIDTH_PX,
           }),
         );
       });
@@ -598,8 +689,8 @@ describe("MediaPaneBody pane sizing", () => {
     await waitFor(() => {
       expect(onSetFixedChrome).toHaveBeenCalledWith(
         expect.objectContaining({
-          id: "reader-overview-ruler",
-          widthPx: OVERVIEW_RULER_WIDTH_PX,
+          id: "reader-document-map-overview-rail",
+          widthPx: DOCUMENT_MAP_OVERVIEW_RAIL_WIDTH_PX,
         }),
       );
     });
@@ -774,7 +865,7 @@ describe("MediaPaneBody pane sizing", () => {
       const { onSetPaneSecondary } = renderMediaPane();
 
       await waitFor(() => {
-        expect(apiCallsForPath("/api/media/media-1/apparatus")).toHaveLength(1);
+        expect(apiCallsForPath("/api/media/media-1/document-map")).toHaveLength(1);
       });
       await waitFor(() => {
         const publication = latestSecondaryPublication(onSetPaneSecondary);
@@ -797,7 +888,7 @@ describe("MediaPaneBody pane sizing", () => {
       const { onSetPaneSecondary } = renderMediaPane();
 
       await waitFor(() => {
-        expect(apiCallsForPath("/api/media/media-1/apparatus")).toHaveLength(1);
+        expect(apiCallsForPath("/api/media/media-1/document-map")).toHaveLength(1);
       });
       await waitFor(() => {
         const publication = latestSecondaryPublication(onSetPaneSecondary);
@@ -1092,7 +1183,7 @@ describe("MediaPaneBody pane sizing", () => {
   });
 
   it.each(["epub", "web_article"] as const)(
-    "requests the Contents secondary from %s mobile reader menu",
+    "requests the Document Map secondary from %s mobile reader menu",
     async (kind) => {
       testState.mediaKind = kind;
       testState.includeToc = true;
@@ -1101,8 +1192,8 @@ describe("MediaPaneBody pane sizing", () => {
         renderMediaPane();
       await getContentsSurfaceBody(onSetPaneSecondary);
 
-      const contentsOption = await getChromeOption("show-contents");
-      expect(contentsOption.label).toBe("Show contents");
+      const contentsOption = await getChromeOption("document-map");
+      expect(contentsOption.label).toBe("Document Map");
 
       contentsOption.onSelect?.({ triggerEl: null });
 
@@ -1121,10 +1212,11 @@ describe("MediaPaneBody pane sizing", () => {
     const { onRequestSecondarySurface, onSetPaneSecondary } = renderMediaPane();
     await getContentsSurfaceBody(onSetPaneSecondary);
 
-    const contentsOption = await getChromeOption("show-contents");
+    const contentsOption = await getChromeOption("document-map");
     const optionIds = latestChromeOverrides()?.options?.map((option) => option.id);
 
-    expect(optionIds).toContain("show-contents");
+    expect(optionIds).toContain("document-map");
+    expect(optionIds).not.toContain("show-contents");
     expect(optionIds).not.toContain("show-highlights");
 
     contentsOption.onSelect?.({ triggerEl: null });
@@ -1136,7 +1228,7 @@ describe("MediaPaneBody pane sizing", () => {
   });
 
   it.each(["epub", "web_article"] as const)(
-    "requests the Contents secondary from %s toolbar controls",
+    "requests the Document Map secondary from %s toolbar controls",
     async (kind) => {
       testState.mediaKind = kind;
       testState.includeToc = true;
@@ -1145,7 +1237,7 @@ describe("MediaPaneBody pane sizing", () => {
       await getContentsSurfaceBody(onSetPaneSecondary);
 
       await renderLatestToolbar();
-      const contentsButton = screen.getByRole("button", { name: "Contents" });
+      const contentsButton = screen.getByRole("button", { name: "Document Map" });
       expect(contentsButton).toHaveAttribute("aria-pressed", "false");
 
       fireEvent.click(contentsButton);
@@ -1158,7 +1250,7 @@ describe("MediaPaneBody pane sizing", () => {
   );
 
   it.each(["epub", "web_article"] as const)(
-    "closes the active Contents secondary from %s toolbar controls",
+    "closes the active Document Map secondary from %s toolbar controls",
     async (kind) => {
       testState.mediaKind = kind;
       testState.includeToc = true;
@@ -1168,7 +1260,7 @@ describe("MediaPaneBody pane sizing", () => {
       await getContentsSurfaceBody(onSetPaneSecondary);
 
       await renderLatestToolbar();
-      const contentsButton = screen.getByRole("button", { name: "Contents" });
+      const contentsButton = screen.getByRole("button", { name: "Document Map" });
       expect(contentsButton).toHaveAttribute("aria-pressed", "true");
 
       fireEvent.click(contentsButton);

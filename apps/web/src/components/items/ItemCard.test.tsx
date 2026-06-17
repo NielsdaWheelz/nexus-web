@@ -4,7 +4,7 @@ import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import ItemCard from "./ItemCard";
 
-// Drives showFullText the way ReaderHighlightsSurface does, so a click on the
+// Drives showFullText the way ReaderDocumentMapHighlightsLens does, so a click on the
 // card's own show-more toggle flips it. Width-constrained so a long snippet
 // overflows the 6-line clamp (clamp geometry is real in the Chromium project).
 function ExpandableHighlightCard({ exact }: { exact: string }) {

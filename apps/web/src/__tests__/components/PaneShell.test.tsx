@@ -330,7 +330,7 @@ describe("PaneShell", () => {
         onResizePrimaryPane={() => {}}
         isMobile
         fixedChromePublication={{
-          id: "reader-overview-ruler",
+          id: "reader-document-map-overview-rail",
           widthPx: 48,
           body: <div>Fixed chrome</div>,
         }}

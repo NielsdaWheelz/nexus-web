@@ -110,9 +110,9 @@ def test_real_browser_captured_article_fixture_matches_reader_apparatus_matrix(
     assert result["status"] == "success", result
 
     register_background_job_cleanup(direct_db, media_id)
-    apparatus_response = auth_client.get(f"/media/{media_id}/apparatus", headers=headers)
+    apparatus_response = auth_client.get(f"/media/{media_id}/document-map", headers=headers)
     assert apparatus_response.status_code == 200, apparatus_response.text
-    apparatus = apparatus_response.json()["data"]
+    apparatus = apparatus_response.json()["data"]["apparatus"]
     assert apparatus["media_kind"] == "web_article"
     _assert_apparatus_matches_case(apparatus, case)
 
@@ -159,9 +159,9 @@ def test_real_epub_noteref_persists_reader_apparatus(
         assert result["chapter_count"] == case["expected"]["chapter_count"], result
 
         register_background_job_cleanup(direct_db, media_id)
-        apparatus_response = auth_client.get(f"/media/{media_id}/apparatus", headers=headers)
+        apparatus_response = auth_client.get(f"/media/{media_id}/document-map", headers=headers)
         assert apparatus_response.status_code == 200, apparatus_response.text
-        apparatus = apparatus_response.json()["data"]
+        apparatus = apparatus_response.json()["data"]["apparatus"]
         assert apparatus["media_kind"] == "epub"
         assert apparatus["status"] == case["expected"]["status"]
         assert_item_and_edge_counts_match_case(
@@ -246,9 +246,9 @@ def test_real_standardebooks_epub_cross_fragment_endnotes_persist_reader_apparat
         assert result["chapter_count"] == case.chapter_count, result
 
         register_background_job_cleanup(direct_db, media_id)
-        apparatus_response = auth_client.get(f"/media/{media_id}/apparatus", headers=headers)
+        apparatus_response = auth_client.get(f"/media/{media_id}/document-map", headers=headers)
         assert apparatus_response.status_code == 200, apparatus_response.text
-        apparatus = apparatus_response.json()["data"]
+        apparatus = apparatus_response.json()["data"]["apparatus"]
         assert apparatus["media_kind"] == "epub"
         _assert_epub_apparatus_matches_case(apparatus, case)
         assert_epub_noteref_pairs_match_apparatus(apparatus, expected_noterefs)
@@ -299,9 +299,9 @@ def test_real_epub_waste_land_notes_chapter_does_not_invent_reader_apparatus(
         assert result["chapter_count"] > 0, result
 
         register_background_job_cleanup(direct_db, media_id)
-        apparatus_response = auth_client.get(f"/media/{media_id}/apparatus", headers=headers)
+        apparatus_response = auth_client.get(f"/media/{media_id}/document-map", headers=headers)
         assert apparatus_response.status_code == 200, apparatus_response.text
-        apparatus = apparatus_response.json()["data"]
+        apparatus = apparatus_response.json()["data"]["apparatus"]
         assert apparatus["media_kind"] == "epub"
         assert apparatus["status"] == case["expected"]["status"]
         assert apparatus["items"] == []
@@ -357,9 +357,9 @@ def test_real_pdf_attention_persists_native_link_graph_reader_apparatus(
         assert result["has_text"] is True, result
 
         register_background_job_cleanup(direct_db, media_id)
-        apparatus_response = auth_client.get(f"/media/{media_id}/apparatus", headers=headers)
+        apparatus_response = auth_client.get(f"/media/{media_id}/document-map", headers=headers)
         assert apparatus_response.status_code == 200, apparatus_response.text
-        apparatus = apparatus_response.json()["data"]
+        apparatus = apparatus_response.json()["data"]["apparatus"]
         assert apparatus["media_kind"] == "pdf"
         _assert_pdf_native_link_graph_apparatus_matches_case(
             apparatus,
@@ -414,9 +414,9 @@ def test_real_pdf_law_review_fixture_persists_legal_footnote_reader_apparatus(
         assert result["has_text"] is True, result
 
         register_background_job_cleanup(direct_db, media_id)
-        apparatus_response = auth_client.get(f"/media/{media_id}/apparatus", headers=headers)
+        apparatus_response = auth_client.get(f"/media/{media_id}/document-map", headers=headers)
         assert apparatus_response.status_code == 200, apparatus_response.text
-        apparatus = apparatus_response.json()["data"]
+        apparatus = apparatus_response.json()["data"]["apparatus"]
         assert apparatus["media_kind"] == "pdf"
         _assert_pdf_legal_footnote_apparatus_matches_case(
             apparatus,
@@ -487,9 +487,9 @@ def test_real_pdf_unsupported_adapter_fixture_does_not_invent_reader_apparatus(
         assert result["has_text"] is True, result
 
         register_background_job_cleanup(direct_db, media_id)
-        apparatus_response = auth_client.get(f"/media/{media_id}/apparatus", headers=headers)
+        apparatus_response = auth_client.get(f"/media/{media_id}/document-map", headers=headers)
         assert apparatus_response.status_code == 200, apparatus_response.text
-        apparatus = apparatus_response.json()["data"]
+        apparatus = apparatus_response.json()["data"]["apparatus"]
         assert apparatus["media_kind"] == "pdf"
         assert apparatus["status"] == case["expected"]["status"]
         assert apparatus["items"] == []

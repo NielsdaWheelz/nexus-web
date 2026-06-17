@@ -4,7 +4,9 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
+type Params = Promise<{ id: string }>;
+
+export async function GET(req: Request, { params }: { params: Params }) {
   const { id } = await params;
-  return proxyToFastAPI(req, `/media/${id}/reader-connections`);
+  return proxyToFastAPI(req, `/media/${id}/document-map`);
 }

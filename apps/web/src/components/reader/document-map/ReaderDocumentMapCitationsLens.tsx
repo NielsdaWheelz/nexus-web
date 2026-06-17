@@ -14,13 +14,13 @@ import {
   type ReaderApparatusCapabilities,
   type ReaderApparatusRow,
 } from "@/lib/reader/apparatus";
-import AnchoredSidecarSurface from "./AnchoredSidecarSurface";
-import type { AnchoredReaderRow } from "./useAnchoredReaderProjection";
-import styles from "./ReaderApparatusSurface.module.css";
+import AnchoredSidecarSurface from "../AnchoredSidecarSurface";
+import type { AnchoredReaderRow } from "../useAnchoredReaderProjection";
+import styles from "./ReaderDocumentMapCitationsLens.module.css";
 
 const ROW_HEIGHT = 112;
 
-interface ReaderApparatusSurfaceProps {
+interface ReaderDocumentMapCitationsLensProps {
   rows: ReaderApparatusRow[];
   projectRows?: ReaderApparatusRow[];
   capabilities: ReaderApparatusCapabilities;
@@ -34,7 +34,7 @@ interface ReaderApparatusSurfaceProps {
   pdfActivePage?: number | null;
 }
 
-export default function ReaderApparatusSurface({
+export default function ReaderDocumentMapCitationsLens({
   rows,
   projectRows,
   capabilities,
@@ -46,7 +46,7 @@ export default function ReaderApparatusSurface({
   measureKey = 0,
   isMobile,
   pdfActivePage = null,
-}: ReaderApparatusSurfaceProps) {
+}: ReaderDocumentMapCitationsLensProps) {
   const anchoredRows = useMemo(
     () =>
       (projectRows ?? rows)

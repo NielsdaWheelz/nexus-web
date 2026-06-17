@@ -8,7 +8,7 @@ import {
 } from "./workspace";
 import { stateChangingApiHeaders } from "./api";
 
-interface ReaderOverviewRulerSeed {
+interface ReaderDocumentMapSeed {
   media_id: string;
   near_fragment_id: string;
   near_highlight_id: string;
@@ -18,18 +18,18 @@ interface ReaderOverviewRulerSeed {
   far_exact: string;
 }
 
-function readReaderOverviewRulerSeed(): ReaderOverviewRulerSeed {
+function readReaderDocumentMapSeed(): ReaderDocumentMapSeed {
   const seedPath = path.join(
     __dirname,
     "..",
     ".seed",
-    "reader-overview-ruler-media.json",
+    "reader-document-map-media.json",
   );
   const parsed = JSON.parse(
     readFileSync(seedPath, "utf-8"),
-  ) as ReaderOverviewRulerSeed;
+  ) as ReaderDocumentMapSeed;
 
-  const requiredFields: Array<keyof ReaderOverviewRulerSeed> = [
+  const requiredFields: Array<keyof ReaderDocumentMapSeed> = [
     "media_id",
     "near_fragment_id",
     "near_highlight_id",
@@ -42,7 +42,7 @@ function readReaderOverviewRulerSeed(): ReaderOverviewRulerSeed {
     const value = parsed[field];
     if (typeof value !== "string" || value.trim().length === 0) {
       throw new Error(
-        `Invalid reader-overview-ruler seed field "${field}" at ${seedPath}`,
+        `Invalid reader-document-map seed field "${field}" at ${seedPath}`,
       );
     }
   }
@@ -55,15 +55,17 @@ function inlineHighlight(page: Page, highlightId: string): Locator {
     .first();
 }
 
-function rulerTick(page: Page, highlightId: string): Locator {
-  return activeWorkspacePane(page).getByTestId(`reader-overview-tick-${highlightId}`);
+function railMarker(page: Page, highlightId: string): Locator {
+  return activeWorkspacePane(page).getByTestId(
+    `reader-document-map-marker-marker:highlights:highlight:${highlightId}`,
+  );
 }
 
-test.describe("reader overview ruler", () => {
-  test("ruler shows ticks across the whole document and jumps to an off-screen highlight", async ({
+test.describe("reader Document Map overview rail", () => {
+  test("rail shows markers across the whole document and jumps to an off-screen highlight", async ({
     page,
   }, testInfo) => {
-    const seed = readReaderOverviewRulerSeed();
+    const seed = readReaderDocumentMapSeed();
     const resetResponse = await page.request.put(`/api/media/${seed.media_id}/reader-state`, {
       data: null,
       headers: stateChangingApiHeaders(),
@@ -73,7 +75,7 @@ test.describe("reader overview ruler", () => {
     await page.setViewportSize({ width: 1280, height: 900 });
     await gotoSinglePaneWorkspace(
       page,
-      workspaceE2eDeviceId(testInfo, "e2e-reader-overview-ruler"),
+      workspaceE2eDeviceId(testInfo, "e2e-reader-document-map"),
       `/media/${seed.media_id}`,
     );
     const activePane = activeWorkspacePane(page);
@@ -86,34 +88,34 @@ test.describe("reader overview ruler", () => {
       inlineHighlight(page, seed.far_highlight_id),
     ).toHaveCount(0);
 
-    // The overview ruler is present on desktop, with its open-highlights button.
-    const ruler = activePane.getByTestId("reader-overview-ruler");
-    await expect(ruler).toBeVisible();
+    // The overview rail is present on desktop, with its Document Map button.
+    const rail = activePane.getByTestId("reader-document-map-overview-rail");
+    await expect(rail).toBeVisible();
     await expect(
-      ruler.getByRole("button", { name: "Open highlights pane" }),
+      rail.getByRole("button", { name: "Open Document Map" }),
     ).toBeVisible();
 
-    // The ruler maps the whole media: it renders a tick for the on-screen near
-    // highlight and a tick for the far highlight whose fragment is not rendered.
-    await expect(rulerTick(page, seed.near_highlight_id)).toBeVisible();
-    const farTick = rulerTick(page, seed.far_highlight_id);
-    await expect(farTick).toBeVisible();
+    // The rail maps the whole media: it renders a marker for the on-screen near
+    // highlight and a marker for the far highlight whose fragment is not rendered.
+    await expect(railMarker(page, seed.near_highlight_id)).toBeVisible();
+    const farMarker = railMarker(page, seed.far_highlight_id);
+    await expect(farMarker).toBeVisible();
 
-    // The far tick sits below the near tick because it is later in the document.
-    const nearTickBox = await rulerTick(
+    // The far marker sits below the near marker because it is later in the document.
+    const nearMarkerBox = await railMarker(
       page,
       seed.near_highlight_id,
     ).boundingBox();
-    const farTickBox = await farTick.boundingBox();
-    expect(nearTickBox).not.toBeNull();
-    expect(farTickBox).not.toBeNull();
-    if (nearTickBox && farTickBox) {
-      expect(farTickBox.y).toBeGreaterThan(nearTickBox.y);
+    const farMarkerBox = await farMarker.boundingBox();
+    expect(nearMarkerBox).not.toBeNull();
+    expect(farMarkerBox).not.toBeNull();
+    if (nearMarkerBox && farMarkerBox) {
+      expect(farMarkerBox.y).toBeGreaterThan(nearMarkerBox.y);
     }
 
-    // Clicking the off-screen tick navigates the reader to that highlight: its
+    // Clicking the off-screen marker navigates the reader to that highlight: its
     // fragment loads, the highlight renders inline, and the pulse scrolls it in.
-    await farTick.click();
+    await farMarker.click();
 
     const farHighlight = inlineHighlight(page, seed.far_highlight_id);
     await expect(farHighlight).toBeAttached({ timeout: 15_000 });

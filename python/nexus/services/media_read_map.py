@@ -1,9 +1,8 @@
-"""Per-kind media document access — the single owner of document-map and
-full-read SQL for a media item.
+"""Per-kind media read access for inspect/read tools.
 
 Three operations, one place:
-- ``get_media_document_map_for_viewer`` — an ordered, navigable section list
-  (the agent's ``inspect_resource`` document map).
+- ``get_media_read_map_for_viewer`` — an ordered, navigable section list
+  (the agent's ``inspect_resource`` read map).
 - ``load_media_document`` — the whole canonical body + char count (the read
   tool's ``media:`` full / too_large read).
 - ``read_page_range`` — a PDF page-range slice of ``media.plain_text`` (the read
@@ -33,11 +32,11 @@ from nexus.services.reader_navigation import get_media_navigation_for_viewer
 
 READ_DOCUMENT_MAX_CHARS = 50_000  # media: read over this → too_large redirect
 _PAGE_GROUP_CHARS = 6_000  # PDF pages are grouped into read sections up to ~this size
-_MAX_MAP_SECTIONS = 200  # cap the document map; the model app_searches for the rest
+_MAX_MAP_SECTIONS = 200  # cap the read map; the model app_searches for the rest
 
 
 @dataclass(frozen=True)
-class DocumentMapSection:
+class MediaReadMapSection:
     label: str
     section_kind: str  # "heading" | "page_range" | "transcript_segment"
     read_uri: str  # fragment:<id> | page_range:<media>:<a>-<b>
@@ -52,11 +51,11 @@ class DocumentMapSection:
 
 
 @dataclass(frozen=True)
-class MediaDocumentMap:
+class MediaReadMap:
     media_id: UUID
     kind: str
     title: str
-    sections: list[DocumentMapSection] = field(default_factory=list)
+    sections: list[MediaReadMapSection] = field(default_factory=list)
     total_sections: int = 0  # full count before the _MAX_MAP_SECTIONS cap
 
 
@@ -77,9 +76,9 @@ class MediaDocumentSummary:
     word_count: int | None
 
 
-def get_media_document_map_for_viewer(
+def get_media_read_map_for_viewer(
     db: Session, viewer_id: UUID, media_id: UUID
-) -> MediaDocumentMap | None:
+) -> MediaReadMap | None:
     if not can_read_media(db, viewer_id, media_id):
         return None
     row = db.execute(
@@ -114,12 +113,12 @@ def get_media_document_map_for_viewer(
     elif kind in ("podcast_episode", "video"):
         sections = _transcript_sections(db, media_id)
     else:
-        raise AssertionError(f"Unhandled media kind for document map: {kind}")
+        raise AssertionError(f"Unhandled media kind for media read map: {kind}")
     numbered_sections = [
         replace(section, ordinal=ordinal) for ordinal, section in enumerate(sections, start=1)
     ]
     total = len(numbered_sections)
-    return MediaDocumentMap(
+    return MediaReadMap(
         media_id=media_id,
         kind=kind,
         title=title,
@@ -134,7 +133,7 @@ def load_media_document_summary(
     """Return the same user-visible metrics as inspect/read for a media item.
 
     ``resource_graph.resolve`` uses this for the pointer summary so section
-    counts do not drift from the document map's per-kind ownership rules.
+    counts do not drift from the media read map's per-kind ownership rules.
     """
     if not can_read_media(db, viewer_id, media_id):
         return None
@@ -310,7 +309,7 @@ def read_page_range(
 
 def _heading_sections(
     db: Session, viewer_id: UUID, media_id: UUID
-) -> list[DocumentMapSection] | None:
+) -> list[MediaReadMapSection] | None:
     try:
         nav = get_media_navigation_for_viewer(db, viewer_id, media_id)
     except ApiError:
@@ -320,12 +319,12 @@ def _heading_sections(
         return None
     fragment_ids = [s.fragment_id for s in nav.sections if s.fragment_id is not None]
     previews = _fragment_previews(db, fragment_ids)
-    sections: list[DocumentMapSection] = []
+    sections: list[MediaReadMapSection] = []
     for nav_section in nav.sections:
         if nav_section.fragment_id is None:
             continue
         sections.append(
-            DocumentMapSection(
+            MediaReadMapSection(
                 label=nav_section.label or "(section)",
                 section_kind="heading",
                 read_uri=f"fragment:{nav_section.fragment_id}",
@@ -336,7 +335,7 @@ def _heading_sections(
     return sections
 
 
-def _page_sections(db: Session, media_id: UUID) -> list[DocumentMapSection]:
+def _page_sections(db: Session, media_id: UUID) -> list[MediaReadMapSection]:
     plain_text = str(
         db.scalar(text("SELECT plain_text FROM media WHERE id = :id"), {"id": media_id}) or ""
     )
@@ -351,7 +350,7 @@ def _page_sections(db: Session, media_id: UUID) -> list[DocumentMapSection]:
         ),
         {"id": media_id},
     ).fetchall()
-    sections: list[DocumentMapSection] = []
+    sections: list[MediaReadMapSection] = []
     group: list[tuple[int, str | None, int, int]] = []
 
     def flush() -> None:
@@ -365,7 +364,7 @@ def _page_sections(db: Session, media_id: UUID) -> list[DocumentMapSection]:
             else f"Pages {first_display}-{last_display}"
         )
         sections.append(
-            DocumentMapSection(
+            MediaReadMapSection(
                 label=label,
                 section_kind="page_range",
                 read_uri=f"page_range:{media_id}:{first_page}-{last_page}",
@@ -385,7 +384,7 @@ def _page_sections(db: Session, media_id: UUID) -> list[DocumentMapSection]:
     return sections
 
 
-def _transcript_sections(db: Session, media_id: UUID) -> list[DocumentMapSection]:
+def _transcript_sections(db: Session, media_id: UUID) -> list[MediaReadMapSection]:
     chapters: list[tuple[str, int, int | None]] = [
         (str(row[0]), int(row[1]), int(row[2]) if row[2] is not None else None)
         for row in db.execute(
@@ -411,13 +410,13 @@ def _transcript_sections(db: Session, media_id: UUID) -> list[DocumentMapSection
         ),
         {"id": media_id},
     ).fetchall()
-    sections: list[DocumentMapSection] = []
+    sections: list[MediaReadMapSection] = []
     for row in fragments:
         canonical_text = str(row[1] or "")
         t_start_ms = int(row[2]) if row[2] is not None else None
         t_end_ms = int(row[3]) if row[3] is not None else None
         sections.append(
-            DocumentMapSection(
+            MediaReadMapSection(
                 label=_preview(canonical_text) or "(segment)",
                 section_kind="transcript_segment",
                 read_uri=f"fragment:{row[0]}",

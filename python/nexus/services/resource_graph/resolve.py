@@ -32,7 +32,7 @@ from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas.retrieval import retrieval_locator_json
 from nexus.services import library_entries
 from nexus.services.locator_resolver import locator_from_resolution, resolve_evidence_span
-from nexus.services.media_document_map import load_media_document_summary
+from nexus.services.media_read_map import load_media_document_summary
 from nexus.services.resource_graph.highlight_notes import linked_note_blocks_for_highlights
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 
@@ -297,9 +297,9 @@ def _reader_target_for_content_chunk(
             return None, None
         return None, locator_from_resolution(
             resolution,
-                media_id=UUID(str(row["owner_id"])),
-                media_kind="note",
-            )
+            media_id=UUID(str(row["owner_id"])),
+            media_kind="note",
+        )
     return None, _note_locator_from_summary_locator(row["summary_locator"])
 
 
@@ -323,10 +323,10 @@ def _note_block_locator_for_block(
     if not body:
         return None
     return retrieval_locator_json(
-            {
-                "type": "note_block_offsets",
-                "block_id": str(block_id),
-                "start_offset": 0,
+        {
+            "type": "note_block_offsets",
+            "block_id": str(block_id),
+            "start_offset": 0,
             "end_offset": len(body),
         }
     )

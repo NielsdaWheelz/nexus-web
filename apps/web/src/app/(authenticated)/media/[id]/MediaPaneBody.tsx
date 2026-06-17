@@ -22,17 +22,16 @@ import type {
   MediaReaderTarget,
   ReaderSourceTarget,
 } from "@/lib/conversations/readerTarget";
-import ReaderHighlightsSurface from "@/components/reader/ReaderHighlightsSurface";
-import ReaderConnectionsSurface from "@/components/reader/ReaderConnectionsSurface";
-import ReaderOverviewRuler from "@/components/reader/ReaderOverviewRuler";
-import { positionHighlights } from "@/components/reader/overviewPositions";
+import ReaderDocumentMapHighlightsLens from "@/components/reader/document-map/ReaderDocumentMapHighlightsLens";
+import ReaderDocumentMapConnectionsLens from "@/components/reader/document-map/ReaderDocumentMapConnectionsLens";
+import ReaderDocumentMapOverviewRail from "@/components/reader/ReaderDocumentMapOverviewRail";
 import {
   toPdfAnchoredReaderRow,
   toTextAnchoredReaderRow,
 } from "@/components/reader/toAnchoredHighlightRow";
 import type { AnchoredReaderRow } from "@/components/reader/useAnchoredReaderProjection";
-import ReaderApparatusSurface from "@/components/reader/ReaderApparatusSurface";
-import { OVERVIEW_RULER_WIDTH_PX } from "@/lib/workspace/fixedPrimaryChrome";
+import ReaderDocumentMapCitationsLens from "@/components/reader/document-map/ReaderDocumentMapCitationsLens";
+import { DOCUMENT_MAP_OVERVIEW_RAIL_WIDTH_PX } from "@/lib/workspace/fixedPrimaryChrome";
 import PdfReader, {
   type PdfHighlightOut,
   type PdfReaderIntrinsicWidthState,
@@ -97,11 +96,11 @@ import ActionMenu, { type ActionMenuOption } from "@/components/ui/ActionMenu";
 import LibraryMembershipPanel from "@/components/LibraryMembershipPanel";
 import { isRetrievalLocator } from "@/lib/api/sse/locators";
 import {
-  listReaderConnections,
-  type ReaderConnectionPage,
+  getReaderDocumentMap,
+  type ReaderDocumentMap,
+  type ReaderDocumentMapLensId,
   type ReaderConnectionRow,
-} from "@/lib/media/readerConnections";
-import type { EdgeOrigin } from "@/lib/resourceGraph/edges";
+} from "@/lib/reader/documentMap";
 import {
   usePaneParam,
   usePaneSearchParams,
@@ -149,10 +148,8 @@ import {
   type ReaderNavigationSection,
 } from "@/lib/media/readerNavigation";
 import {
-  assertReaderApparatusResponse,
   buildReaderApparatusRows,
   readerApparatusRowPresentation,
-  type ReaderApparatusResponse,
   type ReaderApparatusRow,
 } from "@/lib/reader/apparatus";
 import type { RetrievalLocator } from "@/lib/api/sse/locators";
@@ -185,7 +182,6 @@ import {
   type Highlight,
   type MediaHighlight,
   fetchHighlights,
-  fetchMediaHighlights,
   createHighlight,
   updateHighlight,
   deleteHighlight,
@@ -205,7 +201,7 @@ import {
   resolveEpubInternalLinkTarget,
   resolveSectionAnchorId,
 } from "./epubHelpers";
-import { ChevronLeft, ChevronRight, ListTree, RefreshCw } from "lucide-react";
+import { ChevronLeft, ChevronRight, Map as MapIcon, RefreshCw } from "lucide-react";
 import {
   dispatchReaderPulse,
   type ReaderPulseTarget,
@@ -370,19 +366,25 @@ const MOBILE_SELECTION_STABILIZATION_DELAY_MS = 180;
 const READER_POSITION_BUCKET_CP = 1024;
 const METADATA_REENRICHMENT_POLL_INTERVAL_MS = 3000;
 const METADATA_REENRICHMENT_MAX_POLLS = 40;
-const READER_APPARATUS_MEDIA_KINDS = new Set(["web_article", "epub", "pdf"]);
 const READER_APPARATUS_FOCUS_CLASS = "reader-apparatus-focused";
 const READER_APPARATUS_HOVER_CLASS = "reader-apparatus-hover";
 const READER_APPARATUS_PULSE_CLASS = "reader-apparatus-pulse";
 const READER_APPARATUS_PULSE_MS = 1200;
-const READER_CONNECTION_ORIGINS: EdgeOrigin[] = [
-  "citation",
-  "note_body",
-  "highlight_note",
-  "user",
-  "synapse",
-  "system",
-];
+
+function readerSurfaceForLens(lensId: ReaderDocumentMapLensId) {
+  switch (lensId) {
+    case "contents":
+      return "reader-contents";
+    case "highlights":
+      return "reader-highlights";
+    case "citations":
+      return "reader-apparatus";
+    case "connections":
+      return "reader-connections";
+    case "chat":
+      return "reader-doc-chat";
+  }
+}
 
 interface ReaderApparatusPreviewState {
   itemId: string;
@@ -408,10 +410,6 @@ function buildSelectionSnapshotKey(selection: SelectionState): string {
     width.toFixed(1),
     height.toFixed(1),
   ].join("::");
-}
-
-function isReaderApparatusMediaKind(kind: string | null | undefined): boolean {
-  return typeof kind === "string" && READER_APPARATUS_MEDIA_KINDS.has(kind);
 }
 
 function readerApparatusSelector(itemId: string): string {
@@ -658,15 +656,13 @@ export default function MediaPaneBody() {
 
   // ---- Highlight interaction state ----
   const [highlights, setHighlights] = useState<Highlight[]>([]);
-  // Media-wide highlights (every fragment/page), feeding the overview ruler.
-  // Loaded once per media open and re-fetched after each highlight mutation;
-  // distinct from the per-fragment `highlights` above.
   const [mediaHighlights, setMediaHighlights] = useState<MediaHighlight[]>([]);
+  const [documentMapVersion, setDocumentMapVersion] = useState(0);
   const [pdfHighlightsPaneState, setPdfHighlightsPaneState] =
     useState<PdfHighlightsPaneState>(EMPTY_PDF_HIGHLIGHTS_PANE_STATE);
   // Accumulated PDF highlights across rendered pages. The reader streams page
-  // highlights into us via `onPageHighlightsChange`; the gutter projects only
-  // highlights whose page geometry is currently visible.
+  // highlights into us via `onPageHighlightsChange`; visible projection uses
+  // only highlights whose page geometry is currently rendered.
   const [pdfDocumentHighlights, setPdfDocumentHighlights] = useState<
     PdfHighlightOut[]
   >([]);
@@ -799,9 +795,9 @@ export default function MediaPaneBody() {
   const contentRef = useRef<HTMLDivElement>(null);
   const pdfContentRef = useRef<HTMLDivElement>(null);
   const cursorRef = useRef<CanonicalCursorResult | null>(null);
-  // A ruler activation that had to navigate to a non-active fragment/section
-  // before its highlight could be pulsed; dispatched once that content renders.
-  const pendingRulerPulseRef = useRef<{
+  // A Document Map marker activation that had to navigate to a non-active
+  // fragment/section before its highlight could be pulsed.
+  const pendingDocumentMapPulseRef = useRef<{
     fragmentId: string;
     target: ReaderPulseTarget;
   } | null>(null);
@@ -1006,27 +1002,9 @@ export default function MediaPaneBody() {
       return { sections: payload.sections, toc: payload.toc };
     },
   });
-  const readerApparatusResource = useResource<ReaderApparatusResponse>({
-    cacheKey:
-      media && canRead && isReaderApparatusMediaKind(media.kind)
-        ? `${id}:reader-apparatus`
-        : null,
-    load: async (signal) => {
-      const response = await apiFetch<{ data: unknown }>(
-        `/api/media/${id}/apparatus`,
-        { signal },
-      );
-      return assertReaderApparatusResponse(response.data);
-    },
-  });
-  const readerConnectionsResource = useResource<ReaderConnectionPage>({
-    cacheKey: media && canRead ? `${id}:reader-connections` : null,
-    load: (signal) =>
-      listReaderConnections(id, {
-        origins: READER_CONNECTION_ORIGINS,
-        limit: 100,
-        signal,
-      }),
+  const readerDocumentMapResource = useResource<ReaderDocumentMap>({
+    cacheKey: media && canRead ? `${id}:reader-document-map:${documentMapVersion}` : null,
+    load: (signal) => getReaderDocumentMap(id, { signal }),
   });
   const epubSections =
     epubNavigationResource.status === "ready"
@@ -1045,8 +1023,8 @@ export default function MediaPaneBody() {
       ? webNavigationResource.data.toc
       : null;
   const readerApparatus =
-    readerApparatusResource.status === "ready"
-      ? readerApparatusResource.data
+    readerDocumentMapResource.status === "ready"
+      ? readerDocumentMapResource.data.apparatus
       : null;
   const readerApparatusRows = useMemo(
     () =>
@@ -1059,20 +1037,27 @@ export default function MediaPaneBody() {
   );
   const readerConnectionRows = useMemo(
     () =>
-      readerConnectionsResource.status === "ready"
+      readerDocumentMapResource.status === "ready"
         ? [
-            ...readerConnectionsResource.data.anchored,
-            ...readerConnectionsResource.data.unanchored,
+            ...readerDocumentMapResource.data.connections.anchored,
+            ...readerDocumentMapResource.data.connections.unanchored,
           ]
         : [],
-    [readerConnectionsResource],
+    [readerDocumentMapResource],
   );
-  const readerConnectionsError =
-    readerConnectionsResource.status === "error"
-      ? toFeedback(readerConnectionsResource.error, {
-          fallback: "Connections could not be loaded.",
+  const documentMapConnectionsError =
+    readerDocumentMapResource.status === "error"
+      ? toFeedback(readerDocumentMapResource.error, {
+          fallback: "Document Map could not be loaded.",
         })
       : null;
+  const documentMapMarkers = useMemo(
+    () =>
+      readerDocumentMapResource.status === "ready"
+        ? readerDocumentMapResource.data.markers
+        : [],
+    [readerDocumentMapResource],
+  );
 
   // Active content
   const activeContent: ActiveContent | null = useMemo(() => {
@@ -2322,38 +2307,19 @@ export default function MediaPaneBody() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- justify-eslint-override: only re-fetch when active fragment changes
   }, [activeContent?.fragmentId]);
 
-  // Media-wide highlights for the overview ruler: loaded once per media open.
   useEffect(() => {
     if (!canRead) {
       setMediaHighlights([]);
       return;
     }
-    let cancelled = false;
-    void fetchMediaHighlights(id)
-      .then((loaded) => {
-        if (!cancelled) {
-          setMediaHighlights(loaded);
-        }
-      })
-      .catch((err) => {
-        if (handleUnauthenticatedApiError(err)) return;
-        console.error("Failed to load media highlights:", err);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [canRead, id]);
+    if (readerDocumentMapResource.status === "ready") {
+      setMediaHighlights(readerDocumentMapResource.data.highlights);
+    }
+  }, [canRead, readerDocumentMapResource]);
 
-  // Re-fetch the media-wide highlights after a highlight mutation so the
-  // overview ruler lags the per-fragment `highlights` by one fetch.
   const refreshMediaHighlights = useCallback(() => {
-    void fetchMediaHighlights(id)
-      .then(setMediaHighlights)
-      .catch((err) => {
-        if (handleUnauthenticatedApiError(err)) return;
-        console.error("Failed to refresh media highlights:", err);
-      });
-  }, [id]);
+    setDocumentMapVersion((version) => version + 1);
+  }, []);
 
   // ==========================================================================
   // Highlight Rendering
@@ -3817,11 +3783,21 @@ export default function MediaPaneBody() {
     secondaryPane.visibility === "visible"
       ? secondaryPane.activeSurfaceId
       : null;
-  // The overview ruler is always on for desktop readable media; the secondary opens
-  // to its right. Both occupy width the pane must reserve.
-  const showDesktopOverviewRuler = !isMobileViewport && showHighlightsPane;
-  const desktopOverviewRulerWidthPx = showDesktopOverviewRuler
-    ? OVERVIEW_RULER_WIDTH_PX
+  const defaultDocumentMapSurface = contentsAvailable
+    ? "reader-contents"
+    : showHighlightsPane
+      ? "reader-highlights"
+      : showApparatusPane
+        ? "reader-apparatus"
+        : "reader-doc-chat";
+  const documentMapSurfaceActive = activeReaderSecondarySurface !== null;
+  const openDocumentMap = useCallback(() => {
+    requestSecondarySurface?.(defaultDocumentMapSurface);
+  }, [defaultDocumentMapSurface, requestSecondarySurface]);
+  const showDesktopDocumentMapRail =
+    !isMobileViewport && canRead && documentMapMarkers.length > 0;
+  const desktopDocumentMapRailWidthPx = showDesktopDocumentMapRail
+    ? DOCUMENT_MAP_OVERVIEW_RAIL_WIDTH_PX
     : 0;
 
   const readerRootRef = useRef<HTMLDivElement | null>(null);
@@ -4346,19 +4322,11 @@ export default function MediaPaneBody() {
       },
     ];
 
-    if (isMobileViewport && showHighlightsPane) {
+    if (isMobileViewport && canRead) {
       readerOptions.push({
-        id: "show-highlights",
-        label: "Show highlights",
-        onSelect: () => requestSecondarySurface?.("reader-highlights"),
-      });
-    }
-
-    if (isMobileViewport && contentsAvailable) {
-      readerOptions.push({
-        id: "show-contents",
-        label: "Show contents",
-        onSelect: () => requestSecondarySurface?.("reader-contents"),
+        id: "document-map",
+        label: "Document Map",
+        onSelect: () => requestSecondarySurface?.(defaultDocumentMapSurface),
       });
     }
 
@@ -4392,6 +4360,7 @@ export default function MediaPaneBody() {
     return options;
   }, [
     documentDeleteBusy,
+    defaultDocumentMapSurface,
     handleDeleteDocument,
     handleRefreshSource,
     handleRetryMetadata,
@@ -4407,8 +4376,7 @@ export default function MediaPaneBody() {
     requestSecondarySurface,
     retryMetadataBusy,
     retryProcessingBusy,
-    contentsAvailable,
-    showHighlightsPane,
+    canRead,
     updateTheme,
   ]);
 
@@ -4460,31 +4428,33 @@ export default function MediaPaneBody() {
     ],
   );
 
-  const contentsSurfaceActive =
-    activeReaderSecondarySurface === "reader-contents";
-
-  const toggleContents = useCallback(() => {
-    if (contentsSurfaceActive) {
+  const toggleDocumentMap = useCallback(() => {
+    if (documentMapSurfaceActive) {
       closeSecondaryPane?.();
       return;
     }
-    requestSecondarySurface?.("reader-contents");
-  }, [closeSecondaryPane, contentsSurfaceActive, requestSecondarySurface]);
+    requestSecondarySurface?.(defaultDocumentMapSurface);
+  }, [
+    closeSecondaryPane,
+    defaultDocumentMapSurface,
+    documentMapSurfaceActive,
+    requestSecondarySurface,
+  ]);
 
-  const contentsToolbarButton = useMemo(
+  const documentMapToolbarButton = useMemo(
     () =>
-      contentsAvailable ? (
+      canRead ? (
         <Button
           variant="ghost"
           size="sm"
-          leadingIcon={<ListTree size={16} aria-hidden="true" />}
-          onClick={toggleContents}
-          aria-pressed={contentsSurfaceActive}
+          leadingIcon={<MapIcon size={16} aria-hidden="true" />}
+          onClick={toggleDocumentMap}
+          aria-pressed={documentMapSurfaceActive}
         >
-          Contents
+          Document Map
         </Button>
       ) : null,
-    [contentsAvailable, contentsSurfaceActive, toggleContents],
+    [canRead, documentMapSurfaceActive, toggleDocumentMap],
   );
 
   const mediaToolbar = useMemo(
@@ -4496,6 +4466,7 @@ export default function MediaPaneBody() {
           aria-label="PDF controls"
         >
           <div className={styles.mediaToolbarRow}>
+            {documentMapToolbarButton}
             <Button
               variant="ghost"
               size="sm"
@@ -4548,7 +4519,7 @@ export default function MediaPaneBody() {
           aria-label="EPUB controls"
         >
           <div className={styles.mediaToolbarRow}>
-            {contentsToolbarButton}
+            {documentMapToolbarButton}
             <Button
               variant="ghost"
               size="sm"
@@ -4611,22 +4582,21 @@ export default function MediaPaneBody() {
             ) : null}
           </div>
         </div>
-      ) : media?.kind === "web_article" && canRead && hasWebToc ? (
+      ) : media?.kind === "web_article" && canRead ? (
         <div
           className={styles.mediaToolbar}
           role="toolbar"
           aria-label="Article controls"
         >
-          <div className={styles.mediaToolbarRow}>{contentsToolbarButton}</div>
+          <div className={styles.mediaToolbarRow}>{documentMapToolbarButton}</div>
         </div>
       ) : null,
     [
       activeSectionId,
       activeSectionPosition,
       canRead,
-      contentsToolbarButton,
+      documentMapToolbarButton,
       epubSections,
-      hasWebToc,
       isEpub,
       isPdf,
       media?.kind,
@@ -4749,8 +4719,7 @@ export default function MediaPaneBody() {
     const releaseLocks: Array<() => void> = [];
     if (
       secondaryPane?.groupId === "reader-tools" &&
-      secondaryPane.visibility === "visible" &&
-      secondaryPane.activeSurfaceId === "reader-highlights"
+      secondaryPane.visibility === "visible"
     ) {
       releaseLocks.push(
         paneMobileChrome.acquireVisibleLock("mobile-secondary"),
@@ -4807,55 +4776,6 @@ export default function MediaPaneBody() {
     );
   }, [fragments, highlights, isPdf, isTranscriptMedia, pdfDocumentHighlights]);
 
-  // Media-wide highlights mapped to overview-ruler rows. Separate from
-  // `anchoredHighlights` (per-fragment, projected for the secondary): this maps the
-  // typed-union `mediaHighlights` straight from stored anchors.
-  const mediaAnchoredHighlights = useMemo<AnchoredReaderRow[]>(() => {
-    return mediaHighlights.map((highlight) => {
-      const anchor = highlight.anchor;
-      if (anchor.type === "pdf_page_geometry") {
-        return toPdfAnchoredReaderRow(
-          highlight,
-          anchor.page_number,
-          anchor.quads,
-        );
-      }
-      return toTextAnchoredReaderRow(
-        highlight,
-        anchor,
-        isTranscriptMedia
-          ? (fragments.find((item) => item.id === anchor.fragment_id) ?? null)
-          : null,
-      );
-    });
-  }, [fragments, isTranscriptMedia, mediaHighlights]);
-
-  const positioned = useMemo(
-    () =>
-      positionHighlights({
-        mediaKind: isPdf
-          ? "pdf"
-          : isEpub
-            ? "epub"
-            : isTranscriptMedia
-              ? "transcript"
-              : "web",
-        highlights: mediaAnchoredHighlights,
-        fragments,
-        epubSections: epubSections ?? [],
-        numPages: pdfControlsState?.numPages ?? null,
-      }),
-    [
-      epubSections,
-      fragments,
-      isEpub,
-      isPdf,
-      isTranscriptMedia,
-      mediaAnchoredHighlights,
-      pdfControlsState?.numPages,
-    ],
-  );
-
   // Whole-document 0..1 fraction range of the currently-scrollable content.
   // For text the active fragment/section spans `[start, end]` of the document;
   // for PDF the scroll container holds every page, so it is the full range.
@@ -4874,11 +4794,10 @@ export default function MediaPaneBody() {
     return { start, end };
   }, [activeContent, activeTextStartOffset, isPdf, totalTextLength]);
 
-  // Dispatch a ruler pulse that was deferred behind a cross-fragment navigation,
-  // once the navigated-to content is the active, rendered fragment/section and
-  // its highlight is in the per-fragment list (so it is rendered inline).
+  // Dispatch a marker pulse once the navigated-to content is active, rendered,
+  // and its highlight is in the per-fragment list.
   useEffect(() => {
-    const pending = pendingRulerPulseRef.current;
+    const pending = pendingDocumentMapPulseRef.current;
     if (
       !pending ||
       epubSectionLoading ||
@@ -4887,7 +4806,7 @@ export default function MediaPaneBody() {
     ) {
       return;
     }
-    pendingRulerPulseRef.current = null;
+    pendingDocumentMapPulseRef.current = null;
     dispatchReaderPulse(pending.target);
   }, [activeContent, epubSectionLoading, highlights, renderedHtml]);
 
@@ -4966,7 +4885,7 @@ export default function MediaPaneBody() {
           dispatchReaderPulse(target);
           return;
         }
-        pendingRulerPulseRef.current = { fragmentId, target };
+        pendingDocumentMapPulseRef.current = { fragmentId, target };
         navigateToSection(section.section_id);
         return;
       }
@@ -4980,14 +4899,14 @@ export default function MediaPaneBody() {
         if (!fragment) {
           return;
         }
-        pendingRulerPulseRef.current = { fragmentId, target };
+        pendingDocumentMapPulseRef.current = { fragmentId, target };
         handleTranscriptSegmentSelect(fragment);
         return;
       }
 
       const params = new URLSearchParams({ fragment: fragmentId });
       paneRouterPush?.(`/media/${id}?${params.toString()}`);
-      pendingRulerPulseRef.current = { fragmentId, target };
+      pendingDocumentMapPulseRef.current = { fragmentId, target };
       setTarget({ kind: "fragment", value: fragmentId, origin: "manual" });
     },
     [
@@ -5006,9 +4925,55 @@ export default function MediaPaneBody() {
     ],
   );
 
-  const onOpenHighlights = useCallback(() => {
-    requestSecondarySurface?.("reader-highlights");
-  }, [requestSecondarySurface]);
+  const activateDocumentMapMarker = useCallback(
+    (itemId: string, lensId: ReaderDocumentMapLensId) => {
+      requestSecondarySurface?.(readerSurfaceForLens(lensId));
+      if (lensId === "contents") {
+        const sectionId = itemId.startsWith("section:")
+          ? itemId.slice("section:".length)
+          : null;
+        if (!sectionId) return;
+        if (isEpub) navigateToSection(sectionId);
+        else navigateToWebSection(sectionId);
+        return;
+      }
+      if (lensId === "highlights") {
+        if (itemId.startsWith("highlight:")) {
+          onActivateHighlight(itemId.slice("highlight:".length));
+        }
+        return;
+      }
+      if (lensId === "citations") {
+        const stableKey = itemId.startsWith("apparatus:")
+          ? itemId.slice("apparatus:".length)
+          : null;
+        const row = stableKey ? readerApparatusRowByItemId.get(stableKey) : null;
+        if (row) handleReaderApparatusRowActivate(row);
+        return;
+      }
+      if (lensId === "connections") {
+        const edgeId = itemId.startsWith("connection:")
+          ? itemId.slice("connection:".length)
+          : null;
+        const row = edgeId
+          ? readerConnectionRows.find((item) => item.connection.edge_id === edgeId)
+          : null;
+        if (row) handleActivateReaderConnectionTarget(row);
+        return;
+      }
+    },
+    [
+      handleActivateReaderConnectionTarget,
+      handleReaderApparatusRowActivate,
+      isEpub,
+      navigateToSection,
+      navigateToWebSection,
+      onActivateHighlight,
+      readerApparatusRowByItemId,
+      readerConnectionRows,
+      requestSecondarySurface,
+    ],
+  );
 
   const anchoredHighlightsMeasureKey = useMemo(
     () =>
@@ -5105,7 +5070,7 @@ export default function MediaPaneBody() {
   const readerApparatusSecondaryBody = useMemo(
     () =>
       showApparatusPane ? (
-        <ReaderApparatusSurface
+        <ReaderDocumentMapCitationsLens
           rows={readerApparatusRows}
           projectRows={currentReaderApparatusRows}
           capabilities={readerApparatus.capabilities}
@@ -5139,7 +5104,7 @@ export default function MediaPaneBody() {
   const highlightsSecondaryBody = useMemo(
     () =>
       showHighlightsPane ? (
-        <ReaderHighlightsSurface
+        <ReaderDocumentMapHighlightsLens
           title="Visible highlights"
           description={
             isPdf
@@ -5200,7 +5165,7 @@ export default function MediaPaneBody() {
     ],
   );
 
-  const readerConnectionsMeasureKey = useMemo(
+  const documentMapConnectionsMeasureKey = useMemo(
     () =>
       [
         id,
@@ -5210,16 +5175,16 @@ export default function MediaPaneBody() {
     [id, isPdf, pdfControlsState?.pageRenderEpoch, readerConnectionRows, renderedHtml],
   );
 
-  const readerConnectionsSecondaryBody = useMemo(
+  const documentMapConnectionsSecondaryBody = useMemo(
     () => (
-      <ReaderConnectionsSurface
+      <ReaderDocumentMapConnectionsLens
         contentRef={isPdf ? pdfContentRef : contentRef}
         rows={readerConnectionRows}
-        loading={readerConnectionsResource.status === "loading"}
-        error={readerConnectionsError}
+        loading={readerDocumentMapResource.status === "loading"}
+        error={documentMapConnectionsError}
         onOpenSource={handleOpenReaderConnectionSource}
         onActivateTarget={handleActivateReaderConnectionTarget}
-        measureKey={readerConnectionsMeasureKey}
+        measureKey={documentMapConnectionsMeasureKey}
         isMobile={isMobileViewport}
       />
     ),
@@ -5231,9 +5196,9 @@ export default function MediaPaneBody() {
       isPdf,
       pdfContentRef,
       readerConnectionRows,
-      readerConnectionsError,
-      readerConnectionsMeasureKey,
-      readerConnectionsResource.status,
+      documentMapConnectionsError,
+      documentMapConnectionsMeasureKey,
+      readerDocumentMapResource.status,
     ],
   );
 
@@ -5241,6 +5206,9 @@ export default function MediaPaneBody() {
     PaneSecondarySurfacePublication[]
   >(() => {
     const surfaces: PaneSecondarySurfacePublication[] = [];
+    if (contentsAvailable) {
+      surfaces.push({ id: "reader-contents", body: contentsSurfaceBody });
+    }
     if (showHighlightsPane) {
       surfaces.push({
         id: "reader-highlights",
@@ -5255,17 +5223,6 @@ export default function MediaPaneBody() {
         ),
       });
     }
-    if (contentsAvailable) {
-      surfaces.push({ id: "reader-contents", body: contentsSurfaceBody });
-    }
-    surfaces.push({
-      id: "reader-connections",
-      body: (
-        <div className={styles.readerSecondaryBody}>
-          {readerConnectionsSecondaryBody}
-        </div>
-      ),
-    });
     if (showApparatusPane) {
       surfaces.push({
         id: "reader-apparatus",
@@ -5280,6 +5237,14 @@ export default function MediaPaneBody() {
         ),
       });
     }
+    surfaces.push({
+      id: "reader-connections",
+      body: (
+        <div className={styles.readerSecondaryBody}>
+          {documentMapConnectionsSecondaryBody}
+        </div>
+      ),
+    });
     surfaces.push({
       id: "reader-doc-chat",
       body: (
@@ -5326,7 +5291,7 @@ export default function MediaPaneBody() {
     openChatInSecondary,
     pendingQuoteUri,
     readerApparatusSecondaryBody,
-    readerConnectionsSecondaryBody,
+    documentMapConnectionsSecondaryBody,
     secondaryChat,
     showApparatusPane,
     showHighlightsPane,
@@ -5336,50 +5301,39 @@ export default function MediaPaneBody() {
   const readerSecondaryDescriptor = useMemo<PaneSecondaryPublication>(
     () => ({
       groupId: "reader-tools",
-      defaultSurfaceId: showHighlightsPane
-        ? "reader-highlights"
-        : contentsAvailable
-          ? "reader-contents"
-          : showApparatusPane
-            ? "reader-apparatus"
-            : "reader-doc-chat",
+      defaultSurfaceId: defaultDocumentMapSurface,
       surfaces: readerSecondarySurfaces,
     }),
-    [
-      contentsAvailable,
-      readerSecondarySurfaces,
-      showApparatusPane,
-      showHighlightsPane,
-    ],
+    [defaultDocumentMapSurface, readerSecondarySurfaces],
   );
   usePaneSecondary(readerSecondaryDescriptor);
   const fixedChromePublication = useMemo(
     () =>
-      showDesktopOverviewRuler
+      showDesktopDocumentMapRail
         ? {
-            id: "reader-overview-ruler" as const,
-            widthPx: desktopOverviewRulerWidthPx,
+            id: "reader-document-map-overview-rail" as const,
+            widthPx: desktopDocumentMapRailWidthPx,
             body: (
-              <ReaderOverviewRuler
-                positioned={positioned}
+              <ReaderDocumentMapOverviewRail
+                markers={documentMapMarkers}
                 contentRef={isPdf ? pdfContentRef : contentRef}
                 documentSpan={documentSpan}
-                onActivateHighlight={onActivateHighlight}
-                onOpenHighlights={onOpenHighlights}
+                onActivateMarker={activateDocumentMapMarker}
+                onOpenMap={openDocumentMap}
               />
             ),
           }
         : null,
     [
       contentRef,
-      desktopOverviewRulerWidthPx,
+      activateDocumentMapMarker,
+      desktopDocumentMapRailWidthPx,
       documentSpan,
+      documentMapMarkers,
       isPdf,
-      onActivateHighlight,
-      onOpenHighlights,
+      openDocumentMap,
       pdfContentRef,
-      positioned,
-      showDesktopOverviewRuler,
+      showDesktopDocumentMapRail,
     ],
   );
   usePaneFixedChrome(fixedChromePublication);

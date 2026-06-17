@@ -27,13 +27,13 @@ import {
   findScrollParent,
   useAnchoredReaderProjection,
   type AnchoredReaderRow,
-} from "./useAnchoredReaderProjection";
-import AnchoredSidecarSurface from "./AnchoredSidecarSurface";
-import styles from "./ReaderHighlightsSurface.module.css";
+} from "../useAnchoredReaderProjection";
+import AnchoredSidecarSurface from "../AnchoredSidecarSurface";
+import styles from "./ReaderDocumentMapHighlightsLens.module.css";
 
 const COLLAPSED_ROW_HEIGHT = 44;
 
-interface ReaderHighlightsSurfaceProps {
+interface ReaderDocumentMapHighlightsLensProps {
   title?: string;
   description?: string;
   pdfActivePage?: number | null;
@@ -71,7 +71,7 @@ interface ReaderHighlightsSurfaceProps {
   onOpenNoteLink: (href: string, options: { newPane: boolean }) => void;
 }
 
-export default function ReaderHighlightsSurface({
+export default function ReaderDocumentMapHighlightsLens({
   title = "Visible highlights",
   description = "Showing highlights visible in the reader viewport.",
   pdfActivePage = null,
@@ -96,7 +96,7 @@ export default function ReaderHighlightsSurface({
   onNoteDelete,
   onOpenConversation,
   onOpenNoteLink,
-}: ReaderHighlightsSurfaceProps) {
+}: ReaderDocumentMapHighlightsLensProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const noteLayoutTimerRef = useRef<number | null>(null);
   const [noteLayoutVersion, setNoteLayoutVersion] = useState(0);

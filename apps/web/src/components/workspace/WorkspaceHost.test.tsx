@@ -120,7 +120,7 @@ function TestPaneBody() {
       fixedChromeWidthPx === null
         ? null
         : {
-            id: "reader-overview-ruler",
+            id: "reader-document-map-overview-rail",
             widthPx: fixedChromeWidthPx,
             body: <div>Fixed chrome</div>,
           },

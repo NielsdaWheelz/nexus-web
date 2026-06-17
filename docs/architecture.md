@@ -762,10 +762,12 @@ from raw layout text. Fixture counts and 20-source support status live in
 
 **Frontend** (`components/reader/*`, `PdfReader.tsx`, `HtmlRenderer.tsx`,
 `lib/reader/*`, `lib/highlights/*`): `HtmlRenderer` is the only
-`dangerouslySetInnerHTML` site (annotating already-sanitized HTML). Highlights are
-rendered two independent ways — inline `<span>` segments + a visible-only sidecar
-projected from rendered geometry, and an **overview ruler** positioned purely from
-stored anchors + metadata (never DOM geometry).
+`dangerouslySetInnerHTML` site (annotating already-sanitized HTML). Inline
+highlight rendering remains separate for text selection, while the reader
+**Document Map** is the single side instrument for Contents, Highlights,
+Citations, Connections, and Chat. Its desktop overview rail is positioned from
+aggregate owner locators and metadata, never DOM geometry; mobile uses the
+workspace secondary sheet instead of fixed chrome.
 
 ### 8.3 Chat & conversations
 
@@ -955,8 +957,8 @@ the driver. New devs frequently look in `page.tsx` for behavior that lives in
   Routes resolve via a pure model (`paneRouteModel.ts`) plus metadata table
   (`paneRouteTable.ts`) bound to React bodies (`paneRenderRegistry.tsx`). Bodies talk
   to the shell only through `paneRuntime.tsx` hooks (`usePaneRouter`, `usePaneParam`,
-  `useSetPaneTitle`, `usePaneSecondary`). Secondary panes (reader tools, conversation
-  context, library tools) are runtime-published sidebars.
+  `useSetPaneTitle`, `usePaneSecondary`). Secondary panes (Document Map,
+  conversation context, library tools) are runtime-published sidebars.
 - **First paint: stream, don't gate.** The `(authenticated)` layout runs only
   **local** work (`verifySession`, header-derived `loadRenderEnvironment`) above a
   `<Suspense fallback={<AuthenticatedShellSkeleton/>}>`; `WorkspaceBootstrapGate`

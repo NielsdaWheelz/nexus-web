@@ -64,6 +64,7 @@ from nexus.services.note_indexing import rebuild_page_content_index
 from nexus.services.notes import pm_doc_from_text, set_highlight_note_body_pm_json
 from nexus.services.pdf_indexing import index_pdf_evidence
 from nexus.services.pdf_ingest import PdfExtractionError
+from nexus.services.reader_apparatus import replace_media_apparatus, source_fingerprint
 from nexus.services.resource_graph import documents as graph_documents
 from nexus.services.resource_graph.cleanup import delete_edges_for_deleted_resource
 from nexus.services.resource_graph.refs import ResourceRef
@@ -81,11 +82,11 @@ NON_PDF_SEED_FILE_RELATIVE = Path("e2e/.seed/non-pdf-media.json")
 EPUB_SEED_FILE_RELATIVE = Path("e2e/.seed/epub-media.json")
 YOUTUBE_SEED_FILE_RELATIVE = Path("e2e/.seed/youtube-media.json")
 READER_RESUME_SEED_FILE_RELATIVE = Path("e2e/.seed/reader-resume-media.json")
-READER_OVERVIEW_RULER_SEED_FILE_RELATIVE = Path("e2e/.seed/reader-overview-ruler-media.json")
+READER_DOCUMENT_MAP_SEED_FILE_RELATIVE = Path("e2e/.seed/reader-document-map-media.json")
 UPLOAD_FIXTURE_RELATIVE = Path("e2e/.seed/upload-source.pdf")
 NON_PDF_SOURCE_URL = "https://example.com/e2e-linked-items-seed"
 READER_RESUME_WEB_SOURCE_URL = "https://example.com/e2e-reader-resume-web-seed"
-READER_OVERVIEW_RULER_SOURCE_URL = "https://example.com/e2e-reader-overview-ruler-seed"
+READER_DOCUMENT_MAP_SOURCE_URL = "https://example.com/e2e-reader-document-map-seed"
 YOUTUBE_VIDEO_ID = "s8E2Evid001"
 YOUTUBE_PLAYBACK_ONLY_VIDEO_ID = "s8E2Evid002"
 YOUTUBE_WATCH_URL = f"https://www.youtube.com/watch?v={YOUTUBE_VIDEO_ID}"
@@ -139,12 +140,12 @@ EPUB_TOC_ANCHOR_LABEL = "Chapter 1: Deep Anchor Target"
 EPUB_TOC_ANCHOR_HEADING = "Deep Anchor Target"
 READER_RESUME_WEB_ANCHOR_TEXT = "reader resume anchor target omega"
 READER_RESUME_PDF_PAGE_COUNT = 8
-# Overview-ruler web article: multiple fragments so a highlight can live in a
+# Document Map web article: multiple fragments so a highlight can live in a
 # fragment the reader does not initially render. Fragment 0 renders on open;
-# fragment 2's highlight is therefore off-screen until the ruler navigates.
-READER_OVERVIEW_RULER_FRAGMENT_COUNT = 3
-READER_OVERVIEW_RULER_NEAR_EXACT = "overview ruler near highlight target alpha"
-READER_OVERVIEW_RULER_FAR_EXACT = "overview ruler far highlight target omega"
+# fragment 2's highlight is therefore off-screen until the overview rail navigates.
+READER_DOCUMENT_MAP_FRAGMENT_COUNT = 3
+READER_DOCUMENT_MAP_NEAR_EXACT = "document map near highlight target alpha"
+READER_DOCUMENT_MAP_FAR_EXACT = "document map far highlight target omega"
 SUPABASE_READY_ATTEMPTS = 8
 SUPABASE_READY_DELAY_SECONDS = 1.5
 
@@ -553,7 +554,7 @@ def _write_reader_resume_seed_file(
     print(f"Wrote E2E reader-resume seed metadata: {seed_path}")
 
 
-def _write_reader_overview_ruler_seed_file(
+def _write_reader_document_map_seed_file(
     *,
     media_id: str,
     near_fragment_id: str,
@@ -563,9 +564,9 @@ def _write_reader_overview_ruler_seed_file(
     far_highlight_id: str,
     far_exact: str,
 ) -> None:
-    """Persist a multi-fragment web article for reader overview-ruler E2E."""
+    """Persist a multi-fragment web article for reader Document Map E2E."""
     repo_root = Path(__file__).resolve().parents[2]
-    seed_path = repo_root / READER_OVERVIEW_RULER_SEED_FILE_RELATIVE
+    seed_path = repo_root / READER_DOCUMENT_MAP_SEED_FILE_RELATIVE
     seed_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "media_fixture_kind": "synthetic",
@@ -579,7 +580,7 @@ def _write_reader_overview_ruler_seed_file(
         "seeded_at": datetime.now(UTC).isoformat(),
     }
     seed_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-    print(f"Wrote E2E reader overview-ruler seed metadata: {seed_path}")
+    print(f"Wrote E2E reader Document Map seed metadata: {seed_path}")
 
 
 def _clear_fragment_artifacts(db, media_id: UUID) -> None:
@@ -872,6 +873,15 @@ def _seed_non_pdf_linked_items_media(session_factory, user_id: UUID) -> None:
             media_id=media_id,
             fragment=fragment,
             source_url=NON_PDF_SOURCE_URL,
+        )
+        replace_media_apparatus(
+            db,
+            media_id=media_id,
+            media_kind="web_article",
+            source_fingerprint_value=source_fingerprint("e2e_seed", media_id),
+            items=[],
+            edges=[],
+            status="empty",
         )
 
         quote_start = canonical_text.index(quote_exact)
@@ -1184,6 +1194,15 @@ def _seed_reader_resume_media(session_factory, user_id: UUID) -> None:
             fragment=fragment,
             source_url=READER_RESUME_WEB_SOURCE_URL,
         )
+        replace_media_apparatus(
+            db,
+            media_id=web_media_id,
+            media_kind="web_article",
+            source_fingerprint_value=source_fingerprint("e2e_seed", web_media_id),
+            items=[],
+            edges=[],
+            status="empty",
+        )
         db.commit()
 
     # ------------------------------------------------------------------
@@ -1311,21 +1330,21 @@ def _seed_reader_resume_media(session_factory, user_id: UUID) -> None:
     print(f"Seeded reader-resume PDF media for E2E: {pdf_media_id_str}")
 
 
-def _seed_reader_overview_ruler_media(session_factory, user_id: UUID) -> None:
-    """Seed a multi-fragment web article for the reader overview-ruler E2E.
+def _seed_reader_document_map_media(session_factory, user_id: UUID) -> None:
+    """Seed a multi-fragment web article for the reader Document Map E2E.
 
     The article has several fragments. The reader renders only fragment 0 on
     open, so a highlight anchored in the last fragment is off-screen until the
-    overview ruler navigates to it. One near highlight (fragment 0) and one far
-    highlight (final fragment) give the ruler ticks on both ends of the
-    document, with the far tick exercising cross-fragment activation.
+    overview rail navigates to it. One near highlight (fragment 0) and one far
+    highlight (final fragment) give the rail markers on both ends of the
+    document, with the far marker exercising cross-fragment activation.
     """
-    near_exact = READER_OVERVIEW_RULER_NEAR_EXACT
-    far_exact = READER_OVERVIEW_RULER_FAR_EXACT
-    far_fragment_idx = READER_OVERVIEW_RULER_FRAGMENT_COUNT - 1
+    near_exact = READER_DOCUMENT_MAP_NEAR_EXACT
+    far_exact = READER_DOCUMENT_MAP_FAR_EXACT
+    far_fragment_idx = READER_DOCUMENT_MAP_FRAGMENT_COUNT - 1
 
     fragment_texts: list[str] = []
-    for fragment_idx in range(READER_OVERVIEW_RULER_FRAGMENT_COUNT):
+    for fragment_idx in range(READER_DOCUMENT_MAP_FRAGMENT_COUNT):
         lines: list[str] = []
         for line_idx in range(1, 81):
             if fragment_idx == 0 and line_idx == 6:
@@ -1339,7 +1358,7 @@ def _seed_reader_overview_ruler_media(session_factory, user_id: UUID) -> None:
             else:
                 lines.append(
                     f"fragment {fragment_idx} line {line_idx:03d} deterministic filler "
-                    "content for overview-ruler tick positioning."
+                    "content for Document Map marker positioning."
                 )
         fragment_texts.append("\n".join(lines))
 
@@ -1348,18 +1367,18 @@ def _seed_reader_overview_ruler_media(session_factory, user_id: UUID) -> None:
         media_id = _accept_seed_url_source(
             db,
             user_id=user_id,
-            url=READER_OVERVIEW_RULER_SOURCE_URL,
+            url=READER_DOCUMENT_MAP_SOURCE_URL,
         )
 
     with session_factory() as db:
         media = db.execute(select(Media).where(Media.id == media_id)).scalar_one_or_none()
         if media is None:
-            raise RuntimeError(f"Reader overview-ruler media missing: {media_id}")
+            raise RuntimeError(f"Reader Document Map media missing: {media_id}")
 
         _clear_fragment_artifacts(db, media_id)
 
         now = datetime.now(UTC)
-        media.title = "E2E reader overview-ruler web seed"
+        media.title = "E2E reader Document Map web seed"
         media.processing_status = ProcessingStatus.ready_for_reading
         media.failure_stage = None
         media.last_error_code = None
@@ -1394,6 +1413,15 @@ def _seed_reader_overview_ruler_media(session_factory, user_id: UUID) -> None:
             fragments=seeded_fragments,
             reason="e2e_seed",
         )
+        replace_media_apparatus(
+            db,
+            media_id=media_id,
+            media_kind="web_article",
+            source_fingerprint_value=source_fingerprint("e2e_seed", media_id),
+            items=[],
+            edges=[],
+            status="empty",
+        )
 
         near_fragment = seeded_fragments[0]
         far_fragment = seeded_fragments[far_fragment_idx]
@@ -1424,13 +1452,13 @@ def _seed_reader_overview_ruler_media(session_factory, user_id: UUID) -> None:
             db,
             user_id,
             near_highlight.id,
-            "Seeded near note for reader overview-ruler e2e.",
+            "Seeded near note for reader Document Map e2e.",
         )
         _set_seed_highlight_note(
             db,
             user_id,
             far_highlight.id,
-            "Seeded far note for reader overview-ruler e2e.",
+            "Seeded far note for reader Document Map e2e.",
         )
         note_page_id = (
             graph_documents.find_block_occurrence(
@@ -1440,7 +1468,7 @@ def _seed_reader_overview_ruler_media(session_factory, user_id: UUID) -> None:
             else None
         )
         if note_page_id is None:
-            raise RuntimeError("Reader overview-ruler seed note block was not created")
+            raise RuntimeError("Reader Document Map seed note block was not created")
         # These notes land on the same default page as the non-PDF seed and would
         # re-mark it 'pending' (enqueue_page_reindex); rebuild inline so the page
         # content index ends 'ready' after this seed runs (it is ordered last), or
@@ -1449,7 +1477,7 @@ def _seed_reader_overview_ruler_media(session_factory, user_id: UUID) -> None:
         rebuild_page_content_index(db, page_id=note_page_id, reason="e2e_seed")
         db.commit()
 
-    _write_reader_overview_ruler_seed_file(
+    _write_reader_document_map_seed_file(
         media_id=str(media_id),
         near_fragment_id=str(near_fragment.id),
         near_highlight_id=str(near_highlight.id),
@@ -1458,7 +1486,7 @@ def _seed_reader_overview_ruler_media(session_factory, user_id: UUID) -> None:
         far_highlight_id=str(far_highlight.id),
         far_exact=far_exact,
     )
-    print(f"Seeded reader overview-ruler media for E2E: {media_id}")
+    print(f"Seeded reader Document Map media for E2E: {media_id}")
 
 
 def main() -> None:
@@ -1593,7 +1621,7 @@ def main() -> None:
     _seed_youtube_transcript_media(session_factory, user_id)
     _seed_epub_media(session_factory, user_id)
     _seed_reader_resume_media(session_factory, user_id)
-    _seed_reader_overview_ruler_media(session_factory, user_id)
+    _seed_reader_document_map_media(session_factory, user_id)
 
 
 if __name__ == "__main__":

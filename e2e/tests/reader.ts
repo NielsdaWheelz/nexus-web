@@ -14,7 +14,7 @@ export async function openReaderSecondary(page: Page): Promise<Locator> {
     await expect(secondary).toBeVisible({ timeout: 5_000 });
   } catch {
     const openButton = activePane
-      .getByRole("button", { name: "Open highlights pane" })
+      .getByRole("button", { name: "Open Document Map" })
       .first();
     await expect(openButton).toBeVisible({ timeout: 10_000 });
     await openButton.click();

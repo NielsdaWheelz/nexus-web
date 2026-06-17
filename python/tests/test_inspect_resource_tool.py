@@ -19,7 +19,7 @@ from nexus.services.agent_tools.inspect_resource import (
     execute_inspect_resource,
 )
 from nexus.services.agent_tools.read_resource import execute_read_resource
-from nexus.services.media_document_map import DocumentMapSection, MediaDocumentMap
+from nexus.services.media_read_map import MediaReadMap, MediaReadMapSection
 from tests.factories import (
     create_test_conversation,
     create_test_media_in_library,
@@ -37,13 +37,13 @@ def test_inspect_resource_tool_output_escapes_attribute_quotes():
         uri='media:"quoted"',
         status="complete",
         body="",
-        document_map=MediaDocumentMap(
+        document_map=MediaReadMap(
             media_id=media_id,
             kind='pdf"kind',
             title='Title "Quoted"',
             total_sections=1,
             sections=[
-                DocumentMapSection(
+                MediaReadMapSection(
                     ordinal=1,
                     label='Pages "1"',
                     section_kind='page"_range',

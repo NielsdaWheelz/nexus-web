@@ -9,7 +9,7 @@ import {
 } from "react";
 
 export interface PaneFixedChromePublication {
-  id: "reader-overview-ruler";
+  id: "reader-document-map-overview-rail";
   widthPx: number;
   body: ReactNode;
 }

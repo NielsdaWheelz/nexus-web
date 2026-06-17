@@ -4,7 +4,7 @@ Navigation, not evidence. Given a ``media:`` URI already in the conversation's
 references, it returns an ordered section list — each section a label, a short
 deterministic preview, and a ``read_uri`` the model can pass to ``read_resource``
 for that section's exact text. It is a thin adapter over the
-``media_document_map`` core: parse the URI, call the core, render. It owns no
+``media_read_map`` core: parse the URI, call the core, render. It owns no
 per-kind SQL, persists no retrievals, and is never cited (no ``n``).
 """
 
@@ -17,7 +17,7 @@ from xml.sax.saxutils import escape as xml_escape
 
 from sqlalchemy.orm import Session
 
-from nexus.services.media_document_map import MediaDocumentMap, get_media_document_map_for_viewer
+from nexus.services.media_read_map import MediaReadMap, get_media_read_map_for_viewer
 from nexus.services.resource_graph.context import admits_resource_for_conversation_read
 from nexus.services.resource_graph.refs import ResourceRefParseFailure, parse_resource_ref
 
@@ -52,7 +52,7 @@ class InspectResourceResult:
     uri: str
     status: Literal["complete", "error"]
     body: str  # error description on failure; unused on success (the map renders)
-    document_map: MediaDocumentMap | None = None
+    document_map: MediaReadMap | None = None
     error_code: str | None = None
 
     @property
@@ -136,7 +136,7 @@ def execute_inspect_resource(
             "not_in_context_refs",
         )
 
-    document_map = get_media_document_map_for_viewer(db, viewer_id, parsed.id)
+    document_map = get_media_read_map_for_viewer(db, viewer_id, parsed.id)
     if document_map is None:
         return _error(
             uri, f"Resource {uri} is unavailable or you do not have access to it.", "missing"

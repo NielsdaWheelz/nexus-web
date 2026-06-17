@@ -1148,9 +1148,17 @@ def test_incoming_connections_old_routes_and_note_component_absent():
 
 def test_reader_sidecar_alignment_owned_by_shared_surface():
     roots = [
-        _WEB_ROOT / "components" / "reader" / "ReaderHighlightsSurface.tsx",
-        _WEB_ROOT / "components" / "reader" / "ReaderApparatusSurface.tsx",
-        _WEB_ROOT / "components" / "reader" / "ReaderConnectionsSurface.tsx",
+        _WEB_ROOT
+        / "components"
+        / "reader"
+        / "document-map"
+        / "ReaderDocumentMapHighlightsLens.tsx",
+        _WEB_ROOT / "components" / "reader" / "document-map" / "ReaderDocumentMapCitationsLens.tsx",
+        _WEB_ROOT
+        / "components"
+        / "reader"
+        / "document-map"
+        / "ReaderDocumentMapConnectionsLens.tsx",
     ]
     hits = _filtered(r"\b(setAlignedRows|rowHeights|overflowCount)\b", *roots)
     assert not hits, f"reader surfaces own duplicate sidecar alignment state:\n{_fmt(hits)}"
@@ -1159,6 +1167,58 @@ def test_reader_sidecar_alignment_owned_by_shared_surface():
         encoding="utf-8"
     )
     assert "setAlignedRows" in shared
+
+
+# =============================================================================
+# Reader Document Map cutover — one aggregate reader instrument
+# =============================================================================
+
+
+def test_reader_document_map_old_product_files_absent():
+    rel_paths = [
+        "apps/web/src/app/api/media/[id]/apparatus/route.ts",
+        "apps/web/src/app/api/media/[id]/reader-connections/route.ts",
+        "apps/web/src/components/reader/ReaderApparatusSurface.tsx",
+        "apps/web/src/components/reader/ReaderApparatusSurface.module.css",
+        "apps/web/src/components/reader/ReaderHighlightsSurface.tsx",
+        "apps/web/src/components/reader/ReaderHighlightsSurface.module.css",
+        "apps/web/src/components/reader/ReaderConnectionsSurface.tsx",
+        "apps/web/src/components/reader/ReaderConnectionsSurface.module.css",
+        "apps/web/src/components/reader/ReaderOverviewRuler.tsx",
+        "apps/web/src/components/reader/ReaderOverviewRuler.module.css",
+        "apps/web/src/components/reader/overviewPositions.ts",
+        "apps/web/src/components/reader/ReaderHighlightsSurface.tsx",
+        "apps/web/src/components/reader/ReaderHighlightsSurface.module.css",
+        "apps/web/src/components/reader/ReaderApparatusSurface.tsx",
+        "apps/web/src/components/reader/ReaderApparatusSurface.module.css",
+        "apps/web/src/components/reader/ReaderConnectionsSurface.tsx",
+        "apps/web/src/components/reader/ReaderConnectionsSurface.module.css",
+        "apps/web/src/lib/media/readerConnections.ts",
+        "python/tests/test_reader_connections_routes.py",
+    ]
+    present = [path for path in rel_paths if (_REPO_ROOT / path).exists()]
+    assert not present, f"old reader Document Map product files exist: {present}"
+
+
+def test_reader_document_map_legacy_affordances_absent():
+    e2e_root = _REPO_ROOT / "e2e"
+    hits = _grep(
+        r"ReaderOverviewRuler|reader-overview-ruler|reader-overview-tick|overviewPositions|OVERVIEW_RULER_WIDTH_PX|Open highlights pane|Show highlights|Show contents",
+        _WEB_ROOT,
+        _SCRIPTS_ROOT,
+        e2e_root,
+    )
+    assert not hits, f"legacy reader overview/highlight affordance remains:\n{_fmt(hits)}"
+
+
+def test_reader_document_map_legacy_product_routes_absent():
+    hits = _filtered(
+        r'@router\.(get|post|put|delete)\("/media/\{media_id\}/(apparatus|reader-connections)"|proxyToFastAPI\(req, `/media/\$\{id\}/(apparatus|reader-connections)',
+        _PY_ROOT,
+        _WEB_ROOT,
+        exclude=_FRONTEND_TEST,
+    )
+    assert not hits, f"legacy reader product route remains:\n{_fmt(hits)}"
 
 
 # =============================================================================

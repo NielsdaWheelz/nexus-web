@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import ReaderApparatusSurface from "./ReaderApparatusSurface";
+import ReaderDocumentMapCitationsLens from "./ReaderDocumentMapCitationsLens";
 import {
   readerApparatusOmittedSurfacePayloadFixtures,
   readerApparatusRowPayloadFixtures,
@@ -69,7 +69,7 @@ function renderPayloadSurface(
   fixtureContentElements.push(contentElement);
 
   render(
-    <ReaderApparatusSurface
+    <ReaderDocumentMapCitationsLens
       rows={rows}
       capabilities={apparatus.capabilities}
       contentRef={{ current: contentElement }}
@@ -100,7 +100,7 @@ let readerApparatusTargetWarnings: unknown[][] = [];
 let consoleWarnSpy: { mockRestore: () => void } | null = null;
 let fixtureContentElements: HTMLElement[] = [];
 
-describe("ReaderApparatusSurface real API payload fixtures", () => {
+describe("ReaderDocumentMapCitationsLens real API payload fixtures", () => {
   beforeEach(() => {
     vi.stubGlobal(
       "ResizeObserver",

@@ -38,7 +38,7 @@ async function waitForReflowableReader(activePane: Locator): Promise<void> {
   await expect(activePane.getByTestId("html-renderer").first()).toBeVisible({
     timeout: 20_000,
   });
-  await expect(activePane.getByTestId("reader-overview-ruler")).toBeVisible({
+  await expect(activePane.getByTestId("reader-document-map-overview-rail")).toBeVisible({
     timeout: 20_000,
   });
 }
@@ -77,7 +77,7 @@ async function expectReflowableFloor(
     )
     .toBeGreaterThanOrEqual(closedWidth + 300);
 
-  await activePane.getByRole("button", { name: "Close Highlights" }).click();
+  await activePane.getByRole("button", { name: /^Close / }).click();
   await expect
     .poll(() =>
       paneShell(activePane).evaluate((element) =>
@@ -172,7 +172,7 @@ test.describe("reader pane width floor", () => {
       )
       .toBeLessThanOrEqual(390);
     await expect(resizeHandle(activePane)).toHaveCount(0);
-    await expect(activePane.getByTestId("reader-overview-ruler")).toHaveCount(0);
+    await expect(activePane.getByTestId("reader-document-map-overview-rail")).toHaveCount(0);
     await expect(activePane.getByTestId("pane-fixed-chrome")).toHaveCount(0);
     await expectNoDocumentHorizontalOverflow(page);
   });

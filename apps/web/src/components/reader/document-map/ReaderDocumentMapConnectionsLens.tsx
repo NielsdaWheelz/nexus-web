@@ -13,13 +13,13 @@ import {
 } from "@/components/feedback/Feedback";
 import Pill from "@/components/ui/Pill";
 import { parseRawPdfQuads } from "@/lib/highlights/pdfTypes";
-import type { ReaderConnectionRow } from "@/lib/media/readerConnections";
+import type { ReaderConnectionRow } from "@/lib/reader/documentMap";
 import { resourceIconForUri } from "@/lib/resources/resourceKind";
-import AnchoredSidecarSurface from "./AnchoredSidecarSurface";
-import type { AnchoredReaderRow } from "./useAnchoredReaderProjection";
-import styles from "./ReaderConnectionsSurface.module.css";
+import AnchoredSidecarSurface from "../AnchoredSidecarSurface";
+import type { AnchoredReaderRow } from "../useAnchoredReaderProjection";
+import styles from "./ReaderDocumentMapConnectionsLens.module.css";
 
-interface ReaderConnectionsSurfaceProps {
+interface ReaderDocumentMapConnectionsLensProps {
   contentRef: RefObject<HTMLElement | null>;
   rows: ReaderConnectionRow[];
   loading: boolean;
@@ -30,7 +30,7 @@ interface ReaderConnectionsSurfaceProps {
   isMobile: boolean;
 }
 
-export default function ReaderConnectionsSurface({
+export default function ReaderDocumentMapConnectionsLens({
   contentRef,
   rows,
   loading,
@@ -39,7 +39,7 @@ export default function ReaderConnectionsSurface({
   onActivateTarget,
   measureKey,
   isMobile,
-}: ReaderConnectionsSurfaceProps) {
+}: ReaderDocumentMapConnectionsLensProps) {
   const anchoredRows = useMemo(
     () =>
       rows

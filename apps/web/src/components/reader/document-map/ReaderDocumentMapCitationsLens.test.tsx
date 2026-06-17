@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import ReaderApparatusSurface from "./ReaderApparatusSurface";
+import ReaderDocumentMapCitationsLens from "./ReaderDocumentMapCitationsLens";
 import type {
   ReaderApparatusCapabilities,
   ReaderApparatusItem,
@@ -108,7 +108,7 @@ const row = {
   sort_key: "000000.marker",
 } satisfies ReaderApparatusRow;
 
-describe("ReaderApparatusSurface", () => {
+describe("ReaderDocumentMapCitationsLens", () => {
   beforeEach(() => {
     vi.stubGlobal(
       "ResizeObserver",
@@ -124,7 +124,7 @@ describe("ReaderApparatusSurface", () => {
     const onActivateRow = vi.fn();
     const contentElement = document.createElement("div");
     render(
-      <ReaderApparatusSurface
+      <ReaderDocumentMapCitationsLens
         rows={[row]}
         capabilities={capabilities}
         contentRef={{ current: contentElement }}
@@ -197,7 +197,7 @@ describe("ReaderApparatusSurface", () => {
     } satisfies ReaderApparatusRow;
 
     render(
-      <ReaderApparatusSurface
+      <ReaderDocumentMapCitationsLens
         rows={[multiReferenceRow]}
         capabilities={capabilities}
         contentRef={{ current: document.createElement("div") }}
@@ -235,7 +235,7 @@ describe("ReaderApparatusSurface", () => {
     } satisfies ReaderApparatusRow;
 
     render(
-      <ReaderApparatusSurface
+      <ReaderDocumentMapCitationsLens
         rows={[marginRow]}
         capabilities={{
           ...capabilities,
@@ -302,7 +302,7 @@ describe("ReaderApparatusSurface", () => {
     } satisfies ReaderApparatusRow;
 
     render(
-      <ReaderApparatusSurface
+      <ReaderDocumentMapCitationsLens
         rows={[markerOnlyRow]}
         capabilities={{
           ...capabilities,

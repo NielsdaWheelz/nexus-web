@@ -3,8 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { useRef, useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
-import ReaderHighlightsSurface from "./ReaderHighlightsSurface";
-import type { AnchoredReaderRow } from "./useAnchoredReaderProjection";
+import ReaderDocumentMapHighlightsLens from "./ReaderDocumentMapHighlightsLens";
+import type { AnchoredReaderRow } from "../useAnchoredReaderProjection";
 
 vi.mock("@/components/notes/HighlightNoteEditor", () => ({
   default: function MockHighlightNoteEditor({
@@ -75,7 +75,7 @@ function highlight(
   };
 }
 
-function ReaderHighlightsSurfaceHarness({
+function ReaderDocumentMapHighlightsLensHarness({
   focusedId = null,
   onFocusHighlight = () => {},
   hoveredId = null,
@@ -101,8 +101,8 @@ function ReaderHighlightsSurfaceHarness({
   onQuoteToNewChat?: (highlightId: string) => void;
   onQuoteToExtantChat?: (highlightId: string) => void;
   isEditingBounds?: boolean;
-  onColorChange?: ReaderHighlightsSurfacePropsForTest["onColorChange"];
-  onDelete?: ReaderHighlightsSurfacePropsForTest["onDelete"];
+  onColorChange?: ReaderDocumentMapHighlightsLensPropsForTest["onColorChange"];
+  onDelete?: ReaderDocumentMapHighlightsLensPropsForTest["onDelete"];
   onStartEditBounds?: () => void;
   onCancelEditBounds?: () => void;
   linkedConversations?: NonNullable<AnchoredReaderRow["linked_conversations"]>;
@@ -148,7 +148,7 @@ function ReaderHighlightsSurfaceHarness({
         </div>
       </div>
       <FeedbackProvider>
-        <ReaderHighlightsSurface
+        <ReaderDocumentMapHighlightsLens
           highlights={rows}
           contentRef={contentRef}
           focusedId={focusedId}
@@ -179,7 +179,7 @@ function ReaderHighlightsSurfaceHarness({
   );
 }
 
-type ReaderHighlightsSurfacePropsForTest = Parameters<typeof ReaderHighlightsSurface>[0];
+type ReaderDocumentMapHighlightsLensPropsForTest = Parameters<typeof ReaderDocumentMapHighlightsLens>[0];
 
 function StableNoteKeyHarness({
   onNoteSave,
@@ -219,7 +219,7 @@ function StableNoteKeyHarness({
         </div>
       </div>
       <FeedbackProvider>
-        <ReaderHighlightsSurface
+        <ReaderDocumentMapHighlightsLens
           highlights={[row]}
           contentRef={contentRef}
           focusedId={null}
@@ -268,9 +268,9 @@ function StableNoteKeyHarness({
   );
 }
 
-describe("ReaderHighlightsSurface", () => {
+describe("ReaderDocumentMapHighlightsLens", () => {
   it("renders only viewport-visible highlight rows", async () => {
-    render(<ReaderHighlightsSurfaceHarness />);
+    render(<ReaderDocumentMapHighlightsLensHarness />);
 
     await waitFor(() => {
       expect(screen.getByTestId("anchored-highlight-row-h1")).toBeTruthy();
@@ -282,7 +282,7 @@ describe("ReaderHighlightsSurface", () => {
 
   it("projects text highlights from rendered spans before canonical range fallback", async () => {
     render(
-      <ReaderHighlightsSurfaceHarness
+      <ReaderDocumentMapHighlightsLensHarness
         highlights={[
           {
             ...highlight(
@@ -308,7 +308,7 @@ describe("ReaderHighlightsSurface", () => {
   });
 
   it("aligns a visible row to its source scanline", async () => {
-    render(<ReaderHighlightsSurfaceHarness />);
+    render(<ReaderDocumentMapHighlightsLensHarness />);
 
     const row = await screen.findByTestId("anchored-highlight-row-h1");
     const target = screen.getByText("First target");
@@ -321,7 +321,7 @@ describe("ReaderHighlightsSurface", () => {
   });
 
   it("shows the final visible row UI without requiring focus first", async () => {
-    render(<ReaderHighlightsSurfaceHarness />);
+    render(<ReaderDocumentMapHighlightsLensHarness />);
 
     const row = await screen.findByTestId("anchored-highlight-row-h1");
     expect(within(row).getByText("Visible quote")).toBeVisible();
@@ -339,7 +339,7 @@ describe("ReaderHighlightsSurface", () => {
     const user = userEvent.setup();
     const onFocusHighlight = vi.fn();
     render(
-      <ReaderHighlightsSurfaceHarness
+      <ReaderDocumentMapHighlightsLensHarness
         onFocusHighlight={onFocusHighlight}
         highlights={[highlight("h1", "", "Before visible context ", " after visible context.")]}
       />,
@@ -356,7 +356,7 @@ describe("ReaderHighlightsSurface", () => {
 
   it("exposes highlight actions behind one overflow menu on the row", async () => {
     const user = userEvent.setup();
-    render(<ReaderHighlightsSurfaceHarness />);
+    render(<ReaderDocumentMapHighlightsLensHarness />);
 
     const row = await screen.findByTestId("anchored-highlight-row-h1");
     const trigger = within(row).getByRole("button", { name: "Highlight actions" });
@@ -387,7 +387,7 @@ describe("ReaderHighlightsSurface", () => {
     const scrollTo = vi.fn();
     const originalScrollTo = Element.prototype.scrollTo;
     Element.prototype.scrollTo = scrollTo as typeof Element.prototype.scrollTo;
-    render(<ReaderHighlightsSurfaceHarness onFocusHighlight={onFocusHighlight} />);
+    render(<ReaderDocumentMapHighlightsLensHarness onFocusHighlight={onFocusHighlight} />);
 
     await user.click(await screen.findByTestId("anchored-highlight-row-h1"));
 
@@ -400,7 +400,7 @@ describe("ReaderHighlightsSurface", () => {
     const user = userEvent.setup();
     const onHoverHighlight = vi.fn();
     render(
-      <ReaderHighlightsSurfaceHarness onHoverHighlight={onHoverHighlight} />,
+      <ReaderDocumentMapHighlightsLensHarness onHoverHighlight={onHoverHighlight} />,
     );
 
     const row = await screen.findByTestId("anchored-highlight-row-h1");
@@ -416,7 +416,7 @@ describe("ReaderHighlightsSurface", () => {
     const onQuoteToNewChat = vi.fn();
     const onQuoteToExtantChat = vi.fn();
     render(
-      <ReaderHighlightsSurfaceHarness
+      <ReaderDocumentMapHighlightsLensHarness
         onQuoteToNewChat={onQuoteToNewChat}
         onQuoteToExtantChat={onQuoteToExtantChat}
       />,
@@ -442,7 +442,7 @@ describe("ReaderHighlightsSurface", () => {
 
   it("hides the quote-to-chat actions when quoting is disabled", async () => {
     const user = userEvent.setup();
-    render(<ReaderHighlightsSurfaceHarness canQuoteToChat={false} />);
+    render(<ReaderDocumentMapHighlightsLensHarness canQuoteToChat={false} />);
 
     const row = await screen.findByTestId("anchored-highlight-row-h1");
     await user.click(within(row).getByRole("button", { name: "Highlight actions" }));
@@ -460,7 +460,7 @@ describe("ReaderHighlightsSurface", () => {
   it("hides quote-to-chat actions for highlights without exact text", async () => {
     const user = userEvent.setup();
     render(
-      <ReaderHighlightsSurfaceHarness
+      <ReaderDocumentMapHighlightsLensHarness
         highlights={[
           highlight(
             "h1",
@@ -488,7 +488,7 @@ describe("ReaderHighlightsSurface", () => {
   it("applies a new highlight color from the color picker menu", async () => {
     const user = userEvent.setup();
     const onColorChange = vi.fn(async () => undefined);
-    render(<ReaderHighlightsSurfaceHarness onColorChange={onColorChange} />);
+    render(<ReaderDocumentMapHighlightsLensHarness onColorChange={onColorChange} />);
 
     const row = await screen.findByTestId("anchored-highlight-row-h1");
     await user.click(within(row).getByRole("button", { name: "Highlight actions" }));
@@ -503,7 +503,7 @@ describe("ReaderHighlightsSurface", () => {
     const onCancelEditBounds = vi.fn();
     const onStartEditBounds = vi.fn();
     render(
-      <ReaderHighlightsSurfaceHarness
+      <ReaderDocumentMapHighlightsLensHarness
         focusedId="h1"
         isEditingBounds
         onCancelEditBounds={onCancelEditBounds}
@@ -523,7 +523,7 @@ describe("ReaderHighlightsSurface", () => {
     const user = userEvent.setup();
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
     const onDelete = vi.fn(async () => undefined);
-    render(<ReaderHighlightsSurfaceHarness onDelete={onDelete} />);
+    render(<ReaderDocumentMapHighlightsLensHarness onDelete={onDelete} />);
 
     const row = await screen.findByTestId("anchored-highlight-row-h1");
     await user.click(within(row).getByRole("button", { name: "Highlight actions" }));
@@ -542,7 +542,7 @@ describe("ReaderHighlightsSurface", () => {
     const onOpenConversation = vi.fn();
     const onFocusHighlight = vi.fn();
     render(
-      <ReaderHighlightsSurfaceHarness
+      <ReaderDocumentMapHighlightsLensHarness
         onFocusHighlight={onFocusHighlight}
         linkedConversations={[{ conversation_id: "c1", title: "Linked chat" }]}
         onOpenConversation={onOpenConversation}
@@ -559,7 +559,7 @@ describe("ReaderHighlightsSurface", () => {
     const user = userEvent.setup();
     const onFocusHighlight = vi.fn();
     render(
-      <ReaderHighlightsSurfaceHarness
+      <ReaderDocumentMapHighlightsLensHarness
         onFocusHighlight={onFocusHighlight}
         highlights={[
           highlight("h1", "overflowing ".repeat(120).trim(), "before ", " after"),
@@ -581,7 +581,7 @@ describe("ReaderHighlightsSurface", () => {
 
   it("leaves a focused highlight's snippet clamped — focus does not expand text", async () => {
     render(
-      <ReaderHighlightsSurfaceHarness
+      <ReaderDocumentMapHighlightsLensHarness
         focusedId="h1"
         highlights={[
           highlight("h1", "overflowing ".repeat(120).trim(), "before ", " after"),
@@ -597,7 +597,7 @@ describe("ReaderHighlightsSurface", () => {
   it("keeps one highlight expanded when another is expanded — multi-open", async () => {
     const user = userEvent.setup();
     render(
-      <ReaderHighlightsSurfaceHarness
+      <ReaderDocumentMapHighlightsLensHarness
         secondTargetMarginTop={96}
         highlights={[
           highlight("h1", "overflowing ".repeat(120).trim(), "before ", " after"),

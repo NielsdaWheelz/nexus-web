@@ -1,1 +1,1 @@
-export const OVERVIEW_RULER_WIDTH_PX = 28;
+export const DOCUMENT_MAP_OVERVIEW_RAIL_WIDTH_PX = 28;

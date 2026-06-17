@@ -22,33 +22,31 @@ state such as `?loc=`.
   `sentence`) driven by `reader_profile.focus_mode`; toggle at
   Cmd/Ctrl+Shift+F; auto-suspends during active selection
 - mobile-safe reader layout and controls; mobile document panes render the
-  shared reader-tools secondary surfaces as a mobile sheet instead of the
+  shared Document Map secondary surfaces as a mobile sheet instead of the
   desktop attached secondary pane
-- on mobile, highlights are reached through the reader-tools sheet opened from
-  the reader menu or by tapping an existing highlight; the overview ruler
-  remains desktop-only
+- on mobile, the Document Map sheet is the single reader detail path.
+  The overview rail remains desktop-only.
 - resume that survives reflow where possible
 
 ## architecture
 
-### highlight surfaces
+### Document Map surfaces
 
-the reader has two right-side highlight surfaces with distinct scopes.
+The reader has one side instrument: **Document Map**. It contains Contents,
+Highlights, Citations, Connections, and Chat tabs under the existing internal
+`reader-tools` secondary group.
 
-- desktop has an always-on **overview ruler**: a whole-document highlight map,
-  one tick per highlight in the entire media, positioned by document fraction,
-  with a viewport-position band, a read-only hover preview, and click-to-jump
-  that navigates cross-fragment. it is `~28px` wide and present for every
-  desktop readable media whether or not highlights exist.
-- the **highlights secondary** (`ReaderHighlightsSurface`) is visible-only: it
-  shows only highlights in the current viewport, with their notes and actions.
-  it is the reader `SecondaryPaneShell` "Highlights" surface, opened on demand
-  from the ruler's open-highlights button.
-- the ruler and the secondary are decoupled instruments, not two states of one
-  widget: *map* (ruler, always on) vs *here, with notes* (secondary, on demand).
-- mobile has no ruler. highlights are reached through a secondary sheet opened from the
-  reader menu or by tapping an existing highlight; the mobile sheet is the same
-  `ReaderHighlightsSurface` component on the same visible-only model.
+- Desktop has a fixed **Document Map overview rail**. It consumes aggregate
+  markers from `GET /media/{id}/document-map`, shows whole-document positions
+  for every anchored lens, and opens the Document Map.
+- The tabbed secondary pane is the detail surface. Contents uses
+  `ReaderContentsNav`; Highlights uses `ReaderDocumentMapHighlightsLens`;
+  Citations uses `ReaderDocumentMapCitationsLens`; Connections uses
+  `ReaderDocumentMapConnectionsLens`; Chat uses the reader document-chat
+  owner.
+- Mobile has no rail. The same Document Map secondary publication renders in
+  the workspace mobile secondary sheet.
+- Highlights are one lens of the Document Map, not a separate reader tool.
 
 ### quick-note composer
 
@@ -85,19 +83,18 @@ state lives (`MediaPaneBody` and `PdfReader`). it is deliberately not a
 keybindings-registry entry — that registry is app-global and cannot capture
 bare keys.
 
-### contents surface
+### contents lens
 
-the document table of contents (epub + web article) is the reader-tools
-"Contents" secondary surface (`ReaderContentsNav`), a peer of Highlights and
-Document chat under `docs/workspace-pane-system.md`.
+The document table of contents (epub + web article) is the Document Map
+"Contents" tab (`ReaderContentsNav`).
 
-- it is on-demand: a single reader toolbar "Contents" button toggles it
-  open/closed. it is not always-on like the overview ruler.
+- it is on-demand through the single reader toolbar/menu "Document Map"
+  affordance. When contents exist, generic Document Map open defaults here.
 - it is available independent of highlights: it shows whenever the document
   has TOC nodes, including focus mode where highlights are hidden.
 - selecting an entry runs the existing section/anchor navigation; navigation
   and pane-history behaviour are unchanged (see pane history).
-- mobile reaches Contents through the same secondary sheet as highlights.
+- mobile reaches Contents through the same Document Map secondary sheet.
 - it has no internal scroll container: the secondary body is the single scroll
   owner. the reader prose keeps a single scroll owner (`.documentViewport`);
   the TOC is not rendered inline.
@@ -114,20 +111,20 @@ PDF panes are the only primary-width exception. `PdfReader` measures rendered
 PDF page geometry and publishes the widest rendered page as intrinsic primary
 width; the workspace raises the PDF pane floor to that width.
 
-The overview ruler is fixed primary-adjacent chrome: it changes rendered pane
+The Document Map overview rail is fixed primary-adjacent chrome: it changes rendered pane
 width without changing stored primary pane width. Reader highlights and
-document chat are target secondary surfaces under
+document chat are Document Map secondary surfaces under
 `docs/workspace-pane-system.md`; their width is independent from the
 primary reader width. Mobile panes ignore desktop runtime pane sizing and render
 at viewport width. Mobile workspace mode also suppresses fixed primary chrome,
-desktop-attached secondary columns, and pane resize handles; reader tools reach
-mobile through the workspace secondary sheet.
+desktop-attached secondary columns, and pane resize handles; the Document Map
+reaches mobile through the workspace secondary sheet.
 
-### overview ruler positioning
+### overview rail positioning
 
-the ruler positions each highlight as a fraction `0..1` through the whole
-document, computed from stored anchors plus document metadata
-(`overviewPositions.ts`), never from rendered DOM geometry.
+The aggregate service positions each anchored Document Map marker as a fraction
+`0..1` through the whole document, computed from owner locators and document
+metadata, never from rendered DOM geometry.
 
 - web/transcript: cumulative codepoint offset over `fragments` ordered by
   `idx`, length = canonical-text codepoint length
@@ -135,28 +132,25 @@ document, computed from stored anchors plus document metadata
   a stored highlight anchors by `fragment_id`, and each navigation section
   carries the `fragment_id` of its one fragment, so highlights position
   directly against the section list
-- pdf: `(page_number - 0.5) / numPages`; ticks are page-granular
-- highlights that cannot be positioned (unknown fragment/section, missing
-  `numPages`) are dropped; the rest are sorted ascending by position
+- pdf: `(page_number - 0.5) / numPages`; markers are page-granular
+- unanchorable items remain in their tabs but do not produce rail markers
 - the viewport band spans the active fragment/section's global offset range
   (`documentSpan`), narrowed by the in-fragment scroll fraction
-- ruler activation routes through `MediaPaneBody`, which navigates to the
-  highlight's fragment/section/page when it is not the active one, then
-  dispatches a reader pulse. User-visible reader jumps that change the pane
-  href use `paneRuntime.router.push`, so pane Back returns to the previous
-  reader location.
+- rail activation routes through `MediaPaneBody`, opens the matching Document
+  Map tab, and then delegates to that lens's existing activation path.
 
 ### highlight read paths
 
-there are two highlight read paths by design, with different scopes and update
-cadences.
+there are two highlight read scopes by design, with different consumers and
+update cadences.
 
 - per-fragment: `GET /api/fragments/{id}/highlights` (per-page for pdf), fed
-  to inline highlight rendering of the active fragment and the visible-only
-  secondary; re-fetched on every fragment switch
-- media-wide: `GET /api/media/{id}/highlights` returns every highlight of the
-  media across all fragments and pages; fed to the overview ruler only,
-  fetched once per media open and after mutations
+  to inline highlight rendering of the active fragment and visible highlight
+  projection; re-fetched on every fragment switch
+- media-wide: `GET /api/media/{id}/document-map` returns highlight items,
+  markers, counts, linked note/chat summaries, and the highlight payloads needed
+  for cross-fragment activation and quote-to-chat lookup; refreshed after
+  highlight mutations
 
 ### reader-to-chat quote selection
 
@@ -178,8 +172,8 @@ transient `reader_selection` turn anchor for the current chat run.
 ### anchored highlight projection
 
 Anchored projection is the reader-owned bridge from stored highlight anchors to
-visible secondary rows. It is the highlights secondary's mechanism only; the overview
-ruler never uses it.
+visible secondary rows. It is the Highlights lens mechanism only; the overview
+rail never uses it.
 
 - Reflowable readers project highlights from rendered DOM segments tagged with
   `data-active-highlight-ids`.
@@ -205,8 +199,7 @@ is not generated chat citation evidence and must not write or read
 - Source-authored standalone margin notes are valid target-only apparatus rows:
   they appear in the sidecar and can jump to the note target, but they do not
   get invented marker edges or hover previews.
-- The reader exposes apparatus in the `Citations` tab under the existing
-  `reader-tools` secondary group.
+- The reader exposes apparatus in the Document Map `Citations` tab.
 - Web/EPUB rows may support hover previews and marker/target activation when
   exact locators exist.
 - PDF rows are capability-gated. Current PDF support is scoped to native
@@ -223,12 +216,9 @@ is not generated chat citation evidence and must not write or read
 Reader connections are graph-authored linked items for the current media,
 separate from source-authored apparatus.
 
-- Backend reads flow through `resource_edges` via
-  `POST /resource-graph/connections/query`; the media reader uses
-  `GET /media/{id}/reader-connections` to roll incoming and outgoing
-  media-owned refs up into anchored and unanchored rows.
-- The reader exposes connections in the `Connections` tab
-  (`reader-connections`) under the existing `reader-tools` secondary group.
+- Backend ownership remains `resource_edges`; the media reader consumes those
+  rows only through `GET /media/{id}/document-map`.
+- The reader exposes connections in the Document Map `Connections` tab.
 - Rows align to the referenced passage when the media-owned endpoint resolves
   to PDF geometry or exact rendered fragment text offsets. Unanchorable rows
   stay in the same list below anchored rows instead of inventing locator data.
@@ -438,7 +428,7 @@ supporting test infra:
 ```bash
 cd apps/web && bunx vitest run --project unit src/lib/reader/useReaderResumeState.test.tsx src/lib/reader/types.test.ts src/lib/media/readerNavigation.test.ts
 cd apps/web && bunx vitest run --project unit src/lib/conversations/chatRunBody.test.ts src/lib/api/sse/events.test.ts src/lib/conversations/citations.test.ts
-cd apps/web && bunx vitest run --project browser 'src/app/(authenticated)/media/[id]/MediaPaneBody.test.tsx' 'src/app/(authenticated)/media/[id]/TextDocumentReader.test.tsx' src/components/reader/ReaderOverviewRuler.test.tsx
+cd apps/web && bunx vitest run --project browser 'src/app/(authenticated)/media/[id]/MediaPaneBody.test.tsx' 'src/app/(authenticated)/media/[id]/TextDocumentReader.test.tsx' src/components/reader/ReaderDocumentMapOverviewRail.test.tsx src/components/reader/document-map/ReaderDocumentMapHighlightsLens.test.tsx
 make test-e2e PLAYWRIGHT_ARGS='tests/reader-resume.spec.ts --project=chromium'
 make test-e2e PLAYWRIGHT_ARGS='tests/quote-attach-references.spec.ts tests/pdf-reader.spec.ts --project=chromium'
 ```
