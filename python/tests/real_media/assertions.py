@@ -570,10 +570,11 @@ def assert_search_and_resolver(
     }.get(resolver_kind)
     assert expected_locator_type is not None, resolver_kind
     assert result["locator"]["type"] == expected_locator_type, result
-    assert result["deep_link"].startswith(f"/media/{media_id}#evidence-"), result
+    assert result["activation"]["href"].startswith(f"/media/{media_id}#evidence-"), result
+    assert "deep_link" not in result
 
     evidence_span_id = result["evidence_span_ids"][0]
-    assert result["deep_link"].endswith(str(evidence_span_id)), result
+    assert result["activation"]["href"].endswith(str(evidence_span_id)), result
     resolver_response = auth_client.get(
         f"/media/{media_id}/evidence/{evidence_span_id}",
         headers=headers,
