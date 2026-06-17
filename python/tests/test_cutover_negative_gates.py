@@ -148,35 +148,16 @@ def test_user_graph_tag_modules_absent():
 
 def test_user_graph_tag_registry_literals_absent():
     cases = [
-        (
-            "python/nexus/services/resource_graph/refs.py",
-            "ResourceScheme = Literal[",
-            "]\n\nRESOURCE_SCHEMES",
-        ),
-        ("python/nexus/services/resource_graph/refs.py", "RESOURCE_SCHEMES:", ")\n\n"),
-        (
-            "apps/web/src/lib/resourceGraph/resourceRef.ts",
-            "export const RESOURCE_SCHEMES = [",
-            "] as const",
-        ),
-        ("apps/web/src/lib/objectRefs.ts", "export const OBJECT_TYPES = [", "] as const"),
-        (
-            "apps/web/src/lib/resources/resourceKind.ts",
-            "const RESOURCE_SCHEME_ICONS = {",
-            "} satisfies",
-        ),
-        (
-            "apps/web/src/lib/resources/resourceKind.ts",
-            "const RESOURCE_SCHEME_OBJECT_TYPES",
-            "\n};",
-        ),
+        "python/nexus/services/resource_graph/refs.py",
+        "apps/web/src/lib/resourceGraph/resourceRef.ts",
+        "apps/web/src/lib/objectRefs.ts",
+        "apps/web/src/lib/resources/resourceKind.ts",
     ]
     hits: list[_Hit] = []
-    for rel_path, start, end in cases:
+    for rel_path in cases:
         path = _REPO_ROOT / rel_path
         text = path.read_text(encoding="utf-8")
-        block = text.split(start, 1)[1].split(end, 1)[0]
-        if re.search(r"['\"]tag['\"]|\btag\s*:", block):
+        if re.search(r"['\"]tag['\"]|\btag\s*:", text):
             hits.append(_Hit(path.as_posix(), 1, "tag registry literal"))
     assert not hits, f"user graph tag literal in registries:\n{_fmt(hits)}"
 

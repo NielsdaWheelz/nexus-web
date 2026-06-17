@@ -159,7 +159,7 @@ describe("fetchSearchResultPage page shape", () => {
     expect(page.rows).toHaveLength(1);
     expect(page.rows[0]).toMatchObject({
       key: "note_block-note-1",
-      href: "/notes/note-1",
+      activation: { href: "/notes/note-1" },
       type: "note_block",
       typeLabel: "note_block",
       paneTitleHint: "note body text",

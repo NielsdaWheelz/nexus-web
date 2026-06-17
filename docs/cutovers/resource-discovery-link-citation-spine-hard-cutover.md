@@ -652,9 +652,8 @@ Response rows are resource-first as described in the search contract.
 strings. `reader_context` is not reintroduced.
 
 `app_search` tool schema uses public query concepts only. The model-facing tool
-may stay minimal (`query`, `scopes`) for UX/control reasons, but the executor
-cannot receive or persist internal result-type/storage-kind overrides. If the
-tool later exposes filters, they are the same public filters as `/search`.
+exposes `query`, `kinds`, `formats`, `authors`, `roles`, and `scopes`; the
+executor cannot receive or persist internal result-type/storage-kind overrides.
 
 ### Resource graph APIs
 

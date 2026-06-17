@@ -34,6 +34,7 @@ from nexus.schemas.retrieval import (
     retrieval_result_ref_json,
 )
 from nexus.services import media_intelligence
+from nexus.services.contributor_taxonomy import CONTRIBUTOR_ROLES
 from nexus.services.contributors import get_contributor_by_handle
 from nexus.services.media_intelligence import MediaUnit
 from nexus.services.resource_graph.context import (
@@ -56,7 +57,8 @@ from nexus.services.retrieval_citation import (
 )
 from nexus.services.search import search
 from nexus.services.search.batch import search_scopes
-from nexus.services.search.query import SearchQuery
+from nexus.services.search.kinds import SEARCH_FORMATS, SEARCH_KINDS
+from nexus.services.search.query import build_search_query
 from nexus.services.search.scope import (
     ScopeUnsupported,
     parse_scope,
@@ -91,6 +93,31 @@ APP_SEARCH_TOOL_DEFINITION: dict[str, Any] = {
         "type": "object",
         "properties": {
             "query": {"type": "string"},
+            "kinds": {
+                "type": "array",
+                "items": {"type": "string", "enum": list(SEARCH_KINDS)},
+                "description": (
+                    "Optional user-facing kinds to search: documents, notes, "
+                    "highlights, conversations, people, web."
+                ),
+            },
+            "formats": {
+                "type": "array",
+                "items": {"type": "string", "enum": list(SEARCH_FORMATS)},
+                "description": (
+                    "Optional document formats: article, pdf, epub, video, episode, podcast."
+                ),
+            },
+            "authors": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Optional contributor handles to filter credited content.",
+            },
+            "roles": {
+                "type": "array",
+                "items": {"type": "string", "enum": sorted(CONTRIBUTOR_ROLES)},
+                "description": "Optional contributor roles to filter credited content.",
+            },
             "scopes": {
                 "type": "array",
                 "items": {"type": "string"},
@@ -170,13 +197,25 @@ def execute_app_search(
     assistant_message_id: UUID,
     scopes: Sequence[str],
     query: str,
+    kinds: Sequence[str] | None = None,
+    formats: Sequence[str] | None = None,
+    authors: Sequence[str] | None = None,
+    roles: Sequence[str] | None = None,
     tool_call_index: int = 0,
     forced_error: str | None = None,
 ) -> AppSearchRun:
     """Run app search for a chat turn and persist tool/retrieval metadata."""
-    base_query = SearchQuery(text=query, limit=APP_SEARCH_LIMIT)
-    requested_types = list(base_query.effective_result_types)
-    filters: dict[str, Any] = {}
+    filters: dict[str, Any] = {
+        key: list(values)
+        for key, values in (
+            ("kinds", kinds),
+            ("formats", formats),
+            ("authors", authors),
+            ("roles", roles),
+        )
+        if values is not None
+    }
+    requested_types: list[str] = []
     start = time.monotonic()
     status = "complete"
     error_code = None
@@ -188,14 +227,27 @@ def execute_app_search(
     try:
         if forced_error is not None:
             raise InvalidScopeError(forced_error)
+        base_query = build_search_query(
+            text=query,
+            raw_kinds=None if kinds is None else list(kinds),
+            raw_formats=None if formats is None else list(formats),
+            raw_authors=None if authors is None else list(authors),
+            raw_roles=None if roles is None else list(roles),
+            scope=scope_from_uri("all"),
+            cursor=None,
+            limit=APP_SEARCH_LIMIT,
+        )
+        requested_types = list(base_query.effective_result_types)
         resolved_scopes = _resolve_scope_uris(
             db,
             viewer_id=viewer_id,
             conversation_id=conversation_id,
             scopes=scopes,
         )
-    except InvalidScopeError as exc:
-        error_code = ApiErrorCode.E_INVALID_REQUEST.value
+    except (ApiError, InvalidScopeError) as exc:
+        error_code = (
+            exc.code.value if isinstance(exc, ApiError) else ApiErrorCode.E_INVALID_REQUEST.value
+        )
         context_text = (
             '<app_search_results status="error" '
             f'code="{_xml_attr(error_code)}" '

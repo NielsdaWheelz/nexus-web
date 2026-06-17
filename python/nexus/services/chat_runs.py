@@ -218,6 +218,24 @@ def _app_search_scopes_from_tool_args(args: Mapping[str, Any]) -> tuple[list[str
     return scopes, None
 
 
+def _app_search_string_array_from_tool_args(
+    args: Mapping[str, Any], key: str
+) -> tuple[list[str] | None, str | None]:
+    raw = args.get(key)
+    if raw is None:
+        return None, None
+    if not isinstance(raw, list):
+        return None, f"app_search {key} must be an array of strings"
+    values: list[str] = []
+    for item in raw:
+        if not isinstance(item, str):
+            return None, f"app_search {key} must be an array of strings"
+        value = item.strip()
+        if value:
+            values.append(value)
+    return values, None
+
+
 class ChatRunModelRuntime(Protocol):
     def stream(
         self,
@@ -1672,9 +1690,29 @@ async def _execute_chat_run(
                         if isinstance(raw_args, Mapping):
                             args = raw_args
                             scopes, forced_error = _app_search_scopes_from_tool_args(args)
+                            kinds, filter_error = _app_search_string_array_from_tool_args(
+                                args, "kinds"
+                            )
+                            forced_error = forced_error or filter_error
+                            formats, filter_error = _app_search_string_array_from_tool_args(
+                                args, "formats"
+                            )
+                            forced_error = forced_error or filter_error
+                            authors, filter_error = _app_search_string_array_from_tool_args(
+                                args, "authors"
+                            )
+                            forced_error = forced_error or filter_error
+                            roles, filter_error = _app_search_string_array_from_tool_args(
+                                args, "roles"
+                            )
+                            forced_error = forced_error or filter_error
                         else:
                             args = {}
                             scopes = []
+                            kinds = None
+                            formats = None
+                            authors = None
+                            roles = None
                             forced_error = "app_search arguments must be an object"
                         app_tool_call_id = _persist_tool_call_start(
                             db,
@@ -1707,6 +1745,10 @@ async def _execute_chat_run(
                             assistant_message_id=run.assistant_message_id,
                             scopes=scopes,
                             query=str(args.get("query") or ""),
+                            kinds=kinds,
+                            formats=formats,
+                            authors=authors,
+                            roles=roles,
                             tool_call_index=tool_call_index_next,
                             forced_error=forced_error,
                         )

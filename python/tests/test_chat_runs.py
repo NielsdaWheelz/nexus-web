@@ -1149,6 +1149,14 @@ class TestChatRunTooling:
         from nexus.services.agent_tools.read_resource import READ_RESOURCE_TOOL_DEFINITION
 
         assert APP_SEARCH_TOOL_DEFINITION["parameters"]["additionalProperties"] is False
+        assert {
+            "query",
+            "kinds",
+            "formats",
+            "authors",
+            "roles",
+            "scopes",
+        } <= set(APP_SEARCH_TOOL_DEFINITION["parameters"]["properties"])
         assert READ_RESOURCE_TOOL_DEFINITION["parameters"]["additionalProperties"] is False
 
     def test_chat_run_tools_always_registered(

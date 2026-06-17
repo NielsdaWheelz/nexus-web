@@ -10,7 +10,7 @@ describe("parseSearchInput", () => {
 
   it("extracts format/author/role/kind/in operators as chips", () => {
     const { text, chips } = parseSearchInput(
-      "attention format:pdf author:le-guin role:translator kind:notes in:library:lib-1",
+      "attention format:pdf author:le-guin role:translator kind:notes in:library:11111111-1111-4111-8111-111111111111",
     );
     expect(text).toBe("attention");
     expect(chips).toEqual([
@@ -18,7 +18,10 @@ describe("parseSearchInput", () => {
       { dim: "author", value: "le-guin" },
       { dim: "role", value: "translator" },
       { dim: "kind", value: "notes" },
-      { dim: "scope", value: "library:lib-1" },
+      {
+        dim: "scope",
+        value: "library:11111111-1111-4111-8111-111111111111",
+      },
     ]);
   });
 

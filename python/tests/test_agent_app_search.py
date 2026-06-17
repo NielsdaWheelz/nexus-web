@@ -1,5 +1,6 @@
 """Agent app-search tool tests."""
 
+from typing import cast
 from uuid import uuid4
 
 import pytest
@@ -9,12 +10,14 @@ from sqlalchemy.orm import Session
 
 from nexus.config import clear_settings_cache
 from nexus.errors import ApiErrorCode
+from nexus.schemas.search import SearchResponse
 from nexus.services.agent_tools.app_search import (
     execute_app_search,
     render_retrieved_context_blocks,
 )
 from nexus.services.note_indexing import rebuild_note_content_index
 from nexus.services.retrieval_citation import RetrievalCitation
+from nexus.services.search.query import SearchQuery
 from tests.factories import (
     add_context_edge,
     create_searchable_media_in_library,
@@ -216,6 +219,55 @@ def test_execute_app_search_rejects_blank_explicit_scope(
     assert run.error_code == ApiErrorCode.E_INVALID_REQUEST.value
     assert "non-empty URI strings" in run.context_text
     assert run.citations == []
+
+
+def test_execute_app_search_builds_public_filter_query(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    viewer_id = uuid4()
+    conversation_id = uuid4()
+    captured: dict[str, SearchQuery] = {}
+
+    def fake_search(db: Session, viewer_id, query: SearchQuery) -> SearchResponse:
+        captured["query"] = query
+        return SearchResponse()
+
+    monkeypatch.setattr(
+        "nexus.services.agent_tools.app_search._resolve_scope_uris",
+        lambda *args, **kwargs: [],
+    )
+    monkeypatch.setattr(
+        "nexus.services.agent_tools.app_search.persist_app_search_run",
+        lambda db, run: None,
+    )
+    monkeypatch.setattr("nexus.services.agent_tools.app_search.search", fake_search)
+
+    run = execute_app_search(
+        cast(Session, object()),
+        viewer_id=viewer_id,
+        conversation_id=conversation_id,
+        user_message_id=uuid4(),
+        assistant_message_id=uuid4(),
+        scopes=[],
+        query="attention",
+        kinds=["documents"],
+        formats=["pdf"],
+        authors=["le-guin"],
+        roles=["author"],
+    )
+
+    assert run.status == "complete"
+    assert run.filters == {
+        "kinds": ["documents"],
+        "formats": ["pdf"],
+        "authors": ["le-guin"],
+        "roles": ["author"],
+    }
+    assert captured["query"].text == "attention"
+    assert captured["query"].requested_kinds == frozenset({"documents"})
+    assert captured["query"].formats == ("pdf",)
+    assert captured["query"].authors == ("le-guin",)
+    assert captured["query"].roles == ("author",)
 
 
 def test_li_revision_reference_dropped_from_default_scope_resolution(

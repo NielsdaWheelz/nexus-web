@@ -48,6 +48,10 @@ def delete_edges_for_deleted_resource(db: Session, *, ref: ResourceRef) -> None:
     )
     # Rule 1: cited edges survive target deletion but die with their source
     # (the domain parent: message/conversation delete, reading delete).
+    cited_edge_ids = select(ResourceEdge.id).where(
+        ResourceEdge.ordinal.is_not(None), _source_is(ref)
+    )
+    db.execute(delete(ResourceViewState).where(ResourceViewState.edge_id.in_(cited_edge_ids)))
     deleted = db.execute(
         delete(ResourceEdge)
         .where(ResourceEdge.ordinal.is_not(None), _source_is(ref))
@@ -78,6 +82,8 @@ def delete_edges_for_deleted_resources(db: Session, *, refs: Iterable[ResourceRe
     # Rule 2: bare edges die with either endpoint.
     db.execute(delete(ResourceEdge).where(ResourceEdge.ordinal.is_(None), or_(source, target)))
     # Rule 1: cited edges survive target deletion but die with their source.
+    cited_edge_ids = select(ResourceEdge.id).where(ResourceEdge.ordinal.is_not(None), source)
+    db.execute(delete(ResourceViewState).where(ResourceViewState.edge_id.in_(cited_edge_ids)))
     deleted = db.execute(
         delete(ResourceEdge)
         .where(ResourceEdge.ordinal.is_not(None), source)

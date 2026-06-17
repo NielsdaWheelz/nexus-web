@@ -26,6 +26,8 @@ from nexus.schemas.reader_apparatus import (
 from nexus.schemas.retrieval import retrieval_locator_json
 from nexus.services.canonicalize import generate_canonical_text
 from nexus.services.capabilities import is_document_status_ready
+from nexus.services.resource_graph.cleanup import delete_edges_for_deleted_resources
+from nexus.services.resource_graph.refs import ResourceRef
 from nexus.text import normalize_whitespace
 
 EXTRACTOR_VERSION = "reader_apparatus_v1"
@@ -1830,6 +1832,17 @@ def replace_media_apparatus(
 
 
 def delete_media_apparatus(db: Session, media_id: UUID) -> None:
+    item_ids = db.execute(
+        text("SELECT id FROM reader_apparatus_items WHERE media_id = :media_id"),
+        {"media_id": media_id},
+    ).scalars()
+    delete_edges_for_deleted_resources(
+        db,
+        refs=[
+            ResourceRef(scheme="reader_apparatus_item", id=UUID(str(item_id)))
+            for item_id in item_ids
+        ],
+    )
     db.execute(
         text(
             """
@@ -1876,49 +1889,12 @@ def delete_media_apparatus(db: Session, media_id: UUID) -> None:
         text(
             """
             DELETE FROM resource_view_states
-            WHERE (
-                target_scheme = 'reader_apparatus_item'
-                AND target_id IN (
-                    SELECT id
-                    FROM reader_apparatus_items
-                    WHERE media_id = :media_id
-                )
+            WHERE target_scheme = 'reader_apparatus_item'
+              AND target_id IN (
+                  SELECT id
+                  FROM reader_apparatus_items
+                  WHERE media_id = :media_id
             )
-            OR edge_id IN (
-                SELECT id
-                FROM resource_edges
-                WHERE (source_scheme = 'reader_apparatus_item'
-                    OR target_scheme = 'reader_apparatus_item')
-                  AND (source_id IN (
-                        SELECT id
-                        FROM reader_apparatus_items
-                        WHERE media_id = :media_id
-                      )
-                       OR target_id IN (
-                        SELECT id
-                        FROM reader_apparatus_items
-                        WHERE media_id = :media_id
-                      ))
-            )
-            """
-        ),
-        {"media_id": media_id},
-    )
-    db.execute(
-        text(
-            """
-            DELETE FROM resource_edges
-            WHERE (source_scheme = 'reader_apparatus_item' OR target_scheme = 'reader_apparatus_item')
-              AND (source_id IN (
-                    SELECT id
-                    FROM reader_apparatus_items
-                    WHERE media_id = :media_id
-                  )
-                   OR target_id IN (
-                    SELECT id
-                    FROM reader_apparatus_items
-                    WHERE media_id = :media_id
-                  ))
             """
         ),
         {"media_id": media_id},
