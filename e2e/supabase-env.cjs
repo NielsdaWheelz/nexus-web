@@ -1,4 +1,4 @@
-const { execSync } = require("node:child_process");
+const { execFileSync } = require("node:child_process");
 const { existsSync, readFileSync } = require("node:fs");
 const path = require("node:path");
 
@@ -10,7 +10,15 @@ const FORBIDDEN_SUPABASE_ADMIN_ENV = [
 ];
 
 const APP_RUNTIME_FORBIDDEN_ENV = [
+  "E2E_MAILBOX_URL",
+  "SUPABASE_API_PORT",
   "SUPABASE_AUTH_ADMIN_KEY",
+  "SUPABASE_DB_PORT",
+  "SUPABASE_DB_SHADOW_PORT",
+  "SUPABASE_INBUCKET_PORT",
+  "SUPABASE_PROJECT_ID",
+  "SUPABASE_STUDIO_PORT",
+  "SUPABASE_WORKDIR",
   ...FORBIDDEN_SUPABASE_ADMIN_ENV,
 ];
 
@@ -78,13 +86,17 @@ function parseSupabaseStatus(rawStatus) {
   }
 }
 
-function readLiveSupabaseStatus(cwd) {
+function readLiveSupabaseStatus(workdir, cwd) {
   try {
-    const rawStatus = execSync("supabase status --output json", {
-      cwd,
-      encoding: "utf-8",
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    const rawStatus = execFileSync(
+      "supabase",
+      ["--workdir", workdir, "status", "--output", "json"],
+      {
+        cwd,
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
     return parseSupabaseStatus(rawStatus);
   } catch {
     return null;
@@ -158,15 +170,21 @@ function applyPublicValues(env, resolved) {
 function resolveSupabaseE2EEnv(rootDir, env = process.env, options = {}) {
   const fileEnv = options.loadFiles === false ? {} : loadRootFileEnv(rootDir);
   assertNoLegacyAdminEnv(env);
-  const liveStatus = readLiveSupabaseStatus(rootDir);
+  const supabaseWorkdirValue = stringValue(env.SUPABASE_WORKDIR);
+  const supabaseWorkdir = supabaseWorkdirValue
+    ? path.resolve(rootDir, supabaseWorkdirValue)
+    : rootDir;
+  const workdirConfigUrl = localApiUrlFromConfig(supabaseWorkdir);
+  const liveStatus = readLiveSupabaseStatus(supabaseWorkdir, rootDir);
 
   const supabaseUrl =
     liveStatus?.apiUrl ??
     env.SUPABASE_URL ??
     env.NEXT_PUBLIC_SUPABASE_URL ??
+    (supabaseWorkdirValue ? workdirConfigUrl : null) ??
     fileEnv.SUPABASE_URL ??
     fileEnv.NEXT_PUBLIC_SUPABASE_URL ??
-    localApiUrlFromConfig(rootDir);
+    workdirConfigUrl;
 
   const anonKey =
     liveStatus?.anonKey ??

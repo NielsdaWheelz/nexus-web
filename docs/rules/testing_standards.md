@@ -372,7 +372,7 @@ Rule:
 - Prefer deterministic seed inputs and idempotent setup behavior
 - Prefer Playwright `globalSetup` for centralized seeding/bootstrap so all invocation paths (`make test-e2e`, direct `bun run test:e2e`, CI) share identical setup guarantees
 - `globalSetup` may load repo `.env`/runtime port files to mirror Makefile behavior when tests are run outside Make, but those files must only provide public/runtime values.
-- Local Supabase Auth bootstrap has one owner: `e2e/supabase-env.cjs` plus Playwright `globalSetup`. E2E may use the real local Supabase Admin API to create the test user and session; it must not use fake auth, fake JWTs, auth skips, or browser-held admin credentials.
+- Local Supabase Auth bootstrap has one owner: `scripts/with_supabase_services.sh` starts the local Auth stack, `e2e/supabase-env.cjs` resolves public/admin env from that stack, and Playwright `globalSetup` seeds the user/session. E2E may use the real local Supabase Admin API to create the test user and session; it must not use fake auth, fake JWTs, auth skips, or browser-held admin credentials.
 - `SUPABASE_AUTH_ADMIN_KEY` is trusted E2E bootstrap env only. Next.js, FastAPI, workers, migrations, and helper subprocesses must receive a scrubbed app runtime env without Supabase admin/service-role/database keys.
 - Do not seed fake or undecryptable BYOK rows just to expose chat models. Chat-run E2E flows require a real runnable model through platform or BYOK configuration; otherwise they must skip through the shared chat-readiness helper before attempting to send.
 
@@ -522,13 +522,13 @@ Command semantics:
 
 Port ownership:
 
-- `make test-e2e`, `make test-e2e-ui`, and real-media Playwright targets
-  allocate Postgres, MinIO, API, and web ports through `scripts/test_env.sh`.
-  A port is available only if the harness can bind loopback immediately; process
-  listings are diagnostic only.
-- `TEST_POSTGRES_PORT`, `TEST_MINIO_PORT`, `TEST_API_PORT`, and `TEST_WEB_PORT`
-  are exact overrides. If one is set and cannot bind, the command fails instead
-  of silently switching ports.
+- `make test-e2e`, `make test-e2e-ui`, `make test-csp`, and real-media
+  Playwright targets allocate Postgres, MinIO, API, web, and local Supabase
+  Auth ports through `scripts/test_env.sh`. A port is available only if the
+  harness can bind loopback immediately; process listings are diagnostic only.
+- `TEST_POSTGRES_PORT`, `TEST_MINIO_PORT`, `TEST_API_PORT`, `TEST_WEB_PORT`,
+  and `TEST_SUPABASE_*_PORT` are exact overrides. If one is set and cannot bind,
+  the command fails instead of silently switching ports.
 - Playwright specs that need a specific pane layout should use the shared
   workspace session-seeding helpers in `e2e/tests/workspace.ts`. Bare direct URLs
   are product behavior; pane-sensitive tests should not rely on restored

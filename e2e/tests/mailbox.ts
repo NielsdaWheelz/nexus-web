@@ -1,6 +1,10 @@
 import { expect, type APIRequestContext } from "@playwright/test";
 
-const MAILBOX_BASE_URL = process.env.E2E_MAILBOX_URL ?? "http://127.0.0.1:54324";
+const MAILBOX_BASE_URL = process.env.E2E_MAILBOX_URL;
+
+if (!MAILBOX_BASE_URL) {
+  throw new Error("E2E_MAILBOX_URL must be provided by with_supabase_services.sh");
+}
 
 function objectValue(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object"

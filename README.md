@@ -93,9 +93,10 @@ make seed-real-media-e2e
   seeding. Direct Playwright commands from `e2e/` require an already-running
   local Supabase stack; pass `SUPABASE_AUTH_ADMIN_KEY` only as command-scoped
   shell env, never through app or deploy env files.
-- Test wrappers choose and hold free Postgres, MinIO, API, and web ports for
-  each run. `TEST_POSTGRES_PORT`, `TEST_MINIO_PORT`, `TEST_API_PORT`, and
-  `TEST_WEB_PORT` force an exact port and fail if it cannot bind.
+- Test wrappers choose and hold free Postgres, MinIO, API, web, and local
+  Supabase Auth ports for each run. `TEST_POSTGRES_PORT`, `TEST_MINIO_PORT`,
+  `TEST_API_PORT`, `TEST_WEB_PORT`, and `TEST_SUPABASE_*_PORT` force exact
+  ports and fail if they cannot bind.
 - Android builds require `NEXUS_GOOGLE_WEB_CLIENT_ID`; `.env.example` owns the
   contract, and local/CI environment owns the value.
 
