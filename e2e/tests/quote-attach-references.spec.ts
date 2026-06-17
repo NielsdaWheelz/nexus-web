@@ -24,7 +24,7 @@ interface ChatReferencesResponse {
   }>;
 }
 
-const NEW_REFERENCE_CHAT_BUTTON = /^(?:\+ New chat|Start new chat(?: about this document)?)$/i;
+const NEW_REFERENCE_CHAT_BUTTON = /^(?:\+ New chat|Start new chat about this resource)$/i;
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -90,11 +90,11 @@ test.describe("quote-attach references (post-cutover)", () => {
     await expect(popover).toBeVisible({ timeout: 5_000 });
     await popover.getByRole("button", { name: "Quote to existing chat" }).click();
 
-    // The reader secondary switches to Doc chat with the quote pending
+    // The reader secondary switches to Chat with the quote pending
     // until the user selects the chat that should receive it.
     const secondary = await openReaderSecondary(page);
     const docChatTab = secondary.getByRole("tab", {
-      name: "Document chat",
+      name: "Chat",
     });
     await expect(docChatTab).toHaveAttribute("aria-selected", "true", {
       timeout: 10_000,
@@ -169,7 +169,7 @@ test.describe("quote-attach references (post-cutover)", () => {
     await openMediaInSinglePaneWorkspace(page, deviceId, seed.media_id);
     const reloadedSecondary = await openReaderSecondary(page);
     const reloadedDocChatTab = reloadedSecondary.getByRole("tab", {
-      name: "Document chat",
+      name: "Chat",
     });
     await reloadedDocChatTab.click();
     await expect(reloadedDocChatTab).toHaveAttribute("aria-selected", "true");

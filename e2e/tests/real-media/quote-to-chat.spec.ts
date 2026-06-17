@@ -77,7 +77,7 @@ test("@real-media desktop selected quote opens doc chat pending context", async 
   const secondary = readerSecondaryForActivePane(page);
   await expect(secondary).toBeVisible({ timeout: 10_000 });
   await expect(
-    secondary.getByRole("tab", { name: "Document chat" }),
+    secondary.getByRole("tab", { name: "Chat" }),
   ).toHaveAttribute("aria-selected", "true");
   await expect(
     secondary.getByRole("region", { name: "Chat detail" }),
@@ -150,7 +150,7 @@ test("@real-media mobile selected quote opens document chat chooser", async ({
   ).toBeVisible({ timeout: 5_000 });
   await actions.getByRole("button", { name: "Quote to existing chat" }).click();
 
-  const chooser = page.getByRole("dialog", { name: "Document chat" });
+  const chooser = page.getByRole("dialog", { name: "Chat" });
   await expect(chooser).toBeVisible({ timeout: 10_000 });
   await expect(
     chooser.getByText("Choose a chat to add your quote"),

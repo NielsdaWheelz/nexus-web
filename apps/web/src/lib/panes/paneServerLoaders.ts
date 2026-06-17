@@ -138,10 +138,7 @@ export const paneServerLoaders: Partial<Record<PaneRouteId, PaneServerLoader>> =
       );
       return {
         cacheKey: noteBlockResource.cacheKey({ blockId: params.blockId }),
-        data: {
-          blockId: params.blockId,
-          bodyText: normalizeBlock(env.data).bodyText,
-        },
+        data: normalizeBlock(env.data),
       };
     },
 

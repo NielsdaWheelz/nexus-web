@@ -1,15 +1,18 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Node as ProseMirrorNode } from "prosemirror-model";
 import {
   FeedbackNotice,
   toFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
+import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import NoteDraftRecovery from "@/components/notes/NoteDraftRecovery";
 import ProseMirrorOutlineEditor from "@/components/notes/ProseMirrorOutlineEditor";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
+import { usePaneSecondary } from "@/components/workspace/PaneSecondary";
+import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createRandomId } from "@/lib/createRandomId";
 import { fetchNoteBlock, saveNoteBody, type NoteBlock } from "@/lib/notes/api";
@@ -19,7 +22,12 @@ import {
   noteBlocksToOutlineDoc,
 } from "@/lib/notes/prosemirror/schema";
 import { useNoteEditorSession } from "@/lib/notes/useNoteEditorSession";
-import { usePaneParam, usePaneRouter, useSetPaneTitle } from "@/lib/panes/paneRuntime";
+import {
+  usePaneParam,
+  usePaneRouter,
+  usePaneRuntime,
+  useSetPaneTitle,
+} from "@/lib/panes/paneRuntime";
 import { useResource } from "@/lib/api/useResource";
 import { consumePendingNoteActivation } from "@/lib/reader/pendingNoteActivation";
 import { useNotePulseHighlight, type NotePulseTarget } from "@/lib/reader/pulseEvent";
@@ -32,6 +40,7 @@ export default function NotePaneBody() {
   if (!blockId) throw new Error("note route requires a block id");
 
   const router = usePaneRouter();
+  const paneRuntime = usePaneRuntime();
   const [block, setBlock] = useState<NoteBlock | null>(null);
   const [initialDoc, setInitialDoc] = useState<ProseMirrorNode | null>(null);
   const [notePulseTarget, setNotePulseTarget] = useState<{
@@ -131,6 +140,48 @@ export default function NotePaneBody() {
     },
     [router],
   );
+
+  const openRoute = useCallback(
+    (href: string, openInNewPane: boolean) => {
+      if (openInNewPane) paneRuntime?.openInNewPane(href);
+      else router.push(href);
+    },
+    [paneRuntime, router],
+  );
+
+  const paneOptions = useMemo(
+    () => [
+      {
+        id: "show-note-connections",
+        label: "Show connections",
+        onSelect: () => {
+          paneRuntime?.requestSecondarySurface("notes-connections");
+        },
+      },
+    ],
+    [paneRuntime],
+  );
+  usePaneChromeOverride({ options: paneOptions });
+
+  const secondaryDescriptor = useMemo(
+    () => ({
+      groupId: "notes-tools" as const,
+      defaultSurfaceId: "notes-connections" as const,
+      surfaces: [
+        {
+          id: "notes-connections" as const,
+          body: (
+            <ConnectionsSurface
+              objectRef={{ objectType: "note_block", objectId: blockId }}
+              onOpenRoute={openRoute}
+            />
+          ),
+        },
+      ],
+    }),
+    [blockId, openRoute],
+  );
+  usePaneSecondary(secondaryDescriptor);
 
   const pulseNoteBlock = useCallback((target: NotePulseTarget) => {
     const pulseId = notePulseIdRef.current + 1;

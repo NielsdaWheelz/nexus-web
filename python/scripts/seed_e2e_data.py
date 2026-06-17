@@ -60,12 +60,11 @@ from nexus.services.epub_metadata import persist_epub_metadata
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
 from nexus.services.highlights import create_highlight_for_fragment
 from nexus.services.media_source_ingest import accept_url_source
-from nexus.services.note_indexing import rebuild_page_content_index
+from nexus.services.note_indexing import rebuild_note_content_index
 from nexus.services.notes import pm_doc_from_text, set_highlight_note_body_pm_json
 from nexus.services.pdf_indexing import index_pdf_evidence
 from nexus.services.pdf_ingest import PdfExtractionError
 from nexus.services.reader_apparatus import replace_media_apparatus, source_fingerprint
-from nexus.services.resource_graph import documents as graph_documents
 from nexus.services.resource_graph.cleanup import delete_edges_for_deleted_resource
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.transcript_segments import normalize_transcript_segments
@@ -916,28 +915,19 @@ def _seed_non_pdf_linked_items_media(session_factory, user_id: UUID) -> None:
             quote_highlight.id,
             "Seeded note for non-PDF linked-items e2e.",
         )
-        _set_seed_highlight_note(
+        focus_note_block = _set_seed_highlight_note(
             db,
             user_id,
             focus_highlight.id,
             "Seeded focus note for non-PDF linked-items e2e.",
         )
-        note_page_id = (
-            graph_documents.find_block_occurrence(
-                db, user_id=user_id, block_id=quote_note_block.id
-            ).page_id
-            if quote_note_block
-            else None
-        )
-        if note_page_id is None:
+        if quote_note_block is None or focus_note_block is None:
             raise RuntimeError("Non-PDF seed note block was not created")
-        # Note/page content indexing is async in production (enqueue_page_reindex
-        # only marks the page 'pending'); no worker runs in E2E, so drive the
-        # rebuild inline — the same synchronous pattern the seeded media use and
-        # the canonical test-factory convention — so the seeded note is
-        # searchable the instant the API serves a request.
+        # Note indexing is async in production; no worker runs in E2E, so make
+        # the seeded notes searchable before the API serves requests.
         db.flush()
-        rebuild_page_content_index(db, page_id=note_page_id, reason="e2e_seed")
+        rebuild_note_content_index(db, note_block_id=quote_note_block.id, reason="e2e_seed")
+        rebuild_note_content_index(db, note_block_id=focus_note_block.id, reason="e2e_seed")
         db.commit()
 
     _write_non_pdf_seed_file(
@@ -1454,27 +1444,19 @@ def _seed_reader_document_map_media(session_factory, user_id: UUID) -> None:
             near_highlight.id,
             "Seeded near note for reader Document Map e2e.",
         )
-        _set_seed_highlight_note(
+        far_note_block = _set_seed_highlight_note(
             db,
             user_id,
             far_highlight.id,
             "Seeded far note for reader Document Map e2e.",
         )
-        note_page_id = (
-            graph_documents.find_block_occurrence(
-                db, user_id=user_id, block_id=near_note_block.id
-            ).page_id
-            if near_note_block
-            else None
-        )
-        if note_page_id is None:
+        if near_note_block is None or far_note_block is None:
             raise RuntimeError("Reader Document Map seed note block was not created")
-        # These notes land on the same default page as the non-PDF seed and would
-        # re-mark it 'pending' (enqueue_page_reindex); rebuild inline so the page
-        # content index ends 'ready' after this seed runs (it is ordered last), or
-        # the note-search evidence would be silently unsearchable.
+        # Note indexing is async in production; no worker runs in E2E, so make
+        # the seeded notes searchable before the API serves requests.
         db.flush()
-        rebuild_page_content_index(db, page_id=note_page_id, reason="e2e_seed")
+        rebuild_note_content_index(db, note_block_id=near_note_block.id, reason="e2e_seed")
+        rebuild_note_content_index(db, note_block_id=far_note_block.id, reason="e2e_seed")
         db.commit()
 
     _write_reader_document_map_seed_file(

@@ -26,11 +26,11 @@ function conversationWorkspacePane(page: Page) {
 async function openConversationReferencesPane(conversationPane: Locator) {
   await conversationPane
     .getByTestId("pane-shell-chrome")
-    .getByRole("button", { name: "References" })
+    .getByRole("button", { name: "Context" })
     .click();
   const secondary = conversationPane.getByTestId("workspace-secondary-pane");
   await expect(secondary).toBeVisible({ timeout: 10_000 });
-  await expect(secondary.getByRole("tab", { name: "References" })).toHaveAttribute(
+  await expect(secondary.getByRole("tab", { name: "Context" })).toHaveAttribute(
     "aria-selected",
     "true",
   );
@@ -160,7 +160,7 @@ test("@real-media search evidence chat citations open each media reader", async 
         {
           headers: stateChangingApiHeaders(),
           data: {
-            initial_references: [
+            initial_context_refs: [
               `media:${mediaId}`,
               `content_chunk:${result.context_ref.id}`,
             ],

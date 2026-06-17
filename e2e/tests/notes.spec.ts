@@ -264,15 +264,7 @@ test.describe("notes cutover", () => {
       await page.keyboard.insertText(childText);
       await page.keyboard.press("Tab");
 
-      const saveResponse = page.waitForResponse(
-        (response) =>
-          response.request().method() === "PUT" &&
-          response.url().includes(`/api/notes/pages/${pageId}/surface`) &&
-          response.ok(),
-        { timeout: 20_000 }
-      );
       await activePane.getByRole("textbox", { name: "Page title" }).click();
-      await saveResponse;
 
       await expect
         .poll(
@@ -401,9 +393,9 @@ test.describe("notes cutover", () => {
       await gotoSinglePaneWorkspace(page, deviceId, `/notes/${noteBlockId}`);
       await expect(page).toHaveURL(new RegExp(`/notes/${noteBlockId}`));
       const notePane = activeWorkspacePane(page);
-      const notesOutline = notePane.getByRole("textbox", { name: "Notes outline" });
-      await expect(notesOutline).toContainText(noteText, { timeout: 10_000 });
-      await expect(notesOutline.locator(`[data-object-id="${seeded.media_id}"]`)).toHaveText(
+      const noteBody = notePane.getByRole("textbox", { name: "Note body" });
+      await expect(noteBody).toContainText(noteText, { timeout: 10_000 });
+      await expect(noteBody.locator(`[data-object-id="${seeded.media_id}"]`)).toHaveText(
         "Source media"
       );
       await expect
@@ -436,7 +428,7 @@ test.describe("notes cutover", () => {
       });
 
       const conversationResponse = await page.request.post("/api/conversations", {
-        data: { initial_references: [`note_block:${noteBlockId}`] },
+        data: { initial_context_refs: [`note_block:${noteBlockId}`] },
         headers: stateChangingApiHeaders(),
       });
       await expectOk(conversationResponse, "Create note-backed conversation");
@@ -448,11 +440,11 @@ test.describe("notes cutover", () => {
       const activeConversationPane = activeWorkspacePane(page);
       await activeConversationPane
         .getByTestId("pane-shell-chrome")
-        .getByRole("button", { name: "References" })
+        .getByRole("button", { name: "Context" })
         .click();
       const referencesPane = activeConversationPane.getByTestId("workspace-secondary-pane");
       await expect(referencesPane).toBeVisible({ timeout: 10_000 });
-      await expect(referencesPane).toHaveAttribute("aria-label", "References");
+      await expect(referencesPane).toHaveAttribute("aria-label", "Context");
       await expect(referencesPane).toContainText(noteText, {
         timeout: 10_000,
       });
@@ -609,10 +601,10 @@ test.describe("notes cutover", () => {
       // AC-9: the note is a real note block reachable at /notes/{blockId}.
       await gotoSinglePaneWorkspace(page, deviceId, `/notes/${noteBlockId}`);
       await expect(page).toHaveURL(new RegExp(`/notes/${noteBlockId}`));
-      const notesOutline = activeWorkspacePane(page).getByRole("textbox", {
-        name: "Notes outline",
+      const noteBody = activeWorkspacePane(page).getByRole("textbox", {
+        name: "Note body",
       });
-      await expect(notesOutline).toContainText(noteText, { timeout: 10_000 });
+      await expect(noteBody).toContainText(noteText, { timeout: 10_000 });
     } catch (error) {
       productError = error;
       throw error;

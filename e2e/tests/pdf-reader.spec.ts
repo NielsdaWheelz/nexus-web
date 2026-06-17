@@ -212,7 +212,7 @@ async function expectDocChatPendingContext(page: Page, exact: string): Promise<v
   const secondary = readerSecondaryForActivePane(page);
   await expect(secondary).toBeVisible({ timeout: 10_000 });
   await expect(
-    secondary.getByRole("tab", { name: "Document chat" }),
+    secondary.getByRole("tab", { name: "Chat" }),
   ).toHaveAttribute("aria-selected", "true");
   await expect(
     secondary.getByLabel("Attached to next message"),

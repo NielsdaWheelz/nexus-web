@@ -39,15 +39,17 @@ export interface WorkspacePaneState {
 export interface WorkspaceAttachedSecondaryPaneState {
   id: string;
   parentPrimaryPaneId: string;
-  groupId: "reader-tools" | "conversation-context" | "library-tools";
+  groupId: "reader-tools" | "conversation-context" | "library-tools" | "notes-tools";
   activeSurfaceId:
     | "reader-highlights"
-    | "reader-doc-chat"
     | "reader-contents"
-    | "conversation-references"
+    | "reader-apparatus"
+    | "reader-connections"
+    | "reader-resource-chat"
+    | "conversation-context-refs"
     | "conversation-forks"
-    | "library-chat"
-    | "library-intelligence";
+    | "library-intelligence"
+    | "notes-connections";
   widthPx: number;
   visibility: "visible" | "collapsed";
 }

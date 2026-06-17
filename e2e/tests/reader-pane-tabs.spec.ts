@@ -28,7 +28,7 @@ test.describe("reader pane tabs (references cutover)", () => {
     const tablist = secondary.getByRole("tablist", { name: "Secondary surfaces" });
     const tabs = tablist.getByRole("tab");
     const highlightsTab = tablist.getByRole("tab", { name: "Highlights" });
-    const documentChatTab = tablist.getByRole("tab", { name: "Document chat" });
+    const documentChatTab = tablist.getByRole("tab", { name: "Chat" });
     const connectionsTab = tablist.getByRole("tab", { name: "Connections" });
 
     await expect(tabs).toHaveCount(3);
@@ -46,7 +46,7 @@ test.describe("reader pane tabs (references cutover)", () => {
     await expect(documentChatTab).toHaveAttribute("aria-selected", "true");
     await expect(
       secondary.getByRole("button", {
-        name: /Start new chat about this document|\+ New chat/i,
+        name: /Start new chat about this resource|\+ New chat/i,
       }),
     ).toBeVisible({ timeout: 10_000 });
   });

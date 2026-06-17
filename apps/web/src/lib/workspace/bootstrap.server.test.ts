@@ -289,8 +289,14 @@ describe("loadWorkspaceBootstrap", () => {
     const result = await loadWorkspaceBootstrap(false);
 
     expect(result.resources[`note-block:${NOTE_BLOCK_ID}`]).toEqual({
-      blockId: NOTE_BLOCK_ID,
+      id: NOTE_BLOCK_ID,
+      parentBlockId: null,
+      orderKey: null,
+      bodyPmJson: { type: "paragraph" },
       bodyText: "Seeded note block",
+      collapsed: false,
+      children: [],
+      versionByLane: {},
     });
   });
 
