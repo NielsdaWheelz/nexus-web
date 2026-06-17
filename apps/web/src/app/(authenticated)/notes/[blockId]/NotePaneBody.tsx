@@ -41,6 +41,8 @@ export default function NotePaneBody() {
 
   const router = usePaneRouter();
   const paneRuntime = usePaneRuntime();
+  const openInNewPaneRoute = paneRuntime?.openInNewPane;
+  const requestSecondarySurface = paneRuntime?.requestSecondarySurface;
   const [block, setBlock] = useState<NoteBlock | null>(null);
   const [initialDoc, setInitialDoc] = useState<ProseMirrorNode | null>(null);
   const [notePulseTarget, setNotePulseTarget] = useState<{
@@ -143,10 +145,10 @@ export default function NotePaneBody() {
 
   const openRoute = useCallback(
     (href: string, openInNewPane: boolean) => {
-      if (openInNewPane) paneRuntime?.openInNewPane(href);
+      if (openInNewPane) openInNewPaneRoute?.(href);
       else router.push(href);
     },
-    [paneRuntime, router],
+    [openInNewPaneRoute, router],
   );
 
   const paneOptions = useMemo(
@@ -155,11 +157,11 @@ export default function NotePaneBody() {
         id: "show-note-connections",
         label: "Show connections",
         onSelect: () => {
-          paneRuntime?.requestSecondarySurface("notes-connections");
+          requestSecondarySurface?.("notes-connections");
         },
       },
     ],
-    [paneRuntime],
+    [requestSecondarySurface],
   );
   usePaneChromeOverride({ options: paneOptions });
 
