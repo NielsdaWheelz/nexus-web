@@ -16,7 +16,7 @@ from tests.factories import (
     get_user_default_library,
 )
 
-pytestmark = pytest.mark.unit
+pytestmark = pytest.mark.integration
 
 
 def _note(db: Session, user_id, text: str) -> NoteBlock:

@@ -67,7 +67,6 @@ function respondWithFn(responder: Responder): void {
 const PROFILE_OK = { data: DEFAULT_READER_PROFILE };
 const NOTE_PAGE_ID = "11111111-1111-4111-8111-111111111111";
 const NOTE_BLOCK_ID = "22222222-2222-4222-8222-222222222222";
-const NOTE_BLOCK_PAGE_ID = "33333333-3333-4333-8333-333333333333";
 
 // Saved-session builders — the same primary()/workspace() helpers sessionSync.test.ts
 // uses, so the raw `own`/`most_recent_elsewhere` states the bootstrap sanitizes and
@@ -275,14 +274,14 @@ describe("loadWorkspaceBootstrap", () => {
     ]);
   });
 
-  it("normalizes and seeds note block to page resolution", async () => {
+  it("normalizes and seeds note block resources", async () => {
     requestHeaders.set(REQUEST_PATH_HEADER, `/notes/${NOTE_BLOCK_ID}`);
     respondWith({
       "/me/reader-profile": PROFILE_OK,
       [`/notes/blocks/${NOTE_BLOCK_ID}`]: {
         data: {
           id: NOTE_BLOCK_ID,
-          page_id: NOTE_BLOCK_PAGE_ID,
+          body_text: "Seeded note block",
         },
       },
     });
@@ -291,7 +290,7 @@ describe("loadWorkspaceBootstrap", () => {
 
     expect(result.resources[`note-block:${NOTE_BLOCK_ID}`]).toEqual({
       blockId: NOTE_BLOCK_ID,
-      pageId: NOTE_BLOCK_PAGE_ID,
+      bodyText: "Seeded note block",
     });
   });
 

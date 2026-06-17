@@ -28,7 +28,7 @@ from nexus.api.routes._sse import open_sse_listener, tail_cursor_stream, tail_sn
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.services import chat_runs as chat_runs_service
-from nexus.services import library_intelligence as library_intelligence_service
+from nexus.services import library_intelligence_revisions as library_intelligence_revisions_service
 from nexus.services import media as media_service
 from nexus.services import oracle as oracle_service
 from nexus.services import run_kit
@@ -78,13 +78,15 @@ _ORACLE_READING_KIND = CursorStreamKind(
 _LIBRARY_INTELLIGENCE_KIND = CursorStreamKind(
     run_kind=run_kit.RunStreamKind.LibraryIntelligence,
     assert_viewer=lambda db, viewer_id, revision_id: (
-        library_intelligence_service.assert_revision_viewer(
+        library_intelligence_revisions_service.assert_revision_viewer(
             db, viewer_id=viewer_id, revision_id=revision_id
         )
     ),
     read_after=lambda db, viewer_id, revision_id, after: (
-        library_intelligence_service.get_revision_events(db, revision_id=revision_id, after=after),
-        library_intelligence_service.is_revision_terminal(db, revision_id=revision_id),
+        library_intelligence_revisions_service.get_revision_events(
+            db, revision_id=revision_id, after=after
+        ),
+        library_intelligence_revisions_service.is_revision_terminal(db, revision_id=revision_id),
     ),
 )
 

@@ -3,7 +3,7 @@
 The sole writer of the stable head (``library_intelligence_artifacts``) and the
 immutable revisions' lifecycle pointers. It creates a ``building`` draft +
 enqueues the reduce, computes the head's read-model + freshness, promotes a prior
-revision (restore), lists revisions, and exposes the SSE read dependencies.
+revision (restore), and owns the shared expansion helpers used by the reduce.
 
 The LLM REDUCE worker that turns a draft into prose + citations and promotes it
 on success lives in ``library_intelligence_reduce``; this module owns the two
@@ -20,30 +20,23 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from uuid import UUID
 
-from sqlalchemy import select, text
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import is_library_member
 from nexus.db.models import (
     LibraryIntelligenceArtifactRevision,
-    LibraryIntelligenceRevisionEvent,
 )
 from nexus.db.retries import retry_serializable
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.jobs.queue import enqueue_unique_job
-from nexus.logging import get_logger
 from nexus.schemas.citation import CitationOut
-from nexus.schemas.library_intelligence import (
-    ArtifactStatus,
-    LibraryIntelligenceRevisionEventOut,
-)
+from nexus.schemas.library_intelligence import ArtifactStatus
 from nexus.services import run_kit
 from nexus.services.resource_graph.citations import (
     build_citation_outs,
 )
 from nexus.services.resource_graph.refs import ResourceRef
-
-logger = get_logger(__name__)
 
 GENERATE_JOB_KIND = "library_intelligence_artifact_generate"
 
@@ -463,52 +456,6 @@ def promote_revision(
 
     retry_serializable(db, "promote_revision", op)
     return get_artifact(db, viewer_id=viewer_id, library_id=library_id)
-
-
-# ---------- SSE handler dependencies ----------------------------------------
-
-
-def assert_revision_viewer(db: Session, *, viewer_id: UUID, revision_id: UUID) -> None:
-    """Raise NotFoundError unless the revision belongs to a library the viewer reads."""
-    _artifact_and_library_for_revision(db, revision_id=revision_id, viewer_id=viewer_id)
-
-
-def get_revision_events(
-    db: Session, *, revision_id: UUID, after: int
-) -> list[LibraryIntelligenceRevisionEventOut]:
-    rows = (
-        db.execute(
-            select(LibraryIntelligenceRevisionEvent)
-            .where(
-                LibraryIntelligenceRevisionEvent.revision_id == revision_id,
-                LibraryIntelligenceRevisionEvent.seq > after,
-            )
-            .order_by(LibraryIntelligenceRevisionEvent.seq)
-        )
-        .scalars()
-        .all()
-    )
-    return [
-        LibraryIntelligenceRevisionEventOut(
-            seq=row.seq,
-            event_type=row.event_type,
-            payload=dict(row.payload) if isinstance(row.payload, dict) else {},
-        )
-        for row in rows
-    ]
-
-
-def is_revision_terminal(db: Session, *, revision_id: UUID) -> bool:
-    status = db.execute(
-        text("SELECT status FROM library_intelligence_artifact_revisions WHERE id = :revision_id"),
-        {"revision_id": revision_id},
-    ).scalar_one_or_none()
-    # A missing revision (deleted mid-stream) is terminal — otherwise the SSE tail
-    # would stream forever; the viewer assertion proved it existed at open. The
-    # terminal set has one owner (run_kit).
-    return status is None or status in run_kit.terminal_statuses(
-        run_kit.RunStreamKind.LibraryIntelligence
-    )
 
 
 # ---------- shared helpers (single owner; imported by the reduce worker) -----

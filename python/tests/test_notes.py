@@ -19,13 +19,12 @@ from tests.factories import (
     get_user_default_library,
 )
 
-pytestmark = pytest.mark.unit
-
 
 def _paragraph(text: str) -> dict[str, object]:
     return {"type": "paragraph", "content": [{"type": "text", "text": text}]}
 
 
+@pytest.mark.unit
 def test_page_and_note_rows_are_intrinsic_only() -> None:
     assert not hasattr(Page, "description")
     assert not hasattr(Page, "document_version")
@@ -33,6 +32,7 @@ def test_page_and_note_rows_are_intrinsic_only() -> None:
     assert not hasattr(NoteBlock, "body_markdown")
 
 
+@pytest.mark.integration
 def test_quick_capture_links_note_to_daily_page(
     db_session: Session,
     bootstrapped_user: UUID,
@@ -72,6 +72,7 @@ def test_quick_capture_links_note_to_daily_page(
     )
 
 
+@pytest.mark.integration
 def test_get_note_block_is_body_only(
     db_session: Session,
     bootstrapped_user: UUID,
@@ -94,6 +95,7 @@ def test_get_note_block_is_body_only(
     assert "pageId" not in block.model_dump(mode="json", by_alias=True)
 
 
+@pytest.mark.integration
 def test_delete_page_leaves_linked_note_alive(
     db_session: Session,
     bootstrapped_user: UUID,
@@ -134,6 +136,7 @@ def test_delete_page_leaves_linked_note_alive(
     ).all()
 
 
+@pytest.mark.integration
 def test_set_highlight_note_body_enqueues_note_reindex(
     db_session: Session,
     bootstrapped_user: UUID,

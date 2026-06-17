@@ -58,10 +58,8 @@ NOTE_OBJECT_EDGE_MATCH = {
         "OR (e.target_scheme = 'page' AND e.target_id = p.id)"
     ),
     "note_block": (
-        "(e.source_scheme = 'note_block'"
-        " AND e.source_id = (cc.summary_locator->>'note_block_id')::uuid) "
-        "OR (e.target_scheme = 'note_block'"
-        " AND e.target_id = (cc.summary_locator->>'note_block_id')::uuid)"
+        "(e.source_scheme = 'note_block' AND e.source_id = cc.owner_id) "
+        "OR (e.target_scheme = 'note_block' AND e.target_id = cc.owner_id)"
     ),
 }
 
@@ -71,10 +69,7 @@ NOTE_OBJECT_EDGE_MATCH = {
 # break the pin.
 NOTE_OBJECT_CONTEXT_TARGET = {
     "page": "AND e.target_scheme = 'page' AND e.target_id = p.id",
-    "note_block": (
-        "AND e.target_scheme = 'note_block' "
-        "AND e.target_id = (cc.summary_locator->>'note_block_id')::uuid"
-    ),
+    "note_block": ("AND e.target_scheme = 'note_block' AND e.target_id = cc.owner_id"),
 }
 
 
@@ -140,7 +135,7 @@ def test_note_object_membership_cells_admit_only_note_media_edge_origins(
     assert not isinstance(result, ScopeUnsupported)
     sql = _squash(result[0])
     assert "e.kind = 'context'" in sql
-    assert "e.origin IN ('user', 'note_body', 'highlight_note')" in sql
+    assert "e.origin IN ('user', 'highlight_note')" in sql
     assert "e.ordinal IS NULL" in sql
     assert "note_containment" not in sql
     assert "synapse" not in sql

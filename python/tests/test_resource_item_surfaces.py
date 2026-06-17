@@ -17,7 +17,7 @@ from tests.factories import (
     get_user_default_library,
 )
 
-pytestmark = pytest.mark.unit
+pytestmark = pytest.mark.integration
 
 
 def test_resource_item_routes_use_product_paths(db_session: Session, bootstrapped_user: UUID):
