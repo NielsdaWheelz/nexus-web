@@ -13,7 +13,7 @@ export default function ConversationContextRefsSurface({
 }: {
   contextRefs: ContextRefOut[];
   removeContextRef: (edgeId: string) => Promise<void>;
-  onOpenResource?: (uri: string) => void;
+  onOpenResource?: (contextRef: ContextRefOut) => void;
 }) {
   if (contextRefs.length === 0) {
     return <p className={styles.empty}>No context yet.</p>;
@@ -34,7 +34,7 @@ export default function ConversationContextRefsSurface({
             meta={contextRef.summary || undefined}
             onActivate={
               onOpenResource && !contextRef.missing
-                ? () => onOpenResource(contextRef.resource_ref)
+                ? () => onOpenResource(contextRef)
                 : undefined
             }
             actions={
@@ -44,7 +44,7 @@ export default function ConversationContextRefsSurface({
                     id: "open",
                     label: "Open",
                     disabled: !onOpenResource || contextRef.missing,
-                    onSelect: () => onOpenResource?.(contextRef.resource_ref),
+                    onSelect: () => onOpenResource?.(contextRef),
                   },
                   {
                     id: "remove",

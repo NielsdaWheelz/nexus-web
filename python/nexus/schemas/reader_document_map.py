@@ -18,6 +18,7 @@ from nexus.schemas.reader_apparatus import (
     ReaderApparatusLocatorStatus,
     ReaderApparatusResponse,
 )
+from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.schemas.resource_graph import EdgeKind, EdgeOrigin
 from nexus.services.resource_graph.schemas import ConnectionDirection
 
@@ -65,6 +66,7 @@ class ReaderDocumentMapItemBaseOut(BaseModel):
     title: str
     subtitle: str | None = None
     excerpt: str | None = None
+    activation: ResourceActivationOut | None = None
     href: str | None = None
     anchor: ReaderDocumentMapAnchorOut | None = None
     document_order_key: str | None = None
@@ -97,6 +99,7 @@ class ReaderDocumentMapHighlightItemOut(ReaderDocumentMapItemBaseOut):
 class ReaderDocumentMapApparatusItemOut(ReaderDocumentMapItemBaseOut):
     kind: Literal["apparatus"]
     source_domain: Literal["reader_apparatus"]
+    resource_ref: str
     stable_key: str
     apparatus_kind: ReaderApparatusItemKind
     confidence: ReaderApparatusConfidence

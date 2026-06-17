@@ -24,6 +24,11 @@ import type {
   ReaderSourceTarget,
 } from "@/lib/conversations/readerTarget";
 import { dispatchReaderSourceActivation } from "@/lib/conversations/readerSourceActivation";
+import {
+  activateResource,
+  hrefForResourceActivation,
+  type ResourceActivation,
+} from "@/lib/resources/activation";
 import { isMediaRetrievalLocator, isRetrievalLocator } from "@/lib/api/sse/locators";
 import ReaderDocumentMapHighlightsLens from "@/components/reader/document-map/ReaderDocumentMapHighlightsLens";
 import ReaderDocumentMapConnectionsLens from "@/components/reader/document-map/ReaderDocumentMapConnectionsLens";
@@ -526,6 +531,8 @@ export default function MediaPaneBody() {
       : paneSearchParams.get("fragment")?.trim() || null;
   const requestedHighlightId =
     target?.kind === "highlight" ? target.value : null;
+  const requestedApparatusStableKey =
+    paneSearchParams.get("apparatus")?.trim() || null;
   const requestedEvidenceId = target?.kind === "evidence" ? target.value : null;
   const requestedLocParam = paneSearchParams.get("loc")?.trim() ?? "";
   const requestedReaderLoc =
@@ -762,6 +769,7 @@ export default function MediaPaneBody() {
   const [quickNote, setQuickNote] = useState<QuickNoteSession | null>(null);
   const focusedHighlightIdRef = useRef<string | null>(focusState.focusedId);
   const urlHighlightAppliedRef = useRef<string | null>(null);
+  const urlApparatusAppliedRef = useRef<string | null>(null);
   const urlEvidenceAppliedRef = useRef<string | null>(null);
   const mismatchToastFragmentRef = useRef<string | null>(null);
   const mismatchLoggedFragmentRef = useRef<string | null>(null);
@@ -3662,6 +3670,28 @@ export default function MediaPaneBody() {
   );
 
   useEffect(() => {
+    if (!requestedApparatusStableKey) {
+      urlApparatusAppliedRef.current = null;
+      return;
+    }
+    if (urlApparatusAppliedRef.current === requestedApparatusStableKey) {
+      return;
+    }
+    const row = readerApparatusRowByItemId.get(requestedApparatusStableKey);
+    if (!row) {
+      return;
+    }
+    urlApparatusAppliedRef.current = requestedApparatusStableKey;
+    handleReaderApparatusRowActivate(row);
+    markActive();
+  }, [
+    handleReaderApparatusRowActivate,
+    markActive,
+    readerApparatusRowByItemId,
+    requestedApparatusStableKey,
+  ]);
+
+  useEffect(() => {
     const pending = pendingApparatusPulseRef.current;
     if (
       !pending ||
@@ -4649,21 +4679,22 @@ export default function MediaPaneBody() {
   // Activate a source cited in an in-secondary chat: seek/highlight this document,
   // or open a different source in a new pane.
   const handleReaderSourceActivate = useCallback(
-    (target: ReaderSourceTarget) => {
-      if (target.kind === "note") {
-        // A note citation is not media: open the notes pane.
-        const route = target.href || `/notes/${target.block_id}`;
-        openInNewPane?.(route, target.label ?? "Note");
+    (
+      activation: ResourceActivation,
+      target: ReaderSourceTarget | null,
+    ) => {
+      if (!target || target.kind !== "media" || target.media_id !== id) {
+        if (target) dispatchReaderSourceActivation(target);
+        activateResource(activation, {
+          label: target?.label ?? "Source",
+          openInNewPane,
+          navigate: paneRouterPush,
+          newPane: true,
+        });
         return;
       }
 
-      if (target.media_id !== id) {
-        const route = target.href || `/media/${target.media_id}`;
-        const titleHint = target.label ?? "Source";
-        openInNewPane?.(route, titleHint);
-        return;
-      }
-
+      dispatchReaderSourceActivation(target);
       setReaderSourceTarget(target);
 
       if (target.locator?.type === "transcript_time_range") {
@@ -4677,17 +4708,17 @@ export default function MediaPaneBody() {
         }
       }
     },
-    [handleTranscriptSeek, id, openInNewPane],
+    [handleTranscriptSeek, id, openInNewPane, paneRouterPush],
   );
 
   const handleOpenReaderConnectionSource = useCallback(
     (row: ReaderConnectionRow, event?: MouseEvent) => {
-      if (!row.href) return;
-      if (event?.shiftKey) {
-        openInNewPane?.(row.href, row.title);
-      } else {
-        paneRouterPush?.(row.href);
-      }
+      activateResource(row.activation, {
+        label: row.title,
+        openInNewPane,
+        navigate: paneRouterPush,
+        newPane: event?.shiftKey,
+      });
     },
     [openInNewPane, paneRouterPush],
   );
@@ -4711,11 +4742,10 @@ export default function MediaPaneBody() {
           highlight_behavior: "pulse",
           focus_behavior: "scroll_into_view",
           label: row.connection.target.label ?? row.title,
-          href: row.connection.target.href ?? `/notes/${targetLocator.block_id}`,
+          href: hrefForResourceActivation(row.connection.target.activation),
           evidence_id: row.connection.target.id,
         };
-        dispatchReaderSourceActivation(target);
-        handleReaderSourceActivate(target);
+        handleReaderSourceActivate(row.connection.target.activation, target);
         return;
       }
 
@@ -4724,7 +4754,7 @@ export default function MediaPaneBody() {
         return;
       }
 
-      handleReaderSourceActivate({
+      handleReaderSourceActivate(row.connection.target.activation, {
         kind: "media",
         source: "message_retrieval",
         media_id: row.anchor?.media_id ?? id,
@@ -4733,7 +4763,7 @@ export default function MediaPaneBody() {
         highlight_behavior: "pulse",
         focus_behavior: "scroll_into_view",
         label: row.title,
-        href: row.href,
+        href: hrefForResourceActivation(row.connection.target.activation),
         evidence_span_id: row.anchor?.evidence_span_id,
       });
     },

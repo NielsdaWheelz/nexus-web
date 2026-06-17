@@ -281,6 +281,12 @@ function resourceItem(
     label: scheme,
     summary: "",
     route: null,
+    activation: {
+      resource_ref: `${scheme}:${id}`,
+      kind: "none",
+      href: null,
+      unresolved_reason: "not_routeable",
+    },
     missing: false,
     capabilities: {
       linkable: true,

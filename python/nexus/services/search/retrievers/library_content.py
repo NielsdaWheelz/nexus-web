@@ -337,7 +337,7 @@ def _search_fragments(
                 ORDER BY nav.fragment_idx DESC, nav.ordinal DESC
                 LIMIT 1
             ) nav ON true
-            LEFT JOIN content_index_states mcis ON mcis.owner_kind = 'media'
+            JOIN content_index_states mcis ON mcis.owner_kind = 'media'
                 AND mcis.owner_id = f.media_id
                 AND mcis.status = 'ready'
             LEFT JOIN media_contributor_credits mcc ON mcc.media_id = m.id
@@ -423,6 +423,9 @@ def _search_evidence_spans(
             FROM evidence_spans es
             JOIN visible_media vm ON vm.media_id = es.owner_id AND es.owner_kind = 'media'
             JOIN media m ON m.id = es.owner_id
+            JOIN content_index_states mcis ON mcis.owner_kind = es.owner_kind
+                AND mcis.owner_id = es.owner_id
+                AND mcis.status = 'ready'
             LEFT JOIN media_contributor_credits mcc ON mcc.media_id = m.id
             WHERE to_tsvector('english', es.span_text)
                   @@ websearch_to_tsquery('english', :query)

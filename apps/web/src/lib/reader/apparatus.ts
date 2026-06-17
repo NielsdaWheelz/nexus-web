@@ -4,6 +4,7 @@ import {
 } from "@/lib/api/sse/locators";
 import { hasOnlyKeys, isOptionalString } from "@/lib/api/sse/guards";
 import { parseRawPdfQuads } from "@/lib/highlights/pdfTypes";
+import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { isRecord } from "@/lib/validation";
 
 export type ReaderApparatusStatus =
@@ -48,6 +49,8 @@ export interface ReaderApparatusCapabilities {
 }
 
 export interface ReaderApparatusItem {
+  id: string;
+  resource_ref: string;
   stable_key: string;
   kind: ReaderApparatusItemKind;
   label: string | null;
@@ -433,9 +436,15 @@ function supportsFrontendApparatusActivation(
 }
 
 function isReaderApparatusItem(value: unknown): value is ReaderApparatusItem {
+  const resourceRef =
+    isRecord(value) && typeof value.resource_ref === "string"
+      ? parseResourceRef(value.resource_ref)
+      : null;
   if (
     !isRecord(value) ||
     !hasOnlyKeys(value, [
+      "id",
+      "resource_ref",
       "stable_key",
       "kind",
       "label",
@@ -448,6 +457,10 @@ function isReaderApparatusItem(value: unknown): value is ReaderApparatusItem {
       "source_ref",
       "sort_key",
     ]) ||
+    typeof value.id !== "string" ||
+    typeof value.resource_ref !== "string" ||
+    resourceRef?.scheme !== "reader_apparatus_item" ||
+    resourceRef.id !== value.id ||
     typeof value.stable_key !== "string" ||
     typeof value.kind !== "string" ||
     !ITEM_KINDS.has(value.kind as ReaderApparatusItemKind) ||

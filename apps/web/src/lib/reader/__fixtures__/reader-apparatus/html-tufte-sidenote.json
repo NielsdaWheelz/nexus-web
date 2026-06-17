@@ -34,6 +34,7 @@
         "body_text": "This is a source-authored Tufte sidenote.",
         "confidence": "strong",
         "extraction_method": "tufte_sidenote",
+        "id": "84320abf-5566-52e3-8437-bf507e734d52",
         "kind": "sidenote",
         "label": "1",
         "locator": {
@@ -48,6 +49,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:84320abf-5566-52e3-8437-bf507e734d52",
         "sort_key": "000004.000000.target",
         "source_ref": {
           "element": "tufte-sidenote",
@@ -63,6 +65,7 @@
         "body_text": null,
         "confidence": "strong",
         "extraction_method": "tufte_sidenote",
+        "id": "664076bd-0196-5195-87ad-07efc9be2199",
         "kind": "sidenote_ref",
         "label": "1",
         "locator": {
@@ -77,6 +80,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:664076bd-0196-5195-87ad-07efc9be2199",
         "sort_key": "000004.000000.marker",
         "source_ref": {
           "element": "tufte-sidenote",

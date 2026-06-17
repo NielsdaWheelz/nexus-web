@@ -25,7 +25,8 @@ from nexus.services.resource_graph.schemas import (
     EdgeOrigin,
     snapshot_from_jsonb,
 )
-from nexus.services.resource_items.capabilities import expand_owned_child_refs, route_for_ref
+from nexus.services.resource_items.capabilities import expand_owned_child_refs
+from nexus.services.resource_items.routing import resource_activation_for_ref
 
 
 def query_connections(db: Session, *, viewer_id: UUID, query: ConnectionQuery) -> ConnectionPage:
@@ -126,16 +127,23 @@ def _hydrate_endpoints(
             ResourceRef(scheme=cast("ResourceScheme", row.target_scheme), id=row.target_id),
         )
     resolved = resolve_refs(db, viewer_id=viewer_id, refs=list(refs.values()))
-    return {
-        ref.uri: ConnectionEndpoint(
+    endpoints: dict[str, ConnectionEndpoint] = {}
+    for ref, item in zip(refs.values(), resolved, strict=True):
+        activation = resource_activation_for_ref(
+            db,
+            viewer_id=viewer_id,
+            ref=ref,
+            missing=item.missing,
+        )
+        endpoints[ref.uri] = ConnectionEndpoint(
             ref=ref,
             label=item.label,
             description=item.summary or None,
-            href=None if item.missing else route_for_ref(db, viewer_id=viewer_id, ref=ref),
+            activation=activation,
+            href=activation.href,
             missing=item.missing,
         )
-        for ref, item in zip(refs.values(), resolved, strict=True)
-    }
+    return endpoints
 
 
 def _connection_for_row(
@@ -167,6 +175,7 @@ def _connection_for_row(
             ordinal=projection.ordinal,
             role=projection.role,
             snapshot=projection.snapshot,
+            activation=endpoints[target_ref.uri].activation,
             target_media_id=projection.media_id,
             target_locator=projection.locator,
             target_status=projection.target_status,

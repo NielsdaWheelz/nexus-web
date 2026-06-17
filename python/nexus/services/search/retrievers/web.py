@@ -86,6 +86,13 @@ def _search_web_results(
                     FROM message_retrievals mr
                     JOIN message_tool_calls mtc ON mtc.id = mr.tool_call_id
                     JOIN visible_conversations vc ON vc.conversation_id = mtc.conversation_id
+                    JOIN resource_external_snapshots res
+                      ON res.id = CASE
+                          WHEN mr.source_id ~ '^[0-9a-f]{{8}}-[0-9a-f]{{4}}-[0-9a-f]{{4}}-[0-9a-f]{{4}}-[0-9a-f]{{12}}$'
+                          THEN CAST(mr.source_id AS uuid)
+                          ELSE NULL
+                      END
+                     AND res.user_id = :viewer_id
                     WHERE mr.result_type = 'web_result'
                       AND mr.result_ref->>'type' = 'web_result'
                       AND mr.locator IS NOT NULL

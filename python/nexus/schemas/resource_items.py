@@ -274,6 +274,22 @@ class ResourceItemCapabilitiesOut(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
 
+class ResourceActivationOut(BaseModel):
+    resource_ref: str = Field(
+        validation_alias=AliasChoices("resource_ref", "resourceRef"),
+        serialization_alias="resourceRef",
+    )
+    kind: Literal["route", "external", "none"]
+    href: str | None = None
+    unresolved_reason: str | None = Field(
+        None,
+        validation_alias=AliasChoices("unresolved_reason", "unresolvedReason"),
+        serialization_alias="unresolvedReason",
+    )
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
 class ResourceItemOut(BaseModel):
     ref: str
     scheme: ResourceScheme
@@ -281,6 +297,7 @@ class ResourceItemOut(BaseModel):
     label: str
     summary: str
     route: str | None = None
+    activation: ResourceActivationOut
     missing: bool = False
     capabilities: ResourceItemCapabilitiesOut
     version_by_lane: dict[str, int] = Field(

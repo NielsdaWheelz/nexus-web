@@ -265,6 +265,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "896bf968-8edf-5231-8b44-394ccb1eaa5f",
         "kind": "endnote_ref",
         "label": "1",
         "locator": {
@@ -280,6 +281,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:896bf968-8edf-5231-8b44-394ccb1eaa5f",
         "sort_key": "000000.marker",
         "source_ref": {
           "format": "xhtml",
@@ -298,6 +300,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "dfd20149-60f7-594f-b574-efd6aa1e14be",
         "kind": "endnote_ref",
         "label": "2",
         "locator": {
@@ -313,6 +316,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:dfd20149-60f7-594f-b574-efd6aa1e14be",
         "sort_key": "000000.marker",
         "source_ref": {
           "format": "xhtml",
@@ -331,6 +335,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "a465a19e-fb09-54be-b1da-64b8a90993f6",
         "kind": "endnote_ref",
         "label": "3",
         "locator": {
@@ -346,6 +351,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:a465a19e-fb09-54be-b1da-64b8a90993f6",
         "sort_key": "000001.marker",
         "source_ref": {
           "format": "xhtml",
@@ -364,6 +370,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "4f8c6f68-e4c8-5004-9a5b-0d43bed00862",
         "kind": "endnote_ref",
         "label": "4",
         "locator": {
@@ -379,6 +386,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:4f8c6f68-e4c8-5004-9a5b-0d43bed00862",
         "sort_key": "000000.marker",
         "source_ref": {
           "format": "xhtml",
@@ -397,6 +405,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "33c3780c-32d8-5d67-b496-eb1a38c0d9d2",
         "kind": "endnote_ref",
         "label": "5",
         "locator": {
@@ -412,6 +421,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:33c3780c-32d8-5d67-b496-eb1a38c0d9d2",
         "sort_key": "000000.marker",
         "source_ref": {
           "format": "xhtml",
@@ -430,6 +440,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "0de58fa2-572d-58b1-b391-bf618a0e232d",
         "kind": "endnote_ref",
         "label": "6",
         "locator": {
@@ -445,6 +456,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:0de58fa2-572d-58b1-b391-bf618a0e232d",
         "sort_key": "000001.marker",
         "source_ref": {
           "format": "xhtml",
@@ -463,6 +475,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "6b1a3a27-0a85-5840-9ac5-2e9768988678",
         "kind": "endnote_ref",
         "label": "7",
         "locator": {
@@ -478,6 +491,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:6b1a3a27-0a85-5840-9ac5-2e9768988678",
         "sort_key": "000002.marker",
         "source_ref": {
           "format": "xhtml",
@@ -496,6 +510,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "b02c203c-0596-5ba5-b832-4eb447687a7c",
         "kind": "endnote_ref",
         "label": "8",
         "locator": {
@@ -511,6 +526,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:b02c203c-0596-5ba5-b832-4eb447687a7c",
         "sort_key": "000000.marker",
         "source_ref": {
           "format": "xhtml",
@@ -529,6 +545,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "b6fc0d81-4471-5ed4-bc7b-136e5c1a93bc",
         "kind": "endnote_ref",
         "label": "9",
         "locator": {
@@ -544,6 +561,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:b6fc0d81-4471-5ed4-bc7b-136e5c1a93bc",
         "sort_key": "000000.marker",
         "source_ref": {
           "format": "xhtml",
@@ -562,6 +580,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "ad805445-575d-5751-ae4a-a7ccad1b306c",
         "kind": "endnote_ref",
         "label": "10",
         "locator": {
@@ -577,6 +596,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:ad805445-575d-5751-ae4a-a7ccad1b306c",
         "sort_key": "000001.marker",
         "source_ref": {
           "format": "xhtml",
@@ -595,6 +615,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "ea2a59c2-6f22-5f56-ac5f-82b462d89688",
         "kind": "endnote_ref",
         "label": "11",
         "locator": {
@@ -610,6 +631,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:ea2a59c2-6f22-5f56-ac5f-82b462d89688",
         "sort_key": "000002.marker",
         "source_ref": {
           "format": "xhtml",
@@ -628,6 +650,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "602aacf1-a81e-5454-955b-1002366e9f6b",
         "kind": "endnote_ref",
         "label": "12",
         "locator": {
@@ -643,6 +666,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:602aacf1-a81e-5454-955b-1002366e9f6b",
         "sort_key": "000000.marker",
         "source_ref": {
           "format": "xhtml",
@@ -661,6 +685,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "6a6ce6f7-aa7f-52b7-9214-2a7642de9495",
         "kind": "endnote_ref",
         "label": "13",
         "locator": {
@@ -676,6 +701,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:6a6ce6f7-aa7f-52b7-9214-2a7642de9495",
         "sort_key": "000001.marker",
         "source_ref": {
           "format": "xhtml",
@@ -694,6 +720,7 @@
         "body_text": "Morrison I. Swift, Human Submission, Part Second, Philadelphia, Liberty Press, 1905, pp. 4\u2060\u2013\u206010. \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "87fd18c8-be38-57cc-b4d7-69296a204937",
         "kind": "endnote",
         "label": "Morrison",
         "locator": {
@@ -709,6 +736,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:87fd18c8-be38-57cc-b4d7-69296a204937",
         "sort_key": "000006.000000.target",
         "source_ref": {
           "format": "xhtml",
@@ -726,6 +754,7 @@
         "body_text": "Translated in the Revue Philosophique for January, 1879 (vol. VII). \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "becaff32-c8ad-5806-99da-c907d34a176e",
         "kind": "endnote",
         "label": "Translated",
         "locator": {
@@ -741,6 +770,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:becaff32-c8ad-5806-99da-c907d34a176e",
         "sort_key": "000007.000001.target",
         "source_ref": {
           "format": "xhtml",
@@ -758,6 +788,7 @@
         "body_text": "\u201cTheorie und Praxis,\u201d Zeitsch. des Oesterreichischen Ingenieur u. Architecten-Vereines, 1905, Nr. 4 u. 6. I find a still more radical pragmatism than Ostwald\u2019s in an address by Professor W. S. Franklin: \u201cI think that the sickliest notion of physics, even if a student gets it, is that it is \u2018the science of masses, molecules and the ether.\u2019 And I think that the healthiest notion, even if a student does not wholly get it, is that physics is the science of the ways of taking hold of bodies and pushing them!\u201d (Science, January 2, 1903.) \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "5c202085-cc9e-5d26-a784-98e5a58847b1",
         "kind": "endnote",
         "label": "\u201cTheorie",
         "locator": {
@@ -773,6 +804,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:5c202085-cc9e-5d26-a784-98e5a58847b1",
         "sort_key": "000008.000002.target",
         "source_ref": {
           "format": "xhtml",
@@ -790,6 +822,7 @@
         "body_text": "The Foundations of Belief, p. 30. \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "b82663b2-58a4-5d06-98b7-7274f3ee15cf",
         "kind": "endnote",
         "label": "The",
         "locator": {
@@ -805,6 +838,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:b82663b2-58a4-5d06-98b7-7274f3ee15cf",
         "sort_key": "000009.000003.target",
         "source_ref": {
           "format": "xhtml",
@@ -822,6 +856,7 @@
         "body_text": "Compare A. Bellanger: Les concepts de cause, et l\u2019activit\u00e9 intentionelle de l\u2019esprit. Paris, Alcan, 1905, p. 79 ff. In this, acquaintance with reality\u2019s diversities is as important as understanding their connection. The human passion of curiosity runs on all fours with the systematizing passion. \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "064c44d2-7586-5c61-b2d2-52048bb91b4f",
         "kind": "endnote",
         "label": "Compare",
         "locator": {
@@ -837,6 +872,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:064c44d2-7586-5c61-b2d2-52048bb91b4f",
         "sort_key": "000010.000004.target",
         "source_ref": {
           "format": "xhtml",
@@ -854,6 +890,7 @@
         "body_text": "The Conception of God, New York, 1897, p. 292. \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "31f7a7e6-de4c-5852-9a96-33969afcedc0",
         "kind": "endnote",
         "label": "The",
         "locator": {
@@ -869,6 +906,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:31f7a7e6-de4c-5852-9a96-33969afcedc0",
         "sort_key": "000011.000005.target",
         "source_ref": {
           "format": "xhtml",
@@ -886,6 +924,7 @@
         "body_text": "Compare on the Ultimate, Mr. Schiller\u2019s essay \u201cActivity and Substance,\u201d in his book entitled Humanism, p. 204. \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "2352c580-fc95-5961-bcbb-e9cfcf0fb71e",
         "kind": "endnote",
         "label": "Compare",
         "locator": {
@@ -901,6 +940,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:2352c580-fc95-5961-bcbb-e9cfcf0fb71e",
         "sort_key": "000012.000006.target",
         "source_ref": {
           "format": "xhtml",
@@ -918,6 +958,7 @@
         "body_text": "The Life of Reason: Reason in Common Sense, 1905, p. 59. \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "7b63d9af-e400-553a-b4c2-72a1d1ead2a9",
         "kind": "endnote",
         "label": "The",
         "locator": {
@@ -933,6 +974,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:7b63d9af-e400-553a-b4c2-72a1d1ead2a9",
         "sort_key": "000013.000007.target",
         "source_ref": {
           "format": "xhtml",
@@ -950,6 +992,7 @@
         "body_text": "A. E. Taylor, Philosophical Review, vol. XIV, p. 288. \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "7fe11f8f-d611-5573-8136-be90c77d3172",
         "kind": "endnote",
         "label": "A.",
         "locator": {
@@ -965,6 +1008,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:7fe11f8f-d611-5573-8136-be90c77d3172",
         "sort_key": "000014.000008.target",
         "source_ref": {
           "format": "xhtml",
@@ -982,6 +1026,7 @@
         "body_text": "H. Rickert, Der Gegenstand der Erkenntniss, chapter on \u201cDie Urtheilsnothwendigkeit.\u201d \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "f592b9da-8788-597a-b9e7-9ab054a6d46d",
         "kind": "endnote",
         "label": "H.",
         "locator": {
@@ -997,6 +1042,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:f592b9da-8788-597a-b9e7-9ab054a6d46d",
         "sort_key": "000015.000009.target",
         "source_ref": {
           "format": "xhtml",
@@ -1014,6 +1060,7 @@
         "body_text": "I am not forgetting that Professor Rickert long ago gave up the whole notion of truth being founded on agreement with reality. Reality, according to him, is whatever agrees with truth, and truth is founded solely on our primal duty. This fantastic flight, together with Mr. Joachim\u2019s candid confession of failure in his book The Nature of Truth, seems to me to mark the bankruptcy of rationalism when dealing with this subject. Rickert deals with part of the pragmatistic position under the head of what he calls \u201cRelativismus.\u201d I cannot discuss his text here. Suffice it to say that his argumentation in that chapter is so feeble as to seem almost incredible in so generally able a writer. \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "0c34697a-a49b-5f82-af48-1eec40d25429",
         "kind": "endnote",
         "label": "I",
         "locator": {
@@ -1029,6 +1076,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:0c34697a-a49b-5f82-af48-1eec40d25429",
         "sort_key": "000016.000010.target",
         "source_ref": {
           "format": "xhtml",
@@ -1046,6 +1094,7 @@
         "body_text": "Personal Idealism, p. 60. \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "1b852825-514e-55c3-8793-fcf44b8ea9ad",
         "kind": "endnote",
         "label": "Personal",
         "locator": {
@@ -1061,6 +1110,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:1b852825-514e-55c3-8793-fcf44b8ea9ad",
         "sort_key": "000017.000011.target",
         "source_ref": {
           "format": "xhtml",
@@ -1078,6 +1128,7 @@
         "body_text": "Mr. Taylor in his Elements of Metaphysics uses this excellent pragmatic definition. \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "eba17f2a-f711-5af8-a933-ce2c95a99866",
         "kind": "endnote",
         "label": "Mr.",
         "locator": {
@@ -1093,6 +1144,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:eba17f2a-f711-5af8-a933-ce2c95a99866",
         "sort_key": "000018.000012.target",
         "source_ref": {
           "format": "xhtml",

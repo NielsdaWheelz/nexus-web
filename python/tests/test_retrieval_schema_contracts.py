@@ -479,18 +479,18 @@ def test_retrieval_ref_json_rejects_page_source_version():
 
 
 def test_retrieval_ref_json_rejects_web_result_source_version():
-    result_id = "web:example"
+    snapshot_id = str(uuid4())
     valid_ref = {
         "type": "web_result",
-        "id": result_id,
+        "id": snapshot_id,
         "result_type": "web_result",
-        "source_id": result_id,
-        "result_ref": result_id,
+        "source_id": snapshot_id,
+        "result_ref": "web:example",
         "title": "External source",
         "url": "https://example.test/source",
         "snippet": "External source snippet",
         "deep_link": "https://example.test/source",
-        "context_ref": {"type": "web_result", "id": result_id},
+        "context_ref": {"type": "web_result", "id": snapshot_id},
         "locator": _external_url_locator(),
         "score": 0.8,
         "selected": True,
@@ -613,13 +613,21 @@ def test_search_result_out_rejects_unknown_variant():
 
 def _search_base(result_type: str) -> dict[str, object]:
     result_id = str(uuid4())
+    resource_ref = f"{result_type}:{result_id}"
     return {
         "type": result_type,
         "id": result_id,
         "score": 0.8,
         "snippet": "Exact match",
         "title": "Result",
-        "deep_link": "/source",
+        "resource_ref": resource_ref,
+        "activation": {
+            "resourceRef": resource_ref,
+            "kind": "route",
+            "href": "/source",
+            "unresolvedReason": None,
+        },
+        "citation_target": resource_ref,
         "context_ref": {"type": result_type, "id": result_id},
     }
 
@@ -735,13 +743,22 @@ def test_search_result_out_rejects_page_source_version():
 
 
 def test_search_result_out_requires_web_result_context_and_external_url_locator():
+    snapshot_id = str(uuid4())
     payload = {
         **_search_base("web_result"),
         "id": str(uuid4()),
         "result_type": "web_result",
-        "source_id": "web:example",
+        "source_id": snapshot_id,
         "result_ref": "web:example",
         "title": "External source",
+        "resource_ref": f"external_snapshot:{snapshot_id}",
+        "activation": {
+            "resourceRef": f"external_snapshot:{snapshot_id}",
+            "kind": "external",
+            "href": "https://example.test/source",
+            "unresolvedReason": None,
+        },
+        "citation_target": f"external_snapshot:{snapshot_id}",
         "url": "https://example.test/source",
         "locator": {
             "type": "external_url",
@@ -751,8 +768,7 @@ def test_search_result_out_requires_web_result_context_and_external_url_locator(
         "media_id": None,
         "media_kind": None,
         "selected": True,
-        "deep_link": "https://example.test/source",
-        "context_ref": {"type": "web_result", "id": "web:example"},
+        "context_ref": {"type": "web_result", "id": snapshot_id},
     }
 
     result = SEARCH_RESULT_ADAPTER.validate_python(payload)

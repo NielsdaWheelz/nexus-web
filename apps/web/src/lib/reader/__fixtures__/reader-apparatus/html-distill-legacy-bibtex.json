@@ -34,10 +34,12 @@
         "body_text": "Visualizing data using t-SNE. Maaten, Laurens van der and Hinton, Geoffrey. Journal of Machine Learning Research. 2008. http://www.jmlr.org/papers/volume9/vandermaaten08a/vandermaaten08a.pdf",
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "ee783973-40f0-5209-818f-b5b618ad4b45",
         "kind": "bibliography_entry",
         "label": "Visualizing",
         "locator": null,
         "locator_status": "missing",
+        "resource_ref": "reader_apparatus_item:ee783973-40f0-5209-818f-b5b618ad4b45",
         "sort_key": "000004.000000.target.000",
         "source_ref": {
           "citation_key": "maaten2008visualizing",
@@ -53,6 +55,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "0f701a8f-8c6c-5748-9179-e1323fbb239e",
         "kind": "bibliography_ref",
         "label": "van der Maaten and Hinton [1]",
         "locator": {
@@ -67,6 +70,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:0f701a8f-8c6c-5748-9179-e1323fbb239e",
         "sort_key": "000004.000000.marker",
         "source_ref": {
           "citation_keys": [

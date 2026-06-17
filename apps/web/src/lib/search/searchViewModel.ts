@@ -1,4 +1,5 @@
 import type { ContributorCredit } from "@/lib/contributors/types";
+import { hrefForResourceActivation } from "@/lib/resources/activation";
 import { normalizeSearchResult } from "./normalizeSearchResult";
 import type { SearchApiResult, SearchResultRowViewModel } from "./types";
 
@@ -149,7 +150,7 @@ function getContributorCredits(result: SearchApiResult): ContributorCredit[] {
   if (result.type === "content_chunk" || result.type === "fragment") {
     return result.source.contributors;
   }
-  if (result.type === "evidence_span") {
+  if (result.type === "evidence_span" || result.type === "reader_apparatus_item") {
     return result.source.contributors;
   }
   if (result.type === "highlight") {
@@ -162,10 +163,16 @@ export function adaptSearchResultRow(
   result: SearchApiResult,
 ): SearchResultRowViewModel {
   const primaryText = buildPrimaryText(result);
+  const href = hrefForResourceActivation(result.activation);
+  if (!href) {
+    throw new Error("Search result missing activation href");
+  }
 
   return {
     key: `${result.type}-${result.id}`,
-    href: result.deep_link,
+    resourceRef: result.resource_ref,
+    activation: result.activation,
+    citationTarget: result.citation_target,
     paneTitleHint: primaryText,
     type: result.type,
     mediaId: result.media_id,

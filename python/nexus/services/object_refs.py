@@ -46,7 +46,7 @@ from nexus.services.resource_graph.resolve import (
     LoadedResource,
     load_resource_batch,
 )
-from nexus.services.resource_items.capabilities import route_for_ref
+from nexus.services.resource_items.routing import route_for_ref
 
 
 @dataclass(frozen=True)
@@ -227,6 +227,15 @@ def _hydrated_from_loaded(
             snippet=(loaded.body or "")[:300],
             route=route,
             icon="sparkles",
+        )
+    if object_type == "reader_apparatus_item":
+        return HydratedObjectRef(
+            object_type="reader_apparatus_item",
+            object_id=object_id,
+            label=loaded.title or "Reader apparatus",
+            snippet=(loaded.body or "")[:300],
+            route=route,
+            icon="notebook-tabs",
         )
     if object_type == "contributor":
         # justify-defect: hydrate_object_ref handles contributors before loading.

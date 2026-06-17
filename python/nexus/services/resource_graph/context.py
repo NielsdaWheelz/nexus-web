@@ -45,6 +45,8 @@ from nexus.services.resource_items.capabilities import (
     conversation_search_scope_schemes,
     resource_can_attach,
 )
+from nexus.services.resource_items.routing import resource_activation_for_ref
+from nexus.schemas.resource_items import ResourceActivationOut
 
 _DEFAULT_LIMIT = 50
 _MIN_LIMIT = 1
@@ -60,6 +62,7 @@ class ContextRefOut:
     target: ResourceRef
     origin: EdgeOrigin
     resolved: ResolvedResource
+    activation: ResourceActivationOut
     created_at: datetime
 
 
@@ -96,7 +99,7 @@ def list_context_refs(
     targets = [_edge_target(row) for row in rows]
     resolved = resolve_refs(db, viewer_id=viewer_id, refs=targets)
     return [
-        _context_ref_out(row, target, res)
+        _context_ref_out(db, viewer_id=viewer_id, row=row, target=target, resolved=res)
         for row, target, res in zip(rows, targets, resolved, strict=True)
     ]
 
@@ -138,7 +141,7 @@ def add_context_ref_without_commit(
         )
     ).scalar_one_or_none()
     if existing is not None:
-        return _context_ref_out(existing, target, resolved)
+        return _context_ref_out(db, viewer_id=viewer_id, row=existing, target=target, resolved=resolved)
 
     created = create_edge(
         db,
@@ -162,6 +165,7 @@ def add_context_ref_without_commit(
         target=target,
         origin=origin,
         resolved=resolved,
+        activation=resource_activation_for_ref(db, viewer_id=viewer_id, ref=target),
         created_at=created.created_at,
     )
 
@@ -387,7 +391,12 @@ def _edge_target(row: ResourceEdge) -> ResourceRef:
 
 
 def _context_ref_out(
-    row: ResourceEdge, target: ResourceRef, resolved: ResolvedResource
+    db: Session,
+    *,
+    viewer_id: UUID,
+    row: ResourceEdge,
+    target: ResourceRef,
+    resolved: ResolvedResource,
 ) -> ContextRefOut:
     return ContextRefOut(
         edge_id=row.id,
@@ -395,6 +404,12 @@ def _context_ref_out(
         target=target,
         origin=cast("EdgeOrigin", row.origin),
         resolved=resolved,
+        activation=resource_activation_for_ref(
+            db,
+            viewer_id=viewer_id,
+            ref=target,
+            missing=resolved.missing,
+        ),
         created_at=row.created_at,
     )
 

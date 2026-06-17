@@ -54,6 +54,7 @@
         "body_text": "First source-authored legacy note body.",
         "confidence": "strong",
         "extraction_method": "html_legacy_named_notes",
+        "id": "28e8ce6a-bb91-5dac-8463-ce391af8a0c7",
         "kind": "footnote",
         "label": "1",
         "locator": {
@@ -68,6 +69,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:28e8ce6a-bb91-5dac-8463-ce391af8a0c7",
         "sort_key": "000007.000000.target",
         "source_ref": {
           "element": "a[name]",
@@ -84,6 +86,7 @@
         "body_text": "Second source-authored legacy note body with inline markup and an external context.",
         "confidence": "strong",
         "extraction_method": "html_legacy_named_notes",
+        "id": "92c0e1de-2698-5ce4-b139-74d54dd1c06e",
         "kind": "footnote",
         "label": "2",
         "locator": {
@@ -98,6 +101,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:92c0e1de-2698-5ce4-b139-74d54dd1c06e",
         "sort_key": "000010.000001.target",
         "source_ref": {
           "element": "a[name]",
@@ -114,6 +118,7 @@
         "body_text": null,
         "confidence": "strong",
         "extraction_method": "html_legacy_named_notes",
+        "id": "c234cfd0-c1a0-5eed-83cf-1f92786eb69b",
         "kind": "footnote_ref",
         "label": "1",
         "locator": {
@@ -128,6 +133,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:c234cfd0-c1a0-5eed-83cf-1f92786eb69b",
         "sort_key": "000004.000000.marker",
         "source_ref": {
           "element": "a[href]",
@@ -145,6 +151,7 @@
         "body_text": null,
         "confidence": "strong",
         "extraction_method": "html_legacy_named_notes",
+        "id": "c231057d-3d2b-5d78-8c63-ac7d9a477194",
         "kind": "footnote_ref",
         "label": "2",
         "locator": {
@@ -159,6 +166,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:c231057d-3d2b-5d78-8c63-ac7d9a477194",
         "sort_key": "000005.000001.marker",
         "source_ref": {
           "element": "a[href]",

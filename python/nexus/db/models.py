@@ -367,7 +367,8 @@ class ResourceVersion(Base):
                 'conversation', 'message', 'oracle_reading',
                 'oracle_corpus_passage', 'library_intelligence_artifact',
                 'library_intelligence_revision',
-                'external_snapshot', 'contributor', 'podcast'
+                'external_snapshot', 'contributor', 'podcast',
+                'reader_apparatus_item'
             )
             """,
             name="ck_resource_versions_resource_scheme",
@@ -492,7 +493,8 @@ class ResourceViewState(Base):
                 'conversation', 'message', 'oracle_reading',
                 'oracle_corpus_passage', 'library_intelligence_artifact',
                 'library_intelligence_revision',
-                'external_snapshot', 'contributor', 'podcast'
+                'external_snapshot', 'contributor', 'podcast',
+                'reader_apparatus_item'
             )
             """,
             name="ck_resource_view_states_surface_scheme",
@@ -505,7 +507,8 @@ class ResourceViewState(Base):
                 'conversation', 'message', 'oracle_reading',
                 'oracle_corpus_passage', 'library_intelligence_artifact',
                 'library_intelligence_revision',
-                'external_snapshot', 'contributor', 'podcast'
+                'external_snapshot', 'contributor', 'podcast',
+                'reader_apparatus_item'
             )
             """,
             name="ck_resource_view_states_target_scheme",
@@ -590,7 +593,8 @@ class ResourceEdge(Base):
                 'conversation', 'message', 'oracle_reading',
                 'oracle_corpus_passage', 'library_intelligence_artifact',
                 'library_intelligence_revision',
-                'external_snapshot', 'contributor', 'podcast'
+                'external_snapshot', 'contributor', 'podcast',
+                'reader_apparatus_item'
             )
             """,
             name="ck_resource_edges_source_scheme",
@@ -603,7 +607,8 @@ class ResourceEdge(Base):
                 'conversation', 'message', 'oracle_reading',
                 'oracle_corpus_passage', 'library_intelligence_artifact',
                 'library_intelligence_revision',
-                'external_snapshot', 'contributor', 'podcast'
+                'external_snapshot', 'contributor', 'podcast',
+                'reader_apparatus_item'
             )
             """,
             name="ck_resource_edges_target_scheme",
@@ -928,7 +933,7 @@ class PinnedObjectRef(Base):
         CheckConstraint(
             "object_type IN ('page', 'note_block', 'media', 'highlight', 'conversation', "
             "'message', 'podcast', 'content_chunk', 'fragment', 'contributor', "
-            "'evidence_span')",
+            "'evidence_span', 'reader_apparatus_item')",
             name="ck_user_pinned_objects_type",
         ),
         CheckConstraint(
@@ -4378,7 +4383,8 @@ class MessageRetrieval(Base):
                 'contributor',
                 'evidence_span',
                 'conversation',
-                'web_result'
+                'web_result',
+                'reader_apparatus_item'
             )
             """,
             name="ck_message_retrievals_result_type",
@@ -4386,6 +4392,13 @@ class MessageRetrieval(Base):
         CheckConstraint(
             "char_length(source_id) BETWEEN 1 AND 128",
             name="ck_message_retrievals_source_id_length",
+        ),
+        CheckConstraint(
+            """
+            result_type <> 'web_result'
+            OR source_id ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+            """,
+            name="ck_message_retrievals_web_source_snapshot_uuid",
         ),
         CheckConstraint(
             "char_length(scope) BETWEEN 1 AND 256",
@@ -4761,7 +4774,7 @@ class ChatRunTurnContext(Base):
             "'note_block', 'fragment', 'conversation', 'message', 'oracle_reading', "
             "'oracle_corpus_passage', 'library_intelligence_artifact', "
             "'library_intelligence_revision', 'external_snapshot', 'contributor', "
-            "'podcast')",
+            "'podcast', 'reader_apparatus_item')",
             name="ck_chat_run_turn_contexts_requested_subject_scheme",
         ),
         CheckConstraint(
@@ -4770,7 +4783,7 @@ class ChatRunTurnContext(Base):
             "'note_block', 'fragment', 'conversation', 'message', 'oracle_reading', "
             "'oracle_corpus_passage', 'library_intelligence_artifact', "
             "'library_intelligence_revision', 'external_snapshot', 'contributor', "
-            "'podcast')",
+            "'podcast', 'reader_apparatus_item')",
             name="ck_chat_run_turn_contexts_subject_scheme",
         ),
         Index("idx_chat_run_turn_contexts_subject", "subject_scheme", "subject_id"),

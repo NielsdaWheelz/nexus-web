@@ -15,11 +15,13 @@ from __future__ import annotations
 from uuid import UUID, uuid4
 
 import pytest
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.services.agent_tools.read_resource import ReadResourceResult, execute_read_resource
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.contributor_credits import replace_media_contributor_credits
+from nexus.services.reader_apparatus import replace_media_apparatus
 from nexus.services.resource_graph.refs import ResourceRefParseFailure, parse_resource_ref
 from tests.factories import (
     add_context_edge,
@@ -474,6 +476,66 @@ def test_read_resource_highlight_returns_enriched_quote(
     assert "“Highlighted Source” by Octavia Butler" in output, (
         "Quote source should name the parent media and author"
     )
+
+
+def test_read_resource_reader_apparatus_item_returns_body(
+    db_session: Session, bootstrapped_user: UUID
+):
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    library_id = get_user_default_library(db_session, bootstrapped_user)
+    assert library_id is not None
+    media_id = create_test_media_in_library(
+        db_session, bootstrapped_user, library_id, title="Annotated Source"
+    )
+    fragment_id = _add_fragment(db_session, media_id, idx=0, text="Apparatus anchor text.")
+    replace_media_apparatus(
+        db_session,
+        media_id=media_id,
+        media_kind="web_article",
+        source_fingerprint_value="apparatus-read-test",
+        items=[
+            {
+                "stable_key": "footnote:1",
+                "kind": "footnote",
+                "label": "1",
+                "body_text": "Reader apparatus body for read_resource.",
+                "body_html_sanitized": "<p>Reader apparatus body for read_resource.</p>",
+                "locator": {
+                    "type": "web_text_offsets",
+                    "media_id": str(media_id),
+                    "fragment_id": str(fragment_id),
+                    "start_offset": 0,
+                    "end_offset": len("Apparatus"),
+                    "media_kind": "web_article",
+                    "text_quote_selector": {
+                        "exact": "Apparatus",
+                        "prefix": "",
+                        "suffix": "",
+                    },
+                },
+                "locator_status": "exact",
+                "confidence": "exact",
+                "extraction_method": "test",
+                "source_ref": {},
+                "sort_key": "000001",
+            }
+        ],
+    )
+    item_id = db_session.execute(
+        text("SELECT id FROM reader_apparatus_items WHERE media_id = :media_id"),
+        {"media_id": media_id},
+    ).scalar_one()
+    uri = f"reader_apparatus_item:{item_id}"
+    _admit_reference(db_session, conversation_id, uri)
+
+    result = execute_read_resource(
+        db_session, viewer_id=bootstrapped_user, conversation_id=conversation_id, uri=uri
+    )
+
+    assert not result.is_error
+    assert result.kind == "reader_apparatus_item"
+    assert result.body == "Reader apparatus body for read_resource."
+    assert result.citation_result_type == "reader_apparatus_item"
 
 
 def test_read_resource_page_owner_returns_title(db_session: Session, bootstrapped_user: UUID):

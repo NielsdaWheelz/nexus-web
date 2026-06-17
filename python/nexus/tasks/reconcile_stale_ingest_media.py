@@ -83,7 +83,7 @@ def reconcile_stale_ingest_media_job(
 
     Rows are considered stale when:
     - processing_status = extracting
-    - kind in {web_article, pdf, epub, podcast_episode}
+    - kind in {web_article, pdf, epub, video, podcast_episode}
     - processing_started_at older than INGEST_STALE_EXTRACTING_SECONDS
 
     Also repairs semantic transcript backlog:
@@ -229,8 +229,22 @@ def reconcile_stale_ingest_media_job(
                         AND mcis.updated_at < now() - (CAST(:stale_seconds AS integer) * interval '1 second')
                     )
                   )
-                  AND m.kind IN ('web_article', 'epub', 'pdf')
-                  AND m.processing_status = 'ready_for_reading'
+                  AND (
+                      (
+                          m.kind IN ('web_article', 'epub', 'pdf')
+                          AND m.processing_status = 'ready_for_reading'
+                      )
+                      OR (
+                          m.kind IN ('podcast_episode', 'video')
+                          AND EXISTS (
+                              SELECT 1
+                              FROM media_transcript_states mts
+                              WHERE mts.media_id = m.id
+                                AND mts.transcript_state IN ('ready', 'partial')
+                                AND mts.transcript_coverage IN ('partial', 'full')
+                          )
+                      )
+                  )
                 ORDER BY mcis.updated_at ASC, mcis.owner_id ASC
                 LIMIT :limit
                 """
@@ -307,7 +321,7 @@ def reconcile_stale_ingest_media_job(
                 SELECT mts.media_id
                 FROM media_transcript_states mts
                 JOIN media m ON m.id = mts.media_id
-                WHERE m.kind = 'podcast_episode'
+                WHERE m.kind IN ('podcast_episode', 'video')
                   AND EXISTS (
                       SELECT 1
                       FROM podcast_transcript_segments pts

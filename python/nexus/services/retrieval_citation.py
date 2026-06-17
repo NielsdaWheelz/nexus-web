@@ -37,6 +37,7 @@ STRICT_LOCATOR_RESULT_TYPES = frozenset(
         "highlight",
         "message",
         "evidence_span",
+        "reader_apparatus_item",
     }
 )
 
@@ -51,6 +52,7 @@ class RetrievalCitation:
     source_label: str | None
     snippet: str
     deep_link: str
+    citation_target: str | None
     citation_label: str | None
     locator: dict[str, Any] | None
     context_ref: dict[str, Any]
@@ -77,6 +79,7 @@ class RetrievalCitation:
             "source_label": self.source_label,
             "snippet": self.snippet,
             "deep_link": self.deep_link,
+            "citation_target": self.citation_target,
             "context_ref": self.context_ref,
             "locator": self.locator,
             "media_id": self.media_id,
@@ -153,6 +156,7 @@ class RetrievalCitation:
                 "source_label": self.source_label,
                 "snippet": self.snippet,
                 "deep_link": self.deep_link,
+                "citation_target": self.citation_target,
                 "citation_label": self.citation_label or "",
                 "context_ref": self.context_ref,
                 "evidence_span_id": self.evidence_span_id or self.source_id,
@@ -161,6 +165,14 @@ class RetrievalCitation:
                 "media_kind": self.media_kind,
                 "score": self.score,
                 "selected": self.selected,
+            }
+        if self.result_type == "reader_apparatus_item":
+            return {
+                **common,
+                "apparatus_kind": self.result_ref["apparatus_kind"],
+                "locator": self.locator,
+                "media_id": self.media_id,
+                "media_kind": self.media_kind,
             }
         if self.result_type == "conversation":
             return {
@@ -172,6 +184,7 @@ class RetrievalCitation:
                 "source_label": self.source_label,
                 "snippet": self.snippet,
                 "deep_link": self.deep_link,
+                "citation_target": self.citation_target,
                 "context_ref": self.context_ref,
                 "locator": None,
                 "media_id": None,
@@ -193,6 +206,19 @@ def citation_from_search_result(
     filters: dict[str, Any],
 ) -> RetrievalCitation:
     payload = result.model_dump(mode="json")
+    result_type = str(payload["type"])
+    if result_type == "web_result":
+        source_id = str(payload["source_id"])
+        payload = {
+            **payload,
+            "id": source_id,
+            "source_id": source_id,
+            "context_ref": {"type": "web_result", "id": source_id},
+        }
+    activation = payload["activation"]
+    deep_link = activation["href"] if isinstance(activation, dict) else None
+    if not isinstance(deep_link, str):
+        raise AssertionError(f"{result_type} search result is not activatable")
     context_ref = payload["context_ref"]
     evidence_span_ids = (
         context_ref.get("evidence_span_ids") if isinstance(context_ref, dict) else []
@@ -205,14 +231,14 @@ def citation_from_search_result(
             else None
         )
     result_ref = dict(payload)
-    result_type = str(payload["type"])
     return RetrievalCitation(
         result_type=result_type,
-        source_id=str(payload["id"]),
+        source_id=str(payload["source_id"] if result_type == "web_result" else payload["id"]),
         title=str(payload["title"]),
         source_label=payload.get("source_label"),
         snippet=str(payload["snippet"]),
-        deep_link=str(payload["deep_link"]),
+        deep_link=deep_link,
+        citation_target=payload.get("citation_target"),
         citation_label=payload.get("citation_label"),
         locator=_locator_from_search_payload(payload),
         context_ref=context_ref,

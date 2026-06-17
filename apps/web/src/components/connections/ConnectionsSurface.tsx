@@ -42,6 +42,12 @@ import {
   formatResourceRef,
   parseResourceRef,
 } from "@/lib/resourceGraph/resourceRef";
+import {
+  activateResource,
+  hrefForResourceActivation,
+  type ResourceActivation,
+} from "@/lib/resources/activation";
+import { RESOURCE_CAPABILITIES } from "@/lib/resources/resourceCapabilities.generated";
 import { resourceIconForUri } from "@/lib/resources/resourceKind";
 import {
   dismissSynapseEdge,
@@ -61,6 +67,7 @@ interface Connection {
   edgeId: string;
   ref: string;
   label: string;
+  activation: ResourceActivation;
   href: string | null;
   missing: boolean;
   kind: EdgeKind;
@@ -136,21 +143,25 @@ export default function ConnectionsSurface({
   const connections: Connection[] =
     connectionsResource.status === "ready"
       ? connectionsResource.data.data
-          .map((connection) => ({
-            edgeId: connection.edge_id,
-            ref: connection.other.ref,
-            label: connection.other.label ?? connection.other.ref,
-            href: connection.other.href,
-            missing: connection.other.missing || connection.other.href === null,
-            kind: connection.kind,
-            origin: connection.origin,
-            rationale:
-              connection.snapshot?.excerpt &&
-              typeof connection.snapshot.excerpt === "string"
-                ? connection.snapshot.excerpt
-                : null,
-            createdAt: connection.created_at,
-          }))
+          .map((connection) => {
+            const href = hrefForResourceActivation(connection.other.activation);
+            return {
+              edgeId: connection.edge_id,
+              ref: connection.other.ref,
+              label: connection.other.label ?? connection.other.ref,
+              activation: connection.other.activation,
+              href,
+              missing: connection.other.missing || href === null,
+              kind: connection.kind,
+              origin: connection.origin,
+              rationale:
+                connection.snapshot?.excerpt &&
+                typeof connection.snapshot.excerpt === "string"
+                  ? connection.snapshot.excerpt
+                  : null,
+              createdAt: connection.created_at,
+            };
+          })
           .sort(compareConnections)
       : [];
 
@@ -158,11 +169,7 @@ export default function ConnectionsSurface({
     setRefreshTick((value) => value + 1);
   }, []);
 
-  const scannable =
-    objectRef.objectType === "media" ||
-    objectRef.objectType === "page" ||
-    objectRef.objectType === "note_block" ||
-    objectRef.objectType === "highlight";
+  const scannable = RESOURCE_CAPABILITIES[objectRef.objectType].adjacencySource;
   const [scanVoice, setScanVoice] = useState<string | null>(null);
   const scanBaselineRef = useRef<number | null>(null);
   const connectionsCountRef = useRef(0);
@@ -207,8 +214,13 @@ export default function ConnectionsSurface({
   }, [connectionsResource]);
 
   const openConnection = useCallback(
-    (href: string | null, openInNewPane: boolean) => {
-      if (href) onOpenRoute?.(href, openInNewPane);
+    (connection: Connection, openInNewPane: boolean) => {
+      activateResource(connection.activation, {
+        label: connection.label,
+        openInNewPane: (href) => onOpenRoute?.(href, true),
+        navigate: (href) => onOpenRoute?.(href, false),
+        newPane: openInNewPane,
+      });
     },
     [onOpenRoute],
   );
@@ -270,7 +282,7 @@ export default function ConnectionsSurface({
                   className={styles.linkButton}
                   disabled={connection.missing}
                   onClick={(event) =>
-                    openConnection(connection.href, event.shiftKey)
+                    openConnection(connection, event.shiftKey)
                   }
                 >
                   <Icon size={14} aria-hidden="true" />

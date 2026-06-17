@@ -320,8 +320,10 @@ def test_embedding_failure_does_not_commit_caller_owned_work(direct_db, monkeypa
         session.rollback()
 
 
-def test_repair_ready_media_content_index_supports_ready_podcast_transcript(
+@pytest.mark.parametrize("kind", ["podcast_episode", "video"])
+def test_repair_ready_media_content_index_supports_ready_transcript(
     db_session: Session,
+    kind: str,
 ):
     user_id = uuid4()
     media_id = uuid4()
@@ -333,14 +335,14 @@ def test_repair_ready_media_content_index_supports_ready_podcast_transcript(
             INSERT INTO media (id, kind, title, processing_status, created_by_user_id)
             VALUES (
                 :media_id,
-                'podcast_episode',
+                :kind,
                 'Transcript Repair',
                 'ready_for_reading',
                 :user_id
             )
             """
         ),
-        {"media_id": media_id, "user_id": user_id},
+        {"media_id": media_id, "kind": kind, "user_id": user_id},
     )
     db_session.execute(
         text(

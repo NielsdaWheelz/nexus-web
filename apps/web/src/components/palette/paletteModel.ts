@@ -15,6 +15,7 @@ import {
   Upload,
 } from "lucide-react";
 import { getPaneRouteIcon } from "@/lib/panes/paneRouteTable";
+import type { ResourceActivation } from "@/lib/resources/activation";
 
 export type PaletteLane = "all" | "actions" | "content" | "ask";
 
@@ -45,6 +46,7 @@ export const PALETTE_OPTION_ID_PREFIX = "palette-option-";
 
 export type PaletteTarget =
   | { kind: "href"; href: string; externalShell: boolean }
+  | { kind: "resource"; activation: ResourceActivation; titleHint?: string }
   | { kind: "action"; actionId: string }
   | { kind: "ask"; text: string; scopeHref?: string }; // wire kind "prefill" (mapped in the controller)
 
@@ -304,6 +306,7 @@ export const STATIC_COMMANDS: PaletteItem[] = [
 
 export type PaletteActionRun =
   | { kind: "open"; href: string; externalShell: boolean }
+  | { kind: "open-resource"; activation: ResourceActivation; titleHint?: string }
   | { kind: "ask"; text: string; scopeHref?: string }
   | { kind: "copy-link"; href: string }
   | { kind: "pane-activate"; paneId: string }

@@ -241,6 +241,7 @@
         "body_text": "First legal footnote body with a cited source.",
         "confidence": "strong",
         "extraction_method": "pdf_legal_footnote_target",
+        "id": "07b35a15-d2c6-5881-8b95-42551470ced0",
         "kind": "footnote",
         "label": "1",
         "locator": {
@@ -267,6 +268,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:07b35a15-d2c6-5881-8b95-42551470ced0",
         "sort_key": "0001.0001.target",
         "source_ref": {
           "format": "pdf",
@@ -292,6 +294,7 @@
         "body_text": "Second legal footnote body with an online archive reference.",
         "confidence": "strong",
         "extraction_method": "pdf_legal_footnote_target",
+        "id": "c2ae1d82-423c-56d6-a68c-5ef75513d2e8",
         "kind": "footnote",
         "label": "2",
         "locator": {
@@ -318,6 +321,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:c2ae1d82-423c-56d6-a68c-5ef75513d2e8",
         "sort_key": "0001.0002.target",
         "source_ref": {
           "format": "pdf",
@@ -343,6 +347,7 @@
         "body_text": "Third legal footnote body starts on one line and continues on the following line without a new label.",
         "confidence": "strong",
         "extraction_method": "pdf_legal_footnote_target",
+        "id": "e4cd0d92-d32f-5333-82e0-7a997d3113b8",
         "kind": "footnote",
         "label": "3",
         "locator": {
@@ -369,6 +374,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:e4cd0d92-d32f-5333-82e0-7a997d3113b8",
         "sort_key": "0001.0003.target",
         "source_ref": {
           "format": "pdf",
@@ -394,6 +400,7 @@
         "body_text": "Fourth legal footnote body with a statutory reference.",
         "confidence": "strong",
         "extraction_method": "pdf_legal_footnote_target",
+        "id": "b790d62c-10be-5ad1-a1ad-2a97334c5451",
         "kind": "footnote",
         "label": "4",
         "locator": {
@@ -420,6 +427,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:b790d62c-10be-5ad1-a1ad-2a97334c5451",
         "sort_key": "0001.0004.target",
         "source_ref": {
           "format": "pdf",
@@ -445,6 +453,7 @@
         "body_text": "Fifth legal footnote body with quoted authority.",
         "confidence": "strong",
         "extraction_method": "pdf_legal_footnote_target",
+        "id": "5cdb3347-82b4-55a8-831f-85ae27301dc7",
         "kind": "footnote",
         "label": "5",
         "locator": {
@@ -471,6 +480,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:5cdb3347-82b4-55a8-831f-85ae27301dc7",
         "sort_key": "0001.0005.target",
         "source_ref": {
           "format": "pdf",
@@ -496,6 +506,7 @@
         "body_text": "Sixth legal footnote body with a policy source.",
         "confidence": "strong",
         "extraction_method": "pdf_legal_footnote_target",
+        "id": "18b07354-afca-5559-9aae-b2865db65705",
         "kind": "footnote",
         "label": "6",
         "locator": {
@@ -522,6 +533,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:18b07354-afca-5559-9aae-b2865db65705",
         "sort_key": "0001.0006.target",
         "source_ref": {
           "format": "pdf",
@@ -547,6 +559,7 @@
         "body_text": "Seventh legal footnote body with empirical context.",
         "confidence": "strong",
         "extraction_method": "pdf_legal_footnote_target",
+        "id": "18dd9330-d0df-59a0-bc7c-b35f650d5633",
         "kind": "footnote",
         "label": "7",
         "locator": {
@@ -573,6 +586,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:18dd9330-d0df-59a0-bc7c-b35f650d5633",
         "sort_key": "0001.0007.target",
         "source_ref": {
           "format": "pdf",
@@ -598,6 +612,7 @@
         "body_text": "Eighth legal footnote body with institutional detail.",
         "confidence": "strong",
         "extraction_method": "pdf_legal_footnote_target",
+        "id": "fd34700c-20d2-5711-afda-dbacd71cdbe0",
         "kind": "footnote",
         "label": "8",
         "locator": {
@@ -624,6 +639,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:fd34700c-20d2-5711-afda-dbacd71cdbe0",
         "sort_key": "0001.0008.target",
         "source_ref": {
           "format": "pdf",
@@ -649,6 +665,7 @@
         "body_text": "Ninth legal footnote body with a final source.",
         "confidence": "strong",
         "extraction_method": "pdf_legal_footnote_target",
+        "id": "80dc0cb4-f8ca-5f7e-ac5a-8c2647e8f6fd",
         "kind": "footnote",
         "label": "9",
         "locator": {
@@ -675,6 +692,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:80dc0cb4-f8ca-5f7e-ac5a-8c2647e8f6fd",
         "sort_key": "0001.0009.target",
         "source_ref": {
           "format": "pdf",
@@ -700,6 +718,7 @@
         "body_text": "Tenth legal footnote body verifies two-digit labels.",
         "confidence": "strong",
         "extraction_method": "pdf_legal_footnote_target",
+        "id": "7fece3ff-35f2-5a8a-afad-1ccfab8b6a49",
         "kind": "footnote",
         "label": "10",
         "locator": {
@@ -726,6 +745,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:7fece3ff-35f2-5a8a-afad-1ccfab8b6a49",
         "sort_key": "0001.0010.target",
         "source_ref": {
           "format": "pdf",
@@ -751,6 +771,7 @@
         "body_text": null,
         "confidence": "strong",
         "extraction_method": "pdf_legal_footnote_marker",
+        "id": "3d4d63bb-3f74-5267-bf45-945e9223bd29",
         "kind": "footnote_ref",
         "label": "1",
         "locator": {
@@ -777,6 +798,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:3d4d63bb-3f74-5267-bf45-945e9223bd29",
         "sort_key": "0001.0001.marker",
         "source_ref": {
           "format": "pdf",
@@ -796,6 +818,7 @@
         "body_text": null,
         "confidence": "strong",
         "extraction_method": "pdf_legal_footnote_marker",
+        "id": "d9e63263-eaca-5eca-b63e-1f901c7ce267",
         "kind": "footnote_ref",
         "label": "2",
         "locator": {
@@ -822,6 +845,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:d9e63263-eaca-5eca-b63e-1f901c7ce267",
         "sort_key": "0001.0002.marker",
         "source_ref": {
           "format": "pdf",
@@ -841,6 +865,7 @@
         "body_text": null,
         "confidence": "strong",
         "extraction_method": "pdf_legal_footnote_marker",
+        "id": "570ca836-4f78-5898-816e-6c96d4fe0b73",
         "kind": "footnote_ref",
         "label": "3",
         "locator": {
@@ -867,6 +892,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:570ca836-4f78-5898-816e-6c96d4fe0b73",
         "sort_key": "0001.0003.marker",
         "source_ref": {
           "format": "pdf",
@@ -886,6 +912,7 @@
         "body_text": null,
         "confidence": "strong",
         "extraction_method": "pdf_legal_footnote_marker",
+        "id": "6adb9999-ca47-55c3-85f3-27ffa4d50bc1",
         "kind": "footnote_ref",
         "label": "4",
         "locator": {
@@ -912,6 +939,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:6adb9999-ca47-55c3-85f3-27ffa4d50bc1",
         "sort_key": "0001.0004.marker",
         "source_ref": {
           "format": "pdf",
@@ -931,6 +959,7 @@
         "body_text": null,
         "confidence": "strong",
         "extraction_method": "pdf_legal_footnote_marker",
+        "id": "c52cd31e-e857-5292-a455-4d4d92da4ad2",
         "kind": "footnote_ref",
         "label": "5",
         "locator": {
@@ -957,6 +986,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:c52cd31e-e857-5292-a455-4d4d92da4ad2",
         "sort_key": "0001.0005.marker",
         "source_ref": {
           "format": "pdf",
@@ -976,6 +1006,7 @@
         "body_text": null,
         "confidence": "strong",
         "extraction_method": "pdf_legal_footnote_marker",
+        "id": "7675c55e-5336-59e6-8dce-0809fd6efdad",
         "kind": "footnote_ref",
         "label": "6",
         "locator": {
@@ -1002,6 +1033,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:7675c55e-5336-59e6-8dce-0809fd6efdad",
         "sort_key": "0001.0006.marker",
         "source_ref": {
           "format": "pdf",
@@ -1021,6 +1053,7 @@
         "body_text": null,
         "confidence": "strong",
         "extraction_method": "pdf_legal_footnote_marker",
+        "id": "adf2277d-08ec-5a23-a32a-026aef2d2b2d",
         "kind": "footnote_ref",
         "label": "7",
         "locator": {
@@ -1047,6 +1080,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:adf2277d-08ec-5a23-a32a-026aef2d2b2d",
         "sort_key": "0001.0007.marker",
         "source_ref": {
           "format": "pdf",
@@ -1066,6 +1100,7 @@
         "body_text": null,
         "confidence": "strong",
         "extraction_method": "pdf_legal_footnote_marker",
+        "id": "84354494-edb1-5400-9585-b3d2a4896874",
         "kind": "footnote_ref",
         "label": "8",
         "locator": {
@@ -1092,6 +1127,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:84354494-edb1-5400-9585-b3d2a4896874",
         "sort_key": "0001.0008.marker",
         "source_ref": {
           "format": "pdf",
@@ -1111,6 +1147,7 @@
         "body_text": null,
         "confidence": "strong",
         "extraction_method": "pdf_legal_footnote_marker",
+        "id": "6a7ac7e3-fff3-56e8-aea9-6ade2ebd27ef",
         "kind": "footnote_ref",
         "label": "9",
         "locator": {
@@ -1137,6 +1174,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:6a7ac7e3-fff3-56e8-aea9-6ade2ebd27ef",
         "sort_key": "0001.0009.marker",
         "source_ref": {
           "format": "pdf",
@@ -1156,6 +1194,7 @@
         "body_text": null,
         "confidence": "strong",
         "extraction_method": "pdf_legal_footnote_marker",
+        "id": "b9d30277-9aec-5ee1-9fdd-6dc7673e9b14",
         "kind": "footnote_ref",
         "label": "10",
         "locator": {
@@ -1182,6 +1221,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:b9d30277-9aec-5ee1-9fdd-6dc7673e9b14",
         "sort_key": "0001.0010.marker",
         "source_ref": {
           "format": "pdf",

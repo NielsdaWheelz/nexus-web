@@ -41,7 +41,21 @@ function endpoint(
   href: string | null = `/${ref.replace(":", "s/")}`,
 ): ConnectionEndpointOut {
   const [scheme, id] = ref.split(":") as [ConnectionEndpointOut["scheme"], string];
-  return { ref, scheme, id, label, description: null, href, missing };
+  return {
+    ref,
+    scheme,
+    id,
+    label,
+    description: null,
+    activation: {
+      resourceRef: ref,
+      kind: href ? "route" : "none",
+      href,
+      unresolvedReason: href ? null : "missing",
+    },
+    href,
+    missing,
+  };
 }
 
 function connection(overrides: Partial<ConnectionOut> = {}): ConnectionOut {

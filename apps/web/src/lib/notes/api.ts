@@ -9,6 +9,10 @@ import type {
   ResourcePromptRenderMode,
   ResourceReadMode,
 } from "@/lib/resources/resourceCapabilities.generated";
+import {
+  normalizeResourceActivation,
+  type ResourceActivation,
+} from "@/lib/resources/activation";
 import { isRecord } from "@/lib/validation";
 
 export interface NoteBlock {
@@ -54,6 +58,7 @@ export interface ResourceItem {
   label: string;
   summary: string;
   route: string | null;
+  activation: ResourceActivation;
   missing: boolean;
   capabilities: ResourceItemCapabilities;
   versionByLane: Record<string, number>;
@@ -211,6 +216,10 @@ function normalizeResourceItem(raw: Record<string, unknown>): ResourceItem {
     raw.capabilities,
     "resource capabilities",
   );
+  const activation = normalizeResourceActivation(raw.activation);
+  if (!activation) {
+    throw new Error("Invalid resource activation");
+  }
   const versionByLane = isRecord(raw.versionByLane)
     ? raw.versionByLane
     : isRecord(raw.version_by_lane)
@@ -223,6 +232,7 @@ function normalizeResourceItem(raw: Record<string, unknown>): ResourceItem {
     label: String(raw.label ?? ""),
     summary: String(raw.summary ?? ""),
     route: typeof raw.route === "string" ? raw.route : null,
+    activation,
     missing: Boolean(raw.missing),
     capabilities: {
       linkable: Boolean(capabilities.linkable),

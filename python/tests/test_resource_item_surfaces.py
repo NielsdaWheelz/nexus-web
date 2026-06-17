@@ -33,6 +33,11 @@ def test_resource_item_routes_use_product_paths(db_session: Session, bootstrappe
     )
 
     assert _route(db_session, bootstrapped_user, "media", media_id) == f"/media/{media_id}"
+    assert _activation(db_session, bootstrapped_user, "media", media_id) == {
+        "kind": "route",
+        "href": f"/media/{media_id}",
+        "unresolved_reason": None,
+    }
     assert (
         _route(db_session, bootstrapped_user, "library", library_id) == f"/libraries/{library_id}"
     )
@@ -52,6 +57,50 @@ def test_resource_item_routes_use_product_paths(db_session: Session, bootstrappe
         _route(db_session, bootstrapped_user, "message", message_id)
         == f"/conversations/{conversation_id}"
     )
+
+
+def test_external_snapshot_activates_as_external_url(
+    db_session: Session, bootstrapped_user: UUID
+):
+    snapshot_id = db_session.execute(
+        text(
+            """
+            INSERT INTO resource_external_snapshots (
+                user_id, provider, url, title, snippet, source_snapshot
+            )
+            VALUES (
+                :user_id, 'web', 'https://example.com/source',
+                'External Source', 'External snippet', '{}'::jsonb
+            )
+            RETURNING id
+            """
+        ),
+        {"user_id": bootstrapped_user},
+    ).scalar_one()
+
+    assert _route(db_session, bootstrapped_user, "external_snapshot", snapshot_id) is None
+    assert _activation(db_session, bootstrapped_user, "external_snapshot", snapshot_id) == {
+        "kind": "external",
+        "href": "https://example.com/source",
+        "unresolved_reason": None,
+    }
+
+
+def test_missing_resource_activation_fails_closed(
+    db_session: Session, bootstrapped_user: UUID
+):
+    missing_id = uuid4()
+
+    item = resource_item_out(
+        db_session,
+        viewer_id=bootstrapped_user,
+        ref=ResourceRef(scheme="media", id=missing_id),
+    )
+
+    assert item.route is None
+    assert item.activation.kind == "none"
+    assert item.activation.href is None
+    assert item.activation.unresolved_reason == "missing"
 
 
 def test_generated_and_identity_resources_project_existing_routes(
@@ -89,11 +138,26 @@ def test_generated_and_identity_resources_project_existing_routes(
 
 
 def _route(db: Session, viewer_id: UUID, scheme: ResourceScheme, resource_id: UUID) -> str | None:
+    return _item(db, viewer_id=viewer_id, scheme=scheme, resource_id=resource_id).route
+
+
+def _activation(
+    db: Session, viewer_id: UUID, scheme: ResourceScheme, resource_id: UUID
+) -> dict[str, str | None]:
+    activation = _item(db, viewer_id=viewer_id, scheme=scheme, resource_id=resource_id).activation
+    return {
+        "kind": activation.kind,
+        "href": activation.href,
+        "unresolved_reason": activation.unresolved_reason,
+    }
+
+
+def _item(db: Session, viewer_id: UUID, scheme: ResourceScheme, resource_id: UUID):
     return resource_item_out(
         db,
         viewer_id=viewer_id,
         ref=ResourceRef(scheme=scheme, id=resource_id),
-    ).route
+    )
 
 
 def _make_library_intelligence(db: Session, user_id: UUID, library_id: UUID) -> tuple[UUID, UUID]:

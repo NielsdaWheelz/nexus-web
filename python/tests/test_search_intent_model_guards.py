@@ -39,7 +39,9 @@ DOCS = ROOT / "docs"
 
 # Deleted HTTP/URL filter params in their query-string form (`types=` is word-bounded so
 # `contentTypes=`/`mimeTypes=` and the like are not flagged).
-_LEGACY_URL_PARAM = re.compile(r"\b(content_kinds|contributor_handles|types)=")
+_LEGACY_URL_PARAM = re.compile(
+    r"\b(content_kinds|contributor_handles|types|result_types|storage_kinds)="
+)
 
 
 def _search_pkg_sources() -> dict[str, str]:
@@ -85,7 +87,16 @@ def test_no_legacy_filter_params_in_chat_and_route() -> None:
 def test_route_rejects_deleted_params_and_accepts_new_ones() -> None:
     src = ROUTE.read_text()
     assert "_DELETED_SEARCH_PARAMS" in src
-    for deleted in ("types", "content_kinds", "contributor_handles", "semantic"):
+    for deleted in (
+        "types",
+        "content_kinds",
+        "contributor_handles",
+        "semantic",
+        "result_types",
+        "storage_kinds",
+        "planned_types",
+        "planned_filters",
+    ):
         assert f'"{deleted}"' in src  # present only in the rejection tuple/docstring
     for accepted in ("kinds", "formats", "authors", "roles"):
         assert f"{accepted}: str | None = Query(" in src
@@ -101,6 +112,22 @@ def test_multi_scope_executor_moved_out_of_app_search() -> None:
     assert "_search_across_scopes" not in APP_SEARCH.read_text()
     assert (SEARCH_PKG / "batch.py").exists()
     assert "def search_scopes" in (SEARCH_PKG / "batch.py").read_text()
+
+
+def test_search_query_has_no_internal_override_fields() -> None:
+    src = (SEARCH_PKG / "query.py").read_text()
+    assert "result_types:" not in src
+    assert "storage_kinds:" not in src
+    assert "self.result_types" not in src
+    assert "self.storage_kinds" not in src
+
+
+def test_app_search_has_no_planned_internal_search_axes() -> None:
+    src = APP_SEARCH.read_text()
+    assert "planned_types" not in src
+    assert "planned_filters" not in src
+    assert "result_types=" not in src
+    assert "storage_kinds=" not in src
 
 
 def test_scope_filter_sql_is_the_single_scope_owner() -> None:
@@ -206,10 +233,12 @@ def test_e2e_suite_has_no_legacy_search_params_or_deleted_ui() -> None:
 
 
 def test_docs_have_no_legacy_search_deep_links() -> None:
-    # No /search?…(types|content_kinds|contributor_handles)= deep-link survives in docs.
+    # No deleted search-param deep-link survives in docs.
     # Scoped to the /search? URL so the authors-directory facet's own `content_kinds` param
     # (a different endpoint's vocabulary) is not flagged; this spec's old→new tables excluded.
-    pattern = re.compile(r"/search\?[^\s)`]*\b(?:types|content_kinds|contributor_handles)=")
+    pattern = re.compile(
+        r"/search\?[^\s)`]*\b(?:types|content_kinds|contributor_handles|result_types|storage_kinds)="
+    )
     offenders: list[str] = []
     for path in DOCS.rglob("*.md"):
         if path.name == "search-intent-model-hard-cutover.md":

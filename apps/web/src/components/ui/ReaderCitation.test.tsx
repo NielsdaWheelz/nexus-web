@@ -10,8 +10,13 @@ function renderCitation(preview: ReaderCitationPreview) {
       index={1}
       color="yellow"
       preview={preview}
+      activation={{
+        resourceRef: "media:media-1",
+        kind: "route",
+        href: "/media/media-1",
+        unresolvedReason: null,
+      }}
       target={null}
-      href="/media/media-1"
       onActivate={vi.fn()}
     />,
   );

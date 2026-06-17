@@ -607,7 +607,7 @@ class TestAppSearchSummaryEnrichment:
         response = search(
             db_session,
             viewer_id=user_id,
-            query=SearchQuery(text="Searchable Abstract", result_types=("media",)),
+            query=SearchQuery(text="Searchable Abstract", requested_kinds=frozenset({"documents"})),
         )
         media_results = [r for r in response.results if getattr(r, "type", None) == "media"]
         assert media_results, "expected the media title hit"
@@ -626,7 +626,7 @@ class TestAppSearchSummaryEnrichment:
         response = search(
             db_session,
             viewer_id=user_id,
-            query=SearchQuery(text="No Abstract", result_types=("media",)),
+            query=SearchQuery(text="No Abstract", requested_kinds=frozenset({"documents"})),
         )
         media_results = [r for r in response.results if getattr(r, "type", None) == "media"]
         assert media_results

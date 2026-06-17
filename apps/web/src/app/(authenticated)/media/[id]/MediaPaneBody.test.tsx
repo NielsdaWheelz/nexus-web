@@ -27,7 +27,10 @@ import {
   NOTE_PULSE_HIGHLIGHT,
   READER_PULSE_HIGHLIGHT,
 } from "@/lib/reader/pulseEvent";
-import type { ReaderApparatusResponse } from "@/lib/reader/apparatus";
+import type {
+  ReaderApparatusItem,
+  ReaderApparatusResponse,
+} from "@/lib/reader/apparatus";
 import type { ReaderConnectionPage } from "@/lib/reader/documentMap";
 import MediaPaneBody from "./MediaPaneBody";
 
@@ -320,6 +323,17 @@ function apparatusResponse(): ReaderApparatusResponse {
   );
 }
 
+function apparatusItem(
+  id: string,
+  item: Omit<ReaderApparatusItem, "id" | "resource_ref">,
+): ReaderApparatusItem {
+  return {
+    id,
+    resource_ref: `reader_apparatus_item:${id}`,
+    ...item,
+  };
+}
+
 function readerDocumentMapResponse() {
   const apparatus = apparatusResponse();
   const citationCount =
@@ -515,6 +529,15 @@ async function getApparatusSurfaceBody(
   return body;
 }
 
+function activation(resourceRef: string, href: string | null) {
+  return {
+    resourceRef,
+    kind: href ? "route" : "none",
+    href,
+    unresolvedReason: href ? null : "missing",
+  } as const;
+}
+
 function noteTargetConnectionPage(): ReaderConnectionPage {
   const noteBlockId = "33333333-3333-4333-8333-333333333333";
   return {
@@ -538,6 +561,10 @@ function noteTargetConnectionPage(): ReaderConnectionPage {
             id: "22222222-2222-4222-8222-222222222222",
             label: "Current highlight",
             description: null,
+            activation: activation(
+              "highlight:22222222-2222-4222-8222-222222222222",
+              "/media/media-1#highlight-22222222-2222-4222-8222-222222222222",
+            ),
             href: "/media/media-1#highlight-22222222-2222-4222-8222-222222222222",
             missing: false,
           },
@@ -547,6 +574,7 @@ function noteTargetConnectionPage(): ReaderConnectionPage {
             id: noteBlockId,
             label: "Research note",
             description: null,
+            activation: activation(`note_block:${noteBlockId}`, `/notes/${noteBlockId}`),
             href: `/notes/${noteBlockId}`,
             missing: false,
           },
@@ -556,6 +584,7 @@ function noteTargetConnectionPage(): ReaderConnectionPage {
             id: noteBlockId,
             label: "Research note",
             description: null,
+            activation: activation(`note_block:${noteBlockId}`, `/notes/${noteBlockId}`),
             href: `/notes/${noteBlockId}`,
             missing: false,
           },
@@ -563,6 +592,7 @@ function noteTargetConnectionPage(): ReaderConnectionPage {
             ordinal: 1,
             role: "context",
             snapshot: { excerpt: "Target note excerpt." },
+            activation: activation(`note_block:${noteBlockId}`, `/notes/${noteBlockId}`),
             target_reader: {
               media_id: null,
               locator: {
@@ -596,6 +626,7 @@ function noteTargetConnectionPage(): ReaderConnectionPage {
         title: "Research note",
         subtitle: "highlight_note · context",
         excerpt: "Target note excerpt.",
+        activation: activation(`note_block:${noteBlockId}`, `/notes/${noteBlockId}`),
         href: `/notes/${noteBlockId}`,
       },
     ],
@@ -899,7 +930,7 @@ describe("MediaPaneBody pane sizing", () => {
         has_probable_items: false,
       },
       items: [
-        {
+        apparatusItem("11111111-1111-4111-8111-111111111111", {
           stable_key: "target-1",
           kind: "footnote",
           label: "1",
@@ -919,8 +950,8 @@ describe("MediaPaneBody pane sizing", () => {
           extraction_method: "html_semantic",
           source_ref: { format: "html", target_id: "fn1" },
           sort_key: "000000.target",
-        },
-        {
+        }),
+        apparatusItem("22222222-2222-4222-8222-222222222222", {
           stable_key: "marker-1",
           kind: "footnote_ref",
           label: "1",
@@ -940,7 +971,7 @@ describe("MediaPaneBody pane sizing", () => {
           extraction_method: "html_semantic",
           source_ref: { format: "html", target_id: "fn1" },
           sort_key: "000000.marker",
-        },
+        }),
       ],
       edges: [
         {
@@ -1102,7 +1133,7 @@ describe("MediaPaneBody pane sizing", () => {
         has_probable_items: false,
       },
       items: [
-        {
+        apparatusItem("33333333-3333-4333-8333-333333333333", {
           stable_key: "margin-1",
           kind: "margin_note",
           label: "Margin note 1",
@@ -1122,7 +1153,7 @@ describe("MediaPaneBody pane sizing", () => {
           extraction_method: "html_margin_note",
           source_ref: { format: "html", element: "span.marginnote" },
           sort_key: "000000.target",
-        },
+        }),
       ],
       edges: [],
       diagnostics: {},
@@ -1191,7 +1222,7 @@ describe("MediaPaneBody pane sizing", () => {
         has_probable_items: false,
       },
       items: [
-        {
+        apparatusItem("44444444-4444-4444-8444-444444444444", {
           stable_key: "pdf-marker-13",
           kind: "bibliography_ref",
           label: "[13]",
@@ -1221,8 +1252,8 @@ describe("MediaPaneBody pane sizing", () => {
           extraction_method: "pdf_native_link",
           source_ref: { format: "pdf", named_destination: "cite.memory" },
           sort_key: "0002.0001.marker",
-        },
-        {
+        }),
+        apparatusItem("55555555-5555-4555-8555-555555555555", {
           stable_key: "pdf-target-13",
           kind: "bibliography_entry",
           label: "[13]",
@@ -1254,7 +1285,7 @@ describe("MediaPaneBody pane sizing", () => {
           extraction_method: "pdf_native_link_target",
           source_ref: { format: "pdf", target_label: "[13]" },
           sort_key: "0011.000200.000.0013.target",
-        },
+        }),
       ],
       edges: [
         {

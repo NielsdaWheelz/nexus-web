@@ -25,12 +25,15 @@ def test_reader_apparatus_not_parsed_in_html_renderer():
     assert not forbidden.search(text), "HtmlRenderer must not parse source-authored apparatus"
 
 
-def test_reader_apparatus_not_written_by_retrieval_citation_service():
-    citation_path = _PY_ROOT / "services" / "retrieval_citation.py"
-    text = citation_path.read_text(encoding="utf-8")
-
-    assert "reader_apparatus" not in text
-    assert "reader-apparatus" not in text
+def test_reader_apparatus_storage_is_not_written_by_citation_or_retrieval_services():
+    for path in [
+        _PY_ROOT / "services" / "retrieval_citation.py",
+        _PY_ROOT / "services" / "resource_graph" / "citations.py",
+    ]:
+        text = path.read_text(encoding="utf-8")
+        assert "reader_apparatus_items" not in text
+        assert "reader_apparatus_edges" not in text
+        assert "reader_apparatus_states" not in text
 
 
 def test_reader_apparatus_surface_not_registered_under_conversation_context():

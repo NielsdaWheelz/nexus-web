@@ -46,6 +46,7 @@ KIND_TO_RESULT_TYPES: dict[SearchKind, tuple[str, ...]] = {
         "content_chunk",
         "fragment",
         "evidence_span",
+        "reader_apparatus_item",
     ),
     "notes": ("page", "note_block"),
     "highlights": ("highlight",),

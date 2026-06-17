@@ -97,6 +97,8 @@ def _scheme_is_handled(scheme: ResourceScheme) -> bool:
         return True
     if scheme == "podcast":
         return True
+    if scheme == "reader_apparatus_item":
+        return True
     assert_never(scheme)
 
 
@@ -128,6 +130,15 @@ def test_parse_rejects_user_graph_tag_scheme():
     assert parse_resource_ref(raw) == ResourceRefParseFailure(raw=raw, reason="unsupported_scheme")
     with pytest.raises(AssertionError, match="unsupported_scheme"):
         assert_resource_ref(raw)
+
+
+@pytest.mark.parametrize(
+    "scheme",
+    ["web", "web_result", "author", "video", "episode", "pdf", "epub", "annotation"],
+)
+def test_parse_rejects_product_alias_schemes(scheme: str):
+    raw = f"{scheme}:{uuid4()}"
+    assert parse_resource_ref(raw) == ResourceRefParseFailure(raw=raw, reason="unsupported_scheme")
 
 
 @pytest.mark.parametrize(

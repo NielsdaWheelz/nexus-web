@@ -84,7 +84,7 @@ def test_contributor_search_credit_text_is_limited_to_media_scope(
         SearchQuery(
             text="Hidden Scope",
             scope=SearchScope(kind=visible_kind, id=visible_scope_id),
-            result_types=("contributor",),
+            requested_kinds=frozenset({"people"}),
         ),
     )
     hidden_scope_results = search_service.search(
@@ -93,7 +93,7 @@ def test_contributor_search_credit_text_is_limited_to_media_scope(
         SearchQuery(
             text="Hidden Scope",
             scope=SearchScope(kind=hidden_kind, id=hidden_scope_id),
-            result_types=("contributor",),
+            requested_kinds=frozenset({"people"}),
         ),
     )
 

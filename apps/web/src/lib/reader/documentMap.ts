@@ -4,6 +4,7 @@ import type { MediaHighlight } from "@/lib/highlights/api";
 import type { MediaNavigationResponse } from "@/lib/media/readerNavigation";
 import type { ConnectionOut } from "@/lib/resourceGraph/connections";
 import type { EdgeKind, EdgeOrigin } from "@/lib/resourceGraph/edges";
+import type { ResourceActivation } from "@/lib/resources/activation";
 import type { ReaderApparatusResponse } from "@/lib/reader/apparatus";
 import { assertReaderApparatusResponse } from "@/lib/reader/apparatus";
 
@@ -74,6 +75,7 @@ export interface ReaderConnectionRow {
   title: string;
   subtitle: string | null;
   excerpt: string | null;
+  activation: ResourceActivation;
   href: string | null;
 }
 
@@ -91,6 +93,7 @@ interface ReaderDocumentMapItemBase {
   title: string;
   subtitle: string | null;
   excerpt: string | null;
+  activation: ResourceActivation | null;
   href: string | null;
   anchor: ReaderConnectionAnchor | null;
   document_order_key: string | null;
@@ -121,6 +124,7 @@ export interface ReaderDocumentMapHighlightItem extends ReaderDocumentMapItemBas
 export interface ReaderDocumentMapApparatusItem extends ReaderDocumentMapItemBase {
   kind: "apparatus";
   source_domain: "reader_apparatus";
+  resource_ref: string;
   stable_key: string;
   apparatus_kind: ReaderApparatusResponse["items"][number]["kind"];
   confidence: ReaderApparatusResponse["items"][number]["confidence"];

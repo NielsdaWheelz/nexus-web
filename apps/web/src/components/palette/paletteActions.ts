@@ -5,6 +5,7 @@
  */
 
 import { ArrowUpRight, Link, PanelLeft, Sparkles, X } from "lucide-react";
+import { hrefForResourceActivation } from "@/lib/resources/activation";
 import type { PaletteAction, PaletteItem } from "./paletteModel";
 import type { PaletteContext } from "./paletteProviders";
 
@@ -30,6 +31,25 @@ export function buildItemActions(item: PaletteItem, ctx: PaletteContext): Palett
         label: "Open",
         icon: ArrowUpRight,
         run: { kind: "open", href, externalShell: item.target.externalShell },
+      },
+      ...(ask ? [ask] : []),
+      { id: "copy-link", label: "Copy link", icon: Link, run: { kind: "copy-link", href } },
+    ];
+  }
+
+  if (item.target.kind === "resource") {
+    const href = hrefForResourceActivation(item.target.activation);
+    if (!href) return ask ? [ask] : [];
+    return [
+      {
+        id: "open",
+        label: "Open",
+        icon: ArrowUpRight,
+        run: {
+          kind: "open-resource",
+          activation: item.target.activation,
+          titleHint: item.target.titleHint ?? item.title,
+        },
       },
       ...(ask ? [ask] : []),
       { id: "copy-link", label: "Copy link", icon: Link, run: { kind: "copy-link", href } },

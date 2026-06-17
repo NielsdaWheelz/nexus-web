@@ -329,6 +329,12 @@ describe("OracleReadingPaneBody", () => {
                     ordinal: 1,
                     role: "context",
                     target_ref: { type: "evidence_span", id: "span-1" },
+                    activation: {
+                      resourceRef: "evidence_span:span-1",
+                      kind: "route",
+                      href: "/media/media-1#fragment-fragment-1",
+                      unresolvedReason: null,
+                    },
                     media_id: "media-1",
                     locator: {
                       type: "web_text_offsets",
@@ -387,6 +393,12 @@ describe("OracleReadingPaneBody", () => {
                     ordinal: 1,
                     role: "context",
                     target_ref: { type: "evidence_span", id: "span-1" },
+                    activation: {
+                      resourceRef: "evidence_span:span-1",
+                      kind: "route",
+                      href: "/notes/block-1",
+                      unresolvedReason: null,
+                    },
                     media_id: null,
                     locator: {
                       type: "note_block_offsets",

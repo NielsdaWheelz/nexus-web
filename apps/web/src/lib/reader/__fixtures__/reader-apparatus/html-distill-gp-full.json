@@ -267,6 +267,7 @@
         "body_text": "Gaussian Processes in Machine Learning [PDF]Rasmussen, C.E., 2004. Advanced Lectures on Machine Learning, pp. 63--71. Springer Berlin Heidelberg. DOI: 10.1007/978-3-540-28650-9_4",
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "0fa751cf-33a9-58fb-a0a5-60e502f32605",
         "kind": "bibliography_entry",
         "label": "Gaussian",
         "locator": {
@@ -281,6 +282,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:0fa751cf-33a9-58fb-a0a5-60e502f32605",
         "sort_key": "000008.000000.target.000",
         "source_ref": {
           "citation_key": "Rasmussen2004",
@@ -297,6 +299,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "c4b8733f-ed8f-5d27-ba3c-10e257c191c1",
         "kind": "bibliography_ref",
         "label": "[1]",
         "locator": {
@@ -311,6 +314,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:c4b8733f-ed8f-5d27-ba3c-10e257c191c1",
         "sort_key": "000008.000000.marker",
         "source_ref": {
           "citation_keys": [
@@ -328,6 +332,7 @@
         "body_text": "Gaussian Processes for Object Categorization [link]Kapoor, A., Grauman, K., Urtasun, R. and Darrell, T., 2010. International Journal of Computer Vision, Vol 88(2), pp. 169--188. DOI: 10.1007/s11263-009-0268-3",
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "573fcc26-0d2b-5c0a-8525-57276cfd8ab7",
         "kind": "bibliography_entry",
         "label": "Gaussian",
         "locator": {
@@ -342,6 +347,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:573fcc26-0d2b-5c0a-8525-57276cfd8ab7",
         "sort_key": "000010.000001.target.000",
         "source_ref": {
           "citation_key": "Kapoor2010",
@@ -358,6 +364,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "db79ac84-13b2-5175-aab4-9c814692c4c2",
         "kind": "bibliography_ref",
         "label": "[2]",
         "locator": {
@@ -372,6 +379,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:db79ac84-13b2-5175-aab4-9c814692c4c2",
         "sort_key": "000010.000001.marker",
         "source_ref": {
           "citation_keys": [
@@ -389,6 +397,7 @@
         "body_text": "Clustering Based on Gaussian Processes [PDF]Kim, H. and Lee, J., 2007. Neural Computation, Vol 19(11), pp. 3088--3107. MIT Press - Journals. DOI: 10.1162/neco.2007.19.11.3088",
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "94e2effe-c084-5cb2-b607-63623840652f",
         "kind": "bibliography_entry",
         "label": "Clustering",
         "locator": {
@@ -403,6 +412,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:94e2effe-c084-5cb2-b607-63623840652f",
         "sort_key": "000011.000002.target.000",
         "source_ref": {
           "citation_key": "Kim2007",
@@ -419,6 +429,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "dde5e84e-cca7-5368-9e79-45b889b7aa29",
         "kind": "bibliography_ref",
         "label": "[3]",
         "locator": {
@@ -433,6 +444,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:dde5e84e-cca7-5368-9e79-45b889b7aa29",
         "sort_key": "000011.000002.marker",
         "source_ref": {
           "citation_keys": [
@@ -450,6 +462,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "3d1ba72d-3c21-5d9f-9836-9fea6a0864d3",
         "kind": "bibliography_ref",
         "label": "[4]",
         "locator": {
@@ -464,6 +477,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:3d1ba72d-3c21-5d9f-9836-9fea6a0864d3",
         "sort_key": "000012.000003.marker",
         "source_ref": {
           "citation_keys": [
@@ -481,6 +495,7 @@
         "body_text": "Covariance matrix (Encyclopedia of Mathematics) 1994. Springer Science+Business Media B.V. / Kluwer Academic Publishers.",
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "12342c1d-92f9-50cc-9369-126c0616842f",
         "kind": "bibliography_entry",
         "label": "Covariance",
         "locator": {
@@ -495,6 +510,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:12342c1d-92f9-50cc-9369-126c0616842f",
         "sort_key": "000014.000004.target.000",
         "source_ref": {
           "citation_key": "Hazewinkel1994",
@@ -511,6 +527,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "076a46bf-6c49-5120-8756-b8c30aa46cce",
         "kind": "bibliography_ref",
         "label": "[5]",
         "locator": {
@@ -525,6 +542,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:076a46bf-6c49-5120-8756-b8c30aa46cce",
         "sort_key": "000014.000004.marker",
         "source_ref": {
           "citation_keys": [
@@ -542,10 +560,12 @@
         "body_text": "One of the implications of this theorem is that a collection of independent, identically distributed random variables with finite variance have a mean that is distributed normally. A good introduction to the central limit theorem is given by this video from Khan Academy.",
         "confidence": "exact",
         "extraction_method": "distill_footnote",
+        "id": "fa68c4c4-b3d8-5517-8278-1a7c6cf9ff7b",
         "kind": "footnote",
         "label": "1",
         "locator": null,
         "locator_status": "missing",
+        "resource_ref": "reader_apparatus_item:fa68c4c4-b3d8-5517-8278-1a7c6cf9ff7b",
         "sort_key": "000019.000000.target",
         "source_ref": {
           "element": "d-footnote",
@@ -560,6 +580,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "distill_footnote",
+        "id": "cfcb7909-476b-5d41-9053-9a07daa14b15",
         "kind": "footnote_ref",
         "label": "1",
         "locator": {
@@ -574,6 +595,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:cfcb7909-476b-5d41-9053-9a07daa14b15",
         "sort_key": "000019.000000.marker",
         "source_ref": {
           "element": "d-footnote",
@@ -588,10 +610,12 @@
         "body_text": "The corresponding Wikipedia article has a good description of the marginal distribution, including several examples.",
         "confidence": "exact",
         "extraction_method": "distill_footnote",
+        "id": "13952ced-448f-5239-ac8e-1638b6a8911a",
         "kind": "footnote",
         "label": "2",
         "locator": null,
         "locator_status": "missing",
+        "resource_ref": "reader_apparatus_item:13952ced-448f-5239-ac8e-1638b6a8911a",
         "sort_key": "000030.000001.target",
         "source_ref": {
           "element": "d-footnote",
@@ -606,6 +630,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "distill_footnote",
+        "id": "319941d3-4e9e-5993-8cfa-4a18f4b3bfc2",
         "kind": "footnote_ref",
         "label": "2",
         "locator": {
@@ -620,6 +645,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:319941d3-4e9e-5993-8cfa-4a18f4b3bfc2",
         "sort_key": "000030.000001.marker",
         "source_ref": {
           "element": "d-footnote",
@@ -634,6 +660,7 @@
         "body_text": "The Nature of Statistical Learning Theory Vapnik, V.N., 2000. Springer New York. DOI: 10.1007/978-1-4757-3264-1",
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "49247a49-881e-576f-982e-53dd4bc1a925",
         "kind": "bibliography_entry",
         "label": "The",
         "locator": {
@@ -648,6 +675,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:49247a49-881e-576f-982e-53dd4bc1a925",
         "sort_key": "000049.000005.target.000",
         "source_ref": {
           "citation_key": "Vapnik2000",
@@ -664,6 +692,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "81d28695-9ee4-5fe8-847d-aedafac59820",
         "kind": "bibliography_ref",
         "label": "[6]",
         "locator": {
@@ -678,6 +707,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:81d28695-9ee4-5fe8-847d-aedafac59820",
         "sort_key": "000049.000005.marker",
         "source_ref": {
           "citation_keys": [
@@ -695,10 +725,12 @@
         "body_text": "If the kernel follows Mercer\u2019s theorem it can be used to define a Hilbert space. More information on this can be found on Wikipedia.",
         "confidence": "exact",
         "extraction_method": "distill_footnote",
+        "id": "76e18b22-c9fb-5fa3-9aa7-ca5b1ff422c5",
         "kind": "footnote",
         "label": "3",
         "locator": null,
         "locator_status": "missing",
+        "resource_ref": "reader_apparatus_item:76e18b22-c9fb-5fa3-9aa7-ca5b1ff422c5",
         "sort_key": "000051.000002.target",
         "source_ref": {
           "element": "d-footnote",
@@ -713,6 +745,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "distill_footnote",
+        "id": "ecfec2b9-0105-5a71-9a33-6b490ec39108",
         "kind": "footnote_ref",
         "label": "3",
         "locator": {
@@ -727,6 +760,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:ecfec2b9-0105-5a71-9a33-6b490ec39108",
         "sort_key": "000051.000002.marker",
         "source_ref": {
           "element": "d-footnote",
@@ -741,6 +775,7 @@
         "body_text": "Automatic model construction with Gaussian processes [link]Duvenaud, D., 2014. University of Cambridge. PhD Thesis.",
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "9ed970f6-7c3b-5d6e-9341-bfd5954b7443",
         "kind": "bibliography_entry",
         "label": "Automatic",
         "locator": {
@@ -755,6 +790,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:9ed970f6-7c3b-5d6e-9341-bfd5954b7443",
         "sort_key": "000051.000006.target.000",
         "source_ref": {
           "citation_key": "Duvenaud2014",
@@ -771,6 +807,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "fbfd7efb-90bf-549f-b0b0-c033591a50fa",
         "kind": "bibliography_ref",
         "label": "[7]",
         "locator": {
@@ -785,6 +822,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:fbfd7efb-90bf-549f-b0b0-c033591a50fa",
         "sort_key": "000051.000006.marker",
         "source_ref": {
           "citation_keys": [
@@ -802,6 +840,7 @@
         "body_text": "Information theory, inference and learning algorithms MacKay, D.J., 2003. Cambridge University Press.",
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "35d37cc8-9473-5836-ac34-906663dcf030",
         "kind": "bibliography_entry",
         "label": "Information",
         "locator": {
@@ -816,6 +855,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:35d37cc8-9473-5836-ac34-906663dcf030",
         "sort_key": "000079.000007.target.000",
         "source_ref": {
           "citation_key": "mackay2003information",
@@ -832,6 +872,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "68571355-fd94-5823-a11b-60acaa904f8b",
         "kind": "bibliography_ref",
         "label": "[8]",
         "locator": {
@@ -846,6 +887,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:68571355-fd94-5823-a11b-60acaa904f8b",
         "sort_key": "000079.000007.marker",
         "source_ref": {
           "citation_keys": [
@@ -863,6 +905,7 @@
         "body_text": "Using Deep Belief Nets to Learn Covariance Kernels for Gaussian Processes [PDF]Hinton, G.E. and Salakhutdinov, R.R., 2008. Advances in Neural Information Processing Systems 20, pp. 1249--1256. Curran Associates, Inc.",
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "734c3cf2-5780-5637-9286-4f653437b35d",
         "kind": "bibliography_entry",
         "label": "Using",
         "locator": {
@@ -877,6 +920,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:734c3cf2-5780-5637-9286-4f653437b35d",
         "sort_key": "000086.000008.target.000",
         "source_ref": {
           "citation_key": "Hinton2008",
@@ -893,6 +937,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "964ef93a-510d-54c7-8e08-c543676f3adc",
         "kind": "bibliography_ref",
         "label": "[9]",
         "locator": {
@@ -907,6 +952,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:964ef93a-510d-54c7-8e08-c543676f3adc",
         "sort_key": "000086.000008.marker",
         "source_ref": {
           "citation_keys": [
@@ -925,6 +971,7 @@
         "body_text": "Deep Kernel Learning [PDF]Wilson, A.G., Hu, Z., Salakhutdinov, R. and Xing, E.P., 2016. Proceedings of the 19th International Conference on Artificial Intelligence and Statistics, Vol 51, pp. 370--378.",
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "6d67038d-14ef-51f9-8e32-10fdd82e6f13",
         "kind": "bibliography_entry",
         "label": "Deep",
         "locator": {
@@ -939,6 +986,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:6d67038d-14ef-51f9-8e32-10fdd82e6f13",
         "sort_key": "000086.000008.target.001",
         "source_ref": {
           "citation_key": "Wilson2016",
@@ -955,6 +1003,7 @@
         "body_text": "Deep Neural Networks as Gaussian Processes [PDF]Lee, J., Sohl-Dickstein, J., Pennington, J., Novak, R., Schoenholz, S. and Bahri, Y., 2018. International Conference on Learning Representations.",
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "d0729a3c-96f0-5a8c-a9a5-ebbfc17166a3",
         "kind": "bibliography_entry",
         "label": "Deep",
         "locator": {
@@ -969,6 +1018,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:d0729a3c-96f0-5a8c-a9a5-ebbfc17166a3",
         "sort_key": "000087.000009.target.000",
         "source_ref": {
           "citation_key": "Lee2018",
@@ -985,6 +1035,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "4a04d6c0-4a69-5211-8585-f11a06e5dfcb",
         "kind": "bibliography_ref",
         "label": "[10]",
         "locator": {
@@ -999,6 +1050,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:4a04d6c0-4a69-5211-8585-f11a06e5dfcb",
         "sort_key": "000087.000009.marker",
         "source_ref": {
           "citation_keys": [
@@ -1017,6 +1069,7 @@
         "body_text": "Deep Gaussian Processes [PDF]Damianou, A. and Lawrence, N., 2013. Proceedings of the Sixteenth International Conference on Artificial Intelligence and Statistics, Vol 31, pp. 207--215. PMLR.",
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "7f319413-57f4-5322-a00a-1e55757d28f1",
         "kind": "bibliography_entry",
         "label": "Deep",
         "locator": {
@@ -1031,6 +1084,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:7f319413-57f4-5322-a00a-1e55757d28f1",
         "sort_key": "000087.000009.target.001",
         "source_ref": {
           "citation_key": "Damianou2013",

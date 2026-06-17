@@ -9,15 +9,12 @@
 
 import { isRetrievalLocator } from "@/lib/api/sse/locators";
 import type { CitationOut } from "@/lib/conversations/citationOut";
+import { hrefForResourceActivation } from "@/lib/resources/activation";
 import {
   readerCitationColorForIndex,
   type ReaderCitationData,
 } from "@/lib/conversations/readerCitation";
-import {
-  hrefForReaderTarget,
-  hrefForNoteTarget,
-  type ReaderSourceTarget,
-} from "@/lib/conversations/readerTarget";
+import { type ReaderSourceTarget } from "@/lib/conversations/readerTarget";
 
 function readerTargetForCitation(c: CitationOut): ReaderSourceTarget | null {
   if (!isRetrievalLocator(c.locator)) {
@@ -34,7 +31,7 @@ function readerTargetForCitation(c: CitationOut): ReaderSourceTarget | null {
       highlight_behavior: "pulse",
       focus_behavior: "scroll_into_view",
       label: c.snapshot?.title ?? undefined,
-      href: c.deep_link ?? hrefForNoteTarget({ block_id: c.locator.block_id }),
+      href: hrefForResourceActivation(c.activation),
       evidence_id: c.target_ref.id,
     };
   }
@@ -52,13 +49,7 @@ function readerTargetForCitation(c: CitationOut): ReaderSourceTarget | null {
     highlight_behavior: "pulse",
     focus_behavior: "scroll_into_view",
     label: c.snapshot?.title ?? undefined,
-    href:
-      c.deep_link ??
-      hrefForReaderTarget({
-        media_id: c.media_id,
-        evidence_span_id,
-        locator: c.locator,
-      }),
+    href: hrefForResourceActivation(c.activation),
     evidence_span_id,
   };
 }
@@ -77,16 +68,7 @@ export function toReaderCitationData(c: CitationOut): ReaderCitationData {
         (v): v is string => Boolean(v),
       ),
     },
+    activation: c.activation,
     target,
-    href:
-      target?.href ??
-      c.deep_link ??
-      (c.media_id
-        ? hrefForReaderTarget({
-            media_id: c.media_id,
-            evidence_span_id,
-            locator: c.locator,
-          })
-        : null),
   };
 }

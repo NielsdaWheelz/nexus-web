@@ -31,6 +31,7 @@ class RetrievalContextRef(BaseModel):
         "evidence_span",
         "conversation",
         "web_result",
+        "reader_apparatus_item",
     ]
     id: UUID | str
     evidence_span_ids: list[UUID | str] = Field(default_factory=list)
@@ -47,6 +48,7 @@ class MediaRetrievalResultRef(BaseModel):
     source_label: str | None = None
     snippet: str
     deep_link: str
+    citation_target: str | None = None
     context_ref: RetrievalContextRef
     locator: None = None
     media_id: UUID | str | None = None
@@ -72,6 +74,7 @@ class PodcastRetrievalResultRef(BaseModel):
     source_label: str | None = None
     snippet: str
     deep_link: str
+    citation_target: str | None = None
     context_ref: RetrievalContextRef
     locator: None = None
     media_id: None = None
@@ -98,6 +101,7 @@ class EpisodeRetrievalResultRef(BaseModel):
     source_label: str | None = None
     snippet: str
     deep_link: str
+    citation_target: str | None = None
     context_ref: RetrievalContextRef
     locator: None = None
     media_id: UUID | str | None = None
@@ -123,6 +127,7 @@ class VideoRetrievalResultRef(BaseModel):
     source_label: str | None = None
     snippet: str
     deep_link: str
+    citation_target: str | None = None
     context_ref: RetrievalContextRef
     locator: None = None
     media_id: UUID | str | None = None
@@ -149,6 +154,7 @@ class ContentChunkRetrievalResultRef(BaseModel):
     source_label: str | None = None
     snippet: str
     deep_link: str
+    citation_target: str | None = None
     citation_label: str
     context_ref: RetrievalContextRef
     evidence_span_id: UUID | str | None = None
@@ -178,6 +184,7 @@ class FragmentRetrievalResultRef(BaseModel):
     source_label: str | None = None
     snippet: str
     deep_link: str
+    citation_target: str | None = None
     citation_label: str | None = None
     context_ref: RetrievalContextRef
     locator: RetrievalLocator
@@ -206,6 +213,7 @@ class ContributorRetrievalResultRef(BaseModel):
     source_label: str | None = None
     snippet: str
     deep_link: str
+    citation_target: str | None = None
     context_ref: RetrievalContextRef
     locator: None = None
     media_id: None = None
@@ -231,6 +239,7 @@ class PageRetrievalResultRef(BaseModel):
     source_label: str | None = None
     snippet: str
     deep_link: str
+    citation_target: str | None = None
     context_ref: RetrievalContextRef
     locator: None = None
     media_id: None = None
@@ -258,6 +267,7 @@ class NoteBlockRetrievalResultRef(BaseModel):
     source_label: str | None = None
     snippet: str
     deep_link: str
+    citation_target: str | None = None
     context_ref: RetrievalContextRef
     locator: RetrievalLocator
     media_id: None = None
@@ -286,6 +296,7 @@ class HighlightRetrievalResultRef(BaseModel):
     source_label: str | None = None
     snippet: str
     deep_link: str
+    citation_target: str | None = None
     citation_label: str | None = None
     context_ref: RetrievalContextRef
     locator: RetrievalLocator
@@ -315,6 +326,7 @@ class MessageRetrievalResultRef(BaseModel):
     source_label: str | None = None
     snippet: str
     deep_link: str
+    citation_target: str | None = None
     context_ref: RetrievalContextRef
     locator: RetrievalLocator
     media_id: None = None
@@ -342,6 +354,7 @@ class WebRetrievalResultRef(BaseModel):
     url: str
     display_url: str | None = None
     deep_link: str
+    citation_target: str | None = None
     snippet: str
     extra_snippets: list[str] = Field(default_factory=list)
     published_at: str | None = None
@@ -362,6 +375,14 @@ class WebRetrievalResultRef(BaseModel):
     def validate_web_ref(self) -> WebRetrievalResultRef:
         if self.context_ref.type != "web_result":
             raise ValueError("web context_ref.type must be web_result")
+        try:
+            UUID(self.source_id)
+        except ValueError as exc:
+            raise ValueError("web_result source_id must be an external_snapshot UUID") from exc
+        if self.id != self.source_id:
+            raise ValueError("web_result id must match source_id")
+        if str(self.context_ref.id) != self.source_id:
+            raise ValueError("web_result context_ref.id must match source_id")
         if self.locator.type != "external_url":
             raise ValueError("web_result locator must be external_url")
         return self
@@ -376,6 +397,7 @@ class EvidenceSpanRetrievalResultRef(BaseModel):
     source_label: str | None = None
     snippet: str
     deep_link: str
+    citation_target: str | None = None
     citation_label: str
     context_ref: RetrievalContextRef
     evidence_span_id: UUID | str
@@ -395,6 +417,34 @@ class EvidenceSpanRetrievalResultRef(BaseModel):
         return self
 
 
+class ReaderApparatusItemRetrievalResultRef(BaseModel):
+    type: Literal["reader_apparatus_item"]
+    id: UUID | str
+    result_type: Literal["reader_apparatus_item"]
+    source_id: str
+    title: str
+    source_label: str | None = None
+    snippet: str
+    deep_link: str
+    citation_target: str | None = None
+    apparatus_kind: str
+    context_ref: RetrievalContextRef
+    locator: RetrievalLocator
+    media_id: UUID | str
+    media_kind: str | None = None
+    score: float | None = None
+    selected: bool = False
+
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def validate_reader_apparatus_item_ref(self) -> ReaderApparatusItemRetrievalResultRef:
+        if self.context_ref.type != "reader_apparatus_item":
+            raise ValueError("reader_apparatus_item context_ref.type must be reader_apparatus_item")
+        validate_locator_for_result_type(self.type, self.locator)
+        return self
+
+
 class ConversationRetrievalResultRef(BaseModel):
     type: Literal["conversation"]
     id: UUID | str
@@ -404,6 +454,7 @@ class ConversationRetrievalResultRef(BaseModel):
     source_label: str | None = None
     snippet: str
     deep_link: str
+    citation_target: str | None = None
     context_ref: RetrievalContextRef
     locator: None = None
     media_id: None = None
@@ -434,6 +485,7 @@ RetrievalResultRef = Annotated[
     | MessageRetrievalResultRef
     | WebRetrievalResultRef
     | EvidenceSpanRetrievalResultRef
+    | ReaderApparatusItemRetrievalResultRef
     | ConversationRetrievalResultRef,
     Field(discriminator="type"),
 ]
@@ -611,6 +663,7 @@ LocatorBackedResultType = Literal[
     "note_block",
     "message",
     "web_result",
+    "reader_apparatus_item",
 ]
 RetrievalLocatorType = Literal[
     "web_text_offsets",
@@ -645,6 +698,7 @@ _LOCATOR_TYPES_BY_RESULT_TYPE: dict[LocatorBackedResultType, frozenset[Retrieval
     "note_block": _NOTE_LOCATOR_TYPES,
     "message": _MESSAGE_LOCATOR_TYPES,
     "web_result": _EXTERNAL_LOCATOR_TYPES,
+    "reader_apparatus_item": _SOURCE_LOCATOR_TYPES,
 }
 
 

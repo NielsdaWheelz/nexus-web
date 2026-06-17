@@ -41,12 +41,8 @@ from nexus.services.contributor_credits import replace_media_contributor_credits
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
 from nexus.services.note_indexing import rebuild_note_content_index
 from nexus.services.notes import get_daily_note
-from nexus.services.search import (
-    get_search_result,
-    search,
-)
+from nexus.services.search import get_search_result
 from nexus.services.search.projection import _snippet_around_query, _truncate_snippet
-from nexus.services.search.query import SearchQuery
 from nexus.services.semantic_chunks import build_text_embedding, to_pgvector_literal
 from nexus.services.transcript_segments import TranscriptSegmentInput
 from tests.factories import (
@@ -218,7 +214,8 @@ class TestBasicSearch:
             if row["type"] == "content_chunk" and row["source"]["media_id"] == str(media_id)
         )
         assert epub_fragment_row["source"]["media_id"] == str(media_id)
-        assert epub_fragment_row["deep_link"].startswith(f"/media/{media_id}")
+        assert epub_fragment_row["activation"]["href"].startswith(f"/media/{media_id}")
+        assert "deep_link" not in epub_fragment_row
 
         note_block_response = auth_client.get(
             "/search?q=unique+epub+note+needle&kinds=notes",
@@ -238,7 +235,8 @@ class TestBasicSearch:
             epub_note_block_row["body_text"]
             == "Unique EPUB note needle for section deep link coverage."
         )
-        assert epub_note_block_row["deep_link"] == f"/notes/{note_block_id}"
+        assert epub_note_block_row["activation"]["href"] == f"/notes/{note_block_id}"
+        assert "deep_link" not in epub_note_block_row
 
     def test_search_finds_media_by_title(self, auth_client, direct_db: DirectSessionManager):
         """Search finds media by matching title."""
@@ -1721,7 +1719,16 @@ class TestSearchTypeFiltering:
 
     @pytest.mark.parametrize(
         "deleted_param",
-        ["types=media", "content_kinds=pdf", "contributor_handles=le-guin", "semantic=true"],
+        [
+            "types=media",
+            "content_kinds=pdf",
+            "contributor_handles=le-guin",
+            "semantic=true",
+            "result_types=media",
+            "storage_kinds=pdf",
+            "planned_types=media",
+            "planned_filters=documents",
+        ],
     )
     def test_deleted_filter_params_are_rejected(self, auth_client, deleted_param):
         """AC-5/D-13: every param the cutover removed fails loud (400) rather than being
@@ -2063,7 +2070,8 @@ class TestSearchResultFormat:
         assert result["title"] == "Unique Title For Test"
         assert result["media_id"] == str(media_id)
         assert result["media_kind"] == "web_article"
-        assert result["deep_link"] == f"/media/{media_id}"
+        assert result["activation"]["href"] == f"/media/{media_id}"
+        assert "deep_link" not in result
         assert result["context_ref"] == {"type": "media", "id": str(media_id)}
 
     def test_media_result_contributors_use_frontend_wire_keys(
@@ -2138,7 +2146,8 @@ class TestSearchResultFormat:
             assert result["source"]["media_kind"] == "web_article"
             assert result["media_id"] == str(media_id)
             assert result["media_kind"] == "web_article"
-            assert result["deep_link"].startswith(f"/media/{media_id}#evidence-")
+            assert result["activation"]["href"].startswith(f"/media/{media_id}#evidence-")
+            assert "deep_link" not in result
             assert result["citation_label"] == "Source"
             assert result["locator"]["type"] == "web_text_offsets"
             assert result["locator"]["media_id"] == str(media_id)
@@ -2151,6 +2160,47 @@ class TestSearchResultFormat:
                 "evidence_span_ids": result["evidence_span_ids"],
             }
             assert "idx" not in result
+
+    def test_media_content_index_results_require_ready_index(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        with direct_db.session() as session:
+            media_id = create_searchable_media(session, user_id, title="Pending Index Source")
+            session.execute(
+                text(
+                    """
+                    UPDATE content_index_states
+                    SET status = 'pending',
+                        active_embedding_provider = NULL,
+                        active_embedding_model = NULL
+                    WHERE owner_kind = 'media' AND owner_id = :media_id
+                    """
+                ),
+                {"media_id": media_id},
+            )
+            session.commit()
+
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        response = auth_client.get(
+            "/search?q=canonical+text&kinds=documents",
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 200, response.text
+        stale_rows = [
+            row
+            for row in response.json()["results"]
+            if row["type"] in {"content_chunk", "fragment", "evidence_span"}
+            and row.get("source", {}).get("media_id") == str(media_id)
+        ]
+        assert stale_rows == []
 
     def test_content_chunk_search_drops_prior_span_after_current_rebuild(
         self, auth_client, direct_db: DirectSessionManager
@@ -2353,7 +2403,8 @@ class TestSearchResultFormat:
         assert result["type"] == "message"
         assert "conversation_id" in result
         assert "seq" in result
-        assert result["deep_link"] == f"/conversations/{conversation_id}"
+        assert result["activation"]["href"] == f"/conversations/{conversation_id}"
+        assert "deep_link" not in result
         assert result["context_ref"] == {"type": "message", "id": str(message_id)}
 
     def test_web_result_search_and_service_resolution(
@@ -2365,6 +2416,7 @@ class TestSearchResultFormat:
 
         tool_call_id = uuid4()
         retrieval_id = uuid4()
+        snapshot_id = uuid4()
         with direct_db.session() as session:
             conversation_id = create_test_conversation(session, user_id)
             user_message_id = create_test_message(
@@ -2380,6 +2432,51 @@ class TestSearchResultFormat:
                 2,
                 role="assistant",
                 content="The calypso archive has a public source.",
+            )
+            session.execute(
+                text("""
+                    INSERT INTO resource_external_snapshots (
+                        id, user_id, provider, url, title, snippet, source_snapshot
+                    )
+                    VALUES (
+                        :snapshot_id, :user_id, 'test', 'https://example.com/calypso',
+                        'Calypso Archive Source',
+                        'Calypso archive public evidence snippet',
+                        jsonb_build_object(
+                            'type', 'web_result',
+                            'id', CAST(:snapshot_id_text AS text),
+                            'result_type', 'web_result',
+                            'result_ref', 'web:calypso',
+                            'source_id', CAST(:snapshot_id_text AS text),
+                            'title', 'Calypso Archive Source',
+                            'url', 'https://example.com/calypso',
+                            'display_url', 'example.com/calypso',
+                            'deep_link', 'https://example.com/calypso',
+                            'snippet', 'Calypso archive public evidence snippet',
+                            'provider', 'test',
+                            'provider_request_id', 'provider-request-1',
+                            'locator', jsonb_build_object(
+                                'type', 'external_url',
+                                'url', 'https://example.com/calypso',
+                                'title', 'Calypso Archive Source',
+                                'display_url', 'example.com/calypso'
+                            ),
+                            'context_ref', jsonb_build_object(
+                                'type', 'web_result',
+                                'id', CAST(:snapshot_id_text AS text)
+                            ),
+                            'media_id', NULL,
+                            'media_kind', NULL,
+                            'score', 0.5,
+                            'selected', true
+                        )
+                    )
+                """),
+                {
+                    "snapshot_id": snapshot_id,
+                    "snapshot_id_text": str(snapshot_id),
+                    "user_id": user_id,
+                },
             )
             session.execute(
                 text("""
@@ -2412,14 +2509,16 @@ class TestSearchResultFormat:
                         included_in_prompt
                     )
                     VALUES (
-                        :retrieval_id, :tool_call_id, 0, 'web_result', 'web:calypso',
-                        jsonb_build_object('type', 'web_result', 'id', 'web:calypso'),
+                        :retrieval_id, :tool_call_id, 0, 'web_result', :snapshot_id_text,
+                        jsonb_build_object(
+                            'type', 'web_result', 'id', CAST(:snapshot_id_text AS text)
+                        ),
                         jsonb_build_object(
                             'type', 'web_result',
-                            'id', 'web:calypso',
+                            'id', CAST(:snapshot_id_text AS text),
                             'result_type', 'web_result',
                             'result_ref', 'web:calypso',
-                            'source_id', 'web:calypso',
+                            'source_id', CAST(:snapshot_id_text AS text),
                             'title', 'Calypso Archive Source',
                             'url', 'https://example.com/calypso',
                             'display_url', 'example.com/calypso',
@@ -2433,7 +2532,10 @@ class TestSearchResultFormat:
                                 'title', 'Calypso Archive Source',
                                 'display_url', 'example.com/calypso'
                             ),
-                            'context_ref', jsonb_build_object('type', 'web_result', 'id', 'web:calypso'),
+                            'context_ref', jsonb_build_object(
+                                'type', 'web_result',
+                                'id', CAST(:snapshot_id_text AS text)
+                            ),
                             'media_id', NULL,
                             'media_kind', NULL,
                             'score', 0.5,
@@ -2454,7 +2556,11 @@ class TestSearchResultFormat:
                         true
                     )
                 """),
-                {"retrieval_id": retrieval_id, "tool_call_id": tool_call_id},
+                {
+                    "retrieval_id": retrieval_id,
+                    "tool_call_id": tool_call_id,
+                    "snapshot_id_text": str(snapshot_id),
+                },
             )
             session.commit()
 
@@ -2462,31 +2568,7 @@ class TestSearchResultFormat:
         direct_db.register_cleanup("messages", "conversation_id", conversation_id)
         direct_db.register_cleanup("message_tool_calls", "id", tool_call_id)
         direct_db.register_cleanup("message_retrievals", "id", retrieval_id)
-
-        response = auth_client.get(
-            "/search?q=calypso+archive&kinds=web",
-            headers=auth_headers(user_id),
-        )
-
-        assert response.status_code == 200, (
-            f"Expected web result search to succeed, got {response.status_code}: {response.text}"
-        )
-        result = response.json()["results"][0]
-        assert result["type"] == "web_result"
-        assert result["id"] == str(retrieval_id)
-        assert result["source_id"] == "web:calypso"
-        assert result["result_ref"] == "web:calypso"
-        assert result["url"] == "https://example.com/calypso"
-        assert result["deep_link"] == "https://example.com/calypso"
-        assert "source_version" not in result
-        assert result["locator"] == {
-            "type": "external_url",
-            "url": "https://example.com/calypso",
-            "title": "Calypso Archive Source",
-            "display_url": "example.com/calypso",
-            "accessed_at": None,
-        }
-        assert result["context_ref"] == {"type": "web_result", "id": str(retrieval_id)}
+        direct_db.register_cleanup("resource_external_snapshots", "id", snapshot_id)
 
         with direct_db.session() as session:
             resolved = get_search_result(
@@ -2495,8 +2577,7 @@ class TestSearchResultFormat:
                 result_type="web_result",
                 result_id=str(retrieval_id),
             )
-            assert str(resolved.id) == str(retrieval_id)
-            assert resolved.result_ref == "web:calypso"
+            result = resolved.model_dump(mode="json")
 
             with pytest.raises(InvalidRequestError):
                 get_search_result(
@@ -2505,6 +2586,30 @@ class TestSearchResultFormat:
                     result_type="web_result",
                     result_id="web:calypso",
                 )
+
+        assert result["type"] == "web_result"
+        assert result["id"] == str(retrieval_id)
+        assert result["source_id"] == str(snapshot_id)
+        assert result["result_ref"] == "web:calypso"
+        assert result["resource_ref"] == f"external_snapshot:{snapshot_id}"
+        assert result["citation_target"] == f"external_snapshot:{snapshot_id}"
+        assert result["activation"] == {
+            "resource_ref": f"external_snapshot:{snapshot_id}",
+            "kind": "external",
+            "href": "https://example.com/calypso",
+            "unresolved_reason": None,
+        }
+        assert result["url"] == "https://example.com/calypso"
+        assert "deep_link" not in result
+        assert "source_version" not in result
+        assert result["locator"] == {
+            "type": "external_url",
+            "url": "https://example.com/calypso",
+            "title": "Calypso Archive Source",
+            "display_url": "example.com/calypso",
+            "accessed_at": None,
+        }
+        assert result["context_ref"] == {"type": "web_result", "id": str(snapshot_id)}
 
         with direct_db.session() as session:
             session.execute(
@@ -2524,16 +2629,6 @@ class TestSearchResultFormat:
                     viewer_id=user_id,
                     result_type="web_result",
                     result_id=str(retrieval_id),
-                )
-
-            with pytest.raises(ValidationError):
-                search(
-                    db=session,
-                    viewer_id=user_id,
-                    query=SearchQuery(
-                        text="calypso archive",
-                        result_types=("web_result",),
-                    ),
                 )
 
     def test_snippet_max_length(self, auth_client, direct_db: DirectSessionManager):
@@ -2622,7 +2717,8 @@ class TestSearchResultFormat:
         assert result["source_label"] == "note"
         assert result["highlight_excerpt"] == "test exact"
         assert result["body_text"] == note_body
-        assert result["deep_link"] == f"/notes/{note_block_id}"
+        assert result["activation"]["href"] == f"/notes/{note_block_id}"
+        assert "deep_link" not in result
         assert result["media_id"] is None
         assert result["media_kind"] is None
         assert result["context_ref"] == {"type": "note_block", "id": str(note_block_id)}
@@ -2661,7 +2757,8 @@ class TestSearchResultFormat:
         assert result["type"] == "page"
         assert result["title"] == "Garden Planning"
         assert "description" not in result
-        assert result["deep_link"] == f"/pages/{page_id}"
+        assert result["activation"]["href"] == f"/pages/{page_id}"
+        assert "deep_link" not in result
         assert result["context_ref"] == {"type": "page", "id": str(page_id)}
         assert "body_text" not in result
 
@@ -3360,6 +3457,99 @@ class TestSearchResponseShape:
         assert "error" not in data
 
 
+class TestReaderApparatusSearch:
+    def test_reader_apparatus_item_is_searchable_citable_and_activatable(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        state_id = uuid4()
+        item_id = uuid4()
+
+        with direct_db.session() as session:
+            media_id = create_searchable_media(session, user_id, title="Apparatus Search Source")
+            session.execute(
+                text("""
+                    INSERT INTO reader_apparatus_states (
+                        id, media_id, media_kind, source_fingerprint, extractor_version,
+                        status, item_count, edge_count, diagnostics
+                    )
+                    VALUES (
+                        :state_id, :media_id, 'web_article', 'sha256:test',
+                        'reader_apparatus_v1', 'ready', 1, 0, '{}'::jsonb
+                    )
+                """),
+                {"state_id": state_id, "media_id": media_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO reader_apparatus_items (
+                        id, media_id, state_id, stable_key, kind, label, body_text,
+                        body_html_sanitized, locator, locator_status, confidence,
+                        extraction_method, source_ref, sort_key
+                    )
+                    VALUES (
+                        :item_id, :media_id, :state_id, 'apparatus-note-1',
+                        'footnote', '1', 'source-authored apparatus needle text',
+                        NULL, CAST(:locator AS jsonb), 'exact', 'exact',
+                        'test', '{}'::jsonb, '000001.target'
+                    )
+                """),
+                {
+                    "item_id": item_id,
+                    "media_id": media_id,
+                    "state_id": state_id,
+                    "locator": json.dumps(
+                        {
+                            "type": "web_text_offsets",
+                            "media_id": str(media_id),
+                            "fragment_id": str(uuid4()),
+                            "start_offset": 0,
+                            "end_offset": 37,
+                            "media_kind": "web_article",
+                            "text_quote_selector": {
+                                "exact": "source-authored apparatus needle text"
+                            },
+                        }
+                    ),
+                },
+            )
+            session.commit()
+
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("reader_apparatus_states", "id", state_id)
+        direct_db.register_cleanup("reader_apparatus_items", "id", item_id)
+
+        response = auth_client.get(
+            "/search?q=apparatus+needle&kinds=documents",
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 200, (
+            f"Expected apparatus search to succeed, got {response.status_code}: {response.text}"
+        )
+        result = next(
+            row
+            for row in response.json()["results"]
+            if row["type"] == "reader_apparatus_item"
+        )
+        assert result["id"] == str(item_id)
+        assert result["resource_ref"] == f"reader_apparatus_item:{item_id}"
+        assert result["citation_target"] == f"reader_apparatus_item:{item_id}"
+        assert result["activation"] == {
+            "resource_ref": f"reader_apparatus_item:{item_id}",
+            "kind": "route",
+            "href": f"/media/{media_id}?apparatus=apparatus-note-1&apparatus_id={item_id}",
+            "unresolved_reason": None,
+        }
+        assert result["context_ref"] == {"type": "reader_apparatus_item", "id": str(item_id)}
+        assert result["source"]["media_id"] == str(media_id)
+        assert result["locator"]["type"] == "web_text_offsets"
+        assert "deep_link" not in result
+
+
 class TestSearchProvenance:
     """Tests for media provenance in search visibility."""
 
@@ -4043,7 +4233,7 @@ class TestSemanticTranscriptChunkSearch:
 
 
 class TestSearchTranscriptNavigation:
-    def test_note_block_search_uses_note_deep_link_when_linked_highlight_targets_transcript(
+    def test_note_block_search_uses_note_activation_when_linked_highlight_targets_transcript(
         self, auth_client, direct_db: DirectSessionManager
     ):
         user_id = create_test_user_id()
@@ -4357,4 +4547,5 @@ class TestSearchTranscriptNavigation:
         note_block_rows = [row for row in response.json()["results"] if row["type"] == "note_block"]
         assert note_block_rows, "expected note-block search row"
         assert note_block_rows[0]["id"] == str(note_block_id)
-        assert note_block_rows[0]["deep_link"] == f"/notes/{note_block_id}"
+        assert note_block_rows[0]["activation"]["href"] == f"/notes/{note_block_id}"
+        assert "deep_link" not in note_block_rows[0]

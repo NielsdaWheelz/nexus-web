@@ -54,6 +54,15 @@ def _web_citation(rank: int = 1) -> WebSearchCitation:
     )
 
 
+def _activation(resource_ref: str, href: str | None = "/notes/example") -> dict[str, str | None]:
+    return {
+        "resource_ref": resource_ref,
+        "kind": "route" if href else "none",
+        "href": href,
+        "unresolved_reason": None if href else "missing",
+    }
+
+
 def test_web_result_result_ref_json_round_trips_through_validator() -> None:
     """The ``web_result`` branch of ``result_ref_json`` passes the strict validator.
 
@@ -64,21 +73,23 @@ def test_web_result_result_ref_json_round_trips_through_validator() -> None:
     ``WebRetrievalResultRef`` keeps them.
     """
     cit = _web_citation(rank=3)
+    snapshot_id = str(uuid4())
     citation = RetrievalCitation(
         result_type="web_result",
-        source_id=cit.result_ref,
+        source_id=snapshot_id,
         title=cit.title,
         source_label=None,
         snippet=cit.snippet,
         deep_link=cit.url,
+        citation_target=f"external_snapshot:{snapshot_id}",
         citation_label=None,
         locator=cit.locator_json(),
-        context_ref={"type": "web_result", "id": cit.result_ref},
+        context_ref={"type": "web_result", "id": snapshot_id},
         evidence_span_id=None,
         media_id=None,
         media_kind=None,
         score=1.0 / 3,
-        result_ref=cit.to_json(),
+        result_ref=cit.to_json(source_id=snapshot_id),
         selected=True,
     )
 
@@ -91,7 +102,8 @@ def test_web_result_result_ref_json_round_trips_through_validator() -> None:
     assert serialized["extra_snippets"] == ["more context"]
     assert serialized["published_at"] == "2026-01-01"
     assert serialized["locator"]["type"] == "external_url"
-    assert serialized["context_ref"] == {"type": "web_result", "id": "web:example"}
+    assert serialized["source_id"] == snapshot_id
+    assert serialized["context_ref"] == {"type": "web_result", "id": snapshot_id}
 
 
 def test_citation_index_payload_carries_backend_built_citations() -> None:
@@ -103,6 +115,7 @@ def test_citation_index_payload_carries_backend_built_citations() -> None:
         ordinal=1,
         role="supports",
         target_ref=CitationTargetRef(type="note_block", id=block_id),
+        activation=_activation(f"note_block:{block_id}"),
         media_id=None,
         locator={
             "type": "note_block_offsets",
@@ -171,6 +184,7 @@ def test_chat_run_citation_index_item_requires_citation_read_model() -> None:
             ordinal=2,
             role="context",
             target_ref=CitationTargetRef(type="note_block", id=target_id),
+            activation=_activation(f"note_block:{target_id}"),
             snapshot=CitationSnapshot(title="Note"),
         ),
     )
@@ -215,6 +229,7 @@ def test_message_out_citations_defaults_empty_and_accepts_outs() -> None:
                 ordinal=1,
                 role="context",
                 target_ref=CitationTargetRef(type="media", id=media_id),
+                activation=_activation(f"media:{media_id}", f"/media/{media_id}"),
                 media_id=media_id,
             )
         ],

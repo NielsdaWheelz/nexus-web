@@ -560,6 +560,7 @@ class TestGenerateReduce:
             "ordinal",
             "role",
             "target_ref",
+            "activation",
             "media_id",
             "locator",
             "deep_link",

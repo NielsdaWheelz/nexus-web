@@ -13,6 +13,7 @@ import type {
 } from "@/lib/conversations/types";
 import { conversationMessageText } from "@/lib/conversations/types";
 import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
+import type { ResourceActivation } from "@/lib/resources/activation";
 import AssistantSelectionPopover from "./AssistantSelectionPopover";
 import AssistantEvidenceDisclosure from "./AssistantEvidenceDisclosure";
 import AssistantTrustInspector from "./AssistantTrustInspector";
@@ -36,7 +37,11 @@ export default function AssistantMessage({
   switchableLeafIds?: Set<string>;
   onSelectFork?: (fork: ForkOption) => void;
   onReplyToAssistant?: (draft: BranchDraft) => void;
-  onCitationActivate?: (target: ReaderSourceTarget, event?: React.MouseEvent) => void;
+  onCitationActivate?: (
+    activation: ResourceActivation,
+    target: ReaderSourceTarget | null,
+    event?: React.MouseEvent,
+  ) => void;
   errorLabel: string;
   timestampLabel: string;
 }) {

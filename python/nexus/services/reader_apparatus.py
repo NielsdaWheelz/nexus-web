@@ -1618,7 +1618,7 @@ def get_media_apparatus(db: Session, viewer_id: UUID, media_id: UUID) -> ReaderA
         db.execute(
             text(
                 """
-            SELECT stable_key, kind, label, body_text, body_html_sanitized,
+            SELECT id, stable_key, kind, label, body_text, body_html_sanitized,
                    locator, locator_status, confidence, extraction_method,
                    source_ref, sort_key
             FROM reader_apparatus_items
@@ -1633,6 +1633,8 @@ def get_media_apparatus(db: Session, viewer_id: UUID, media_id: UUID) -> ReaderA
     )
     items = [
         ReaderApparatusItemOut(
+            id=row["id"],
+            resource_ref=f"reader_apparatus_item:{row['id']}",
             stable_key=str(row["stable_key"]),
             kind=row["kind"],
             label=row["label"],
@@ -1828,6 +1830,99 @@ def replace_media_apparatus(
 
 
 def delete_media_apparatus(db: Session, media_id: UUID) -> None:
+    db.execute(
+        text(
+            """
+            DELETE FROM message_retrievals
+            WHERE result_type = 'reader_apparatus_item'
+              AND source_id IN (
+                  SELECT id::text
+                  FROM reader_apparatus_items
+                  WHERE media_id = :media_id
+              )
+            """
+        ),
+        {"media_id": media_id},
+    )
+    db.execute(
+        text(
+            """
+            DELETE FROM message_retrieval_candidate_ledgers
+            WHERE result_type = 'reader_apparatus_item'
+              AND source_id IN (
+                  SELECT id::text
+                  FROM reader_apparatus_items
+                  WHERE media_id = :media_id
+              )
+            """
+        ),
+        {"media_id": media_id},
+    )
+    db.execute(
+        text(
+            """
+            DELETE FROM resource_versions
+            WHERE resource_scheme = 'reader_apparatus_item'
+              AND resource_id IN (
+                  SELECT id
+                  FROM reader_apparatus_items
+                  WHERE media_id = :media_id
+              )
+            """
+        ),
+        {"media_id": media_id},
+    )
+    db.execute(
+        text(
+            """
+            DELETE FROM resource_view_states
+            WHERE (
+                target_scheme = 'reader_apparatus_item'
+                AND target_id IN (
+                    SELECT id
+                    FROM reader_apparatus_items
+                    WHERE media_id = :media_id
+                )
+            )
+            OR edge_id IN (
+                SELECT id
+                FROM resource_edges
+                WHERE (source_scheme = 'reader_apparatus_item'
+                    OR target_scheme = 'reader_apparatus_item')
+                  AND (source_id IN (
+                        SELECT id
+                        FROM reader_apparatus_items
+                        WHERE media_id = :media_id
+                      )
+                       OR target_id IN (
+                        SELECT id
+                        FROM reader_apparatus_items
+                        WHERE media_id = :media_id
+                      ))
+            )
+            """
+        ),
+        {"media_id": media_id},
+    )
+    db.execute(
+        text(
+            """
+            DELETE FROM resource_edges
+            WHERE (source_scheme = 'reader_apparatus_item' OR target_scheme = 'reader_apparatus_item')
+              AND (source_id IN (
+                    SELECT id
+                    FROM reader_apparatus_items
+                    WHERE media_id = :media_id
+                  )
+                   OR target_id IN (
+                    SELECT id
+                    FROM reader_apparatus_items
+                    WHERE media_id = :media_id
+                  ))
+            """
+        ),
+        {"media_id": media_id},
+    )
     db.execute(
         text("DELETE FROM reader_apparatus_edges WHERE media_id = :media_id"),
         {"media_id": media_id},

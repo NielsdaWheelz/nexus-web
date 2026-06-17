@@ -4,7 +4,7 @@ import { useCallback } from "react";
 import { formatDisplayDate } from "@/lib/display/format";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
-import { dispatchReaderSourceActivation } from "@/lib/conversations/readerSourceActivation";
+import type { ResourceActivation } from "@/lib/resources/activation";
 import type {
   BranchDraft,
   ConversationMessage,
@@ -24,7 +24,8 @@ interface MessageRowProps {
   retryingAssistantMessageIds?: Set<string>;
   onRetryAssistantResponse?: (assistantMessageId: string) => void;
   onReaderSourceActivate?: (
-    target: ReaderSourceTarget,
+    activation: ResourceActivation,
+    target: ReaderSourceTarget | null,
     event?: React.MouseEvent,
   ) => void;
 }
@@ -50,9 +51,12 @@ export function MessageRow({
 }: MessageRowProps) {
   const display = useRenderEnvironment();
   const activateTarget = useCallback(
-    (target: ReaderSourceTarget, event?: React.MouseEvent) => {
-      dispatchReaderSourceActivation(target);
-      onReaderSourceActivate?.(target, event);
+    (
+      activation: ResourceActivation,
+      target: ReaderSourceTarget | null,
+      event?: React.MouseEvent,
+    ) => {
+      onReaderSourceActivate?.(activation, target, event);
     },
     [onReaderSourceActivate],
   );

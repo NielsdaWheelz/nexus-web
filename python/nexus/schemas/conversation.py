@@ -22,6 +22,7 @@ from pydantic import (
 from nexus.llm_catalog import LLMKeyMode, ReasoningMode
 from nexus.schemas.citation import CitationOut, CitationRole, CitationTargetRef
 from nexus.schemas.retrieval import RetrievalContextRef, RetrievalLocator, RetrievalResultRef
+from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.schemas.search import SEARCH_RESULT_TYPES
 
 # Valid sharing modes - must match DB constraint
@@ -297,6 +298,7 @@ class ChatRunContextRefAddedEventPayload(BaseModel):
     id: UUID
     conversation_id: UUID
     resource_ref: str = Field(min_length=1)
+    activation: ResourceActivationOut
     label: str
     summary: str
     missing: bool

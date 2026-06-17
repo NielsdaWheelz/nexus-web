@@ -9,6 +9,12 @@ function contextRef(overrides: Partial<ContextRefOut> = {}): ContextRefOut {
     id: "ref-1",
     conversation_id: "conv-1",
     resource_ref: "media:m1",
+    activation: {
+      resourceRef: "media:m1",
+      kind: "route",
+      href: "/media/m1",
+      unresolvedReason: null,
+    },
     label: "Annual report",
     summary: "Page 4",
     missing: false,
@@ -71,7 +77,7 @@ describe("ConversationContextRefsSurface", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "Annual report" }));
-    expect(onOpenResource).toHaveBeenCalledWith("media:m1");
+    expect(onOpenResource).toHaveBeenCalledWith(expect.objectContaining({ resource_ref: "media:m1" }));
 
     await user.click(screen.getByRole("button", { name: "Actions" }));
     await user.click(screen.getByRole("menuitem", { name: "Open" }));

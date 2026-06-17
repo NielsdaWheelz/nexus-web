@@ -11,6 +11,7 @@ from datetime import datetime
 from typing import Literal, get_args
 from uuid import UUID
 
+from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 
 # Single source for the edge vocabularies (LOW #20): the wire schema
@@ -148,6 +149,7 @@ class ConnectionEndpoint:
     ref: ResourceRef
     label: str | None
     description: str | None
+    activation: ResourceActivationOut
     href: str | None
     missing: bool
 
@@ -157,6 +159,7 @@ class ConnectionCitation:
     ordinal: int
     role: EdgeKind
     snapshot: CitationSnapshot
+    activation: ResourceActivationOut
     target_media_id: UUID | None
     target_locator: dict[str, object] | None
     target_status: ConnectionTargetStatus

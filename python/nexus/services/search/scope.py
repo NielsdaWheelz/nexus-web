@@ -277,6 +277,15 @@ _SCOPE_MATRIX: dict[str, dict[str, str | ScopeUnsupported]] = {
             AND {_media_context_ref_scope("es.owner_id")}
         """,
     },
+    "reader_apparatus_item": {
+        "media": "AND rai.media_id = :scope_id",
+        "library": """
+            AND rai.media_id IN (
+                SELECT media_id FROM library_entries WHERE library_id = :scope_id
+            )
+        """,
+        "conversation": f"AND {_media_context_ref_scope('rai.media_id')}",
+    },
     "page": _note_object_scope("page", "p.id"),
     "note_block": _note_object_scope("note_block", "cc.owner_id"),
     "highlight": {

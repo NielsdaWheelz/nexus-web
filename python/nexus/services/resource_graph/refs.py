@@ -30,6 +30,7 @@ ResourceScheme = Literal[
     "external_snapshot",
     "contributor",
     "podcast",
+    "reader_apparatus_item",
 ]
 
 RESOURCE_SCHEMES: tuple[ResourceScheme, ...] = (
@@ -50,6 +51,7 @@ RESOURCE_SCHEMES: tuple[ResourceScheme, ...] = (
     "external_snapshot",
     "contributor",
     "podcast",
+    "reader_apparatus_item",
 )
 
 

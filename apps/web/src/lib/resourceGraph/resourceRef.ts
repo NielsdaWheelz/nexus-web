@@ -27,6 +27,7 @@ export const RESOURCE_SCHEMES = [
   "external_snapshot",
   "contributor",
   "podcast",
+  "reader_apparatus_item",
 ] as const;
 
 export type ResourceScheme = (typeof RESOURCE_SCHEMES)[number];

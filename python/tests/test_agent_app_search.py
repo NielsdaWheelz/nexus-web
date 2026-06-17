@@ -13,10 +13,8 @@ from nexus.services.agent_tools.app_search import (
     execute_app_search,
     render_retrieved_context_blocks,
 )
-from nexus.services.contributor_credits import replace_media_contributor_credits
 from nexus.services.note_indexing import rebuild_note_content_index
 from nexus.services.retrieval_citation import RetrievalCitation
-from nexus.services.search import ALL_RESULT_TYPES
 from tests.factories import (
     add_context_edge,
     create_searchable_media_in_library,
@@ -78,9 +76,7 @@ def test_execute_app_search_persists_retrieval_metadata(
             user_message_id=user_message_id,
             assistant_message_id=assistant_message_id,
             scopes=[],
-            planned_query="App Search Needle",
-            planned_types=list(ALL_RESULT_TYPES),
-            planned_filters={},
+            query="App Search Needle",
         )
 
         assert run is not None
@@ -213,9 +209,7 @@ def test_execute_app_search_rejects_blank_explicit_scope(
         user_message_id=user_message_id,
         assistant_message_id=assistant_message_id,
         scopes=["  "],
-        planned_query="Find something",
-        planned_types=["media"],
-        planned_filters={},
+        query="Find something",
     )
 
     assert run.status == "error"
@@ -452,101 +446,13 @@ def test_execute_app_search_error_output_escapes_attribute_quotes(
         user_message_id=user_message_id,
         assistant_message_id=assistant_message_id,
         scopes=[],
-        planned_query="Find something",
-        planned_types=["media"],
-        planned_filters={},
+        query="Find something",
         forced_error='bad "scope"',
     )
 
     assert run.status == "error"
     assert 'message="bad &quot;scope&quot;"' in run.context_text
     assert 'message="bad "scope""' not in run.context_text
-
-
-def test_execute_app_search_persists_normalized_executed_filters(
-    direct_db: DirectSessionManager,
-) -> None:
-    user_id = create_test_user_id()
-    credited_name = f"Mixed Case Filter Contributor {uuid4()}"
-    source = f"app-search-filter-{uuid4()}"
-
-    with direct_db.session() as session:
-        session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
-        library_id = create_test_library(session, user_id, "Agent Filter Search Library")
-        conversation_id = create_test_conversation(session, user_id)
-        user_message_id = create_test_message(
-            session,
-            conversation_id,
-            seq=1,
-            role="user",
-            content="Find mixed filters",
-        )
-        assistant_message_id = create_test_message(
-            session,
-            conversation_id,
-            seq=2,
-            role="assistant",
-            content="",
-            status="pending",
-        )
-        media_id = create_searchable_media_in_library(
-            session,
-            user_id,
-            library_id,
-            title="Mixed Filter Needle",
-        )
-        replace_media_contributor_credits(
-            session,
-            media_id=media_id,
-            credits=[{"name": credited_name, "role": "HOST", "source": source}],
-        )
-        contributor_handle = session.execute(
-            text(
-                """
-                SELECT c.handle
-                FROM contributor_credits cc
-                JOIN contributors c ON c.id = cc.contributor_id
-                WHERE cc.media_id = :media_id
-                """
-            ),
-            {"media_id": media_id},
-        ).scalar_one()
-
-        run = execute_app_search(
-            session,
-            viewer_id=user_id,
-            conversation_id=conversation_id,
-            user_message_id=user_message_id,
-            assistant_message_id=assistant_message_id,
-            scopes=[],
-            planned_query="Mixed Filter Needle",
-            planned_types=["media"],
-            planned_filters={
-                "authors": [contributor_handle.upper()],
-                "roles": ["HOST"],
-                "formats": ["WEB_ARTICLE"],
-            },
-        )
-
-        assert run is not None
-        assert run.status == "complete"
-        assert run.filters == {
-            "authors": [contributor_handle],
-            "roles": ["host"],
-            "formats": ["web_article"],
-        }
-        assert any(citation.source_id == str(media_id) for citation in run.citations)
-
-    direct_db.register_cleanup("contributors", "display_name", credited_name)
-    direct_db.register_cleanup("contributor_aliases", "source", source)
-    direct_db.register_cleanup("fragments", "media_id", media_id)
-    direct_db.register_cleanup("library_entries", "media_id", media_id)
-    direct_db.register_cleanup("media", "id", media_id)
-    direct_db.register_cleanup("messages", "conversation_id", conversation_id)
-    direct_db.register_cleanup("conversations", "id", conversation_id)
-    direct_db.register_cleanup("memberships", "library_id", library_id)
-    direct_db.register_cleanup("libraries", "id", library_id)
-    direct_db.register_cleanup("users", "id", user_id)
 
 
 @respx.mock
@@ -588,9 +494,7 @@ def test_execute_app_search_preserves_typed_provider_error_code(
             user_message_id=user_message_id,
             assistant_message_id=assistant_message_id,
             scopes=[],
-            planned_query="typed provider failure",
-            planned_types=["content_chunk"],
-            planned_filters={},
+            query="typed provider failure",
         )
 
         assert run is not None
@@ -649,12 +553,7 @@ def test_scoped_app_search_persists_no_indexed_evidence_as_empty_tool_result(
             user_message_id=user_message_id,
             assistant_message_id=assistant_message_id,
             scopes=[f"library:{library_id}"],
-            planned_query="indexed evidence",
-            # Production chat shape (chat_runs.py plans content_chunk + note_block); an
-            # empty library has neither indexed media nor indexed notes -> still
-            # no_indexed_evidence.
-            planned_types=["content_chunk", "note_block"],
-            planned_filters={},
+            query="indexed evidence",
         )
 
         assert run is not None
@@ -738,12 +637,7 @@ def test_scoped_app_search_persists_no_results_as_empty_tool_result(
             user_message_id=user_message_id,
             assistant_message_id=assistant_message_id,
             scopes=[f"library:{library_id}"],
-            planned_query="termthatdoesnotexist",
-            # Production chat shape: the scope holds ready-indexed media evidence, so an
-            # unmatched query is no_results (indexed-but-unmatched), not
-            # no_indexed_evidence.
-            planned_types=["content_chunk", "note_block"],
-            planned_filters={},
+            query="termthatdoesnotexist",
         )
 
         assert run is not None
@@ -753,7 +647,7 @@ def test_scoped_app_search_persists_no_results_as_empty_tool_result(
         assert run.retrieval_result_event()["results"] == []
         assert 'status="no_results"' in run.context_text
         assert 'status="no_indexed_evidence"' not in run.context_text
-        assert "&quot;formats&quot;" in run.context_text
+        assert 'filters="{}"' in run.context_text
 
         tool_row = session.execute(
             text(
@@ -832,9 +726,7 @@ def test_execute_app_search_accepts_referenced_media_scope(
             user_message_id=user_message_id,
             assistant_message_id=assistant_message_id,
             scopes=[f"media:{media_id}"],
-            planned_query="Media Scope Needle",
-            planned_types=["content_chunk"],
-            planned_filters={},
+            query="Media Scope Needle",
         )
 
         assert run is not None
@@ -899,15 +791,13 @@ def test_execute_app_search_selects_highlight_result_as_prompt_evidence(
             user_message_id=user_message_id,
             assistant_message_id=assistant_message_id,
             scopes=[],
-            planned_query="test exact",
-            planned_types=["highlight"],
-            planned_filters={},
+            query="test exact",
         )
 
         assert run is not None
         assert run.status == "complete"
         assert run.selected_citations
-        assert run.selected_citations[0].result_type == "highlight"
+        assert any(citation.result_type == "highlight" for citation in run.selected_citations)
         assert '<app_search_result type="highlight">' in run.context_text
         assert "<exact>test exact</exact>" in run.context_text
 
@@ -917,6 +807,7 @@ def test_execute_app_search_selects_highlight_result_as_prompt_evidence(
                 SELECT result_type, result_ref, exact_snippet, selected
                 FROM message_retrievals
                 WHERE tool_call_id = :tool_call_id
+                  AND result_type = 'highlight'
                 """
             ),
             {"tool_call_id": run.tool_call_id},
@@ -948,10 +839,9 @@ def test_execute_app_search_cites_note_block_as_prompt_evidence(
 ) -> None:
     """AC-5: the AI cites your notes.
 
-    A note-owned body matching the query is retrieved as a note_block result
-    (chat plans content_chunk + note_block exactly like chat_runs.py), selected into the
-    prompt, rendered via _render_note_block_block, and persisted with a /notes/{block_id}
-    deep link.
+    A note-owned body matching the query is retrieved as a note_block result,
+    selected into the prompt, rendered via _render_note_block_block, and persisted
+    with a /notes/{block_id} deep link.
     """
     user_id = create_test_user_id()
     note_needle = f"noteneedle{uuid4().hex}"
@@ -995,10 +885,7 @@ def test_execute_app_search_cites_note_block_as_prompt_evidence(
             user_message_id=user_message_id,
             assistant_message_id=assistant_message_id,
             scopes=[],
-            planned_query=note_needle,
-            # Exactly the chat planner shape (chat_runs.py plans content_chunk + note_block).
-            planned_types=["content_chunk", "note_block"],
-            planned_filters={},
+            query=note_needle,
         )
 
         assert run is not None
@@ -1195,9 +1082,7 @@ def test_scoped_app_search_with_only_indexed_notes_is_no_results(
             user_message_id=user_message_id,
             assistant_message_id=assistant_message_id,
             scopes=[f"media:{media_id}"],
-            planned_query="termthatmatchesnoindexednote",
-            planned_types=["content_chunk", "note_block"],
-            planned_filters={},
+            query="termthatmatchesnoindexednote",
         )
 
         assert run is not None
@@ -1332,9 +1217,7 @@ def test_scoped_app_search_with_no_indexed_media_or_notes_is_no_indexed_evidence
             user_message_id=user_message_id,
             assistant_message_id=assistant_message_id,
             scopes=[f"media:{media_id}"],
-            planned_query="anything",
-            planned_types=["content_chunk", "note_block"],
-            planned_filters={},
+            query="anything",
         )
 
         assert run is not None
@@ -1432,6 +1315,7 @@ def test_render_retrieved_context_requires_matching_current_evidence(
             source_label=None,
             snippet=span_text,
             deep_link="/media/test",
+            citation_target=f"content_chunk:{row[0]}",
             citation_label="Wrong Evidence",
             locator=None,
             context_ref={

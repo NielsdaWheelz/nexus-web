@@ -23,16 +23,17 @@ import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoun
 import type { CitationOut } from "@/lib/conversations/citationOut";
 import { toReaderCitationData } from "@/lib/conversations/citations";
 import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
-import {
-  dispatchReaderSourceActivation,
-  hrefForReaderSourceTarget,
-} from "@/lib/conversations/readerSourceActivation";
+import { dispatchReaderSourceActivation } from "@/lib/conversations/readerSourceActivation";
 import { formatDisplayDate } from "@/lib/display/format";
 import {
   usePaneRouter,
   usePaneRuntime,
   usePaneSearchParams,
 } from "@/lib/panes/paneRuntime";
+import {
+  activateResource,
+  type ResourceActivation,
+} from "@/lib/resources/activation";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import { useLibraryIntelligenceStream } from "@/components/library/useLibraryIntelligenceStream";
 import ResourceChatDetail from "@/components/chat/ResourceChatDetail";
@@ -189,14 +190,24 @@ export default function LibraryIntelligencePane({ libraryId }: { libraryId: stri
   );
 
   const activate = useCallback(
-    (target: ReaderSourceTarget, event?: React.MouseEvent) => {
-      dispatchReaderSourceActivation(target);
-      const href = hrefForReaderSourceTarget(target);
+    (
+      activation: ResourceActivation,
+      target: ReaderSourceTarget | null,
+      event?: React.MouseEvent,
+    ) => {
+      if (target) dispatchReaderSourceActivation(target);
       if (event?.shiftKey) {
-        openInNewPane?.(href, target.label);
+        activateResource(activation, {
+          label: target?.label,
+          openInNewPane,
+          newPane: true,
+        });
         return;
       }
-      router.push(href);
+      activateResource(activation, {
+        label: target?.label,
+        navigate: (href) => router.push(href),
+      });
     },
     [openInNewPane, router],
   );

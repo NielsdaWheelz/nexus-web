@@ -665,14 +665,14 @@ def repair_ready_media_content_index_now(
             LEFT JOIN media_file mf ON mf.media_id = m.id
             LEFT JOIN media_transcript_states mts ON mts.media_id = m.id
             WHERE m.id = :media_id
-              AND m.kind IN ('web_article', 'epub', 'pdf', 'podcast_episode')
+              AND m.kind IN ('web_article', 'epub', 'pdf', 'podcast_episode', 'video')
               AND (
                   (
                       m.kind IN ('web_article', 'epub', 'pdf')
                       AND m.processing_status = 'ready_for_reading'
                   )
                   OR (
-                      m.kind = 'podcast_episode'
+                      m.kind IN ('podcast_episode', 'video')
                       AND mts.transcript_state IN ('ready', 'partial')
                       AND mts.transcript_coverage IN ('partial', 'full')
                   )
@@ -706,7 +706,7 @@ def repair_ready_media_content_index_now(
             language=row[1],
         )
 
-    if source_kind == "podcast_episode":
+    if source_kind in {"podcast_episode", "video"}:
         return _repair_ready_transcript_content_index(db, media_id=media_id, reason=reason)
 
     return _repair_ready_pdf_content_index(

@@ -50,6 +50,7 @@
         "body_text": "Gaussian Processes in Machine Learning Rasmussen, C. E., 2004.",
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "341095db-d7bc-5e6b-951d-478f720750e9",
         "kind": "bibliography_entry",
         "label": "Gaussian",
         "locator": {
@@ -64,6 +65,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:341095db-d7bc-5e6b-951d-478f720750e9",
         "sort_key": "000004.000000.target.000",
         "source_ref": {
           "citation_key": "Rasmussen2004",
@@ -80,6 +82,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "f1b6b8cd-65bf-5b7b-968e-79c7b85db436",
         "kind": "bibliography_ref",
         "label": "[1]",
         "locator": {
@@ -94,6 +97,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:f1b6b8cd-65bf-5b7b-968e-79c7b85db436",
         "sort_key": "000004.000000.marker",
         "source_ref": {
           "citation_keys": [
@@ -111,10 +115,12 @@
         "body_text": "A short explanatory note attached by Distill markup.",
         "confidence": "exact",
         "extraction_method": "distill_footnote",
+        "id": "1585f8a5-0bb4-5311-9fa9-f2efbc8f7ae5",
         "kind": "footnote",
         "label": "1",
         "locator": null,
         "locator_status": "missing",
+        "resource_ref": "reader_apparatus_item:1585f8a5-0bb4-5311-9fa9-f2efbc8f7ae5",
         "sort_key": "000005.000000.target",
         "source_ref": {
           "element": "d-footnote",
@@ -129,6 +135,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "distill_footnote",
+        "id": "7a5a507a-2493-5aab-881b-a8fc06e7443b",
         "kind": "footnote_ref",
         "label": "1",
         "locator": {
@@ -143,6 +150,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:7a5a507a-2493-5aab-881b-a8fc06e7443b",
         "sort_key": "000005.000000.marker",
         "source_ref": {
           "element": "d-footnote",

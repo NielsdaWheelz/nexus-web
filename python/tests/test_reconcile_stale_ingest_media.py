@@ -553,6 +553,45 @@ def _insert_ready_document_with_pending_content_index(db: Session, *, kind: str)
             ),
             {"fragment_id": fragment_id, "media_id": media_id},
         )
+    if kind == "video":
+        db.execute(
+            text(
+                """
+                INSERT INTO media_transcript_states (
+                    media_id,
+                    transcript_state,
+                    transcript_coverage,
+                    semantic_status,
+                    last_request_reason
+                )
+                VALUES (:media_id, 'ready', 'full', 'pending', 'search')
+                """
+            ),
+            {"media_id": media_id},
+        )
+        db.execute(
+            text(
+                """
+                INSERT INTO podcast_transcript_segments (
+                    media_id,
+                    segment_idx,
+                    canonical_text,
+                    t_start_ms,
+                    t_end_ms,
+                    speaker_label
+                )
+                VALUES (
+                    :media_id,
+                    0,
+                    'Sample video transcript repair needle.',
+                    0,
+                    1500,
+                    'Speaker'
+                )
+                """
+            ),
+            {"media_id": media_id},
+        )
     if kind == "pdf":
         db.execute(
             text(
@@ -789,7 +828,7 @@ def test_reconciler_requeues_stale_podcast_episode_when_attempts_below_limit(
     assert refreshed.processing_attempts == 1
 
 
-@pytest.mark.parametrize("kind", ["web_article", "epub", "pdf"])
+@pytest.mark.parametrize("kind", ["web_article", "epub", "pdf", "video"])
 def test_reconciler_repairs_pending_document_content_index(db_session: Session, kind: str):
     media_id = _insert_ready_document_with_pending_content_index(db_session, kind=kind)
 

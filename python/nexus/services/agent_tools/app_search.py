@@ -34,7 +34,6 @@ from nexus.schemas.retrieval import (
     retrieval_result_ref_json,
 )
 from nexus.services import media_intelligence
-from nexus.services.contributor_taxonomy import normalize_contributor_role
 from nexus.services.contributors import get_contributor_by_handle
 from nexus.services.media_intelligence import MediaUnit
 from nexus.services.resource_graph.context import (
@@ -170,16 +169,14 @@ def execute_app_search(
     user_message_id: UUID,
     assistant_message_id: UUID,
     scopes: Sequence[str],
-    planned_query: str,
-    planned_types: Sequence[str],
-    planned_filters: Mapping[str, object],
+    query: str,
     tool_call_index: int = 0,
     forced_error: str | None = None,
 ) -> AppSearchRun:
     """Run app search for a chat turn and persist tool/retrieval metadata."""
-    query = planned_query
-    requested_types = [str(result_type) for result_type in planned_types]
-    filters = _normalize_app_search_filters(planned_filters)
+    base_query = SearchQuery(text=query, limit=APP_SEARCH_LIMIT)
+    requested_types = list(base_query.effective_result_types)
+    filters: dict[str, Any] = {}
     start = time.monotonic()
     status = "complete"
     error_code = None
@@ -231,14 +228,6 @@ def execute_app_search(
     # one scope, or "all" when no scopes apply.
     scope = ",".join(resolved_scopes) if resolved_scopes else "all"
 
-    base_query = SearchQuery(
-        text=query,
-        result_types=tuple(requested_types),
-        authors=tuple(filters["authors"]),
-        roles=tuple(filters["roles"]),
-        storage_kinds=tuple(filters["formats"]),
-        limit=APP_SEARCH_LIMIT,
-    )
     try:
         if resolved_scopes:
             response = search_scopes(
@@ -262,8 +251,6 @@ def execute_app_search(
                 db,
                 viewer_id=viewer_id,
                 scopes=resolved_scopes,
-                requested_types=requested_types,
-                filters=filters,
             )
             empty_status = result_status
             context_text = (
@@ -363,30 +350,20 @@ def _resolve_scope_uris(
     return resolved
 
 
-# Result types whose evidence lives in content_chunks (media-owned or note-owned), so a
-# scope can be "indexed but unmatched" vs "no indexed evidence". A named set keeps the
-# empty-status guard correct as chat planned_types evolve (chat plans content_chunk +
-# note_block; see chat_runs).
-_CHUNK_OWNER_RESULT_TYPES = frozenset({"content_chunk", "note_block"})
-
-
 def _empty_status_for_scopes(
     db: Session,
     *,
     viewer_id: UUID,
     scopes: Sequence[str],
-    requested_types: list[str],
-    filters: dict[str, Any],
 ) -> str:
     """Distinguish 'no_results' from 'no_indexed_evidence' across scopes."""
-    if not scopes or not any(t in _CHUNK_OWNER_RESULT_TYPES for t in requested_types):
+    if not scopes:
         return "no_results"
     for scope_uri in scopes:
         status = _scoped_content_chunk_empty_status(
             db,
             viewer_id=viewer_id,
             scope=scope_uri,
-            filters=filters,
         )
         if status == "no_results":
             return "no_results"
@@ -398,62 +375,32 @@ def _scoped_content_chunk_empty_status(
     *,
     viewer_id: UUID,
     scope: str,
-    filters: dict[str, Any],
 ) -> str:
     scope_type, scope_id = parse_scope(scope)
     # Reuse the §4.6 scope owner so this probe filters identically to the content_chunk
-    # retriever. Callers only pass media:/library: URIs, so the unscoped/UNSUPPORTED cells
-    # are unreachable here.
+    # retriever.
     scope_clause = scope_filter_sql(scope_type, scope_id, "content_chunk")
     if isinstance(scope_clause, ScopeUnsupported):
         return "no_indexed_evidence"
     scope_filter, scope_params = scope_clause
     params: dict[str, Any] = {"viewer_id": viewer_id, **scope_params}
 
-    content_kind_filter = ""
-    if filters["formats"]:
-        content_kind_filter = "AND m.kind = ANY(:format_kinds)"
-        params["format_kinds"] = filters["formats"]
-
-    contributor_credit_filter = ""
-    if filters["authors"] or filters["roles"]:
-        credit_clauses = ["cc_filter.media_id = m.id"]
-        if filters["authors"]:
-            credit_clauses.append("c_filter.handle = ANY(:author_handles)")
-            params["author_handles"] = filters["authors"]
-        if filters["roles"]:
-            credit_clauses.append("cc_filter.role = ANY(:roles)")
-            params["roles"] = filters["roles"]
-        contributor_credit_filter = f"""
-            AND EXISTS (
+    note_exists = ""
+    note_clause = scope_filter_sql(scope_type, scope_id, "note_block")
+    if not isinstance(note_clause, ScopeUnsupported):
+        note_scope_filter, _ = note_clause  # same :scope_id bind, already in params
+        note_exists = f"""
+            OR EXISTS (
                 SELECT 1
-                FROM contributor_credits cc_filter
-                JOIN contributors c_filter ON c_filter.id = cc_filter.contributor_id
-                WHERE {" AND ".join(credit_clauses)}
-                  AND c_filter.status NOT IN ('merged', 'tombstoned')
+                FROM content_chunks cc
+                JOIN note_blocks nb ON nb.id = cc.owner_id AND cc.owner_kind = 'note_block'
+                    AND nb.user_id = :viewer_id
+                JOIN content_index_states ncis ON ncis.owner_kind = cc.owner_kind
+                    AND ncis.owner_id = cc.owner_id AND ncis.status = 'ready'
+                WHERE TRUE
+                {note_scope_filter}
             )
         """
-
-    # Note-owned evidence also makes a scope "indexed" (chat cites notes). Skip it
-    # whenever a media-only filter (format/author/role) is active, since notes can never
-    # satisfy those — a filtered search legitimately has no note evidence.
-    note_exists = ""
-    if not (filters["formats"] or filters["authors"] or filters["roles"]):
-        note_clause = scope_filter_sql(scope_type, scope_id, "note_block")
-        if not isinstance(note_clause, ScopeUnsupported):
-            note_scope_filter, _ = note_clause  # same :scope_id bind, already in params
-            note_exists = f"""
-                OR EXISTS (
-                    SELECT 1
-                    FROM content_chunks cc
-                    JOIN note_blocks nb ON nb.id = cc.owner_id AND cc.owner_kind = 'note_block'
-                        AND nb.user_id = :viewer_id
-                    JOIN content_index_states ncis ON ncis.owner_kind = cc.owner_kind
-                        AND ncis.owner_id = cc.owner_id AND ncis.status = 'ready'
-                    WHERE TRUE
-                    {note_scope_filter}
-                )
-            """
 
     row = db.execute(
         text(
@@ -471,8 +418,6 @@ def _scoped_content_chunk_empty_status(
                     AND es.owner_kind = cc.owner_kind AND es.owner_id = cc.owner_id
                 WHERE TRUE
                 {scope_filter}
-                {content_kind_filter}
-                {contributor_credit_filter}
             )
             {note_exists}
             LIMIT 1
@@ -481,41 +426,6 @@ def _scoped_content_chunk_empty_status(
         params,
     ).first()
     return "no_results" if row is not None else "no_indexed_evidence"
-
-
-def _normalize_app_search_filters(filters: Mapping[str, object] | None) -> dict[str, Any]:
-    """Normalize the chat planner's extracted filters. ``formats`` carries storage
-    content-kind values (web_article/podcast_episode/…, the storage vocabulary — NOT the
-    public HTTP MediaFormat vocab), so it is folded as-is and fed straight to the
-    retrievers' storage-kind parameter; ``roles`` go through the lenient ingestion
-    normalizer (the chat path is model-driven, not the strict HTTP edge)."""
-    normalized: dict[str, list[str]] = {
-        "authors": [],
-        "roles": [],
-        "formats": [],
-    }
-    if not filters:
-        return normalized
-    for key in ("authors", "roles", "formats"):
-        raw_values = filters.get(key)
-        if isinstance(raw_values, str):
-            values = [raw_values]
-        elif isinstance(raw_values, Sequence):
-            values = list(raw_values)
-        else:
-            values = []
-        seen: set[str] = set()
-        for raw_value in values:
-            raw_text = str(raw_value or "")
-            if key == "roles":
-                value = normalize_contributor_role(raw_text)
-            else:
-                value = raw_text.strip().lower()
-            if not value or value in seen:
-                continue
-            normalized[key].append(value)
-            seen.add(value)
-    return normalized
 
 
 def persist_app_search_run(db: Session, run: AppSearchRun) -> None:
@@ -764,7 +674,7 @@ def render_retrieved_context_blocks(
     selected: list[RetrievalCitation] = []
     total_chars = 0
 
-    for citation in citations[:APP_SEARCH_SELECTED_LIMIT]:
+    for citation in citations:
         block = _render_single_retrieved_context(db, viewer_id, citation)
         if not block:
             continue
@@ -775,6 +685,8 @@ def render_retrieved_context_blocks(
         selected.append(citation)
         rendered_blocks.append(block)
         total_chars += block_chars
+        if len(selected) >= APP_SEARCH_SELECTED_LIMIT:
+            break
 
     if not rendered_blocks:
         return "", 0, selected
@@ -833,6 +745,9 @@ def _render_single_retrieved_context(
 
     if context_type == "evidence_span":
         return _render_evidence_span_block(db, viewer_id, context_id)
+
+    if context_type == "reader_apparatus_item":
+        return _render_reader_apparatus_item_block(db, viewer_id, context_id, citation)
 
     if context_type == "podcast":
         return _render_podcast_context(db, viewer_id, context_id, citation)
@@ -956,6 +871,35 @@ def _render_evidence_span_block(db: Session, viewer_id: UUID, evidence_span_id: 
         f"<evidence_span>{xml_escape(row[2] or '')}</evidence_span>",
         "</app_search_result>",
     ]
+    return "\n".join(lines)
+
+
+def _render_reader_apparatus_item_block(
+    db: Session, viewer_id: UUID, item_id: UUID, citation: RetrievalCitation
+) -> str | None:
+    row = db.execute(
+        text(
+            """
+            SELECT rai.kind, rai.label, rai.body_text, rai.media_id, m.title
+            FROM reader_apparatus_items rai
+            JOIN media m ON m.id = rai.media_id
+            WHERE rai.id = :item_id
+            """
+        ),
+        {"item_id": item_id},
+    ).fetchone()
+    if row is None or not can_read_media(db, viewer_id, row[3]):
+        return None
+    lines = [
+        '<app_search_result type="reader_apparatus_item">',
+        f"<source>{xml_escape(row[4] or '')}</source>",
+        f"<apparatus_kind>{xml_escape(row[0] or '')}</apparatus_kind>",
+    ]
+    if row[1]:
+        lines.append(f"<label>{xml_escape(row[1])}</label>")
+    lines.append(f"<content>{xml_escape(row[2] or '')}</content>")
+    _append_citation_source_xml(lines, citation)
+    lines.append("</app_search_result>")
     return "\n".join(lines)
 
 

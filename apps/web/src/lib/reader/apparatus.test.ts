@@ -7,6 +7,17 @@ import {
   type ReaderApparatusResponse,
 } from "./apparatus";
 
+function apparatusItem(
+  id: string,
+  item: Omit<ReaderApparatusItem, "id" | "resource_ref">,
+): ReaderApparatusItem {
+  return {
+    id,
+    resource_ref: `reader_apparatus_item:${id}`,
+    ...item,
+  };
+}
+
 const response = {
   media_id: "media-1",
   media_kind: "web_article",
@@ -22,7 +33,7 @@ const response = {
     has_probable_items: false,
   },
   items: [
-    {
+    apparatusItem("11111111-1111-4111-8111-111111111111", {
       stable_key: "note-1",
       kind: "footnote",
       label: "1",
@@ -42,8 +53,8 @@ const response = {
       extraction_method: "dpub_aria",
       source_ref: {},
       sort_key: "000000.target",
-    },
-    {
+    }),
+    apparatusItem("22222222-2222-4222-8222-222222222222", {
       stable_key: "marker-1",
       kind: "footnote_ref",
       label: "1",
@@ -63,7 +74,7 @@ const response = {
       extraction_method: "dpub_aria",
       source_ref: {},
       sort_key: "000000.marker",
-    },
+    }),
   ],
   edges: [
     {

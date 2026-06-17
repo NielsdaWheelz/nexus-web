@@ -428,11 +428,15 @@ class TestRunSynapseScan:
             user_id,
             SearchQuery(
                 text=f'Highlight from "{_HL_STEM}":\nspooky',
-                result_types=("content_chunk",),
+                requested_kinds=frozenset({"documents"}),
                 limit=12,
             ),
         )
-        retrieved_media = {result.source.media_id for result in retrieved.results}
+        retrieved_media = {
+            result.source.media_id
+            for result in retrieved.results
+            if getattr(result, "type", None) == "content_chunk"
+        }
         assert {anchor_id, alpha_id, beta_id} <= retrieved_media, (
             f"corpus must be lexically retrievable; got {retrieved_media}"
         )
@@ -493,11 +497,15 @@ class TestRunSynapseScan:
             user_id,
             SearchQuery(
                 text=f"{_MEDIA_UNIT_STEM}\n\n{_MEDIA_UNIT_STEM.lower()}.",
-                result_types=("content_chunk",),
+                requested_kinds=frozenset({"documents"}),
                 limit=12,
             ),
         )
-        retrieved_media = {result.source.media_id for result in retrieved.results}
+        retrieved_media = {
+            result.source.media_id
+            for result in retrieved.results
+            if getattr(result, "type", None) == "content_chunk"
+        }
         assert {source_id, other_id} <= retrieved_media, (
             f"corpus must be lexically retrievable; got {retrieved_media}"
         )
@@ -549,9 +557,15 @@ class TestRunSynapseScan:
         retrieved = search(
             db_session,
             user_id,
-            SearchQuery(text=f"Resonance\n\n{_NOTE_BODY}", result_types=("note_block",), limit=12),
+            SearchQuery(
+                text=f"Resonance\n\n{_NOTE_BODY}",
+                requested_kinds=frozenset({"notes"}),
+                limit=12,
+            ),
         )
-        retrieved_blocks = {result.id for result in retrieved.results}
+        retrieved_blocks = {
+            result.id for result in retrieved.results if getattr(result, "type", None) == "note_block"
+        }
         assert {source_block, sibling_block, other_block} <= retrieved_blocks, (
             f"corpus must be lexically retrievable; got {retrieved_blocks}"
         )

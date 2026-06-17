@@ -39,6 +39,12 @@ function contextRef(id: string, conversationId: string): ContextRefOut {
     id,
     conversation_id: conversationId,
     resource_ref: `media:${id}`,
+    activation: {
+      resourceRef: `media:${id}`,
+      kind: "route",
+      href: `/media/${id}`,
+      unresolvedReason: null,
+    },
     label: id,
     summary: "",
     missing: false,

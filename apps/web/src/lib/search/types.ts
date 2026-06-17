@@ -1,5 +1,6 @@
 import type { RetrievalLocator } from "@/lib/api/sse/locators";
 import type { ContributorCredit } from "@/lib/contributors/types";
+import type { ResourceActivation } from "@/lib/resources/activation";
 
 // Canonical internal result-type discriminants (the response union tags). Kept as
 // the validator for normalizeSearchResult — NOT a user-facing filter taxonomy.
@@ -18,6 +19,7 @@ export const RESULT_TYPE_VALUES = [
   "evidence_span",
   "conversation",
   "web_result",
+  "reader_apparatus_item",
 ] as const;
 
 export type SearchType = (typeof RESULT_TYPE_VALUES)[number];
@@ -38,7 +40,9 @@ export interface SearchBaseResult {
   source_label: string | null;
   media_id: string | null;
   media_kind: string | null;
-  deep_link: string;
+  resource_ref: string;
+  activation: ResourceActivation;
+  citation_target: string | null;
   context_ref: {
     type: SearchType;
     id: string;
@@ -118,6 +122,13 @@ export interface SearchEvidenceSpanResult extends SearchBaseResult {
   source: SearchSourceMetadata;
 }
 
+export interface SearchReaderApparatusItemResult extends SearchBaseResult {
+  type: "reader_apparatus_item";
+  apparatus_kind: string;
+  locator: RetrievalLocator;
+  source: SearchSourceMetadata;
+}
+
 export interface SearchConversationResult extends SearchBaseResult {
   type: "conversation";
 }
@@ -149,6 +160,7 @@ export type SearchApiResult =
   | SearchHighlightResult
   | SearchMessageResult
   | SearchEvidenceSpanResult
+  | SearchReaderApparatusItemResult
   | SearchConversationResult
   | SearchWebResult;
 
@@ -161,7 +173,9 @@ export interface SearchResponseShape {
 
 export interface SearchResultRowViewModel {
   key: string;
-  href: string;
+  resourceRef: string;
+  activation: ResourceActivation;
+  citationTarget: string | null;
   paneTitleHint: string;
   type: SearchType;
   mediaId: string | null;

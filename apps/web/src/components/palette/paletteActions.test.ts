@@ -102,6 +102,32 @@ describe("buildItemActions", () => {
     });
   });
 
+  describe("(c2) resource item", () => {
+    it("opens through resource activation and copies the derived href", () => {
+      const resourceItem = item({
+        target: {
+          kind: "resource",
+          activation: {
+            resourceRef: "media:11111111-1111-4111-8111-111111111111",
+            kind: "route",
+            href: "/media/11111111-1111-4111-8111-111111111111",
+            unresolvedReason: null,
+          },
+          titleHint: "Media title",
+        },
+      });
+      const actions = buildItemActions(resourceItem, ctx({ canOpenConversation: true }));
+      expect(actions[0].run).toMatchObject({
+        kind: "open-resource",
+        titleHint: "Media title",
+      });
+      expect(actions[2].run).toEqual({
+        kind: "copy-link",
+        href: "/media/11111111-1111-4111-8111-111111111111",
+      });
+    });
+  });
+
   describe("(d) static/action item that is NOT pane-open", () => {
     it("returns [] for actionId new-conversation", () => {
       const staticItem = item({ target: { kind: "action", actionId: "new-conversation" } });

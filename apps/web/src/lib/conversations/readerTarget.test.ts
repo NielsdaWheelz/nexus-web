@@ -56,7 +56,7 @@ describe("readerTargetFromRetrieval", () => {
     expect(target?.kind).toBe("media");
     if (target?.kind !== "media") throw new Error("expected media target");
     expect(target.media_id).toBe("media-1");
-    expect(target.href).toBe("/media/media-1#evidence-span-1");
+    expect(target.href).toBeNull();
   });
 
   it("builds a note target from a note_block retrieval with null media_id", () => {
@@ -68,16 +68,16 @@ describe("readerTargetFromRetrieval", () => {
     expect(target.start_offset).toBe(4);
     expect(target.end_offset).toBe(19);
     expect(target.snippet).toBe("a cited note span");
-    expect(target.href).toBe("/notes/block-9");
+    expect(target.href).toBeNull();
   });
 
-  it("prefers an explicit deep_link for a note target", () => {
+  it("does not promote retrieval deep_link to activation href", () => {
     const target = readerTargetFromRetrieval({
       ...noteRetrieval,
       deep_link: "/notes/block-9#custom",
     });
     if (target?.kind !== "note") throw new Error("expected note target");
-    expect(target.href).toBe("/notes/block-9#custom");
+    expect(target.href).toBeNull();
   });
 
   it("returns null when the locator is absent or invalid", () => {

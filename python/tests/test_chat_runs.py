@@ -1229,70 +1229,43 @@ class TestChatRunTooling:
         assert scopes == ["media:one", "library:two"]
         assert forced_error is None
 
-    def test_citation_target_maps_each_result_type_to_finest_ref(self):
-        """Citation-edge target mapping (spec §5.2): span/chunk/note_block keep their
-        own scheme, media kinds collapse to ``media:``, media-anchored rows
-        (highlight/fragment) fall back to their media, anchorless rows get no edge."""
+    def test_citation_target_reads_search_owned_target(self):
+        """Citation-edge targets come from the validated retrieval result ref."""
         span_id = uuid4()
         media_id = uuid4()
         chunk_id = uuid4()
         note_block_id = uuid4()
+        highlight_id = uuid4()
+        fragment_id = uuid4()
+        message_id = uuid4()
+        apparatus_item_id = uuid4()
 
-        def target(row: dict):
-            # db/run are only touched by the web_result branch (snapshot minting),
-            # covered by test_web_search_citation_mints_external_snapshot.
-            return _citation_target_ref(None, run=None, row=row)
+        def target(uri: str | None):
+            return _citation_target_ref(None, run=None, row={"result_ref": {"citation_target": uri}})
 
-        def row(result_type: str, **overrides) -> dict:
-            return {
-                "result_type": result_type,
-                "source_id": "",
-                "media_id": None,
-                "evidence_span_id": None,
-                **overrides,
-            }
+        for uri in (
+            f"evidence_span:{span_id}",
+            f"content_chunk:{chunk_id}",
+            f"media:{media_id}",
+            f"highlight:{highlight_id}",
+            f"fragment:{fragment_id}",
+            f"note_block:{note_block_id}",
+            f"message:{message_id}",
+            f"reader_apparatus_item:{apparatus_item_id}",
+        ):
+            assert target(uri).uri == uri
 
-        assert (
-            target(row("evidence_span", evidence_span_id=span_id)).uri == f"evidence_span:{span_id}"
-        )
-        assert (
-            target(row("evidence_span", source_id=str(span_id))).uri == f"evidence_span:{span_id}"
-        )
-        assert (
-            target(row("content_chunk", source_id=str(chunk_id))).uri == f"content_chunk:{chunk_id}"
-        )
-        assert (
-            target(row("note_block", source_id=str(note_block_id))).uri
-            == f"note_block:{note_block_id}"
-        )
-        for media_kind in ("media", "episode", "video"):
-            assert target(row(media_kind, media_id=media_id)).uri == f"media:{media_id}", (
-                f"{media_kind} rows must cite their media"
-            )
-        assert target(row("highlight", media_id=media_id)).uri == f"media:{media_id}", (
-            "a media-anchored highlight cites its media (snapshot deep_link keeps the jump)"
-        )
-        assert target(row("fragment", media_id=media_id)).uri == f"media:{media_id}"
-        assert target(row("page", source_id=str(uuid4()))) is None, (
-            "rows outside the citation render contract with no media anchor mint no edge"
-        )
-        assert target(row("message", source_id=str(uuid4()))) is None
+        assert target(None) is None
+        assert _citation_target_ref(None, run=None, row={"result_ref": {}}) is None
 
-    def test_citation_target_requires_canonical_uuid_source_id(self):
-        for bad_source_id in ("not-a-uuid", str(uuid4()).upper(), ""):
-            assert (
+    def test_citation_target_rejects_malformed_or_uncitable_targets(self):
+        for raw_target in ("not-a-ref", "library:not-a-uuid", f"library:{uuid4()}"):
+            with pytest.raises(AssertionError):
                 _citation_target_ref(
                     None,
                     run=None,
-                    row={
-                        "result_type": "content_chunk",
-                        "source_id": bad_source_id,
-                        "media_id": None,
-                        "evidence_span_id": None,
-                    },
+                    row={"result_ref": {"citation_target": raw_target}},
                 )
-                is None
-            ), f"non-canonical source_id {bad_source_id!r} must not mint an edge target"
 
     def test_chat_run_subject_persists_turn_context_and_job_payload(
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
@@ -2348,9 +2321,9 @@ class TestCitationEdgeWriteThrough:
     def test_web_search_citation_mints_external_snapshot(
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
     ):
-        """A CITED web result mints a resource_external_snapshots row and the edge
-        targets external_snapshot:<id>; uncited results stay telemetry-only and
-        external targets never graduate into conversation context (AC7 scope)."""
+        """Persisted web results get external_snapshot identities; cited rows
+        point their citation edge at the selected snapshot, while external
+        targets never graduate into conversation context (AC7 scope)."""
         from nexus.db.models import ChatRun as ChatRunModel
         from nexus.services.agent_tools.web_search import (
             WebSearchCitation,
@@ -2447,13 +2420,14 @@ class TestCitationEdgeWriteThrough:
             snapshots = (
                 session.query(ResourceExternalSnapshot)
                 .filter(ResourceExternalSnapshot.user_id == user_id)
+                .order_by(ResourceExternalSnapshot.url.asc())
                 .all()
             )
-            assert len(snapshots) == 1, (
-                f"Citation time mints exactly one snapshot for the cited result; "
+            assert len(snapshots) == 2, (
+                f"Every persisted web result gets a searchable resource identity; "
                 f"got {[(s.url, s.title) for s in snapshots]}"
             )
-            snapshot = snapshots[0]
+            snapshot = next(s for s in snapshots if s.url == "https://example.com/1")
             assert snapshot.provider == "brave"
             assert snapshot.url == "https://example.com/1"
             assert snapshot.title == "Web Result 1"
@@ -2462,6 +2436,7 @@ class TestCitationEdgeWriteThrough:
                 f"source_snapshot keeps the telemetry display payload; got "
                 f"{snapshot.source_snapshot}"
             )
+            assert snapshot.source_snapshot["source_id"] == str(snapshot.id)
             edge = (
                 session.query(ResourceEdge)
                 .filter(
@@ -2477,16 +2452,19 @@ class TestCitationEdgeWriteThrough:
             assert edge.ordinal == 1
             cited_rows = session.execute(
                 text(
-                    "SELECT selected, cited_edge_id FROM message_retrievals "
+                    "SELECT selected, source_id, cited_edge_id FROM message_retrievals "
                     "WHERE tool_call_id = :tool_call_id ORDER BY ordinal"
                 ),
                 {"tool_call_id": tool_call_id},
             ).fetchall()
-            assert cited_rows[0] == (True, edge.id), (
+            assert cited_rows[0] == (True, str(snapshot.id), edge.id), (
                 f"Cited web row must point at its edge; got {cited_rows[0]}"
             )
-            assert cited_rows[1] == (False, None), (
+            assert cited_rows[1][0] is False and cited_rows[1][2] is None, (
                 f"Uncited web rows stay telemetry-only; got {cited_rows[1]}"
+            )
+            assert UUID(cited_rows[1][1]) == next(
+                s.id for s in snapshots if s.url == "https://example.com/2"
             )
             context_edges = session.execute(
                 text(
@@ -2712,6 +2690,12 @@ class TestCitationEdgeWriteThrough:
             assert run is not None
             _record_tool_citations(session, run=run, tool_call_id=tool_call_id, start_ordinal=1)
             session.commit()
+        with direct_db.session() as session:
+            evidence_span_id = session.execute(
+                text("SELECT primary_evidence_span_id FROM content_chunks WHERE id = :id"),
+                {"id": chunk_id},
+            ).scalar_one()
+            assert evidence_span_id is not None
 
         resp = auth_client.get(
             f"/conversations/{conversation_id}/messages",
@@ -2725,6 +2709,12 @@ class TestCitationEdgeWriteThrough:
                 "ordinal": 1,
                 "role": "context",
                 "target_ref": {"type": "content_chunk", "id": str(chunk_id)},
+                "activation": {
+                    "resource_ref": f"content_chunk:{chunk_id}",
+                    "kind": "route",
+                    "href": f"/media/{media_id}#evidence-{evidence_span_id}",
+                    "unresolved_reason": None,
+                },
                 # build_citation_outs reconstructs the in-reader jump from the
                 # target: a content_chunk resolves to its parent media (media_id),
                 # with no offset locator (D11). Spans add a locator; chunks do not.
@@ -2857,11 +2847,18 @@ class TestCitationEdgeWriteThrough:
                 == 2
             )
 
-        # Attempt 2 (re-execution): only ONE result this time. persist_web_search_run
-        # upserts ordinal 0 and prunes ordinal >= 1 — the pruned row still carries
-        # the cited_edge_id from attempt 1, so its edge and snapshot must die with it.
+        # Attempt 2 (re-execution): only ONE result this time. The writer prunes
+        # the previous telemetry set first, so old citation edges and snapshots
+        # die before the new selected row records its current edge.
         with direct_db.session() as session:
             persist_web_search_run(session, web_run([web_citation(1)]))
+            run = session.get(ChatRunModel, run_id)
+            assert run is not None
+            next_ordinal = _record_tool_citations(
+                session, run=run, tool_call_id=tool_call_id, start_ordinal=1
+            )
+            assert next_ordinal == 2
+            session.commit()
 
         with direct_db.session() as session:
             edges = (

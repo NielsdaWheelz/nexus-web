@@ -41,6 +41,7 @@ from nexus.services.resource_graph.schemas import (
     EdgeOut,
     snapshot_from_jsonb,
 )
+from nexus.services.resource_items.routing import resource_activation_for_ref
 
 _MARKDOWN_CITATION_MARKER_RE = re.compile(r"\[(\d+)\](?!\()")
 _MARKDOWN_LINKED_CITATION_MARKER_RE = re.compile(r"\[(\d+)\]\(")
@@ -216,11 +217,15 @@ def citation_reader_target_for_edge(
     )
     target = ResourceRef(scheme=cast("ResourceScheme", edge.target_scheme), id=edge.target_id)
     media_id, locator = reader_target_for_citation_target(db, viewer_id=viewer_id, target=target)
-    target_status = (
-        "missing"
-        if resolve_ref(db, viewer_id=viewer_id, ref=target).missing
-        else ("current" if media_id is not None or locator is not None else "unanchorable")
-    )
+    resolved = resolve_ref(db, viewer_id=viewer_id, ref=target)
+    if resolved.missing:
+        target_status = "missing"
+    elif media_id is not None or locator is not None:
+        target_status = "current"
+    elif resource_activation_for_ref(db, viewer_id=viewer_id, ref=target).href is not None:
+        target_status = "current"
+    else:
+        target_status = "unanchorable"
     return CitationTargetProjection(
         ordinal=edge.ordinal,
         role=cast("EdgeKind", edge.kind),
@@ -302,6 +307,7 @@ def _citation_out(
     summaries: Mapping[UUID, str],
 ) -> CitationOut:
     projection = citation_reader_target_for_edge(db, viewer_id=viewer_id, edge=row)
+    target_ref = ResourceRef(scheme=cast("ResourceScheme", row.target_scheme), id=row.target_id)
     # Only media-scheme targets carry the summary abstract; a content_chunk/span
     # whose parent happens to be media is a finer grain and does not (mirrors the
     # harness's "media targets only" rule, keyed by the media target id).
@@ -312,6 +318,12 @@ def _citation_out(
         target_ref=CitationTargetRef(
             type=cast("CitationTargetType", row.target_scheme),
             id=row.target_id,
+        ),
+        activation=resource_activation_for_ref(
+            db,
+            viewer_id=viewer_id,
+            ref=target_ref,
+            missing=projection.target_status == "missing",
         ),
         media_id=projection.media_id,
         # Pydantic coerces the validated locator JSON into the RetrievalLocator union.

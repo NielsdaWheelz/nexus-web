@@ -46,6 +46,8 @@ class ReaderApparatusCapabilities(BaseModel):
 
 
 class ReaderApparatusItemOut(BaseModel):
+    id: UUID
+    resource_ref: str
     stable_key: str
     kind: ReaderApparatusItemKind
     label: str | None

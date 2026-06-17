@@ -216,6 +216,7 @@ def _endpoint_out(endpoint: ConnectionEndpoint) -> ConnectionEndpointOut:
         id=endpoint.ref.id,
         label=endpoint.label,
         description=endpoint.description,
+        activation=endpoint.activation,
         href=endpoint.href,
         missing=endpoint.missing,
     )
@@ -234,6 +235,7 @@ def _connection_out(item: Connection) -> ConnectionOut:
             ordinal=item.citation.ordinal,
             role=item.citation.role,
             snapshot=snapshot_to_jsonb(item.citation.snapshot),
+            activation=item.citation.activation,
             target_reader=target_reader,
             target_status=item.citation.target_status,
         )

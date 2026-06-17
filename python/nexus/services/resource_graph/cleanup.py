@@ -23,6 +23,7 @@ from sqlalchemy import and_, delete, or_, select, tuple_
 from sqlalchemy.orm import Session
 
 from nexus.db.models import (
+    MessageRetrieval,
     ResourceEdge,
     ResourceExternalSnapshot,
     ResourceMutation,
@@ -119,10 +120,9 @@ def delete_resource_protocol_state(db: Session, *, viewer_id: UUID, ref: Resourc
 def delete_orphaned_external_snapshots(db: Session, *, snapshot_ids: Iterable[UUID]) -> None:
     """Delete ``external_snapshot`` rows no longer referenced by any edge.
 
-    ``external_snapshot`` rows are minted only as citation targets (web results);
-    when the last citation edge pointing at one is deleted — by a citation
-    replace, a tool-call prune, or a domain-parent delete — the row is garbage.
-    The single owner of that GC for every citation-edge deletion path.
+    ``external_snapshot`` rows are resource identities for persisted web
+    retrievals. They die only after both citation edges and retrieval telemetry
+    stop referencing them.
     """
     ids = list(dict.fromkeys(snapshot_ids))
     if not ids:
@@ -132,6 +132,15 @@ def delete_orphaned_external_snapshots(db: Session, *, snapshot_ids: Iterable[UU
             select(ResourceEdge.target_id).where(
                 ResourceEdge.target_scheme == "external_snapshot",
                 ResourceEdge.target_id.in_(ids),
+            )
+        ).scalars()
+    )
+    still_referenced.update(
+        UUID(source_id)
+        for source_id in db.execute(
+            select(MessageRetrieval.source_id).where(
+                MessageRetrieval.result_type == "web_result",
+                MessageRetrieval.source_id.in_([str(sid) for sid in ids]),
             )
         ).scalars()
     )

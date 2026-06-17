@@ -108,7 +108,7 @@ def test_result_types_for_empty_is_empty() -> None:
     assert result_types_for(frozenset()) == ()
 
 
-def test_result_types_for_documents_folds_seven_doc_types() -> None:
+def test_result_types_for_documents_folds_reader_document_types() -> None:
     doc_types = result_types_for(frozenset({"documents"}))
     assert doc_types == (
         "media",
@@ -118,8 +118,9 @@ def test_result_types_for_documents_folds_seven_doc_types() -> None:
         "content_chunk",
         "fragment",
         "evidence_span",
+        "reader_apparatus_item",
     )
-    assert len(doc_types) == 7
+    assert len(doc_types) == 8
 
 
 def test_result_types_for_preserves_all_result_types_order() -> None:
@@ -333,17 +334,6 @@ def test_search_query_default_kinds_resolve_to_all_result_types() -> None:
     assert query.effective_result_types == ALL_RESULT_TYPES
 
 
-def test_search_query_result_types_override_bypasses_kind_resolution() -> None:
-    # The chat app_search tool sets result_types explicitly; it must bypass kind→type
-    # resolution even when requested_kinds would derive something different.
-    query = SearchQuery(
-        text="x",
-        requested_kinds=frozenset({"highlights"}),
-        result_types=("message", "conversation"),
-    )
-    assert query.effective_result_types == ("message", "conversation")
-
-
 def test_search_query_format_filter_narrows_effective_kinds() -> None:
     # A format filter on an all-kinds query narrows to Documents (implied-kind on the object).
     query = SearchQuery(text="x", formats=("pdf",))
@@ -355,14 +345,10 @@ def test_search_query_content_kinds_maps_formats_to_storage() -> None:
     assert query.content_kinds == ["web_article", "podcast_episode"]
 
 
-def test_search_query_content_kinds_override_bypasses_formats() -> None:
-    query = SearchQuery(
-        text="x",
-        formats=("pdf",),
-        storage_kinds=("web_article", "video"),
-    )
-    assert query.content_kinds == ["web_article", "video"]
-
-
 def test_search_query_content_kinds_default_empty() -> None:
     assert SearchQuery(text="x").content_kinds == []
+
+
+def test_search_query_has_no_internal_override_fields() -> None:
+    assert "result_types" not in SearchQuery.__dataclass_fields__
+    assert "storage_kinds" not in SearchQuery.__dataclass_fields__

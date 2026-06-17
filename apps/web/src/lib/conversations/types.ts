@@ -7,6 +7,7 @@ import type {
 import type { ChatToolStatus } from "@/lib/api/sse/events";
 import type { RetrievalLocator } from "@/lib/api/sse/locators";
 import type { CitationOut } from "@/lib/conversations/citationOut";
+import type { ResourceActivation } from "@/lib/resources/activation";
 
 export interface ConversationSummary {
   id: string;
@@ -222,6 +223,7 @@ export interface AssistantTrustTrail {
     id: string;
     conversation_id: string;
     resource_ref: string;
+    activation: ResourceActivation;
     label: string;
     summary: string;
     missing: boolean;

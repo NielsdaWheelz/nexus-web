@@ -2097,6 +2097,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "f56a7214-bcd6-52a6-9c89-7cc9d2a95d4f",
         "kind": "bibliography_ref",
         "label": "[13]",
         "locator": {
@@ -2123,6 +2124,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:f56a7214-bcd6-52a6-9c89-7cc9d2a95d4f",
         "sort_key": "0002.0000.marker",
         "source_ref": {
           "destination_page_number": 11,
@@ -2149,6 +2151,7 @@
         "body_text": "[13] Sepp Hochreiter and J\u00fcrgen Schmidhuber. Long short-term memory. Neural computation, 9(8):1735\u20131780, 1997.",
         "confidence": "exact",
         "extraction_method": "pdf_native_link_target",
+        "id": "e1d457a3-e957-56ac-901c-d9d123a3095f",
         "kind": "bibliography_entry",
         "label": "[13]",
         "locator": {
@@ -2175,6 +2178,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:e1d457a3-e957-56ac-901c-d9d123a3095f",
         "sort_key": "0011.00341.653.0013.target",
         "source_ref": {
           "destination_point": {
@@ -2199,6 +2203,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "ad541344-12a6-5116-8789-54656fe259e7",
         "kind": "bibliography_ref",
         "label": "[7]",
         "locator": {
@@ -2225,6 +2230,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:ad541344-12a6-5116-8789-54656fe259e7",
         "sort_key": "0002.0001.marker",
         "source_ref": {
           "destination_page_number": 11,
@@ -2251,6 +2257,7 @@
         "body_text": "[7] Junyoung Chung, \u00c7aglar G\u00fcl\u00e7ehre, Kyunghyun Cho, and Yoshua Bengio. Empirical evaluation of gated recurrent neural networks on sequence modeling. CoRR, abs/1412.3555, 2014.",
         "confidence": "exact",
         "extraction_method": "pdf_native_link_target",
+        "id": "08a7ce7c-e9bd-50ce-8362-f17897314105",
         "kind": "bibliography_entry",
         "label": "[7]",
         "locator": {
@@ -2277,6 +2284,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:08a7ce7c-e9bd-50ce-8362-f17897314105",
         "sort_key": "0011.00146.737.0007.target",
         "source_ref": {
           "destination_point": {
@@ -2301,6 +2309,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "86157e59-180e-51b4-91eb-ee735387bbb7",
         "kind": "bibliography_ref",
         "label": "[35,",
         "locator": {
@@ -2327,6 +2336,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:86157e59-180e-51b4-91eb-ee735387bbb7",
         "sort_key": "0002.0002.marker",
         "source_ref": {
           "destination_page_number": 12,
@@ -2353,6 +2363,7 @@
         "body_text": "[35] Ilya Sutskever, Oriol Vinyals, and Quoc VV Le. Sequence to sequence learning with neural networks. In Advances in Neural Information Processing Systems, pages 3104\u20133112, 2014.",
         "confidence": "exact",
         "extraction_method": "pdf_native_link_target",
+        "id": "0d9d5a1d-ac3e-5007-bb6a-f07f52a865a0",
         "kind": "bibliography_entry",
         "label": "[35]",
         "locator": {
@@ -2379,6 +2390,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:0d9d5a1d-ac3e-5007-bb6a-f07f52a865a0",
         "sort_key": "0012.00494.616.0035.target",
         "source_ref": {
           "destination_point": {
@@ -2403,6 +2415,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "f3e14dc1-9223-5e17-b9a7-44c7e1c5667e",
         "kind": "bibliography_ref",
         "label": "2,",
         "locator": {
@@ -2429,6 +2442,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:f3e14dc1-9223-5e17-b9a7-44c7e1c5667e",
         "sort_key": "0002.0003.marker",
         "source_ref": {
           "destination_page_number": 10,
@@ -2455,6 +2469,7 @@
         "body_text": "[2] Dzmitry Bahdanau, Kyunghyun Cho, and Yoshua Bengio. Neural machine translation by jointly learning to align and translate. CoRR, abs/1409.0473, 2014.",
         "confidence": "exact",
         "extraction_method": "pdf_native_link_target",
+        "id": "667982ae-79a0-5b8b-ab87-cc4a3f3e4256",
         "kind": "bibliography_entry",
         "label": "[2]",
         "locator": {
@@ -2481,6 +2496,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:667982ae-79a0-5b8b-ab87-cc4a3f3e4256",
         "sort_key": "0010.00643.951.0002.target",
         "source_ref": {
           "destination_point": {
@@ -2505,6 +2521,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "fceb6dc9-3673-5590-8469-f1fef4e88a1d",
         "kind": "bibliography_ref",
         "label": "5]",
         "locator": {
@@ -2531,6 +2548,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:fceb6dc9-3673-5590-8469-f1fef4e88a1d",
         "sort_key": "0002.0004.marker",
         "source_ref": {
           "destination_page_number": 11,
@@ -2557,6 +2575,7 @@
         "body_text": "[5] Kyunghyun Cho, Bart van Merrienboer, Caglar Gulcehre, Fethi Bougares, Holger Schwenk, and Yoshua Bengio. Learning phrase representations using rnn encoder-decoder for statistical machine translation. CoRR, abs/1406.1078, 2014.",
         "confidence": "exact",
         "extraction_method": "pdf_native_link_target",
+        "id": "f71726c4-4a1e-5029-a349-def0494aa41d",
         "kind": "bibliography_entry",
         "label": "[5]",
         "locator": {
@@ -2583,6 +2602,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:f71726c4-4a1e-5029-a349-def0494aa41d",
         "sort_key": "0011.00074.332.0005.target",
         "source_ref": {
           "destination_point": {
@@ -2607,6 +2627,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "ed5ab2b8-3a3f-5fb7-920c-77ee0adbae07",
         "kind": "bibliography_ref",
         "label": "[38,",
         "locator": {
@@ -2633,6 +2654,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:ed5ab2b8-3a3f-5fb7-920c-77ee0adbae07",
         "sort_key": "0002.0005.marker",
         "source_ref": {
           "destination_page_number": 12,
@@ -2659,6 +2681,7 @@
         "body_text": "[38] Yonghui Wu, Mike Schuster, Zhifeng Chen, Quoc V Le, Mohammad Norouzi, Wolfgang Macherey, Maxim Krikun, Yuan Cao, Qin Gao, Klaus Macherey, et al. Google\u2019s neural machine translation system: Bridging the gap between human and machine translation. arXiv preprint arXiv:1609.08144, 2016.",
         "confidence": "exact",
         "extraction_method": "pdf_native_link_target",
+        "id": "4e710f23-3065-59f5-ac42-0acf826e3aee",
         "kind": "bibliography_entry",
         "label": "[38]",
         "locator": {
@@ -2685,6 +2708,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:4e710f23-3065-59f5-ac42-0acf826e3aee",
         "sort_key": "0012.00597.792.0038.target",
         "source_ref": {
           "destination_point": {
@@ -2709,6 +2733,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "6c63432e-d1f3-5a9f-8589-a881e4ffa882",
         "kind": "bibliography_ref",
         "label": "24,",
         "locator": {
@@ -2735,6 +2760,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:6c63432e-d1f3-5a9f-8589-a881e4ffa882",
         "sort_key": "0002.0006.marker",
         "source_ref": {
           "destination_page_number": 11,
@@ -2761,6 +2787,7 @@
         "body_text": "[24] Minh-Thang Luong, Hieu Pham, and Christopher D Manning. Effective approaches to attention- based neural machine translation. arXiv preprint arXiv:1508.04025, 2015.",
         "confidence": "exact",
         "extraction_method": "pdf_native_link_target",
+        "id": "0a36a8dc-c67b-577b-8136-4635964cb3b7",
         "kind": "bibliography_entry",
         "label": "[24]",
         "locator": {
@@ -2787,6 +2814,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:0a36a8dc-c67b-577b-8136-4635964cb3b7",
         "sort_key": "0011.00701.535.0024.target",
         "source_ref": {
           "destination_point": {
@@ -2811,6 +2839,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "80e9ac91-886e-59b1-bcc2-eb3eb16cd7b5",
         "kind": "bibliography_ref",
         "label": "15]",
         "locator": {
@@ -2837,6 +2866,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:80e9ac91-886e-59b1-bcc2-eb3eb16cd7b5",
         "sort_key": "0002.0007.marker",
         "source_ref": {
           "destination_page_number": 11,
@@ -2863,6 +2893,7 @@
         "body_text": "[15] Rafal Jozefowicz, Oriol Vinyals, Mike Schuster, Noam Shazeer, and Yonghui Wu. Exploring the limits of language modeling. arXiv preprint arXiv:1602.02410, 2016.",
         "confidence": "exact",
         "extraction_method": "pdf_native_link_target",
+        "id": "75e2e75b-e823-5390-8566-0d2b7181f50b",
         "kind": "bibliography_entry",
         "label": "[15]",
         "locator": {
@@ -2889,6 +2920,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:75e2e75b-e823-5390-8566-0d2b7181f50b",
         "sort_key": "0011.00414.190.0015.target",
         "source_ref": {
           "destination_point": {
@@ -2913,6 +2945,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "f2dc59fc-5fee-562b-8a98-3b427f5e7d17",
         "kind": "bibliography_ref",
         "label": "[21]",
         "locator": {
@@ -2939,6 +2972,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:f2dc59fc-5fee-562b-8a98-3b427f5e7d17",
         "sort_key": "0002.0008.marker",
         "source_ref": {
           "destination_page_number": 11,
@@ -2965,6 +2999,7 @@
         "body_text": "[21] Oleksii Kuchaiev and Boris Ginsburg. Factorization tricks for LSTM networks. arXiv preprint arXiv:1703.10722, 2017.",
         "confidence": "exact",
         "extraction_method": "pdf_native_link_target",
+        "id": "c8e2b8d2-52b2-5e82-ae0e-7d13634d8808",
         "kind": "bibliography_entry",
         "label": "[21]",
         "locator": {
@@ -2991,6 +3026,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:c8e2b8d2-52b2-5e82-ae0e-7d13634d8808",
         "sort_key": "0011.00598.355.0021.target",
         "source_ref": {
           "destination_point": {
@@ -3015,6 +3051,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "4433e479-e3bc-51cc-84de-0e82601295f8",
         "kind": "bibliography_ref",
         "label": "[32]",
         "locator": {
@@ -3041,6 +3078,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:4433e479-e3bc-51cc-84de-0e82601295f8",
         "sort_key": "0002.0009.marker",
         "source_ref": {
           "destination_page_number": 12,
@@ -3067,6 +3105,7 @@
         "body_text": "[32] Noam Shazeer, Azalia Mirhoseini, Krzysztof Maziarz, Andy Davis, Quoc Le, Geoffrey Hinton, and Jeff Dean. Outrageously large neural networks: The sparsely-gated mixture-of-experts layer. arXiv preprint arXiv:1701.06538, 2017.",
         "confidence": "exact",
         "extraction_method": "pdf_native_link_target",
+        "id": "9073c53b-28ac-5902-bb12-0a3ef5881dcf",
         "kind": "bibliography_entry",
         "label": "[32]",
         "locator": {
@@ -3093,6 +3132,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:9073c53b-28ac-5902-bb12-0a3ef5881dcf",
         "sort_key": "0012.00347.878.0032.target",
         "source_ref": {
           "destination_point": {
@@ -3117,6 +3157,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "0037b79e-9b43-5b5a-8cb7-64dd41879eac",
         "kind": "bibliography_ref",
         "label": "[2,",
         "locator": {
@@ -3143,6 +3184,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:0037b79e-9b43-5b5a-8cb7-64dd41879eac",
         "sort_key": "0002.0010.marker",
         "source_ref": {
           "destination_page_number": 10,
@@ -3169,6 +3211,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "80690c2c-26bf-5b2c-bc0b-7212c2d8a793",
         "kind": "bibliography_ref",
         "label": "19]",
         "locator": {
@@ -3195,6 +3238,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:80690c2c-26bf-5b2c-bc0b-7212c2d8a793",
         "sort_key": "0002.0011.marker",
         "source_ref": {
           "destination_page_number": 11,
@@ -3221,6 +3265,7 @@
         "body_text": "[19] Yoon Kim, Carl Denton, Luong Hoang, and Alexander M. Rush. Structured attention networks. In International Conference on Learning Representations, 2017.",
         "confidence": "exact",
         "extraction_method": "pdf_native_link_target",
+        "id": "7949e58f-dd94-5314-8924-331914e363e8",
         "kind": "bibliography_entry",
         "label": "[19]",
         "locator": {
@@ -3247,6 +3292,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:7949e58f-dd94-5314-8924-331914e363e8",
         "sort_key": "0011.00547.984.0019.target",
         "source_ref": {
           "destination_point": {
@@ -3271,6 +3317,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "ac2408de-3287-5c8b-a586-ec61090cbc99",
         "kind": "bibliography_ref",
         "label": "[27]",
         "locator": {
@@ -3297,6 +3344,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:ac2408de-3287-5c8b-a586-ec61090cbc99",
         "sort_key": "0002.0012.marker",
         "source_ref": {
           "destination_page_number": 12,
@@ -3323,6 +3371,7 @@
         "body_text": "[27] Ankur Parikh, Oscar T\u00e4ckstr\u00f6m, Dipanjan Das, and Jakob Uszkoreit. A decomposable attention model. In Empirical Methods in Natural Language Processing, 2016.",
         "confidence": "exact",
         "extraction_method": "pdf_native_link_target",
+        "id": "90adc7bd-b371-5ba7-8e3c-652ae86e8c01",
         "kind": "bibliography_entry",
         "label": "[27]",
         "locator": {
@@ -3349,6 +3398,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:90adc7bd-b371-5ba7-8e3c-652ae86e8c01",
         "sort_key": "0012.00154.100.0027.target",
         "source_ref": {
           "destination_point": {
@@ -3373,6 +3423,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "3a8c0f47-c1d4-58e4-8810-62985b3157ab",
         "kind": "bibliography_ref",
         "label": "[16]",
         "locator": {
@@ -3399,6 +3450,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:3a8c0f47-c1d4-58e4-8810-62985b3157ab",
         "sort_key": "0002.0013.marker",
         "source_ref": {
           "destination_page_number": 11,
@@ -3425,6 +3477,7 @@
         "body_text": "[16] \u0141ukasz Kaiser and Samy Bengio. Can active memory replace attention? In Advances in Neural Information Processing Systems, (NIPS), 2016.",
         "confidence": "exact",
         "extraction_method": "pdf_native_link_target",
+        "id": "87ec550e-a744-5745-8af0-ffa5a96b0568",
         "kind": "bibliography_entry",
         "label": "[16]",
         "locator": {
@@ -3451,6 +3504,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:87ec550e-a744-5745-8af0-ffa5a96b0568",
         "sort_key": "0011.00444.839.0016.target",
         "source_ref": {
           "destination_point": {
@@ -3475,6 +3529,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "1c5947ba-92b4-5689-b482-81e0b3b62b72",
         "kind": "bibliography_ref",
         "label": "[18]",
         "locator": {
@@ -3501,6 +3556,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:1c5947ba-92b4-5689-b482-81e0b3b62b72",
         "sort_key": "0002.0014.marker",
         "source_ref": {
           "destination_page_number": 11,
@@ -3527,6 +3583,7 @@
         "body_text": "[18] Nal Kalchbrenner, Lasse Espeholt, Karen Simonyan, Aaron van den Oord, Alex Graves, and Ko- ray Kavukcuoglu. Neural machine translation in linear time. arXiv preprint arXiv:1610.10099v2, 2017.",
         "confidence": "exact",
         "extraction_method": "pdf_native_link_target",
+        "id": "3bb8b17f-fbdb-5080-82a3-ce85899dbb03",
         "kind": "bibliography_entry",
         "label": "[18]",
         "locator": {
@@ -3553,6 +3610,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:3bb8b17f-fbdb-5080-82a3-ce85899dbb03",
         "sort_key": "0011.00506.365.0018.target",
         "source_ref": {
           "destination_point": {
@@ -3577,6 +3635,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "f7016f29-f172-54fe-97b3-2ae7c42d4cef",
         "kind": "bibliography_ref",
         "label": "[9]",
         "locator": {
@@ -3603,6 +3662,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:f7016f29-f172-54fe-97b3-2ae7c42d4cef",
         "sort_key": "0002.0015.marker",
         "source_ref": {
           "destination_page_number": 11,
@@ -3629,6 +3689,7 @@
         "body_text": "[9] Jonas Gehring, Michael Auli, David Grangier, Denis Yarats, and Yann N. Dauphin. Convolu- tional sequence to sequence learning. arXiv preprint arXiv:1705.03122v2, 2017.",
         "confidence": "exact",
         "extraction_method": "pdf_native_link_target",
+        "id": "3f567912-a865-5444-8e9a-98af7f0cacba",
         "kind": "bibliography_entry",
         "label": "[9]",
         "locator": {
@@ -3655,6 +3716,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:3f567912-a865-5444-8e9a-98af7f0cacba",
         "sort_key": "0011.00208.111.0009.target",
         "source_ref": {
           "destination_point": {
@@ -3679,6 +3741,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "cadbee73-6031-5232-8402-35e65cd3f7fd",
         "kind": "bibliography_ref",
         "label": "[12]",
         "locator": {
@@ -3705,6 +3768,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:cadbee73-6031-5232-8402-35e65cd3f7fd",
         "sort_key": "0002.0016.marker",
         "source_ref": {
           "destination_page_number": 11,
@@ -3731,6 +3795,7 @@
         "body_text": "[12] Sepp Hochreiter, Yoshua Bengio, Paolo Frasconi, and J\u00fcrgen Schmidhuber. Gradient flow in recurrent nets: the difficulty of learning long-term dependencies, 2001.",
         "confidence": "exact",
         "extraction_method": "pdf_native_link_target",
+        "id": "2b9e6b48-afcb-5cee-8697-cb6b585a9c8a",
         "kind": "bibliography_entry",
         "label": "[12]",
         "locator": {
@@ -3757,6 +3822,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:2b9e6b48-afcb-5cee-8697-cb6b585a9c8a",
         "sort_key": "0011.00311.136.0012.target",
         "source_ref": {
           "destination_point": {
@@ -3781,6 +3847,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "0ee8e97b-c333-5ee5-a4d4-7280434a5ff7",
         "kind": "bibliography_ref",
         "label": "[4,",
         "locator": {
@@ -3807,6 +3874,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:0ee8e97b-c333-5ee5-a4d4-7280434a5ff7",
         "sort_key": "0002.0018.marker",
         "source_ref": {
           "destination_page_number": 10,
@@ -3833,6 +3901,7 @@
         "body_text": "[4] Jianpeng Cheng, Li Dong, and Mirella Lapata. Long short-term memory-networks for machine reading. arXiv preprint arXiv:1601.06733, 2016.",
         "confidence": "exact",
         "extraction_method": "pdf_native_link_target",
+        "id": "9afca4cf-7281-54ba-b77c-7558176d7759",
         "kind": "bibliography_entry",
         "label": "[4]",
         "locator": {
@@ -3859,6 +3928,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:9afca4cf-7281-54ba-b77c-7558176d7759",
         "sort_key": "0010.00701.535.0004.target",
         "source_ref": {
           "destination_point": {
@@ -3883,6 +3953,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "4cd000ab-fe14-578f-8fc1-6e938847c1ea",
         "kind": "bibliography_ref",
         "label": "27,",
         "locator": {
@@ -3909,6 +3980,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:4cd000ab-fe14-578f-8fc1-6e938847c1ea",
         "sort_key": "0002.0019.marker",
         "source_ref": {
           "destination_page_number": 12,
@@ -3935,6 +4007,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "61022d53-bad0-5462-972f-1ab9a099df1d",
         "kind": "bibliography_ref",
         "label": "28,",
         "locator": {
@@ -3961,6 +4034,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:61022d53-bad0-5462-972f-1ab9a099df1d",
         "sort_key": "0002.0020.marker",
         "source_ref": {
           "destination_page_number": 12,
@@ -3987,6 +4061,7 @@
         "body_text": "[28] Romain Paulus, Caiming Xiong, and Richard Socher. A deep reinforced model for abstractive summarization. arXiv preprint arXiv:1705.04304, 2017.",
         "confidence": "exact",
         "extraction_method": "pdf_native_link_target",
+        "id": "437f1ea7-693a-5391-bc76-942c74b6df33",
         "kind": "bibliography_entry",
         "label": "[28]",
         "locator": {
@@ -4013,6 +4088,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:437f1ea7-693a-5391-bc76-942c74b6df33",
         "sort_key": "0012.00188.492.0028.target",
         "source_ref": {
           "destination_point": {
@@ -4037,6 +4113,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "b928afa0-ea81-51a8-aadf-41f5433eff30",
         "kind": "bibliography_ref",
         "label": "22]",
         "locator": {
@@ -4063,6 +4140,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:b928afa0-ea81-51a8-aadf-41f5433eff30",
         "sort_key": "0002.0021.marker",
         "source_ref": {
           "destination_page_number": 11,
@@ -4089,6 +4167,7 @@
         "body_text": "[22] Zhouhan Lin, Minwei Feng, Cicero Nogueira dos Santos, Mo Yu, Bing Xiang, Bowen Zhou, and Yoshua Bengio. A structured self-attentive sentence embedding. arXiv preprint arXiv:1703.03130, 2017.",
         "confidence": "exact",
         "extraction_method": "pdf_native_link_target",
+        "id": "3aca7fa5-5d87-5732-a021-113225dd58f9",
         "kind": "bibliography_entry",
         "label": "[22]",
         "locator": {
@@ -4115,6 +4194,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:3aca7fa5-5d87-5732-a021-113225dd58f9",
         "sort_key": "0011.00629.131.0022.target",
         "source_ref": {
           "destination_point": {
@@ -4139,6 +4219,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "6be8590c-586e-53d0-852f-952ae825010b",
         "kind": "bibliography_ref",
         "label": "[34]",
         "locator": {
@@ -4165,6 +4246,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:6be8590c-586e-53d0-852f-952ae825010b",
         "sort_key": "0002.0022.marker",
         "source_ref": {
           "destination_page_number": 12,
@@ -4191,6 +4273,7 @@
         "body_text": "[34] Sainbayar Sukhbaatar, Arthur Szlam, Jason Weston, and Rob Fergus. End-to-end memory networks. In C. Cortes, N. D. Lawrence, D. D. Lee, M. Sugiyama, and R. Garnett, editors, Advances in Neural Information Processing Systems 28, pages 2440\u20132448. Curran Associates, Inc., 2015.",
         "confidence": "exact",
         "extraction_method": "pdf_native_link_target",
+        "id": "26fe7cc0-7cde-56aa-9b5d-a396f1fc70bc",
         "kind": "bibliography_entry",
         "label": "[34]",
         "locator": {
@@ -4217,6 +4300,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:26fe7cc0-7cde-56aa-9b5d-a396f1fc70bc",
         "sort_key": "0012.00438.405.0034.target",
         "source_ref": {
           "destination_point": {
@@ -4241,6 +4325,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "1c1a5dc2-50b0-54a5-b391-34f3bf5d8ae0",
         "kind": "bibliography_ref",
         "label": "[17,",
         "locator": {
@@ -4267,6 +4352,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:1c1a5dc2-50b0-54a5-b391-34f3bf5d8ae0",
         "sort_key": "0002.0023.marker",
         "source_ref": {
           "destination_page_number": 11,
@@ -4293,6 +4379,7 @@
         "body_text": "[17] \u0141ukasz Kaiser and Ilya Sutskever. Neural GPUs learn algorithms. In International Conference on Learning Representations (ICLR), 2016.",
         "confidence": "exact",
         "extraction_method": "pdf_native_link_target",
+        "id": "2cf20a16-91a1-5494-9d85-c2af8e427d88",
         "kind": "bibliography_entry",
         "label": "[17]",
         "locator": {
@@ -4319,6 +4406,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:2cf20a16-91a1-5494-9d85-c2af8e427d88",
         "sort_key": "0011.00475.510.0017.target",
         "source_ref": {
           "destination_point": {
@@ -4343,6 +4431,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "2c73fa0c-3eda-50dd-bc41-98e33e3050f2",
         "kind": "bibliography_ref",
         "label": "18]",
         "locator": {
@@ -4369,6 +4458,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:2c73fa0c-3eda-50dd-bc41-98e33e3050f2",
         "sort_key": "0002.0024.marker",
         "source_ref": {
           "destination_page_number": 11,
@@ -4395,6 +4485,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "34a15a6c-0b0a-568e-92ee-5a1a8e6cd266",
         "kind": "bibliography_ref",
         "label": "[9]",
         "locator": {
@@ -4421,6 +4512,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:34a15a6c-0b0a-568e-92ee-5a1a8e6cd266",
         "sort_key": "0002.0025.marker",
         "source_ref": {
           "destination_page_number": 11,
@@ -4447,6 +4539,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "7248b196-1b83-5255-a7d7-a63288ac05d8",
         "kind": "bibliography_ref",
         "label": "[5,",
         "locator": {
@@ -4473,6 +4566,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:7248b196-1b83-5255-a7d7-a63288ac05d8",
         "sort_key": "0002.0026.marker",
         "source_ref": {
           "destination_page_number": 11,
@@ -4499,6 +4593,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "46b04001-be4c-5223-9ee4-7f75707f6802",
         "kind": "bibliography_ref",
         "label": "2,",
         "locator": {
@@ -4525,6 +4620,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:46b04001-be4c-5223-9ee4-7f75707f6802",
         "sort_key": "0002.0027.marker",
         "source_ref": {
           "destination_page_number": 10,
@@ -4551,6 +4647,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "1eb499f6-d2c9-5972-b798-c438e343df90",
         "kind": "bibliography_ref",
         "label": "35]",
         "locator": {
@@ -4577,6 +4674,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:1eb499f6-d2c9-5972-b798-c438e343df90",
         "sort_key": "0002.0028.marker",
         "source_ref": {
           "destination_page_number": 12,
@@ -4603,6 +4701,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "7dffe43e-4e34-5832-bfdc-9552edf628b7",
         "kind": "bibliography_ref",
         "label": "[10]",
         "locator": {
@@ -4629,6 +4728,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:7dffe43e-4e34-5832-bfdc-9552edf628b7",
         "sort_key": "0002.0029.marker",
         "source_ref": {
           "destination_page_number": 11,
@@ -4655,6 +4755,7 @@
         "body_text": "[10] Alex Graves. Generating sequences with recurrent neural networks. arXiv preprint arXiv:1308.0850, 2013.",
         "confidence": "exact",
         "extraction_method": "pdf_native_link_target",
+        "id": "64be9925-9f69-5170-afea-d686441f109c",
         "kind": "bibliography_entry",
         "label": "[10]",
         "locator": {
@@ -4681,6 +4782,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:64be9925-9f69-5170-afea-d686441f109c",
         "sort_key": "0011.00238.613.0010.target",
         "source_ref": {
           "destination_point": {
@@ -4705,6 +4807,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "37cffd16-1bde-511d-aeaf-a92382ee0344",
         "kind": "bibliography_ref",
         "label": "[11]",
         "locator": {
@@ -4731,6 +4834,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:37cffd16-1bde-511d-aeaf-a92382ee0344",
         "sort_key": "0003.0001.marker",
         "source_ref": {
           "destination_page_number": 11,
@@ -4757,6 +4861,7 @@
         "body_text": "[11] Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian Sun. Deep residual learning for im- age recognition. In Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition, pages 770\u2013778, 2016.",
         "confidence": "exact",
         "extraction_method": "pdf_native_link_target",
+        "id": "e8ec20db-3658-5993-a49e-f11d7a978b01",
         "kind": "bibliography_entry",
         "label": "[11]",
         "locator": {
@@ -4783,6 +4888,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:e8ec20db-3658-5993-a49e-f11d7a978b01",
         "sort_key": "0011.00269.501.0011.target",
         "source_ref": {
           "destination_point": {
@@ -4807,6 +4913,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "b464c454-26d1-522f-b8f9-02cadb2820a9",
         "kind": "bibliography_ref",
         "label": "[1]",
         "locator": {
@@ -4833,6 +4940,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:b464c454-26d1-522f-b8f9-02cadb2820a9",
         "sort_key": "0003.0002.marker",
         "source_ref": {
           "destination_page_number": 10,
@@ -4859,6 +4967,7 @@
         "body_text": "[1] Jimmy Lei Ba, Jamie Ryan Kiros, and Geoffrey E Hinton. Layer normalization. arXiv preprint arXiv:1607.06450, 2016.",
         "confidence": "exact",
         "extraction_method": "pdf_native_link_target",
+        "id": "069f49ec-262a-52ae-837f-108a328cd523",
         "kind": "bibliography_entry",
         "label": "[1]",
         "locator": {
@@ -4885,6 +4994,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:069f49ec-262a-52ae-837f-108a328cd523",
         "sort_key": "0010.00615.036.0001.target",
         "source_ref": {
           "destination_point": {
@@ -4909,6 +5019,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "e97269d9-3004-5236-86ef-1580bfebf585",
         "kind": "bibliography_ref",
         "label": "[2]",
         "locator": {
@@ -4935,6 +5046,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:e97269d9-3004-5236-86ef-1580bfebf585",
         "sort_key": "0004.0001.marker",
         "source_ref": {
           "destination_page_number": 10,
@@ -4961,6 +5073,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "afc65093-da78-5f32-9303-4affe3dd462d",
         "kind": "bibliography_ref",
         "label": "[3]",
         "locator": {
@@ -4987,6 +5100,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:afc65093-da78-5f32-9303-4affe3dd462d",
         "sort_key": "0004.0002.marker",
         "source_ref": {
           "destination_page_number": 10,
@@ -5013,6 +5127,7 @@
         "body_text": "[3] Denny Britz, Anna Goldie, Minh-Thang Luong, and Quoc V. Le. Massive exploration of neural machine translation architectures. CoRR, abs/1703.03906, 2017.",
         "confidence": "exact",
         "extraction_method": "pdf_native_link_target",
+        "id": "fb130671-586a-529e-bbde-cacc2ab45949",
         "kind": "bibliography_entry",
         "label": "[3]",
         "locator": {
@@ -5039,6 +5154,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:fb130671-586a-529e-bbde-cacc2ab45949",
         "sort_key": "0010.00672.743.0003.target",
         "source_ref": {
           "destination_point": {
@@ -5063,6 +5179,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "5704ff55-f07a-527a-acad-6094e50d8ad9",
         "kind": "bibliography_ref",
         "label": "[38,",
         "locator": {
@@ -5089,6 +5206,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:5704ff55-f07a-527a-acad-6094e50d8ad9",
         "sort_key": "0005.0001.marker",
         "source_ref": {
           "destination_page_number": 12,
@@ -5115,6 +5233,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "68f9a41c-5b49-5a31-81a9-4552f555d076",
         "kind": "bibliography_ref",
         "label": "2,",
         "locator": {
@@ -5141,6 +5260,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:68f9a41c-5b49-5a31-81a9-4552f555d076",
         "sort_key": "0005.0002.marker",
         "source_ref": {
           "destination_page_number": 10,
@@ -5167,6 +5287,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "67983397-1613-5801-9f32-3ba8025353af",
         "kind": "bibliography_ref",
         "label": "9]",
         "locator": {
@@ -5193,6 +5314,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:67983397-1613-5801-9f32-3ba8025353af",
         "sort_key": "0005.0003.marker",
         "source_ref": {
           "destination_page_number": 11,
@@ -5219,6 +5341,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "20c0fa1d-aaf3-53c2-a742-e97973d1598a",
         "kind": "bibliography_ref",
         "label": "[30]",
         "locator": {
@@ -5245,6 +5368,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:20c0fa1d-aaf3-53c2-a742-e97973d1598a",
         "sort_key": "0005.0005.marker",
         "source_ref": {
           "destination_page_number": 12,
@@ -5271,6 +5395,7 @@
         "body_text": "[30] Ofir Press and Lior Wolf. Using the output embedding to improve language models. arXiv preprint arXiv:1608.05859, 2016.",
         "confidence": "exact",
         "extraction_method": "pdf_native_link_target",
+        "id": "bb5e2725-a8a8-537c-af92-2bfd3fec708a",
         "kind": "bibliography_entry",
         "label": "[30]",
         "locator": {
@@ -5297,6 +5422,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:bb5e2725-a8a8-537c-af92-2bfd3fec708a",
         "sort_key": "0012.00278.841.0030.target",
         "source_ref": {
           "destination_point": {
@@ -5321,6 +5447,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "3349cf4d-2de3-5dcf-b838-d67fa15ac57a",
         "kind": "bibliography_ref",
         "label": "[9]",
         "locator": {
@@ -5347,6 +5474,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:3349cf4d-2de3-5dcf-b838-d67fa15ac57a",
         "sort_key": "0006.0000.marker",
         "source_ref": {
           "destination_page_number": 11,
@@ -5373,6 +5501,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "a4270f9a-87e4-5eb5-b7cc-62f2f1c6118d",
         "kind": "bibliography_ref",
         "label": "[9]",
         "locator": {
@@ -5399,6 +5528,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:a4270f9a-87e4-5eb5-b7cc-62f2f1c6118d",
         "sort_key": "0006.0001.marker",
         "source_ref": {
           "destination_page_number": 11,
@@ -5425,6 +5555,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "394cb7c2-726c-586e-8d5c-6061ca253923",
         "kind": "bibliography_ref",
         "label": "[12]",
         "locator": {
@@ -5451,6 +5582,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:394cb7c2-726c-586e-8d5c-6061ca253923",
         "sort_key": "0006.0003.marker",
         "source_ref": {
           "destination_page_number": 11,
@@ -5477,6 +5609,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "85399975-ba85-5906-bc25-7cb04f3cf227",
         "kind": "bibliography_ref",
         "label": "[38]",
         "locator": {
@@ -5503,6 +5636,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:85399975-ba85-5906-bc25-7cb04f3cf227",
         "sort_key": "0007.0000.marker",
         "source_ref": {
           "destination_page_number": 12,
@@ -5529,6 +5663,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "d45ed3b9-1a16-5898-8607-e97d54519ee2",
         "kind": "bibliography_ref",
         "label": "[31]",
         "locator": {
@@ -5555,6 +5690,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:d45ed3b9-1a16-5898-8607-e97d54519ee2",
         "sort_key": "0007.0001.marker",
         "source_ref": {
           "destination_page_number": 12,
@@ -5581,6 +5717,7 @@
         "body_text": "[31] Rico Sennrich, Barry Haddow, and Alexandra Birch. Neural machine translation of rare words with subword units. arXiv preprint arXiv:1508.07909, 2015.",
         "confidence": "exact",
         "extraction_method": "pdf_native_link_target",
+        "id": "15f40ba6-07ab-5242-b3bb-89b10cfab9c0",
         "kind": "bibliography_entry",
         "label": "[31]",
         "locator": {
@@ -5607,6 +5744,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:15f40ba6-07ab-5242-b3bb-89b10cfab9c0",
         "sort_key": "0012.00313.486.0031.target",
         "source_ref": {
           "destination_point": {
@@ -5631,6 +5769,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "340ce85e-6654-5ae2-abd1-756861300ae6",
         "kind": "bibliography_ref",
         "label": "[18]",
         "locator": {
@@ -5657,6 +5796,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:340ce85e-6654-5ae2-abd1-756861300ae6",
         "sort_key": "0007.0002.marker",
         "source_ref": {
           "destination_page_number": 11,
@@ -5683,6 +5823,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "d8024b3f-7acb-58a4-9e5d-e5ab5d37ac38",
         "kind": "bibliography_ref",
         "label": "[6]",
         "locator": {
@@ -5709,6 +5850,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:d8024b3f-7acb-58a4-9e5d-e5ab5d37ac38",
         "sort_key": "0007.0003.marker",
         "source_ref": {
           "destination_page_number": 11,
@@ -5735,6 +5877,7 @@
         "body_text": "[6] Francois Chollet. Xception: Deep learning with depthwise separable convolutions. arXiv preprint arXiv:1610.02357, 2016.",
         "confidence": "exact",
         "extraction_method": "pdf_native_link_target",
+        "id": "601b4875-1f4e-587d-b966-524c77e4cafa",
         "kind": "bibliography_entry",
         "label": "[6]",
         "locator": {
@@ -5761,6 +5904,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:601b4875-1f4e-587d-b966-524c77e4cafa",
         "sort_key": "0011.00115.773.0006.target",
         "source_ref": {
           "destination_point": {
@@ -5785,6 +5929,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "61bd69e2-e193-5fc5-ab89-df9a066b544b",
         "kind": "bibliography_ref",
         "label": "[3]",
         "locator": {
@@ -5811,6 +5956,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:61bd69e2-e193-5fc5-ab89-df9a066b544b",
         "sort_key": "0007.0004.marker",
         "source_ref": {
           "destination_page_number": 10,
@@ -5837,6 +5983,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "0b4bbe78-307d-5eb4-9cf4-6e86baf36612",
         "kind": "bibliography_ref",
         "label": "[38]",
         "locator": {
@@ -5863,6 +6010,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:0b4bbe78-307d-5eb4-9cf4-6e86baf36612",
         "sort_key": "0007.0005.marker",
         "source_ref": {
           "destination_page_number": 12,
@@ -5889,6 +6037,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "acd69791-e5ea-5ee1-9a65-fc4cf7890741",
         "kind": "bibliography_ref",
         "label": "[20]",
         "locator": {
@@ -5915,6 +6064,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:acd69791-e5ea-5ee1-9a65-fc4cf7890741",
         "sort_key": "0007.0007.marker",
         "source_ref": {
           "destination_page_number": 11,
@@ -5941,6 +6091,7 @@
         "body_text": "[20] Diederik Kingma and Jimmy Ba. Adam: A method for stochastic optimization. In ICLR, 2015.",
         "confidence": "exact",
         "extraction_method": "pdf_native_link_target",
+        "id": "1b4b9418-f67e-5dad-b5c5-7eda89182384",
         "kind": "bibliography_entry",
         "label": "[20]",
         "locator": {
@@ -5967,6 +6118,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:1b4b9418-f67e-5dad-b5c5-7eda89182384",
         "sort_key": "0011.00578.562.0020.target",
         "source_ref": {
           "destination_point": {
@@ -5991,6 +6143,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "e142f028-7de9-5d70-b360-a612f7ad4c97",
         "kind": "bibliography_ref",
         "label": "[18]",
         "locator": {
@@ -6017,6 +6170,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:e142f028-7de9-5d70-b360-a612f7ad4c97",
         "sort_key": "0008.0000.marker",
         "source_ref": {
           "destination_page_number": 11,
@@ -6043,6 +6197,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "fcec7f9e-b4ba-537e-aedf-27064cbb7b07",
         "kind": "bibliography_ref",
         "label": "[39]",
         "locator": {
@@ -6069,6 +6224,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:fcec7f9e-b4ba-537e-aedf-27064cbb7b07",
         "sort_key": "0008.0001.marker",
         "source_ref": {
           "destination_page_number": 12,
@@ -6095,6 +6251,7 @@
         "body_text": "[39] Jie Zhou, Ying Cao, Xuguang Wang, Peng Li, and Wei Xu. Deep recurrent models with fast-forward connections for neural machine translation. CoRR, abs/1606.04199, 2016.",
         "confidence": "exact",
         "extraction_method": "pdf_native_link_target",
+        "id": "1e536620-174f-5bed-a450-0ec883f88913",
         "kind": "bibliography_entry",
         "label": "[39]",
         "locator": {
@@ -6121,6 +6278,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:1e536620-174f-5bed-a450-0ec883f88913",
         "sort_key": "0012.00654.002.0039.target",
         "source_ref": {
           "destination_point": {
@@ -6145,6 +6303,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "bf529bd1-a6df-596a-a0bc-29e0b768ec40",
         "kind": "bibliography_ref",
         "label": "[38]",
         "locator": {
@@ -6171,6 +6330,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:bf529bd1-a6df-596a-a0bc-29e0b768ec40",
         "sort_key": "0008.0002.marker",
         "source_ref": {
           "destination_page_number": 12,
@@ -6197,6 +6357,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "8c950b93-dc8f-58d1-8d20-8d99d366efb3",
         "kind": "bibliography_ref",
         "label": "[9]",
         "locator": {
@@ -6223,6 +6384,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:8c950b93-dc8f-58d1-8d20-8d99d366efb3",
         "sort_key": "0008.0003.marker",
         "source_ref": {
           "destination_page_number": 11,
@@ -6249,6 +6411,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "af1f4910-ebee-5bb8-8994-9743324e550e",
         "kind": "bibliography_ref",
         "label": "[32]",
         "locator": {
@@ -6275,6 +6438,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:af1f4910-ebee-5bb8-8994-9743324e550e",
         "sort_key": "0008.0004.marker",
         "source_ref": {
           "destination_page_number": 12,
@@ -6301,6 +6465,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "97a20ec0-a4fc-5291-ab9c-926604e2b80f",
         "kind": "bibliography_ref",
         "label": "[39]",
         "locator": {
@@ -6327,6 +6492,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:97a20ec0-a4fc-5291-ab9c-926604e2b80f",
         "sort_key": "0008.0005.marker",
         "source_ref": {
           "destination_page_number": 12,
@@ -6353,6 +6519,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "6d8a564e-05c0-52bc-92d7-a4f9db65734c",
         "kind": "bibliography_ref",
         "label": "[38]",
         "locator": {
@@ -6379,6 +6546,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:6d8a564e-05c0-52bc-92d7-a4f9db65734c",
         "sort_key": "0008.0006.marker",
         "source_ref": {
           "destination_page_number": 12,
@@ -6405,6 +6573,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "cd9849ac-f464-5362-b404-742e5b256ed5",
         "kind": "bibliography_ref",
         "label": "[9]",
         "locator": {
@@ -6431,6 +6600,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:cd9849ac-f464-5362-b404-742e5b256ed5",
         "sort_key": "0008.0007.marker",
         "source_ref": {
           "destination_page_number": 11,
@@ -6457,6 +6627,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "7b54370e-2f6f-5b70-84dd-3eb8c76d5497",
         "kind": "bibliography_ref",
         "label": "[33]",
         "locator": {
@@ -6483,6 +6654,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:7b54370e-2f6f-5b70-84dd-3eb8c76d5497",
         "sort_key": "0008.0008.marker",
         "source_ref": {
           "destination_page_number": 12,
@@ -6509,6 +6681,7 @@
         "body_text": "[33] Nitish Srivastava, Geoffrey E Hinton, Alex Krizhevsky, Ilya Sutskever, and Ruslan Salakhutdi- nov. Dropout: a simple way to prevent neural networks from overfitting. Journal of Machine Learning Research, 15(1):1929\u20131958, 2014.",
         "confidence": "exact",
         "extraction_method": "pdf_native_link_target",
+        "id": "a24bf121-caf6-5bb4-b098-3f18e0766bab",
         "kind": "bibliography_entry",
         "label": "[33]",
         "locator": {
@@ -6535,6 +6708,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:a24bf121-caf6-5bb4-b098-3f18e0766bab",
         "sort_key": "0012.00393.179.0033.target",
         "source_ref": {
           "destination_point": {
@@ -6559,6 +6733,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "6ab00753-5292-5e9c-ac95-7ec569088d7e",
         "kind": "bibliography_ref",
         "label": "[36]",
         "locator": {
@@ -6585,6 +6760,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:6ab00753-5292-5e9c-ac95-7ec569088d7e",
         "sort_key": "0008.0009.marker",
         "source_ref": {
           "destination_page_number": 12,
@@ -6611,6 +6787,7 @@
         "body_text": "[36] Christian Szegedy, Vincent Vanhoucke, Sergey Ioffe, Jonathon Shlens, and Zbigniew Wojna. Rethinking the inception architecture for computer vision. CoRR, abs/1512.00567, 2015.",
         "confidence": "exact",
         "extraction_method": "pdf_native_link_target",
+        "id": "0d7e0f15-d0b3-51fc-80dc-2c768d05d5a6",
         "kind": "bibliography_entry",
         "label": "[36]",
         "locator": {
@@ -6637,6 +6814,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:0d7e0f15-d0b3-51fc-80dc-2c768d05d5a6",
         "sort_key": "0012.00529.008.0036.target",
         "source_ref": {
           "destination_point": {
@@ -6661,6 +6839,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "f45bec89-7772-55ac-baac-a809fc300185",
         "kind": "bibliography_ref",
         "label": "[38]",
         "locator": {
@@ -6687,6 +6866,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:f45bec89-7772-55ac-baac-a809fc300185",
         "sort_key": "0008.0012.marker",
         "source_ref": {
           "destination_page_number": 12,
@@ -6713,6 +6893,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "1064f284-9811-58fb-962c-4351fe134fa0",
         "kind": "bibliography_ref",
         "label": "[38]",
         "locator": {
@@ -6739,6 +6920,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:1064f284-9811-58fb-962c-4351fe134fa0",
         "sort_key": "0008.0013.marker",
         "source_ref": {
           "destination_page_number": 12,
@@ -6765,6 +6947,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "a36bc6d9-daa2-56a3-9fdd-483fa9562724",
         "kind": "bibliography_ref",
         "label": "[9]",
         "locator": {
@@ -6791,6 +6974,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:a36bc6d9-daa2-56a3-9fdd-483fa9562724",
         "sort_key": "0009.0004.marker",
         "source_ref": {
           "destination_page_number": 11,
@@ -6817,6 +7001,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "f464ac2d-f898-5a0b-ad05-224cd9e213c2",
         "kind": "bibliography_ref",
         "label": "[37]",
         "locator": {
@@ -6843,6 +7028,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:f464ac2d-f898-5a0b-ad05-224cd9e213c2",
         "sort_key": "0009.0005.marker",
         "source_ref": {
           "destination_page_number": 12,
@@ -6869,6 +7055,7 @@
         "body_text": "[37] Vinyals & Kaiser, Koo, Petrov, Sutskever, and Hinton. Grammar as a foreign language. In Advances in Neural Information Processing Systems, 2015.",
         "confidence": "exact",
         "extraction_method": "pdf_native_link_target",
+        "id": "7e06f2b4-9f4b-55f9-bb7d-02f2228edcd2",
         "kind": "bibliography_entry",
         "label": "[37]",
         "locator": {
@@ -6895,6 +7082,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:7e06f2b4-9f4b-55f9-bb7d-02f2228edcd2",
         "sort_key": "0012.00563.400.0037.target",
         "source_ref": {
           "destination_point": {
@@ -6919,6 +7107,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "f9bd96ee-a27f-5423-af6a-b88b7970e941",
         "kind": "bibliography_ref",
         "label": "[25]",
         "locator": {
@@ -6945,6 +7134,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:f9bd96ee-a27f-5423-af6a-b88b7970e941",
         "sort_key": "0009.0006.marker",
         "source_ref": {
           "destination_page_number": 12,
@@ -6971,6 +7161,7 @@
         "body_text": "[25] Mitchell P Marcus, Mary Ann Marcinkiewicz, and Beatrice Santorini. Building a large annotated corpus of english: The penn treebank. Computational linguistics, 19(2):313\u2013330, 1993.",
         "confidence": "exact",
         "extraction_method": "pdf_native_link_target",
+        "id": "53f949f5-eab4-5d25-b692-726bb6a67427",
         "kind": "bibliography_entry",
         "label": "[25]",
         "locator": {
@@ -6997,6 +7188,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:53f949f5-eab4-5d25-b692-726bb6a67427",
         "sort_key": "0012.00074.407.0025.target",
         "source_ref": {
           "destination_point": {
@@ -7021,6 +7213,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "2fcd6dee-2f4b-56e9-8ab4-1ba396529d18",
         "kind": "bibliography_ref",
         "label": "[37]",
         "locator": {
@@ -7047,6 +7240,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:2fcd6dee-2f4b-56e9-8ab4-1ba396529d18",
         "sort_key": "0009.0007.marker",
         "source_ref": {
           "destination_page_number": 12,
@@ -7073,6 +7267,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "b2020710-807b-5c52-bfc5-a0303d7e7597",
         "kind": "bibliography_ref",
         "label": "[37]",
         "locator": {
@@ -7099,6 +7294,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:b2020710-807b-5c52-bfc5-a0303d7e7597",
         "sort_key": "0010.0000.marker",
         "source_ref": {
           "destination_page_number": 12,
@@ -7125,6 +7321,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "81c96031-e618-56dd-9831-a45affe69c19",
         "kind": "bibliography_ref",
         "label": "[29]",
         "locator": {
@@ -7151,6 +7348,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:81c96031-e618-56dd-9831-a45affe69c19",
         "sort_key": "0010.0001.marker",
         "source_ref": {
           "destination_page_number": 12,
@@ -7177,6 +7375,7 @@
         "body_text": "[29] Slav Petrov, Leon Barrett, Romain Thibaux, and Dan Klein. Learning accurate, compact, and interpretable tree annotation. In Proceedings of the 21st International Conference on Computational Linguistics and 44th Annual Meeting of the ACL, pages 433\u2013440. ACL, July 2006.",
         "confidence": "exact",
         "extraction_method": "pdf_native_link_target",
+        "id": "eb32b9fa-442d-5b6a-825c-44d9ecf548f6",
         "kind": "bibliography_entry",
         "label": "[29]",
         "locator": {
@@ -7203,6 +7402,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:eb32b9fa-442d-5b6a-825c-44d9ecf548f6",
         "sort_key": "0012.00222.809.0029.target",
         "source_ref": {
           "destination_point": {
@@ -7227,6 +7427,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "b7c80f59-9c1b-5790-89cf-7f9639c9d25c",
         "kind": "bibliography_ref",
         "label": "[40]",
         "locator": {
@@ -7253,6 +7454,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:b7c80f59-9c1b-5790-89cf-7f9639c9d25c",
         "sort_key": "0010.0002.marker",
         "source_ref": {
           "destination_page_number": 12,
@@ -7279,6 +7481,7 @@
         "body_text": "[40] Muhua Zhu, Yue Zhang, Wenliang Chen, Min Zhang, and Jingbo Zhu. Fast and accurate shift-reduce constituent parsing. In Proceedings of the 51st Annual Meeting of the ACL (Volume 1: Long Papers), pages 434\u2013443. ACL, August 2013.",
         "confidence": "exact",
         "extraction_method": "pdf_native_link_target",
+        "id": "6a4d9968-3af9-5656-852f-105fc4fc4bec",
         "kind": "bibliography_entry",
         "label": "[40]",
         "locator": {
@@ -7305,6 +7508,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:6a4d9968-3af9-5656-852f-105fc4fc4bec",
         "sort_key": "0012.00688.394.0040.target",
         "source_ref": {
           "destination_point": {
@@ -7329,6 +7533,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "ff10eb94-6740-598a-b430-549811deebf4",
         "kind": "bibliography_ref",
         "label": "[8]",
         "locator": {
@@ -7355,6 +7560,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:ff10eb94-6740-598a-b430-549811deebf4",
         "sort_key": "0010.0003.marker",
         "source_ref": {
           "destination_page_number": 11,
@@ -7381,6 +7587,7 @@
         "body_text": "[8] Chris Dyer, Adhiguna Kuncoro, Miguel Ballesteros, and Noah A. Smith. Recurrent neural network grammars. In Proc. of NAACL, 2016.",
         "confidence": "exact",
         "extraction_method": "pdf_native_link_target",
+        "id": "51aa05c8-d80f-531f-89a0-58de86ccc6ad",
         "kind": "bibliography_entry",
         "label": "[8]",
         "locator": {
@@ -7407,6 +7614,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:51aa05c8-d80f-531f-89a0-58de86ccc6ad",
         "sort_key": "0011.00177.371.0008.target",
         "source_ref": {
           "destination_point": {
@@ -7431,6 +7639,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "7c189f42-5808-5f12-a4d6-3259ec5ee10b",
         "kind": "bibliography_ref",
         "label": "[40]",
         "locator": {
@@ -7457,6 +7666,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:7c189f42-5808-5f12-a4d6-3259ec5ee10b",
         "sort_key": "0010.0004.marker",
         "source_ref": {
           "destination_page_number": 12,
@@ -7483,6 +7693,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "cf49e814-9933-5d15-9fcd-cdf6050ff01b",
         "kind": "bibliography_ref",
         "label": "[14]",
         "locator": {
@@ -7509,6 +7720,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:cf49e814-9933-5d15-9fcd-cdf6050ff01b",
         "sort_key": "0010.0005.marker",
         "source_ref": {
           "destination_page_number": 11,
@@ -7535,6 +7747,7 @@
         "body_text": "[14] Zhongqiang Huang and Mary Harper. Self-training PCFG grammars with latent annotations across languages. In Proceedings of the 2009 Conference on Empirical Methods in Natural Language Processing, pages 832\u2013841. ACL, August 2009.",
         "confidence": "exact",
         "extraction_method": "pdf_native_link_target",
+        "id": "424f16d5-a71a-57d9-a6d5-2395ecf39581",
         "kind": "bibliography_entry",
         "label": "[14]",
         "locator": {
@@ -7561,6 +7774,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:424f16d5-a71a-57d9-a6d5-2395ecf39581",
         "sort_key": "0011.00372.541.0014.target",
         "source_ref": {
           "destination_point": {
@@ -7585,6 +7799,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "3e5d18d1-a794-5c2d-b446-1e146df267af",
         "kind": "bibliography_ref",
         "label": "[26]",
         "locator": {
@@ -7611,6 +7826,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:3e5d18d1-a794-5c2d-b446-1e146df267af",
         "sort_key": "0010.0006.marker",
         "source_ref": {
           "destination_page_number": 12,
@@ -7637,6 +7853,7 @@
         "body_text": "[26] David McClosky, Eugene Charniak, and Mark Johnson. Effective self-training for parsing. In Proceedings of the Human Language Technology Conference of the NAACL, Main Conference, pages 152\u2013159. ACL, June 2006.",
         "confidence": "exact",
         "extraction_method": "pdf_native_link_target",
+        "id": "92c577ca-ff8b-576c-bda2-8bf862ea8711",
         "kind": "bibliography_entry",
         "label": "[26]",
         "locator": {
@@ -7663,6 +7880,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:92c577ca-ff8b-576c-bda2-8bf862ea8711",
         "sort_key": "0012.00108.788.0026.target",
         "source_ref": {
           "destination_point": {
@@ -7687,6 +7905,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "fc0be6e1-d0e3-5e15-8ec0-1578ae95bdcf",
         "kind": "bibliography_ref",
         "label": "[37]",
         "locator": {
@@ -7713,6 +7932,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:fc0be6e1-d0e3-5e15-8ec0-1578ae95bdcf",
         "sort_key": "0010.0007.marker",
         "source_ref": {
           "destination_page_number": 12,
@@ -7739,6 +7959,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "a9b724f5-f69f-529f-ac26-3f25e64d36db",
         "kind": "bibliography_ref",
         "label": "[23]",
         "locator": {
@@ -7765,6 +7986,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:a9b724f5-f69f-529f-ac26-3f25e64d36db",
         "sort_key": "0010.0008.marker",
         "source_ref": {
           "destination_page_number": 11,
@@ -7791,6 +8013,7 @@
         "body_text": "[23] Minh-Thang Luong, Quoc V. Le, Ilya Sutskever, Oriol Vinyals, and Lukasz Kaiser. Multi-task sequence to sequence learning. arXiv preprint arXiv:1511.06114, 2015.",
         "confidence": "exact",
         "extraction_method": "pdf_native_link_target",
+        "id": "38383a95-bc64-54df-a43e-9e21052c35a8",
         "kind": "bibliography_entry",
         "label": "[23]",
         "locator": {
@@ -7817,6 +8040,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:38383a95-bc64-54df-a43e-9e21052c35a8",
         "sort_key": "0011.00670.825.0023.target",
         "source_ref": {
           "destination_point": {
@@ -7841,6 +8065,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "a6fc3491-3138-55e4-8cbf-dc7d87d197ad",
         "kind": "bibliography_ref",
         "label": "[8]",
         "locator": {
@@ -7867,6 +8092,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:a6fc3491-3138-55e4-8cbf-dc7d87d197ad",
         "sort_key": "0010.0009.marker",
         "source_ref": {
           "destination_page_number": 11,
@@ -7893,6 +8119,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "03845796-4e9c-525f-8c12-73fc3ba0c79f",
         "kind": "bibliography_ref",
         "label": "[8]",
         "locator": {
@@ -7919,6 +8146,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:03845796-4e9c-525f-8c12-73fc3ba0c79f",
         "sort_key": "0010.0011.marker",
         "source_ref": {
           "destination_page_number": 11,
@@ -7945,6 +8173,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "966be6b8-2c1e-5e15-8119-717f807d4ff6",
         "kind": "bibliography_ref",
         "label": "[37]",
         "locator": {
@@ -7971,6 +8200,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:966be6b8-2c1e-5e15-8119-717f807d4ff6",
         "sort_key": "0010.0012.marker",
         "source_ref": {
           "destination_page_number": 12,
@@ -7997,6 +8227,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "pdf_native_link",
+        "id": "6c99d618-cce8-5983-bfd2-330b06649dda",
         "kind": "bibliography_ref",
         "label": "[29]",
         "locator": {
@@ -8023,6 +8254,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:6c99d618-cce8-5983-bfd2-330b06649dda",
         "sort_key": "0010.0013.marker",
         "source_ref": {
           "destination_page_number": 12,

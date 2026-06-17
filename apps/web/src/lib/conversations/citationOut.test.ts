@@ -8,6 +8,12 @@ const citationOut = {
     type: "media",
     id: "11111111-1111-4111-8111-111111111111",
   },
+  activation: {
+    resourceRef: "media:11111111-1111-4111-8111-111111111111",
+    kind: "route",
+    href: "/media/11111111-1111-4111-8111-111111111111",
+    unresolvedReason: null,
+  },
   media_id: "11111111-1111-4111-8111-111111111111",
   locator: null,
   deep_link: "/media/11111111-1111-4111-8111-111111111111",
@@ -32,6 +38,18 @@ describe("isCitationOut", () => {
         snapshot: {
           ...citationOut.snapshot,
           page_id: "22222222-2222-4222-8222-222222222222",
+        },
+      }),
+    ).toBe(false);
+  });
+
+  it("rejects malformed activation instead of coercing it", () => {
+    expect(
+      isCitationOut({
+        ...citationOut,
+        activation: {
+          ...citationOut.activation,
+          kind: "missing",
         },
       }),
     ).toBe(false);

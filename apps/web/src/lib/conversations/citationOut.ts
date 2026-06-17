@@ -4,6 +4,10 @@ import {
   isRetrievalLocator,
   type RetrievalLocator,
 } from "@/lib/api/sse/locators";
+import {
+  normalizeResourceActivation,
+  type ResourceActivation,
+} from "@/lib/resources/activation";
 
 export type CitationRole = "supports" | "contradicts" | "context";
 // The closed set of citation-edge target schemes that render as chips, mirroring
@@ -12,9 +16,14 @@ export type CitationTargetType =
   | "evidence_span"
   | "content_chunk"
   | "media"
+  | "highlight"
+  | "fragment"
+  | "page"
   | "note_block"
+  | "message"
   | "external_snapshot"
-  | "oracle_corpus_passage";
+  | "oracle_corpus_passage"
+  | "reader_apparatus_item";
 
 export interface CitationTargetRef {
   type: CitationTargetType;
@@ -33,6 +42,7 @@ export interface CitationOut {
   ordinal: number;
   role: CitationRole;
   target_ref: CitationTargetRef;
+  activation: ResourceActivation;
   /** The jump anchor. For an evidence_span citation, target_ref.id is the span, NOT the media. */
   media_id: string | null;
   locator: RetrievalLocator | null;
@@ -50,9 +60,14 @@ const CITATION_TARGET_TYPES = new Set<CitationTargetType>([
   "evidence_span",
   "content_chunk",
   "media",
+  "highlight",
+  "fragment",
+  "page",
   "note_block",
+  "message",
   "external_snapshot",
   "oracle_corpus_passage",
+  "reader_apparatus_item",
 ]);
 
 function isCitationTargetRef(value: unknown): value is CitationTargetRef {
@@ -95,6 +110,7 @@ export function isCitationOut(value: unknown): value is CitationOut {
       "ordinal",
       "role",
       "target_ref",
+      "activation",
       "media_id",
       "locator",
       "deep_link",
@@ -105,6 +121,7 @@ export function isCitationOut(value: unknown): value is CitationOut {
     typeof value.role === "string" &&
     CITATION_ROLES.has(value.role as CitationRole) &&
     isCitationTargetRef(value.target_ref) &&
+    normalizeResourceActivation(value.activation) !== null &&
     (value.media_id === null || typeof value.media_id === "string") &&
     (value.locator === null || isRetrievalLocator(value.locator)) &&
     (value.deep_link === null || typeof value.deep_link === "string") &&

@@ -600,7 +600,7 @@ result-type grid. The package owns one concern per module (`kinds`, `query`, `sc
   `evidence_span`, `content_chunk`, `highlight`, `page`, `note_block`, `fragment`,
   `conversation`, `message`, `oracle_reading`, `oracle_corpus_passage`,
   `library_intelligence_artifact`, `library_intelligence_revision`,
-  `external_snapshot`, `contributor`, `podcast`)
+  `reader_apparatus_item`, `external_snapshot`, `contributor`, `podcast`)
   is the one persisted resource-identity vocabulary. The same ref identifies a
   resource everywhere: an edge endpoint, a citation target, an attached
   conversation context ref, a chat subject, and a read/inspect agent-tool
@@ -630,8 +630,8 @@ backend builds the `CitationOut` read-model from those edges via
 `resource_graph.citations.build_citation_outs` (uniformly for chat, Oracle, and
 Library Intelligence), reconstructing the in-reader jump from the target's own
 anchoring. `message_retrievals` stays chat-owned **telemetry**, pointing back at
-the edge through `cited_edge_id`; the frontend maps `[N]` → a `CitationOut` → a
-clickable reader target.
+the edge through `cited_edge_id`; the frontend maps `[N]` → a `CitationOut` →
+resource activation plus an optional reader-internal focus target.
 
 ---
 
@@ -753,7 +753,10 @@ exact-only cutover, [`modules/reader-highlight-sidecar-exact-only`](cutovers/rea
 EPUB, and PDF ingest paths persist document-authored notes, endnotes,
 bibliography entries, in-document markers, and marker-to-target edges into
 `reader_apparatus_*` tables. This model is separate from generated chat
-citations, `message_retrievals`, and conversation context refs. Web/EPUB
+citations, `message_retrievals`, and conversation context refs; materialized
+rows are addressed as `reader_apparatus_item:<uuid>` resources and can be
+searched, opened, linked, read, and cited through the same resource activation
+and graph-citation spine as other explicit resource targets. Web/EPUB
 apparatus is extracted before sanitization removes semantic attributes. PDF
 apparatus is capability-gated: native `cite.*` links can be `ready` when
 deterministic reference targets are materialized, marker-only native-link rows

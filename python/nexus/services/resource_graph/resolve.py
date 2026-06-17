@@ -73,6 +73,7 @@ class LoadedResource:
     title: str | None = None  # media/span/chunk/fragment/conversation/page title; library name
     author: str | None = None  # media authors, aggregated
     media_kind: str | None = None  # media summary ("{kind} · ~N words · M sections")
+    source_label: str | None = None  # parent/source label for child evidence rows
     section_count: int | None = None  # media summary (pages for pdf, else map sections)
     word_count: int | None = None  # media summary
     fragment_idx: int | None = None  # fragment label "fragment {idx+1}"
@@ -86,6 +87,7 @@ class LoadedResource:
     related_revision_status: str | None = None
     related_revision_is_current: bool | None = None
     locator_label: str | None = None  # oracle corpus passage locator
+    apparatus_kind: str | None = None
 
 
 @dataclass(frozen=True)
@@ -186,6 +188,8 @@ def load_resource_batch(
             loaded = _load_contributor(db, items)
         elif scheme == "podcast":
             loaded = _load_podcast(db, items, viewer_id=viewer_id)
+        elif scheme == "reader_apparatus_item":
+            loaded = _load_reader_apparatus_item(db, items, viewer_id=viewer_id)
         else:
             assert_never(scheme)
         for entry in loaded:
@@ -234,6 +238,32 @@ def reader_target_for_citation_target(
     """
     if target.scheme == "media":
         return target.id, None
+    if target.scheme == "highlight":
+        media_id = db.scalar(
+            text("SELECT anchor_media_id FROM highlights WHERE id = :id"),
+            {"id": target.id},
+        )
+        if media_id is None or not can_read_media(db, viewer_id, media_id):
+            return None, None
+        return media_id, None
+    if target.scheme == "fragment":
+        row = db.execute(
+            text(
+                """
+                SELECT media_id
+                FROM fragments
+                WHERE id = :id
+                """
+            ),
+            {"id": target.id},
+        ).first()
+        if row is None or not can_read_media(db, viewer_id, row[0]):
+            return None, None
+        return row[0], None
+    if target.scheme == "reader_apparatus_item":
+        return _reader_target_for_reader_apparatus_item(
+            db, viewer_id=viewer_id, apparatus_item_id=target.id
+        )
     if target.scheme == "note_block":
         return None, _note_block_locator_for_block(db, viewer_id=viewer_id, block_id=target.id)
     if target.scheme == "content_chunk":
@@ -349,6 +379,28 @@ def _note_locator_from_summary_locator(raw: object) -> dict[str, object] | None:
             "end_offset": end_offset,
         }
     )
+
+
+def _reader_target_for_reader_apparatus_item(
+    db: Session, *, viewer_id: UUID, apparatus_item_id: UUID
+) -> tuple[UUID | None, dict[str, object] | None]:
+    row = db.execute(
+        text(
+            """
+            SELECT rai.media_id, rai.locator
+            FROM reader_apparatus_items rai
+            JOIN reader_apparatus_states ras ON ras.id = rai.state_id
+            WHERE rai.id = :id
+              AND ras.status IN ('ready', 'partial')
+              AND rai.locator IS NOT NULL
+              AND rai.locator_status != 'missing'
+            """
+        ),
+        {"id": apparatus_item_id},
+    ).first()
+    if row is None or not can_read_media(db, viewer_id, row[0]):
+        return None, None
+    return row[0], retrieval_locator_json(row[1])
 
 
 def _load_media(db: Session, items: list[ResourceRef], *, viewer_id: UUID) -> list[LoadedResource]:
@@ -989,6 +1041,45 @@ def _load_podcast(
     return out
 
 
+def _load_reader_apparatus_item(
+    db: Session, items: list[ResourceRef], *, viewer_id: UUID
+) -> list[LoadedResource]:
+    ids = [ref.id for ref in items]
+    rows = db.execute(
+        text(
+            """
+            SELECT rai.id, rai.media_id, rai.kind, rai.label, rai.body_text, m.title
+            FROM reader_apparatus_items rai
+            JOIN reader_apparatus_states ras ON ras.id = rai.state_id
+            JOIN media m ON m.id = rai.media_id
+            WHERE rai.id = ANY(:ids)
+              AND ras.status IN ('ready', 'partial')
+              AND rai.locator IS NOT NULL
+              AND rai.locator_status != 'missing'
+            """
+        ),
+        {"ids": ids},
+    ).fetchall()
+    by_id = {row[0]: row for row in rows}
+    out: list[LoadedResource] = []
+    for ref in items:
+        row = by_id.get(ref.id)
+        if row is None or not can_read_media(db, viewer_id, row[1]):
+            out.append(_missing(ref.uri, "reader_apparatus_item"))
+            continue
+        out.append(
+            LoadedResource(
+                uri=ref.uri,
+                scheme="reader_apparatus_item",
+                title=str(row[3] or row[2] or "Reader apparatus"),
+                body=str(row[4] or ""),
+                source_label=str(row[5] or ""),
+                apparatus_kind=str(row[2] or ""),
+            )
+        )
+    return out
+
+
 # ---------- presentation ------------------------------------------------------
 
 
@@ -1172,5 +1263,15 @@ def _present(loaded: LoadedResource) -> ResolvedResource:
             summary=_first_line(loaded.body or ""),
             inline_body=None,
             fetch_hint="",
+        )
+    if scheme == "reader_apparatus_item":
+        body = loaded.body or ""
+        source = f" in {loaded.source_label}" if loaded.source_label else ""
+        return ResolvedResource(
+            uri=loaded.uri,
+            label=f"{loaded.title or 'Reader apparatus'}{source}",
+            summary=_first_line(body) or loaded.apparatus_kind or "",
+            inline_body=body if body and len(body) < INLINE_THRESHOLD_CHARS else None,
+            fetch_hint=f'read_resource("{loaded.uri}")',
         )
     assert_never(scheme)

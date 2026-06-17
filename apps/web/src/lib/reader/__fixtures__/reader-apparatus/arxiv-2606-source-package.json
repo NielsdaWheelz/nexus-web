@@ -525,10 +525,12 @@
         "body_text": "Annotated References in the Historiography on Venice: 19th\u201321st centuries. Colavizza, Giovanni and Romanello, Matteo. Journal of Open Humanities Data. 2017. 10.5334/johd.9",
         "confidence": "exact",
         "extraction_method": "latex_biblatex_bibliography",
+        "id": "845b9ba1-82ac-5521-8921-b982c22a9346",
         "kind": "bibliography_entry",
         "label": "colavizza2017annotated",
         "locator": null,
         "locator_status": "missing",
+        "resource_ref": "reader_apparatus_item:845b9ba1-82ac-5521-8921-b982c22a9346",
         "sort_key": "bibliography.000000.target",
         "source_ref": {
           "bib_paths": [
@@ -549,10 +551,12 @@
         "body_text": "Citation Mining of Humanities Journals: The Progress to Date and the Challenges Ahead. Colavizza, Giovanni and Romanello, Matteo. Journal of European Periodical Studies. ESPRit (European Society for Periodical Research). 2019. 10.21825/jeps.v4i1.10120. https://openjournals.ugent.be/jeps/article/id/71493/",
         "confidence": "exact",
         "extraction_method": "latex_biblatex_bibliography",
+        "id": "df2458fe-b6da-5b3f-ae07-e6e6ad699e82",
         "kind": "bibliography_entry",
         "label": "colavizza2019citation",
         "locator": null,
         "locator_status": "missing",
+        "resource_ref": "reader_apparatus_item:df2458fe-b6da-5b3f-ae07-e6e6ad699e82",
         "sort_key": "bibliography.000001.target",
         "source_ref": {
           "bib_paths": [
@@ -573,10 +577,12 @@
         "body_text": "Structured references from PDF articles: assessing the tools for bibliographic reference extraction and parsing. Cioffi, Alessia and Peroni, Silvio. ArXiv. 2022. 10.48550/arXiv.2205.14677. http://arxiv.org/abs/2205.14677",
         "confidence": "exact",
         "extraction_method": "latex_biblatex_bibliography",
+        "id": "00b4efaf-8d5c-5a2e-b87f-a6da474cde6d",
         "kind": "bibliography_entry",
         "label": "cioffi2022structured",
         "locator": null,
         "locator_status": "missing",
+        "resource_ref": "reader_apparatus_item:00b4efaf-8d5c-5a2e-b87f-a6da474cde6d",
         "sort_key": "bibliography.000002.target",
         "source_ref": {
           "bib_paths": [
@@ -597,10 +603,12 @@
         "body_text": "Comparing free reference extraction pipelines. Backes, Tobias and Iurshina, Anastasiia and Shahid, Muhammad Ahsan and Mayr, Philipp. International Journal on Digital Libraries. 2024. 10.1007/s00799-024-00404-6",
         "confidence": "exact",
         "extraction_method": "latex_biblatex_bibliography",
+        "id": "bf35f8eb-005b-541d-ac2c-0de291cfaf41",
         "kind": "bibliography_entry",
         "label": "backes2024comparing",
         "locator": null,
         "locator_status": "missing",
+        "resource_ref": "reader_apparatus_item:bf35f8eb-005b-541d-ac2c-0de291cfaf41",
         "sort_key": "bibliography.000003.target",
         "source_ref": {
           "bib_paths": [
@@ -621,10 +629,12 @@
         "body_text": "Extracting Bibliographic References from Footnotes with Excite-Docker. Boulanger, Christian and Iurshina, Anastasiia. Proceedings of the Workshop on Understanding Literature References in Academic Full Text. CEUR. 2022. http://ceur-ws.org/Vol-3220/#paper3",
         "confidence": "exact",
         "extraction_method": "latex_biblatex_bibliography",
+        "id": "7377c6d9-fcbd-5847-830a-59d656b13086",
         "kind": "bibliography_entry",
         "label": "boulanger2022extracting",
         "locator": null,
         "locator_status": "missing",
+        "resource_ref": "reader_apparatus_item:7377c6d9-fcbd-5847-830a-59d656b13086",
         "sort_key": "bibliography.000004.target",
         "source_ref": {
           "bib_paths": [
@@ -645,10 +655,12 @@
         "body_text": "Large language models for history, philosophy, and sociology of science: Interpretive uses, methodological challenges, and critical perspectives. Simons, Arno and Zichert, Michael and Wuthrich, Adrian. Studies in History and Philosophy of Science. 2026. 10.1016/j.shpsa.2026.102151",
         "confidence": "exact",
         "extraction_method": "latex_biblatex_bibliography",
+        "id": "e961fb72-ce1a-5009-b81d-2b33ce2f16a2",
         "kind": "bibliography_entry",
         "label": "simons2026large",
         "locator": null,
         "locator_status": "missing",
+        "resource_ref": "reader_apparatus_item:e961fb72-ce1a-5009-b81d-2b33ce2f16a2",
         "sort_key": "bibliography.000005.target",
         "source_ref": {
           "bib_paths": [
@@ -669,10 +681,12 @@
         "body_text": "Citation Parsing and Analysis with Language Models. Sarin, Parth and Alperin, Juan Pablo. ArXiv. arXiv. 2025. 10.48550/arXiv.2505.15948. http://arxiv.org/abs/2505.15948",
         "confidence": "exact",
         "extraction_method": "latex_biblatex_bibliography",
+        "id": "9e1c5e3a-eab7-595f-a269-0fdb8976e684",
         "kind": "bibliography_entry",
         "label": "sarin2025citation",
         "locator": null,
         "locator_status": "missing",
+        "resource_ref": "reader_apparatus_item:9e1c5e3a-eab7-595f-a269-0fdb8976e684",
         "sort_key": "bibliography.000006.target",
         "source_ref": {
           "bib_paths": [
@@ -693,10 +707,12 @@
         "body_text": "OpenAI (text-davinci-003) reference extraction via API: Code/Result. 2022. https://pad.gwdg.de/s/LWUjPOi1F#",
         "confidence": "exact",
         "extraction_method": "latex_biblatex_bibliography",
+        "id": "a56e00ba-b597-55f1-849f-21f0abdce799",
         "kind": "bibliography_entry",
         "label": "textDavinci20222",
         "locator": null,
         "locator_status": "missing",
+        "resource_ref": "reader_apparatus_item:a56e00ba-b597-55f1-849f-21f0abdce799",
         "sort_key": "bibliography.000007.target",
         "source_ref": {
           "bib_paths": [
@@ -717,10 +733,12 @@
         "body_text": "Comprehensive Analysis of Transparency and Accessibility of ChatGPT, DeepSeek, And other SoTA Large Language Models. Karkee, Manoj and Raza, Shaina and Karkee, Manoj. Preprints. 2025. 10.20944/preprints202502.1608.v1. https://www.preprints.org/manuscript/202502.1608",
         "confidence": "exact",
         "extraction_method": "latex_biblatex_bibliography",
+        "id": "f4932796-f843-5893-862d-5d69a7f45ee8",
         "kind": "bibliography_entry",
         "label": "karkee2025comprehensive",
         "locator": null,
         "locator_status": "missing",
+        "resource_ref": "reader_apparatus_item:f4932796-f843-5893-862d-5d69a7f45ee8",
         "sort_key": "bibliography.000008.target",
         "source_ref": {
           "bib_paths": [
@@ -741,10 +759,12 @@
         "body_text": "GROBID. GitHub. 2008/. https://github.com/grobidOrg/grobid",
         "confidence": "exact",
         "extraction_method": "latex_biblatex_bibliography",
+        "id": "13d1674f-9537-5bed-bf2b-84f99ef2be51",
         "kind": "bibliography_entry",
         "label": "grobid",
         "locator": null,
         "locator_status": "missing",
+        "resource_ref": "reader_apparatus_item:13d1674f-9537-5bed-bf2b-84f99ef2be51",
         "sort_key": "bibliography.000009.target",
         "source_ref": {
           "bib_paths": [
@@ -765,10 +785,12 @@
         "body_text": "Data for Testing and Evaluating References Extraction and Parsing Tools. Cioffi, Alessia. Zenodo. 2022. 10.5281/zenodo.6182066. https://zenodo.org/record/6182066",
         "confidence": "exact",
         "extraction_method": "latex_biblatex_bibliography",
+        "id": "f6e36039-6525-572b-8c83-14dc966ebcd9",
         "kind": "bibliography_entry",
         "label": "cioffi2022data",
         "locator": null,
         "locator_status": "missing",
+        "resource_ref": "reader_apparatus_item:f6e36039-6525-572b-8c83-14dc966ebcd9",
         "sort_key": "bibliography.000010.target",
         "source_ref": {
           "bib_paths": [
@@ -789,10 +811,12 @@
         "body_text": "CEX Project - Dataset and Gold Standard. Pagnotta, O.. Zenodo. 2024. 10.5281/zenodo.10535653",
         "confidence": "exact",
         "extraction_method": "latex_biblatex_bibliography",
+        "id": "528ff236-5d65-5a6f-8509-fef5fd4ec1d4",
         "kind": "bibliography_entry",
         "label": "pagnotta2024cex",
         "locator": null,
         "locator_status": "missing",
+        "resource_ref": "reader_apparatus_item:528ff236-5d65-5a6f-8509-fef5fd4ec1d4",
         "sort_key": "bibliography.000011.target",
         "source_ref": {
           "bib_paths": [
@@ -813,10 +837,12 @@
         "body_text": "EXCITE \u2013 A Toolchain to Extract, Match and Publish Open Literature References. Hosseini, Azam and Ghavimi, Behnam and Boukhers, Zeyd and Mayr, Philipp. 2019 ACM/IEEE Joint Conference on Digital Libraries (JCDL). IEEE. 2019. 10.1109/JCDL.2019.00105. https://ieeexplore.ieee.org/document/8791194/",
         "confidence": "exact",
         "extraction_method": "latex_biblatex_bibliography",
+        "id": "0e85c145-02e8-5b88-b26f-425202c4dfbc",
         "kind": "bibliography_entry",
         "label": "hosseini2019excite",
         "locator": null,
         "locator_status": "missing",
+        "resource_ref": "reader_apparatus_item:0e85c145-02e8-5b88-b26f-425202c4dfbc",
         "sort_key": "bibliography.000012.target",
         "source_ref": {
           "bib_paths": [
@@ -837,10 +863,12 @@
         "body_text": "Benchmarking Large Language Models on Reference Extraction and Parsing in the Social Sciences and Humanities. Zhu, Yurui and Colavizza, Giovanni and Romanello, Matteo. arXiv. 2026. 10.48550/arXiv.2603.13651. http://arxiv.org/abs/2603.13651",
         "confidence": "exact",
         "extraction_method": "latex_biblatex_bibliography",
+        "id": "8bb1775a-13e2-59c2-b998-56b6c362ff8b",
         "kind": "bibliography_entry",
         "label": "zhu2026benchmarking",
         "locator": null,
         "locator_status": "missing",
+        "resource_ref": "reader_apparatus_item:8bb1775a-13e2-59c2-b998-56b6c362ff8b",
         "sort_key": "bibliography.000013.target",
         "source_ref": {
           "bib_paths": [
@@ -861,10 +889,12 @@
         "body_text": "PDF-TEI Editor. Christian Boulanger. GitHub. 2024/. https://github.com/mpilhlt/pdf-tei-editor/",
         "confidence": "exact",
         "extraction_method": "latex_biblatex_bibliography",
+        "id": "d2994716-9e24-5eb5-aed1-1fc6ad746e9e",
         "kind": "bibliography_entry",
         "label": "boulanger2024pdftei",
         "locator": null,
         "locator_status": "missing",
+        "resource_ref": "reader_apparatus_item:d2994716-9e24-5eb5-aed1-1fc6ad746e9e",
         "sort_key": "bibliography.000014.target",
         "source_ref": {
           "bib_paths": [
@@ -885,10 +915,12 @@
         "body_text": "LLaMore. Max Planck Institute for Legal History and Legal Theory. 2025/. https://github.com/mpilhlt/llamore",
         "confidence": "exact",
         "extraction_method": "latex_biblatex_bibliography",
+        "id": "bc703815-fba7-5325-82f8-78f7296e1e59",
         "kind": "bibliography_entry",
         "label": "llamore",
         "locator": null,
         "locator_status": "missing",
+        "resource_ref": "reader_apparatus_item:bc703815-fba7-5325-82f8-78f7296e1e59",
         "sort_key": "bibliography.000015.target",
         "source_ref": {
           "bib_paths": [
@@ -909,10 +941,12 @@
         "body_text": "The potential of LLMs for constructing a socio-legal knowledge graph. Boulanger, Christian. Understanding Science with Large Language Models? Potentials for the History, Philosophy, and Sociology of Science. transcript. 2026",
         "confidence": "exact",
         "extraction_method": "latex_biblatex_bibliography",
+        "id": "f4eef4a5-af8f-51da-a829-8b7327adf989",
         "kind": "bibliography_entry",
         "label": "boulanger2026potential",
         "locator": null,
         "locator_status": "missing",
+        "resource_ref": "reader_apparatus_item:f4eef4a5-af8f-51da-a829-8b7327adf989",
         "sort_key": "bibliography.000016.target",
         "source_ref": {
           "bib_paths": [
@@ -933,10 +967,12 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "latex_biblatex_citation",
+        "id": "4e6f97f0-39a5-5f1d-938f-28168bee0248",
         "kind": "bibliography_ref",
         "label": "colavizza2017annotated, colavizza2019citation, cioffi2022structured, backes2024comparing",
         "locator": null,
         "locator_status": "missing",
+        "resource_ref": "reader_apparatus_item:4e6f97f0-39a5-5f1d-938f-28168bee0248",
         "sort_key": "citation.000000909.000000.marker",
         "source_ref": {
           "bib_paths": [
@@ -962,10 +998,12 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "latex_biblatex_citation",
+        "id": "b835c85f-a0b3-5339-be91-c026122522d6",
         "kind": "bibliography_ref",
         "label": "boulanger2022extracting",
         "locator": null,
         "locator_status": "missing",
+        "resource_ref": "reader_apparatus_item:b835c85f-a0b3-5339-be91-c026122522d6",
         "sort_key": "citation.000001415.000001.marker",
         "source_ref": {
           "bib_paths": [
@@ -988,10 +1026,12 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "latex_biblatex_citation",
+        "id": "75940fa6-5271-58ec-8d10-c52e18eefeda",
         "kind": "bibliography_ref",
         "label": "simons2026large, sarin2025citation",
         "locator": null,
         "locator_status": "missing",
+        "resource_ref": "reader_apparatus_item:75940fa6-5271-58ec-8d10-c52e18eefeda",
         "sort_key": "citation.000001516.000002.marker",
         "source_ref": {
           "bib_paths": [
@@ -1015,10 +1055,12 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "latex_biblatex_citation",
+        "id": "93bff400-9859-549b-95dc-73537170e1b6",
         "kind": "bibliography_ref",
         "label": "textDavinci20222",
         "locator": null,
         "locator_status": "missing",
+        "resource_ref": "reader_apparatus_item:93bff400-9859-549b-95dc-73537170e1b6",
         "sort_key": "citation.000001648.000003.marker",
         "source_ref": {
           "bib_paths": [
@@ -1041,10 +1083,12 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "latex_biblatex_citation",
+        "id": "c4b40ef0-9542-5faf-8339-dedea408de97",
         "kind": "bibliography_ref",
         "label": "karkee2025comprehensive",
         "locator": null,
         "locator_status": "missing",
+        "resource_ref": "reader_apparatus_item:c4b40ef0-9542-5faf-8339-dedea408de97",
         "sort_key": "citation.000001822.000004.marker",
         "source_ref": {
           "bib_paths": [
@@ -1067,10 +1111,12 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "latex_biblatex_citation",
+        "id": "55018ec8-e21a-502d-a6d6-61cd1d498839",
         "kind": "bibliography_ref",
         "label": "grobid",
         "locator": null,
         "locator_status": "missing",
+        "resource_ref": "reader_apparatus_item:55018ec8-e21a-502d-a6d6-61cd1d498839",
         "sort_key": "citation.000002504.000005.marker",
         "source_ref": {
           "bib_paths": [
@@ -1093,10 +1139,12 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "latex_biblatex_citation",
+        "id": "86972461-bf0d-5528-9646-e391c24dddda",
         "kind": "bibliography_ref",
         "label": "cioffi2022data, pagnotta2024cex",
         "locator": null,
         "locator_status": "missing",
+        "resource_ref": "reader_apparatus_item:86972461-bf0d-5528-9646-e391c24dddda",
         "sort_key": "citation.000003005.000006.marker",
         "source_ref": {
           "bib_paths": [
@@ -1120,10 +1168,12 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "latex_biblatex_citation",
+        "id": "9b1cfbb6-61e1-56b9-bfb0-41e8790831f8",
         "kind": "bibliography_ref",
         "label": "hosseini2019excite",
         "locator": null,
         "locator_status": "missing",
+        "resource_ref": "reader_apparatus_item:9b1cfbb6-61e1-56b9-bfb0-41e8790831f8",
         "sort_key": "citation.000003147.000007.marker",
         "source_ref": {
           "bib_paths": [
@@ -1146,10 +1196,12 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "latex_biblatex_citation",
+        "id": "d2529cff-27ad-5dbe-a6d1-2efb6edc6d9a",
         "kind": "bibliography_ref",
         "label": "colavizza2017annotated",
         "locator": null,
         "locator_status": "missing",
+        "resource_ref": "reader_apparatus_item:d2529cff-27ad-5dbe-a6d1-2efb6edc6d9a",
         "sort_key": "citation.000003244.000008.marker",
         "source_ref": {
           "bib_paths": [
@@ -1172,10 +1224,12 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "latex_biblatex_citation",
+        "id": "618a76f5-1f4d-5aaa-b45c-c32a7f52425a",
         "kind": "bibliography_ref",
         "label": "zhu2026benchmarking",
         "locator": null,
         "locator_status": "missing",
+        "resource_ref": "reader_apparatus_item:618a76f5-1f4d-5aaa-b45c-c32a7f52425a",
         "sort_key": "citation.000003393.000009.marker",
         "source_ref": {
           "bib_paths": [
@@ -1198,10 +1252,12 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "latex_biblatex_citation",
+        "id": "5c6387b5-0ee4-5764-8fc6-bd356abe85d7",
         "kind": "bibliography_ref",
         "label": "boulanger2024pdftei",
         "locator": null,
         "locator_status": "missing",
+        "resource_ref": "reader_apparatus_item:5c6387b5-0ee4-5764-8fc6-bd356abe85d7",
         "sort_key": "citation.000005322.000010.marker",
         "source_ref": {
           "bib_paths": [
@@ -1224,10 +1280,12 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "latex_biblatex_citation",
+        "id": "b92bf2d6-1638-5ba1-af67-40f65af0a6ec",
         "kind": "bibliography_ref",
         "label": "llamore",
         "locator": null,
         "locator_status": "missing",
+        "resource_ref": "reader_apparatus_item:b92bf2d6-1638-5ba1-af67-40f65af0a6ec",
         "sort_key": "citation.000005578.000011.marker",
         "source_ref": {
           "bib_paths": [
@@ -1250,10 +1308,12 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "latex_biblatex_citation",
+        "id": "5d05dc80-3da8-50d5-9ace-fb9dfeef700b",
         "kind": "bibliography_ref",
         "label": "boulanger2026potential",
         "locator": null,
         "locator_status": "missing",
+        "resource_ref": "reader_apparatus_item:5d05dc80-3da8-50d5-9ace-fb9dfeef700b",
         "sort_key": "citation.000008927.000012.marker",
         "source_ref": {
           "bib_paths": [
@@ -1276,10 +1336,12 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "latex_biblatex_citation",
+        "id": "45573481-1417-57f1-bc25-d3f89e15f5ae",
         "kind": "bibliography_ref",
         "label": "llamore",
         "locator": null,
         "locator_status": "missing",
+        "resource_ref": "reader_apparatus_item:45573481-1417-57f1-bc25-d3f89e15f5ae",
         "sort_key": "citation.000009261.000013.marker",
         "source_ref": {
           "bib_paths": [
@@ -1302,10 +1364,12 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "latex_biblatex_citation",
+        "id": "c0d0a351-788f-5d87-9f5f-14dd9f7638a5",
         "kind": "bibliography_ref",
         "label": "zhu2026benchmarking",
         "locator": null,
         "locator_status": "missing",
+        "resource_ref": "reader_apparatus_item:c0d0a351-788f-5d87-9f5f-14dd9f7638a5",
         "sort_key": "citation.000012563.000014.marker",
         "source_ref": {
           "bib_paths": [
@@ -1328,10 +1392,12 @@
         "body_text": "These authors contributed equally to this work.",
         "confidence": "exact",
         "extraction_method": "latex_footnote",
+        "id": "81d06402-ce5d-5a87-bc82-0806ac09438b",
         "kind": "footnote",
         "label": "1",
         "locator": null,
         "locator_status": "missing",
+        "resource_ref": "reader_apparatus_item:81d06402-ce5d-5a87-bc82-0806ac09438b",
         "sort_key": "footnote.000000744.000000.target",
         "source_ref": {
           "bib_paths": [

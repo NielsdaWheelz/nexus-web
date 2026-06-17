@@ -39,7 +39,8 @@ from nexus.schemas.reader_document_map import (
 )
 from nexus.services import highlights, reader_apparatus, reader_connections, reader_navigation
 from nexus.services.resource_graph import context as conversation_context
-from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
+from nexus.services.resource_items.routing import resource_activation_for_ref
 
 
 def get_reader_document_map(
@@ -223,8 +224,13 @@ def get_reader_document_map(
                 title=app_item.label or "Citation",
                 subtitle=app_item.kind,
                 excerpt=app_item.body_text,
+                activation=resource_activation_for_ref(
+                    db,
+                    viewer_id=viewer_id,
+                    ref=assert_resource_ref(app_item.resource_ref),
+                ),
                 anchor=_anchor_from_locator(
-                    ref=f"reader_apparatus:{app_item.stable_key}",
+                    ref=app_item.resource_ref,
                     media_id=media_id,
                     locator=locator,
                     precision="exact" if app_item.locator_status == "exact" else "container",
@@ -242,6 +248,7 @@ def get_reader_document_map(
                     "confidence": app_item.confidence,
                 },
                 actions=["activate"] if locator else [],
+                resource_ref=app_item.resource_ref,
                 stable_key=app_item.stable_key,
                 apparatus_kind=app_item.kind,
                 confidence=app_item.confidence,
@@ -268,7 +275,8 @@ def get_reader_document_map(
             title=row.title,
             subtitle=row.subtitle,
             excerpt=row.excerpt,
-            href=row.href,
+            activation=row.connection.other.activation,
+            href=row.connection.other.activation.href,
             anchor=_document_map_anchor(row.anchor) if row.anchor else None,
             document_order_key=row.anchor.order_key if row.anchor else None,
             document_fraction=fraction,
@@ -295,7 +303,12 @@ def get_reader_document_map(
                 source_domain="chat",
                 title=conversation.title,
                 subtitle=f"{conversation.message_count} messages",
-                href=f"/chat/{conversation.id}",
+                activation=resource_activation_for_ref(
+                    db,
+                    viewer_id=viewer_id,
+                    ref=ResourceRef(scheme="conversation", id=conversation.id),
+                ),
+                href=f"/conversations/{conversation.id}",
                 anchor=None,
                 document_order_key=None,
                 document_fraction=None,

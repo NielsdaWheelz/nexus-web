@@ -35,6 +35,7 @@
         "body_text": "1. EPUB note body for reader apparatus.",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "f296526a-f82f-5be3-8c13-ac8aaffcc562",
         "kind": "footnote",
         "label": "1.",
         "locator": {
@@ -50,6 +51,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:f296526a-f82f-5be3-8c13-ac8aaffcc562",
         "sort_key": "000005.000000.target",
         "source_ref": {
           "format": "xhtml",
@@ -67,6 +69,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "html_semantic",
+        "id": "e4e9f1dd-2f19-59d6-83f4-09558d7be883",
         "kind": "footnote_ref",
         "label": "1",
         "locator": {
@@ -82,6 +85,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:e4e9f1dd-2f19-59d6-83f4-09558d7be883",
         "sort_key": "000000.marker",
         "source_ref": {
           "format": "xhtml",

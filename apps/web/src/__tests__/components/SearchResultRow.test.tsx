@@ -3,11 +3,27 @@ import { render, screen } from "@testing-library/react";
 import SearchResultRow from "@/components/search/SearchResultRow";
 import type { SearchResultRowViewModel } from "@/lib/search/types";
 
+function resourceFields(resourceRef: string, href: string) {
+  return {
+    resourceRef,
+    activation: {
+      resourceRef,
+      kind: href.startsWith("http") ? "external" : "route",
+      href,
+      unresolvedReason: null,
+    } as const,
+    citationTarget: resourceRef,
+  };
+}
+
 describe("SearchResultRow", () => {
   it("renders content-first note rows with contextual metadata", () => {
     const row: SearchResultRowViewModel = {
       key: "note_block-note-1",
-      href: "/notes/note-1",
+      ...resourceFields(
+        "note_block:a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        "/notes/note-1",
+      ),
       paneTitleHint: "note body text",
       type: "note_block",
       mediaId: null,
@@ -39,7 +55,10 @@ describe("SearchResultRow", () => {
   it("uses linked highlight quote as the note row link title", () => {
     const row: SearchResultRowViewModel = {
       key: "note_block-note-1",
-      href: "/notes/note-1",
+      ...resourceFields(
+        "note_block:a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        "/notes/note-1",
+      ),
       paneTitleHint: "linked source quote text",
       type: "note_block",
       mediaId: null,
@@ -71,7 +90,10 @@ describe("SearchResultRow", () => {
   it("renders emphasized snippet segments for non-highlight rows", () => {
     const row: SearchResultRowViewModel = {
       key: "content_chunk-chunk-1",
-      href: "/media/media-1#evidence-span-1",
+      ...resourceFields(
+        "content_chunk:c1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        "/media/media-1#evidence-span-1",
+      ),
       paneTitleHint: "before match after",
       type: "content_chunk",
       mediaId: "b1b2c3d4-e5f6-7890-abcd-ef1234567890",
@@ -102,7 +124,10 @@ describe("SearchResultRow", () => {
   it("renders web results as external evidence", () => {
     const row: SearchResultRowViewModel = {
       key: "web_result-result-1",
-      href: "https://example.com/report",
+      ...resourceFields(
+        "external_snapshot:11111111-1111-4111-8111-111111111111",
+        "https://example.com/report",
+      ),
       paneTitleHint: "External report",
       type: "web_result",
       mediaId: null,
@@ -132,7 +157,10 @@ describe("SearchResultRow", () => {
   it("renders message metadata", () => {
     const row: SearchResultRowViewModel = {
       key: "message-msg-1",
-      href: "/conversations/conv-1",
+      ...resourceFields(
+        "message:11111111-1111-4111-8111-111111111111",
+        "/conversations/conv-1",
+      ),
       paneTitleHint: "Message #12",
       type: "message",
       mediaId: null,

@@ -1025,6 +1025,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "829758b3-0355-5bbf-b3af-51fcea8fe9d5",
         "kind": "endnote_ref",
         "label": "1",
         "locator": {
@@ -1040,6 +1041,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:829758b3-0355-5bbf-b3af-51fcea8fe9d5",
         "sort_key": "000000.marker",
         "source_ref": {
           "format": "xhtml",
@@ -1058,6 +1060,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "fd31eed4-7fb6-5cb5-8d96-89c1999558fc",
         "kind": "endnote_ref",
         "label": "2",
         "locator": {
@@ -1073,6 +1076,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:fd31eed4-7fb6-5cb5-8d96-89c1999558fc",
         "sort_key": "000001.marker",
         "source_ref": {
           "format": "xhtml",
@@ -1091,6 +1095,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "3e8bb109-dd2e-51aa-aced-dd3682919c52",
         "kind": "endnote_ref",
         "label": "3",
         "locator": {
@@ -1106,6 +1111,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:3e8bb109-dd2e-51aa-aced-dd3682919c52",
         "sort_key": "000002.marker",
         "source_ref": {
           "format": "xhtml",
@@ -1124,6 +1130,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "ba837a4e-5fb7-59f7-bfc9-7be927a9618f",
         "kind": "endnote_ref",
         "label": "4",
         "locator": {
@@ -1139,6 +1146,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:ba837a4e-5fb7-59f7-bfc9-7be927a9618f",
         "sort_key": "000003.marker",
         "source_ref": {
           "format": "xhtml",
@@ -1157,6 +1165,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "ead6c742-d9d2-524a-8b30-f45fb3e69aa5",
         "kind": "endnote_ref",
         "label": "5",
         "locator": {
@@ -1172,6 +1181,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:ead6c742-d9d2-524a-8b30-f45fb3e69aa5",
         "sort_key": "000004.marker",
         "source_ref": {
           "format": "xhtml",
@@ -1190,6 +1200,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "4d3129d6-5114-5998-b22b-9ebe55966b20",
         "kind": "endnote_ref",
         "label": "6",
         "locator": {
@@ -1205,6 +1216,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:4d3129d6-5114-5998-b22b-9ebe55966b20",
         "sort_key": "000005.marker",
         "source_ref": {
           "format": "xhtml",
@@ -1223,6 +1235,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "aafee5a9-4e09-5a80-a23e-c03d4dd0fb9e",
         "kind": "endnote_ref",
         "label": "7",
         "locator": {
@@ -1238,6 +1251,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:aafee5a9-4e09-5a80-a23e-c03d4dd0fb9e",
         "sort_key": "000006.marker",
         "source_ref": {
           "format": "xhtml",
@@ -1256,6 +1270,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "78afcf00-2a4d-5c11-abbe-9808bfda38f0",
         "kind": "endnote_ref",
         "label": "8",
         "locator": {
@@ -1271,6 +1286,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:78afcf00-2a4d-5c11-abbe-9808bfda38f0",
         "sort_key": "000007.marker",
         "source_ref": {
           "format": "xhtml",
@@ -1289,6 +1305,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "d2d4e806-1472-5be0-a085-f57fdb0c4203",
         "kind": "endnote_ref",
         "label": "9",
         "locator": {
@@ -1304,6 +1321,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:d2d4e806-1472-5be0-a085-f57fdb0c4203",
         "sort_key": "000008.marker",
         "source_ref": {
           "format": "xhtml",
@@ -1322,6 +1340,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "f6f5f30e-8203-51e7-a1f8-fa1babce8fb3",
         "kind": "endnote_ref",
         "label": "10",
         "locator": {
@@ -1337,6 +1356,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:f6f5f30e-8203-51e7-a1f8-fa1babce8fb3",
         "sort_key": "000009.marker",
         "source_ref": {
           "format": "xhtml",
@@ -1355,6 +1375,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "007e1ebe-7101-5645-b8bf-019a1b057ad9",
         "kind": "endnote_ref",
         "label": "11",
         "locator": {
@@ -1370,6 +1391,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:007e1ebe-7101-5645-b8bf-019a1b057ad9",
         "sort_key": "000010.marker",
         "source_ref": {
           "format": "xhtml",
@@ -1388,6 +1410,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "6059c6f6-9dae-5995-b4ca-5ce9f2fa314b",
         "kind": "endnote_ref",
         "label": "12",
         "locator": {
@@ -1403,6 +1426,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:6059c6f6-9dae-5995-b4ca-5ce9f2fa314b",
         "sort_key": "000011.marker",
         "source_ref": {
           "format": "xhtml",
@@ -1421,6 +1445,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "095273ae-4623-5457-a139-ac714a4276df",
         "kind": "endnote_ref",
         "label": "13",
         "locator": {
@@ -1436,6 +1461,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:095273ae-4623-5457-a139-ac714a4276df",
         "sort_key": "000012.marker",
         "source_ref": {
           "format": "xhtml",
@@ -1454,6 +1480,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "4988b2a3-302c-5332-8f8b-b41185fa8626",
         "kind": "endnote_ref",
         "label": "14",
         "locator": {
@@ -1469,6 +1496,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:4988b2a3-302c-5332-8f8b-b41185fa8626",
         "sort_key": "000013.marker",
         "source_ref": {
           "format": "xhtml",
@@ -1487,6 +1515,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "3fb097d6-8a63-5742-b0b7-1fd7da2aadd9",
         "kind": "endnote_ref",
         "label": "15",
         "locator": {
@@ -1502,6 +1531,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:3fb097d6-8a63-5742-b0b7-1fd7da2aadd9",
         "sort_key": "000014.marker",
         "source_ref": {
           "format": "xhtml",
@@ -1520,6 +1550,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "738b9b20-1bc7-536c-9e83-54111a89da5f",
         "kind": "endnote_ref",
         "label": "16",
         "locator": {
@@ -1535,6 +1566,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:738b9b20-1bc7-536c-9e83-54111a89da5f",
         "sort_key": "000015.marker",
         "source_ref": {
           "format": "xhtml",
@@ -1553,6 +1585,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "8880cb79-f9b3-55be-8127-4fbb67983667",
         "kind": "endnote_ref",
         "label": "17",
         "locator": {
@@ -1568,6 +1601,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:8880cb79-f9b3-55be-8127-4fbb67983667",
         "sort_key": "000016.marker",
         "source_ref": {
           "format": "xhtml",
@@ -1586,6 +1620,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "6c558738-23b5-51db-9b69-4adef830aa9f",
         "kind": "endnote_ref",
         "label": "18",
         "locator": {
@@ -1601,6 +1636,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:6c558738-23b5-51db-9b69-4adef830aa9f",
         "sort_key": "000017.marker",
         "source_ref": {
           "format": "xhtml",
@@ -1619,6 +1655,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "6b102670-e568-5f71-94c2-fb3fd29048fd",
         "kind": "endnote_ref",
         "label": "19",
         "locator": {
@@ -1634,6 +1671,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:6b102670-e568-5f71-94c2-fb3fd29048fd",
         "sort_key": "000018.marker",
         "source_ref": {
           "format": "xhtml",
@@ -1652,6 +1690,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "f4db3dc7-e13a-57a8-aec0-91872f532355",
         "kind": "endnote_ref",
         "label": "20",
         "locator": {
@@ -1667,6 +1706,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:f4db3dc7-e13a-57a8-aec0-91872f532355",
         "sort_key": "000019.marker",
         "source_ref": {
           "format": "xhtml",
@@ -1685,6 +1725,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "36ecae08-11ee-5a7d-b087-660fe04442af",
         "kind": "endnote_ref",
         "label": "21",
         "locator": {
@@ -1700,6 +1741,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:36ecae08-11ee-5a7d-b087-660fe04442af",
         "sort_key": "000020.marker",
         "source_ref": {
           "format": "xhtml",
@@ -1718,6 +1760,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "ed9a1a66-b4b8-570b-b495-20631bbd41a0",
         "kind": "endnote_ref",
         "label": "22",
         "locator": {
@@ -1733,6 +1776,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:ed9a1a66-b4b8-570b-b495-20631bbd41a0",
         "sort_key": "000021.marker",
         "source_ref": {
           "format": "xhtml",
@@ -1751,6 +1795,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "aa0fb554-ba48-58af-8988-ede0e731f916",
         "kind": "endnote_ref",
         "label": "23",
         "locator": {
@@ -1766,6 +1811,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:aa0fb554-ba48-58af-8988-ede0e731f916",
         "sort_key": "000022.marker",
         "source_ref": {
           "format": "xhtml",
@@ -1784,6 +1830,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "7c7891b9-a906-5225-a28a-0b24a0338e13",
         "kind": "endnote_ref",
         "label": "24",
         "locator": {
@@ -1799,6 +1846,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:7c7891b9-a906-5225-a28a-0b24a0338e13",
         "sort_key": "000023.marker",
         "source_ref": {
           "format": "xhtml",
@@ -1817,6 +1865,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "70ce2309-0a86-546a-ac19-c2a8055b4a6d",
         "kind": "endnote_ref",
         "label": "25",
         "locator": {
@@ -1832,6 +1881,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:70ce2309-0a86-546a-ac19-c2a8055b4a6d",
         "sort_key": "000024.marker",
         "source_ref": {
           "format": "xhtml",
@@ -1850,6 +1900,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "d989489f-b616-54aa-a06f-63cf8810b975",
         "kind": "endnote_ref",
         "label": "26",
         "locator": {
@@ -1865,6 +1916,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:d989489f-b616-54aa-a06f-63cf8810b975",
         "sort_key": "000025.marker",
         "source_ref": {
           "format": "xhtml",
@@ -1883,6 +1935,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "ee1612cd-8fb8-5d9a-ac78-f1a7e6397496",
         "kind": "endnote_ref",
         "label": "27",
         "locator": {
@@ -1898,6 +1951,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:ee1612cd-8fb8-5d9a-ac78-f1a7e6397496",
         "sort_key": "000026.marker",
         "source_ref": {
           "format": "xhtml",
@@ -1916,6 +1970,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "3a06526a-816d-5143-ba60-7cdb73595fbb",
         "kind": "endnote_ref",
         "label": "28",
         "locator": {
@@ -1931,6 +1986,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:3a06526a-816d-5143-ba60-7cdb73595fbb",
         "sort_key": "000027.marker",
         "source_ref": {
           "format": "xhtml",
@@ -1949,6 +2005,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "9efd6a65-d628-5dad-a35f-fd88241d2278",
         "kind": "endnote_ref",
         "label": "29",
         "locator": {
@@ -1964,6 +2021,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:9efd6a65-d628-5dad-a35f-fd88241d2278",
         "sort_key": "000028.marker",
         "source_ref": {
           "format": "xhtml",
@@ -1982,6 +2040,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "d6cc7de6-1863-5251-952a-5695499fd8ef",
         "kind": "endnote_ref",
         "label": "30",
         "locator": {
@@ -1997,6 +2056,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:d6cc7de6-1863-5251-952a-5695499fd8ef",
         "sort_key": "000029.marker",
         "source_ref": {
           "format": "xhtml",
@@ -2015,6 +2075,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "b2147dba-7aab-5f8c-b054-c25ade07c3e1",
         "kind": "endnote_ref",
         "label": "31",
         "locator": {
@@ -2030,6 +2091,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:b2147dba-7aab-5f8c-b054-c25ade07c3e1",
         "sort_key": "000030.marker",
         "source_ref": {
           "format": "xhtml",
@@ -2048,6 +2110,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "8f67e81f-c13a-5e2d-bab8-1e5e72e11765",
         "kind": "endnote_ref",
         "label": "32",
         "locator": {
@@ -2063,6 +2126,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:8f67e81f-c13a-5e2d-bab8-1e5e72e11765",
         "sort_key": "000031.marker",
         "source_ref": {
           "format": "xhtml",
@@ -2081,6 +2145,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "648d5b8d-c748-5f1f-8bc2-3ea9daed7499",
         "kind": "endnote_ref",
         "label": "33",
         "locator": {
@@ -2096,6 +2161,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:648d5b8d-c748-5f1f-8bc2-3ea9daed7499",
         "sort_key": "000032.marker",
         "source_ref": {
           "format": "xhtml",
@@ -2114,6 +2180,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "6518a161-dc50-5021-9b4c-51da843a8feb",
         "kind": "endnote_ref",
         "label": "34",
         "locator": {
@@ -2129,6 +2196,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:6518a161-dc50-5021-9b4c-51da843a8feb",
         "sort_key": "000033.marker",
         "source_ref": {
           "format": "xhtml",
@@ -2147,6 +2215,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "7bf0d41c-350b-58ba-ad6a-46a0be13d573",
         "kind": "endnote_ref",
         "label": "35",
         "locator": {
@@ -2162,6 +2231,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:7bf0d41c-350b-58ba-ad6a-46a0be13d573",
         "sort_key": "000034.marker",
         "source_ref": {
           "format": "xhtml",
@@ -2180,6 +2250,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "45b86d28-340f-5f19-a62f-436c9b077144",
         "kind": "endnote_ref",
         "label": "36",
         "locator": {
@@ -2195,6 +2266,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:45b86d28-340f-5f19-a62f-436c9b077144",
         "sort_key": "000035.marker",
         "source_ref": {
           "format": "xhtml",
@@ -2213,6 +2285,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "9c4a1893-03a4-5df6-9c83-b6c517f33ccf",
         "kind": "endnote_ref",
         "label": "37",
         "locator": {
@@ -2228,6 +2301,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:9c4a1893-03a4-5df6-9c83-b6c517f33ccf",
         "sort_key": "000036.marker",
         "source_ref": {
           "format": "xhtml",
@@ -2246,6 +2320,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "40e19287-ce89-57db-a6ff-c9fb9387507e",
         "kind": "endnote_ref",
         "label": "38",
         "locator": {
@@ -2261,6 +2336,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:40e19287-ce89-57db-a6ff-c9fb9387507e",
         "sort_key": "000037.marker",
         "source_ref": {
           "format": "xhtml",
@@ -2279,6 +2355,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "a69a2a84-1647-584b-a8f1-714222643dbc",
         "kind": "endnote_ref",
         "label": "39",
         "locator": {
@@ -2294,6 +2371,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:a69a2a84-1647-584b-a8f1-714222643dbc",
         "sort_key": "000038.marker",
         "source_ref": {
           "format": "xhtml",
@@ -2312,6 +2390,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "62d2c3a3-2bfc-592e-8c76-597c8881e0e4",
         "kind": "endnote_ref",
         "label": "40",
         "locator": {
@@ -2327,6 +2406,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:62d2c3a3-2bfc-592e-8c76-597c8881e0e4",
         "sort_key": "000039.marker",
         "source_ref": {
           "format": "xhtml",
@@ -2345,6 +2425,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "58b3a744-bcc6-56ed-b369-ad2b5dfb8526",
         "kind": "endnote_ref",
         "label": "41",
         "locator": {
@@ -2360,6 +2441,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:58b3a744-bcc6-56ed-b369-ad2b5dfb8526",
         "sort_key": "000040.marker",
         "source_ref": {
           "format": "xhtml",
@@ -2378,6 +2460,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "838d701e-69df-57ea-9739-2f9a3d493919",
         "kind": "endnote_ref",
         "label": "42",
         "locator": {
@@ -2393,6 +2476,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:838d701e-69df-57ea-9739-2f9a3d493919",
         "sort_key": "000041.marker",
         "source_ref": {
           "format": "xhtml",
@@ -2411,6 +2495,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "cce1adc6-154b-52b0-806f-244c78127081",
         "kind": "endnote_ref",
         "label": "43",
         "locator": {
@@ -2426,6 +2511,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:cce1adc6-154b-52b0-806f-244c78127081",
         "sort_key": "000042.marker",
         "source_ref": {
           "format": "xhtml",
@@ -2444,6 +2530,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "4aa8188f-2784-51df-8c55-c8fd20923e6f",
         "kind": "endnote_ref",
         "label": "44",
         "locator": {
@@ -2459,6 +2546,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:4aa8188f-2784-51df-8c55-c8fd20923e6f",
         "sort_key": "000043.marker",
         "source_ref": {
           "format": "xhtml",
@@ -2477,6 +2565,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "f24c0cc0-3666-5048-b41e-54e67d331301",
         "kind": "endnote_ref",
         "label": "45",
         "locator": {
@@ -2492,6 +2581,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:f24c0cc0-3666-5048-b41e-54e67d331301",
         "sort_key": "000044.marker",
         "source_ref": {
           "format": "xhtml",
@@ -2510,6 +2600,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "3cf60764-609f-541e-b3ba-d31632f1490a",
         "kind": "endnote_ref",
         "label": "46",
         "locator": {
@@ -2525,6 +2616,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:3cf60764-609f-541e-b3ba-d31632f1490a",
         "sort_key": "000045.marker",
         "source_ref": {
           "format": "xhtml",
@@ -2543,6 +2635,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "16037199-0853-53b1-9560-7d60f7662dab",
         "kind": "endnote_ref",
         "label": "47",
         "locator": {
@@ -2558,6 +2651,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:16037199-0853-53b1-9560-7d60f7662dab",
         "sort_key": "000046.marker",
         "source_ref": {
           "format": "xhtml",
@@ -2576,6 +2670,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "b75be327-53fe-5921-a382-7e956b1bdb0f",
         "kind": "endnote_ref",
         "label": "48",
         "locator": {
@@ -2591,6 +2686,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:b75be327-53fe-5921-a382-7e956b1bdb0f",
         "sort_key": "000047.marker",
         "source_ref": {
           "format": "xhtml",
@@ -2609,6 +2705,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "90bba015-5f39-5184-b3c2-3177a5978fd3",
         "kind": "endnote_ref",
         "label": "49",
         "locator": {
@@ -2624,6 +2721,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:90bba015-5f39-5184-b3c2-3177a5978fd3",
         "sort_key": "000048.marker",
         "source_ref": {
           "format": "xhtml",
@@ -2642,6 +2740,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "08aa5621-c734-5905-a58e-9a88b4234656",
         "kind": "endnote_ref",
         "label": "50",
         "locator": {
@@ -2657,6 +2756,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:08aa5621-c734-5905-a58e-9a88b4234656",
         "sort_key": "000049.marker",
         "source_ref": {
           "format": "xhtml",
@@ -2675,6 +2775,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "3919375c-af86-56a5-b0f4-920c145ce1f3",
         "kind": "endnote_ref",
         "label": "51",
         "locator": {
@@ -2690,6 +2791,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:3919375c-af86-56a5-b0f4-920c145ce1f3",
         "sort_key": "000050.marker",
         "source_ref": {
           "format": "xhtml",
@@ -2708,6 +2810,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "95087781-fbc8-5905-b8ac-cfc7ee6b7aa9",
         "kind": "endnote_ref",
         "label": "52",
         "locator": {
@@ -2723,6 +2826,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:95087781-fbc8-5905-b8ac-cfc7ee6b7aa9",
         "sort_key": "000051.marker",
         "source_ref": {
           "format": "xhtml",
@@ -2741,6 +2845,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "5f5bcc65-02e7-508b-9516-56b608ad66e3",
         "kind": "endnote_ref",
         "label": "53",
         "locator": {
@@ -2756,6 +2861,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:5f5bcc65-02e7-508b-9516-56b608ad66e3",
         "sort_key": "000052.marker",
         "source_ref": {
           "format": "xhtml",
@@ -2774,6 +2880,7 @@
         "body_text": "\u201cA.B.C.\u2019s\u201d signifes endemic teashops, found in all parts of London. The initials signify \u201cAerated Bread Company, Limited.\u201d \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "fb17318e-ad4b-5529-8fb2-fb7a7f9c5a2b",
         "kind": "endnote",
         "label": "\u201cA.B.C.\u2019s\u201d",
         "locator": {
@@ -2789,6 +2896,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:fb17318e-ad4b-5529-8fb2-fb7a7f9c5a2b",
         "sort_key": "000006.000000.target",
         "source_ref": {
           "format": "xhtml",
@@ -2806,6 +2914,7 @@
         "body_text": "Not only the title, but the plan and a good deal of the incidental symbolism of the poem were suggested by Miss Jessie L. Weston\u2019s book on the Grail legend: From Ritual to Romance (Macmillan, Cambridge) Indeed, so deeply am I indebted, Miss Weston\u2019s book will elucidate the difficulties of the poem much better than my notes can do; and I recommend it (apart from the great interest of the book itself) to any who think such elucidation of the poem worth the trouble. To another work of anthropology I am indebted in general, one which has influenced our generation profoundly; I mean The Golden Bough; I have used especially the two volumes Adonis, Attis, Osiris. Anyone who is acquainted with these works will immediately recognise in the poem certain references to vegetation ceremonies. \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "5e99ab4a-e58b-5299-ae65-efd6b335eca3",
         "kind": "endnote",
         "label": "Not",
         "locator": {
@@ -2821,6 +2930,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:5e99ab4a-e58b-5299-ae65-efd6b335eca3",
         "sort_key": "000007.000001.target",
         "source_ref": {
           "format": "xhtml",
@@ -2838,6 +2948,7 @@
         "body_text": "Cf. Ezekiel 2:1. \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "2f750f8b-3e65-5ae4-b49c-30590c2786ec",
         "kind": "endnote",
         "label": "Cf.",
         "locator": {
@@ -2853,6 +2964,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:2f750f8b-3e65-5ae4-b49c-30590c2786ec",
         "sort_key": "000008.000002.target",
         "source_ref": {
           "format": "xhtml",
@@ -2870,6 +2982,7 @@
         "body_text": "Cf. Ecclesiastes 12:5. \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "ca97c4e1-68b4-52de-beeb-0f2e03302e0c",
         "kind": "endnote",
         "label": "Cf.",
         "locator": {
@@ -2885,6 +2998,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:ca97c4e1-68b4-52de-beeb-0f2e03302e0c",
         "sort_key": "000009.000003.target",
         "source_ref": {
           "format": "xhtml",
@@ -2902,6 +3016,7 @@
         "body_text": "V. Tristan und Isolde, I, verses 5\u2060\u2013\u20608. \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "315aed12-dc6b-5552-a2f1-84f1dd33ce6c",
         "kind": "endnote",
         "label": "V.",
         "locator": {
@@ -2917,6 +3032,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:315aed12-dc6b-5552-a2f1-84f1dd33ce6c",
         "sort_key": "000010.000004.target",
         "source_ref": {
           "format": "xhtml",
@@ -2934,6 +3050,7 @@
         "body_text": "V. Tristan und Isolde, III, verse 24. \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "9a81dd6b-72b6-53bf-85d8-e92f959b0448",
         "kind": "endnote",
         "label": "V.",
         "locator": {
@@ -2949,6 +3066,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:9a81dd6b-72b6-53bf-85d8-e92f959b0448",
         "sort_key": "000011.000005.target",
         "source_ref": {
           "format": "xhtml",
@@ -2966,6 +3084,7 @@
         "body_text": "I am not familiar with the exact constitution of the Tarot pack of cards, from which I have obviously departed to suit my own convenience. The Hanged Man, a member of the traditional pack, fits my purpose in two ways: because he is associated in my mind with the Hanged God of Frazer, and because I associate him with the hooded figure in the passage of the disciples to Emmaus in Part V. The Phoenician Sailor and the Merchant appear later; also the \u201ccrowds of people,\u201d and Death by Water is executed in Part IV. The Man with Three Staves (an authentic member of the Tarot pack) I associate, quite arbitrarily, with the Fisher King himself. \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "76cad52a-879e-5415-b8d0-f75e59fc1a32",
         "kind": "endnote",
         "label": "I",
         "locator": {
@@ -2981,6 +3100,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:76cad52a-879e-5415-b8d0-f75e59fc1a32",
         "sort_key": "000012.000006.target",
         "source_ref": {
           "format": "xhtml",
@@ -2998,6 +3118,7 @@
         "body_text": "Cf. Baudelaire: \u201cFourmillante cit\u00e9, cit\u00e9; pleine de r\u00eaves, O\u00f9 le spectre en plein jour raccroche le passant.\u201d \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "35f1505e-b3be-5b05-ad18-e8ec5a5a95b9",
         "kind": "endnote",
         "label": "Cf.",
         "locator": {
@@ -3013,6 +3134,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:35f1505e-b3be-5b05-ad18-e8ec5a5a95b9",
         "sort_key": "000013.000007.target",
         "source_ref": {
           "format": "xhtml",
@@ -3030,6 +3152,7 @@
         "body_text": "Cf. Inferno, iii. 55\u2060\u2013\u20607. \u201csi lunga tratta di gente, ch\u2019io non avrei mai creduto che morte tanta n\u2019avesse disfatta.\u201d \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "f632cf67-28e2-521c-9369-909f99319663",
         "kind": "endnote",
         "label": "Cf.",
         "locator": {
@@ -3045,6 +3168,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:f632cf67-28e2-521c-9369-909f99319663",
         "sort_key": "000014.000008.target",
         "source_ref": {
           "format": "xhtml",
@@ -3062,6 +3186,7 @@
         "body_text": "Cf. Inferno, iv. 25\u2060\u2013\u20607: \u201cQuivi, secondo che per ascoltare, non avea pianto, ma\u2019 che di sospiri, che l\u2019aura eterna facevan tremare.\u201d \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "ed1222ac-077f-589a-9ff8-d56220840a97",
         "kind": "endnote",
         "label": "Cf.",
         "locator": {
@@ -3077,6 +3202,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:ed1222ac-077f-589a-9ff8-d56220840a97",
         "sort_key": "000015.000009.target",
         "source_ref": {
           "format": "xhtml",
@@ -3094,6 +3220,7 @@
         "body_text": "A phenomenon which I have often noticed. \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "5c31048f-e7a2-55ad-8510-4bb011639290",
         "kind": "endnote",
         "label": "A",
         "locator": {
@@ -3109,6 +3236,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:5c31048f-e7a2-55ad-8510-4bb011639290",
         "sort_key": "000016.000010.target",
         "source_ref": {
           "format": "xhtml",
@@ -3126,6 +3254,7 @@
         "body_text": "Cf. the Dirge in Webster\u2019s White Devil. \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "132a43c3-39a8-55fd-87f3-9b046ce49c45",
         "kind": "endnote",
         "label": "Cf.",
         "locator": {
@@ -3141,6 +3270,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:132a43c3-39a8-55fd-87f3-9b046ce49c45",
         "sort_key": "000017.000011.target",
         "source_ref": {
           "format": "xhtml",
@@ -3158,6 +3288,7 @@
         "body_text": "V. Baudelaire, Preface to Fleurs du Mal. \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "76fd123d-3af2-5828-af25-e674179c0ca7",
         "kind": "endnote",
         "label": "V.",
         "locator": {
@@ -3173,6 +3304,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:76fd123d-3af2-5828-af25-e674179c0ca7",
         "sort_key": "000018.000012.target",
         "source_ref": {
           "format": "xhtml",
@@ -3190,6 +3322,7 @@
         "body_text": "Cf. Antony and Cleopatra, II. ii., l. 190. \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "05b47a5c-a380-52e0-a579-30ce8fe732e4",
         "kind": "endnote",
         "label": "Cf.",
         "locator": {
@@ -3205,6 +3338,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:05b47a5c-a380-52e0-a579-30ce8fe732e4",
         "sort_key": "000019.000013.target",
         "source_ref": {
           "format": "xhtml",
@@ -3222,6 +3356,7 @@
         "body_text": "Laquearia. V. Aeneid, I. 726: dependent lychni laquearibus aureis incensi, et noctem flammis funalia vincunt. \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "52acbe3c-574f-5d3a-9471-66a370452e9f",
         "kind": "endnote",
         "label": "Laquearia.",
         "locator": {
@@ -3237,6 +3372,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:52acbe3c-574f-5d3a-9471-66a370452e9f",
         "sort_key": "000020.000014.target",
         "source_ref": {
           "format": "xhtml",
@@ -3254,6 +3390,7 @@
         "body_text": "Sylvan scene. V. Milton, Paradise Lost, iv. 140. \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "eda2ac48-0412-5d29-a63b-1ca890ead87a",
         "kind": "endnote",
         "label": "Sylvan",
         "locator": {
@@ -3269,6 +3406,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:eda2ac48-0412-5d29-a63b-1ca890ead87a",
         "sort_key": "000021.000015.target",
         "source_ref": {
           "format": "xhtml",
@@ -3286,6 +3424,7 @@
         "body_text": "V. Ovid, Metamorphoses, vi, Philomela. \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "2f2d18a0-c0e0-58f0-8752-2b28076731d5",
         "kind": "endnote",
         "label": "V.",
         "locator": {
@@ -3301,6 +3440,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:2f2d18a0-c0e0-58f0-8752-2b28076731d5",
         "sort_key": "000022.000016.target",
         "source_ref": {
           "format": "xhtml",
@@ -3318,6 +3458,7 @@
         "body_text": "Cf. Part III, l. 204. \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "12434ef2-63d1-5a3d-93ad-7d31945b8955",
         "kind": "endnote",
         "label": "Cf.",
         "locator": {
@@ -3333,6 +3474,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:12434ef2-63d1-5a3d-93ad-7d31945b8955",
         "sort_key": "000023.000017.target",
         "source_ref": {
           "format": "xhtml",
@@ -3350,6 +3492,7 @@
         "body_text": "Cf. Part III, l. 195. \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "828d577c-f538-571f-b167-978fa8928e4b",
         "kind": "endnote",
         "label": "Cf.",
         "locator": {
@@ -3365,6 +3508,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:828d577c-f538-571f-b167-978fa8928e4b",
         "sort_key": "000024.000018.target",
         "source_ref": {
           "format": "xhtml",
@@ -3382,6 +3526,7 @@
         "body_text": "Cf. Webster: \u201cIs the wind in that door still?\u201d \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "d71ea2e5-63b1-5a65-8631-6cf3fdf35621",
         "kind": "endnote",
         "label": "Cf.",
         "locator": {
@@ -3397,6 +3542,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:d71ea2e5-63b1-5a65-8631-6cf3fdf35621",
         "sort_key": "000025.000019.target",
         "source_ref": {
           "format": "xhtml",
@@ -3414,6 +3560,7 @@
         "body_text": "Cf. Part I, l. 37, 48. \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "b8086929-3e25-5c0f-8bbc-4a757cc60121",
         "kind": "endnote",
         "label": "Cf.",
         "locator": {
@@ -3429,6 +3576,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:b8086929-3e25-5c0f-8bbc-4a757cc60121",
         "sort_key": "000026.000020.target",
         "source_ref": {
           "format": "xhtml",
@@ -3446,6 +3594,7 @@
         "body_text": "Cf. the game of chess in Middleton\u2019s Women Beware Women. \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "185dfe0f-5b80-5c35-bf91-1128d43bacc2",
         "kind": "endnote",
         "label": "Cf.",
         "locator": {
@@ -3461,6 +3610,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:185dfe0f-5b80-5c35-bf91-1128d43bacc2",
         "sort_key": "000027.000021.target",
         "source_ref": {
           "format": "xhtml",
@@ -3478,6 +3628,7 @@
         "body_text": "V. Spenser, Prothalamion. \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "83d67796-6485-5a76-8d2a-fb8be825a30d",
         "kind": "endnote",
         "label": "V.",
         "locator": {
@@ -3493,6 +3644,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:83d67796-6485-5a76-8d2a-fb8be825a30d",
         "sort_key": "000028.000022.target",
         "source_ref": {
           "format": "xhtml",
@@ -3510,6 +3662,7 @@
         "body_text": "Cf. The Tempest, I. ii. \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "3dcf8697-0659-587a-95a9-67afb6a24245",
         "kind": "endnote",
         "label": "Cf.",
         "locator": {
@@ -3525,6 +3678,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:3dcf8697-0659-587a-95a9-67afb6a24245",
         "sort_key": "000029.000023.target",
         "source_ref": {
           "format": "xhtml",
@@ -3542,6 +3696,7 @@
         "body_text": "Cf. Marvell, \u201cTo His Coy Mistress.\u201d \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "18149555-8955-5e03-a9db-4dd844e83b3c",
         "kind": "endnote",
         "label": "Cf.",
         "locator": {
@@ -3557,6 +3712,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:18149555-8955-5e03-a9db-4dd844e83b3c",
         "sort_key": "000030.000024.target",
         "source_ref": {
           "format": "xhtml",
@@ -3574,6 +3730,7 @@
         "body_text": "Cf. Day, Parliament of Bees: \u201cWhen of the sudden, listening, you shall hear, A noise of horns and hunting, which shall bring Actaeon to Diana in the spring, Where all shall see her naked skin\u2060 \u2060\u2026\u201d \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "e65baa28-25d3-5083-a6b2-0cab176b3118",
         "kind": "endnote",
         "label": "Cf.",
         "locator": {
@@ -3589,6 +3746,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:e65baa28-25d3-5083-a6b2-0cab176b3118",
         "sort_key": "000031.000025.target",
         "source_ref": {
           "format": "xhtml",
@@ -3606,6 +3764,7 @@
         "body_text": "I do not know the origin of the ballad from which these lines are taken: it was reported to me from Sydney, Australia. \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "18782310-5c1a-59a0-bf5c-445588a072bf",
         "kind": "endnote",
         "label": "I",
         "locator": {
@@ -3621,6 +3780,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:18782310-5c1a-59a0-bf5c-445588a072bf",
         "sort_key": "000032.000026.target",
         "source_ref": {
           "format": "xhtml",
@@ -3638,6 +3798,7 @@
         "body_text": "V. Verlaine, Parsifal. \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "92878690-d9c7-5225-8d09-1bdb6918ff96",
         "kind": "endnote",
         "label": "V.",
         "locator": {
@@ -3653,6 +3814,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:92878690-d9c7-5225-8d09-1bdb6918ff96",
         "sort_key": "000033.000027.target",
         "source_ref": {
           "format": "xhtml",
@@ -3670,6 +3832,7 @@
         "body_text": "The currants were quoted at a price \u201ccarriage and insurance free to London\u201d; and the Bill of Lading etc. were to be handed to the buyer upon payment of the sight draft. \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "c46ad41c-c1c9-5579-97b4-d31cc51cb96a",
         "kind": "endnote",
         "label": "The",
         "locator": {
@@ -3685,6 +3848,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:c46ad41c-c1c9-5579-97b4-d31cc51cb96a",
         "sort_key": "000034.000028.target",
         "source_ref": {
           "format": "xhtml",
@@ -3702,6 +3866,7 @@
         "body_text": "Tiresias, although a mere spectator and not indeed a \u201ccharacter,\u201d is yet the most important personage in the poem, uniting all the rest. Just as the one-eyed merchant, seller of currants, melts into the Phoenician Sailor, and the latter is not wholly distinct from Ferdinand Prince of Naples, so all the women are one woman, and the two sexes meet in Tiresias. What Tiresias sees, in fact, is the substance of the poem. The whole passage from Ovid is of great anthropological interest: \u201c\u2026 Cum Iunone iocos et maior vestra profecto est Quam, quae contingit maribus,\u2019 dixisse, \u2018voluptas.\u2019 Illa negat; placuit quae sit sententia docti Quaerere Tiresiae: venus huic erat utraque nota. Nam duo magnorum viridi coeuntia silva Corpora serpentum baculi violaverat ictu Deque viro factus, mirabile, femina septem Egerat autumnos; octavo rursus eosdem Vidit et \u2018est vestrae si tanta potentia plagae,\u2019 Dixit \u2018ut auctoris sortem in contraria mutet, Nunc quoque vos feriam!\u2019 percussis anguibus isdem Forma prior rediit genetivaque venit imago. Arbiter hic igitur sumptus de lite iocosa Dicta Iovis firmat; gravius Saturnia iusto Nec pro materia fertur doluisse suique Iudicis aeterna damnavit lumina nocte, At pater omnipotens (neque enim licet inrita cuiquam Facta dei fecisse deo) pro lumine adempto Scire futura dedit poenamque levavit honore.\u201d \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "fefa56ed-94de-5938-aa76-412850fa1c53",
         "kind": "endnote",
         "label": "Tiresias,",
         "locator": {
@@ -3717,6 +3882,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:fefa56ed-94de-5938-aa76-412850fa1c53",
         "sort_key": "000035.000029.target",
         "source_ref": {
           "format": "xhtml",
@@ -3734,6 +3900,7 @@
         "body_text": "This may not appear as exact as Sappho\u2019s lines, but I had in mind the \u201clongshore\u201d or \u201cdory\u201d fisherman, who returns at nightfall. \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "40183334-f487-5693-8989-43ad0027bb0d",
         "kind": "endnote",
         "label": "This",
         "locator": {
@@ -3749,6 +3916,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:40183334-f487-5693-8989-43ad0027bb0d",
         "sort_key": "000036.000030.target",
         "source_ref": {
           "format": "xhtml",
@@ -3766,6 +3934,7 @@
         "body_text": "V. Goldsmith, the song in The Vicar of Wakefield. \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "374df7b2-818e-5764-9e6e-a142551f2a24",
         "kind": "endnote",
         "label": "V.",
         "locator": {
@@ -3781,6 +3950,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:374df7b2-818e-5764-9e6e-a142551f2a24",
         "sort_key": "000037.000031.target",
         "source_ref": {
           "format": "xhtml",
@@ -3798,6 +3968,7 @@
         "body_text": "V. The Tempest, I. ii. \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "98b750a4-2942-5a39-a6b2-513495864a09",
         "kind": "endnote",
         "label": "V.",
         "locator": {
@@ -3813,6 +3984,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:98b750a4-2942-5a39-a6b2-513495864a09",
         "sort_key": "000038.000032.target",
         "source_ref": {
           "format": "xhtml",
@@ -3830,6 +4002,7 @@
         "body_text": "The interior of St. Magnus Martyr is to my mind one of the finest among Wren\u2019s interiors. See The Proposed Demolition of Nineteen City Churches (P. S. King & Son, Ltd.). \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "c9cb7b3b-7c44-59fc-bb97-14c28dd2ea5d",
         "kind": "endnote",
         "label": "The",
         "locator": {
@@ -3845,6 +4018,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:c9cb7b3b-7c44-59fc-bb97-14c28dd2ea5d",
         "sort_key": "000039.000033.target",
         "source_ref": {
           "format": "xhtml",
@@ -3862,6 +4036,7 @@
         "body_text": "The Song of the (three) Thames-daughters begins here. From line 292 to 306 inclusive they speak in turn. V. G\u00f6tterd\u00e4mmerung, III. i: the Rhine-daughters. \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "3bc473e4-70fd-55d1-b74c-6ca14b2b8d63",
         "kind": "endnote",
         "label": "The",
         "locator": {
@@ -3877,6 +4052,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:3bc473e4-70fd-55d1-b74c-6ca14b2b8d63",
         "sort_key": "000040.000034.target",
         "source_ref": {
           "format": "xhtml",
@@ -3894,6 +4070,7 @@
         "body_text": "V. Froude, Elizabeth, Vol. I, ch. iv, letter of De Quadra to Philip of Spain: \u201cIn the afternoon we were in a barge, watching the games on the river. (The queen) was alone with Lord Robert and myself on the poop, when they began to talk nonsense, and went so far that Lord Robert at last said, as I was on the spot there was no reason why they should not be married if the queen pleased.\u201d \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "ae3a6067-dc43-5a7f-9b6b-bb2677199901",
         "kind": "endnote",
         "label": "V.",
         "locator": {
@@ -3909,6 +4086,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:ae3a6067-dc43-5a7f-9b6b-bb2677199901",
         "sort_key": "000041.000035.target",
         "source_ref": {
           "format": "xhtml",
@@ -3926,6 +4104,7 @@
         "body_text": "Cf. Purgatorio, v. 133: \u201cRicorditi di me, che son la Pia; Siena mi fe\u2019, disfecemi Maremma.\u201d \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "983757e9-30e2-5e6d-b94b-4e3180733f04",
         "kind": "endnote",
         "label": "Cf.",
         "locator": {
@@ -3941,6 +4120,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:983757e9-30e2-5e6d-b94b-4e3180733f04",
         "sort_key": "000042.000036.target",
         "source_ref": {
           "format": "xhtml",
@@ -3958,6 +4138,7 @@
         "body_text": "V. St. Augustine\u2019s Confessions: \u201cto Carthage then I came, where a cauldron of unholy loves sang all about mine ears.\u201d \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "95231889-8b8f-5806-bba0-aecd1d51d1e2",
         "kind": "endnote",
         "label": "V.",
         "locator": {
@@ -3973,6 +4154,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:95231889-8b8f-5806-bba0-aecd1d51d1e2",
         "sort_key": "000043.000037.target",
         "source_ref": {
           "format": "xhtml",
@@ -3990,6 +4172,7 @@
         "body_text": "The complete text of the Buddha\u2019s Fire Sermon (which corresponds in importance to the Sermon on the Mount) from which these words are taken, will be found translated in the late Henry Clarke Warren\u2019s Buddhism in Translation (Harvard Oriental Series). Mr. Warren was one of the great pioneers of Buddhist studies in the Occident. \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "8436fd05-24ce-50c6-97dc-5cd908051d71",
         "kind": "endnote",
         "label": "The",
         "locator": {
@@ -4005,6 +4188,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:8436fd05-24ce-50c6-97dc-5cd908051d71",
         "sort_key": "000044.000038.target",
         "source_ref": {
           "format": "xhtml",
@@ -4022,6 +4206,7 @@
         "body_text": "From St. Augustine\u2019s Confessions again. The collocation of these two representatives of eastern and western asceticism, as the culmination of this part of the poem, is not an accident. \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "85df34d0-1061-5473-8473-b0da1b1b7b6e",
         "kind": "endnote",
         "label": "From",
         "locator": {
@@ -4037,6 +4222,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:85df34d0-1061-5473-8473-b0da1b1b7b6e",
         "sort_key": "000045.000039.target",
         "source_ref": {
           "format": "xhtml",
@@ -4054,6 +4240,7 @@
         "body_text": "In the first part of Part V three themes are employed: the journey to Emmaus, the approach to the Chapel Perilous (see Miss Weston\u2019s book) and the present decay of eastern Europe. \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "93c4b9a0-bfc4-549d-87a1-a657db4f9ef0",
         "kind": "endnote",
         "label": "In",
         "locator": {
@@ -4069,6 +4256,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:93c4b9a0-bfc4-549d-87a1-a657db4f9ef0",
         "sort_key": "000046.000040.target",
         "source_ref": {
           "format": "xhtml",
@@ -4086,6 +4274,7 @@
         "body_text": "This is Turdus aonalaschkae pallasii, the hermit thrush, which I have heard in Quebec County. Chapman says (Handbook of Birds of Eastern North America) \u201cit is most at home in secluded woodland and thickety retreats.\u2060 \u2060\u2026 Its notes are not remarkable for variety or volume, but in purity and sweetness of tone and exquisite modulation they are unequalled.\u201d Its \u201cwater-dripping song\u201d is justly celebrated. \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "1fdfe4c4-197c-55a6-a02d-7ddae28936d3",
         "kind": "endnote",
         "label": "This",
         "locator": {
@@ -4101,6 +4290,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:1fdfe4c4-197c-55a6-a02d-7ddae28936d3",
         "sort_key": "000047.000041.target",
         "source_ref": {
           "format": "xhtml",
@@ -4118,6 +4308,7 @@
         "body_text": "The following lines were stimulated by the account of one of the Antarctic expeditions (I forget which, but I think one of Shackleton\u2019s): it was related that the party of explorers, at the extremity of their strength, had the constant delusion that there was one more member than could actually be counted. \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "b28f38a1-650e-5486-92da-49891f275629",
         "kind": "endnote",
         "label": "The",
         "locator": {
@@ -4133,6 +4324,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:b28f38a1-650e-5486-92da-49891f275629",
         "sort_key": "000048.000042.target",
         "source_ref": {
           "format": "xhtml",
@@ -4150,6 +4342,7 @@
         "body_text": "Through line 376. Cf. Hermann Hesse, Blick ins Chaos: \u201cSchon ist halb Europa, schon ist zumindest der halbe Osten Europas auf dem Wege zum Chaos, f\u00e4hrt betrunken im heiligem Wahn am Abgrund entlang und singt dazu, singt betrunken und hymnisch wie Dmitri Karamasoff sang. Ueber diese Lieder lacht der B\u00fcrger beleidigt, der Heilige und Seher h\u00f6rt sie mit Tr\u00e4nen.\u201d \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "ffc4a390-edd5-5647-b637-dfb20426a610",
         "kind": "endnote",
         "label": "Through",
         "locator": {
@@ -4165,6 +4358,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:ffc4a390-edd5-5647-b637-dfb20426a610",
         "sort_key": "000049.000043.target",
         "source_ref": {
           "format": "xhtml",
@@ -4182,6 +4376,7 @@
         "body_text": "\u201cDatta, dayadhvam, damyata\u201d (Give, sympathize, control). The fable of the meaning of the Thunder is found in the Brihadaranyaka\u2060\u2014Upanishad, 5, 1. A translation is found in Deussen\u2019s Sechzig Upanishads des Veda, p. 489. \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "0e2c3fc5-f7b7-5252-8ab6-c239e546bea1",
         "kind": "endnote",
         "label": "\u201cDatta,",
         "locator": {
@@ -4197,6 +4392,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:0e2c3fc5-f7b7-5252-8ab6-c239e546bea1",
         "sort_key": "000050.000044.target",
         "source_ref": {
           "format": "xhtml",
@@ -4214,6 +4410,7 @@
         "body_text": "Cf. Webster, The White Devil, v. vi: \u201c\u2026 they\u2019ll remarry Ere the worm pierce your winding-sheet, ere the spider Make a thin curtain for your epitaphs.\u201d \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "3807016c-daac-55bb-a5f5-59f0b6a5b42f",
         "kind": "endnote",
         "label": "Cf.",
         "locator": {
@@ -4229,6 +4426,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:3807016c-daac-55bb-a5f5-59f0b6a5b42f",
         "sort_key": "000051.000045.target",
         "source_ref": {
           "format": "xhtml",
@@ -4246,6 +4444,7 @@
         "body_text": "Cf. Inferno, xxxiii. 46: \u201ced io sentii chiavar l\u2019uscio di sotto all\u2019orribile torre.\u201d Also F. H. Bradley, Appearance and Reality, p. 346: \u201cMy external sensations are no less private to myself than are my thoughts or my feelings. In either case my experience falls within my own circle, a circle closed on the outside; and, with all its elements alike, every sphere is opaque to the others which surround it.\u2060 \u2060\u2026 In brief, regarded as an existence which appears in a soul, the whole world for each is peculiar and private to that soul.\u201d \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "b6b4cfa5-7394-58d7-a1e0-e7923f452dd4",
         "kind": "endnote",
         "label": "Cf.",
         "locator": {
@@ -4261,6 +4460,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:b6b4cfa5-7394-58d7-a1e0-e7923f452dd4",
         "sort_key": "000052.000046.target",
         "source_ref": {
           "format": "xhtml",
@@ -4278,6 +4478,7 @@
         "body_text": "V. Weston, From Ritual to Romance; chapter on the Fisher King. \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "8d087281-c22c-5027-83f8-bfea934cfc29",
         "kind": "endnote",
         "label": "V.",
         "locator": {
@@ -4293,6 +4494,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:8d087281-c22c-5027-83f8-bfea934cfc29",
         "sort_key": "000053.000047.target",
         "source_ref": {
           "format": "xhtml",
@@ -4310,6 +4512,7 @@
         "body_text": "V. Purgatorio, xxvi. 148. \u201c \u2018Ara vos prec per aquella valor \u2018que vos guida al som de l\u2019escalina, \u2018sovegna vos a temps de ma dolor.\u2019 Poi s\u2019ascose nel foco che gli affina.\u201d \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "0628a040-9b3b-5aa5-b093-905870469a71",
         "kind": "endnote",
         "label": "V.",
         "locator": {
@@ -4325,6 +4528,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:0628a040-9b3b-5aa5-b093-905870469a71",
         "sort_key": "000054.000048.target",
         "source_ref": {
           "format": "xhtml",
@@ -4342,6 +4546,7 @@
         "body_text": "V. Pervigilium Veneris. Cf. Philomela in Parts II and III. \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "4a4ee4c2-3a71-54ea-bade-c9d420583fdb",
         "kind": "endnote",
         "label": "V.",
         "locator": {
@@ -4357,6 +4562,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:4a4ee4c2-3a71-54ea-bade-c9d420583fdb",
         "sort_key": "000055.000049.target",
         "source_ref": {
           "format": "xhtml",
@@ -4374,6 +4580,7 @@
         "body_text": "V. G\u00e9rard de Nerval, Sonnet El Desdichado. \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "602a1c6d-5271-5167-89e3-3275afd4ba5a",
         "kind": "endnote",
         "label": "V.",
         "locator": {
@@ -4389,6 +4596,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:602a1c6d-5271-5167-89e3-3275afd4ba5a",
         "sort_key": "000056.000050.target",
         "source_ref": {
           "format": "xhtml",
@@ -4406,6 +4614,7 @@
         "body_text": "V. Kyd\u2019s Spanish Tragedy. \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "0aa3cbd9-dc5d-5180-bd44-3a503bd045fb",
         "kind": "endnote",
         "label": "V.",
         "locator": {
@@ -4421,6 +4630,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:0aa3cbd9-dc5d-5180-bd44-3a503bd045fb",
         "sort_key": "000057.000051.target",
         "source_ref": {
           "format": "xhtml",
@@ -4438,6 +4648,7 @@
         "body_text": "Shantih. Repeated as here, a formal ending to an Upanishad. \u201cThe Peace which passeth understanding\u201d is a feeble translation of the content of this word. \u21a9",
         "confidence": "exact",
         "extraction_method": "epub_noteref",
+        "id": "dbaa4cb3-a990-520b-9654-283becc76dfb",
         "kind": "endnote",
         "label": "Shantih.",
         "locator": {
@@ -4453,6 +4664,7 @@
           "type": "epub_fragment_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:dbaa4cb3-a990-520b-9654-283becc76dfb",
         "sort_key": "000058.000052.target",
         "source_ref": {
           "format": "xhtml",

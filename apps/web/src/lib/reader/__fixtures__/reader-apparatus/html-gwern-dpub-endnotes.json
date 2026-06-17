@@ -33,6 +33,7 @@
         "body_text": "A source-authored note with a backlink. back",
         "confidence": "exact",
         "extraction_method": "html_semantic",
+        "id": "46745e8d-a365-5380-99ef-d28728e2d57c",
         "kind": "endnote",
         "label": "A",
         "locator": {
@@ -47,6 +48,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:46745e8d-a365-5380-99ef-d28728e2d57c",
         "sort_key": "000000.target",
         "source_ref": {
           "format": "html",
@@ -60,6 +62,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "html_semantic",
+        "id": "9f4ef6e4-1c78-5ce4-9be2-4c89d17b95cd",
         "kind": "endnote_ref",
         "label": "1",
         "locator": {
@@ -74,6 +77,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:9f4ef6e4-1c78-5ce4-9be2-4c89d17b95cd",
         "sort_key": "000000.marker",
         "source_ref": {
           "format": "html",

@@ -1,4 +1,5 @@
 import type { ReaderSourceTarget } from "./readerTarget";
+import type { ResourceActivation } from "@/lib/resources/activation";
 
 export type ReaderCitationColor =
   | "yellow"
@@ -20,8 +21,8 @@ export interface ReaderCitationData {
   index: number;
   color: ReaderCitationColor;
   preview: ReaderCitationPreview;
+  activation: ResourceActivation;
   target: ReaderSourceTarget | null;
-  href?: string | null;
 }
 
 const READER_CITATION_COLORS: ReaderCitationColor[] = [

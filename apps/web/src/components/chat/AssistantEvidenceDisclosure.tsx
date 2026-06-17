@@ -8,6 +8,7 @@ import {
   type ConversationMessage,
 } from "@/lib/conversations/types";
 import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
+import type { ResourceActivation } from "@/lib/resources/activation";
 import styles from "./MessageRow.module.css";
 
 export default function AssistantEvidenceDisclosure({
@@ -17,7 +18,11 @@ export default function AssistantEvidenceDisclosure({
 }: {
   message: ConversationMessage;
   answerRef?: Ref<HTMLDivElement>;
-  onCitationActivate?: (target: ReaderSourceTarget, event?: React.MouseEvent) => void;
+  onCitationActivate?: (
+    activation: ResourceActivation,
+    target: ReaderSourceTarget | null,
+    event?: React.MouseEvent,
+  ) => void;
 }) {
   const answerContent = conversationMessageText(message);
   const citations = useMemo(

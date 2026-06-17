@@ -9,6 +9,12 @@ describe("toChatSSEEvent", () => {
       type: "note_block",
       id: "22222222-2222-4222-8222-222222222222",
     },
+    activation: {
+      resourceRef: "note_block:22222222-2222-4222-8222-222222222222",
+      kind: "route",
+      href: "/notes/22222222-2222-4222-8222-222222222222",
+      unresolvedReason: null,
+    },
     media_id: null,
     locator: {
       type: "note_block_offsets",
@@ -135,6 +141,12 @@ describe("toChatSSEEvent", () => {
       id: "33333333-3333-4333-8333-333333333333",
       conversation_id: "conv-1",
       resource_ref: "media:44444444-4444-4444-8444-444444444444",
+      activation: {
+        resourceRef: "media:44444444-4444-4444-8444-444444444444",
+        kind: "route",
+        href: "/media/44444444-4444-4444-8444-444444444444",
+        unresolvedReason: null,
+      },
       label: "Annual report",
       summary: "Page 4",
       missing: false,
@@ -153,6 +165,12 @@ describe("toChatSSEEvent", () => {
         id: "33333333-3333-4333-8333-333333333333",
         conversation_id: "conv-1",
         resource_ref: "media:44444444-4444-4444-8444-444444444444",
+        activation: {
+          resourceRef: "media:44444444-4444-4444-8444-444444444444",
+          kind: "route",
+          href: "/media/44444444-4444-4444-8444-444444444444",
+          unresolvedReason: null,
+        },
         label: "Annual report",
         summary: "Page 4",
         missing: false,

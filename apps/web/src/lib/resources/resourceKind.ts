@@ -15,6 +15,7 @@ import {
   Link2,
   MessageSquare,
   MessagesSquare,
+  NotebookTabs,
   Sparkles,
   StickyNote,
   TextQuote,
@@ -47,6 +48,7 @@ const RESOURCE_SCHEME_ICONS = {
   external_snapshot: Globe,
   contributor: User,
   podcast: Disc3,
+  reader_apparatus_item: NotebookTabs,
 } satisfies Record<ResourceScheme, LucideIcon>;
 
 export function resourceObjectTypeForScheme(

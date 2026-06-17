@@ -31,7 +31,16 @@ router = APIRouter(tags=["search"])
 
 # Params removed by the search intent-model cutover. Stale links carrying any of
 # these must fail loud (400) rather than silently broaden to an all-kinds search.
-_DELETED_SEARCH_PARAMS = ("types", "content_kinds", "contributor_handles", "semantic")
+_DELETED_SEARCH_PARAMS = (
+    "types",
+    "content_kinds",
+    "contributor_handles",
+    "semantic",
+    "result_types",
+    "storage_kinds",
+    "planned_types",
+    "planned_filters",
+)
 
 
 @router.get("/search", response_model=SearchResponse, response_model_by_alias=False)
@@ -83,9 +92,9 @@ def search(
     - `conversation:<id>` - Messages within that conversation
 
     Returns 400 for removed legacy params (`types`, `content_kinds`,
-    `contributor_handles`, `semantic`), 404 for unauthorized scope (prevents
-    existence leakage), and 200 with empty results when there is neither a usable
-    full-text query nor a structured filter.
+    `contributor_handles`, `semantic`, `result_types`, `storage_kinds`), 404 for
+    unauthorized scope (prevents existence leakage), and 200 with empty results
+    when there is neither a usable full-text query nor a structured filter.
     """
     present_deleted = [param for param in _DELETED_SEARCH_PARAMS if param in request.query_params]
     if present_deleted:

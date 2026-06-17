@@ -1,6 +1,7 @@
 import type { ApiPath } from "@/lib/api/client";
 import { apiFetch } from "@/lib/api/client";
 import type { ResourceScheme } from "@/lib/resourceGraph/resourceRef";
+import type { ResourceActivation } from "@/lib/resources/activation";
 import type { EdgeKind, EdgeOrigin } from "./edges";
 
 export interface ConnectionEndpointOut {
@@ -9,6 +10,7 @@ export interface ConnectionEndpointOut {
   id: string;
   label: string | null;
   description: string | null;
+  activation: ResourceActivation;
   href: string | null;
   missing: boolean;
 }
@@ -17,6 +19,7 @@ export interface ConnectionCitationOut {
   ordinal: number;
   role: EdgeKind;
   snapshot: Record<string, unknown>;
+  activation: ResourceActivation;
   target_reader: ConnectionReaderTargetOut | null;
   target_status: "current" | "missing" | "forbidden" | "unanchorable";
 }

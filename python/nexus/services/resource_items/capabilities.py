@@ -8,14 +8,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Literal, assert_never
-from urllib.parse import quote
 from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.services.resource_graph.refs import RESOURCE_SCHEMES, ResourceRef, ResourceScheme
-from nexus.services.resource_graph.resolve import reader_target_for_citation_target
 from nexus.services.resource_graph.schemas import EdgeOrigin
 
 ResourceChatSubjectMode = Literal["none", "label", "scope", "readable", "quote", "generated_output"]
@@ -269,7 +267,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         chat_subject="none",
         readable="none",
         inspectable="none",
-        citable_result_type=None,
+        citable_result_type="web_result",
         app_search_scope=False,
         conversation_search_scope=False,
         citation_output_source=False,
@@ -304,6 +302,21 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         conversation_search_scope=False,
         citation_output_source=False,
         prompt_render="label",
+        expansion_policy="none",
+        adjacency_source=False,
+        adjacency_target=True,
+    ),
+    "reader_apparatus_item": ResourceItemCapability(
+        linkable=True,
+        attachable=True,
+        chat_subject="readable",
+        readable="body",
+        inspectable="none",
+        citable_result_type="reader_apparatus_item",
+        app_search_scope=False,
+        conversation_search_scope=False,
+        citation_output_source=False,
+        prompt_render="inline_body",
         expansion_policy="none",
         adjacency_source=False,
         adjacency_target=True,
@@ -406,77 +419,6 @@ def expandable_resource_schemes() -> tuple[ResourceScheme, ...]:
 
 def resource_expansion_policy(ref: ResourceRef) -> ResourceExpansionPolicy:
     return capability_for_ref(ref).expansion_policy
-
-
-def route_for_ref(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> str | None:
-    if ref.scheme == "page":
-        return f"/pages/{ref.id}"
-    if ref.scheme == "note_block":
-        return f"/notes/{ref.id}"
-    if ref.scheme == "media":
-        return f"/media/{ref.id}"
-    if ref.scheme == "conversation":
-        return f"/conversations/{ref.id}"
-    if ref.scheme == "library":
-        return f"/libraries/{ref.id}"
-    if ref.scheme == "oracle_reading":
-        return f"/oracle/{ref.id}"
-    if ref.scheme == "podcast":
-        return f"/podcasts/{ref.id}"
-    if ref.scheme == "highlight":
-        media_id = db.scalar(
-            text("SELECT anchor_media_id FROM highlights WHERE id = :id"),
-            {"id": ref.id},
-        )
-        return f"/media/{media_id}#highlight-{ref.id}" if media_id is not None else None
-    if ref.scheme == "message":
-        conversation_id = db.scalar(
-            text("SELECT conversation_id FROM messages WHERE id = :id"),
-            {"id": ref.id},
-        )
-        return f"/conversations/{conversation_id}" if conversation_id is not None else None
-    if ref.scheme == "fragment":
-        media_id = db.scalar(text("SELECT media_id FROM fragments WHERE id = :id"), {"id": ref.id})
-        return f"/media/{media_id}#fragment-{ref.id}" if media_id is not None else None
-    if ref.scheme in ("content_chunk", "evidence_span"):
-        media_id, locator = reader_target_for_citation_target(db, viewer_id=viewer_id, target=ref)
-        if media_id is not None:
-            if ref.scheme == "evidence_span":
-                return f"/media/{media_id}#evidence-{ref.id}"
-            if isinstance(locator, dict) and isinstance(locator.get("fragment_id"), str):
-                return f"/media/{media_id}#fragment-{locator['fragment_id']}"
-            return f"/media/{media_id}"
-        if isinstance(locator, dict) and isinstance(locator.get("block_id"), str):
-            return f"/notes/{locator['block_id']}"
-    if ref.scheme == "library_intelligence_artifact":
-        library_id = db.scalar(
-            text("SELECT library_id FROM library_intelligence_artifacts WHERE id = :id"),
-            {"id": ref.id},
-        )
-        return f"/libraries/{library_id}?tab=intelligence" if library_id is not None else None
-    if ref.scheme == "library_intelligence_revision":
-        library_id = db.scalar(
-            text(
-                """
-                SELECT a.library_id
-                FROM library_intelligence_artifact_revisions r
-                JOIN library_intelligence_artifacts a ON a.id = r.artifact_id
-                WHERE r.id = :id
-                """
-            ),
-            {"id": ref.id},
-        )
-        return (
-            f"/libraries/{library_id}?tab=intelligence&revision={ref.id}"
-            if library_id is not None
-            else None
-        )
-    if ref.scheme == "contributor":
-        handle = db.scalar(text("SELECT handle FROM contributors WHERE id = :id"), {"id": ref.id})
-        return f"/authors/{quote(str(handle), safe='')}" if handle is not None else None
-    if ref.scheme in ("oracle_corpus_passage", "external_snapshot"):
-        return None
-    assert_never(ref.scheme)
 
 
 def expand_owned_child_refs(

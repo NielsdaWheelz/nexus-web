@@ -35,10 +35,7 @@ class SearchQuery:
     """The typed request object passed to ``search()`` (spec §5.1).
 
     ``requested_kinds`` is ``None`` when the param was omitted (⇒ all kinds) and an
-    empty frozenset when explicitly cleared (⇒ no results). ``result_types`` is an
-    optional explicit internal-type selection used by the chat app_search tool,
-    which works in canonical result types rather than user kinds; when set it
-    bypasses the kind→type resolution.
+    empty frozenset when explicitly cleared (⇒ no results).
     """
 
     text: str
@@ -49,10 +46,6 @@ class SearchQuery:
     scope: SearchScope = field(default_factory=lambda: SearchScope("all"))
     cursor: str | None = None
     limit: int = DEFAULT_LIMIT
-    # Chat app_search overrides: it works in canonical result types + storage kinds
-    # rather than user kinds/formats. When set, these bypass the taxonomy resolution.
-    result_types: tuple[str, ...] | None = None
-    storage_kinds: tuple[str, ...] | None = None
 
     @property
     def effective_kinds(self) -> frozenset[SearchKind]:
@@ -64,16 +57,12 @@ class SearchQuery:
 
     @property
     def effective_result_types(self) -> tuple[str, ...]:
-        """Internal result types to dispatch: explicit override, else kind-derived."""
-        if self.result_types is not None:
-            return self.result_types
+        """Internal result types to dispatch, derived from public kinds."""
         return kinds.result_types_for(self.effective_kinds)
 
     @property
     def content_kinds(self) -> list[str]:
-        """Storage-kind values the retrievers filter on: override, else from formats."""
-        if self.storage_kinds is not None:
-            return list(self.storage_kinds)
+        """Storage-kind values the retrievers filter on, derived from public formats."""
         return kinds.storage_for_formats(self.formats)
 
 

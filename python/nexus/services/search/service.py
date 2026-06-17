@@ -58,6 +58,7 @@ from nexus.services.search.results import (
     _RankedNoteBlockResult,
     _RankedPageResult,
     _RankedPodcastResult,
+    _RankedReaderApparatusItemResult,
     _RankedWebResult,
     _SearchScore,
     _web_result_ref_json,
@@ -72,6 +73,7 @@ from nexus.services.search.retrievers.library_content import (
 )
 from nexus.services.search.retrievers.media import _search_media, _search_podcasts
 from nexus.services.search.retrievers.notes import _search_note_chunks, _search_pages
+from nexus.services.search.retrievers.reader_apparatus import _search_reader_apparatus_items
 from nexus.services.search.retrievers.web import _search_web_results
 from nexus.services.search.scope import authorize_scope
 from nexus.services.search.sql import contributor_credits_rollup_cte_sql
@@ -208,7 +210,7 @@ def search(db: Session, viewer_id: UUID, query: SearchQuery) -> SearchResponse:
         paginated = paginated[:limit]
 
     # Convert to response objects
-    results = [_result_to_out(r) for r in paginated]
+    results = [_result_to_out(db, viewer_id, r) for r in paginated]
     _enrich_results_with_media_summaries(db, results)
 
     # Build page info
@@ -274,6 +276,8 @@ def get_search_result(
             else "media"
         )
         return _result_to_out(
+            db,
+            viewer_id,
             _RankedMediaResult(
                 id=row[0],
                 snippet=_truncate_snippet(str(row[1])),
@@ -303,6 +307,8 @@ def get_search_result(
         if row is None:
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
         return _result_to_out(
+            db,
+            viewer_id,
             _RankedPodcastResult(
                 id=row[0],
                 title=row[1],
@@ -328,7 +334,7 @@ def get_search_result(
         if not matches:
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
         matches[0].score = score
-        return _result_to_out(matches[0])
+        return _result_to_out(db, viewer_id, matches[0])
 
     if result_type == "content_chunk":
         chunk_id = _uuid_from_search_id(result_id)
@@ -376,6 +382,8 @@ def get_search_result(
         source_kind = str(row[3])
         source_title = str(row[4])
         return _result_to_out(
+            db,
+            viewer_id,
             _RankedContentChunkResult(
                 id=row[0],
                 snippet=_truncate_snippet(str(row[7] or "")),
@@ -430,7 +438,7 @@ def get_search_result(
                     ORDER BY nav.fragment_idx DESC, nav.ordinal DESC
                     LIMIT 1
                 ) nav ON true
-                LEFT JOIN content_index_states mcis ON mcis.owner_kind = 'media'
+                JOIN content_index_states mcis ON mcis.owner_kind = 'media'
                     AND mcis.owner_id = f.media_id
                     AND mcis.status = 'ready'
                 LEFT JOIN media_contributor_credits mcc ON mcc.media_id = m.id
@@ -456,6 +464,8 @@ def get_search_result(
         if locator is None:
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
         return _result_to_out(
+            db,
+            viewer_id,
             _RankedFragmentResult(
                 id=row[0],
                 idx=int(row[1]),
@@ -483,6 +493,8 @@ def get_search_result(
         if row is None:
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
         return _result_to_out(
+            db,
+            viewer_id,
             _RankedPageResult(
                 id=row[0],
                 title=row[1],
@@ -496,9 +508,25 @@ def get_search_result(
         block = db.get(NoteBlock, block_id)
         if block is None or block.user_id != viewer_id:
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
+        ready = db.execute(
+            text(
+                """
+                SELECT 1
+                FROM content_index_states
+                WHERE owner_kind = 'note_block'
+                  AND owner_id = :block_id
+                  AND status = 'ready'
+                """
+            ),
+            {"block_id": block_id},
+        ).first()
+        if ready is None:
+            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
         if not str(block.body_text or ""):
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
         return _result_to_out(
+            db,
+            viewer_id,
             _RankedNoteBlockResult(
                 id=block.id,
                 snippet=_truncate_snippet(str(block.body_text or "")),
@@ -644,6 +672,8 @@ def get_search_result(
         if locator is None:
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
         return _result_to_out(
+            db,
+            viewer_id,
             _RankedHighlightResult(
                 id=row[0],
                 exact=str(row[1] or ""),
@@ -676,6 +706,8 @@ def get_search_result(
         if not str(row[3] or ""):
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
         return _result_to_out(
+            db,
+            viewer_id,
             _RankedMessageResult(
                 id=row[0],
                 snippet=_truncate_snippet(str(row[3] or "")),
@@ -714,10 +746,59 @@ def get_search_result(
         if row is None:
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
         return _result_to_out(
+            db,
+            viewer_id,
             _RankedConversationResult(
                 id=row[0],
                 title=str(row[1] or "Conversation"),
                 snippet=str(row[1] or "Conversation"),
+                score=score,
+            )
+        )
+
+    if result_type == "reader_apparatus_item":
+        item_id = _uuid_from_search_id(result_id)
+        row = db.execute(
+            text(
+                f"""
+                WITH
+                    visible_media AS ({visible_media_ids_cte_sql()}),
+                    media_contributor_credits AS ({contributor_credits_rollup_cte_sql("media_id")})
+                SELECT
+                    rai.id,
+                    rai.kind,
+                    rai.label,
+                    rai.body_text,
+                    rai.locator,
+                    rai.media_id,
+                    m.kind,
+                    m.title,
+                    m.published_date,
+                    mcc.contributor_credits
+                FROM reader_apparatus_items rai
+                JOIN reader_apparatus_states ras ON ras.id = rai.state_id
+                JOIN media m ON m.id = rai.media_id
+                JOIN visible_media vm ON vm.media_id = rai.media_id
+                LEFT JOIN media_contributor_credits mcc ON mcc.media_id = m.id
+                WHERE rai.id = :id
+                  AND ras.status IN ('ready', 'partial')
+                  AND rai.locator IS NOT NULL
+                  AND rai.locator_status != 'missing'
+                """
+            ),
+            {"viewer_id": viewer_id, "id": item_id},
+        ).first()
+        if row is None:
+            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
+        return _result_to_out(
+            db,
+            viewer_id,
+            _RankedReaderApparatusItemResult(
+                id=row[0],
+                snippet=_truncate_snippet(str(row[3] or row[2] or row[1] or "")),
+                apparatus_kind=str(row[1]),
+                locator=dict(row[4]),
+                source=_build_search_source(row[5], row[6], row[7], row[9], row[8]),
                 score=score,
             )
         )
@@ -752,6 +833,13 @@ def get_search_result(
                 FROM message_retrievals mr
                 JOIN message_tool_calls mtc ON mtc.id = mr.tool_call_id
                 JOIN visible_conversations vc ON vc.conversation_id = mtc.conversation_id
+                JOIN resource_external_snapshots res
+                  ON res.id = CASE
+                      WHEN mr.source_id ~ '^[0-9a-f]{{8}}-[0-9a-f]{{4}}-[0-9a-f]{{4}}-[0-9a-f]{{4}}-[0-9a-f]{{12}}$'
+                      THEN CAST(mr.source_id AS uuid)
+                      ELSE NULL
+                  END
+                 AND res.user_id = :viewer_id
                 WHERE mr.id = :id
                   AND mr.result_type = 'web_result'
                   AND mr.result_ref->>'type' = 'web_result'
@@ -765,6 +853,8 @@ def get_search_result(
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
         result_ref = _web_result_ref_json(row[14])
         return _result_to_out(
+            db,
+            viewer_id,
             _RankedWebResult(
                 id=str(row[0]),
                 source_id=str(result_ref["source_id"]),
@@ -808,6 +898,9 @@ def get_search_result(
                 LEFT JOIN media m ON m.id = es.owner_id AND es.owner_kind = 'media'
                 LEFT JOIN visible_media vm ON vm.media_id = es.owner_id
                 LEFT JOIN note_blocks nb ON nb.id = es.owner_id AND es.owner_kind = 'note_block'
+                JOIN content_index_states cis ON cis.owner_kind = es.owner_kind
+                    AND cis.owner_id = es.owner_id
+                    AND cis.status = 'ready'
                 LEFT JOIN media_contributor_credits mcc ON mcc.media_id = m.id
                 WHERE es.id = :id
                   AND (
@@ -830,6 +923,8 @@ def get_search_result(
         source_kind = str(row[5] or "note") if owner_kind == "media" else owner_kind
         source_title = str(row[6] if owner_kind == "media" else "Note")
         return _result_to_out(
+            db,
+            viewer_id,
             _RankedEvidenceSpanResult(
                 id=row[0],
                 snippet=_truncate_snippet(str(row[3] or "")),
@@ -975,6 +1070,8 @@ def _search_type(
         return _search_evidence_spans(db, viewer_id, q, scope_type, scope_id, limit)
     if result_type == "fragment":
         return _search_fragments(db, viewer_id, q, scope_type, scope_id, limit)
+    if result_type == "reader_apparatus_item":
+        return _search_reader_apparatus_items(db, viewer_id, q, scope_type, scope_id, limit)
     if result_type == "page":
         return _search_pages(
             db, viewer_id, q, semantic_query_embedding, scope_type, scope_id, limit

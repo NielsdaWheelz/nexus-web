@@ -352,6 +352,7 @@ export function useChatMessageUpdates({
             id: data.id,
             conversation_id: data.conversation_id,
             resource_ref: data.resource_ref,
+            activation: data.activation,
             label: data.label,
             summary: data.summary,
             missing: data.missing,

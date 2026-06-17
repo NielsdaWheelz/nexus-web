@@ -61,9 +61,18 @@ function makeHistoryRow(
 }
 
 function makeSearchResult(
-  partial: Partial<SearchResultRowViewModel> & { key: string; href: string },
+  partial: Partial<SearchResultRowViewModel> & { key: string },
 ): SearchResultRowViewModel {
+  const resourceRef = partial.resourceRef ?? "media:11111111-1111-4111-8111-111111111111";
   return {
+    resourceRef,
+    activation: partial.activation ?? {
+      resourceRef,
+      kind: "route",
+      href: "/media/11111111-1111-4111-8111-111111111111",
+      unresolvedReason: null,
+    },
+    citationTarget: partial.citationTarget ?? resourceRef,
     type: "media",
     mediaId: null,
     contextRef: null,
@@ -235,8 +244,26 @@ describe("buildPaletteItems — static items", () => {
 describe("buildPaletteItems — search results", () => {
   it("maps each searchResult to a search-results item with source=search and searchScore=1", () => {
     const results = [
-      makeSearchResult({ key: "s1", href: "/media/abc", primaryText: "Article about love" }),
-      makeSearchResult({ key: "s2", href: "/media/def", primaryText: "Article about war" }),
+      makeSearchResult({
+        key: "s1",
+        activation: {
+          resourceRef: "media:11111111-1111-4111-8111-111111111111",
+          kind: "route",
+          href: "/media/abc",
+          unresolvedReason: null,
+        },
+        primaryText: "Article about love",
+      }),
+      makeSearchResult({
+        key: "s2",
+        activation: {
+          resourceRef: "media:22222222-2222-4222-8222-222222222222",
+          kind: "route",
+          href: "/media/def",
+          unresolvedReason: null,
+        },
+        primaryText: "Article about war",
+      }),
     ];
     const items = buildPaletteItems(ctx({ searchResults: results }));
 
@@ -245,7 +272,10 @@ describe("buildPaletteItems — search results", () => {
 
     const s1 = searchItems.find((i) => i.id === "search-s1")!;
     expect(s1.sectionId).toBe("search-results");
-    expect(s1.target).toEqual({ kind: "href", href: "/media/abc", externalShell: false });
+    expect(s1.target).toMatchObject({
+      kind: "resource",
+      activation: { resourceRef: results[0]!.resourceRef, href: "/media/abc" },
+    });
     expect(s1.rank.searchScore).toBe(1);
   });
 });
@@ -292,7 +322,18 @@ describe("buildPaletteItems — ask item", () => {
   });
 
   it("is NOT suppressed by a search result title that matches (search source excluded)", () => {
-    const results = [makeSearchResult({ key: "s1", href: "/media/abc", primaryText: "quantum leap" })];
+    const results = [
+      makeSearchResult({
+        key: "s1",
+        activation: {
+          resourceRef: "media:11111111-1111-4111-8111-111111111111",
+          kind: "route",
+          href: "/media/abc",
+          unresolvedReason: null,
+        },
+        primaryText: "quantum leap",
+      }),
+    ];
     const items = buildPaletteItems(ctx({
       intent: { lane: "all", term: "quantum leap", raw: "quantum leap" },
       searchResults: results,

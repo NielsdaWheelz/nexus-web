@@ -220,7 +220,7 @@ async def run_synapse_scan(
                 text=dossier.query
                 if dossier.query is not None
                 else dossier.text[:SYNAPSE_QUERY_CHAR_BUDGET],
-                result_types=("content_chunk", "note_block"),
+                requested_kinds=frozenset({"documents", "notes"}),
                 limit=min(50, SYNAPSE_CANDIDATE_LIMIT * 4),
             ),
         )
@@ -577,7 +577,7 @@ def _map_candidates(
                 snippet=result.body_text[:600],
             )
         else:
-            continue  # unreachable: result_types pins the two chunk corpora
+            continue
         if candidate.target in excluded or candidate.target in seen:
             continue
         seen.add(candidate.target)

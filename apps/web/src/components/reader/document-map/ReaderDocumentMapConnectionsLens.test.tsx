@@ -14,7 +14,21 @@ const FRAGMENT_ID = "44444444-4444-4444-8444-444444444444";
 
 function endpoint(ref: string, label: string, href: string | null): ConnectionEndpointOut {
   const [scheme, id] = ref.split(":") as [ConnectionEndpointOut["scheme"], string];
-  return { ref, scheme, id, label, description: null, href, missing: href === null };
+  return {
+    ref,
+    scheme,
+    id,
+    label,
+    description: null,
+    activation: {
+      resourceRef: ref,
+      kind: href ? "route" : "none",
+      href,
+      unresolvedReason: href ? null : "missing",
+    },
+    href,
+    missing: href === null,
+  };
 }
 
 function connection(overrides: Partial<ConnectionOut> = {}): ConnectionOut {
@@ -38,6 +52,12 @@ function connection(overrides: Partial<ConnectionOut> = {}): ConnectionOut {
       ordinal: 1,
       role: "supports",
       snapshot: { excerpt: "Quoted passage." },
+      activation: {
+        resourceRef: `evidence_span:${SPAN_ID}`,
+        kind: "route",
+        href: `/media/${MEDIA_ID}#evidence-${SPAN_ID}`,
+        unresolvedReason: null,
+      },
       target_reader: null,
       target_status: "current",
     },
@@ -70,6 +90,12 @@ function row(overrides: Partial<ReaderConnectionRow> = {}): ReaderConnectionRow 
     title: "Assistant answer",
     subtitle: "citation · supports",
     excerpt: "Quoted passage.",
+    activation: {
+      resourceRef: `message:${MESSAGE_ID}`,
+      kind: "route",
+      href: `/conversations/${MESSAGE_ID}`,
+      unresolvedReason: null,
+    },
     href: `/conversations/${MESSAGE_ID}`,
     ...overrides,
   };
@@ -126,6 +152,12 @@ describe("ReaderDocumentMapConnectionsLens", () => {
                 ordinal: 1,
                 role: "supports",
                 snapshot: { excerpt: "Quoted passage." },
+                activation: {
+                  resourceRef: `evidence_span:${SPAN_ID}`,
+                  kind: "none",
+                  href: null,
+                  unresolvedReason: "missing",
+                },
                 target_reader: null,
                 target_status: "unanchorable",
               },

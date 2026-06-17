@@ -25,6 +25,7 @@ import rehypeHighlight from "rehype-highlight";
 import ReaderCitation from "@/components/ui/ReaderCitation";
 import type { ReaderCitationData } from "@/lib/conversations/readerCitation";
 import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
+import type { ResourceActivation } from "@/lib/resources/activation";
 import "./hljs-theme.css";
 import styles from "./MarkdownMessage.module.css";
 
@@ -143,7 +144,11 @@ const baseComponents: MarkdownComponents = {
 };
 const CitationContext = createContext<{
   citationByIndex?: Map<number, ReaderCitationData>;
-  onActivate?: (target: ReaderSourceTarget, event?: React.MouseEvent) => void;
+  onActivate?: (
+    activation: ResourceActivation,
+    target: ReaderSourceTarget | null,
+    event?: React.MouseEvent,
+  ) => void;
 }>({});
 
 function citationIndexFromHref(href: string | undefined): number | null {
@@ -183,8 +188,8 @@ function CitationAwareLink({
         index={citation.index}
         color={citation.color}
         preview={citation.preview}
+        activation={citation.activation}
         target={citation.target}
-        href={citation.href}
         onActivate={onActivate ?? (() => undefined)}
       />
     );
@@ -213,7 +218,8 @@ function MarkdownMessageInner({
   content: string;
   citations?: ReaderCitationData[];
   onCitationActivate?: (
-    target: ReaderSourceTarget,
+    activation: ResourceActivation,
+    target: ReaderSourceTarget | null,
     event?: React.MouseEvent,
   ) => void;
 }) {

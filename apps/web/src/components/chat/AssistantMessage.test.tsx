@@ -128,6 +128,12 @@ describe("AssistantMessage", () => {
         type: "content_chunk" as const,
         id: "33333333-3333-4333-8333-333333333333",
       },
+      activation: {
+        resourceRef: "content_chunk:33333333-3333-4333-8333-333333333333",
+        kind: "route" as const,
+        href: "/reader/source",
+        unresolvedReason: null,
+      },
       media_id: "22222222-2222-4222-8222-222222222222",
       locator: {
         type: "web_text_offsets" as const,
@@ -306,6 +312,12 @@ describe("AssistantMessage", () => {
           id: "ref-1",
           conversation_id: "conversation-1",
           resource_ref: "content_chunk:33333333-3333-4333-8333-333333333333",
+          activation: {
+            resourceRef: "content_chunk:33333333-3333-4333-8333-333333333333",
+            kind: "route",
+            href: "/media/11111111-1111-4111-8111-111111111111#evidence-33333333-3333-4333-8333-333333333333",
+            unresolvedReason: null,
+          },
           label: "Source title",
           summary: "Context",
           missing: false,
@@ -341,6 +353,9 @@ describe("AssistantMessage", () => {
     expect(screen.getByText("search_score_then_context_budget")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /\[1\] Source title/ }));
     expect(onCitationActivate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        resourceRef: "media:22222222-2222-4222-8222-222222222222",
+      }),
       expect.objectContaining({
         kind: "media",
         media_id: "22222222-2222-4222-8222-222222222222",

@@ -497,10 +497,12 @@
         "body_text": "That is, really outstanding tutorials, reviews, textbooks, and so on.",
         "confidence": "exact",
         "extraction_method": "distill_footnote",
+        "id": "3eaaf3e8-34b4-5dff-98c6-5039a8a82442",
         "kind": "footnote",
         "label": "1",
         "locator": null,
         "locator_status": "missing",
+        "resource_ref": "reader_apparatus_item:3eaaf3e8-34b4-5dff-98c6-5039a8a82442",
         "sort_key": "000010.000000.target",
         "source_ref": {
           "element": "d-footnote",
@@ -515,6 +517,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "distill_footnote",
+        "id": "db145d00-5bb4-5fb8-8fc2-68012af477ce",
         "kind": "footnote_ref",
         "label": "1",
         "locator": {
@@ -529,6 +532,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:db145d00-5bb4-5fb8-8fc2-68012af477ce",
         "sort_key": "000010.000000.marker",
         "source_ref": {
           "element": "d-footnote",
@@ -543,6 +547,7 @@
         "body_text": "The Tau Manifesto [link]Hartl, M., 2013.",
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "163766d3-a02e-5ccd-a076-943c5ae042e0",
         "kind": "bibliography_entry",
         "label": "The",
         "locator": {
@@ -557,6 +562,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:163766d3-a02e-5ccd-a076-943c5ae042e0",
         "sort_key": "000019.000000.target.000",
         "source_ref": {
           "citation_key": "hartl2013tau",
@@ -573,6 +579,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "5f3a5582-8e1c-566c-82b2-6e4439ec3622",
         "kind": "bibliography_ref",
         "label": "pi is wrong",
         "locator": {
@@ -587,6 +594,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:5f3a5582-8e1c-566c-82b2-6e4439ec3622",
         "sort_key": "000019.000000.marker",
         "source_ref": {
           "citation_keys": [
@@ -604,10 +612,12 @@
         "body_text": "Because most work is explained poorly, it takes a lot of energy to understand each piece of work. For many papers, one wants a simple one sentence explanation of it, but needs to fight with it to get that sentence. Because the simplest way to get the attention of interested parties is to get everyone\u2019s attention, we get flooded with work. Because we incentivize people being \u201cprolific,\u201d we get flooded with a lot of work\u2026",
         "confidence": "exact",
         "extraction_method": "distill_footnote",
+        "id": "b9249bbd-cd1b-559e-bf17-484e665af4c2",
         "kind": "footnote",
         "label": "2",
         "locator": null,
         "locator_status": "missing",
+        "resource_ref": "reader_apparatus_item:b9249bbd-cd1b-559e-bf17-484e665af4c2",
         "sort_key": "000020.000001.target",
         "source_ref": {
           "element": "d-footnote",
@@ -622,6 +632,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "distill_footnote",
+        "id": "4d806364-54b4-5ce1-a2f7-95ff62ecbd61",
         "kind": "footnote_ref",
         "label": "2",
         "locator": {
@@ -636,6 +647,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:4d806364-54b4-5ce1-a2f7-95ff62ecbd61",
         "sort_key": "000020.000001.marker",
         "source_ref": {
           "element": "d-footnote",
@@ -650,6 +662,7 @@
         "body_text": "Interpretive Labor [link]Van Nostrand, E., 2015.",
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "d8ec6638-1f9f-57b2-9a8f-b43567b95203",
         "kind": "bibliography_entry",
         "label": "Interpretive",
         "locator": {
@@ -664,6 +677,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:d8ec6638-1f9f-57b2-9a8f-b43567b95203",
         "sort_key": "000019.000001.target.000",
         "source_ref": {
           "citation_key": "nostrand2015interpretive",
@@ -680,6 +694,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "daf88736-ae2d-5a65-9c59-0c356230dc1f",
         "kind": "bibliography_ref",
         "label": "[2]",
         "locator": {
@@ -694,6 +709,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:daf88736-ae2d-5a65-9c59-0c356230dc1f",
         "sort_key": "000019.000001.marker",
         "source_ref": {
           "citation_keys": [
@@ -712,6 +728,7 @@
         "body_text": "The utopia of rules: On technology, stupidity, and the secret joys of bureaucracy Graeber, D., 2015. Melville House.",
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "17644918-d2af-5e0c-8133-429e854281f4",
         "kind": "bibliography_entry",
         "label": "The",
         "locator": {
@@ -726,6 +743,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:17644918-d2af-5e0c-8133-429e854281f4",
         "sort_key": "000019.000001.target.001",
         "source_ref": {
           "citation_key": "graeber2015utopia",
@@ -742,10 +760,12 @@
         "body_text": "More formally, if N people are trying to understand each other, it takes each one O(1) effort to write an explanation of their ideas but O(N) effort to understand each of the other N-1 people\u2019s ideas. The result is that energy cost looks like O(a + bN) where a and b are coefficients for the trade off between energy on the explanation side and energy on the understanding side. That is a is the energy spent on explaining and b is the corresponding effort needed to understand. This is similar to ideas in The Mythical Man-Month",
         "confidence": "exact",
         "extraction_method": "distill_footnote",
+        "id": "d4b2bb33-dbbd-5400-8d4b-9c4520d9cfff",
         "kind": "footnote",
         "label": "3",
         "locator": null,
         "locator_status": "missing",
+        "resource_ref": "reader_apparatus_item:d4b2bb33-dbbd-5400-8d4b-9c4520d9cfff",
         "sort_key": "000019.000002.target",
         "source_ref": {
           "element": "d-footnote",
@@ -760,6 +780,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "distill_footnote",
+        "id": "9d7cacc6-f2ca-5a58-8d22-f7ac9c5dba9f",
         "kind": "footnote_ref",
         "label": "3",
         "locator": {
@@ -774,6 +795,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:9d7cacc6-f2ca-5a58-8d22-f7ac9c5dba9f",
         "sort_key": "000019.000002.marker",
         "source_ref": {
           "element": "d-footnote",
@@ -788,6 +810,7 @@
         "body_text": "The Mythical Man-Month Brooks, F., 1986. Tutorial, Vol 11, pp. 35--42.",
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "3b86f355-bc30-5cd7-b50c-8649fa98e76a",
         "kind": "bibliography_entry",
         "label": "The",
         "locator": {
@@ -802,6 +825,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:3b86f355-bc30-5cd7-b50c-8649fa98e76a",
         "sort_key": "000000.000002.target.000",
         "source_ref": {
           "citation_key": "brooks1986mythical",
@@ -818,6 +842,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "eaa27a8b-df8f-50ef-a59d-1e54235dbc44",
         "kind": "bibliography_ref",
         "label": "The Mythical Man-Month",
         "locator": {
@@ -832,6 +857,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:eaa27a8b-df8f-50ef-a59d-1e54235dbc44",
         "sort_key": "000000.000002.marker",
         "source_ref": {
           "citation_keys": [
@@ -849,10 +875,12 @@
         "body_text": "For example, Christopher\u2019s average blog post is read by over 100,000 people; if he can save each reader just one second, he\u2019s saved humanity 30 hours.",
         "confidence": "exact",
         "extraction_method": "distill_footnote",
+        "id": "2da1172f-fce3-5e1e-bdfe-1ae5c5bc3558",
         "kind": "footnote",
         "label": "4",
         "locator": null,
         "locator_status": "missing",
+        "resource_ref": "reader_apparatus_item:2da1172f-fce3-5e1e-bdfe-1ae5c5bc3558",
         "sort_key": "000020.000003.target",
         "source_ref": {
           "element": "d-footnote",
@@ -867,10 +895,12 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "distill_footnote",
+        "id": "19e379f3-8626-54ca-a452-ae4865093dff",
         "kind": "footnote_ref",
         "label": "4",
         "locator": null,
         "locator_status": "missing",
+        "resource_ref": "reader_apparatus_item:19e379f3-8626-54ca-a452-ae4865093dff",
         "sort_key": "000020.000003.marker",
         "source_ref": {
           "element": "d-footnote",
@@ -885,10 +915,12 @@
         "body_text": "Often, some individuals have a much more developed version of an idea than is publicly shared. There are a lot of reasons for not sharing it (in particular, they\u2019re often not traditionally publishable).",
         "confidence": "exact",
         "extraction_method": "distill_footnote",
+        "id": "471e284a-6836-5b6d-96f9-062e86e7adb9",
         "kind": "footnote",
         "label": "5",
         "locator": null,
         "locator_status": "missing",
+        "resource_ref": "reader_apparatus_item:471e284a-6836-5b6d-96f9-062e86e7adb9",
         "sort_key": "000024.000004.target",
         "source_ref": {
           "element": "d-footnote",
@@ -903,6 +935,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "distill_footnote",
+        "id": "fef4be60-1697-5192-9b13-b2a7b2211b0e",
         "kind": "footnote_ref",
         "label": "5",
         "locator": {
@@ -917,6 +950,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:fef4be60-1697-5192-9b13-b2a7b2211b0e",
         "sort_key": "000024.000004.marker",
         "source_ref": {
           "element": "d-footnote",
@@ -931,10 +965,12 @@
         "body_text": "There are a lot of perverse incentives that push against explaining things well, sharing data, and so forth. This is especially true when the work you are doing isn\u2019t that interesting or isn\u2019t reproducible and you want to obscure that. Or if you have a lot of competitors and don\u2019t want them to catch up.However, our experience is that most good researchers don\u2019t seem that motivated by these kind of factors. Instead, the main issue is that it isn\u2019t worthwhile for them to divert energy from pursuing results to distill things. Perhaps things are different in other fields, or I\u2019m not cynical enough.",
         "confidence": "exact",
         "extraction_method": "distill_footnote",
+        "id": "b7044232-f44d-5a97-9052-3270974dace1",
         "kind": "footnote",
         "label": "6",
         "locator": null,
         "locator_status": "missing",
+        "resource_ref": "reader_apparatus_item:b7044232-f44d-5a97-9052-3270974dace1",
         "sort_key": "000034.000005.target",
         "source_ref": {
           "element": "d-footnote",
@@ -949,6 +985,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "distill_footnote",
+        "id": "49312579-5463-5342-9252-3b289e401ed7",
         "kind": "footnote_ref",
         "label": "6",
         "locator": {
@@ -963,6 +1000,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:49312579-5463-5342-9252-3b289e401ed7",
         "sort_key": "000034.000005.marker",
         "source_ref": {
           "element": "d-footnote",
@@ -977,10 +1015,12 @@
         "body_text": "There is a strange kind of informal support for people working on research distillation. Christopher has personally benefitted a great deal from this. But it\u2019s unreliable and not widely advertised, which makes it hard to build a career on.",
         "confidence": "exact",
         "extraction_method": "distill_footnote",
+        "id": "7a403d66-3e3b-5e24-8414-d0beaaac24b8",
         "kind": "footnote",
         "label": "7",
         "locator": null,
         "locator_status": "missing",
+        "resource_ref": "reader_apparatus_item:7a403d66-3e3b-5e24-8414-d0beaaac24b8",
         "sort_key": "000035.000006.target",
         "source_ref": {
           "element": "d-footnote",
@@ -995,10 +1035,12 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "distill_footnote",
+        "id": "754b60d3-f93c-5e78-b6ae-0d562ed4d23b",
         "kind": "footnote_ref",
         "label": "7",
         "locator": null,
         "locator_status": "missing",
+        "resource_ref": "reader_apparatus_item:754b60d3-f93c-5e78-b6ae-0d562ed4d23b",
         "sort_key": "000035.000006.marker",
         "source_ref": {
           "element": "d-footnote",
@@ -1013,6 +1055,7 @@
         "body_text": "Visual Complex Analysis Needham, T., 1998. Oxford University Press.",
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "0cbcdc4a-d053-5c45-9b3b-08dd34294f5a",
         "kind": "bibliography_entry",
         "label": "Visual",
         "locator": {
@@ -1027,6 +1070,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:0cbcdc4a-d053-5c45-9b3b-08dd34294f5a",
         "sort_key": "000047.000003.target.000",
         "source_ref": {
           "citation_key": "needham1998visual",
@@ -1043,6 +1087,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "d0201c83-9b8b-5f1b-beb9-20338d1435b8",
         "kind": "bibliography_ref",
         "label": "Visual Complex Analysis",
         "locator": {
@@ -1057,6 +1102,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:d0201c83-9b8b-5f1b-beb9-20338d1435b8",
         "sort_key": "000047.000003.marker",
         "source_ref": {
           "citation_keys": [
@@ -1074,6 +1120,7 @@
         "body_text": "Visual Group Theory Carter, N., 2009. MAA.",
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "c7559dec-0e46-51d2-b688-03f145d4ea5f",
         "kind": "bibliography_entry",
         "label": "Visual",
         "locator": {
@@ -1088,6 +1135,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:c7559dec-0e46-51d2-b688-03f145d4ea5f",
         "sort_key": "000048.000004.target.000",
         "source_ref": {
           "citation_key": "carter2009visual",
@@ -1104,6 +1152,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "d8d2abc0-d889-5385-90e9-175fe326f184",
         "kind": "bibliography_ref",
         "label": "[5]",
         "locator": {
@@ -1118,6 +1167,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:d8d2abc0-d889-5385-90e9-175fe326f184",
         "sort_key": "000048.000004.marker",
         "source_ref": {
           "citation_keys": [
@@ -1137,6 +1187,7 @@
         "body_text": "A visual explanation of Jensen's inequality Needham, T., 1993. The American mathematical monthly, Vol 100(8), pp. 768--771. JSTOR. DOI: 10.2307/2324783",
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "d18bda81-daa8-52ee-8a0c-340a6f3c7f6c",
         "kind": "bibliography_entry",
         "label": "A",
         "locator": {
@@ -1151,6 +1202,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:d18bda81-daa8-52ee-8a0c-340a6f3c7f6c",
         "sort_key": "000048.000004.target.001",
         "source_ref": {
           "citation_key": "needham1993visual",
@@ -1167,6 +1219,7 @@
         "body_text": "Visual Differential Geometry Needham, T., Work In Progress.",
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "d9095561-d35f-5f8e-acda-25ce194a846b",
         "kind": "bibliography_entry",
         "label": "Visual",
         "locator": {
@@ -1181,6 +1234,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:d9095561-d35f-5f8e-acda-25ce194a846b",
         "sort_key": "000048.000004.target.002",
         "source_ref": {
           "citation_key": "needhamUnpublished",
@@ -1197,6 +1251,7 @@
         "body_text": "A Research Center for Augmenting Human Intellect [link]Engelbart, D.C. and English, W.K., 1968. Proceedings of the December 9-11, 1968, Fall Joint Computer Conference, Part I, pp. 395--410. ACM. DOI: 10.1145/1476589.1476645",
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "8d03ce62-de79-5b2c-88ab-a3b69a83715d",
         "kind": "bibliography_entry",
         "label": "A",
         "locator": {
@@ -1211,6 +1266,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:8d03ce62-de79-5b2c-88ab-a3b69a83715d",
         "sort_key": "000049.000005.target.000",
         "source_ref": {
           "citation_key": "Engelbart:1968:RCA:1476589.1476645",
@@ -1227,6 +1283,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "173bf944-3cad-5d56-83ff-b6a475f03cc6",
         "kind": "bibliography_ref",
         "label": "[6]",
         "locator": {
@@ -1241,6 +1298,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:173bf944-3cad-5d56-83ff-b6a475f03cc6",
         "sort_key": "000049.000005.marker",
         "source_ref": {
           "citation_keys": [
@@ -1258,6 +1316,7 @@
         "body_text": "Personal Dynamic Media [link]Kay, A. and Goldberg, A., 1977. Computer, Vol 10(3), pp. 31--41. IEEE Computer Society Press. DOI: 10.1109/C-M.1977.217672",
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "f371bf11-dfac-5cbd-b8ab-27729188f325",
         "kind": "bibliography_entry",
         "label": "Personal",
         "locator": {
@@ -1272,6 +1331,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:f371bf11-dfac-5cbd-b8ab-27729188f325",
         "sort_key": "000050.000006.target.000",
         "source_ref": {
           "citation_key": "Kay:1977:PDM:1300728.1301186",
@@ -1288,6 +1348,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "a907a911-7564-5dfc-8cde-abd5720decd0",
         "kind": "bibliography_ref",
         "label": "[7]",
         "locator": {
@@ -1302,6 +1363,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:a907a911-7564-5dfc-8cde-abd5720decd0",
         "sort_key": "000050.000006.marker",
         "source_ref": {
           "citation_keys": [
@@ -1319,6 +1381,7 @@
         "body_text": "Explorable explanations [link]Victor, B., 2011.",
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "e45199dd-5538-5d3f-a19e-5c6f6391945a",
         "kind": "bibliography_entry",
         "label": "Explorable",
         "locator": {
@@ -1333,6 +1396,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:e45199dd-5538-5d3f-a19e-5c6f6391945a",
         "sort_key": "000050.000007.target.000",
         "source_ref": {
           "citation_key": "victor2011explorable",
@@ -1349,6 +1413,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "8b9cd0eb-6628-5c07-8565-f3ab8cef8643",
         "kind": "bibliography_ref",
         "label": "foundational essay",
         "locator": {
@@ -1363,6 +1428,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:8b9cd0eb-6628-5c07-8565-f3ab8cef8643",
         "sort_key": "000050.000007.marker",
         "source_ref": {
           "citation_keys": [
@@ -1380,6 +1446,7 @@
         "body_text": "Visualizing Algorithms [link]Bostock, M., 2014.",
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "9b8eb1f4-4bee-5f1f-a870-4265053aa3f6",
         "kind": "bibliography_entry",
         "label": "Visualizing",
         "locator": {
@@ -1394,6 +1461,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:9b8eb1f4-4bee-5f1f-a870-4265053aa3f6",
         "sort_key": "000051.000008.target.000",
         "source_ref": {
           "citation_key": "bostock2014visualizing",
@@ -1410,6 +1478,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "3472b4c1-c5d6-542f-bb0e-df2d1e367a58",
         "kind": "bibliography_ref",
         "label": "[9]",
         "locator": {
@@ -1424,6 +1493,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:3472b4c1-c5d6-542f-bb0e-df2d1e367a58",
         "sort_key": "000051.000008.marker",
         "source_ref": {
           "citation_keys": [
@@ -1443,6 +1513,7 @@
         "body_text": "How to Fold a Julia Fractal [link]Wittens, S., 2013.",
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "d1f03b70-a6fd-5309-bf4c-61132147ae9b",
         "kind": "bibliography_entry",
         "label": "How",
         "locator": {
@@ -1457,6 +1528,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:d1f03b70-a6fd-5309-bf4c-61132147ae9b",
         "sort_key": "000051.000008.target.001",
         "source_ref": {
           "citation_key": "wittens2013how",
@@ -1473,6 +1545,7 @@
         "body_text": "Back to the Future of Handwriting Recognition [link]Schaedler, J., 2016.",
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "d45c5639-78a5-5aba-8245-bd47671e4a22",
         "kind": "bibliography_entry",
         "label": "Back",
         "locator": {
@@ -1487,6 +1560,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:d45c5639-78a5-5aba-8245-bd47671e4a22",
         "sort_key": "000051.000008.target.002",
         "source_ref": {
           "citation_key": "schaedler2016back",
@@ -1503,6 +1577,7 @@
         "body_text": "Media for thinking the unthinkable [link]Victor, B., 2013.",
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "b777aab1-ebbe-5cd1-92df-fd917097d6f3",
         "kind": "bibliography_entry",
         "label": "Media",
         "locator": {
@@ -1517,6 +1592,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:b777aab1-ebbe-5cd1-92df-fd917097d6f3",
         "sort_key": "000050.000009.target.000",
         "source_ref": {
           "citation_key": "victor2013media",
@@ -1533,6 +1609,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "9e4f032f-4313-5d0a-9f17-0c371d170732",
         "kind": "bibliography_ref",
         "label": "[10]",
         "locator": {
@@ -1547,6 +1624,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:9e4f032f-4313-5d0a-9f17-0c371d170732",
         "sort_key": "000050.000009.marker",
         "source_ref": {
           "citation_keys": [
@@ -1565,6 +1643,7 @@
         "body_text": "Learnable programming [link]Victor, B., 2012.",
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "d3e7e78f-615d-5c39-adc8-6a8180736e16",
         "kind": "bibliography_entry",
         "label": "Learnable",
         "locator": {
@@ -1579,6 +1658,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:d3e7e78f-615d-5c39-adc8-6a8180736e16",
         "sort_key": "000050.000009.target.001",
         "source_ref": {
           "citation_key": "victor2012learnable",
@@ -1595,6 +1675,7 @@
         "body_text": "Thought as a Technology [HTML]Nielsen, M., 2016.",
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "b3829f20-5d6f-5e63-bbc5-8232bbdf0197",
         "kind": "bibliography_entry",
         "label": "Thought",
         "locator": {
@@ -1609,6 +1690,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:b3829f20-5d6f-5e63-bbc5-8232bbdf0197",
         "sort_key": "000051.000010.target.000",
         "source_ref": {
           "citation_key": "nielsen2016thought",
@@ -1625,6 +1707,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "e6014e69-b847-5c2e-ae72-2762f84d3617",
         "kind": "bibliography_ref",
         "label": "[11]",
         "locator": {
@@ -1639,6 +1722,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:e6014e69-b847-5c2e-ae72-2762f84d3617",
         "sort_key": "000051.000010.marker",
         "source_ref": {
           "citation_keys": [
@@ -1657,6 +1741,7 @@
         "body_text": "Toward an Exploratory Medium for Mathematics [HTML]Nielsen, M., 2016.",
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "95f2407d-0bd3-50bb-85fb-8c55d418d956",
         "kind": "bibliography_entry",
         "label": "Toward",
         "locator": {
@@ -1671,6 +1756,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:95f2407d-0bd3-50bb-85fb-8c55d418d956",
         "sort_key": "000051.000010.target.001",
         "source_ref": {
           "citation_key": "nielsen2016towards",
@@ -1687,6 +1773,7 @@
         "body_text": "On Proof and Progress in Mathematics [PDF]Thurston, W.P., 1998. New directions in the philosophy of mathematics, pp. 337--55.",
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "4c59574b-5f98-53b5-967d-5dc82a71fdbe",
         "kind": "bibliography_entry",
         "label": "On",
         "locator": {
@@ -1701,6 +1788,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:4c59574b-5f98-53b5-967d-5dc82a71fdbe",
         "sort_key": "000052.000011.target.000",
         "source_ref": {
           "citation_key": "thurston1998proof",
@@ -1717,6 +1805,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "f519a3cd-8af5-59c1-b7a6-e5a2ac542df8",
         "kind": "bibliography_ref",
         "label": "[12]",
         "locator": {
@@ -1731,6 +1820,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:f519a3cd-8af5-59c1-b7a6-e5a2ac542df8",
         "sort_key": "000052.000011.marker",
         "source_ref": {
           "citation_keys": [
@@ -1748,6 +1838,7 @@
         "body_text": "A beginner\u2019s guide to forcing [PDF]Chow, T.Y., 2009. Communicating mathematics, Vol 479, pp. 25--40. American Mathematical Soc.",
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "ec608f60-1843-5b94-a273-0f89be5a20a8",
         "kind": "bibliography_entry",
         "label": "A",
         "locator": {
@@ -1762,6 +1853,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:ec608f60-1843-5b94-a273-0f89be5a20a8",
         "sort_key": "000054.000012.target.000",
         "source_ref": {
           "citation_key": "chow2009beginner",
@@ -1778,6 +1870,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "30bfacbf-aa48-5e22-af92-93c85c002d44",
         "kind": "bibliography_ref",
         "label": "[13]",
         "locator": {
@@ -1792,6 +1885,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:30bfacbf-aa48-5e22-af92-93c85c002d44",
         "sort_key": "000054.000012.marker",
         "source_ref": {
           "citation_keys": [
@@ -1809,6 +1903,7 @@
         "body_text": "Recoltes et Semailles Grothendieck, A., 1985. Reflexions et temoignage sur un passe de mathematicien, pp. 621.",
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "78bca3ba-401b-5681-8fb4-4653b8d3b4b6",
         "kind": "bibliography_entry",
         "label": "Recoltes",
         "locator": {
@@ -1823,6 +1918,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:78bca3ba-401b-5681-8fb4-4653b8d3b4b6",
         "sort_key": "000055.000013.target.000",
         "source_ref": {
           "citation_key": "grothendieck1985recoltes",
@@ -1839,6 +1935,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "2c80f58d-285f-5edb-bfee-8ce3959de9a2",
         "kind": "bibliography_ref",
         "label": "[14]",
         "locator": {
@@ -1853,6 +1950,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:2c80f58d-285f-5edb-bfee-8ce3959de9a2",
         "sort_key": "000055.000013.marker",
         "source_ref": {
           "citation_keys": [
@@ -1870,6 +1968,7 @@
         "body_text": "Statement on conceptual contributions in theory [link]Aaronson, S., Borodin, A., Chazelle, B., Goldreich, O., Goldwasser, S., Karp, R., Kearns, M., Papadimitriou, C., Sudan, M. and Vadhan, S., 2008. Shtetl-Optimized.",
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "fa30897f-0909-5df2-9996-4ae74893fae6",
         "kind": "bibliography_entry",
         "label": "Statement",
         "locator": {
@@ -1884,6 +1983,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:fa30897f-0909-5df2-9996-4ae74893fae6",
         "sort_key": "000056.000014.target.000",
         "source_ref": {
           "citation_key": "aaronson2008statement",
@@ -1900,6 +2000,7 @@
         "body_text": null,
         "confidence": "exact",
         "extraction_method": "distill_citation",
+        "id": "346c223c-e718-5027-9d44-90ad70a28139",
         "kind": "bibliography_ref",
         "label": "[15]",
         "locator": {
@@ -1914,6 +2015,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:346c223c-e718-5027-9d44-90ad70a28139",
         "sort_key": "000056.000014.marker",
         "source_ref": {
           "citation_keys": [

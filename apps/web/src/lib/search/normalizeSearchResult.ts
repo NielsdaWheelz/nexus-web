@@ -5,6 +5,7 @@ import {
 } from "@/lib/api/sse/locators";
 import type { ContributorCredit } from "@/lib/contributors/types";
 import { hasLegacyArtifactIdentityKey } from "@/lib/currentArtifactIdentity";
+import { normalizeResourceActivation } from "@/lib/resources/activation";
 import { isRecord } from "@/lib/validation";
 import {
   RESULT_TYPE_VALUES,
@@ -54,7 +55,8 @@ function locatorMatchesSearchType(
 ): boolean {
   if (
     type === "content_chunk" ||
-    type === "evidence_span"
+    type === "evidence_span" ||
+    type === "reader_apparatus_item"
   ) {
     return (
       isMediaRetrievalLocator(locator) || locator.type === "note_block_offsets"
@@ -148,7 +150,14 @@ export function normalizeSearchResult(result: unknown): SearchApiResult | null {
   if (typeof row.title !== "string") {
     return null;
   }
-  if (typeof row.deep_link !== "string") {
+  if (typeof row.resource_ref !== "string") {
+    return null;
+  }
+  const activation = normalizeResourceActivation(row.activation);
+  if (!activation || activation.kind === "none" || !activation.href) {
+    return null;
+  }
+  if (row.citation_target !== null && typeof row.citation_target !== "string") {
     return null;
   }
   if (typeof row.context_ref !== "object" || row.context_ref === null) {
@@ -184,7 +193,9 @@ export function normalizeSearchResult(result: unknown): SearchApiResult | null {
       typeof row.source_label === "string" ? row.source_label : null,
     media_id: typeof row.media_id === "string" ? row.media_id : null,
     media_kind: typeof row.media_kind === "string" ? row.media_kind : null,
-    deep_link: row.deep_link,
+    resource_ref: row.resource_ref,
+    activation,
+    citation_target: row.citation_target,
     context_ref: {
       type: contextRef.type as SearchType,
       id: contextRef.id,
@@ -421,6 +432,31 @@ export function normalizeSearchResult(result: unknown): SearchApiResult | null {
         },
       };
     }
+    case "reader_apparatus_item": {
+      if (
+        typeof row.apparatus_kind !== "string" ||
+        !isRetrievalLocator(row.locator) ||
+        !locatorMatchesSearchType("reader_apparatus_item", row.locator) ||
+        !isValidSource(row.source) ||
+        base.context_ref.type !== "reader_apparatus_item"
+      ) {
+        return null;
+      }
+      const contributors = normalizeContributorCredits(row.source.contributors);
+      if (!contributors) {
+        return null;
+      }
+      return {
+        ...base,
+        type: "reader_apparatus_item",
+        apparatus_kind: row.apparatus_kind,
+        locator: row.locator,
+        source: {
+          ...row.source,
+          contributors,
+        },
+      };
+    }
     case "conversation":
       if (base.context_ref.type !== "conversation") {
         return null;
@@ -434,6 +470,7 @@ export function normalizeSearchResult(result: unknown): SearchApiResult | null {
         base.context_ref.type !== "web_result" ||
         row.result_type !== "web_result" ||
         typeof row.source_id !== "string" ||
+        base.context_ref.id !== row.source_id ||
         typeof row.result_ref !== "string" ||
         typeof row.url !== "string" ||
         !isRetrievalLocator(row.locator) ||

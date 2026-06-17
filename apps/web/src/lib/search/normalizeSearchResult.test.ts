@@ -7,10 +7,44 @@ import { adaptSearchResultRow } from "./searchViewModel";
 // A row that survives normalize is the same row the API page would render.
 
 function adapt(row: Record<string, unknown>) {
-  const normalized = normalizeSearchResult(row);
+  const normalized = normalizeSearchResult(withActivation(row));
   expect(normalized).not.toBeNull();
   // biome/ts: normalized is non-null past the assertion above.
   return adaptSearchResultRow(normalized!);
+}
+
+function normalize(row: Record<string, unknown>) {
+  return normalizeSearchResult(withActivation(row));
+}
+
+function withActivation(row: Record<string, unknown>) {
+  const { activationHref, ...payload } = row;
+  const href = typeof activationHref === "string" ? activationHref : "/resource";
+  const resourceRef =
+    typeof payload.resource_ref === "string"
+      ? payload.resource_ref
+      : typeof payload.type === "string" && typeof payload.id === "string"
+        ? `${payload.type}:${payload.id}`
+        : "page:page-1";
+  const activation =
+    payload.activation && typeof payload.activation === "object"
+      ? payload.activation
+      : {
+          resourceRef,
+          kind:
+            href.startsWith("http://") || href.startsWith("https://")
+              ? "external"
+              : "route",
+          href,
+          unresolvedReason: null,
+        };
+  return {
+    ...payload,
+    resource_ref: resourceRef,
+    activation,
+    citation_target:
+      typeof row.citation_target === "string" ? row.citation_target : resourceRef,
+  };
 }
 
 const HOST_CREDIT = {
@@ -31,7 +65,7 @@ const PDF_GEOMETRY_LOCATOR = {
 };
 
 describe("normalizeSearchResult happy-path adaptation", () => {
-  it("adapts a content_chunk row using backend citation label and deep link", () => {
+  it("adapts a content_chunk row using backend citation label and activation", () => {
     const row = adapt({
       type: "content_chunk",
       id: "chunk-7",
@@ -48,7 +82,7 @@ describe("normalizeSearchResult happy-path adaptation", () => {
         contributors: [],
         published_date: null,
       },
-      deep_link: "/media/media-pdf-1#evidence-span-1",
+      activationHref: "/media/media-pdf-1#evidence-span-1",
       citation_label: "p. 12",
       context_ref: {
         type: "content_chunk",
@@ -60,7 +94,9 @@ describe("normalizeSearchResult happy-path adaptation", () => {
 
     expect(row).toMatchObject({
       key: "content_chunk-chunk-7",
-      href: "/media/media-pdf-1#evidence-span-1",
+      activation: { href: "/media/media-pdf-1#evidence-span-1" },
+      resourceRef: "content_chunk:chunk-7",
+      citationTarget: "content_chunk:chunk-7",
       type: "content_chunk",
       typeLabel: "p. 12",
       primaryText: "section text",
@@ -87,7 +123,7 @@ describe("normalizeSearchResult happy-path adaptation", () => {
       source_label: "Reader Source - web article",
       media_id: "media-1",
       media_kind: "web_article",
-      deep_link: "/media/media-1#highlight-highlight-1",
+      activationHref: "/media/media-1#highlight-highlight-1",
       context_ref: { type: "highlight", id: "highlight-1" },
       color: "yellow",
       exact: "important saved quote",
@@ -111,7 +147,7 @@ describe("normalizeSearchResult happy-path adaptation", () => {
 
     expect(row).toMatchObject({
       key: "highlight-highlight-1",
-      href: "/media/media-1#highlight-highlight-1",
+      activation: { href: "/media/media-1#highlight-highlight-1" },
       type: "highlight",
       primaryText: "important saved quote",
       sourceMeta: "Reader Source - web article",
@@ -129,7 +165,7 @@ describe("normalizeSearchResult happy-path adaptation", () => {
       source_label: "Reader Source - section 2",
       media_id: "media-1",
       media_kind: "web_article",
-      deep_link: "/media/media-1#fragment-fragment-1",
+      activationHref: "/media/media-1#fragment-fragment-1",
       context_ref: { type: "fragment", id: "fragment-1" },
       citation_label: "fragment 1",
       locator: {
@@ -152,7 +188,7 @@ describe("normalizeSearchResult happy-path adaptation", () => {
 
     expect(row).toMatchObject({
       key: "fragment-fragment-1",
-      href: "/media/media-1#fragment-fragment-1",
+      activation: { href: "/media/media-1#fragment-fragment-1" },
       type: "fragment",
       primaryText: "fragment source text",
       sourceMeta: "Reader Source - section 2",
@@ -169,7 +205,7 @@ describe("normalizeSearchResult happy-path adaptation", () => {
       source_label: "Memory Episode - podcast episode",
       media_id: "episode-media-1",
       media_kind: "podcast_episode",
-      deep_link: "/media/episode-media-1",
+      activationHref: "/media/episode-media-1",
       context_ref: { type: "media", id: "episode-media-1" },
       source: {
         media_id: "episode-media-1",
@@ -196,7 +232,7 @@ describe("normalizeSearchResult happy-path adaptation", () => {
       source_label: "Lecture Video - video",
       media_id: "video-media-1",
       media_kind: "video",
-      deep_link: "/media/video-media-1",
+      activationHref: "/media/video-media-1",
       context_ref: { type: "media", id: "video-media-1" },
       source: {
         media_id: "video-media-1",
@@ -224,13 +260,13 @@ describe("normalizeSearchResult happy-path adaptation", () => {
       source_label: "Systems Thinking Weekly - Host",
       media_id: null,
       media_kind: null,
-      deep_link: "/podcasts/podcast-1",
+      activationHref: "/podcasts/podcast-1",
       context_ref: { type: "podcast", id: "podcast-1" },
       contributors: [HOST_CREDIT],
     });
 
     expect(row).toMatchObject({
-      href: "/podcasts/podcast-1",
+      activation: { href: "/podcasts/podcast-1" },
       type: "podcast",
       primaryText: "Systems Thinking Weekly",
       sourceMeta: "Systems Thinking Weekly - Host",
@@ -261,7 +297,7 @@ describe("normalizeSearchResult happy-path adaptation", () => {
       source_label: "contributor",
       media_id: null,
       media_kind: null,
-      deep_link: "/authors/ursula-le-guin",
+      activationHref: "/authors/ursula-le-guin",
       context_ref: {
         type: "contributor",
         id: "11111111-1111-4111-8111-111111111111",
@@ -275,7 +311,7 @@ describe("normalizeSearchResult happy-path adaptation", () => {
     });
 
     expect(row).toMatchObject({
-      href: "/authors/ursula-le-guin",
+      activation: { href: "/authors/ursula-le-guin" },
       type: "contributor",
       typeLabel: "author",
       primaryText: "Ursula K. Le Guin",
@@ -290,7 +326,7 @@ describe("normalizeSearchResult happy-path adaptation", () => {
       result_type: "web_result",
       score: 0.77,
       snippet: "Calypso <b>archive</b> public evidence snippet",
-      source_id: "web:calypso",
+      source_id: "33333333-3333-4333-8333-333333333333",
       result_ref: "web:calypso",
       title: "Calypso Archive Source",
       url: "https://example.com/calypso",
@@ -304,8 +340,10 @@ describe("normalizeSearchResult happy-path adaptation", () => {
       source_label: "Example",
       media_id: null,
       media_kind: null,
-      deep_link: "https://example.com/calypso",
-      context_ref: { type: "web_result", id: "retrieval-web-1" },
+      resource_ref: "external_snapshot:33333333-3333-4333-8333-333333333333",
+      citation_target: "external_snapshot:33333333-3333-4333-8333-333333333333",
+      activationHref: "https://example.com/calypso",
+      context_ref: { type: "web_result", id: "33333333-3333-4333-8333-333333333333" },
       locator: {
         type: "external_url",
         url: "https://example.com/calypso",
@@ -316,7 +354,8 @@ describe("normalizeSearchResult happy-path adaptation", () => {
 
     expect(row).toMatchObject({
       key: "web_result-retrieval-web-1",
-      href: "https://example.com/calypso",
+      activation: { href: "https://example.com/calypso" },
+      resourceRef: "external_snapshot:33333333-3333-4333-8333-333333333333",
       type: "web_result",
       typeLabel: "web result",
       primaryText: "Calypso Archive Source",
@@ -340,7 +379,7 @@ describe("normalizeSearchResult happy-path adaptation", () => {
       source_label: "note",
       media_id: null,
       media_kind: null,
-      deep_link: "/notes/note-1",
+      activationHref: "/notes/note-1",
       context_ref: { type: "note_block", id: "note-1" },
       body_text: "note body text",
       highlight_excerpt: null,
@@ -373,14 +412,14 @@ describe("normalizeSearchResult structural rejections", () => {
         score: 0.5,
         snippet: "s",
         title: "t",
-        // missing deep_link + context_ref
+        // missing activation + context_ref
       }),
     ).toBeNull();
   });
 
   it("rejects an unknown result type", () => {
     expect(
-      normalizeSearchResult({
+      normalize({
         type: "galaxy",
         id: "x",
         score: 0.5,
@@ -389,8 +428,77 @@ describe("normalizeSearchResult structural rejections", () => {
         source_label: null,
         media_id: null,
         media_kind: null,
-        deep_link: "/x",
+        activationHref: "/x",
         context_ref: { type: "page", id: "x" },
+      }),
+    ).toBeNull();
+  });
+
+  it("rejects rows without an activatable resource target", () => {
+    expect(
+      normalizeSearchResult({
+        type: "page",
+        id: "page-1",
+        score: 0.5,
+        snippet: "s",
+        title: "t",
+        source_label: "page",
+        media_id: null,
+        media_kind: null,
+        resource_ref: "page:page-1",
+        activation: {
+          resourceRef: "page:page-1",
+          kind: "none",
+          href: null,
+          unresolvedReason: "missing",
+        },
+        citation_target: "page:page-1",
+        activationHref: "/pages/page-1",
+        context_ref: { type: "page", id: "page-1" },
+        description: "Page",
+      }),
+    ).toBeNull();
+  });
+
+  it("rejects malformed activation instead of coercing it", () => {
+    expect(
+      normalizeSearchResult({
+        type: "page",
+        id: "page-1",
+        score: 0.5,
+        snippet: "s",
+        title: "t",
+        source_label: "page",
+        media_id: null,
+        media_kind: null,
+        resource_ref: "page:page-1",
+        activation: {
+          resourceRef: "page:page-1",
+          kind: "missing",
+          href: "/pages/page-1",
+          unresolvedReason: null,
+        },
+        citation_target: "page:page-1",
+        context_ref: { type: "page", id: "page-1" },
+      }),
+    ).toBeNull();
+  });
+
+  it("rejects a row that has only the deleted deep_link navigation field", () => {
+    expect(
+      normalizeSearchResult({
+        type: "page",
+        id: "page-1",
+        score: 0.5,
+        snippet: "s",
+        title: "t",
+        source_label: "page",
+        media_id: null,
+        media_kind: null,
+        resource_ref: "page:page-1",
+        citation_target: "page:page-1",
+        deep_link: "/pages/page-1",
+        context_ref: { type: "page", id: "page-1" },
       }),
     ).toBeNull();
   });
@@ -399,7 +507,7 @@ describe("normalizeSearchResult structural rejections", () => {
 describe("normalizeSearchResult locator / type-mismatch rejections", () => {
   it("rejects a note_block whose locator is a media (web_text_offsets) locator", () => {
     expect(
-      normalizeSearchResult({
+      normalize({
         type: "note_block",
         id: "note-1",
         score: 0.91,
@@ -408,7 +516,7 @@ describe("normalizeSearchResult locator / type-mismatch rejections", () => {
         source_label: "note",
         media_id: null,
         media_kind: null,
-        deep_link: "/notes/note-1",
+        activationHref: "/notes/note-1",
         context_ref: { type: "note_block", id: "note-1" },
         body_text: "note body text",
         highlight_excerpt: null,
@@ -425,7 +533,7 @@ describe("normalizeSearchResult locator / type-mismatch rejections", () => {
 
   it("rejects a content_chunk whose context_ref type drifts from the row type", () => {
     expect(
-      normalizeSearchResult({
+      normalize({
         type: "content_chunk",
         id: "chunk-7",
         score: 0.88,
@@ -441,7 +549,7 @@ describe("normalizeSearchResult locator / type-mismatch rejections", () => {
           contributors: [],
           published_date: null,
         },
-        deep_link: "/media/media-pdf-1#evidence-span-1",
+        activationHref: "/media/media-pdf-1#evidence-span-1",
         citation_label: "p. 12",
         context_ref: { type: "fragment", id: "chunk-7", evidence_span_ids: ["span-1"] },
         locator: PDF_GEOMETRY_LOCATOR,
@@ -451,7 +559,7 @@ describe("normalizeSearchResult locator / type-mismatch rejections", () => {
 
   it("rejects a content_chunk with no evidence_span_ids", () => {
     expect(
-      normalizeSearchResult({
+      normalize({
         type: "content_chunk",
         id: "chunk-7",
         score: 0.88,
@@ -467,7 +575,7 @@ describe("normalizeSearchResult locator / type-mismatch rejections", () => {
           contributors: [],
           published_date: null,
         },
-        deep_link: "/media/media-pdf-1#evidence-span-1",
+        activationHref: "/media/media-pdf-1#evidence-span-1",
         citation_label: "p. 12",
         context_ref: { type: "content_chunk", id: "chunk-7", evidence_span_ids: [] },
         locator: PDF_GEOMETRY_LOCATOR,
@@ -477,13 +585,13 @@ describe("normalizeSearchResult locator / type-mismatch rejections", () => {
 
   it("rejects a web_result whose locator is not an external_url", () => {
     expect(
-      normalizeSearchResult({
+      normalize({
         type: "web_result",
         id: "retrieval-web-1",
         result_type: "web_result",
         score: 0.77,
         snippet: "snippet",
-        source_id: "web:calypso",
+        source_id: "44444444-4444-4444-8444-444444444444",
         result_ref: "web:calypso",
         title: "Calypso Archive Source",
         url: "https://example.com/calypso",
@@ -497,8 +605,10 @@ describe("normalizeSearchResult locator / type-mismatch rejections", () => {
         source_label: "Example",
         media_id: null,
         media_kind: null,
-        deep_link: "https://example.com/calypso",
-        context_ref: { type: "web_result", id: "retrieval-web-1" },
+        resource_ref: "external_snapshot:44444444-4444-4444-8444-444444444444",
+        citation_target: "external_snapshot:44444444-4444-4444-8444-444444444444",
+        activationHref: "https://example.com/calypso",
+        context_ref: { type: "web_result", id: "44444444-4444-4444-8444-444444444444" },
         locator: {
           type: "note_block_offsets",
           block_id: "note-1",
@@ -513,7 +623,7 @@ describe("normalizeSearchResult locator / type-mismatch rejections", () => {
 describe("normalizeSearchResult legacy artifact identity rejections", () => {
   it("rejects a row carrying a top-level legacy source_version key", () => {
     expect(
-      normalizeSearchResult({
+      normalize({
         type: "content_chunk",
         id: "chunk-7",
         score: 0.88,
@@ -529,7 +639,7 @@ describe("normalizeSearchResult legacy artifact identity rejections", () => {
           contributors: [],
           published_date: null,
         },
-        deep_link: "/media/media-pdf-1#evidence-span-1",
+        activationHref: "/media/media-pdf-1#evidence-span-1",
         source_version: "pdf-source:v1",
         citation_label: "p. 12",
         context_ref: { type: "content_chunk", id: "chunk-7", evidence_span_ids: ["span-1"] },
@@ -540,7 +650,7 @@ describe("normalizeSearchResult legacy artifact identity rejections", () => {
 
   it("rejects a row carrying a nested legacy revision key in context_ref", () => {
     expect(
-      normalizeSearchResult({
+      normalize({
         type: "page",
         id: "page-legacy",
         score: 0.72,
@@ -549,7 +659,7 @@ describe("normalizeSearchResult legacy artifact identity rejections", () => {
         source_label: "page",
         media_id: null,
         media_kind: null,
-        deep_link: "/pages/page-legacy",
+        activationHref: "/pages/page-legacy",
         context_ref: { type: "page", id: "page-legacy", revision: 2 },
         description: "Old page shape",
       }),
@@ -560,7 +670,7 @@ describe("normalizeSearchResult legacy artifact identity rejections", () => {
 describe("normalizeSearchResult malformed-locator-geometry rejections", () => {
   it("rejects a pdf_page_geometry locator with malformed quads", () => {
     expect(
-      normalizeSearchResult({
+      normalize({
         type: "content_chunk",
         id: "chunk-7",
         score: 0.88,
@@ -576,7 +686,7 @@ describe("normalizeSearchResult malformed-locator-geometry rejections", () => {
           contributors: [],
           published_date: null,
         },
-        deep_link: "/media/media-pdf-1#evidence-span-1",
+        activationHref: "/media/media-pdf-1#evidence-span-1",
         citation_label: "p. 12",
         context_ref: { type: "content_chunk", id: "chunk-7", evidence_span_ids: ["span-1"] },
         locator: { ...PDF_GEOMETRY_LOCATOR, quads: [{ x1: 1 }] },
@@ -588,7 +698,7 @@ describe("normalizeSearchResult malformed-locator-geometry rejections", () => {
 describe("normalizeSearchResult contributor-credit rejections", () => {
   it("rejects a podcast row whose contributor credit is missing href", () => {
     expect(
-      normalizeSearchResult({
+      normalize({
         type: "podcast",
         id: "podcast-bad-credit",
         score: 0.64,
@@ -597,7 +707,7 @@ describe("normalizeSearchResult contributor-credit rejections", () => {
         source_label: "Bad Credit",
         media_id: null,
         media_kind: null,
-        deep_link: "/podcasts/podcast-bad-credit",
+        activationHref: "/podcasts/podcast-bad-credit",
         context_ref: { type: "podcast", id: "podcast-bad-credit" },
         contributors: [
           {
@@ -614,7 +724,7 @@ describe("normalizeSearchResult contributor-credit rejections", () => {
 
   it("rejects a media row whose source.contributors is not an array", () => {
     expect(
-      normalizeSearchResult({
+      normalize({
         type: "media",
         id: "media-1",
         score: 0.8,
@@ -623,7 +733,7 @@ describe("normalizeSearchResult contributor-credit rejections", () => {
         source_label: "Book",
         media_id: "media-1",
         media_kind: "epub",
-        deep_link: "/media/media-1",
+        activationHref: "/media/media-1",
         context_ref: { type: "media", id: "media-1" },
         source: {
           media_id: "media-1",

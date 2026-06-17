@@ -14,6 +14,10 @@ import {
   isCitationOut,
   type CitationOut,
 } from "@/lib/conversations/citationOut";
+import {
+  normalizeResourceActivation,
+  type ResourceActivation,
+} from "@/lib/resources/activation";
 import { hasOnlyKeys, isOptionalString } from "./guards";
 import {
   isCitationEventData,
@@ -117,6 +121,7 @@ export interface SSEContextRefAddedEvent {
     id: string;
     conversation_id: string;
     resource_ref: string;
+    activation: ResourceActivation;
     label: string;
     summary: string;
     missing: boolean;
@@ -341,12 +346,16 @@ function parseCitationIndexItem(item: unknown): SSECitationIndexItem {
 function parseContextRefAddedData(
   data: unknown,
 ): SSEContextRefAddedEvent["data"] {
+  const activation = isRecord(data)
+    ? normalizeResourceActivation(data.activation)
+    : null;
   if (
     !isRecord(data) ||
     !hasOnlyKeys(data, [
       "id",
       "conversation_id",
       "resource_ref",
+      "activation",
       "label",
       "summary",
       "missing",
@@ -356,6 +365,7 @@ function parseContextRefAddedData(
     typeof data.id !== "string" ||
     typeof data.conversation_id !== "string" ||
     typeof data.resource_ref !== "string" ||
+    activation === null ||
     typeof data.label !== "string" ||
     typeof data.summary !== "string" ||
     typeof data.missing !== "boolean" ||
@@ -365,9 +375,17 @@ function parseContextRefAddedData(
   ) {
     throw new Error("Invalid SSE payload for context_ref_added");
   }
-  // justify-type-assertion: the guard above exhaustively validated every
-  // field of the context_ref_added payload.
-  return data as SSEContextRefAddedEvent["data"];
+  return {
+    id: data.id,
+    conversation_id: data.conversation_id,
+    resource_ref: data.resource_ref,
+    activation,
+    label: data.label,
+    summary: data.summary,
+    missing: data.missing,
+    created_at: data.created_at,
+    citation_edge_id: data.citation_edge_id,
+  };
 }
 
 export function toChatSSEEvent(eventType: string, data: unknown): SSEEvent {

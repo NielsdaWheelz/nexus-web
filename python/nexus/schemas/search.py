@@ -17,6 +17,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
 from nexus.schemas.contributors import ContributorCreditOut, ContributorOut
+from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.schemas.retrieval import RetrievalLocator, validate_locator_for_result_type
 
 # Valid search result types — the canonical result-discriminant authority for the
@@ -37,6 +38,7 @@ SEARCH_RESULT_TYPES = Literal[
     "evidence_span",
     "conversation",
     "web_result",
+    "reader_apparatus_item",
 ]
 
 # Runtime view of SEARCH_RESULT_TYPES (declaration order preserved) for iteration,
@@ -94,7 +96,9 @@ class SearchResultBaseOut(BaseModel):
     source_label: str | None = None
     media_id: UUID | None = None
     media_kind: str | None = None
-    deep_link: str
+    resource_ref: str
+    activation: ResourceActivationOut
+    citation_target: str | None
     context_ref: SearchResultContextRefOut
 
     model_config = ConfigDict(extra="forbid")
@@ -243,6 +247,21 @@ class SearchResultEvidenceSpanOut(SearchResultBaseOut):
         return self
 
 
+class SearchResultReaderApparatusItemOut(SearchResultBaseOut):
+    """Typed search result for source-authored reader apparatus rows."""
+
+    type: Literal["reader_apparatus_item"]
+    id: UUID
+    source: SearchResultSourceOut
+    apparatus_kind: str
+    locator: RetrievalLocator
+
+    @model_validator(mode="after")
+    def validate_locator_contract(self) -> "SearchResultReaderApparatusItemOut":
+        validate_locator_for_result_type(self.type, self.locator)
+        return self
+
+
 class SearchResultConversationOut(SearchResultBaseOut):
     """Typed search result for visible conversations."""
 
@@ -273,6 +292,8 @@ class SearchResultWebOut(SearchResultBaseOut):
     def validate_web_result_contract(self) -> "SearchResultWebOut":
         if self.context_ref.type != "web_result":
             raise ValueError("context_ref.type must be web_result")
+        if str(self.context_ref.id) != self.source_id:
+            raise ValueError("web_result context_ref.id must match source_id")
         validate_locator_for_result_type(self.type, self.locator)
         return self
 
@@ -290,6 +311,7 @@ SearchResultOut = Annotated[
     | SearchResultHighlightOut
     | SearchResultMessageOut
     | SearchResultEvidenceSpanOut
+    | SearchResultReaderApparatusItemOut
     | SearchResultConversationOut
     | SearchResultWebOut,
     Field(discriminator="type"),

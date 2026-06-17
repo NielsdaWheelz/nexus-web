@@ -7,6 +7,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from nexus.schemas.resource_graph import ConnectionOut
+from nexus.schemas.resource_items import ResourceActivationOut
 
 ThemeValue = Literal["light", "dark"]
 FontFamilyValue = Literal["serif", "sans"]
@@ -58,6 +59,7 @@ class ReaderConnectionRowOut(BaseModel):
     title: str
     subtitle: str | None = None
     excerpt: str | None = None
+    activation: ResourceActivationOut
     href: str | None = None
 
 

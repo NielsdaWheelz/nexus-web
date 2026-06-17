@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { type ApiPath } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { useResource } from "@/lib/api/useResource";
 import { isAbortError } from "@/lib/errors";
@@ -21,7 +20,7 @@ export function useConversationContextRefs(conversationId: string | null) {
   conversationIdRef.current = conversationId;
   const contextRefsResource = useResource<{ data: ContextRefOut[] }>({
     cacheKey: conversationId,
-    path: (id) => `/api/conversations/${id}/context-refs` as ApiPath,
+    load: async (signal) => ({ data: await listContextRefs(conversationIdRef.current ?? "", { signal }) }),
   });
 
   const refreshContextRefs = useCallback(

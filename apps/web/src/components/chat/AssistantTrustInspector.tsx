@@ -8,6 +8,7 @@ import type {
   MessageToolCall,
 } from "@/lib/conversations/types";
 import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
+import type { ResourceActivation } from "@/lib/resources/activation";
 import styles from "./MessageRow.module.css";
 
 export default function AssistantTrustInspector({
@@ -15,7 +16,11 @@ export default function AssistantTrustInspector({
   onCitationActivate,
 }: {
   trustTrail: AssistantTrustTrail;
-  onCitationActivate?: (target: ReaderSourceTarget, event?: React.MouseEvent) => void;
+  onCitationActivate?: (
+    activation: ResourceActivation,
+    target: ReaderSourceTarget | null,
+    event?: React.MouseEvent,
+  ) => void;
 }) {
   const retrieved = trustTrail.tool_calls.reduce(
     (count, tool) => count + tool.retrievals.length,
@@ -133,13 +138,15 @@ export default function AssistantTrustInspector({
                   <li key={item.citation_edge_id}>
                     <div className={styles.trustLine}>
                       <Search size={13} aria-hidden="true" />
-                      {citation.target && onCitationActivate ? (
+                      {onCitationActivate ? (
                         <button
                           type="button"
                           onClick={(event) =>
-                            citation.target
-                              ? onCitationActivate(citation.target, event)
-                              : undefined
+                            onCitationActivate(
+                              citation.activation,
+                              citation.target,
+                              event,
+                            )
                           }
                         >
                           [{item.ordinal}] {citation.preview.title || "Citation"}

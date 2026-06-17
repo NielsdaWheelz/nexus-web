@@ -107,6 +107,17 @@ class _RankedEvidenceSpanResult:
 
 
 @dataclass(slots=True)
+class _RankedReaderApparatusItemResult:
+    id: UUID
+    snippet: str
+    apparatus_kind: str
+    locator: dict[str, Any]
+    source: SearchResultSourceOut
+    score: _SearchScore
+    result_type: Literal["reader_apparatus_item"] = "reader_apparatus_item"
+
+
+@dataclass(slots=True)
 class _RankedFragmentResult:
     id: UUID
     idx: int
@@ -175,6 +186,7 @@ InternalSearchResult = (
     | _RankedNoteBlockResult
     | _RankedHighlightResult
     | _RankedMessageResult
+    | _RankedReaderApparatusItemResult
     | _RankedConversationResult
     | _RankedWebResult
 )

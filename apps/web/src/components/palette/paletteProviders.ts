@@ -16,6 +16,7 @@ import { SEARCH_TYPE_ICON } from "@/lib/search/searchTypeIcon";
 import type { SearchResultRowViewModel } from "@/lib/search/types";
 import { searchQueryFromInput } from "@/lib/search/query";
 import { searchHref } from "@/lib/search/searchParams";
+import { hrefForResourceActivation } from "@/lib/resources/activation";
 
 export interface PalettePane {
   id: string;
@@ -149,19 +150,27 @@ function staticItems(ctx: PaletteContext): PaletteItem[] {
 
 function searchItems(ctx: PaletteContext): PaletteItem[] {
   return ctx.searchResults
-    .filter((result) => !androidBlocked(ctx, result.href))
-    .map((result) => ({
-      id: `search-${result.key}`,
-      title: result.primaryText,
-      subtitle: result.typeLabel,
-      keywords: [],
-      sectionId: "search-results",
-      icon: SEARCH_TYPE_ICON[result.type],
-      target: { kind: "href", href: result.href, externalShell: false },
-      source: "search",
-      rank: { searchScore: 1 },
-      hasActions: true,
-    }));
+    .map((result): PaletteItem | null => {
+      const href = hrefForResourceActivation(result.activation);
+      if (!href || androidBlocked(ctx, href)) return null;
+      return {
+        id: `search-${result.key}`,
+        title: result.primaryText,
+        subtitle: result.typeLabel,
+        keywords: [],
+        sectionId: "search-results",
+        icon: SEARCH_TYPE_ICON[result.type],
+        target: {
+          kind: "resource",
+          activation: result.activation,
+          titleHint: result.paneTitleHint,
+        },
+        source: "search",
+        rank: { searchScore: 1 },
+        hasActions: true,
+      };
+    })
+    .filter((item): item is PaletteItem => item !== null);
 }
 
 function askItem(ctx: PaletteContext, base: PaletteItem[]): PaletteItem | null {

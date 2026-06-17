@@ -32,13 +32,20 @@ FakeSearch = Callable[[object, object, SearchQuery], SearchResponse]
 def _conversation_result(result_id: UUID, score: float) -> SearchResultOut:
     """Construct a minimal valid ``conversation`` result — the simplest variant
     (just the shared envelope plus type/id)."""
+    resource_ref = f"conversation:{result_id}"
     return SearchResultConversationOut(
         type="conversation",
         id=result_id,
         score=score,
         snippet="snippet",
         title="title",
-        deep_link=f"/conversations/{result_id}",
+        resource_ref=resource_ref,
+        activation={
+            "resourceRef": resource_ref,
+            "kind": "route",
+            "href": f"/conversations/{result_id}",
+        },
+        citation_target=None,
         context_ref=SearchResultContextRefOut(type="conversation", id=result_id),
     )
 

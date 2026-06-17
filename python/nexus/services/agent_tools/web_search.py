@@ -20,6 +20,7 @@ from web_search_tool.types import (
     WebSearchResultType,
 )
 
+from nexus.db.models import ResourceExternalSnapshot
 from nexus.logging import get_logger
 from nexus.schemas.retrieval import (
     retrieval_context_ref_json,
@@ -84,17 +85,19 @@ class WebSearchCitation:
             raise ValueError("web search citation is missing external_url locator")
         return locator
 
-    def to_json(self) -> dict[str, Any]:
+    def to_json(self, *, source_id: str | None = None) -> dict[str, Any]:
+        source_id = source_id or self.result_ref
         return {
             "type": "web_result",
-            "id": self.result_ref,
+            "id": source_id,
             "result_type": "web_result",
             "result_ref": self.result_ref,
-            "source_id": self.result_ref,
+            "source_id": source_id,
             "title": self.title,
             "url": self.url,
             "display_url": self.display_url,
             "deep_link": self.url,
+            "citation_target": f"external_snapshot:{source_id}",
             "locator": self.locator_json(),
             "snippet": self.snippet,
             "extra_snippets": list(self.extra_snippets),
@@ -103,7 +106,7 @@ class WebSearchCitation:
             "rank": self.rank,
             "provider": self.provider,
             "provider_request_id": self.provider_request_id,
-            "context_ref": {"type": "web_result", "id": self.result_ref},
+            "context_ref": {"type": "web_result", "id": source_id},
             "media_id": None,
             "media_kind": None,
             "score": 1.0 / max(self.rank, 1),
@@ -230,17 +233,41 @@ def _render_single_web_context(citation: WebSearchCitation) -> str:
 
 def persist_web_search_run(db: Session, run: WebSearchRun) -> None:
     """Persist the web-search tool call and retrieval rows."""
+    owner_user_id = db.scalar(
+        text("SELECT owner_user_id FROM conversations WHERE id = :conversation_id"),
+        {"conversation_id": run.conversation_id},
+    )
+    if owner_user_id is None:
+        raise ValueError("web_search conversation is missing")
+    snapshot_ids: dict[str, str] = {}
+    for citation in run.citations:
+        snapshot = ResourceExternalSnapshot(
+            user_id=owner_user_id,
+            provider=citation.provider,
+            url=citation.url,
+            title=citation.title,
+            snippet=citation.snippet,
+            source_snapshot=citation.to_json(),
+        )
+        db.add(snapshot)
+        db.flush()
+        source_id = str(snapshot.id)
+        snapshot.source_snapshot = citation.to_json(source_id=source_id)
+        snapshot_ids[citation.result_ref] = source_id
 
     selected_context_refs = [
         retrieval_context_ref_json(
             {
                 "type": "web_result",
-                "id": citation.result_ref,
+                "id": snapshot_ids[citation.result_ref],
             }
         )
         for citation in run.selected_citations
     ]
-    result_refs = [retrieval_result_ref_json(citation.to_json()) for citation in run.citations]
+    result_refs = [
+        retrieval_result_ref_json(citation.to_json(source_id=snapshot_ids[citation.result_ref]))
+        for citation in run.citations
+    ]
     requested_types = [run.result_type]
 
     existing = db.execute(
@@ -358,6 +385,10 @@ def persist_web_search_run(db: Session, run: WebSearchRun) -> None:
             },
         )
     run.tool_call_id = tool_call_id
+    from nexus.services.chat_runs import prune_tool_call_retrievals
+
+    if existing is not None:
+        prune_tool_call_retrievals(db, tool_call_id=tool_call_id)
 
     insert_candidate_ledger = text(
         """
@@ -399,7 +430,8 @@ def persist_web_search_run(db: Session, run: WebSearchRun) -> None:
     for ordinal, citation in enumerate(run.citations):
         selected = citation.result_ref in selected_refs
         score = 1.0 / max(citation.rank, 1)
-        result_ref = retrieval_result_ref_json(citation.to_json())
+        source_id = snapshot_ids[citation.result_ref]
+        result_ref = retrieval_result_ref_json(citation.to_json(source_id=source_id))
         locator = citation.locator_json()
         retrieval_id = insert_retrieval_row(
             db,
@@ -407,19 +439,20 @@ def persist_web_search_run(db: Session, run: WebSearchRun) -> None:
             ordinal=ordinal,
             citation=RetrievalCitation(
                 result_type="web_result",
-                source_id=citation.result_ref,
+                source_id=source_id,
                 title=citation.title,
                 source_label=None,
                 snippet=citation.snippet,
                 deep_link=citation.url,
+                citation_target=f"external_snapshot:{source_id}",
                 citation_label=None,
                 locator=locator,
-                context_ref={"type": "web_result", "id": citation.result_ref},
+                context_ref={"type": "web_result", "id": source_id},
                 evidence_span_id=None,
                 media_id=None,
                 media_kind=None,
                 score=score,
-                result_ref=citation.to_json(),
+                result_ref=citation.to_json(source_id=source_id),
                 selected=selected,
             ),
             selected=selected,
@@ -433,7 +466,7 @@ def persist_web_search_run(db: Session, run: WebSearchRun) -> None:
                 "retrieval_id": retrieval_id,
                 "ordinal": ordinal,
                 "result_type": "web_result",
-                "source_id": citation.result_ref,
+                "source_id": source_id,
                 "score": score,
                 "selected": selected,
                 "selection_status": "web_result" if selected else "retrieved",
@@ -443,11 +476,6 @@ def persist_web_search_run(db: Session, run: WebSearchRun) -> None:
             },
         )
         persisted_count = ordinal + 1
-    # Trim over-count rows from a previous attempt, cleaning their citation edges
-    # too. Deferred import: chat_runs imports this module, so the chat-run-owned
-    # prune owner is reached lazily to break the cycle.
-    from nexus.services.chat_runs import prune_tool_call_retrievals
-
     prune_tool_call_retrievals(db, tool_call_id=tool_call_id, min_ordinal=persisted_count)
     db.execute(
         text(

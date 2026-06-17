@@ -13,6 +13,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.services.resource_graph.refs import ResourceScheme
 
 # The edge vocabularies are single-sourced in the graph-schema module (LOW #20);
@@ -97,6 +98,7 @@ class ConnectionEndpointOut(ResourceGraphModel):
     id: UUID
     label: str | None
     description: str | None
+    activation: ResourceActivationOut
     href: str | None
     missing: bool
 
@@ -110,6 +112,7 @@ class ConnectionCitationOut(ResourceGraphModel):
     ordinal: int
     role: EdgeKind
     snapshot: dict[str, Any]
+    activation: ResourceActivationOut
     target_reader: ConnectionReaderTargetOut | None
     target_status: Literal["current", "missing", "forbidden", "unanchorable"]
 
@@ -143,6 +146,7 @@ class ContextRefOut(ResourceGraphModel):
     id: UUID
     conversation_id: UUID
     resource_ref: str
+    activation: ResourceActivationOut
     label: str
     summary: str
     missing: bool

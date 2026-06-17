@@ -20,6 +20,7 @@ TYPE_WEIGHTS = {
     "highlight": 1.25,
     "message": 1.0,
     "evidence_span": 1.15,
+    "reader_apparatus_item": 1.1,
     "conversation": 0.95,
     "web_result": 0.9,
 }

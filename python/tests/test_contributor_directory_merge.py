@@ -452,7 +452,6 @@ def test_search_by_merged_handle_returns_target_works(db_session):
         viewer_id=viewer_id,
         query=SearchQuery(
             text="",
-            result_types=("media",),
             authors=(source_handle,),
         ),
     )
@@ -816,7 +815,7 @@ def test_edge_only_contributor_appears_in_directory_and_search(db_session):
     response = search(
         db_session,
         viewer_id=viewer_id,
-        query=SearchQuery(text=distinctive, result_types=("contributor",)),
+        query=SearchQuery(text=distinctive, requested_kinds=frozenset({"people"})),
     )
     search_handles = {getattr(result, "contributor_handle", None) for result in response.results}
     assert handle in search_handles

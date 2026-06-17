@@ -33,6 +33,7 @@
         "body_text": "^ There is a discrepancy between line numbers in different editions.",
         "confidence": "strong",
         "extraction_method": "html_link_graph",
+        "id": "c0ea8048-69d5-5dc3-a5f8-69c803eb1c96",
         "kind": "footnote",
         "label": "^",
         "locator": {
@@ -47,6 +48,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:c0ea8048-69d5-5dc3-a5f8-69c803eb1c96",
         "sort_key": "000000.target",
         "source_ref": {
           "format": "html",
@@ -60,6 +62,7 @@
         "body_text": null,
         "confidence": "strong",
         "extraction_method": "html_link_graph",
+        "id": "572f7454-9557-54a9-aaec-a61b462206f1",
         "kind": "footnote_ref",
         "label": "[A]",
         "locator": {
@@ -74,6 +77,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:572f7454-9557-54a9-aaec-a61b462206f1",
         "sort_key": "000000.marker",
         "source_ref": {
           "format": "html",

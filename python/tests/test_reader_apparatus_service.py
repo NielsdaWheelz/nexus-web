@@ -171,7 +171,9 @@ def test_get_reader_apparatus_returns_source_authored_items(auth_client, direct_
     assert data["capabilities"]["has_inline_markers"] is True
     assert [item["kind"] for item in data["items"]] == ["footnote_ref", "footnote"]
     assert [item["stable_key"] for item in data["items"]] == ["marker", "target"]
-    assert "id" not in data["items"][0]
+    for item in data["items"]:
+        UUID(item["id"])
+        assert item["resource_ref"] == f"reader_apparatus_item:{item['id']}"
     assert data["edges"][0]["relation"] == "points_to_note"
     assert data["edges"][0]["from_stable_key"] == "marker"
     assert data["edges"][0]["to_stable_key"] == "target"

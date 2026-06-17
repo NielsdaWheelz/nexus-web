@@ -8,6 +8,10 @@ import type {
   ReaderCitationPreview,
 } from "@/lib/conversations/readerCitation";
 import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
+import {
+  hrefForResourceActivation,
+  type ResourceActivation,
+} from "@/lib/resources/activation";
 import styles from "./ReaderCitation.module.css";
 
 const colorClass = {
@@ -23,17 +27,22 @@ export default function ReaderCitation({
   index,
   color,
   preview,
+  activation,
   target,
-  href,
   onActivate,
 }: {
   index: number;
   color: ReaderCitationColor;
   preview: ReaderCitationPreview;
+  activation: ResourceActivation;
   target: ReaderSourceTarget | null;
-  href?: string | null;
-  onActivate: (target: ReaderSourceTarget, event?: React.MouseEvent) => void;
+  onActivate: (
+    activation: ResourceActivation,
+    target: ReaderSourceTarget | null,
+    event?: React.MouseEvent,
+  ) => void;
 }) {
+  const href = hrefForResourceActivation(activation);
   const [showPreview, setShowPreview] = useState(false);
   const [anchor, setAnchor] = useState<{ x: number; y: number } | null>(null);
   const hoverTimerRef = useRef<number | null>(null);
@@ -102,22 +111,24 @@ export default function ReaderCitation({
                 className={styles.previewAction}
                 onClick={(event) => {
                   event.stopPropagation();
-                  onActivate(activationTarget, event);
+                  onActivate(activation, activationTarget, event);
                   closePreview();
                 }}
               >
                 Open in context
               </button>
             ) : href ? (
-              <a
+              <button
+                type="button"
                 className={styles.previewAction}
-                href={href}
-                target={externalHref ? "_blank" : undefined}
-                rel={externalHref ? "noopener noreferrer" : undefined}
-                onClick={closePreview}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onActivate(activation, null, event);
+                  closePreview();
+                }}
               >
                 Open source
-              </a>
+              </button>
             ) : null}
             {copyText ? (
               <button
@@ -165,6 +176,11 @@ export default function ReaderCitation({
           onPointerEnter={openWithDelay}
           onPointerLeave={cancelHoverTimer}
           onFocus={openWithDelay}
+          onClick={(event) => {
+            if (event.metaKey || event.ctrlKey || event.altKey || event.button !== 0) return;
+            event.preventDefault();
+            onActivate(activation, null, event);
+          }}
         >
           {index}
         </a>
@@ -174,12 +190,30 @@ export default function ReaderCitation({
   }
 
   if (activationTarget) {
-    const canonicalHashHref =
-      activationTarget.href ??
-      href ??
-      (activationTarget.kind === "note"
-        ? `/notes/${activationTarget.block_id}`
-        : `/media/${activationTarget.media_id}`);
+    const targetHref = activationTarget.href ?? href ?? null;
+    if (!targetHref) {
+      return (
+        <>
+          <button
+            ref={(element) => {
+              citationRef.current = element;
+            }}
+            type="button"
+            className={className}
+            aria-label={label}
+            onPointerEnter={openWithDelay}
+            onPointerLeave={cancelHoverTimer}
+            onFocus={openWithDelay}
+            onClick={(event) => {
+              onActivate(activation, activationTarget, event);
+            }}
+          >
+            {index}
+          </button>
+          {previewNode}
+        </>
+      );
+    }
     return (
       <>
         <a
@@ -187,7 +221,7 @@ export default function ReaderCitation({
             citationRef.current = element;
           }}
           className={className}
-          href={canonicalHashHref}
+          href={targetHref}
           aria-label={label}
           onPointerEnter={openWithDelay}
           onPointerLeave={cancelHoverTimer}
@@ -195,7 +229,7 @@ export default function ReaderCitation({
           onClick={(event) => {
             if (event.metaKey || event.ctrlKey || event.altKey || event.button !== 0) return;
             event.preventDefault();
-            onActivate(activationTarget, event);
+            onActivate(activation, activationTarget, event);
           }}
         >
           {index}

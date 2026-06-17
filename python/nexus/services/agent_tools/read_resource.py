@@ -374,7 +374,7 @@ def _present_read(loaded: LoadedResource) -> ReadResourceResult:
             body=loaded.body or "",
             kind="oracle_reading",
         )
-    if scheme in ("evidence_span", "content_chunk", "page", "note_block"):
+    if scheme in ("evidence_span", "content_chunk", "page", "note_block", "reader_apparatus_item"):
         return ReadResourceResult(
             uri=loaded.uri,
             status="complete",

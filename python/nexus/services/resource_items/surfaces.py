@@ -31,7 +31,8 @@ from nexus.services.resource_graph.resolve import (
     resolve_ref,
 )
 from nexus.services.resource_items import versions
-from nexus.services.resource_items.capabilities import capability_for_ref, route_for_ref
+from nexus.services.resource_items.capabilities import capability_for_ref
+from nexus.services.resource_items.routing import resource_activation_for_ref
 
 
 def get_surface(db: Session, *, viewer_id: UUID, source: ResourceRef) -> ResourceSurfaceOut:
@@ -164,13 +165,20 @@ def replace_surface(
 def resource_item_out(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> ResourceItemOut:
     resolved = resolve_ref(db, viewer_id=viewer_id, ref=ref)
     capability = capability_for_ref(ref)
+    activation = resource_activation_for_ref(
+        db,
+        viewer_id=viewer_id,
+        ref=ref,
+        missing=resolved.missing,
+    )
     return ResourceItemOut(
         ref=ref.uri,
         scheme=ref.scheme,
         id=ref.id,
         label=resolved.label,
         summary=resolved.summary,
-        route=None if resolved.missing else route_for_ref(db, viewer_id=viewer_id, ref=ref),
+        route=activation.href if activation.kind == "route" else None,
+        activation=activation,
         missing=resolved.missing,
         capabilities=ResourceItemCapabilitiesOut(
             linkable=capability.linkable,

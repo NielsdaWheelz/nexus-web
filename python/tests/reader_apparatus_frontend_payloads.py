@@ -50,6 +50,7 @@ FRONTEND_PAYLOAD_DIR = REPO_ROOT / "apps/web/src/lib/reader/__fixtures__/reader-
 FRONTEND_PAYLOAD_INDEX_PATH = FRONTEND_PAYLOAD_DIR / "index.ts"
 FRONTEND_MEDIA_NAMESPACE = UUID("11111111-1111-4111-8111-111111111111")
 FRONTEND_FRAGMENT_NAMESPACE = UUID("22222222-2222-4222-8222-222222222222")
+FRONTEND_APPARATUS_NAMESPACE = UUID("33333333-3333-4333-8333-333333333333")
 MEDIA_PANE_SHELL_PUBLICATION_FIXTURE_IDS = {
     "arxiv-2606-source-package",
     "epub-standardebooks-james-pragmatism",
@@ -93,9 +94,9 @@ def build_frontend_payload_artifact(case: dict[str, Any]) -> FrontendPayloadArti
     media_id = _media_uuid(str(case["id"]))
     result = _extract_fixture_apparatus(case, media_id=media_id)
     items = [
-        ReaderApparatusItemOut.model_validate(_strip_private_item_fields(item)).model_dump(
-            mode="json"
-        )
+        ReaderApparatusItemOut.model_validate(
+            _strip_private_item_fields(str(case["id"]), item)
+        ).model_dump(mode="json")
         for item in result["items"]
     ]
     edges = [
@@ -409,9 +410,12 @@ def _mark_missing_locators(items: list[dict[str, object]]) -> list[dict[str, obj
     return result
 
 
-def _strip_private_item_fields(item: dict[str, object]) -> dict[str, object]:
+def _strip_private_item_fields(fixture_id: str, item: dict[str, object]) -> dict[str, object]:
     copy = dict(item)
     copy.pop("_locator_text", None)
+    item_id = str(copy.get("id") or _apparatus_item_uuid(fixture_id, str(copy["stable_key"])))
+    copy["id"] = item_id
+    copy["resource_ref"] = str(copy.get("resource_ref") or f"reader_apparatus_item:{item_id}")
     return copy
 
 
@@ -446,6 +450,10 @@ def _media_uuid(fixture_id: str) -> UUID:
 
 def _fragment_uuid(fixture_id: str, index: int) -> UUID:
     return uuid5(FRONTEND_FRAGMENT_NAMESPACE, f"{fixture_id}:{index}")
+
+
+def _apparatus_item_uuid(fixture_id: str, stable_key: str) -> UUID:
+    return uuid5(FRONTEND_APPARATUS_NAMESPACE, f"{fixture_id}:{stable_key}")
 
 
 def _epub_documents(archive: zipfile.ZipFile) -> list[dict[str, object]]:

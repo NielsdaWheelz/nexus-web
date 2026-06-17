@@ -1,4 +1,4 @@
-"""InternalSearchResult -> SearchResultOut projection, snippets, locators, deep links."""
+"""InternalSearchResult -> SearchResultOut projection, snippets, locators."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, ValidationError
+from sqlalchemy.orm import Session
 
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas.retrieval import RetrievalLocator, retrieval_locator_json
@@ -25,10 +26,14 @@ from nexus.schemas.search import (
     SearchResultOut,
     SearchResultPageOut,
     SearchResultPodcastOut,
+    SearchResultReaderApparatusItemOut,
     SearchResultSourceOut,
     SearchResultVideoOut,
     SearchResultWebOut,
 )
+from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.resource_items.capabilities import resource_citation_result_type
+from nexus.services.resource_items.routing import resource_activation_for_ref
 from nexus.services.search.constants import MAX_SNIPPET_LENGTH, RETRIEVAL_LOCATOR_ADAPTER
 from nexus.services.search.results import (
     InternalSearchResult,
@@ -44,6 +49,7 @@ from nexus.services.search.results import (
     _RankedNoteBlockResult,
     _RankedPageResult,
     _RankedPodcastResult,
+    _RankedReaderApparatusItemResult,
     _RankedWebResult,
 )
 
@@ -128,6 +134,8 @@ def _build_source_label(source: SearchResultSourceOut) -> str:
 
 
 def _result_context_ref(result: InternalSearchResult) -> SearchResultContextRefOut:
+    if isinstance(result, _RankedWebResult):
+        return SearchResultContextRefOut(type="web_result", id=result.source_id)
     if isinstance(result, _RankedMediaResult):
         return SearchResultContextRefOut(type="media", id=result.id)
     if isinstance(result, _RankedContentChunkResult):
@@ -204,43 +212,36 @@ def _require_resolved_evidence(resolution: dict[str, Any]) -> None:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result is stale")
 
 
-def _result_deep_link(result: InternalSearchResult) -> str:
-    if isinstance(result, _RankedMediaResult):
-        return f"/media/{result.id}"
-    if isinstance(result, _RankedPodcastResult):
-        return f"/podcasts/{result.id}"
-    if isinstance(result, _RankedContributorResult):
-        return f"/authors/{result.handle}"
-    if isinstance(result, _RankedPageResult):
-        return f"/pages/{result.id}"
-    if isinstance(result, _RankedContentChunkResult):
-        # Resolver always seeds params["evidence"] with the span id (see
-        # locator_resolver.resolve_evidence_span); route is /media/<media_id> for
-        # media-owned chunks or /notes/<note_block_id> for note-owned chunks.
-        route = result.resolver.get("route")
-        params = result.resolver.get("params")
-        if not isinstance(route, str) or not route:
-            raise AssertionError("Content chunk resolver route is required")
-        if not isinstance(params, dict):
-            raise AssertionError("Content chunk resolver params must be an object")
-        evidence_id = params.get("evidence")
-        if not isinstance(evidence_id, str) or not evidence_id:
-            raise AssertionError("Content chunk resolver params must include evidence id")
-        return f"{route}#evidence-{evidence_id}"
-    if isinstance(result, _RankedFragmentResult):
-        return f"/media/{result.source.media_id}#fragment-{result.id}"
-    if isinstance(result, _RankedNoteBlockResult):
-        return f"/notes/{result.id}"
-    if isinstance(result, _RankedHighlightResult):
-        return f"/media/{result.source.media_id}#highlight-{result.id}"
-    if isinstance(result, _RankedMessageResult):
-        return f"/conversations/{result.conversation_id}"
-    if isinstance(result, _RankedConversationResult):
-        return f"/conversations/{result.id}"
-    if isinstance(result, _RankedEvidenceSpanResult):
-        return f"/media/{result.source.media_id}#evidence-{result.id}"
+def _result_resource_ref(result: InternalSearchResult) -> ResourceRef:
     if isinstance(result, _RankedWebResult):
-        return result.url
+        try:
+            return ResourceRef(scheme="external_snapshot", id=UUID(result.source_id))
+        except ValueError as exc:
+            raise AssertionError("web_result search row has no external_snapshot source") from exc
+    if isinstance(result, _RankedMediaResult):
+        return ResourceRef(scheme="media", id=result.id)
+    if isinstance(result, _RankedPodcastResult):
+        return ResourceRef(scheme="podcast", id=result.id)
+    if isinstance(result, _RankedContributorResult):
+        return ResourceRef(scheme="contributor", id=result.id)
+    if isinstance(result, _RankedPageResult):
+        return ResourceRef(scheme="page", id=result.id)
+    if isinstance(result, _RankedContentChunkResult):
+        return ResourceRef(scheme="content_chunk", id=result.id)
+    if isinstance(result, _RankedFragmentResult):
+        return ResourceRef(scheme="fragment", id=result.id)
+    if isinstance(result, _RankedNoteBlockResult):
+        return ResourceRef(scheme="note_block", id=result.id)
+    if isinstance(result, _RankedHighlightResult):
+        return ResourceRef(scheme="highlight", id=result.id)
+    if isinstance(result, _RankedMessageResult):
+        return ResourceRef(scheme="message", id=result.id)
+    if isinstance(result, _RankedConversationResult):
+        return ResourceRef(scheme="conversation", id=result.id)
+    if isinstance(result, _RankedEvidenceSpanResult):
+        return ResourceRef(scheme="evidence_span", id=result.id)
+    if isinstance(result, _RankedReaderApparatusItemResult):
+        return ResourceRef(scheme="reader_apparatus_item", id=result.id)
     raise AssertionError(f"Unknown search result type: {type(result).__name__}")
 
 
@@ -259,9 +260,18 @@ def _required_locator(
     raise AssertionError(f"{result_type} search result is missing locator")
 
 
-def _result_model_fields(result: InternalSearchResult) -> dict[str, Any]:
+def _result_model_fields(db: Session, viewer_id: UUID, result: InternalSearchResult) -> dict[str, Any]:
     context_ref = _result_context_ref(result)
-    deep_link = _result_deep_link(result)
+    ref = _result_resource_ref(result)
+    activation = resource_activation_for_ref(db, viewer_id=viewer_id, ref=ref)
+    if activation.href is None:
+        raise AssertionError(f"{result.result_type} search result is not activatable")
+    fields = {
+        "resource_ref": ref.uri,
+        "activation": activation,
+        "citation_target": ref.uri if resource_citation_result_type(ref) is not None else None,
+        "context_ref": context_ref,
+    }
 
     if isinstance(result, _RankedPodcastResult):
         source_parts = [result.title]
@@ -271,8 +281,7 @@ def _result_model_fields(result: InternalSearchResult) -> dict[str, Any]:
             "source_label": " - ".join(source_parts),
             "media_id": None,
             "media_kind": None,
-            "deep_link": deep_link,
-            "context_ref": context_ref,
+            **fields,
         }
 
     if isinstance(result, _RankedContributorResult):
@@ -281,8 +290,7 @@ def _result_model_fields(result: InternalSearchResult) -> dict[str, Any]:
             "source_label": "contributor",
             "media_id": None,
             "media_kind": None,
-            "deep_link": deep_link,
-            "context_ref": context_ref,
+            **fields,
         }
 
     if isinstance(result, _RankedMessageResult):
@@ -291,8 +299,7 @@ def _result_model_fields(result: InternalSearchResult) -> dict[str, Any]:
             "source_label": f"message #{result.seq}",
             "media_id": None,
             "media_kind": None,
-            "deep_link": deep_link,
-            "context_ref": context_ref,
+            **fields,
         }
 
     if isinstance(result, _RankedNoteBlockResult):
@@ -301,8 +308,7 @@ def _result_model_fields(result: InternalSearchResult) -> dict[str, Any]:
             "source_label": "note",
             "media_id": None,
             "media_kind": None,
-            "deep_link": deep_link,
-            "context_ref": context_ref,
+            **fields,
         }
 
     if isinstance(result, _RankedPageResult):
@@ -311,8 +317,7 @@ def _result_model_fields(result: InternalSearchResult) -> dict[str, Any]:
             "source_label": "page",
             "media_id": None,
             "media_kind": None,
-            "deep_link": deep_link,
-            "context_ref": context_ref,
+            **fields,
         }
 
     if isinstance(result, _RankedConversationResult):
@@ -321,8 +326,7 @@ def _result_model_fields(result: InternalSearchResult) -> dict[str, Any]:
             "source_label": "conversation",
             "media_id": None,
             "media_kind": None,
-            "deep_link": deep_link,
-            "context_ref": context_ref,
+            **fields,
         }
 
     if isinstance(result, _RankedHighlightResult):
@@ -331,8 +335,7 @@ def _result_model_fields(result: InternalSearchResult) -> dict[str, Any]:
             "source_label": _build_source_label(result.source),
             "media_id": result.source.media_id,
             "media_kind": result.source.media_kind,
-            "deep_link": deep_link,
-            "context_ref": context_ref,
+            **fields,
         }
 
     if isinstance(result, _RankedEvidenceSpanResult):
@@ -341,8 +344,7 @@ def _result_model_fields(result: InternalSearchResult) -> dict[str, Any]:
             "source_label": _build_source_label(result.source),
             "media_id": result.source.media_id,
             "media_kind": result.source.media_kind,
-            "deep_link": deep_link,
-            "context_ref": context_ref,
+            **fields,
         }
 
     if isinstance(result, _RankedWebResult):
@@ -351,8 +353,16 @@ def _result_model_fields(result: InternalSearchResult) -> dict[str, Any]:
             "source_label": result.source_name or result.display_url or "web",
             "media_id": None,
             "media_kind": None,
-            "deep_link": deep_link,
-            "context_ref": context_ref,
+            **fields,
+        }
+
+    if isinstance(result, _RankedReaderApparatusItemResult):
+        return {
+            "title": result.source.title,
+            "source_label": _build_source_label(result.source),
+            "media_id": result.source.media_id,
+            "media_kind": result.source.media_kind,
+            **fields,
         }
 
     source = result.source
@@ -361,19 +371,18 @@ def _result_model_fields(result: InternalSearchResult) -> dict[str, Any]:
         "source_label": _build_source_label(source),
         "media_id": source.media_id,
         "media_kind": source.media_kind,
-        "deep_link": deep_link,
-        "context_ref": context_ref,
+        **fields,
     }
 
 
-def _result_to_out(result: InternalSearchResult) -> SearchResultOut:
+def _result_to_out(db: Session, viewer_id: UUID, result: InternalSearchResult) -> SearchResultOut:
     """Convert an internal ranked result into the strict response union."""
     result_id = result.handle if isinstance(result, _RankedContributorResult) else result.id
     base_payload = {
         "id": result_id,
         "score": round(result.score.normalized, 4),
         "snippet": result.snippet,
-        **_result_model_fields(result),
+        **_result_model_fields(db, viewer_id, result),
     }
 
     if isinstance(result, _RankedMediaResult) and result.result_type == "media":
@@ -428,6 +437,15 @@ def _result_to_out(result: InternalSearchResult) -> SearchResultOut:
             citation_label=result.citation_label,
             locator=_required_locator("evidence_span", result.locator),
             source=result.source,
+            **base_payload,
+        )
+
+    if isinstance(result, _RankedReaderApparatusItemResult):
+        return SearchResultReaderApparatusItemOut(
+            type="reader_apparatus_item",
+            source=result.source,
+            apparatus_kind=result.apparatus_kind,
+            locator=_required_locator("reader_apparatus_item", result.locator),
             **base_payload,
         )
 

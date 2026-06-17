@@ -9,6 +9,7 @@ import { FeedbackNotice } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import type { ReaderSelectionInput } from "@/lib/api/sse/requests";
 import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
+import type { ResourceActivation } from "@/lib/resources/activation";
 import styles from "./ResourceChatDetail.module.css";
 
 interface ResourceChatDetailProps {
@@ -20,7 +21,8 @@ interface ResourceChatDetailProps {
   onBack: () => void;
   onOpenFullChat: (conversationId: string) => void;
   onReaderSourceActivate?: (
-    target: ReaderSourceTarget,
+    activation: ResourceActivation,
+    target: ReaderSourceTarget | null,
     event?: React.MouseEvent,
   ) => void;
 }

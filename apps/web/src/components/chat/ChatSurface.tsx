@@ -15,6 +15,7 @@ import type {
   ForkOption,
 } from "@/lib/conversations/types";
 import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
+import type { ResourceActivation } from "@/lib/resources/activation";
 import { MessageRow } from "./MessageRow";
 import { useChatScroll, type ChatScrollHandle } from "./useChatScroll";
 import styles from "./ChatSurface.module.css";
@@ -33,7 +34,8 @@ interface ChatSurfaceProps {
   onRetryAssistantResponse?: (assistantMessageId: string) => void;
   retryingAssistantMessageIds?: Set<string>;
   onReaderSourceActivate?: (
-    target: ReaderSourceTarget,
+    activation: ResourceActivation,
+    target: ReaderSourceTarget | null,
     event?: React.MouseEvent,
   ) => void;
 }

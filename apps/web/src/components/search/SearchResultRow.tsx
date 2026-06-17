@@ -2,6 +2,7 @@
 
 import ContributorCreditList from "@/components/contributors/ContributorCreditList";
 import ResourceRow from "@/components/ui/ResourceRow";
+import { hrefForResourceActivation } from "@/lib/resources/activation";
 import type { SearchResultRowViewModel } from "@/lib/search/types";
 import styles from "./SearchResultRow.module.css";
 
@@ -30,9 +31,13 @@ function renderSnippetContent(row: SearchResultRowViewModel) {
 }
 
 export default function SearchResultRow({ row }: SearchResultRowProps) {
+  const href = hrefForResourceActivation(row.activation);
+  if (!href) {
+    throw new Error("Search result missing activation href");
+  }
   return (
     <ResourceRow
-      primary={{ kind: "link", href: row.href, paneTitleHint: row.paneTitleHint }}
+      primary={{ kind: "link", href, paneTitleHint: row.paneTitleHint }}
       title={<span className={styles.primaryText}>{renderSnippetContent(row)}</span>}
       description={<span className={styles.type}>{row.typeLabel}</span>}
       meta={<span className={styles.meta}>{row.sourceMeta}</span>}

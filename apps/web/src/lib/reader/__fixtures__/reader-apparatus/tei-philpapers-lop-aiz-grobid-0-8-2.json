@@ -4299,6 +4299,7 @@
         "body_text": "Ahmed, S. (2004). ADective Economies. Social Text 22 (2): 117-139.",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "b9098014-2c78-5ece-8519-9936f5d46d75",
         "kind": "bibliography_entry",
         "label": "b0",
         "locator": {
@@ -4325,6 +4326,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:b9098014-2c78-5ece-8519-9936f5d46d75",
         "sort_key": "bibliography.000000.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -4343,6 +4345,7 @@
         "body_text": "Garc\u00eda \u00c1lvarez, A. (2021). Redefining the Wrong of Epistemic Injustice: The Knower as a Concrete Other and the ADective Dimension of Cognition. International Journal of Philosophical Studies, 29(4), 497-518.",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "a1897450-d02d-5ccb-982e-a966ea159fdb",
         "kind": "bibliography_entry",
         "label": "b1",
         "locator": {
@@ -4389,6 +4392,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:a1897450-d02d-5ccb-982e-a966ea159fdb",
         "sort_key": "bibliography.000001.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -4407,6 +4411,7 @@
         "body_text": "Ambrosino, M. (2025). ADective Agency and Axiological Harm: A Schelerian Approach to ADective Injustice. Journal of Speculative Philosophy 39 (3):310-322 (2025)",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "b0f870a2-354c-5b65-a77b-f88eb6683e5a",
         "kind": "bibliography_entry",
         "label": "b2",
         "locator": {
@@ -4443,6 +4448,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:b0f870a2-354c-5b65-a77b-f88eb6683e5a",
         "sort_key": "bibliography.000002.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -4461,6 +4467,7 @@
         "body_text": "Archer, A., & Mills, G. (2025). Fear and ADective Injustice. In Harbin, A. (ed.) The Moral Psychology of Fear. Bloomsbury",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "f2ae1309-4ee8-5b3e-8f58-66ada061c183",
         "kind": "bibliography_entry",
         "label": "b3",
         "locator": {
@@ -4497,6 +4504,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:f2ae1309-4ee8-5b3e-8f58-66ada061c183",
         "sort_key": "bibliography.000003.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -4515,6 +4523,7 @@
         "body_text": "Archer, A. How Public Statues Wrong: ADective Artifacts and ADective Injustice. Topoi, 43: 809-819.",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "faf7152f-4dfe-503a-badb-129d4e1bd314",
         "kind": "bibliography_entry",
         "label": "b4",
         "locator": {
@@ -4561,6 +4570,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:faf7152f-4dfe-503a-badb-129d4e1bd314",
         "sort_key": "bibliography.000004.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -4579,6 +4589,7 @@
         "body_text": "Archer, A., & Matheson, B. (2022). Commemoration and Emotional imperialism. Journal of Applied Philosophy, 39(5), 761-777.",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "16306f3c-6aa7-5cad-9951-22e6c588fca1",
         "kind": "bibliography_entry",
         "label": "b5",
         "locator": {
@@ -4615,6 +4626,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:16306f3c-6aa7-5cad-9951-22e6c588fca1",
         "sort_key": "bibliography.000005.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -4633,6 +4645,7 @@
         "body_text": "Archer, A., & Matheson, B. (2023). Emotional Imperialism. Philosophical Topics, 51 (1): 7-25",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "8b0307c5-1a7e-5e5b-96ce-e9c2ffc8dfae",
         "kind": "bibliography_entry",
         "label": "b6",
         "locator": {
@@ -4659,6 +4672,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:8b0307c5-1a7e-5e5b-96ce-e9c2ffc8dfae",
         "sort_key": "bibliography.000006.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -4677,6 +4691,7 @@
         "body_text": "Archer, A., & Mills, G. (2019). Anger, aDective injustice, and emotion regulation. Philosophical Topics, 47(2): 75-94",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "14a46a08-83cd-5cbc-8369-6d2cd4a448d7",
         "kind": "bibliography_entry",
         "label": "b7",
         "locator": {
@@ -4713,6 +4728,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:14a46a08-83cd-5cbc-8369-6d2cd4a448d7",
         "sort_key": "bibliography.000007.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -4731,6 +4747,7 @@
         "body_text": "Bell, M. (2023). The Wrong of ADective Dismissal and Its Place in an Account of ADective Injustice. Philosophical Topics, 51(1): 239-264.",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "3709ad01-2408-57e5-a2d9-cb6276b39ce8",
         "kind": "bibliography_entry",
         "label": "b8",
         "locator": {
@@ -4767,6 +4784,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:3709ad01-2408-57e5-a2d9-cb6276b39ce8",
         "sort_key": "bibliography.000008.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -4785,6 +4803,7 @@
         "body_text": "Bogaert, B. (2025). A\"ective Injustice in Healthcare. Springer.",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "59014e76-0481-5f0a-ac76-e50b271855a2",
         "kind": "bibliography_entry",
         "label": "b9",
         "locator": {
@@ -4811,6 +4830,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:59014e76-0481-5f0a-ac76-e50b271855a2",
         "sort_key": "bibliography.000009.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -4829,6 +4849,7 @@
         "body_text": "Brownlee, L. (2020). Being Sure of Each Other. Oxford: Oxford University Press.",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "e80039a9-5030-55a4-b17e-6521bed15193",
         "kind": "bibliography_entry",
         "label": "b10",
         "locator": {
@@ -4855,6 +4876,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:e80039a9-5030-55a4-b17e-6521bed15193",
         "sort_key": "bibliography.000010.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -4873,6 +4895,7 @@
         "body_text": "Brownlee, K., Jenkins, D., & Neal, A. (2022). Being Social: The Philosophy of Social Human Rights. Oxford: Oxford University Press.",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "7031a3a0-3d70-5fe9-8c87-38a19c5d4313",
         "kind": "bibliography_entry",
         "label": "b11",
         "locator": {
@@ -4909,6 +4932,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:7031a3a0-3d70-5fe9-8c87-38a19c5d4313",
         "sort_key": "bibliography.000011.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -4927,6 +4951,7 @@
         "body_text": "Carman, M. (2024). Disruptive Emotions and ADective Injustice Within an African-Inspired Relational Ethics. Theoria: A Journal of Social and Political Theory 71 (179): 28-52.",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "c3099225-7da7-50f3-892e-9fe1fb3aa6ee",
         "kind": "bibliography_entry",
         "label": "b12",
         "locator": {
@@ -4963,6 +4988,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:c3099225-7da7-50f3-892e-9fe1fb3aa6ee",
         "sort_key": "bibliography.000012.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -4981,6 +5007,7 @@
         "body_text": "Carman, M. (2023). Harmony, Disruption, and ADective Injustice: Metz and the Capacity for Harmonious Relationship. Ethical Theory and Moral Practice: 1-16.",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "d5af6ad8-8869-5898-89f1-8b8a1db4d67f",
         "kind": "bibliography_entry",
         "label": "b13",
         "locator": {
@@ -5017,6 +5044,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:d5af6ad8-8869-5898-89f1-8b8a1db4d67f",
         "sort_key": "bibliography.000013.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -5035,6 +5063,7 @@
         "body_text": "Cherry, M. (2021). Political anger. Philosophy Compass, 17(2), e12811. https://doi.org/10.1111/phc3.12811",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "fac68ebe-f16c-5631-bb51-ec87f83223b4",
         "kind": "bibliography_entry",
         "label": "b14",
         "locator": {
@@ -5151,6 +5180,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:fac68ebe-f16c-5631-bb51-ec87f83223b4",
         "sort_key": "bibliography.000014.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -5169,6 +5199,7 @@
         "body_text": "Cherry, M. (2023). ADective Stereotype Threat as ADective Injustice. Philosophical Topics, 51 (1), 135-148.",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "fc0ec035-d4f8-5bea-aeeb-98029061b5e6",
         "kind": "bibliography_entry",
         "label": "b15",
         "locator": {
@@ -5205,6 +5236,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:fc0ec035-d4f8-5bea-aeeb-98029061b5e6",
         "sort_key": "bibliography.000015.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -5223,6 +5255,7 @@
         "body_text": "Collins, S., & Shields, L. (2025). Justice and Security-based Attachment. Journal of Moral Philosophy 22 (3-4):392-426.",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "5cbdba79-4b34-5e1e-bd3f-d5882e5607cb",
         "kind": "bibliography_entry",
         "label": "b16",
         "locator": {
@@ -5259,6 +5292,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:5cbdba79-4b34-5e1e-bd3f-d5882e5607cb",
         "sort_key": "bibliography.000016.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -5277,6 +5311,7 @@
         "body_text": "Cordelli, C. (2015a). Justice as Fairness and Relational Resources. Journal of Political Philosophy, 23(1): 86-110. doi:10.1111/jopp.12036",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "17970fbd-9444-5813-ba02-9c736d951602",
         "kind": "bibliography_entry",
         "label": "b17",
         "locator": {
@@ -5313,6 +5348,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:17970fbd-9444-5813-ba02-9c736d951602",
         "sort_key": "bibliography.000017.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -5331,6 +5367,7 @@
         "body_text": "Cordelli, C. (2015b). Distributive Justice and the Problem of Friendship, Political Studies, 63(3): 679-695. doi:10.1111/1467-9248.12115",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "b583e4ed-e131-5809-a091-4a5a04718404",
         "kind": "bibliography_entry",
         "label": "b18",
         "locator": {
@@ -5367,6 +5404,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:b583e4ed-e131-5809-a091-4a5a04718404",
         "sort_key": "bibliography.000018.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -5385,6 +5423,7 @@
         "body_text": "Dale, M. T., & Gubka, S. (2025). AI Emotion Recognition and ADective Injustice. Erkennis. https://doi.org/10.1007/s10670-025-01049-w",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "b4856e24-bb85-58ea-83f3-e89269d78ad1",
         "kind": "bibliography_entry",
         "label": "b19",
         "locator": {
@@ -5421,6 +5460,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:b4856e24-bb85-58ea-83f3-e89269d78ad1",
         "sort_key": "bibliography.000019.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -5439,6 +5479,7 @@
         "body_text": "Dunne, G., & Kotsonis, A. (2025). Carving at the Joints: Distinguishing Epistemic Wrongs from Epistemic Harms in Epistemic Injustice Contexts. Episteme, 22(2), 425-438.",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "d5722d17-fc54-5c69-b0e5-527427351053",
         "kind": "bibliography_entry",
         "label": "b20",
         "locator": {
@@ -5475,6 +5516,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:d5722d17-fc54-5c69-b0e5-527427351053",
         "sort_key": "bibliography.000020.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -5493,6 +5535,7 @@
         "body_text": "Eickers, G. (2024). Pathologizing Disabled and Trans Identities: How Emotions Become Marginalized. In S. Tremain (ed.), The Bloomsbury Guide to Philosophy of Disability. London: Bloomsbury Academic, pp. 360-379.",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "1a6c26b4-e694-5f47-9457-fa79a5028685",
         "kind": "bibliography_entry",
         "label": "b21",
         "locator": {
@@ -5539,6 +5582,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:1a6c26b4-e694-5f47-9457-fa79a5028685",
         "sort_key": "bibliography.000021.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -5557,6 +5601,7 @@
         "body_text": "Fanon, F. (1963/2004). The Wretched of the Earth. Trans. Richard Philcox. New York: Grove Press.",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "cb1d0ffb-4b45-5c31-9883-7b3fa13a93fa",
         "kind": "bibliography_entry",
         "label": "b22",
         "locator": {
@@ -5593,6 +5638,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:cb1d0ffb-4b45-5c31-9883-7b3fa13a93fa",
         "sort_key": "bibliography.000022.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -5611,6 +5657,7 @@
         "body_text": "Floris, M., Ganz, C., & Grisorio, A. (2026). Epistemic and aDective harms in Endometriosis diagnosis. Philosophical Psychology, 1-24. https://doi.org/10.1080/09515089.2026.2632370",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "ddc4843a-db98-53d5-b3dd-04bce38cd5e6",
         "kind": "bibliography_entry",
         "label": "b23",
         "locator": {
@@ -5647,6 +5694,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:ddc4843a-db98-53d5-b3dd-04bce38cd5e6",
         "sort_key": "bibliography.000023.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -5665,6 +5713,7 @@
         "body_text": "Frye, M. (1983). The Politics of Reality: Essays in Feminist Theory. Berkeley: Crossing Press.",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "2f8c1208-5798-5d1e-b62e-a146b44ad3bb",
         "kind": "bibliography_entry",
         "label": "b24",
         "locator": {
@@ -5691,6 +5740,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:2f8c1208-5798-5d1e-b62e-a146b44ad3bb",
         "sort_key": "bibliography.000024.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -5709,6 +5759,7 @@
         "body_text": "Fuchs, T. (2013). The phenomenology of aDectivity. In K.W.M. Fulford et al. (Eds.), The Oxford Handbook of the Philosophy of Psychiatry, pp. 612-631. Oxford University Press.",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "f807b7be-a03a-56d4-a2e3-e0962bbc89cf",
         "kind": "bibliography_entry",
         "label": "b25",
         "locator": {
@@ -5745,6 +5796,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:f807b7be-a03a-56d4-a2e3-e0962bbc89cf",
         "sort_key": "bibliography.000025.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -5763,6 +5815,7 @@
         "body_text": "Gallegos, F. (2019). What are Emotions For? From ADective Epistemology to ADective Ethics. Journal of Philosophy of Emotion 1 (1):123-134 (2019)",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "1d1458a7-0868-5b9b-bdad-edc54a73c067",
         "kind": "bibliography_entry",
         "label": "b26",
         "locator": {
@@ -5799,6 +5852,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:1d1458a7-0868-5b9b-bdad-edc54a73c067",
         "sort_key": "bibliography.000026.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -5817,6 +5871,7 @@
         "body_text": "Gallegos, F. (2022). ADective injustice and fundamental aDective goods. Journal of Social Philosophy, 53(2), 185-201.",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "8d219760-5412-567c-a8d3-afb33f0ece10",
         "kind": "bibliography_entry",
         "label": "b27",
         "locator": {
@@ -5853,6 +5908,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:8d219760-5412-567c-a8d3-afb33f0ece10",
         "sort_key": "bibliography.000027.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -5871,6 +5927,7 @@
         "body_text": "Gallegos, L. (2023). The ADective Injustice of Linguistic Shame. Philosophical Topics. 51(1): 149- 162.",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "4fab9092-1d9b-55c5-8988-d618780fbb61",
         "kind": "bibliography_entry",
         "label": "b28",
         "locator": {
@@ -5907,6 +5964,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:4fab9092-1d9b-55c5-8988-d618780fbb61",
         "sort_key": "bibliography.000028.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -5925,6 +5983,7 @@
         "body_text": "Gheaus, A. (2009). How Much of What Matters Can We Redistribute? Love, Justice, and Luck. Hypatia, 24(4): 68-90. doi:10.1111/j.1527-2001.2009.01058.x",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "4261de2b-2255-53b6-8c7d-f8ff7b6bb398",
         "kind": "bibliography_entry",
         "label": "b29",
         "locator": {
@@ -5961,6 +6020,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:4261de2b-2255-53b6-8c7d-f8ff7b6bb398",
         "sort_key": "bibliography.000029.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -5979,6 +6039,7 @@
         "body_text": "Gheaus, A. (2018). Hikers in Flip-Flops: Luck Egalitarianism, Democratic Equality and the Distribuenda of Justice. Journal of Applied Philosophy, 35(1): 54-69. doi:10.1111/japp.12198",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "39733f0f-f66b-5229-8b4f-243d810fd5d5",
         "kind": "bibliography_entry",
         "label": "b30",
         "locator": {
@@ -6085,6 +6146,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:39733f0f-f66b-5229-8b4f-243d810fd5d5",
         "sort_key": "bibliography.000030.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -6103,6 +6165,7 @@
         "body_text": "Gheaus, A. (2022). Personal Relationship Goods. The Stanford Encyclopedia of Philosophy (Winter Edition), E. N. Zalta and U. Nodelman (eds.). https://plato.stanford.edu/archives/win2022/entries/personal-relationship-goods/",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "d416d9e1-49b5-55ac-8019-8a8d9b445747",
         "kind": "bibliography_entry",
         "label": "b31",
         "locator": {
@@ -6219,6 +6282,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:d416d9e1-49b5-55ac-8019-8a8d9b445747",
         "sort_key": "bibliography.000031.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -6237,6 +6301,7 @@
         "body_text": "Gilligan, C. (1982). In a Di\"erent Voice: Psychological Theory and Women's Development. Cambridge: Harvard University Press",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "b2717134-b341-5595-bbaa-58eacedbea02",
         "kind": "bibliography_entry",
         "label": "b32",
         "locator": {
@@ -6273,6 +6338,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:b2717134-b341-5595-bbaa-58eacedbea02",
         "sort_key": "bibliography.000032.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -6291,6 +6357,7 @@
         "body_text": "Gokn, K. (2026). Autistic injustice as aDective injustice: the double empathy problem is not about empathy. Philosophical Psychology, 1-19. https://doi.org/10.1080/09515089.2026.2651512",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "5b6f143a-89fd-5d89-a465-229b1919bb18",
         "kind": "bibliography_entry",
         "label": "b33",
         "locator": {
@@ -6367,6 +6434,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:5b6f143a-89fd-5d89-a465-229b1919bb18",
         "sort_key": "bibliography.000033.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -6385,6 +6453,7 @@
         "body_text": "Gokn, K. & Archer, A. (2025). Don't go reading my emotions: aDective, harm, aDective injustice and aDective artificial intelligence",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "3947d057-6d87-58da-a7c3-dd4d22674a3a",
         "kind": "bibliography_entry",
         "label": "b34",
         "locator": {
@@ -6421,6 +6490,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:3947d057-6d87-58da-a7c3-dd4d22674a3a",
         "sort_key": "bibliography.000034.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -6439,6 +6509,7 @@
         "body_text": "Helm, B. (2017). Communities of Respect: Grounding Responsibility, Authority, and Dignity. Oxford: Oxford University Press.",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "3aefda18-4a1a-542d-a090-b85e8855728d",
         "kind": "bibliography_entry",
         "label": "b35",
         "locator": {
@@ -6475,6 +6546,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:3aefda18-4a1a-542d-a090-b85e8855728d",
         "sort_key": "bibliography.000035.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -6493,6 +6565,7 @@
         "body_text": "Hildebrand, C., & Jackson, L. (2025). Reframing ADective Injustice: On the Right to Anger and the Priority of Moral Reasons. Res Publica:1-18. https://doi.org/10.1007/s11158-025-09754-7",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "06ec2e61-ffc6-530f-a88f-9f19eac568cb",
         "kind": "bibliography_entry",
         "label": "b36",
         "locator": {
@@ -6529,6 +6602,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:06ec2e61-ffc6-530f-a88f-9f19eac568cb",
         "sort_key": "bibliography.000036.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -6547,6 +6621,7 @@
         "body_text": "Honneth, A. 2004. Between justice and aDection: The family as a field of moral disputes. In B. Rossler (ed.) Privacies: Philosophical Evaluations. Stanford: Stanford University Press.",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "132cfb44-2bd5-55f7-a24c-353022f31ffd",
         "kind": "bibliography_entry",
         "label": "b37",
         "locator": {
@@ -6583,6 +6658,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:132cfb44-2bd5-55f7-a24c-353022f31ffd",
         "sort_key": "bibliography.000037.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -6601,6 +6677,7 @@
         "body_text": "Isern-Mas, C., & Almagro, M. (2025). Unmasking therapy-speak. Theor Med Bioeth. https://doi.org/10.1007/s11017-025-09730-5",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "096cb1d7-1526-5d23-b846-4002b82b35cd",
         "kind": "bibliography_entry",
         "label": "b38",
         "locator": {
@@ -6637,6 +6714,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:096cb1d7-1526-5d23-b846-4002b82b35cd",
         "sort_key": "bibliography.000038.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -6655,6 +6733,7 @@
         "body_text": "Isern-Mas, C., Schaubroeck, K. & Archer, A. (2025). No One Mourns the Wicked: The Ethics of Mourning Morally Flawed Celebrities. Journal of Social Philosophy 1- 9. https://doi.org/10.1111/josp.70015.",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "97d7694f-395e-57a9-98ca-c6976f648ec6",
         "kind": "bibliography_entry",
         "label": "b39",
         "locator": {
@@ -6761,6 +6840,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:97d7694f-395e-57a9-98ca-c6976f648ec6",
         "sort_key": "bibliography.000039.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -6779,6 +6859,7 @@
         "body_text": "Jaggar, A. (1989). Love and Knowledge: Emotion in Feminist Epistemology. Inquiry 32 (2): 151- 76.",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "c09613a1-6751-5a9f-b10c-46cd52fde463",
         "kind": "bibliography_entry",
         "label": "b40",
         "locator": {
@@ -6815,6 +6896,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:c09613a1-6751-5a9f-b10c-46cd52fde463",
         "sort_key": "bibliography.000040.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -6833,6 +6915,7 @@
         "body_text": "Krueger, J. (2023). An Ecological Approach to ADective Injustice. Philosophical Topics, 51(1), 85- 112. https://www.jstor.org/stable/48776805",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "67624557-c36a-5e0d-a2bd-73df06370190",
         "kind": "bibliography_entry",
         "label": "b41",
         "locator": {
@@ -6869,6 +6952,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:67624557-c36a-5e0d-a2bd-73df06370190",
         "sort_key": "bibliography.000041.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -6887,6 +6971,7 @@
         "body_text": "Lavellee, Z., & Gagn\u00e9-Julien, A.M. (2024) ADective injustice, sanism and psychiatry. Synthese 204, 94. https://doi.org/10.1007/s11229-024-04731-8",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "6c488352-7e3c-5ae4-9378-47d022d74893",
         "kind": "bibliography_entry",
         "label": "b42",
         "locator": {
@@ -7013,6 +7098,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:6c488352-7e3c-5ae4-9378-47d022d74893",
         "sort_key": "bibliography.000042.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -7031,6 +7117,7 @@
         "body_text": "Li, Q (2023). A Kantian Account of Political Hopes as Fundamental Hopes. Kantian Review, 1-14.",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "1de75435-e588-518e-86b9-0d1509715c6b",
         "kind": "bibliography_entry",
         "label": "b43",
         "locator": {
@@ -7057,6 +7144,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:1de75435-e588-518e-86b9-0d1509715c6b",
         "sort_key": "bibliography.000043.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -7075,6 +7163,7 @@
         "body_text": "Liao, S., & Brinner, Z. (2026). Critical 4E Cognitive Science. Philosophy Compass: e70075. https://doi.org/10.1111/phc3.70075.",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "d0b014ef-6add-544d-81d9-85523af196b4",
         "kind": "bibliography_entry",
         "label": "b44",
         "locator": {
@@ -7111,6 +7200,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:d0b014ef-6add-544d-81d9-85523af196b4",
         "sort_key": "bibliography.000044.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -7129,6 +7219,7 @@
         "body_text": "Lopez-Cantero, P. (2025). Gentrification, migration, and non-material injustice. Critical Review of International Social and Political Philosophy. https://doi.org/10.1080/13698230.2025.2548027",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "754a4b44-59c6-5e67-a75c-d871c87b5aa2",
         "kind": "bibliography_entry",
         "label": "b45",
         "locator": {
@@ -7225,6 +7316,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:754a4b44-59c6-5e67-a75c-d871c87b5aa2",
         "sort_key": "bibliography.000045.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -7243,6 +7335,7 @@
         "body_text": "Lorde, A. (1984). Sister Outsider. Berkeley: Crossing Press.",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "4c93c388-64bd-5fff-89d4-873feeec2b8b",
         "kind": "bibliography_entry",
         "label": "b46",
         "locator": {
@@ -7269,6 +7362,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:4c93c388-64bd-5fff-89d4-873feeec2b8b",
         "sort_key": "bibliography.000046.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -7287,6 +7381,7 @@
         "body_text": "Lugones, M. (2003). Pilgrimages/Peregrinajes: Theorizing Coalition against Multiple Oppressions. New York: Rowman and Littlefield.",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "d096ae3d-9c42-5c75-9867-1914a87348cf",
         "kind": "bibliography_entry",
         "label": "b47",
         "locator": {
@@ -7323,6 +7418,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:d096ae3d-9c42-5c75-9867-1914a87348cf",
         "sort_key": "bibliography.000047.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -7341,6 +7437,7 @@
         "body_text": "Lynch, K. (2020) 'ADective Equality and Social Justice' In Denise Celentano and Luigi Caranti (Eds) Paradigms of Justice: Redistribution, Recognition, and Beyond. New York and London: Routledge.",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "eaccb9f0-1441-5c14-8d87-2150dcda3d36",
         "kind": "bibliography_entry",
         "label": "b48",
         "locator": {
@@ -7387,6 +7484,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:eaccb9f0-1441-5c14-8d87-2150dcda3d36",
         "sort_key": "bibliography.000048.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -7405,6 +7503,7 @@
         "body_text": "MacLachlan, A. (2023). Dikcult Conversations with Adam Smith. Philosophical Topics, 51(1): 221-238.",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "0d89219d-11d7-5d7f-a4f4-1f0947c1acac",
         "kind": "bibliography_entry",
         "label": "b49",
         "locator": {
@@ -7441,6 +7540,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:0d89219d-11d7-5d7f-a4f4-1f0947c1acac",
         "sort_key": "bibliography.000049.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -7459,6 +7559,7 @@
         "body_text": "Maiese, M. & Hanna, R. (2019). The Mind-Body Politic. Palgrave Macmillan",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "507227b7-ca19-5a38-a9be-a0bfb7345131",
         "kind": "bibliography_entry",
         "label": "b50",
         "locator": {
@@ -7485,6 +7586,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:507227b7-ca19-5a38-a9be-a0bfb7345131",
         "sort_key": "bibliography.000050.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -7503,6 +7605,7 @@
         "body_text": "Medina, J. (2013). The Epistemology of Resistance: Gender and Racial Oppression, Epistemic Injustice, and Resistant Imaginations. New York: Oxford University Press.",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "da9eaafd-1244-5f69-a686-fc0fac04fa82",
         "kind": "bibliography_entry",
         "label": "b51",
         "locator": {
@@ -7539,6 +7642,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:da9eaafd-1244-5f69-a686-fc0fac04fa82",
         "sort_key": "bibliography.000051.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -7557,6 +7661,7 @@
         "body_text": "Mills, G. (2019). Swallowing Traumatic Anger: Family Abuse and the Pressure to Forgive. Public Philosophy Journal 2 (2).",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "3409100d-8c7a-5bf8-93c6-0a28de4fd29f",
         "kind": "bibliography_entry",
         "label": "b52",
         "locator": {
@@ -7593,6 +7698,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:3409100d-8c7a-5bf8-93c6-0a28de4fd29f",
         "sort_key": "bibliography.000052.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -7611,6 +7717,7 @@
         "body_text": "Narayan, U. (1988). Working together across diDerences: some considerations on emotions and political practice. Hypatia, 3, 31-47.",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "279b8451-8b5a-59ec-abe5-4e1d8576f325",
         "kind": "bibliography_entry",
         "label": "b53",
         "locator": {
@@ -7647,6 +7754,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:279b8451-8b5a-59ec-abe5-4e1d8576f325",
         "sort_key": "bibliography.000053.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -7665,6 +7773,7 @@
         "body_text": "Nussbaum, M. C. (2011). Creating capabilities: The human development approach. Cambridge, MA: Harvard University Press.",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "29368443-759d-53fd-85dc-5a058ef3e997",
         "kind": "bibliography_entry",
         "label": "b54",
         "locator": {
@@ -7701,6 +7810,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:29368443-759d-53fd-85dc-5a058ef3e997",
         "sort_key": "bibliography.000054.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -7719,6 +7829,7 @@
         "body_text": "Osler, L., Engelen, B., & Archer, A. (2025). The ethics and politics of nudges and niches. In T.S. Petersen, S.B. Holmen, & J. Ryberg (eds.), Crime Prevention by Exclusion: Ethical Considerations. Routledge.",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "0286c0cf-aa9e-56d9-b6ba-299f79631b68",
         "kind": "bibliography_entry",
         "label": "b55",
         "locator": {
@@ -7765,6 +7876,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:0286c0cf-aa9e-56d9-b6ba-299f79631b68",
         "sort_key": "bibliography.000055.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -7783,6 +7895,7 @@
         "body_text": "Pismenny, A. (2025). Pain, Power, and Policing: Emotional Injustice in Healthcare. Bioethics, 1- 8",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "257e73b3-7814-5f9a-8082-416869ebf882",
         "kind": "bibliography_entry",
         "label": "b56",
         "locator": {
@@ -7819,6 +7932,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:257e73b3-7814-5f9a-8082-416869ebf882",
         "sort_key": "bibliography.000056.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -7837,6 +7951,7 @@
         "body_text": "Pismenny, A., G. Eickers, and J. Prinz (2024). Emotional Injustice. Ergo: An Open Access Journal of Philosophy.",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "e8474ce0-9741-5018-b72c-81381e652578",
         "kind": "bibliography_entry",
         "label": "b57",
         "locator": {
@@ -7873,6 +7988,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:e8474ce0-9741-5018-b72c-81381e652578",
         "sort_key": "bibliography.000057.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -7891,6 +8007,7 @@
         "body_text": "Plunkett, D. (2021). Debate: Anger, Fitting Attitudes, and Srinivasan's Category of \"ADective Injustice\" Journal of Political Philosophy 29 (1):117-131.",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "85de62da-96f2-5550-9619-3bbcf48029ea",
         "kind": "bibliography_entry",
         "label": "b58",
         "locator": {
@@ -7927,6 +8044,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:85de62da-96f2-5550-9619-3bbcf48029ea",
         "sort_key": "bibliography.000058.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -7945,6 +8063,7 @@
         "body_text": "Puddifoot, K. (2025). ADect, attention, and injustice: The injustice of neglected aDect. Philosophical Psychology, 1-32.",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "14dafc4e-7078-5d94-bd54-354c40a94b37",
         "kind": "bibliography_entry",
         "label": "b59",
         "locator": {
@@ -7981,6 +8100,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:14dafc4e-7078-5d94-bd54-354c40a94b37",
         "sort_key": "bibliography.000059.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -7999,6 +8119,7 @@
         "body_text": "Rathe, K.J. (2025). Tired of trying to belong: On aDective justice and fatigue. Philosophy and Social Criticism. https://doi.org/10.1177/01914537251334948",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "e7c49ac5-22bb-518e-9198-76620312a362",
         "kind": "bibliography_entry",
         "label": "b60",
         "locator": {
@@ -8035,6 +8156,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:e7c49ac5-22bb-518e-9198-76620312a362",
         "sort_key": "bibliography.000060.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -8053,6 +8175,7 @@
         "body_text": "Reddy, W. M. (2001). The Navigation of Feeling: A Framework for the History of Emotions. Cambridge: Cambridge University Press.",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "f3b85bf6-ea0a-53bc-a08d-bb65d0284c78",
         "kind": "bibliography_entry",
         "label": "b61",
         "locator": {
@@ -8089,6 +8212,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:f3b85bf6-ea0a-53bc-a08d-bb65d0284c78",
         "sort_key": "bibliography.000061.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -8107,6 +8231,7 @@
         "body_text": "Schexer, S. (2010). Equality and Tradition. New York: Oxford University Press.",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "0e5eef76-93e0-5e14-afa4-6bdce9564a2d",
         "kind": "bibliography_entry",
         "label": "b62",
         "locator": {
@@ -8133,6 +8258,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:0e5eef76-93e0-5e14-afa4-6bdce9564a2d",
         "sort_key": "bibliography.000062.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -8151,6 +8277,7 @@
         "body_text": "Sen, A. (1999). Development as freedom. Oxford: Oxford University Press.",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "bfc45205-b81e-5be0-840d-73b8bb04be36",
         "kind": "bibliography_entry",
         "label": "b63",
         "locator": {
@@ -8177,6 +8304,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:bfc45205-b81e-5be0-840d-73b8bb04be36",
         "sort_key": "bibliography.000063.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -8195,6 +8323,7 @@
         "body_text": "Silva, L., Liebow, N., & Berdini, F. (2026). Coping in an Unjust World: ADective Injustice and Liberatory Coping. Hypatia, 1-22. doi:10.1017/hyp.2026.10067",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "4c109322-e333-5c77-85d5-5b7c8db1085e",
         "kind": "bibliography_entry",
         "label": "b64",
         "locator": {
@@ -8231,6 +8360,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:4c109322-e333-5c77-85d5-5b7c8db1085e",
         "sort_key": "bibliography.000064.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -8249,6 +8379,7 @@
         "body_text": "Slaby, J. (2023). Structural Apathy, ADective Injustice, and the Ecological Crisis. Philosophical Topics, 51:1, pp. 63-84",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "0cf3bee6-5978-51fe-b82a-e04d766f89f9",
         "kind": "bibliography_entry",
         "label": "b65",
         "locator": {
@@ -8285,6 +8416,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:0cf3bee6-5978-51fe-b82a-e04d766f89f9",
         "sort_key": "bibliography.000065.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -8303,6 +8435,7 @@
         "body_text": "Srinivasan, A. (2018). The Aptness of Anger. Journal of Political Philosophy 26 (2): 123-44.",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "4b932c42-87da-54be-a81c-a50010ddf26b",
         "kind": "bibliography_entry",
         "label": "b66",
         "locator": {
@@ -8329,6 +8462,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:4b932c42-87da-54be-a81c-a50010ddf26b",
         "sort_key": "bibliography.000066.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -8347,6 +8481,7 @@
         "body_text": "Stockdale, K. (2023). (Why) Do We Need a Theory of ADective Injustice?. Philosophical Topics. 51(1):113-134.",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "186aab02-c9f5-5ca1-9705-badede963b90",
         "kind": "bibliography_entry",
         "label": "b67",
         "locator": {
@@ -8383,6 +8518,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:186aab02-c9f5-5ca1-9705-badede963b90",
         "sort_key": "bibliography.000067.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -8401,6 +8537,7 @@
         "body_text": "Tessman, L. (2023). An Apology for Inapt Emotions. Philosophical Topics, 51(1), 189-220.",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "99a369f9-aaf6-5a8a-ae05-ea0c5a3b2507",
         "kind": "bibliography_entry",
         "label": "b68",
         "locator": {
@@ -8427,6 +8564,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:99a369f9-aaf6-5a8a-ae05-ea0c5a3b2507",
         "sort_key": "bibliography.000068.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -8445,6 +8583,7 @@
         "body_text": "Thomas, A., Engelen, B., & Archer, A. (2025). Extravagance and Misery: The Emotional Regime of Market Societies. Oxford: Oxford University Press.",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "6bbd427b-a1b2-57dd-85b9-3f778bd30d93",
         "kind": "bibliography_entry",
         "label": "b69",
         "locator": {
@@ -8481,6 +8620,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:6bbd427b-a1b2-57dd-85b9-3f778bd30d93",
         "sort_key": "bibliography.000069.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -8499,6 +8639,7 @@
         "body_text": "Tiberius, V. (2018). Well-Being as Value Fulfillment: How We Can Help Each Other to Live Well. New York: Oxford University Press.",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "737d4aa4-ce41-5867-89e0-4cf8ff726916",
         "kind": "bibliography_entry",
         "label": "b70",
         "locator": {
@@ -8535,6 +8676,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:737d4aa4-ce41-5867-89e0-4cf8ff726916",
         "sort_key": "bibliography.000070.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -8553,6 +8695,7 @@
         "body_text": "Tronto, J. C. (1993). Moral Boundaries: A Political Argument for an Ethic of Care. Routledge Tulbure, C. (2026). Border harm and aDective injustice: The politics of anger at the Melilla border, Spain. American Journal of Community Psychology. Portico. https://doi.org/10.1002/ajcp.70070",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "784a6f33-e3af-5bda-a8c8-0a1250679e3f",
         "kind": "bibliography_entry",
         "label": "b71",
         "locator": {
@@ -8679,6 +8822,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:784a6f33-e3af-5bda-a8c8-0a1250679e3f",
         "sort_key": "bibliography.000071.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -8697,6 +8841,7 @@
         "body_text": "Tzima, S., & Slaby, J. (2024). Political philosophy of mind: inverting the concepts, expanding the niche. Phenomenology and the Cognitive Sciences. https://doi.org/10.1007/s11097-024-10051-6",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "bcf0bbc2-e236-5434-bf07-3de12fdbd313",
         "kind": "bibliography_entry",
         "label": "b72",
         "locator": {
@@ -8733,6 +8878,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:bcf0bbc2-e236-5434-bf07-3de12fdbd313",
         "sort_key": "bibliography.000072.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -8751,6 +8897,7 @@
         "body_text": "Vespermann, D., & Tirkkonen, S. K. (2024). Existential injustice in phenomenological psychopathology. Philosophical Psychology, 38(1), 209-245.",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "57c9fc53-2697-53fa-bc01-29f7a6d92a8b",
         "kind": "bibliography_entry",
         "label": "b73",
         "locator": {
@@ -8787,6 +8934,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:57c9fc53-2697-53fa-bc01-29f7a6d92a8b",
         "sort_key": "bibliography.000073.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -8805,6 +8953,7 @@
         "body_text": "Villa, K. (2024). ADective Injustice and Responsibility for Emotion Regulation. Feminist Philosophy Quarterly, 10(1/2).",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "366d7c59-d1d9-5399-8391-7877641c94fe",
         "kind": "bibliography_entry",
         "label": "b74",
         "locator": {
@@ -8841,6 +8990,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:366d7c59-d1d9-5399-8391-7877641c94fe",
         "sort_key": "bibliography.000074.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -8859,6 +9009,7 @@
         "body_text": "Walter, S., & aus dem Bruch, K. (2026) The Weight of Feeling \"Otherized\": Asexuality, Allonormativity, and ADective Injustice. Philosophia.",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "aa43351a-f8be-564c-8fe5-5d34bfb43d4b",
         "kind": "bibliography_entry",
         "label": "b75",
         "locator": {
@@ -8895,6 +9046,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:aa43351a-f8be-564c-8fe5-5d34bfb43d4b",
         "sort_key": "bibliography.000075.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -8913,6 +9065,7 @@
         "body_text": "Walter, S. & Stephan, A. (2023). Situated a\"ectivity and mind shaping: Lessons from social psychology. Emotion Review, 15(1), 3-16.",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "565af346-1d93-5be2-bf3e-2e1f32945f1a",
         "kind": "bibliography_entry",
         "label": "b76",
         "locator": {
@@ -8949,6 +9102,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:565af346-1d93-5be2-bf3e-2e1f32945f1a",
         "sort_key": "bibliography.000076.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -8967,6 +9121,7 @@
         "body_text": "Walzer, M. (1983). Spheres of Justice: A Defence of Pluralism and Equality. Basic Books Wenar, L. (2003). Epistemic Rights and Legal Rights. Analysis, 63(2), 142-146.",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "534cb49a-2f95-5f3b-bac9-e6e70644f38b",
         "kind": "bibliography_entry",
         "label": "b77",
         "locator": {
@@ -9003,6 +9158,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:534cb49a-2f95-5f3b-bac9-e6e70644f38b",
         "sort_key": "bibliography.000077.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -9021,6 +9177,7 @@
         "body_text": "Wenar, L. 2015.\"Rights.\" In The Stanford Encyclopedia of Philosophy, edited by E. N. Zalta. https://plato.stanford.edu/archives/fall2015/entries/rights/",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "7fd75d28-0113-5818-a5c7-836b8a6b4421",
         "kind": "bibliography_entry",
         "label": "b78",
         "locator": {
@@ -9057,6 +9214,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:7fd75d28-0113-5818-a5c7-836b8a6b4421",
         "sort_key": "bibliography.000078.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -9075,6 +9233,7 @@
         "body_text": "Whitney, S. (2025). Anger Gaslighting as ADective Injustice. In K. Oliver, H.K. Gunn, & H. Longair (eds.). Gaslighting: Philosophical Approaches. State University of New York Press, pp. 147-174.",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "ac22651b-812f-5060-aa1b-42bf7149a6bc",
         "kind": "bibliography_entry",
         "label": "b79",
         "locator": {
@@ -9111,6 +9270,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:ac22651b-812f-5060-aa1b-42bf7149a6bc",
         "sort_key": "bibliography.000079.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -9129,6 +9289,7 @@
         "body_text": "Whitney, S. (2023). Anger Gaslighting and ADective Injustice. Philosophical Topics, 51 (1): 27-62.",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "78be873b-8df1-59e3-b8f8-b94174e34491",
         "kind": "bibliography_entry",
         "label": "b80",
         "locator": {
@@ -9155,6 +9316,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:78be873b-8df1-59e3-b8f8-b94174e34491",
         "sort_key": "bibliography.000080.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -9173,6 +9335,7 @@
         "body_text": "Whitney, S. (2018). ADective Intentionality and ADective Injustice: Merleau-Ponty and Fanon on the Body Schema as a Theory of ADect. Southern Journal of Philosophy 56 (4): 488-515.",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "349ab2b6-48f8-5452-bda0-33cdea25e87c",
         "kind": "bibliography_entry",
         "label": "b81",
         "locator": {
@@ -9209,6 +9372,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:349ab2b6-48f8-5452-bda0-33cdea25e87c",
         "sort_key": "bibliography.000081.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -9227,6 +9391,7 @@
         "body_text": "Wildman, N., Rietdijk, N., & Archer, A. (2022). Online aDective manipulation. In F. Jongepier & M. Klenk (eds.), The Philosophy of Online Manipulation. Routledge. pp. 311-326.",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "b60ea92a-6314-511d-ba69-2b96b70c695e",
         "kind": "bibliography_entry",
         "label": "b82",
         "locator": {
@@ -9263,6 +9428,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:b60ea92a-6314-511d-ba69-2b96b70c695e",
         "sort_key": "bibliography.000082.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -9281,6 +9447,7 @@
         "body_text": "Wong, P.-H. (2025) Who Controls Our Emotional Lives?-Rethinking ADective Injustice in the Era of Emotional AI with the Case of Moxie. Science\u2022Economy\u2022Society Vol. 43.",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "e9ba9e73-b81b-5ec2-a7e6-f4140ef92398",
         "kind": "bibliography_entry",
         "label": "b83",
         "locator": {
@@ -9317,6 +9484,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:e9ba9e73-b81b-5ec2-a7e6-f4140ef92398",
         "sort_key": "bibliography.000083.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -9335,6 +9503,7 @@
         "body_text": "Young, I. M. (1990). Justice and the Politics of Di\"erence. Princeton: Princeton University Press.",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "d2e7bddf-dc9e-5930-a850-df127844be9a",
         "kind": "bibliography_entry",
         "label": "b84",
         "locator": {
@@ -9361,6 +9530,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:d2e7bddf-dc9e-5930-a850-df127844be9a",
         "sort_key": "bibliography.000084.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -9379,6 +9549,7 @@
         "body_text": "Zembylas, M. (2022). The ADective Dimension Of Epistemic Injustice. Educ Theory, 72: 703- 725. https://doi.org/10.1111/edth.12554",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "87b6df49-da24-5c4e-8ddc-e732cdd03061",
         "kind": "bibliography_entry",
         "label": "b85",
         "locator": {
@@ -9415,6 +9586,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:87b6df49-da24-5c4e-8ddc-e732cdd03061",
         "sort_key": "bibliography.000085.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -9433,6 +9605,7 @@
         "body_text": "Zembylas, M. (2024a). Racial Gaslighting as ADective Injustice: A Conceptual Framework for Education. Race Ethnicity and Education, 27 (4): 417-431.",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "7b69e151-5e2e-5b65-9bbf-af73a2868b84",
         "kind": "bibliography_entry",
         "label": "b86",
         "locator": {
@@ -9469,6 +9642,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:7b69e151-5e2e-5b65-9bbf-af73a2868b84",
         "sort_key": "bibliography.000086.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -9487,6 +9661,7 @@
         "body_text": "Zembylas, M. (2024b). Political anger, aDective injustice, and civic education. Journal of Philosophy of Education 57 (6):1176-1192",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "ff6b1dfe-672a-5fce-bb05-f436b24e15c9",
         "kind": "bibliography_entry",
         "label": "b87",
         "locator": {
@@ -9523,6 +9698,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:ff6b1dfe-672a-5fce-bb05-f436b24e15c9",
         "sort_key": "bibliography.000087.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -9541,6 +9717,7 @@
         "body_text": "Zembylas, M. (2024c). Unlearning emotional imperialism in education: political, theoretical and pedagogical implications. Discourse: Studies in the Cultural Politics of Education, 45(4), 569- 582. https://doi.org/10.1080/01596306.2024.2360091",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "ed17a70d-b7c8-5282-9ffe-56402db15d85",
         "kind": "bibliography_entry",
         "label": "b88",
         "locator": {
@@ -9587,6 +9764,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:ed17a70d-b7c8-5282-9ffe-56402db15d85",
         "sort_key": "bibliography.000088.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -9605,6 +9783,7 @@
         "body_text": "Zembylas, M. (2025). On the entanglement of epistemic violence and aDective injustice in higher education: a conceptual analysis. High Educ 89, 791-805. https://doi.org/10.1007/s10734-024- 01247-5",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "2b6b75c1-23b7-5e81-ba2e-55a492b4e430",
         "kind": "bibliography_entry",
         "label": "b89",
         "locator": {
@@ -9651,6 +9830,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:2b6b75c1-23b7-5e81-ba2e-55a492b4e430",
         "sort_key": "bibliography.000089.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -9669,6 +9849,7 @@
         "body_text": "Zembylas, M. (2026a). DisaDection as refusal: aDective injustice and the politics of unfeeling in pedagogies of nation. Pedagogy, Culture & Society, 34(2), 579-596. https://doi.org/10.1080/14681366.2025.2524506",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "fa4fdd19-ea87-59f8-9a47-4954c366a7e0",
         "kind": "bibliography_entry",
         "label": "b90",
         "locator": {
@@ -9775,6 +9956,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:fa4fdd19-ea87-59f8-9a47-4954c366a7e0",
         "sort_key": "bibliography.000090.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -9793,6 +9975,7 @@
         "body_text": "Zembylas, M. (2026b). ADective climate injustice and infrastructural Apathy: Rethinking public pedagogies for climate engagement. Emotion, Space and Society, 59 https://doi.org/10.1016/j.emospa.2026.101173.",
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_entry",
+        "id": "33218e31-39d5-5827-ae63-2e232ea28881",
         "kind": "bibliography_entry",
         "label": "b91",
         "locator": {
@@ -9919,6 +10102,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:33218e31-39d5-5827-ae63-2e232ea28881",
         "sort_key": "bibliography.000091.target",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -9937,6 +10121,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "383f2974-91ab-578a-beaf-844c340c8ffe",
         "kind": "bibliography_ref",
         "label": "Srinivasan (2018)",
         "locator": {
@@ -9963,6 +10148,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:383f2974-91ab-578a-beaf-844c340c8ffe",
         "sort_key": "bibliography_ref.000000.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -9990,6 +10176,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "e6c70f99-7e00-52d7-84d4-834a9589b506",
         "kind": "bibliography_ref",
         "label": "Whitney (2018)",
         "locator": {
@@ -10016,6 +10203,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:e6c70f99-7e00-52d7-84d4-834a9589b506",
         "sort_key": "bibliography_ref.000001.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -10043,6 +10231,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "06ca7643-b4f9-5870-b29e-aeaaa50f845a",
         "kind": "bibliography_ref",
         "label": "Srinivasan (2018, 127;",
         "locator": {
@@ -10069,6 +10258,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:06ca7643-b4f9-5870-b29e-aeaaa50f845a",
         "sort_key": "bibliography_ref.000002.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -10096,6 +10286,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "a78d548b-daf6-53ac-9653-056c480ba328",
         "kind": "bibliography_ref",
         "label": "133)",
         "locator": {
@@ -10122,6 +10313,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:a78d548b-daf6-53ac-9653-056c480ba328",
         "sort_key": "bibliography_ref.000003.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -10147,6 +10339,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "6dbce9e9-eebf-56e7-80aa-a0834573e9a9",
         "kind": "bibliography_ref",
         "label": "Young's (1990)",
         "locator": {
@@ -10173,6 +10366,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:6dbce9e9-eebf-56e7-80aa-a0834573e9a9",
         "sort_key": "bibliography_ref.000004.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -10200,6 +10394,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "1085697e-425a-5774-9fb1-f2a8b8edfc72",
         "kind": "bibliography_ref",
         "label": "Whitney (2018, 497)",
         "locator": {
@@ -10226,6 +10421,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:1085697e-425a-5774-9fb1-f2a8b8edfc72",
         "sort_key": "bibliography_ref.000005.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -10253,6 +10449,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "37b55c91-fd99-5dc9-91f2-6ebede1e4b14",
         "kind": "bibliography_ref",
         "label": "Archer and Benjamin Matheson (2023)",
         "locator": {
@@ -10289,6 +10486,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:37b55c91-fd99-5dc9-91f2-6ebede1e4b14",
         "sort_key": "bibliography_ref.000006.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -10316,6 +10514,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "f8bbd445-2f00-566e-bfef-93fc9645d44d",
         "kind": "bibliography_ref",
         "label": "(Archer and Matheson 2023, 9)",
         "locator": {
@@ -10342,6 +10541,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:f8bbd445-2f00-566e-bfef-93fc9645d44d",
         "sort_key": "bibliography_ref.000007.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -10369,6 +10569,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "7ee7e592-4885-5179-967e-2dd70cbbef75",
         "kind": "bibliography_ref",
         "label": "(Archer and Matheson 2023;",
         "locator": {
@@ -10395,6 +10596,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:7ee7e592-4885-5179-967e-2dd70cbbef75",
         "sort_key": "bibliography_ref.000008.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -10422,6 +10624,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "2975d244-84c0-5549-93ec-247bede2f5ec",
         "kind": "bibliography_ref",
         "label": "Whitney 2023)",
         "locator": {
@@ -10448,6 +10651,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:2975d244-84c0-5549-93ec-247bede2f5ec",
         "sort_key": "bibliography_ref.000009.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -10475,6 +10679,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "f3bead47-23b1-5883-a4ee-bd918e4db0d4",
         "kind": "bibliography_ref",
         "label": "(Krueger 2023;",
         "locator": {
@@ -10501,6 +10706,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:f3bead47-23b1-5883-a4ee-bd918e4db0d4",
         "sort_key": "bibliography_ref.000010.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -10528,6 +10734,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "bcd2c216-6637-5fcd-99de-a1f4099aa0b5",
         "kind": "bibliography_ref",
         "label": "Pismenny et al. 2024;",
         "locator": {
@@ -10554,6 +10761,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:bcd2c216-6637-5fcd-99de-a1f4099aa0b5",
         "sort_key": "bibliography_ref.000011.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -10581,6 +10789,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "36d680e1-dc88-5286-846f-1ea3e34879b1",
         "kind": "bibliography_ref",
         "label": "Slaby 2023;",
         "locator": {
@@ -10607,6 +10816,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:36d680e1-dc88-5286-846f-1ea3e34879b1",
         "sort_key": "bibliography_ref.000012.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -10634,6 +10844,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "c5052753-8c5b-5f8e-88ca-b67eec5552f9",
         "kind": "bibliography_ref",
         "label": "Stockdale 2023)",
         "locator": {
@@ -10660,6 +10871,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:c5052753-8c5b-5f8e-88ca-b67eec5552f9",
         "sort_key": "bibliography_ref.000013.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -10687,6 +10899,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "93469309-fa7b-57a6-b9b2-43790171b898",
         "kind": "bibliography_ref",
         "label": "(Archer and Mills 2019;",
         "locator": {
@@ -10713,6 +10926,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:93469309-fa7b-57a6-b9b2-43790171b898",
         "sort_key": "bibliography_ref.000014.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -10740,6 +10954,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "350c7164-1e8d-576d-a818-a8624c10beff",
         "kind": "bibliography_ref",
         "label": "Villa 2024)",
         "locator": {
@@ -10776,6 +10991,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:350c7164-1e8d-576d-a818-a8624c10beff",
         "sort_key": "bibliography_ref.000015.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -10803,6 +11019,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "bec3ce2b-304c-5bcf-80e5-9a527f171168",
         "kind": "bibliography_ref",
         "label": "(Bell 2023)",
         "locator": {
@@ -10829,6 +11046,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:bec3ce2b-304c-5bcf-80e5-9a527f171168",
         "sort_key": "bibliography_ref.000016.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -10856,6 +11074,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "159d3cee-9d04-5ade-9d75-18543453b6d2",
         "kind": "bibliography_ref",
         "label": "(Cherry 2023)",
         "locator": {
@@ -10882,6 +11101,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:159d3cee-9d04-5ade-9d75-18543453b6d2",
         "sort_key": "bibliography_ref.000017.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -10909,6 +11129,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "c8d12cda-0929-5227-b841-6be279192609",
         "kind": "bibliography_ref",
         "label": "(Silva et. Al 2026)",
         "locator": {
@@ -10935,6 +11156,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:c8d12cda-0929-5227-b841-6be279192609",
         "sort_key": "bibliography_ref.000018.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -10962,6 +11184,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "dfd17aac-54f3-5f78-8150-6e0ba86ed982",
         "kind": "bibliography_ref",
         "label": "(Whitney 2023",
         "locator": {
@@ -10988,6 +11211,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:dfd17aac-54f3-5f78-8150-6e0ba86ed982",
         "sort_key": "bibliography_ref.000019.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -11015,6 +11239,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "0ea493ad-7c29-5e8d-bbaf-4bf8148c6bd2",
         "kind": "bibliography_ref",
         "label": ", Whitney 2025",
         "locator": {
@@ -11051,6 +11276,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:0ea493ad-7c29-5e8d-bbaf-4bf8148c6bd2",
         "sort_key": "bibliography_ref.000020.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -11078,6 +11304,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "d9da8ec3-ee7a-50fc-afdc-2547d3e95029",
         "kind": "bibliography_ref",
         "label": "(Archer and",
         "locator": {
@@ -11104,6 +11331,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:d9da8ec3-ee7a-50fc-afdc-2547d3e95029",
         "sort_key": "bibliography_ref.000021.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -11131,6 +11359,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "6e4985db-f3e0-51a2-bf69-45287ac623ce",
         "kind": "bibliography_ref",
         "label": "Mills 2025, Puddifoot 2025)",
         "locator": {
@@ -11157,6 +11386,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:6e4985db-f3e0-51a2-bf69-45287ac623ce",
         "sort_key": "bibliography_ref.000022.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -11184,6 +11414,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "4567b7b3-7d50-59df-98a6-f65bc2af709b",
         "kind": "bibliography_ref",
         "label": "(Gallegos 2023)",
         "locator": {
@@ -11210,6 +11441,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:4567b7b3-7d50-59df-98a6-f65bc2af709b",
         "sort_key": "bibliography_ref.000023.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -11237,6 +11469,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "25dd8301-d652-5502-badc-ea1d21bc4f00",
         "kind": "bibliography_ref",
         "label": "(Hildebrand and Jackson 2025)",
         "locator": {
@@ -11263,6 +11496,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:25dd8301-d652-5502-badc-ea1d21bc4f00",
         "sort_key": "bibliography_ref.000024.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -11290,6 +11524,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "abbac67d-620e-5f4d-ac32-27d5e5ae8f70",
         "kind": "bibliography_ref",
         "label": "(Li 2023)",
         "locator": {
@@ -11316,6 +11551,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:abbac67d-620e-5f4d-ac32-27d5e5ae8f70",
         "sort_key": "bibliography_ref.000025.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -11343,6 +11579,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "6dc93cf6-a321-59ed-abd0-e1ac0234d03f",
         "kind": "bibliography_ref",
         "label": "(Rathe 2025)",
         "locator": {
@@ -11369,6 +11606,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:6dc93cf6-a321-59ed-abd0-e1ac0234d03f",
         "sort_key": "bibliography_ref.000026.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -11396,6 +11634,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "d7496c73-03ff-57a0-8797-2f439e3a3e1e",
         "kind": "bibliography_ref",
         "label": "(Tessman 2023)",
         "locator": {
@@ -11422,6 +11661,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:d7496c73-03ff-57a0-8797-2f439e3a3e1e",
         "sort_key": "bibliography_ref.000027.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -11449,6 +11689,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "5f448d46-e729-57c4-845f-9b0a594de79a",
         "kind": "bibliography_ref",
         "label": "(Slaby 2023",
         "locator": {
@@ -11475,6 +11716,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:5f448d46-e729-57c4-845f-9b0a594de79a",
         "sort_key": "bibliography_ref.000028.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -11502,6 +11744,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "f0f2a5d9-f6b7-57d5-b458-cc0329263735",
         "kind": "bibliography_ref",
         "label": ", Zembylas 2026a)",
         "locator": {
@@ -11528,6 +11771,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:f0f2a5d9-f6b7-57d5-b458-cc0329263735",
         "sort_key": "bibliography_ref.000029.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -11555,6 +11799,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "ae307812-3364-536f-a5a4-e796b254b4bb",
         "kind": "bibliography_ref",
         "label": "(Vespermann and Tirkonnen 2024)",
         "locator": {
@@ -11581,6 +11826,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:ae307812-3364-536f-a5a4-e796b254b4bb",
         "sort_key": "bibliography_ref.000030.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -11608,6 +11854,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "6f4041ca-ab0e-5227-845f-fbd796edacd2",
         "kind": "bibliography_ref",
         "label": "(Archer 2024)",
         "locator": {
@@ -11634,6 +11881,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:6f4041ca-ab0e-5227-845f-fbd796edacd2",
         "sort_key": "bibliography_ref.000031.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -11659,6 +11907,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "a7da6974-14f7-5894-a96c-a182f5ed2e2f",
         "kind": "bibliography_ref",
         "label": "(Bogaert 2025",
         "locator": {
@@ -11685,6 +11934,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:a7da6974-14f7-5894-a96c-a182f5ed2e2f",
         "sort_key": "bibliography_ref.000032.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -11712,6 +11962,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "805ee060-d219-5b7b-80a0-d8038043bc65",
         "kind": "bibliography_ref",
         "label": ", Floris et al. 2026",
         "locator": {
@@ -11748,6 +11999,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:805ee060-d219-5b7b-80a0-d8038043bc65",
         "sort_key": "bibliography_ref.000033.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -11775,6 +12027,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "8d855589-8f4b-59ff-9d54-2d81852881f4",
         "kind": "bibliography_ref",
         "label": ", Pismenny 2025)",
         "locator": {
@@ -11801,6 +12054,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:8d855589-8f4b-59ff-9d54-2d81852881f4",
         "sort_key": "bibliography_ref.000034.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -11828,6 +12082,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "acb4cf84-953f-58a9-b1ce-4bcbcb2a124c",
         "kind": "bibliography_ref",
         "label": "(Dale and Gubka 2025;",
         "locator": {
@@ -11854,6 +12109,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:acb4cf84-953f-58a9-b1ce-4bcbcb2a124c",
         "sort_key": "bibliography_ref.000035.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -11881,6 +12137,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "96ac441e-1b7c-57b2-9a80-cd404e393c35",
         "kind": "bibliography_ref",
         "label": "Gokn and Archer 2025;",
         "locator": {
@@ -11907,6 +12164,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:96ac441e-1b7c-57b2-9a80-cd404e393c35",
         "sort_key": "bibliography_ref.000036.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -11934,6 +12192,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "338e01a3-8ca1-51ea-9e8d-edde03508c00",
         "kind": "bibliography_ref",
         "label": "Wong 2025)",
         "locator": {
@@ -11960,6 +12219,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:338e01a3-8ca1-51ea-9e8d-edde03508c00",
         "sort_key": "bibliography_ref.000037.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -11987,6 +12247,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "9a793cb2-4aae-5293-9a19-ab05201214f8",
         "kind": "bibliography_ref",
         "label": "(Eickers 2024)",
         "locator": {
@@ -12013,6 +12274,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:9a793cb2-4aae-5293-9a19-ab05201214f8",
         "sort_key": "bibliography_ref.000038.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -12040,6 +12302,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "0da90224-ffa5-5bb7-8aad-50dbe237b50e",
         "kind": "bibliography_ref",
         "label": "(Isern-Mas et al. 2025)",
         "locator": {
@@ -12066,6 +12329,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:0da90224-ffa5-5bb7-8aad-50dbe237b50e",
         "sort_key": "bibliography_ref.000039.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -12091,6 +12355,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "3521c35a-53cc-5e26-b9ae-ec020a0e6f88",
         "kind": "bibliography_ref",
         "label": "(Krueger 2023)",
         "locator": {
@@ -12117,6 +12382,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:3521c35a-53cc-5e26-b9ae-ec020a0e6f88",
         "sort_key": "bibliography_ref.000040.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -12144,6 +12410,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "6aa2b812-b32d-5971-91c1-1046ff5d3753",
         "kind": "bibliography_ref",
         "label": "(Krueger 2023",
         "locator": {
@@ -12170,6 +12437,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:6aa2b812-b32d-5971-91c1-1046ff5d3753",
         "sort_key": "bibliography_ref.000041.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -12197,6 +12465,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "92924ed0-26ee-54f0-bf83-d49052ff3b2c",
         "kind": "bibliography_ref",
         "label": ", Gokn 2026)",
         "locator": {
@@ -12223,6 +12492,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:92924ed0-26ee-54f0-bf83-d49052ff3b2c",
         "sort_key": "bibliography_ref.000042.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -12250,6 +12520,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "4a803f98-28a0-5276-a667-c695e42d394b",
         "kind": "bibliography_ref",
         "label": "(Mills 2019)",
         "locator": {
@@ -12276,6 +12547,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:4a803f98-28a0-5276-a667-c695e42d394b",
         "sort_key": "bibliography_ref.000043.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -12303,6 +12575,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "575970dc-6e1d-5801-8a36-9dc1979d3e4d",
         "kind": "bibliography_ref",
         "label": "(Osler et al. 2025)",
         "locator": {
@@ -12329,6 +12602,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:575970dc-6e1d-5801-8a36-9dc1979d3e4d",
         "sort_key": "bibliography_ref.000044.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -12356,6 +12630,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "10e4489b-3986-525f-9c35-e4c0ea54e182",
         "kind": "bibliography_ref",
         "label": "(Thomas et al. 2025)",
         "locator": {
@@ -12382,6 +12657,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:10e4489b-3986-525f-9c35-e4c0ea54e182",
         "sort_key": "bibliography_ref.000045.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -12409,6 +12685,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "2c1aa0ef-2624-578e-b495-151a5745c96c",
         "kind": "bibliography_ref",
         "label": "(Wildman et al. 2022)",
         "locator": {
@@ -12435,6 +12712,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:2c1aa0ef-2624-578e-b495-151a5745c96c",
         "sort_key": "bibliography_ref.000046.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -12462,6 +12740,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "6fb9b914-ade9-5c95-825b-5d2e3b184388",
         "kind": "bibliography_ref",
         "label": "(Zembylas 2026b)",
         "locator": {
@@ -12488,6 +12767,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:6fb9b914-ade9-5c95-825b-5d2e3b184388",
         "sort_key": "bibliography_ref.000047.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -12515,6 +12795,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "b21d7005-11f9-535f-a64c-a2fc42d8683c",
         "kind": "bibliography_ref",
         "label": "(Zembylas 2024a;",
         "locator": {
@@ -12541,6 +12822,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:b21d7005-11f9-535f-a64c-a2fc42d8683c",
         "sort_key": "bibliography_ref.000048.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -12568,6 +12850,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "2bdcffc2-5e18-59fd-bbdd-ba2df6004a28",
         "kind": "bibliography_ref",
         "label": "2024b;",
         "locator": {
@@ -12594,6 +12877,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:2bdcffc2-5e18-59fd-bbdd-ba2df6004a28",
         "sort_key": "bibliography_ref.000049.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -12621,6 +12905,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "47f6ecad-4be8-5360-b581-077330403dde",
         "kind": "bibliography_ref",
         "label": "2024c;",
         "locator": {
@@ -12647,6 +12932,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:47f6ecad-4be8-5360-b581-077330403dde",
         "sort_key": "bibliography_ref.000050.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -12674,6 +12960,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "871dec6d-0d74-5773-8ed4-6a368fbeac40",
         "kind": "bibliography_ref",
         "label": "2025b)",
         "locator": {
@@ -12700,6 +12987,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:871dec6d-0d74-5773-8ed4-6a368fbeac40",
         "sort_key": "bibliography_ref.000051.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -12725,6 +13013,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "f41ce50b-519e-5ad2-afbc-35d037f6d76c",
         "kind": "bibliography_ref",
         "label": "(Carman 2023;",
         "locator": {
@@ -12751,6 +13040,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:f41ce50b-519e-5ad2-afbc-35d037f6d76c",
         "sort_key": "bibliography_ref.000052.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -12778,6 +13068,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "1dc55816-82aa-5b90-8aeb-7248e84215d4",
         "kind": "bibliography_ref",
         "label": "2024)",
         "locator": {
@@ -12804,6 +13095,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:1dc55816-82aa-5b90-8aeb-7248e84215d4",
         "sort_key": "bibliography_ref.000053.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -12829,6 +13121,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "994ae16a-54c5-5169-a71c-1386039e8673",
         "kind": "bibliography_ref",
         "label": "Archer and Georgina Mills (2019)",
         "locator": {
@@ -12865,6 +13158,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:994ae16a-54c5-5169-a71c-1386039e8673",
         "sort_key": "bibliography_ref.000054.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -12892,6 +13186,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "2c90950a-bfdc-5da3-9375-6d67b0b81835",
         "kind": "bibliography_ref",
         "label": "(Archer and Mills 2019, 75)",
         "locator": {
@@ -12918,6 +13213,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:2c90950a-bfdc-5da3-9375-6d67b0b81835",
         "sort_key": "bibliography_ref.000055.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -12945,6 +13241,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "7680ff40-002b-5fda-b1c1-2ef2527568e0",
         "kind": "bibliography_ref",
         "label": "Krueger (2023, 85)",
         "locator": {
@@ -12971,6 +13268,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:7680ff40-002b-5fda-b1c1-2ef2527568e0",
         "sort_key": "bibliography_ref.000056.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -12998,6 +13296,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "6c9b1bc0-02bd-59a3-97a8-627f57f542ee",
         "kind": "bibliography_ref",
         "label": "(Archer and",
         "locator": {
@@ -13024,6 +13323,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:6c9b1bc0-02bd-59a3-97a8-627f57f542ee",
         "sort_key": "bibliography_ref.000057.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -13051,6 +13351,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "dabc553a-e011-55a9-af1a-3f8b73d14f7e",
         "kind": "bibliography_ref",
         "label": "Mills 2025, Pismenny et al. 2024)",
         "locator": {
@@ -13077,6 +13378,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:dabc553a-e011-55a9-af1a-3f8b73d14f7e",
         "sort_key": "bibliography_ref.000058.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -13105,6 +13407,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "c5c2c62b-4460-5bd1-be94-f431db523d7f",
         "kind": "bibliography_ref",
         "label": "Vespermann and Sanna Tirkonnen (2024)",
         "locator": {
@@ -13141,6 +13444,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:c5c2c62b-4460-5bd1-be94-f431db523d7f",
         "sort_key": "bibliography_ref.000059.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -13168,6 +13472,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "b09c3230-6d20-5039-a241-4645e1dbb045",
         "kind": "bibliography_ref",
         "label": "(Archer and Matheson 2023)",
         "locator": {
@@ -13194,6 +13499,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:b09c3230-6d20-5039-a241-4645e1dbb045",
         "sort_key": "bibliography_ref.000060.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -13221,6 +13527,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "980650e0-b9bd-5697-b1f2-5883286b25a6",
         "kind": "bibliography_ref",
         "label": "(Whitney 2023",
         "locator": {
@@ -13247,6 +13554,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:980650e0-b9bd-5697-b1f2-5883286b25a6",
         "sort_key": "bibliography_ref.000061.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -13274,6 +13582,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "93e0bd52-ca4d-589a-bd02-578e0786dc9f",
         "kind": "bibliography_ref",
         "label": "(Archer and Mills 2025)",
         "locator": {
@@ -13310,6 +13619,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:93e0bd52-ca4d-589a-bd02-578e0786dc9f",
         "sort_key": "bibliography_ref.000062.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -13337,6 +13647,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "bb9524ea-5bdd-576f-815a-f537971a0f59",
         "kind": "bibliography_ref",
         "label": "Pismenny et al. (2024)",
         "locator": {
@@ -13363,6 +13674,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:bb9524ea-5bdd-576f-815a-f537971a0f59",
         "sort_key": "bibliography_ref.000063.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -13390,6 +13702,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "8435e1bc-a5cd-58be-947c-b5826bcc9305",
         "kind": "bibliography_ref",
         "label": "(Fanon 1963",
         "locator": {
@@ -13426,6 +13739,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:8435e1bc-a5cd-58be-947c-b5826bcc9305",
         "sort_key": "bibliography_ref.000064.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -13453,6 +13767,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "f03dd03f-010b-5990-90b3-5e51cf601c6b",
         "kind": "bibliography_ref",
         "label": "(Fanon /2004;;",
         "locator": {
@@ -13479,6 +13794,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:f03dd03f-010b-5990-90b3-5e51cf601c6b",
         "sort_key": "bibliography_ref.000065.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -13506,6 +13822,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "aae725ed-ef5b-5dd2-99c1-3f79d55bfd03",
         "kind": "bibliography_ref",
         "label": "Frye 1983;",
         "locator": {
@@ -13532,6 +13849,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:aae725ed-ef5b-5dd2-99c1-3f79d55bfd03",
         "sort_key": "bibliography_ref.000066.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -13559,6 +13877,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "c7510b6b-db8f-5668-856a-f207b19ab374",
         "kind": "bibliography_ref",
         "label": "Jaggar 1989;",
         "locator": {
@@ -13585,6 +13904,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:c7510b6b-db8f-5668-856a-f207b19ab374",
         "sort_key": "bibliography_ref.000067.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -13612,6 +13932,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "2a73bd64-ec62-5188-b85c-ddf8699379ec",
         "kind": "bibliography_ref",
         "label": "Lorde 1984;",
         "locator": {
@@ -13638,6 +13959,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:2a73bd64-ec62-5188-b85c-ddf8699379ec",
         "sort_key": "bibliography_ref.000068.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -13665,6 +13987,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "1717855e-1965-5f4d-95f1-2657f5e74aaf",
         "kind": "bibliography_ref",
         "label": "Lugones 2003;",
         "locator": {
@@ -13691,6 +14014,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:1717855e-1965-5f4d-95f1-2657f5e74aaf",
         "sort_key": "bibliography_ref.000069.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -13718,6 +14042,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "55e895ed-9919-5dab-ba73-d8d296901496",
         "kind": "bibliography_ref",
         "label": "Narayan 1988)",
         "locator": {
@@ -13744,6 +14069,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:55e895ed-9919-5dab-ba73-d8d296901496",
         "sort_key": "bibliography_ref.000070.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -13771,6 +14097,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "ace23952-e330-57c7-a581-67cb64014dca",
         "kind": "bibliography_ref",
         "label": "(Maiese & Hanna 2019",
         "locator": {
@@ -13797,6 +14124,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:ace23952-e330-57c7-a581-67cb64014dca",
         "sort_key": "bibliography_ref.000071.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -13824,6 +14152,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "789b2e99-8cae-5191-acb3-3980e0068835",
         "kind": "bibliography_ref",
         "label": ", Tzima & Slaby 2024",
         "locator": {
@@ -13850,6 +14179,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:789b2e99-8cae-5191-acb3-3980e0068835",
         "sort_key": "bibliography_ref.000072.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -13877,6 +14207,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "d66d3a84-f94f-5c65-ad3d-c7d2dc8ae515",
         "kind": "bibliography_ref",
         "label": "(Bell 2023",
         "locator": {
@@ -13903,6 +14234,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:d66d3a84-f94f-5c65-ad3d-c7d2dc8ae515",
         "sort_key": "bibliography_ref.000073.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -13930,6 +14262,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "a565ab6f-8d6b-5776-987b-2cf819094a90",
         "kind": "bibliography_ref",
         "label": ", Plunkett 2021",
         "locator": {
@@ -13956,6 +14289,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:a565ab6f-8d6b-5776-987b-2cf819094a90",
         "sort_key": "bibliography_ref.000074.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -13983,6 +14317,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "967fe824-041d-5a12-8687-b203ce3d44cf",
         "kind": "bibliography_ref",
         "label": "Bell (2023)",
         "locator": {
@@ -14009,6 +14344,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:967fe824-041d-5a12-8687-b203ce3d44cf",
         "sort_key": "bibliography_ref.000075.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -14036,6 +14372,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "25488c3f-8cc6-5c1d-a16c-b4aa90b55007",
         "kind": "bibliography_ref",
         "label": "(Archer and Mills 2025;",
         "locator": {
@@ -14062,6 +14399,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:25488c3f-8cc6-5c1d-a16c-b4aa90b55007",
         "sort_key": "bibliography_ref.000076.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -14089,6 +14427,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "e8bfbffa-0b3a-5aee-b575-20e03e4d4d2e",
         "kind": "bibliography_ref",
         "label": "Whitney 2023)",
         "locator": {
@@ -14115,6 +14454,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:e8bfbffa-0b3a-5aee-b575-20e03e4d4d2e",
         "sort_key": "bibliography_ref.000077.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -14142,6 +14482,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "cb356d7d-1fc1-557b-9c9e-40214adb2f0a",
         "kind": "bibliography_ref",
         "label": "(Bell 2023)",
         "locator": {
@@ -14168,6 +14509,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:cb356d7d-1fc1-557b-9c9e-40214adb2f0a",
         "sort_key": "bibliography_ref.000078.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -14195,6 +14537,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "1e7b096a-ddb6-572b-a754-53c0ed6fa244",
         "kind": "bibliography_ref",
         "label": "(Bell 2023, 245)",
         "locator": {
@@ -14221,6 +14564,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:1e7b096a-ddb6-572b-a754-53c0ed6fa244",
         "sort_key": "bibliography_ref.000079.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -14248,6 +14592,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "007cc2ff-4c20-5f38-9e27-624a20602009",
         "kind": "bibliography_ref",
         "label": "(Archer and Matheson 2023;",
         "locator": {
@@ -14274,6 +14619,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:007cc2ff-4c20-5f38-9e27-624a20602009",
         "sort_key": "bibliography_ref.000080.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -14301,6 +14647,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "d683e03e-a80b-576d-a54a-6940e2c43350",
         "kind": "bibliography_ref",
         "label": "Bell 2023)",
         "locator": {
@@ -14327,6 +14674,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:d683e03e-a80b-576d-a54a-6940e2c43350",
         "sort_key": "bibliography_ref.000081.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -14354,6 +14702,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "854c0dc6-b866-5d1f-b89d-995cd0ca54ef",
         "kind": "bibliography_ref",
         "label": "(Ambrosino 2025;",
         "locator": {
@@ -14390,6 +14739,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:854c0dc6-b866-5d1f-b89d-995cd0ca54ef",
         "sort_key": "bibliography_ref.000082.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -14417,6 +14767,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "7ade4957-24d5-5181-98e3-64d165b4ada1",
         "kind": "bibliography_ref",
         "label": "Whitney 2023)",
         "locator": {
@@ -14443,6 +14794,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:7ade4957-24d5-5181-98e3-64d165b4ada1",
         "sort_key": "bibliography_ref.000083.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -14470,6 +14822,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "af52f4a8-8da4-5e2e-9bcb-ab7e527edf15",
         "kind": "bibliography_ref",
         "label": "(Whitney 2018",
         "locator": {
@@ -14496,6 +14849,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:af52f4a8-8da4-5e2e-9bcb-ab7e527edf15",
         "sort_key": "bibliography_ref.000084.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -14523,6 +14877,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "487b06a2-be83-5064-b1a4-cb46346f9ab3",
         "kind": "bibliography_ref",
         "label": "(Whitney , 2023))",
         "locator": {
@@ -14549,6 +14904,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:487b06a2-be83-5064-b1a4-cb46346f9ab3",
         "sort_key": "bibliography_ref.000085.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -14576,6 +14932,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "13884665-f22a-51c4-a9ab-6162505fd398",
         "kind": "bibliography_ref",
         "label": "(Bell 2023)",
         "locator": {
@@ -14602,6 +14959,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:13884665-f22a-51c4-a9ab-6162505fd398",
         "sort_key": "bibliography_ref.000086.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -14629,6 +14987,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "4808c436-34d5-56ae-82f9-5e1b4099e1f5",
         "kind": "bibliography_ref",
         "label": "Pismenny et al. 2024;",
         "locator": {
@@ -14655,6 +15014,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:4808c436-34d5-56ae-82f9-5e1b4099e1f5",
         "sort_key": "bibliography_ref.000087.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -14682,6 +15042,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "199d3f58-b241-5b5a-9c34-7104614a0d1f",
         "kind": "bibliography_ref",
         "label": "Whitney 2023)",
         "locator": {
@@ -14708,6 +15069,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:199d3f58-b241-5b5a-9c34-7104614a0d1f",
         "sort_key": "bibliography_ref.000088.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -14735,6 +15097,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "2b407383-c914-5ef8-ad1e-08f5230c18c1",
         "kind": "bibliography_ref",
         "label": "Pismenny et al. 2024)",
         "locator": {
@@ -14771,6 +15134,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:2b407383-c914-5ef8-ad1e-08f5230c18c1",
         "sort_key": "bibliography_ref.000089.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -14798,6 +15162,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "ea350143-c0de-5a8c-91c4-f6258b2ae7e7",
         "kind": "bibliography_ref",
         "label": "(Bell 2023)",
         "locator": {
@@ -14834,6 +15199,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:ea350143-c0de-5a8c-91c4-f6258b2ae7e7",
         "sort_key": "bibliography_ref.000090.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -14861,6 +15227,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "b6fcd9c6-b2cc-552b-9f7b-ffdeef6956ed",
         "kind": "bibliography_ref",
         "label": "(Archer and Mills 2025;",
         "locator": {
@@ -14887,6 +15254,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:b6fcd9c6-b2cc-552b-9f7b-ffdeef6956ed",
         "sort_key": "bibliography_ref.000091.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -14914,6 +15282,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "72920e4e-ca06-58db-8089-e07c1a687c51",
         "kind": "bibliography_ref",
         "label": "Whitney 2023)",
         "locator": {
@@ -14940,6 +15309,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:72920e4e-ca06-58db-8089-e07c1a687c51",
         "sort_key": "bibliography_ref.000092.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -14967,6 +15337,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "65515dbc-1b1a-5fcf-a887-461af554068f",
         "kind": "bibliography_ref",
         "label": "(Krueger 2023)",
         "locator": {
@@ -14993,6 +15364,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:65515dbc-1b1a-5fcf-a887-461af554068f",
         "sort_key": "bibliography_ref.000093.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -15020,6 +15392,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "0dd2ff97-f124-5518-b73f-2a993978220a",
         "kind": "bibliography_ref",
         "label": "(Archer and Matheson 2023)",
         "locator": {
@@ -15056,6 +15429,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:0dd2ff97-f124-5518-b73f-2a993978220a",
         "sort_key": "bibliography_ref.000094.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -15083,6 +15457,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "68adf3bc-ebf2-532e-b121-5b3654c5a617",
         "kind": "bibliography_ref",
         "label": "(Archer and Matheson 2023;",
         "locator": {
@@ -15119,6 +15494,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:68adf3bc-ebf2-532e-b121-5b3654c5a617",
         "sort_key": "bibliography_ref.000095.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -15146,6 +15522,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "f63fbda6-412b-5955-b1b6-88b4c2ab2e1f",
         "kind": "bibliography_ref",
         "label": "Stockdale 2023;",
         "locator": {
@@ -15172,6 +15549,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:f63fbda6-412b-5955-b1b6-88b4c2ab2e1f",
         "sort_key": "bibliography_ref.000096.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -15199,6 +15577,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "f6d6c353-2650-50ac-b2be-e59fd6597b0d",
         "kind": "bibliography_ref",
         "label": "Whitney 2023",
         "locator": {
@@ -15225,6 +15604,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:f6d6c353-2650-50ac-b2be-e59fd6597b0d",
         "sort_key": "bibliography_ref.000097.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -15252,6 +15632,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "3c09fff5-a920-5cc9-a128-59f65b613fc5",
         "kind": "bibliography_ref",
         "label": ", Slaby 2023)",
         "locator": {
@@ -15278,6 +15659,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:3c09fff5-a920-5cc9-a128-59f65b613fc5",
         "sort_key": "bibliography_ref.000098.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -15305,6 +15687,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "c69e0809-b86c-5692-96bc-c7609602a1dd",
         "kind": "bibliography_ref",
         "label": "Bell (2023, 256)",
         "locator": {
@@ -15331,6 +15714,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:c69e0809-b86c-5692-96bc-c7609602a1dd",
         "sort_key": "bibliography_ref.000099.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -15358,6 +15742,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "199e4341-e286-5879-a8a8-5a694b5a3fcd",
         "kind": "bibliography_ref",
         "label": "(Whitney 2023;",
         "locator": {
@@ -15384,6 +15769,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:199e4341-e286-5879-a8a8-5a694b5a3fcd",
         "sort_key": "bibliography_ref.000100.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -15411,6 +15797,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "2e00dbcf-dd4f-58fe-87e3-43dd9769ebcc",
         "kind": "bibliography_ref",
         "label": "Slaby 2023)",
         "locator": {
@@ -15437,6 +15824,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:2e00dbcf-dd4f-58fe-87e3-43dd9769ebcc",
         "sort_key": "bibliography_ref.000101.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -15464,6 +15852,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "bfb17d1d-6d38-5ff3-a890-351b699ee8b4",
         "kind": "bibliography_ref",
         "label": "Srinivasan's (2018, 135)",
         "locator": {
@@ -15490,6 +15879,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:bfb17d1d-6d38-5ff3-a890-351b699ee8b4",
         "sort_key": "bibliography_ref.000102.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -15517,6 +15907,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "cc9242b1-1e41-560a-b341-17b0f76c313c",
         "kind": "bibliography_ref",
         "label": "Stockdale (2023)",
         "locator": {
@@ -15543,6 +15934,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:cc9242b1-1e41-560a-b341-17b0f76c313c",
         "sort_key": "bibliography_ref.000103.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -15570,6 +15962,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "96e63e18-a2dc-5758-8a73-fae47722e578",
         "kind": "bibliography_ref",
         "label": "(Pismenny et al. 2024, 155)",
         "locator": {
@@ -15596,6 +15989,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:96e63e18-a2dc-5758-8a73-fae47722e578",
         "sort_key": "bibliography_ref.000104.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -15623,6 +16017,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "1a53f9e6-caf7-5593-93e5-3fc4f2a05d92",
         "kind": "bibliography_ref",
         "label": "Tessman (2023)",
         "locator": {
@@ -15649,6 +16044,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:1a53f9e6-caf7-5593-93e5-3fc4f2a05d92",
         "sort_key": "bibliography_ref.000105.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -15676,6 +16072,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "ab2b8a40-b2fd-5c1c-94c9-141496fdf582",
         "kind": "bibliography_ref",
         "label": "(Gallegos 2022, 198, n. 14)",
         "locator": {
@@ -15702,6 +16099,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:ab2b8a40-b2fd-5c1c-94c9-141496fdf582",
         "sort_key": "bibliography_ref.000106.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -15729,6 +16127,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "5e1de597-58d4-5442-a0bc-53999888b556",
         "kind": "bibliography_ref",
         "label": "Archer and Mills (2025)",
         "locator": {
@@ -15755,6 +16154,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:5e1de597-58d4-5442-a0bc-53999888b556",
         "sort_key": "bibliography_ref.000107.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -15782,6 +16182,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "0e70bab3-e986-50c0-b917-8a9660b6c7b6",
         "kind": "bibliography_ref",
         "label": "Gallegos (2022, 194)",
         "locator": {
@@ -15808,6 +16209,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:0e70bab3-e986-50c0-b917-8a9660b6c7b6",
         "sort_key": "bibliography_ref.000108.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -15835,6 +16237,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "a90ea108-a0e4-5280-9411-7fe02188dabf",
         "kind": "bibliography_ref",
         "label": "(Gilligan 1982;",
         "locator": {
@@ -15861,6 +16264,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:a90ea108-a0e4-5280-9411-7fe02188dabf",
         "sort_key": "bibliography_ref.000109.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -15888,6 +16292,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "71b2c545-97c3-56bc-b4fa-e42cfe5921d3",
         "kind": "bibliography_ref",
         "label": "Tronto 1993)",
         "locator": {
@@ -15914,6 +16319,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:71b2c545-97c3-56bc-b4fa-e42cfe5921d3",
         "sort_key": "bibliography_ref.000110.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -15941,6 +16347,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "96e9c3bc-0fc8-5d33-a38f-df7963135e74",
         "kind": "bibliography_ref",
         "label": "(Nussbaum 2011;",
         "locator": {
@@ -15967,6 +16374,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:96e9c3bc-0fc8-5d33-a38f-df7963135e74",
         "sort_key": "bibliography_ref.000111.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -15994,6 +16402,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "e698b6ef-e81c-5674-826c-d93a4705ac2a",
         "kind": "bibliography_ref",
         "label": "Sen 1999",
         "locator": {
@@ -16020,6 +16429,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:e698b6ef-e81c-5674-826c-d93a4705ac2a",
         "sort_key": "bibliography_ref.000112.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -16047,6 +16457,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "481aeec2-bf1d-59f8-8e22-dd8dfed9836c",
         "kind": "bibliography_ref",
         "label": "Honneth 2004;",
         "locator": {
@@ -16073,6 +16484,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:481aeec2-bf1d-59f8-8e22-dd8dfed9836c",
         "sort_key": "bibliography_ref.000113.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -16100,6 +16512,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "cb59ab30-11bd-559b-926a-211a9a719b5d",
         "kind": "bibliography_ref",
         "label": "Walzer 1983)",
         "locator": {
@@ -16126,6 +16539,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:cb59ab30-11bd-559b-926a-211a9a719b5d",
         "sort_key": "bibliography_ref.000114.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -16153,6 +16567,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "3e2e17c6-b826-5592-8c01-2e87e7ab53ff",
         "kind": "bibliography_ref",
         "label": "(Gheaus 2022)",
         "locator": {
@@ -16179,6 +16594,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:3e2e17c6-b826-5592-8c01-2e87e7ab53ff",
         "sort_key": "bibliography_ref.000115.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -16206,6 +16622,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "d1b32c5b-d822-5e8a-8c88-1d70c5cc41a9",
         "kind": "bibliography_ref",
         "label": "(Brownlee 2020;",
         "locator": {
@@ -16232,6 +16649,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:d1b32c5b-d822-5e8a-8c88-1d70c5cc41a9",
         "sort_key": "bibliography_ref.000116.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -16259,6 +16677,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "9db550bf-4a6b-5989-ab2b-2d534aa7047b",
         "kind": "bibliography_ref",
         "label": "Brownlee at al. 2022;",
         "locator": {
@@ -16285,6 +16704,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:9db550bf-4a6b-5989-ab2b-2d534aa7047b",
         "sort_key": "bibliography_ref.000117.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -16312,6 +16732,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "e719417b-2cb8-51d1-ba68-f963c9843fde",
         "kind": "bibliography_ref",
         "label": "Collins and Shields 2025)",
         "locator": {
@@ -16338,6 +16759,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:e719417b-2cb8-51d1-ba68-f963c9843fde",
         "sort_key": "bibliography_ref.000118.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -16365,6 +16787,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "bd01a78c-cb20-5645-8507-5d9c11d0f68f",
         "kind": "bibliography_ref",
         "label": "Archer and Matheson (2023)",
         "locator": {
@@ -16391,6 +16814,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:bd01a78c-cb20-5645-8507-5d9c11d0f68f",
         "sort_key": "bibliography_ref.000119.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -16418,6 +16842,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "e6e3c414-3807-55c0-8c09-bd272b597517",
         "kind": "bibliography_ref",
         "label": "(Archer and Matheson 2023, 22)",
         "locator": {
@@ -16444,6 +16869,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:e6e3c414-3807-55c0-8c09-bd272b597517",
         "sort_key": "bibliography_ref.000120.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -16471,6 +16897,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "ab1d4cdc-029b-54d7-8b10-f14d35c399c6",
         "kind": "bibliography_ref",
         "label": "Gallegos (2022, 196)",
         "locator": {
@@ -16497,6 +16924,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:ab1d4cdc-029b-54d7-8b10-f14d35c399c6",
         "sort_key": "bibliography_ref.000121.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -16524,6 +16952,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "4381e812-f1a0-53c6-a15e-749f214b1475",
         "kind": "bibliography_ref",
         "label": "Pismenny et al. (2024",
         "locator": {
@@ -16550,6 +16979,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:4381e812-f1a0-53c6-a15e-749f214b1475",
         "sort_key": "bibliography_ref.000122.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -16577,6 +17007,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "13c5ad2f-e11e-545b-8671-8e71bba1b23a",
         "kind": "bibliography_ref",
         "label": "), while Pilar Lopez-Cantero (2025)",
         "locator": {
@@ -16603,6 +17034,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:13c5ad2f-e11e-545b-8671-8e71bba1b23a",
         "sort_key": "bibliography_ref.000123.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -16630,6 +17062,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "19d60322-b471-5987-8f0e-9dac6a8aedf2",
         "kind": "bibliography_ref",
         "label": "(Cordelli 2015a",
         "locator": {
@@ -16656,6 +17089,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:19d60322-b471-5987-8f0e-9dac6a8aedf2",
         "sort_key": "bibliography_ref.000124.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -16683,6 +17117,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "8907f63d-229d-5692-a717-f8ff0df7cfd6",
         "kind": "bibliography_ref",
         "label": "(Cordelli , 2015b;;",
         "locator": {
@@ -16709,6 +17144,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:8907f63d-229d-5692-a717-f8ff0df7cfd6",
         "sort_key": "bibliography_ref.000125.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -16736,6 +17172,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "e6cc9920-f2af-50d3-881b-d3245621a45f",
         "kind": "bibliography_ref",
         "label": "Gheaus 2009",
         "locator": {
@@ -16762,6 +17199,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:e6cc9920-f2af-50d3-881b-d3245621a45f",
         "sort_key": "bibliography_ref.000126.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -16789,6 +17227,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "d26f069a-46e1-580c-b0cc-0b4d32d3862d",
         "kind": "bibliography_ref",
         "label": "Gheaus , 2018))",
         "locator": {
@@ -16815,6 +17254,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:d26f069a-46e1-580c-b0cc-0b4d32d3862d",
         "sort_key": "bibliography_ref.000127.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -16842,6 +17282,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "32cbefe6-2865-56c9-85b0-ff4758ca85b8",
         "kind": "bibliography_ref",
         "label": "(Gallegos 2019)",
         "locator": {
@@ -16868,6 +17309,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:32cbefe6-2865-56c9-85b0-ff4758ca85b8",
         "sort_key": "bibliography_ref.000128.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -16895,6 +17337,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "d2fc4440-4d4b-5836-aa2a-34366e1265fc",
         "kind": "bibliography_ref",
         "label": "Whitney (2018, 493)",
         "locator": {
@@ -16921,6 +17364,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:d2fc4440-4d4b-5836-aa2a-34366e1265fc",
         "sort_key": "bibliography_ref.000129.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -16948,6 +17392,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "d38938b0-a953-541f-858c-d3b5eef3bea9",
         "kind": "bibliography_ref",
         "label": "(Bell 2023, 259)",
         "locator": {
@@ -16974,6 +17419,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:d38938b0-a953-541f-858c-d3b5eef3bea9",
         "sort_key": "bibliography_ref.000130.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -17001,6 +17447,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "28aef4bd-7303-5d50-ac63-5b9e1f9aaeee",
         "kind": "bibliography_ref",
         "label": "Whitney (2023, 38)",
         "locator": {
@@ -17027,6 +17474,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:28aef4bd-7303-5d50-ac63-5b9e1f9aaeee",
         "sort_key": "bibliography_ref.000131.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -17054,6 +17502,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "3ff7e083-f30c-5339-ba69-e710938647bb",
         "kind": "bibliography_ref",
         "label": "Archer and Matheson (2023, 21-23)",
         "locator": {
@@ -17080,6 +17529,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:3ff7e083-f30c-5339-ba69-e710938647bb",
         "sort_key": "bibliography_ref.000132.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -17107,6 +17557,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "e72844b6-a791-5a47-974e-354f055f39c7",
         "kind": "bibliography_ref",
         "label": "(Archer and Matheson 2022, 771)",
         "locator": {
@@ -17133,6 +17584,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:e72844b6-a791-5a47-974e-354f055f39c7",
         "sort_key": "bibliography_ref.000133.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -17160,6 +17612,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "253841db-2be2-52b1-9a40-892a05e50812",
         "kind": "bibliography_ref",
         "label": "Young's (1990)",
         "locator": {
@@ -17186,6 +17639,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:253841db-2be2-52b1-9a40-892a05e50812",
         "sort_key": "bibliography_ref.000134.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -17213,6 +17667,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "a8ebe034-2cf6-5669-bc74-135f2c0f3858",
         "kind": "bibliography_ref",
         "label": "Reddy's (2001)",
         "locator": {
@@ -17239,6 +17694,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:a8ebe034-2cf6-5669-bc74-135f2c0f3858",
         "sort_key": "bibliography_ref.000135.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -17266,6 +17722,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "230196d3-dc02-5256-bd01-75a73d886e78",
         "kind": "bibliography_ref",
         "label": "Whitney's (2023)",
         "locator": {
@@ -17292,6 +17749,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:230196d3-dc02-5256-bd01-75a73d886e78",
         "sort_key": "bibliography_ref.000136.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -17319,6 +17777,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "e2580955-0eae-5d02-959e-1ca77d631652",
         "kind": "bibliography_ref",
         "label": "Ahmed (2004)",
         "locator": {
@@ -17345,6 +17804,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:e2580955-0eae-5d02-959e-1ca77d631652",
         "sort_key": "bibliography_ref.000137.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -17372,6 +17832,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "75ed00ec-8aeb-5de6-bd04-b553e90ed0ed",
         "kind": "bibliography_ref",
         "label": "Stockdale (2023, 115)",
         "locator": {
@@ -17398,6 +17859,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:75ed00ec-8aeb-5de6-bd04-b553e90ed0ed",
         "sort_key": "bibliography_ref.000138.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -17425,6 +17887,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "9d18102b-d29a-5841-9885-24de95a55fea",
         "kind": "bibliography_ref",
         "label": "Pismenny et al. (2024, 154)",
         "locator": {
@@ -17451,6 +17914,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:9d18102b-d29a-5841-9885-24de95a55fea",
         "sort_key": "bibliography_ref.000139.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -17478,6 +17942,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "90751747-bce2-534e-9cd5-e6cac83594e9",
         "kind": "bibliography_ref",
         "label": "Pismenny et al. (2024, 152)",
         "locator": {
@@ -17504,6 +17969,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:90751747-bce2-534e-9cd5-e6cac83594e9",
         "sort_key": "bibliography_ref.000140.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -17531,6 +17997,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "43c0c0af-b158-5d13-8711-0d9f5a0ac6ae",
         "kind": "bibliography_ref",
         "label": "Pismenny et al. (2024, 159)",
         "locator": {
@@ -17557,6 +18024,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:43c0c0af-b158-5d13-8711-0d9f5a0ac6ae",
         "sort_key": "bibliography_ref.000141.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -17584,6 +18052,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "061ee0e8-b12a-5e53-a755-c5c60246815d",
         "kind": "bibliography_ref",
         "label": "Gallegos (2022, 195)",
         "locator": {
@@ -17610,6 +18079,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:061ee0e8-b12a-5e53-a755-c5c60246815d",
         "sort_key": "bibliography_ref.000142.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -17637,6 +18107,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "29e9d078-054f-5639-8bcb-4de8efd94ad6",
         "kind": "bibliography_ref",
         "label": "Medina 2013)",
         "locator": {
@@ -17663,6 +18134,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:29e9d078-054f-5639-8bcb-4de8efd94ad6",
         "sort_key": "bibliography_ref.000143.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -17690,6 +18162,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "f4812853-b803-5dc6-a52b-e182467bdd61",
         "kind": "bibliography_ref",
         "label": "Zembylas 2022)",
         "locator": {
@@ -17716,6 +18189,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:f4812853-b803-5dc6-a52b-e182467bdd61",
         "sort_key": "bibliography_ref.000144.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -17743,6 +18217,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "1a4d39c1-2580-57ea-8a18-8dffecb1ce6a",
         "kind": "bibliography_ref",
         "label": "Brinner (2026)",
         "locator": {
@@ -17769,6 +18244,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:1a4d39c1-2580-57ea-8a18-8dffecb1ce6a",
         "sort_key": "bibliography_ref.000145.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -17796,6 +18272,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "81cdb3f3-9543-5844-916a-3e60f93a89ff",
         "kind": "bibliography_ref",
         "label": "Archer (2024)",
         "locator": {
@@ -17822,6 +18299,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:81cdb3f3-9543-5844-916a-3e60f93a89ff",
         "sort_key": "bibliography_ref.000146.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -17847,6 +18325,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "8f776c03-fbb4-5670-ae7e-d7e06a85957c",
         "kind": "bibliography_ref",
         "label": "Osler et al. (2025), and",
         "locator": {
@@ -17873,6 +18352,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:8f776c03-fbb4-5670-ae7e-d7e06a85957c",
         "sort_key": "bibliography_ref.000147.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -17900,6 +18380,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "ec1e4f42-9ced-5c67-9d5b-d79999ded0a6",
         "kind": "bibliography_ref",
         "label": "Slaby (2023)",
         "locator": {
@@ -17926,6 +18407,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:ec1e4f42-9ced-5c67-9d5b-d79999ded0a6",
         "sort_key": "bibliography_ref.000148.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -17953,6 +18435,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "4bf781e2-e71e-583a-873e-32b932da4492",
         "kind": "bibliography_ref",
         "label": "Walter and aus dem Bruch (2026)",
         "locator": {
@@ -17979,6 +18462,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:4bf781e2-e71e-583a-873e-32b932da4492",
         "sort_key": "bibliography_ref.000149.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -18006,6 +18490,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "b9854c8f-7b71-528a-9048-5c188b36f84b",
         "kind": "bibliography_ref",
         "label": "Whitney (2018, 498;",
         "locator": {
@@ -18032,6 +18517,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:b9854c8f-7b71-528a-9048-5c188b36f84b",
         "sort_key": "bibliography_ref.000150.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -18059,6 +18545,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "4bec1f4c-56f0-5934-b581-b22863995f1c",
         "kind": "bibliography_ref",
         "label": "501)",
         "locator": {
@@ -18085,6 +18572,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:4bec1f4c-56f0-5934-b581-b22863995f1c",
         "sort_key": "bibliography_ref.000151.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -18110,6 +18598,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "ee138cba-7e59-5d76-90f2-81929eea6566",
         "kind": "bibliography_ref",
         "label": "(Carman 2024)",
         "locator": {
@@ -18136,6 +18625,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:ee138cba-7e59-5d76-90f2-81929eea6566",
         "sort_key": "bibliography_ref.000152.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -18163,6 +18653,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "94b12c85-8b92-58db-82be-e75f495edd7c",
         "kind": "bibliography_ref",
         "label": "Lynch (2020)",
         "locator": {
@@ -18189,6 +18680,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:94b12c85-8b92-58db-82be-e75f495edd7c",
         "sort_key": "bibliography_ref.000153.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -18216,6 +18708,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "9a141324-5877-5876-aec4-8298cd2836fc",
         "kind": "bibliography_ref",
         "label": "(Bell 2023;",
         "locator": {
@@ -18242,6 +18735,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:9a141324-5877-5876-aec4-8298cd2836fc",
         "sort_key": "bibliography_ref.000154.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -18269,6 +18763,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "e23e6487-f09a-5c40-a66f-6684abe2abc8",
         "kind": "bibliography_ref",
         "label": "Stockdale 2023",
         "locator": {
@@ -18295,6 +18790,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:e23e6487-f09a-5c40-a66f-6684abe2abc8",
         "sort_key": "bibliography_ref.000155.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -18322,6 +18818,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "8d4b3985-6cce-5e2f-b316-ab921ae7ec0a",
         "kind": "bibliography_ref",
         "label": "Carman (2024)",
         "locator": {
@@ -18348,6 +18845,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:8d4b3985-6cce-5e2f-b316-ab921ae7ec0a",
         "sort_key": "bibliography_ref.000156.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",
@@ -18375,6 +18873,7 @@
         "body_text": null,
         "confidence": "probable",
         "extraction_method": "grobid_tei_bibliography_ref",
+        "id": "7558e9b5-1fdd-5e16-bcfa-d230d3967cfd",
         "kind": "bibliography_ref",
         "label": "Zembylas (2022)",
         "locator": {
@@ -18401,6 +18900,7 @@
           "type": "pdf_page_geometry"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:7558e9b5-1fdd-5e16-bcfa-d230d3967cfd",
         "sort_key": "bibliography_ref.000157.marker",
         "source_ref": {
           "adapter_version": "grobid_tei_scholarly_v1",

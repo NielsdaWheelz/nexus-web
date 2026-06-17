@@ -16,10 +16,11 @@ import { startResourceChat } from "@/lib/resources/resourceChat";
 import type { CitationOut } from "@/lib/conversations/citationOut";
 import { toReaderCitationData } from "@/lib/conversations/citations";
 import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
+import { dispatchReaderSourceActivation } from "@/lib/conversations/readerSourceActivation";
 import {
-  dispatchReaderSourceActivation,
-  hrefForReaderSourceTarget,
-} from "@/lib/conversations/readerSourceActivation";
+  activateResource,
+  type ResourceActivation,
+} from "@/lib/resources/activation";
 import { createRandomId } from "@/lib/createRandomId";
 import {
   parseOraclePlateImageSrc,
@@ -519,9 +520,12 @@ export default function OracleReadingPaneBody({
   }, [streamPhase]);
 
   const activateCitation = useCallback(
-    (target: ReaderSourceTarget) => {
-      dispatchReaderSourceActivation(target);
-      router.push(hrefForReaderSourceTarget(target));
+    (activation: ResourceActivation, target: ReaderSourceTarget | null) => {
+      if (target) dispatchReaderSourceActivation(target);
+      activateResource(activation, {
+        label: target?.label,
+        navigate: (href) => router.push(href),
+      });
     },
     [router],
   );

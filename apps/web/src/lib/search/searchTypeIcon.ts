@@ -4,6 +4,7 @@ import {
   Highlighter,
   MessageSquare,
   Mic,
+  NotebookTabs,
   UserRound,
   Video,
   type LucideIcon,
@@ -27,6 +28,7 @@ export const SEARCH_TYPE_ICON: Record<SearchType, LucideIcon> = {
   highlight: Highlighter,
   message: MessageSquare,
   evidence_span: FileText,
+  reader_apparatus_item: NotebookTabs,
   conversation: MessageSquare,
   web_result: Globe,
 };

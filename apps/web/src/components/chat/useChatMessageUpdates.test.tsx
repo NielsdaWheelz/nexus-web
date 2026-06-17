@@ -56,6 +56,12 @@ const NOTE_CITATION: CitationOut = {
   ordinal: 1,
   role: "supports",
   target_ref: { type: "note_block", id: NOTE_BLOCK_ID },
+  activation: {
+    resourceRef: `note_block:${NOTE_BLOCK_ID}`,
+    kind: "route",
+    href: `/notes/${NOTE_BLOCK_ID}`,
+    unresolvedReason: null,
+  },
   media_id: null,
   locator: {
     type: "note_block_offsets",
@@ -76,6 +82,12 @@ const MEDIA_CITATION: CitationOut = {
   ordinal: 2,
   role: "context",
   target_ref: { type: "media", id: MEDIA_ID },
+  activation: {
+    resourceRef: `media:${MEDIA_ID}`,
+    kind: "route",
+    href: `/media/${MEDIA_ID}#fragment-1`,
+    unresolvedReason: null,
+  },
   media_id: MEDIA_ID,
   locator: {
     type: "web_text_offsets",

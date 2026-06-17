@@ -22,14 +22,15 @@ import ConversationContextRefsSurface from "@/components/chat/ConversationContex
 import { useConversation } from "@/components/chat/useConversation";
 import { useConversationContextRefs } from "@/lib/conversations/useConversationContextRefs";
 import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
-import {
-  hrefForReaderSourceTarget,
-  resourceRefForReaderSourceTarget,
-} from "@/lib/conversations/readerSourceActivation";
+import { dispatchReaderSourceActivation } from "@/lib/conversations/readerSourceActivation";
 import { conversationResourceOptions } from "@/lib/actions/resourceActions";
 import { chatDraftKeyFor } from "@/lib/conversations/chatDraftKey";
 import { apiFetch } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import {
+  activateResource,
+  type ResourceActivation,
+} from "@/lib/resources/activation";
 import {
   FeedbackNotice,
   toFeedback,
@@ -178,32 +179,36 @@ export default function Conversation() {
   // --------------------------------------------------------------------------
 
   const handleReaderSourceActivate = useCallback(
-    (target: ReaderSourceTarget, event?: React.MouseEvent) => {
-      const href = hrefForReaderSourceTarget(target);
+    (
+      activation: ResourceActivation,
+      target: ReaderSourceTarget | null,
+      event?: React.MouseEvent,
+    ) => {
+      if (target) dispatchReaderSourceActivation(target);
       if (event?.shiftKey) {
-        openInNewPane?.(href);
+        activateResource(activation, {
+          label: target?.label,
+          openInNewPane,
+          newPane: true,
+        });
         return;
       }
-      const currentRef = resourceRefForReaderSourceTarget(target);
-      if (resourceRef === currentRef) return;
-      router.push(href);
+      if (resourceRef === activation.resourceRef) return;
+      activateResource(activation, {
+        label: target?.label,
+        navigate: (href) => router.push(href),
+      });
     },
     [openInNewPane, resourceRef, router],
   );
 
   const handleOpenResource = useCallback(
-    async (uri: string) => {
-      try {
-        const response = await apiFetch<{
-          data: { route: string | null; label: string };
-        }>(`/api/resource-items/${encodeURIComponent(uri)}`);
-        const href = response.data.route;
-        if (!href) return;
-        openInNewPane?.(href, response.data.label);
-      } catch (err) {
-        if (handleUnauthenticatedApiError(err)) return;
-        console.error("Failed to open context ref:", err);
-      }
+    (contextRef: ContextRefOut) => {
+      activateResource(contextRef.activation, {
+        label: contextRef.label,
+        openInNewPane,
+        newPane: true,
+      });
     },
     [openInNewPane],
   );

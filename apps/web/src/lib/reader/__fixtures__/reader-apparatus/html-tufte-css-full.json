@@ -130,6 +130,7 @@
         "body_text": "Beautiful Evidence",
         "confidence": "strong",
         "extraction_method": "tufte_sidenote",
+        "id": "66bc371d-b823-5344-8c8b-727fcecb141d",
         "kind": "sidenote",
         "label": "1",
         "locator": {
@@ -144,6 +145,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:66bc371d-b823-5344-8c8b-727fcecb141d",
         "sort_key": "000017.000000.target",
         "source_ref": {
           "element": "tufte-sidenote",
@@ -159,6 +161,7 @@
         "body_text": null,
         "confidence": "strong",
         "extraction_method": "tufte_sidenote",
+        "id": "71d1c759-d7cd-55f9-af56-50531adbddb9",
         "kind": "sidenote_ref",
         "label": "1",
         "locator": {
@@ -173,6 +176,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:71d1c759-d7cd-55f9-af56-50531adbddb9",
         "sort_key": "000017.000000.marker",
         "source_ref": {
           "element": "tufte-sidenote",
@@ -188,6 +192,7 @@
         "body_text": "See Tufte\u2019s comment in the Tufte book fonts thread.",
         "confidence": "strong",
         "extraction_method": "tufte_sidenote",
+        "id": "e06acac0-7a27-5a7e-b048-1400a65de202",
         "kind": "sidenote",
         "label": "2",
         "locator": {
@@ -202,6 +207,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:e06acac0-7a27-5a7e-b048-1400a65de202",
         "sort_key": "000019.000001.target",
         "source_ref": {
           "element": "tufte-sidenote",
@@ -217,6 +223,7 @@
         "body_text": null,
         "confidence": "strong",
         "extraction_method": "tufte_sidenote",
+        "id": "8f20882c-94a2-51de-859d-460dc1b443c3",
         "kind": "sidenote_ref",
         "label": "2",
         "locator": {
@@ -231,6 +238,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:8f20882c-94a2-51de-859d-460dc1b443c3",
         "sort_key": "000019.000001.marker",
         "source_ref": {
           "element": "tufte-sidenote",
@@ -246,6 +254,7 @@
         "body_text": "Blue text, while also a widely recognizable clickable-text indicator, is crass and distracting. Luckily, it is also rendered unnecessary by the use of underlining.",
         "confidence": "strong",
         "extraction_method": "tufte_margin_note",
+        "id": "9ab487a8-cffb-56be-b8ae-431922894ce6",
         "kind": "margin_note",
         "label": "Margin note 3",
         "locator": {
@@ -260,6 +269,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:9ab487a8-cffb-56be-b8ae-431922894ce6",
         "sort_key": "000023.000002.target",
         "source_ref": {
           "element": "tufte-margin-note",
@@ -275,6 +285,7 @@
         "body_text": null,
         "confidence": "strong",
         "extraction_method": "tufte_margin_note",
+        "id": "1a9b2d84-d868-5076-bc03-0919f694a0df",
         "kind": "margin_note_ref",
         "label": "\u2295",
         "locator": {
@@ -289,6 +300,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:1a9b2d84-d868-5076-bc03-0919f694a0df",
         "sort_key": "000023.000002.marker",
         "source_ref": {
           "element": "tufte-margin-note",
@@ -304,6 +316,7 @@
         "body_text": "This is a sidenote.",
         "confidence": "strong",
         "extraction_method": "tufte_sidenote",
+        "id": "77b52f7c-a3a6-5eaa-a74c-08bc9760ca68",
         "kind": "sidenote",
         "label": "4",
         "locator": {
@@ -318,6 +331,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:77b52f7c-a3a6-5eaa-a74c-08bc9760ca68",
         "sort_key": "000013.000003.target",
         "source_ref": {
           "element": "tufte-sidenote",
@@ -333,6 +347,7 @@
         "body_text": null,
         "confidence": "strong",
         "extraction_method": "tufte_sidenote",
+        "id": "58ed5ec2-1a85-563b-9f1e-39ca07dd7790",
         "kind": "sidenote_ref",
         "label": "4",
         "locator": {
@@ -347,6 +362,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:58ed5ec2-1a85-563b-9f1e-39ca07dd7790",
         "sort_key": "000013.000003.marker",
         "source_ref": {
           "element": "tufte-sidenote",
@@ -362,6 +378,7 @@
         "body_text": "This is a margin note. Notice there isn\u2019t a number preceding the note.",
         "confidence": "strong",
         "extraction_method": "tufte_margin_note",
+        "id": "356e475a-83cb-5741-9f33-96083794fd6f",
         "kind": "margin_note",
         "label": "Margin note 5",
         "locator": {
@@ -376,6 +393,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:356e475a-83cb-5741-9f33-96083794fd6f",
         "sort_key": "000020.000004.target",
         "source_ref": {
           "element": "tufte-margin-note",
@@ -391,6 +409,7 @@
         "body_text": null,
         "confidence": "strong",
         "extraction_method": "tufte_margin_note",
+        "id": "2ac4d52e-e09a-5a88-a777-bb4fad58a28d",
         "kind": "margin_note_ref",
         "label": "\u2295",
         "locator": {
@@ -405,6 +424,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:2ac4d52e-e09a-5a88-a777-bb4fad58a28d",
         "sort_key": "000020.000004.marker",
         "source_ref": {
           "element": "tufte-margin-note",
@@ -420,6 +440,7 @@
         "body_text": "From Edward Tufte, Visual Display of Quantitative Information, page 92.",
         "confidence": "strong",
         "extraction_method": "tufte_margin_note",
+        "id": "5f4978f9-836b-540e-b86d-04aff9b5f561",
         "kind": "margin_note",
         "label": "Margin note 6",
         "locator": {
@@ -434,6 +455,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:5f4978f9-836b-540e-b86d-04aff9b5f561",
         "sort_key": "000016.000005.target",
         "source_ref": {
           "element": "tufte-margin-note",
@@ -449,6 +471,7 @@
         "body_text": null,
         "confidence": "strong",
         "extraction_method": "tufte_margin_note",
+        "id": "07183d4d-33e7-5b7f-992c-24f143857c4f",
         "kind": "margin_note_ref",
         "label": "\u2295",
         "locator": {
@@ -463,6 +486,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:07183d4d-33e7-5b7f-992c-24f143857c4f",
         "sort_key": "000016.000005.marker",
         "source_ref": {
           "element": "tufte-margin-note",
@@ -478,6 +502,7 @@
         "body_text": "Science, Medicine, and History: Essays on the Evolution of Scientific Thought and Medical Practice (London, 1953), ed. E. Ashworth Underwood, 337-356. From page 71 of Edward Tufte\u2019s Visual Explanations.",
         "confidence": "strong",
         "extraction_method": "tufte_margin_note",
+        "id": "37b1c5dd-ac12-546a-8587-cd7379ef0a77",
         "kind": "margin_note",
         "label": "Margin note 7",
         "locator": {
@@ -492,6 +517,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:37b1c5dd-ac12-546a-8587-cd7379ef0a77",
         "sort_key": "000017.000006.target",
         "source_ref": {
           "element": "tufte-margin-note",
@@ -507,6 +533,7 @@
         "body_text": null,
         "confidence": "strong",
         "extraction_method": "tufte_margin_note",
+        "id": "9d187fbb-d1d9-523c-8b8d-bc0d871e56d5",
         "kind": "margin_note_ref",
         "label": "\u2295",
         "locator": {
@@ -521,6 +548,7 @@
           "type": "web_text_offsets"
         },
         "locator_status": "exact",
+        "resource_ref": "reader_apparatus_item:9d187fbb-d1d9-523c-8b8d-bc0d871e56d5",
         "sort_key": "000017.000006.marker",
         "source_ref": {
           "element": "tufte-margin-note",

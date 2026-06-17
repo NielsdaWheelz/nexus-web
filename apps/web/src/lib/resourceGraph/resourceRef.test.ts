@@ -19,6 +19,10 @@ describe("resourceRef", () => {
       scheme: "library_intelligence_revision",
       id: UUID,
     });
+    expect(parseResourceRef(`reader_apparatus_item:${UUID}`)).toEqual({
+      scheme: "reader_apparatus_item",
+      id: UUID,
+    });
   });
 
   it("rejects malformed, noncanonical, and unsupported refs", () => {
@@ -40,6 +44,21 @@ describe("resourceRef", () => {
     expect(parseResourceRef(`tag:${UUID}`)).toBeNull();
   });
 
+  it("rejects product aliases that are not resource schemes", () => {
+    for (const scheme of [
+      "web",
+      "web_result",
+      "author",
+      "video",
+      "episode",
+      "pdf",
+      "epub",
+      "annotation",
+    ]) {
+      expect(parseResourceRef(`${scheme}:${UUID}`)).toBeNull();
+    }
+  });
+
   it("round-trips parse and format", () => {
     for (const scheme of RESOURCE_SCHEMES) {
       const ref = { scheme, id: UUID };
@@ -51,6 +70,7 @@ describe("resourceRef", () => {
     expect(isResourceScheme("media")).toBe(true);
     expect(isResourceScheme("oracle_corpus_passage")).toBe(true);
     expect(isResourceScheme("library_intelligence_revision")).toBe(true);
+    expect(isResourceScheme("reader_apparatus_item")).toBe(true);
     expect(isResourceScheme("tag")).toBe(false);
     expect(isResourceScheme("span")).toBe(false);
   });

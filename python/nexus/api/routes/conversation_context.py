@@ -44,6 +44,7 @@ def _context_ref_out(row: context_service.ContextRefOut) -> ContextRefOut:
         id=row.edge_id,
         conversation_id=row.conversation_id,
         resource_ref=row.target.uri,
+        activation=row.activation,
         label=row.resolved.label,
         summary=row.resolved.summary,
         missing=row.resolved.missing,

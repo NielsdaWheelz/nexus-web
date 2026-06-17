@@ -20,6 +20,10 @@ import { searchQueryFromInput } from "@/lib/search/query";
 import type { SearchResultRowViewModel } from "@/lib/search/types";
 import { isAndroidShellRestrictedRouteId } from "@/lib/androidShell";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
+import {
+  activateResource,
+  hrefForResourceActivation,
+} from "@/lib/resources/activation";
 import { resolveWorkspacePaneTitle, useWorkspaceStore } from "@/lib/workspace/store";
 import { getWorkspacePrimaryPanes } from "@/lib/workspace/schema";
 import { parsePaletteInput, type PaletteIntent } from "./paletteIntent";
@@ -50,6 +54,12 @@ function openAskConversation(text: string): void {
   requestOpenInAppPane(`/conversations/new?draft=${encodeURIComponent(text)}`, {
     titleHint: "New chat",
   });
+}
+
+function hrefForPaletteTarget(target: PaletteItem["target"]): string | null {
+  if (target.kind === "href") return target.href;
+  if (target.kind === "resource") return hrefForResourceActivation(target.activation);
+  return null;
 }
 
 const HISTORY_DEBOUNCE_MS = 200;
@@ -263,6 +273,20 @@ export function usePaletteController(): PaletteController {
         else requestOpenInAppPane(target.href, { titleHint: item.title });
         return;
       }
+      if (target.kind === "resource") {
+        if (target.activation.kind === "external" && target.activation.href) {
+          window.location.assign(target.activation.href);
+          return;
+        }
+        activateResource(target.activation, {
+          label: target.titleHint ?? item.title,
+          navigate: (href) =>
+            requestOpenInAppPane(href, { titleHint: target.titleHint ?? item.title }),
+          openInNewPane: (href, title) =>
+            requestOpenInAppPane(href, { titleHint: title ?? item.title }),
+        });
+        return;
+      }
       if (target.kind === "ask") {
         openAskConversation(target.text);
         return;
@@ -301,9 +325,11 @@ export function usePaletteController(): PaletteController {
     (item: PaletteItem) => {
       const target = item.target;
       if (
-        target.kind === "href" &&
+        ((target.kind === "href" && !target.externalShell) ||
+          (target.kind === "resource" && target.activation.kind === "route")) &&
         androidShell &&
-        isAndroidShellRestrictedRouteId(resolvePaneRoute(target.href).id)
+        hrefForPaletteTarget(target) !== null &&
+        isAndroidShellRestrictedRouteId(resolvePaneRoute(hrefForPaletteTarget(target) ?? "").id)
       ) {
         setOpen(false);
         feedback.show({ severity: "warning", title: "Local Vault is not available in the Android app." });
@@ -315,6 +341,12 @@ export function usePaletteController(): PaletteController {
       const wire =
         target.kind === "href"
           ? { kind: "href", key: target.href, href: target.href as string | null }
+          : target.kind === "resource"
+            ? {
+                kind: "href",
+                key: target.activation.resourceRef,
+                href: hrefForResourceActivation(target.activation),
+              }
           : target.kind === "ask"
             ? { kind: "prefill", key: `prefill:conversation:${target.text}`, href: null }
             : { kind: "action", key: item.id, href: null };
@@ -349,6 +381,19 @@ export function usePaletteController(): PaletteController {
           setOpen(false);
           if (run.externalShell) window.location.assign(run.href);
           else requestOpenInAppPane(run.href);
+          return;
+        case "open-resource":
+          setOpen(false);
+          if (run.activation.kind === "external" && run.activation.href) {
+            window.location.assign(run.activation.href);
+            return;
+          }
+          activateResource(run.activation, {
+            label: run.titleHint,
+            navigate: (href) => requestOpenInAppPane(href, { titleHint: run.titleHint }),
+            openInNewPane: (href, title) =>
+              requestOpenInAppPane(href, { titleHint: title ?? run.titleHint }),
+          });
           return;
         case "ask":
           setOpen(false);

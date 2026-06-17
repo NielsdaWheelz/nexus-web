@@ -20,6 +20,12 @@ function mediaCitation(overrides: Partial<CitationOut> = {}): CitationOut {
     ordinal: 1,
     role: "context",
     target_ref: { type: "evidence_span", id: "span-1" },
+    activation: {
+      resourceRef: "evidence_span:span-1",
+      kind: "route",
+      href: "/media/media-1#evidence-span-1",
+      unresolvedReason: null,
+    },
     media_id: "media-1",
     locator,
     deep_link: null,
@@ -43,7 +49,12 @@ describe("toReaderCitationData", () => {
         excerpt: "matched source text",
         meta: ["Section", "fragment"],
       },
-      href: "/media/media-1#evidence-span-1",
+      activation: {
+        resourceRef: "evidence_span:span-1",
+        kind: "route",
+        href: "/media/media-1#evidence-span-1",
+        unresolvedReason: null,
+      },
       target: {
         kind: "media",
         source: "message_retrieval",
@@ -63,13 +74,19 @@ describe("toReaderCitationData", () => {
     const data = toReaderCitationData(
       mediaCitation({
         target_ref: { type: "external_snapshot", id: "ext-1" },
+        activation: {
+          resourceRef: "external_snapshot:ext-1",
+          kind: "external",
+          href: "https://example.com/source",
+          unresolvedReason: null,
+        },
         media_id: null,
         locator: null,
-        deep_link: "https://example.com/source",
+        deep_link: null,
       }),
     );
     expect(data.target).toBeNull();
-    expect(data.href).toBe("https://example.com/source");
+    expect(data.activation.href).toBe("https://example.com/source");
   });
 
   it("builds a note reader target from note locators", () => {
@@ -77,6 +94,12 @@ describe("toReaderCitationData", () => {
       toReaderCitationData(
         mediaCitation({
           target_ref: { type: "evidence_span", id: "span-note-1" },
+          activation: {
+            resourceRef: "evidence_span:span-note-1",
+            kind: "route",
+            href: "/notes/block-1",
+            unresolvedReason: null,
+          },
           media_id: null,
           locator: {
             type: "note_block_offsets",
@@ -95,7 +118,12 @@ describe("toReaderCitationData", () => {
         excerpt: "matched source text",
         meta: ["Section", "fragment"],
       },
-      href: "/notes/block-1",
+      activation: {
+        resourceRef: "evidence_span:span-note-1",
+        kind: "route",
+        href: "/notes/block-1",
+        unresolvedReason: null,
+      },
       target: {
         kind: "note",
         source: "message_retrieval",
@@ -112,24 +140,30 @@ describe("toReaderCitationData", () => {
     });
   });
 
-  it("has a null target and href when neither a media reader nor a deep_link is present", () => {
+  it("has a null target and href when backend activation is unresolved", () => {
     const data = toReaderCitationData(
       mediaCitation({
         target_ref: { type: "note_block", id: "block-1" },
+        activation: {
+          resourceRef: "note_block:block-1",
+          kind: "none",
+          href: null,
+          unresolvedReason: "missing",
+        },
         media_id: null,
         locator: null,
         deep_link: null,
       }),
     );
     expect(data.target).toBeNull();
-    expect(data.href).toBeNull();
+    expect(data.activation.href).toBeNull();
   });
 
-  it("prefers deep_link for the href when present", () => {
+  it("uses activation href instead of deep_link", () => {
     const data = toReaderCitationData(
       mediaCitation({ deep_link: "https://example.com/source" }),
     );
-    expect(data.href).toBe("https://example.com/source");
-    expect(data.target?.href).toBe("https://example.com/source");
+    expect(data.activation.href).toBe("/media/media-1#evidence-span-1");
+    expect(data.target?.href).toBe("/media/media-1#evidence-span-1");
   });
 });

@@ -40,7 +40,6 @@ from nexus.db.models import (
     MessageToolCall,
     Model,
     ResourceEdge,
-    ResourceExternalSnapshot,
 )
 from nexus.errors import (
     ApiError,
@@ -153,6 +152,7 @@ from nexus.services.resource_graph.schemas import (
     ConnectionFilters,
     ConnectionQuery,
 )
+from nexus.services.resource_items.capabilities import resource_citation_result_type
 from nexus.services.resource_items.chat_subjects import resolve_chat_subject
 from nexus.services.retrieval_citation import (
     RetrievalCitation,
@@ -351,42 +351,26 @@ def _record_retrieval_citation(
 def _citation_target_ref(
     db: Session, *, run: ChatRun, row: Mapping[str, Any]
 ) -> ResourceRef | None:
-    """The finest citation-edge target for a cited telemetry row (spec §5.2).
-
-    Cited web results mint a ``resource_external_snapshots`` row here — at
-    citation time only, so uncited results stay telemetry-only (§11.4). Rows
-    whose finest existing object is outside the citation render contract fall
-    back to their anchoring ``media:``; with no media anchor there is no target.
-    """
-    result_type = row["result_type"]
-    if result_type == "web_result":
-        result_ref = row["result_ref"] or {}
-        snapshot_row = ResourceExternalSnapshot(
-            user_id=run.owner_user_id,
-            provider=str(result_ref.get("provider") or ""),
-            url=str(result_ref.get("url") or row["deep_link"] or ""),
-            title=row["source_title"] or "",
-            snippet=row["exact_snippet"] or "",
-            source_snapshot=dict(result_ref),
+    """The search-owned citation target for a cited telemetry row."""
+    del db, run
+    result_ref = row["result_ref"]
+    if not isinstance(result_ref, Mapping):
+        raise AssertionError("message_retrievals.result_ref must be an object")
+    raw_target = result_ref.get("citation_target")
+    if raw_target is None:
+        return None
+    if not isinstance(raw_target, str):
+        raise AssertionError("message_retrievals.result_ref.citation_target must be a string")
+    target = parse_resource_ref(raw_target)
+    if isinstance(target, ResourceRefParseFailure):
+        raise AssertionError(
+            f"message_retrievals.result_ref.citation_target is invalid: {raw_target!r}"
         )
-        db.add(snapshot_row)
-        db.flush()
-        return ResourceRef(scheme="external_snapshot", id=snapshot_row.id)
-    if result_type == "evidence_span":
-        span_id = row["evidence_span_id"] or _uuid_or_none(row["source_id"])
-        return ResourceRef(scheme="evidence_span", id=span_id) if span_id else None
-    if result_type == "content_chunk":
-        chunk_id = _uuid_or_none(row["source_id"])
-        return ResourceRef(scheme="content_chunk", id=chunk_id) if chunk_id else None
-    if result_type == "note_block":
-        note_block_id = _uuid_or_none(row["source_id"])
-        return ResourceRef(scheme="note_block", id=note_block_id) if note_block_id else None
-    if result_type in {"media", "episode", "video"}:
-        media_id = row["media_id"] or _uuid_or_none(row["source_id"])
-        return ResourceRef(scheme="media", id=media_id) if media_id else None
-    if row["media_id"] is not None:
-        return ResourceRef(scheme="media", id=row["media_id"])
-    return None
+    if resource_citation_result_type(target) is None:
+        raise AssertionError(
+            f"message_retrievals.result_ref.citation_target is not citable: {raw_target}"
+        )
+    return target
 
 
 def _uuid_or_none(raw: object) -> UUID | None:
@@ -555,6 +539,22 @@ def prune_tool_call_retrievals(
         for edge_id in cited_edge_ids:
             _delete_citation_edge(db, viewer_id=owner_user_id, edge_id=edge_id)
 
+    web_snapshot_ids = [
+        snapshot_id
+        for snapshot_id in (
+            _uuid_or_none(source_id)
+            for source_id in db.execute(
+                text(
+                    "SELECT source_id FROM message_retrievals "
+                    f"WHERE tool_call_id = :tool_call_id{ordinal_clause} "
+                    "AND result_type = 'web_result'"
+                ),
+                params,
+            ).scalars()
+        )
+        if snapshot_id is not None
+    ]
+
     # The candidate ledger FKs message_retrievals; null its pointer before the
     # delete (app_search/web_search write these; chat-run traces never do, so the
     # UPDATE is a harmless no-op there).
@@ -572,6 +572,8 @@ def prune_tool_call_retrievals(
         text(f"DELETE FROM message_retrievals WHERE tool_call_id = :tool_call_id{ordinal_clause}"),
         params,
     )
+    if web_snapshot_ids:
+        graph_cleanup.delete_orphaned_external_snapshots(db, snapshot_ids=web_snapshot_ids)
 
 
 def _delete_citation_edge(db: Session, *, viewer_id: UUID, edge_id: UUID) -> None:
@@ -962,6 +964,7 @@ def _emit_citation_index(db: Session, run: ChatRun) -> None:
                 "id": str(context_ref.edge_id),
                 "conversation_id": str(context_ref.conversation_id),
                 "resource_ref": context_ref.target.uri,
+                "activation": context_ref.activation.model_dump(mode="json"),
                 "label": context_ref.resolved.label,
                 "summary": context_ref.resolved.summary,
                 "missing": context_ref.resolved.missing,
@@ -1679,7 +1682,7 @@ async def _execute_chat_run(
                             tool_call_index=tool_call_index_next,
                             tool_name=APP_SEARCH_TOOL_NAME,
                             scope="all",
-                            requested_types=["content_chunk", "note_block"],
+                            requested_types=[],
                         )
                         append_run_event(
                             db,
@@ -1691,7 +1694,7 @@ async def _execute_chat_run(
                                 tool_call_index=tool_call_index_next,
                                 tool_name=APP_SEARCH_TOOL_NAME,
                                 scope="all",
-                                types=["content_chunk", "note_block"],
+                                types=[],
                                 filters={},
                             ),
                         )
@@ -1703,9 +1706,7 @@ async def _execute_chat_run(
                             user_message_id=run.user_message_id,
                             assistant_message_id=run.assistant_message_id,
                             scopes=scopes,
-                            planned_query=str(args.get("query") or ""),
-                            planned_types=["content_chunk", "note_block"],
-                            planned_filters={},
+                            query=str(args.get("query") or ""),
                             tool_call_index=tool_call_index_next,
                             forced_error=forced_error,
                         )
