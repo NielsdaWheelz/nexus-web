@@ -88,9 +88,7 @@ def test_check_corpus_readiness_exits_zero_only_when_ready(monkeypatch, capsys):
 
 
 def test_plate_manifests_use_direct_bounded_upload_urls():
-    script_manifest = json.loads(
-        (_REPO_ROOT / "scripts/oracle/manifest_plates.json").read_text()
-    )
+    script_manifest = json.loads((_REPO_ROOT / "scripts/oracle/manifest_plates.json").read_text())
     migration_manifest = json.loads(
         (_REPO_ROOT / "migrations/oracle_v1_seed/manifest_plates.json").read_text()
     )
