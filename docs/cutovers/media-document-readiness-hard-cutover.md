@@ -105,7 +105,7 @@ The plan follows these existing repo rules:
   implementations instead of adding wrapper behavior.
 - `docs/rules/layers.md`: BFF routes translate transport and delegate business
   decisions to services.
-- `docs/rules/module-apis.md`: expose each capability one way; do not keep
+- `docs/local-rules/module-apis.md`: expose each capability one way; do not keep
   parallel APIs or local reconstructions.
 - `docs/rules/correctness.md`: normalize at ingress, enforce invariants close
   to the owner, and fail loudly when persisted state violates the contract.

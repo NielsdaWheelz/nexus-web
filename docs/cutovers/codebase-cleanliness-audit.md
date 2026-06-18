@@ -12,7 +12,7 @@ Current cleanup work must follow:
 
 - `docs/rules/cleanliness.md`
 - `docs/rules/layers.md`
-- `docs/rules/module-apis.md`
+- `docs/local-rules/module-apis.md`
 - `docs/cutovers/current-only-artifacts-hard-cutover.md`
 - the live module docs in `docs/modules/`
 

@@ -64,7 +64,7 @@ This cutover follows the repo rules:
 
 - `docs/rules/cleanliness.md`: one owner per concern; remove dead, duplicate,
   compatibility, fallback, migration-era, and orphaned code.
-- `docs/rules/module-apis.md`: expose each capability in one primary form; do
+- `docs/local-rules/module-apis.md`: expose each capability in one primary form; do
   not keep interchangeable duplicate APIs.
 - `docs/rules/database.md`: database cleanup is explicit; do not hide lifecycle
   behavior behind cascades.

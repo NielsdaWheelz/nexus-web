@@ -42,7 +42,7 @@ shape in `resource_edges` or is not a durable connection.
   `services/search/scope.py` the single `scope -> SQL` owner.
 - `docs/rules/cleanliness.md` - one owner per concern, no fallback lanes,
   collapse dangerous duplication.
-- `docs/rules/module-apis.md` - expose each capability in one primary form.
+- `docs/local-rules/module-apis.md` - expose each capability in one primary form.
 - `docs/rules/database.md` - explicit cleanup, no speculative indexes,
   SELECT-then-write, no DB cascades as application behavior.
 - `docs/rules/layers.md` - routes validate and dispatch, services own business

@@ -70,13 +70,13 @@ instead of authoring another private list.
   source-authored reader apparatus from generated assistant citations.
 - `docs/rules/cleanliness.md` requires one owner per concern, deletion of
   compatibility lanes, and collapsing dangerous duplication.
-- `docs/rules/module-apis.md` requires one primary form per capability.
+- `docs/local-rules/module-apis.md` requires one primary form per capability.
 - `docs/rules/keys-and-identities.md` requires the same specific name across
   boundaries when the concept is the same.
 - `docs/rules/layers.md` keeps BFF and API routes thin; services own business
   behavior.
 - `docs/rules/correctness.md` requires illegal states to be unrepresentable.
-- `docs/rules/testing_standards.md` requires behavior tests at public owner
+- `docs/local-rules/testing_standards.md` requires behavior tests at public owner
   boundaries, plus negative gates for completed hard cutovers.
 
 ## SME Thesis

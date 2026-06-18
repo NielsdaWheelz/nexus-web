@@ -101,13 +101,13 @@ Repo rules:
 
 - `docs/rules/cleanliness.md`: one concern, one owner; collapse duplicate
   validators and mutation flows.
-- `docs/rules/module-apis.md`: expose each capability in one primary form.
+- `docs/local-rules/module-apis.md`: expose each capability in one primary form.
 - `docs/rules/correctness.md`: parse and validate untrusted data once at
   ingress; after the boundary, treat values as canonical.
 - `docs/rules/layers.md`: middleware classifies sessions and gates pages; DAL is
   the verified-session boundary; BFF routes and API clients do not own business
   policy.
-- `docs/rules/testing_standards.md`: auth/session behavior needs real-stack E2E
+- `docs/local-rules/testing_standards.md`: auth/session behavior needs real-stack E2E
   coverage where framework routing matters.
 
 ## Pre-cutover behavior map

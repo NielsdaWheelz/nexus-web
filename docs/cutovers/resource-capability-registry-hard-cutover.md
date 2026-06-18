@@ -69,12 +69,12 @@ not re-authored at the call site.
   keeps generated chat citations separate from source-authored apparatus.
 - `docs/rules/cleanliness.md` requires one owner per concern, deletion of
   compatibility lanes, and collapsing dangerous duplication.
-- `docs/rules/module-apis.md` requires each capability in one primary form.
+- `docs/local-rules/module-apis.md` requires each capability in one primary form.
 - `docs/rules/layers.md` keeps BFF and API routes thin; services own business
   behavior.
 - `docs/rules/correctness.md` requires typed boundary parsing and illegal states
   made unrepresentable.
-- `docs/rules/testing_standards.md` requires behavior tests at owner boundaries,
+- `docs/local-rules/testing_standards.md` requires behavior tests at owner boundaries,
   not implementation-shape tests.
 
 ## SME Thesis

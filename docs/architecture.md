@@ -119,7 +119,7 @@ only the internal secret to FastAPI `/oracle/plates/{id}`. The **only** direct
 browser-to-FastAPI exception is Server-Sent Events: the browser streams from
 FastAPI `/stream/*` using a short-lived, single-use stream token minted through
 the BFF. See [`rules/layers.md`](rules/layers.md) and
-[`rules/transport.md`](rules/transport.md).
+[`local-rules/transport.md`](local-rules/transport.md).
 
 ---
 
@@ -196,7 +196,7 @@ immediately as a typed error or a defect. Parse at the boundary, trust inward.
 Branch exhaustively on finite value sets (`assert_never`); no bare
 `except Exception` swallowing.
 
-**Transport is a dumb pipe** ([`rules/transport.md`](rules/transport.md)).
+**Transport is a dumb pipe** ([`local-rules/transport.md`](local-rules/transport.md)).
 Application work that must survive a disconnect is decoupled from the transport —
 which is exactly why a chat answer is a durable `ChatRun` executed by the worker
 and merely *tailed* over SSE, not driven by the HTTP connection.
@@ -1087,7 +1087,7 @@ linear `NNNN_*` numbering, no autogenerate). Dev: `make migrate`. Test: a dedica
 `nexus_test_migrations` DB. Prod: run on every deploy before services start.
 
 **Environment**: `.env.example` is the source of truth for every variable
-([`rules/environment.md`](rules/environment.md)); `make setup` generates local
+([`local-rules/environment.md`](local-rules/environment.md)); `make setup` generates local
 `.env` + `apps/web/.env.local`. Major groups: app/env, database + pool, Supabase
 Auth (issuer/JWKS/audiences), internal secret, encryption key, LLM providers +
 flags + rate limits, Brave web search, streaming (token signing key + base URL +
@@ -1108,7 +1108,7 @@ real-media, and (secrets-gated) live-providers.
 
 ## 12. Testing strategy
 
-The doctrine is in [`rules/testing_standards.md`](rules/testing_standards.md):
+The doctrine is in [`local-rules/testing_standards.md`](local-rules/testing_standards.md):
 **test behavior not implementation**, a testing trophy weighted to **E2E** (real
 stack, real DB/MinIO/Supabase-local), with backend integration as a separate tier.
 **Mock only external boundaries** — never `nexus.services.*`, DB sessions, the BFF
@@ -1213,7 +1213,7 @@ attached-reference citation regression came from breaking this density.
 | Android shell | `apps/android/app/src/main/` |
 | Browser extension | `apps/extension/` |
 | Build / run / deploy | `Makefile`, `deployment.md`, `deploy/` |
-| Tests | `docs/rules/testing_standards.md`, `python/tests/`, `e2e/`, `apps/web/vitest.config.ts` |
+| Tests | `docs/local-rules/testing_standards.md`, `python/tests/`, `e2e/`, `apps/web/vitest.config.ts` |
 
 ---
 

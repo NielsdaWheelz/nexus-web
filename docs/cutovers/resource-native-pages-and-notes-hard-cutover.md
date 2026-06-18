@@ -37,7 +37,7 @@ capabilities through one service-owned policy layer.
   instead of making one overloaded status or type answer every question.
 - `docs/rules/cleanliness.md` requires one owner per concern and no fallback
   lanes.
-- `docs/rules/module-apis.md` requires one primary API per capability.
+- `docs/local-rules/module-apis.md` requires one primary API per capability.
 - `docs/rules/layers.md` keeps BFF/routes thin and puts business behavior in
   services.
 - `docs/rules/database.md` requires explicit cleanup, SELECT-then-write, and

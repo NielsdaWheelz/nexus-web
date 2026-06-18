@@ -56,12 +56,12 @@ the owner and replaces it with a resource-subject contract.
   highlight-first and keep `reader_selection` bind-only.
 - `docs/rules/cleanliness.md` requires one owner per concern, no compatibility
   lanes, and deletion of finished-era names.
-- `docs/rules/module-apis.md` requires one primary API per capability.
+- `docs/local-rules/module-apis.md` requires one primary API per capability.
 - `docs/rules/layers.md` keeps BFF and FastAPI routes thin; services own
   business behavior.
 - `docs/rules/correctness.md` requires typed boundary parsing and illegal states
   made unrepresentable.
-- `docs/rules/testing_standards.md` requires behavior tests at public owner
+- `docs/local-rules/testing_standards.md` requires behavior tests at public owner
   boundaries, not implementation-shape tests.
 
 ## SME Thesis

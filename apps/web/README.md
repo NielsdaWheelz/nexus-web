@@ -76,6 +76,7 @@ Repository-wide rule owners:
 
 - `docs/rules/layers.md`
 - `docs/rules/codebase.md`
+- `docs/local-rules/codebase.md` (nexus-web structure and module ownership)
 - `docs/rules/errors.md`
 
 ## Testing

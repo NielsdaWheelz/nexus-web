@@ -119,11 +119,11 @@ The cutover follows the current repository rules:
 
 - `docs/rules/cleanliness.md`: one owner per concern, collapse duplication,
   avoid hollow generic helpers, keep public surfaces small and semantic.
-- `docs/rules/module-apis.md`: one primary form per capability, prefer an
+- `docs/local-rules/module-apis.md`: one primary form per capability, prefer an
   existing capability over inventing another surface.
 - `docs/rules/simplicity.md`: fewer code paths, no speculative options or
   flags until a real call site needs them.
-- `docs/rules/testing_standards.md`: UI behavior gets component/browser
+- `docs/local-rules/testing_standards.md`: UI behavior gets component/browser
   coverage where interaction and accessibility matter; integration and E2E
   tests exercise real flows without mock API servers.
 
