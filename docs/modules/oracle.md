@@ -33,7 +33,10 @@ other media. Two small Oracle-owned tables sit above that substrate:
   / `current_content_chunk_id`) into the current index. The anchor `id` is the
   durable identity; the pointers are FK-free because evidence/chunk rows are
   regenerated on reindex, and `resolve_oracle_passage_anchors` re-points them
-  against the mapped media.
+  against the mapped media. Resolution matches normalized text-quote prefixes
+  against active ready chunks, so edition line breaks, punctuation style, and
+  Unicode quote/dash differences do not make otherwise identical public-domain
+  passages unavailable.
 
 Corpus **readiness** is derived state, not a stored flag:
 `get_oracle_corpus_readiness` reports the library id, work/ready-media counts,

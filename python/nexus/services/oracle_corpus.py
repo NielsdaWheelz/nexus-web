@@ -10,6 +10,8 @@ issues ``library_entries`` DML directly, and never embeds corpus text itself (G3
 from __future__ import annotations
 
 import hashlib
+import re
+import unicodedata
 from dataclasses import dataclass
 from typing import Literal
 from uuid import UUID
@@ -323,25 +325,14 @@ def resolve_oracle_passage_anchors(
     now = db.scalar(select(func.now()))
     resolved = 0
     failed = 0
+    chunk_cache: dict[UUID, list[tuple[UUID, UUID | None, str]]] = {}
     for anchor, media_id in rows:
         needle = _anchor_needle(anchor.selector)
         match = None
         if needle:
-            match = db.execute(
-                text(
-                    """
-                    SELECT cc.id AS chunk_id, cc.primary_evidence_span_id AS span_id
-                    FROM content_chunks cc
-                    JOIN content_index_states mcis ON mcis.owner_kind = 'media'
-                        AND mcis.owner_id = cc.owner_id AND mcis.status = 'ready'
-                    WHERE cc.owner_kind = 'media' AND cc.owner_id = :media_id
-                      AND position(lower(:needle) in lower(cc.chunk_text)) > 0
-                    ORDER BY cc.chunk_idx ASC
-                    LIMIT 1
-                    """
-                ),
-                {"media_id": media_id, "needle": needle},
-            ).first()
+            match = _find_anchor_chunk_match(
+                db, media_id=media_id, needle=needle, cache=chunk_cache
+            )
         if match is not None:
             anchor.current_content_chunk_id = match[0]
             anchor.current_evidence_span_id = match[1]
@@ -481,13 +472,68 @@ def get_oracle_corpus_readiness(db: Session) -> OracleCorpusReadiness:
     )
 
 
-def _anchor_needle(selector: dict[str, object]) -> str:
-    """The text-quote's first line (truncated) used to locate a passage's chunk, or ''.
+def _find_anchor_chunk_match(
+    db: Session,
+    *,
+    media_id: UUID,
+    needle: str,
+    cache: dict[UUID, list[tuple[UUID, UUID | None, str]]],
+) -> tuple[UUID, UUID | None] | None:
+    if media_id not in cache:
+        rows = db.execute(
+            text(
+                """
+                SELECT
+                    cc.id AS chunk_id,
+                    cc.primary_evidence_span_id AS span_id,
+                    cc.chunk_text AS chunk_text
+                FROM content_chunks cc
+                JOIN content_index_states mcis ON mcis.owner_kind = 'media'
+                    AND mcis.owner_id = cc.owner_id
+                    AND mcis.status = 'ready'
+                    AND mcis.active_embedding_provider = :provider
+                    AND mcis.active_embedding_model = :model
+                WHERE cc.owner_kind = 'media' AND cc.owner_id = :media_id
+                ORDER BY cc.chunk_idx ASC
+                """
+            ),
+            {
+                "media_id": media_id,
+                "provider": current_transcript_embedding_provider(),
+                "model": current_transcript_embedding_model(),
+            },
+        ).mappings()
+        cache[media_id] = [
+            (row["chunk_id"], row["span_id"], _normalize_anchor_match_text(row["chunk_text"] or ""))
+            for row in rows
+        ]
+    for chunk_id, span_id, normalized_text in cache[media_id]:
+        if needle in normalized_text:
+            return (chunk_id, span_id)
+    return None
 
-    The first line avoids cross-line whitespace drift between the curated quote and the
-    extracted media text; ``position(...)`` matches it case-insensitively within a chunk.
+
+def _anchor_needle(selector: dict[str, object]) -> str:
+    """The normalized text-quote prefix used to locate a passage's chunk, or ''.
+
+    Public-domain editions differ in line breaks, punctuation style, apostrophes, and
+    Unicode dashes. The resolver still requires same-media ready chunks, but quote
+    comparison normalizes those presentation differences before matching.
     """
     exact = selector.get("exact")
     if not isinstance(exact, str) or not exact.strip():
         return ""
-    return exact.strip().splitlines()[0][:_ANCHOR_NEEDLE_CHARS]
+    return _normalize_anchor_match_text(exact)[:_ANCHOR_NEEDLE_CHARS]
+
+
+def _normalize_anchor_match_text(value: str) -> str:
+    value = (
+        value.replace("\u2018", "'")
+        .replace("\u2019", "'")
+        .replace("\u201c", '"')
+        .replace("\u201d", '"')
+        .replace("\u2013", "-")
+        .replace("\u2014", "-")
+    )
+    value = unicodedata.normalize("NFKD", value).lower()
+    return re.sub(r"[^a-z0-9]+", "", value)
