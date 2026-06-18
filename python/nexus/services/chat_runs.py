@@ -1700,22 +1700,6 @@ async def _execute_chat_run(
                 )
                 try:
                     async for chunk in stream:
-                        if chunk.done:
-                            iter_terminal = True
-                            terminal_seen = True
-                            usage = chunk.usage
-                            provider_request_id = chunk.provider_request_id
-                            terminal_tokens = usage_tokens(chunk.usage)["total_tokens"]
-                            if terminal_tokens is not None:
-                                actual_budget_tokens += terminal_tokens
-                            if chunk.status == "incomplete":
-                                incomplete_reason = "unknown"
-                                if chunk.incomplete_details is not None:
-                                    reason = chunk.incomplete_details.get("reason")
-                                    incomplete_reason = (
-                                        reason if isinstance(reason, str) else "unknown"
-                                    )
-                            break
                         if chunk.delta_text:
                             delta = chunk.delta_text
                             if len(full_content) + len(delta) > MAX_ASSISTANT_CONTENT_LENGTH:
@@ -1734,6 +1718,22 @@ async def _execute_chat_run(
                                     ),
                                 )
                                 break
+                        if chunk.done:
+                            iter_terminal = True
+                            terminal_seen = True
+                            usage = chunk.usage
+                            provider_request_id = chunk.provider_request_id
+                            terminal_tokens = usage_tokens(chunk.usage)["total_tokens"]
+                            if terminal_tokens is not None:
+                                actual_budget_tokens += terminal_tokens
+                            if chunk.status == "incomplete":
+                                incomplete_reason = "unknown"
+                                if chunk.incomplete_details is not None:
+                                    reason = chunk.incomplete_details.get("reason")
+                                    incomplete_reason = (
+                                        reason if isinstance(reason, str) else "unknown"
+                                    )
+                            break
                         if chunk.tool_call is not None:
                             pending_tool_calls.append(chunk.tool_call)
                         if chunk.provider_artifact is not None:
