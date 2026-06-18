@@ -1165,16 +1165,14 @@ class TestChatRunTooling:
     ):
         """Tool SSE events accept any non-empty tool name."""
         from nexus.schemas.conversation import (
-            ChatRunRetrievalResultEventPayload,
-            ChatRunToolCallEventPayload,
+            ChatRunToolCallStartEventPayload,
+            ChatRunToolResultEventPayload,
         )
 
         common = {
             "tool_call_id": None,
             "assistant_message_id": str(uuid4()),
             "tool_call_index": 0,
-            "status": "running",
-            "scope": "all",
         }
         for tool_name in (
             "app_search",
@@ -1183,18 +1181,24 @@ class TestChatRunTooling:
             "inspect_resource",
             "future_tool",
         ):
-            ChatRunToolCallEventPayload.model_validate(
-                {**common, "tool_name": tool_name, "types": [], "filters": {}}
-            )
-            ChatRunRetrievalResultEventPayload.model_validate(
+            ChatRunToolCallStartEventPayload.model_validate(
                 {
-                    "assistant_message_id": common["assistant_message_id"],
+                    **common,
                     "tool_name": tool_name,
-                    "tool_call_index": 0,
+                    "provider_event_seq_start": 0,
+                    "provider_event_seq_end": 0,
+                }
+            )
+            ChatRunToolResultEventPayload.model_validate(
+                {
+                    **common,
+                    "tool_name": tool_name,
                     "status": "complete",
+                    "scope": "all",
+                    "types": [],
+                    "filters": {},
                     "result_count": 0,
                     "selected_count": 0,
-                    "filters": {},
                     "results": [],
                 }
             )

@@ -349,6 +349,8 @@ def test_chat_run_dead_letter_finalizes_run_in_worker_transaction(
         "usage": None,
         "error_code": "E_JOB_LEASE_EXPIRED",
         "final_chars": None,
+        "last_provider_event_seq": None,
+        "cancelled": None,
     }
 
 
