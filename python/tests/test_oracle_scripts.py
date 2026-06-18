@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -83,3 +85,25 @@ def test_check_corpus_readiness_exits_zero_only_when_ready(monkeypatch, capsys):
     )
     assert script.main() == 1
     assert "plate object invalid: missing oracle/plates/x.jpg" in capsys.readouterr().out
+
+
+def test_plate_manifests_use_direct_bounded_upload_urls():
+    script_manifest = json.loads(
+        (_REPO_ROOT / "scripts/oracle/manifest_plates.json").read_text()
+    )
+    migration_manifest = json.loads(
+        (_REPO_ROOT / "migrations/oracle_v1_seed/manifest_plates.json").read_text()
+    )
+
+    assert script_manifest == migration_manifest
+
+    urls = [entry["resolved_source_url"] for entry in script_manifest]
+    assert len(urls) == 36
+    assert len(urls) == len(set(urls))
+    for url in urls:
+        parsed = urlsplit(url)
+        assert parsed.scheme == "https"
+        assert parsed.netloc == "upload.wikimedia.org"
+        assert parsed.path.startswith("/wikipedia/commons/thumb/")
+        assert "/1920px-" in parsed.path
+        assert "Special:Redirect" not in url
