@@ -29,6 +29,7 @@ from uuid import UUID
 import httpx
 
 from nexus.db.session import get_session_factory
+from nexus.errors import ApiError
 from nexus.jobs.worker import JobWorker
 from nexus.services import oracle_corpus, oracle_plates
 from nexus.services.image_validation import fetch_validated_image
@@ -38,6 +39,11 @@ from nexus.storage.paths import ext_for_content_type
 MANIFEST_DIR = Path(__file__).resolve().parent
 WORKS_PATH = MANIFEST_DIR / "manifest_works.json"
 PLATES_PATH = MANIFEST_DIR / "manifest_plates.json"
+PLATE_FETCH_MAX_ATTEMPTS = 6
+PLATE_FETCH_RETRY_BASE_SECONDS = 10.0
+PLATE_FETCH_RETRY_MAX_SECONDS = 60.0
+PLATE_FETCH_SUCCESS_DELAY_SECONDS = 2.0
+_RETRYABLE_PLATE_FETCH_STATUSES = ("status 429", "status 502", "status 503", "status 504")
 
 
 def main() -> int:
@@ -115,11 +121,11 @@ def _seed_plates(
     """Download, validate, upload, and upsert each plate (no embeddings)."""
     for entry in manifest:
         resolved = entry["resolved_source_url"]
-        validated = fetch_validated_image(resolved, client)
+        validated = _fetch_plate_image(resolved, client)
         storage_key = _plate_storage_key(entry, content_type=validated.content_type)
         if storage.head_object(storage_key) is None:
             storage.put_object(storage_key, validated.data, validated.content_type)
-        time.sleep(0.2)  # be polite to Wikimedia
+        time.sleep(PLATE_FETCH_SUCCESS_DELAY_SECONDS)
         plate = oracle_plates.upsert_oracle_plate(
             db,
             source_repository=entry["source_repository"],
@@ -138,6 +144,33 @@ def _seed_plates(
             tags=list(entry.get("tags") or []),
         )
         print(f"  plate {entry['work_title']!r}: {storage_key} ({plate.id})")
+
+
+def _fetch_plate_image(resolved_source_url: str, client: httpx.Client):
+    for attempt in range(1, PLATE_FETCH_MAX_ATTEMPTS + 1):
+        try:
+            return fetch_validated_image(resolved_source_url, client)
+        except ApiError as exc:
+            if not _is_retryable_plate_fetch_error(exc) or attempt >= PLATE_FETCH_MAX_ATTEMPTS:
+                raise
+            delay = _plate_fetch_retry_delay(exc, attempt=attempt)
+            print(
+                "  plate source temporarily unavailable; "
+                f"retrying in {delay:g}s ({attempt}/{PLATE_FETCH_MAX_ATTEMPTS})"
+            )
+            time.sleep(delay)
+    raise RuntimeError(f"Could not fetch Oracle plate source: {resolved_source_url}")
+
+
+def _is_retryable_plate_fetch_error(exc: ApiError) -> bool:
+    return any(marker in exc.message for marker in _RETRYABLE_PLATE_FETCH_STATUSES)
+
+
+def _plate_fetch_retry_delay(exc: ApiError, *, attempt: int) -> float:
+    if exc.retry_after_seconds is not None:
+        return float(max(1, exc.retry_after_seconds))
+    delay = PLATE_FETCH_RETRY_BASE_SECONDS * (2 ** (attempt - 1))
+    return min(delay, PLATE_FETCH_RETRY_MAX_SECONDS)
 
 
 def _plate_storage_key(entry: dict[str, Any], *, content_type: str) -> str:
