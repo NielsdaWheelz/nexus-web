@@ -62,12 +62,21 @@ test_env_require_tool python3
 
 create_postgres_database() {
     local database="$1"
+    local exists
+    local i
 
-    if [ "$(docker exec "$postgres_container" psql -U postgres -d postgres \
-        -v ON_ERROR_STOP=1 -tAc "SELECT 1 FROM pg_database WHERE datname = '${database}'")" != "1" ]; then
-        docker exec "$postgres_container" createdb -U postgres "$database"
-    fi
-    test_env_wait_until "$database database" 30 0.5 \
+    for i in {1..120}; do
+        exists="$(docker exec "$postgres_container" psql -U postgres -d postgres \
+            -v ON_ERROR_STOP=1 -tAc "SELECT 1 FROM pg_database WHERE datname = '${database}'" 2>/dev/null || true)"
+        if [ "$exists" = "1" ]; then
+            break
+        fi
+        if docker exec "$postgres_container" createdb -U postgres "$database" >/dev/null 2>&1; then
+            break
+        fi
+        sleep 0.25
+    done
+    test_env_wait_until "$database database" 120 0.25 \
         docker exec "$postgres_container" psql -U postgres -d "$database" \
         -v ON_ERROR_STOP=1 -c "SELECT 1"
 }
