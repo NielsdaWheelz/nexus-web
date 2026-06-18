@@ -408,9 +408,11 @@ stream-token replay claims.
 (`system_key = 'oracle_corpus'`) of ordinary `media`; its text and embeddings live
 in the shared content index (`content_chunks`/`content_embeddings`), not an
 Oracle-owned vector store. `oracle_corpus_sources` maps each curated `work_key` to
-its `media_id`; `oracle_passage_anchors` is stable curation identity (selector +
-tags + phase hints, plus cache pointers to current `evidence_span`/`content_chunk`)
-that doubles as the `oracle_passage_anchor:<id>` citation target. `oracle_plates`
+its current `media_id`; manifest source changes are hard cut over by accepting new
+system media and removing the old media from the Oracle Corpus library.
+`oracle_passage_anchors` is stable curation identity (selector + tags + phase
+hints, plus cache pointers to current `evidence_span`/`content_chunk`) that
+doubles as the `oracle_passage_anchor:<id>` citation target. `oracle_plates`
 (public owned plate object metadata; **no embeddings** — selection is
 deterministic over tags/phase hints), `oracle_readings`, `oracle_reading_folios`
 (the per-phase generated folio, referencing its citation `resource_edge`),

@@ -24,6 +24,10 @@ other media. Two small Oracle-owned tables sit above that substrate:
 
 - `oracle_corpus_sources` maps each curated `(corpus_key, work_key)` to its
   authoritative `media_id` (provenance + display order; no text or vectors).
+  When the manifest changes a work's ingest URL or media kind, seeding performs a
+  hard cutover: it accepts the new source through shared source ingest, repoints
+  the source row to the new `media_id`, and removes the previous media from the
+  Oracle Corpus library.
 - `oracle_passage_anchors` is stable curation/concordance identity: a deterministic
   `selector`, `tags`, `phase_hints`, and cache pointers (`current_evidence_span_id`
   / `current_content_chunk_id`) into the current index. The anchor `id` is the
@@ -106,12 +110,12 @@ files when an owned plate object is missing.
 The corpus is seeded and verified by worker-image operator commands, not requests:
 `scripts/ensure_oracle_seed_objects.py`, `scripts/oracle/seed_corpus_library.py`
 (idempotent — ensures the system library, accepts/reuses each work's media through
-the shared source-ingest path, attaches entries via `library_entries`, repairs
-reused failed/stale media through the source-ingest owner, upserts source mappings
-and anchors, and resolves anchors), and `scripts/oracle/check_corpus_readiness.py`
-(exits non-zero unless the corpus is ready). The manifest describes media ingestion
-(a direct ingestable source URL per work) plus passage anchors, not raw passage text
-or embeddings.
+the shared source-ingest path, hard-replaces changed manifest sources, attaches
+entries via `library_entries`, repairs reused failed/stale media through the
+source-ingest owner, upserts source mappings and anchors, and resolves anchors),
+and `scripts/oracle/check_corpus_readiness.py` (exits non-zero unless the corpus is
+ready). The manifest describes media ingestion (a direct ingestable source URL per
+work) plus passage anchors, not raw passage text or embeddings.
 `GET /oracle/corpus` exposes the same readiness as a read-only status report
 (library ref/id, work/ready-media counts, anchor/resolved-anchor counts, plate
 count); it never seeds or repairs on read.

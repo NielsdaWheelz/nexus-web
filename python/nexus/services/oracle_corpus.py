@@ -9,6 +9,7 @@ issues ``library_entries`` DML directly, and never embeds corpus text itself (G3
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from typing import Literal
 from uuid import UUID
@@ -121,8 +122,8 @@ def ensure_oracle_corpus_media(
 ) -> OracleCorpusSeedResult:
     """Accept-or-reuse one work's media, attach it to the corpus library, upsert its anchors.
 
-    Idempotent by ``(corpus_key, work_key)``: an unchanged work reuses its media; the same
-    work_key pointing at a different download URL is a hard error (no silent replacement).
+    Idempotent by ``(corpus_key, work_key)``: an unchanged work reuses its media; a
+    manifest source change is an explicit hard cutover to newly accepted system media.
     Acceptance runs through the shared durable source-ingest path, which enqueues
     extraction/indexing for the operator to drain before anchors resolve.
     """
@@ -133,20 +134,40 @@ def ensure_oracle_corpus_media(
         )
     ).scalar_one_or_none()
     if source is not None:
-        if source.source_download_url != work.source_download_url:
-            raise ApiError(
-                ApiErrorCode.E_INVALID_REQUEST,
-                f"Oracle work {work.work_key!r} already maps to a different source URL",
+        previous_media_id = source.media_id
+        source_changed = (
+            source.source_download_url != work.source_download_url
+            or source.source_media_kind != work.source_media_kind
+        )
+        if source_changed:
+            accepted = accept_system_url_source(
+                db=db,
+                actor_user_id=owner_user_id,
+                url=work.source_download_url,
+                expected_kind=work.source_media_kind,
+                system_source=ORACLE_CORPUS_SYSTEM_KEY,
+                idempotency_key=_source_accept_idempotency_key(work),
             )
+            source.media_id = accepted.media_id
+            created = accepted.idempotency_outcome == "created"
+        else:
+            created = False
         source.library_id = library_id
         source.title = work.title
         source.author_text = work.author_text
         source.source_repository = work.source_repository
         source.source_url = work.source_url
+        source.source_download_url = work.source_download_url
         source.source_media_kind = work.source_media_kind
         source.display_order = work.display_order
         source.updated_at = db.scalar(select(func.now()))
-        created = False
+        if source_changed and previous_media_id != source.media_id:
+            if library_entries.delete_entry(
+                db,
+                library_id,
+                library_entries.media_target(previous_media_id),
+            ):
+                library_entries.normalize_positions(db, library_id)
     else:
         accepted = accept_system_url_source(
             db=db,
@@ -154,7 +175,7 @@ def ensure_oracle_corpus_media(
             url=work.source_download_url,
             expected_kind=work.source_media_kind,
             system_source=ORACLE_CORPUS_SYSTEM_KEY,
-            idempotency_key=f"oracle-corpus-{ORACLE_CORPUS_KEY}-{work.work_key}",
+            idempotency_key=_source_accept_idempotency_key(work),
         )
         source = OracleCorpusSource(
             corpus_key=ORACLE_CORPUS_KEY,
@@ -223,6 +244,11 @@ def ensure_oracle_corpus_media(
         created_media=created,
         anchor_count=len(work.passage_anchors),
     )
+
+
+def _source_accept_idempotency_key(work: OracleCorpusManifestWork) -> str:
+    source_digest = hashlib.sha256(work.source_download_url.encode("utf-8")).hexdigest()[:16]
+    return f"oracle-corpus-{ORACLE_CORPUS_KEY}-{work.work_key}-{source_digest}"
 
 
 def _repair_reused_corpus_media(

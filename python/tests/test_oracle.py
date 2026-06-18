@@ -1055,6 +1055,129 @@ def test_ensure_oracle_corpus_media_repairs_failed_reused_system_media(
     assert media_status == "extracting"
 
 
+def test_ensure_oracle_corpus_media_replaces_changed_source_media(
+    direct_db: DirectSessionManager,
+    oracle_schema,
+) -> None:
+    user_id = uuid4()
+    old_media_id = uuid4()
+    work_key = f"replace-source-{uuid4().hex[:8]}"
+    old_url = f"https://example.org/{work_key}-old.epub"
+    new_url = f"https://example.org/{work_key}-new.epub"
+    with direct_db.session() as db:
+        ensure_user_and_default_library(db, user_id)
+        library_id = oracle_corpus.ensure_oracle_corpus_library(db, owner_user_id=user_id)
+        db.execute(
+            text(
+                """
+                INSERT INTO media (
+                    id, kind, title, processing_status, requested_url,
+                    canonical_source_url, created_by_user_id
+                )
+                VALUES (
+                    :media_id, 'epub', 'Old Oracle work', 'failed',
+                    :old_url, :old_url, :user_id
+                )
+                """
+            ),
+            {"media_id": old_media_id, "old_url": old_url, "user_id": user_id},
+        )
+        library_entries.ensure_entry(db, library_id, library_entries.media_target(old_media_id))
+        db.add(
+            OracleCorpusSource(
+                corpus_key=oracle_corpus.ORACLE_CORPUS_KEY,
+                work_key=work_key,
+                library_id=library_id,
+                media_id=old_media_id,
+                title="Old Oracle work",
+                author_text="A. Scribe",
+                source_repository="test",
+                source_url=old_url,
+                source_download_url=old_url,
+                source_media_kind="epub",
+                display_order=30,
+            )
+        )
+        db.commit()
+
+        result = oracle_corpus.ensure_oracle_corpus_media(
+            db,
+            owner_user_id=user_id,
+            library_id=library_id,
+            work=oracle_corpus.OracleCorpusManifestWork(
+                work_key=work_key,
+                title="New Oracle work",
+                author_text="A. Scribe",
+                source_repository="test",
+                source_url=new_url,
+                source_download_url=new_url,
+                source_media_kind="epub",
+                display_order=30,
+                passage_anchors=[],
+            ),
+        )
+        db.commit()
+
+        source = db.execute(
+            select(OracleCorpusSource).where(OracleCorpusSource.work_key == work_key)
+        ).scalar_one()
+        source_media_id = source.media_id
+        source_download_url = source.source_download_url
+        entry_media_ids = [
+            UUID(str(media_id))
+            for media_id in db.execute(
+                text(
+                    """
+                    SELECT media_id
+                    FROM library_entries
+                    WHERE library_id = :library_id
+                    ORDER BY position ASC
+                    """
+                ),
+                {"library_id": library_id},
+            )
+            .scalars()
+            .all()
+        ]
+        attempt_row = db.execute(
+            text(
+                """
+                SELECT idempotency_key, source_payload->>'system_source'
+                FROM media_source_attempts
+                WHERE media_id = :media_id
+                ORDER BY attempt_no ASC
+                LIMIT 1
+                """
+            ),
+            {"media_id": result.media_id},
+        ).one()
+        queued_job_id = db.execute(
+            text(
+                """
+                SELECT id
+                FROM background_jobs
+                WHERE kind = 'ingest_media_source'
+                  AND payload->>'media_id' = :media_id
+                LIMIT 1
+                """
+            ),
+            {"media_id": str(result.media_id)},
+        ).scalar_one()
+
+    direct_db.register_cleanup("background_jobs", "id", queued_job_id)
+    _register_oracle_corpus_cleanup(direct_db, user_id)
+    direct_db.register_cleanup("users", "id", user_id)
+
+    assert result.created_media is True
+    assert result.media_id != old_media_id
+    assert source_media_id == result.media_id
+    assert source_download_url == new_url
+    assert entry_media_ids == [result.media_id]
+    assert old_media_id not in entry_media_ids
+    assert attempt_row[0].startswith(f"oracle-corpus-{oracle_corpus.ORACLE_CORPUS_KEY}-{work_key}-")
+    assert attempt_row[1] == oracle_corpus.ORACLE_CORPUS_SYSTEM_KEY
+
+
 def test_create_reading_checks_llm_limits_before_enqueue(
     db_session: Session,
     oracle_schema,
