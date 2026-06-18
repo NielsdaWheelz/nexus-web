@@ -101,7 +101,7 @@ Repo rules:
 
 - `docs/rules/cleanliness.md`: one concern, one owner; collapse duplicate
   validators and mutation flows.
-- `docs/local-rules/module-apis.md`: expose each capability in one primary form.
+- `docs/rules/cleanliness.md`: expose each capability in one primary form.
 - `docs/rules/correctness.md`: parse and validate untrusted data once at
   ingress; after the boundary, treat values as canonical.
 - `docs/rules/layers.md`: middleware classifies sessions and gates pages; DAL is

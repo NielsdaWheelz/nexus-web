@@ -57,3 +57,8 @@ technology-ownership, import, and module-boundary model.
 - Password identities are managed via Supabase Auth's `auth.identities` table;
   the application stores no password material. Password-auth Server Actions
   live in `apps/web/src/lib/auth/password-actions.ts`.
+
+## Environment
+
+- The environment-variable contract required by
+  [../rules/codebase.md](../rules/codebase.md) is `.env.example`.

@@ -70,7 +70,7 @@ instead of authoring another private list.
   source-authored reader apparatus from generated assistant citations.
 - `docs/rules/cleanliness.md` requires one owner per concern, deletion of
   compatibility lanes, and collapsing dangerous duplication.
-- `docs/local-rules/module-apis.md` requires one primary form per capability.
+- `docs/rules/cleanliness.md` requires one primary form per capability.
 - `docs/rules/keys-and-identities.md` requires the same specific name across
   boundaries when the concept is the same.
 - `docs/rules/layers.md` keeps BFF and API routes thin; services own business

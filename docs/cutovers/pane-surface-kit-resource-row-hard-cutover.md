@@ -119,7 +119,7 @@ The cutover follows the current repository rules:
 
 - `docs/rules/cleanliness.md`: one owner per concern, collapse duplication,
   avoid hollow generic helpers, keep public surfaces small and semantic.
-- `docs/local-rules/module-apis.md`: one primary form per capability, prefer an
+- `docs/rules/cleanliness.md`: one primary form per capability, prefer an
   existing capability over inventing another surface.
 - `docs/rules/simplicity.md`: fewer code paths, no speculative options or
   flags until a real call site needs them.

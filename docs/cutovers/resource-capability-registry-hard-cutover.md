@@ -69,7 +69,7 @@ not re-authored at the call site.
   keeps generated chat citations separate from source-authored apparatus.
 - `docs/rules/cleanliness.md` requires one owner per concern, deletion of
   compatibility lanes, and collapsing dangerous duplication.
-- `docs/local-rules/module-apis.md` requires each capability in one primary form.
+- `docs/rules/cleanliness.md` requires each capability in one primary form.
 - `docs/rules/layers.md` keeps BFF and API routes thin; services own business
   behavior.
 - `docs/rules/correctness.md` requires typed boundary parsing and illegal states
