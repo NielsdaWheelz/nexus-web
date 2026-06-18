@@ -2,11 +2,13 @@
 
 import json
 from datetime import UTC, datetime
+from typing import Any, cast
 from uuid import UUID
 
 from pydantic import TypeAdapter, ValidationError
 from sqlalchemy import bindparam, text
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media, visible_media_ids_cte_sql
@@ -233,7 +235,10 @@ def put_reader_media_state(
 
     if locator_payload is None:
         if state_id is not None:
-            result = db.execute(_DELETE_READER_MEDIA_STATE_SQL, {"state_id": state_id})
+            result = cast(
+                CursorResult[Any],
+                db.execute(_DELETE_READER_MEDIA_STATE_SQL, {"state_id": state_id}),
+            )
             assert result.rowcount == 1
         db.commit()
         return None
@@ -246,9 +251,12 @@ def put_reader_media_state(
         db.commit()
         return locator
 
-    result = db.execute(
-        _UPDATE_READER_MEDIA_STATE_SQL,
-        {"state_id": state_id, "locator": locator_payload},
+    result = cast(
+        CursorResult[Any],
+        db.execute(
+            _UPDATE_READER_MEDIA_STATE_SQL,
+            {"state_id": state_id, "locator": locator_payload},
+        ),
     )
     assert result.rowcount == 1
 
