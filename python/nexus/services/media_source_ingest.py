@@ -6,7 +6,7 @@ import hashlib
 import json
 import posixpath
 import re
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from urllib.parse import unquote, urlparse
 from uuid import UUID, uuid4
@@ -121,6 +121,15 @@ _TERMINAL_SOURCE_ERROR_CODES = {
     ApiErrorCode.E_PDF_PASSWORD_REQUIRED.value,
     ApiErrorCode.E_ARCHIVE_UNSAFE.value,
 }
+
+
+@dataclass(frozen=True)
+class SystemSourceRepairResult:
+    media_id: UUID
+    source_attempt_id: UUID | None
+    action: str
+    ingest_enqueued: bool
+    processing_status: str
 
 
 def accept_url_source(
@@ -1055,6 +1064,115 @@ def refresh_source_for_viewer(
             "processing_status": _status_to_str(media.processing_status),
             "ingest_enqueued": ingest_enqueued,
         },
+    )
+
+
+def repair_source_for_system_media(
+    *,
+    db: Session,
+    actor_user_id: UUID,
+    media_id: UUID,
+    request_id: str | None,
+    reason: str,
+) -> SystemSourceRepairResult:
+    """Repair source-backed system media through the durable attempt owner.
+
+    System libraries such as the Oracle Corpus do not have an interactive viewer
+    request, but they must still use the same retry/refresh substrate as user media:
+    clone attempts for audit, enforce reacquirability, clear stale artifacts, and
+    enqueue ``ingest_media_source`` through the canonical job owner.
+    """
+    media = db.execute(select(Media).where(Media.id == media_id).with_for_update()).scalar()
+    if media is None:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+    if media.created_by_user_id != actor_user_id:
+        raise ForbiddenError(
+            ApiErrorCode.E_FORBIDDEN,
+            "Only the source owner can repair system media.",
+        )
+    attempt = _latest_source_attempt(db, media.id)
+    if attempt is None:
+        raise ConflictError(
+            ApiErrorCode.E_RETRY_NOT_ALLOWED,
+            "Source repair is not available for media without a source attempt.",
+        )
+
+    if attempt.status in {_ATTEMPT_QUEUED, _ATTEMPT_RUNNING}:
+        return SystemSourceRepairResult(
+            media_id=media.id,
+            source_attempt_id=attempt.id,
+            action="already_in_flight",
+            ingest_enqueued=False,
+            processing_status=_status_to_str(media.processing_status),
+        )
+
+    if attempt.status == _ATTEMPT_ACCEPTED:
+        ingest_enqueued = _dispatch_requeue_attempt(
+            db,
+            media_id=media.id,
+            attempt_id=attempt.id,
+            actor_user_id=actor_user_id,
+            request_id=request_id,
+            failure_stage=_source_attempt_failure_stage(attempt),
+        )
+        media = db.get(Media, media.id) or media
+        attempt = db.get(MediaSourceAttempt, attempt.id) or attempt
+        return SystemSourceRepairResult(
+            media_id=media.id,
+            source_attempt_id=attempt.id,
+            action="queued",
+            ingest_enqueued=ingest_enqueued,
+            processing_status=_status_to_str(media.processing_status),
+        )
+
+    if media.processing_status != ProcessingStatus.failed and attempt.status != _ATTEMPT_FAILED:
+        return SystemSourceRepairResult(
+            media_id=media.id,
+            source_attempt_id=attempt.id,
+            action="not_needed",
+            ingest_enqueued=False,
+            processing_status=_status_to_str(media.processing_status),
+        )
+
+    if attempt.status != _ATTEMPT_FAILED:
+        raise ConflictError(
+            ApiErrorCode.E_RETRY_INVALID_STATE,
+            "Latest source attempt is not repairable.",
+        )
+
+    _raise_if_source_action_not_reacquirable(media, attempt)
+    repair_attempt = _clone_attempt_for_media(
+        db,
+        media=media,
+        viewer_id=actor_user_id,
+        previous=attempt,
+        request_id=request_id,
+        intent_key=_source_action_intent_key(
+            "system_repair", media_id=media.id, previous_attempt_id=attempt.id
+        ),
+        idempotency_key=None,
+    )
+    payload = dict(repair_attempt.source_payload or {})
+    payload["system_repair_reason"] = reason
+    repair_attempt.source_payload = payload
+    _mark_source_requeue_payload(repair_attempt)
+    db.commit()
+    ingest_enqueued = _dispatch_requeue_attempt(
+        db,
+        media_id=media.id,
+        attempt_id=repair_attempt.id,
+        actor_user_id=actor_user_id,
+        request_id=request_id,
+        failure_stage=_source_attempt_failure_stage(repair_attempt),
+    )
+    media = db.get(Media, media.id) or media
+    repair_attempt = db.get(MediaSourceAttempt, repair_attempt.id) or repair_attempt
+    return SystemSourceRepairResult(
+        media_id=media.id,
+        source_attempt_id=repair_attempt.id,
+        action="repair_queued",
+        ingest_enqueued=ingest_enqueued,
+        processing_status=_status_to_str(media.processing_status),
     )
 
 

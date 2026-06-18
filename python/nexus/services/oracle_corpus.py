@@ -17,11 +17,21 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
-from nexus.db.models import OracleCorpusSource, OraclePassageAnchor, OraclePlate
+from nexus.db.models import (
+    Media,
+    OracleCorpusSource,
+    OraclePassageAnchor,
+    OraclePlate,
+    ProcessingStatus,
+)
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.services import library_entries, library_governance
+from nexus.services.content_indexing import repair_ready_media_content_index_now
 from nexus.services.image_validation import MAX_IMAGE_BYTES, MAX_IMAGE_DIMENSION
-from nexus.services.media_source_ingest import accept_system_url_source
+from nexus.services.media_source_ingest import (
+    accept_system_url_source,
+    repair_source_for_system_media,
+)
 from nexus.services.semantic_chunks import (
     current_transcript_embedding_model,
     current_transcript_embedding_provider,
@@ -165,6 +175,8 @@ def ensure_oracle_corpus_media(
 
     # System attach: corpus media live only in the corpus library (not the user's default).
     library_entries.ensure_entry(db, library_id, library_entries.media_target(source.media_id))
+    if not created:
+        _repair_reused_corpus_media(db, owner_user_id=owner_user_id, source=source)
 
     intended_anchor_keys = {manifest_anchor.passage_key for manifest_anchor in work.passage_anchors}
     for manifest_anchor in work.passage_anchors:
@@ -210,6 +222,61 @@ def ensure_oracle_corpus_media(
         media_id=source.media_id,
         created_media=created,
         anchor_count=len(work.passage_anchors),
+    )
+
+
+def _repair_reused_corpus_media(
+    db: Session,
+    *,
+    owner_user_id: UUID,
+    source: OracleCorpusSource,
+) -> None:
+    media = db.get(Media, source.media_id)
+    if media is None:
+        raise ApiError(
+            ApiErrorCode.E_MEDIA_NOT_FOUND,
+            f"Oracle work {source.work_key!r} maps to missing media {source.media_id}",
+        )
+    request_id = f"oracle-corpus-seed:{source.work_key}"
+    if media.processing_status == ProcessingStatus.ready_for_reading:
+        if not _has_ready_active_content_index(db, media_id=media.id):
+            repair_ready_media_content_index_now(
+                db,
+                media_id=media.id,
+                reason="oracle_corpus_seed",
+            )
+        return
+    repair_source_for_system_media(
+        db=db,
+        actor_user_id=owner_user_id,
+        media_id=media.id,
+        request_id=request_id,
+        reason="oracle_corpus_seed",
+    )
+
+
+def _has_ready_active_content_index(db: Session, *, media_id: UUID) -> bool:
+    return (
+        db.execute(
+            text(
+                """
+                SELECT 1
+                FROM content_index_states
+                WHERE owner_kind = 'media'
+                  AND owner_id = :media_id
+                  AND status = 'ready'
+                  AND active_embedding_provider = :provider
+                  AND active_embedding_model = :model
+                LIMIT 1
+                """
+            ),
+            {
+                "media_id": media_id,
+                "provider": current_transcript_embedding_provider(),
+                "model": current_transcript_embedding_model(),
+            },
+        ).first()
+        is not None
     )
 
 

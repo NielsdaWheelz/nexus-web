@@ -37,4 +37,5 @@ the storage client only for `200` responses.
 Object-storage preconditions that migrations depend on are established by deploy
 or operator code, not app startup. Backend deploy migrates schema first, then runs
 `python /app/scripts/ensure_oracle_seed_objects.py` and the Oracle corpus
-seed/readiness commands so runtime surfaces only see storage-backed Oracle assets.
+seed/readiness commands as worker-image one-offs so runtime surfaces only see
+storage-backed Oracle assets.

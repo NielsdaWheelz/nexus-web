@@ -18,13 +18,16 @@ from unittest.mock import patch
 from uuid import UUID, uuid4
 
 import pytest
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import OraclePlate
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.services.oracle_plates import (
+    ensure_oracle_plate_asset,
     get_oracle_plate_bytes,
     oracle_plate_url,
+    prune_oracle_plates_except_source_urls,
     validate_oracle_plate_storage_objects,
 )
 from tests.support.storage import FakeStorageClient
@@ -255,6 +258,109 @@ def test_validate_oracle_plate_storage_objects_checks_object_metadata(
 
     assert after_put.valid == missing.valid + 1
     assert not any(str(image_id) in reason for reason in after_put.invalid)
+
+
+@pytest.mark.integration
+def test_ensure_oracle_plate_asset_overwrites_mismatched_object(
+    direct_db: DirectSessionManager,
+):
+    old_data = b"\xff\xd8\xff" + b"old"
+    new_data = b"\xff\xd8\xff" + b"new image bytes"
+    with direct_db.session() as session:
+        image_id, storage_key = _seed_oracle_plate(session, data=old_data)
+        source_url = session.get(OraclePlate, image_id).source_url
+    _register_plate_cleanup(direct_db, image_id)
+
+    fake = FakeStorageClient()
+    fake.put_object(storage_key, old_data, "image/jpeg")
+
+    with direct_db.session() as session:
+        result = ensure_oracle_plate_asset(
+            session,
+            storage_client=fake,
+            source_repository="test",
+            source_page_url="https://example.com/page",
+            source_url=source_url,
+            license_text="public domain",
+            artist="Test Engraver",
+            work_title="The Test Plate",
+            year="1860",
+            attribution_text="Test Engraver, The Test Plate, test collection.",
+            width=800,
+            height=1200,
+            storage_key=storage_key,
+            content_type="image/jpeg",
+            data=new_data,
+            tags=["forest"],
+        )
+        session.commit()
+
+    assert result.object_written is True
+    assert fake.get_object(storage_key) == new_data
+    with direct_db.session() as session:
+        row = session.get(OraclePlate, image_id)
+        assert row is not None
+        assert row.byte_size == len(new_data)
+
+
+@pytest.mark.integration
+def test_prune_oracle_plates_except_source_urls_deletes_only_stale_unreferenced_rows(
+    direct_db: DirectSessionManager,
+):
+    with direct_db.session() as session:
+        keep_id, _ = _seed_oracle_plate(session, data=b"\xff\xd8\xffkeep")
+        stale_id, _ = _seed_oracle_plate(session, data=b"\xff\xd8\xffstale")
+        keep_source_url = session.get(OraclePlate, keep_id).source_url
+        stale_source_url = session.get(OraclePlate, stale_id).source_url
+        existing_urls = set(session.execute(select(OraclePlate.source_url)).scalars())
+    _register_plate_cleanup(direct_db, keep_id)
+    _register_plate_cleanup(direct_db, stale_id)
+
+    with direct_db.session() as session:
+        deleted = prune_oracle_plates_except_source_urls(
+            session,
+            source_urls=(existing_urls - {stale_source_url}) | {keep_source_url},
+        )
+        session.commit()
+
+    assert deleted == 1
+    with direct_db.session() as session:
+        assert session.get(OraclePlate, keep_id) is not None
+        assert session.get(OraclePlate, stale_id) is None
+
+
+@pytest.mark.integration
+def test_prune_oracle_plates_except_source_urls_fails_for_referenced_stale_rows(
+    direct_db: DirectSessionManager,
+):
+    user_id = uuid4()
+    with direct_db.session() as session:
+        session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
+        image_id, _ = _seed_oracle_plate(session, data=b"\xff\xd8\xffreferenced")
+        source_url = session.get(OraclePlate, image_id).source_url
+        existing_urls = set(session.execute(select(OraclePlate.source_url)).scalars())
+        session.execute(
+            text(
+                """
+                INSERT INTO oracle_readings (
+                    user_id, folio_number, question_text, status, image_id, completed_at
+                )
+                VALUES (:user_id, 1, 'Will this prune?', 'complete', :image_id, now())
+                """
+            ),
+            {"user_id": user_id, "image_id": image_id},
+        )
+        session.commit()
+    direct_db.register_cleanup("users", "id", user_id)
+    _register_plate_cleanup(direct_db, image_id)
+    direct_db.register_cleanup("oracle_readings", "user_id", user_id)
+
+    with direct_db.session() as session:
+        with pytest.raises(ApiError, match="readings still reference"):
+            prune_oracle_plates_except_source_urls(
+                session,
+                source_urls=existing_urls - {source_url},
+            )
 
 
 @pytest.mark.integration

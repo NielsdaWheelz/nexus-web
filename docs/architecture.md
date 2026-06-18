@@ -1071,11 +1071,12 @@ The `Makefile` is the single entrypoint; `make help` is canonical. Targets group
 **Deploy** (`deployment.md`, `deploy/`): the frontend deploys to **Vercel on push
 to `main`** (Git integration). The backend deploys via `deploy/hetzner/deploy.sh`:
 sync env → rsync repo to the VPS → `compose build` → stop worker+api → **run
-	`alembic upgrade head`** via one-off `compose run` commands → **run
-	`python /app/scripts/ensure_oracle_seed_objects.py`** →
-	`python /app/scripts/oracle/seed_corpus_library.py --owner-user $NEXUS_ORACLE_CORPUS_OWNER_USER_ID --drain` →
-`python /app/scripts/oracle/check_corpus_readiness.py` →
-`compose up -d --force-recreate`. Env contracts live in `deploy/env/*` (real values untracked,
+`alembic upgrade head`** via API-image one-off `compose run` commands → run
+Oracle preconditions via `compose run --rm --no-deps worker`:
+`python /app/scripts/ensure_oracle_seed_objects.py` →
+`python /app/scripts/oracle/seed_corpus_library.py --owner-user $NEXUS_ORACLE_CORPUS_OWNER_USER_ID --drain` →
+`python /app/scripts/oracle/check_corpus_readiness.py` → `compose up -d
+--force-recreate`. Env contracts live in `deploy/env/*` (real values untracked,
 `.example` tracked); the sync scripts strongly validate them and reject legacy
 Supabase/`STORAGE_*` keys. R2 CORS/lifecycle are applied as code via
 `deploy/cloudflare/*`. Supabase hosted Auth redirect config is verified as

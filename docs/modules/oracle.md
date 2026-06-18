@@ -103,13 +103,15 @@ Oracle seed objects and corpus readiness are deployment preconditions after sche
 migrations. Runtime request handlers do not seed, repair, or fall back to fixture
 files when an owned plate object is missing.
 
-The corpus is seeded and verified by operator commands, not requests:
-`scripts/oracle/seed_corpus_library.py` (idempotent — ensures the system library,
-accepts/reuses each work's media through the shared source-ingest path, attaches
-entries via `library_entries`, upserts source mappings and anchors, and resolves
-anchors) and `scripts/oracle/check_corpus_readiness.py` (exits non-zero unless the
-corpus is ready). The manifest describes media ingestion (a direct ingestable
-source URL per work) plus passage anchors, not raw passage text or embeddings.
+The corpus is seeded and verified by worker-image operator commands, not requests:
+`scripts/ensure_oracle_seed_objects.py`, `scripts/oracle/seed_corpus_library.py`
+(idempotent — ensures the system library, accepts/reuses each work's media through
+the shared source-ingest path, attaches entries via `library_entries`, repairs
+reused failed/stale media through the source-ingest owner, upserts source mappings
+and anchors, and resolves anchors), and `scripts/oracle/check_corpus_readiness.py`
+(exits non-zero unless the corpus is ready). The manifest describes media ingestion
+(a direct ingestable source URL per work) plus passage anchors, not raw passage text
+or embeddings.
 `GET /oracle/corpus` exposes the same readiness as a read-only status report
 (library ref/id, work/ready-media counts, anchor/resolved-anchor counts, plate
 count); it never seeds or repairs on read.

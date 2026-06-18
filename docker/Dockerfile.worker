@@ -74,6 +74,7 @@ COPY migrations ./migrations
 
 # Copy migration seed manifests
 COPY scripts/oracle ./scripts/oracle
+COPY python/scripts/ensure_oracle_seed_objects.py ./scripts/ensure_oracle_seed_objects.py
 
 # Copy Node.js ingest package
 COPY --from=node-builder /app/node/ingest ./node/ingest

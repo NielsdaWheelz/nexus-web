@@ -146,19 +146,21 @@ curl https://api.example.com/health
 
 The Oracle reads from a system library of ingested public-domain media. Set
 `NEXUS_ORACLE_CORPUS_OWNER_USER_ID=<prod-user-id>` in `/etc/nexus/nexus.env`; deploy runs
-migrations, seeds the corpus for that owner, drains ingestion, then gates on readiness (the
-deploy is not complete until readiness passes — it proves every required media has a ready
-content index on the active embedding provider/model, every anchor resolved, and every plate
-object present):
+migrations in the API image, then runs Oracle seed objects, corpus seed/drain, and readiness
+as one-off worker-image commands. The deploy is not complete until readiness passes — it
+proves every required media has a ready content index on the active embedding provider/model,
+every anchor resolved, and every plate object present:
 
 ```bash
-docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml exec api \
+docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml run -T --rm --no-deps worker \
+  /app/.venv/bin/python /app/scripts/ensure_oracle_seed_objects.py
+docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml run -T --rm --no-deps worker \
   /app/.venv/bin/python /app/scripts/oracle/seed_corpus_library.py --owner-user "$NEXUS_ORACLE_CORPUS_OWNER_USER_ID" --drain
-docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml exec api \
+docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml run -T --rm --no-deps worker \
   /app/.venv/bin/python /app/scripts/oracle/check_corpus_readiness.py
 ```
 
-Both are idempotent and safe to re-run; `check_corpus_readiness.py` exits non-zero unless ready.
+These commands are idempotent and safe to re-run; `check_corpus_readiness.py` exits non-zero unless ready.
 
 ## Supabase Exit Check
 

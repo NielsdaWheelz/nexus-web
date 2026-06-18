@@ -931,6 +931,130 @@ def test_ensure_oracle_corpus_media_uses_system_ingest_without_default_membershi
     assert "library_ids" not in source_payload
 
 
+def test_ensure_oracle_corpus_media_repairs_failed_reused_system_media(
+    direct_db: DirectSessionManager,
+    oracle_schema,
+) -> None:
+    user_id = uuid4()
+    media_id = uuid4()
+    work_key = f"repair-reused-{uuid4().hex[:8]}"
+    source_download_url = f"https://example.org/{work_key}"
+    with direct_db.session() as db:
+        ensure_user_and_default_library(db, user_id)
+        library_id = oracle_corpus.ensure_oracle_corpus_library(db, owner_user_id=user_id)
+        db.execute(
+            text(
+                """
+                INSERT INTO media (
+                    id, kind, title, processing_status, failure_stage, last_error_code,
+                    last_error_message, requested_url, canonical_source_url, created_by_user_id
+                )
+                VALUES (
+                    :media_id, 'web_article', 'Failed Oracle work', 'failed', 'extract',
+                    'E_INGEST_FAILED', 'Node ingest script not found',
+                    :url, :url, :user_id
+                )
+                """
+            ),
+            {"media_id": media_id, "url": source_download_url, "user_id": user_id},
+        )
+        db.execute(
+            text(
+                """
+                INSERT INTO media_source_attempts (
+                    media_id, created_by_user_id, source_type, attempt_no, status,
+                    intent_key, requested_url, canonical_source_url, source_payload,
+                    error_code, error_message, finished_at
+                )
+                VALUES (
+                    :media_id, :user_id, 'generic_web_url', 1, 'failed',
+                    :intent_key, :url, :url, '{}'::jsonb,
+                    'E_INGEST_FAILED', 'Node ingest script not found', now()
+                )
+                """
+            ),
+            {
+                "media_id": media_id,
+                "user_id": user_id,
+                "intent_key": f"test:oracle-repair:{media_id}",
+                "url": source_download_url,
+            },
+        )
+        db.add(
+            OracleCorpusSource(
+                corpus_key=oracle_corpus.ORACLE_CORPUS_KEY,
+                work_key=work_key,
+                library_id=library_id,
+                media_id=media_id,
+                title="Failed Oracle work",
+                author_text="A. Scribe",
+                source_repository="test",
+                source_url=source_download_url,
+                source_download_url=source_download_url,
+                source_media_kind="web_article",
+                display_order=20,
+            )
+        )
+        db.commit()
+
+        result = oracle_corpus.ensure_oracle_corpus_media(
+            db,
+            owner_user_id=user_id,
+            library_id=library_id,
+            work=oracle_corpus.OracleCorpusManifestWork(
+                work_key=work_key,
+                title="Failed Oracle work",
+                author_text="A. Scribe",
+                source_repository="test",
+                source_url=source_download_url,
+                source_download_url=source_download_url,
+                source_media_kind="web_article",
+                display_order=20,
+                passage_anchors=[],
+            ),
+        )
+        db.commit()
+
+        attempt_rows = db.execute(
+            text(
+                """
+                SELECT attempt_no, status, source_payload->>'system_repair_reason'
+                FROM media_source_attempts
+                WHERE media_id = :media_id
+                ORDER BY attempt_no ASC
+                """
+            ),
+            {"media_id": media_id},
+        ).fetchall()
+        queued_job_id = db.execute(
+            text(
+                """
+                SELECT id
+                FROM background_jobs
+                WHERE kind = 'ingest_media_source'
+                  AND payload->>'media_id' = :media_id
+                """
+            ),
+            {"media_id": str(media_id)},
+        ).scalar_one()
+        media_status = db.execute(
+            text("SELECT processing_status FROM media WHERE id = :media_id"),
+            {"media_id": media_id},
+        ).scalar_one()
+
+    direct_db.register_cleanup("background_jobs", "id", queued_job_id)
+    _register_oracle_corpus_cleanup(direct_db, user_id)
+    direct_db.register_cleanup("users", "id", user_id)
+
+    assert result.media_id == media_id
+    assert result.created_media is False
+    assert attempt_rows == [
+        (1, "failed", None),
+        (2, "queued", "oracle_corpus_seed"),
+    ]
+    assert media_status == "extracting"
+
+
 def test_create_reading_checks_llm_limits_before_enqueue(
     db_session: Session,
     oracle_schema,

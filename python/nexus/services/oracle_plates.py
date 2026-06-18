@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from typing import NoReturn
 from uuid import UUID
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from nexus import web_paths
-from nexus.db.models import OraclePlate
-from nexus.errors import ApiError, ApiErrorCode, NotFoundError
+from nexus.db.models import OraclePlate, OracleReading
+from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.logging import get_logger
 from nexus.storage.client import StorageClientBase, StorageError, get_storage_client
 from nexus.storage.paths import ext_for_content_type
@@ -47,6 +48,114 @@ class OraclePlateStorageReadiness:
     @property
     def ready(self) -> bool:
         return self.total > 0 and self.valid == self.total
+
+
+@dataclass(frozen=True)
+class OraclePlateAssetResult:
+    plate: OraclePlate
+    object_written: bool
+
+
+def ensure_oracle_plate_asset(
+    db: Session,
+    *,
+    storage_client: StorageClientBase,
+    source_repository: str,
+    source_page_url: str | None,
+    source_url: str,
+    license_text: str,
+    artist: str,
+    work_title: str,
+    year: str | None,
+    attribution_text: str,
+    width: int,
+    height: int,
+    storage_key: str,
+    content_type: str,
+    data: bytes,
+    tags: list[str],
+) -> OraclePlateAssetResult:
+    """Ensure one manifest plate row owns a valid object-store asset.
+
+    The object is made correct before the DB row is upserted, so every locally
+    visible ``oracle_plates`` row remains renderable by the public route.
+    """
+    normalized_content_type = _normalize_content_type(content_type)
+    existing = db.query(OraclePlate).filter(OraclePlate.source_url == source_url).one_or_none()
+    _validate_plate_metadata(
+        image_id=existing.id if existing is not None else UUID(int=0),
+        storage_key=storage_key,
+        byte_size=len(data),
+        content_type=normalized_content_type,
+        width=width,
+        height=height,
+    )
+    object_written = _ensure_plate_object(
+        storage_client,
+        storage_key=storage_key,
+        data=data,
+        content_type=normalized_content_type,
+    )
+    plate = upsert_oracle_plate(
+        db,
+        source_repository=source_repository,
+        source_page_url=source_page_url,
+        source_url=source_url,
+        license_text=license_text,
+        artist=artist,
+        work_title=work_title,
+        year=year,
+        attribution_text=attribution_text,
+        width=width,
+        height=height,
+        storage_key=storage_key,
+        content_type=normalized_content_type,
+        byte_size=len(data),
+        tags=tags,
+    )
+    return OraclePlateAssetResult(plate=plate, object_written=object_written)
+
+
+def prune_oracle_plates_except_source_urls(db: Session, *, source_urls: Collection[str]) -> int:
+    """Delete unreferenced plate rows outside the current manifest source set."""
+    intended = {url.strip() for url in source_urls if url and url.strip()}
+    if not intended:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Oracle plate manifest must include at least one source URL.",
+        )
+
+    stale_ids = db.execute(
+        select(OraclePlate.id)
+        .where(OraclePlate.source_url.not_in(intended))
+        .order_by(OraclePlate.created_at.asc(), OraclePlate.id.asc())
+    ).scalars()
+    stale_id_list = list(stale_ids)
+    if not stale_id_list:
+        return 0
+
+    referenced = list(
+        db.execute(
+            select(OracleReading.image_id)
+            .where(OracleReading.image_id.in_(stale_id_list))
+            .order_by(OracleReading.created_at.asc(), OracleReading.id.asc())
+            .limit(5)
+        ).scalars()
+    )
+    if referenced:
+        sample = ", ".join(str(image_id) for image_id in referenced)
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            f"Cannot prune stale Oracle plates while readings still reference them: {sample}",
+        )
+
+    deleted = (
+        db.query(OraclePlate)
+        .filter(OraclePlate.id.in_(stale_id_list))
+        .delete(synchronize_session=False)
+    )
+    db.flush()
+    return int(deleted or 0)
 
 
 def upsert_oracle_plate(
@@ -214,7 +323,7 @@ def validate_oracle_plate_storage_objects(
                 f"({object_metadata.size_bytes} != {row.byte_size})"
             )
             continue
-        object_content_type = object_metadata.content_type.lower().split(";", 1)[0].strip()
+        object_content_type = _normalize_content_type(object_metadata.content_type)
         if object_content_type != row.content_type:
             invalid.append(
                 f"{row.id}: content-type mismatch for {row.storage_key} "
@@ -223,6 +332,26 @@ def validate_oracle_plate_storage_objects(
             continue
         valid += 1
     return OraclePlateStorageReadiness(total=len(rows), valid=valid, invalid=tuple(invalid))
+
+
+def _ensure_plate_object(
+    storage_client: StorageClientBase,
+    *,
+    storage_key: str,
+    data: bytes,
+    content_type: str,
+) -> bool:
+    object_metadata = storage_client.head_object(storage_key)
+    if object_metadata is not None:
+        object_content_type = _normalize_content_type(object_metadata.content_type)
+        if object_metadata.size_bytes == len(data) and object_content_type == content_type:
+            return False
+    storage_client.put_object(storage_key, data, content_type)
+    return True
+
+
+def _normalize_content_type(content_type: str) -> str:
+    return content_type.lower().split(";", 1)[0].strip()
 
 
 def _validate_plate_metadata(

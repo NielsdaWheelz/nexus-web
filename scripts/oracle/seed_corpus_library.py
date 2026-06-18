@@ -34,7 +34,7 @@ from nexus.jobs.worker import JobWorker
 from nexus.services import oracle_corpus, oracle_plates
 from nexus.services.image_validation import fetch_validated_image
 from nexus.storage.client import StorageClientBase, get_storage_client
-from nexus.storage.paths import ext_for_content_type
+from nexus.storage.paths import build_oracle_plate_storage_path, ext_for_content_type
 
 MANIFEST_DIR = Path(__file__).resolve().parent
 WORKS_PATH = MANIFEST_DIR / "manifest_works.json"
@@ -119,15 +119,20 @@ def _seed_plates(
     db: Any, client: httpx.Client, storage: StorageClientBase, manifest: list[dict[str, Any]]
 ) -> None:
     """Download, validate, upload, and upsert each plate (no embeddings)."""
+    _preflight_plate_manifest(manifest)
+    pruned = oracle_plates.prune_oracle_plates_except_source_urls(
+        db,
+        source_urls=[entry["resolved_source_url"] for entry in manifest],
+    )
+    if pruned:
+        print(f"  pruned {pruned} stale plate row{'s' if pruned != 1 else ''}")
     for entry in manifest:
         resolved = entry["resolved_source_url"]
         validated = _fetch_plate_image(resolved, client)
         storage_key = _plate_storage_key(entry, content_type=validated.content_type)
-        if storage.head_object(storage_key) is None:
-            storage.put_object(storage_key, validated.data, validated.content_type)
-        time.sleep(PLATE_FETCH_SUCCESS_DELAY_SECONDS)
-        plate = oracle_plates.upsert_oracle_plate(
+        result = oracle_plates.ensure_oracle_plate_asset(
             db,
+            storage_client=storage,
             source_repository=entry["source_repository"],
             source_page_url=entry["source_url"],
             source_url=resolved,
@@ -140,10 +145,43 @@ def _seed_plates(
             height=validated.height,
             storage_key=storage_key,
             content_type=validated.content_type,
-            byte_size=len(validated.data),
+            data=validated.data,
             tags=list(entry.get("tags") or []),
         )
-        print(f"  plate {entry['work_title']!r}: {storage_key} ({plate.id})")
+        time.sleep(PLATE_FETCH_SUCCESS_DELAY_SECONDS)
+        object_status = "uploaded" if result.object_written else "present"
+        print(
+            f"  plate {entry['work_title']!r}: {storage_key} "
+            f"({result.plate.id}, object {object_status})"
+        )
+
+
+def _preflight_plate_manifest(manifest: list[dict[str, Any]]) -> None:
+    if not manifest:
+        raise RuntimeError("Oracle plate manifest must not be empty")
+    resolved_urls = [str(entry["resolved_source_url"]) for entry in manifest]
+    duplicate_resolved_urls = _duplicates(resolved_urls)
+    if duplicate_resolved_urls:
+        raise RuntimeError(
+            "Oracle plate manifest contains duplicate resolved_source_url values: "
+            + ", ".join(duplicate_resolved_urls)
+        )
+    slugs = [_plate_storage_slug(entry) for entry in manifest]
+    duplicate_slugs = _duplicates(slugs)
+    if duplicate_slugs:
+        raise RuntimeError(
+            "Oracle plate manifest contains duplicate storage slugs: " + ", ".join(duplicate_slugs)
+        )
+
+
+def _duplicates(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    duplicates: list[str] = []
+    for value in values:
+        if value in seen and value not in duplicates:
+            duplicates.append(value)
+        seen.add(value)
+    return duplicates
 
 
 def _fetch_plate_image(resolved_source_url: str, client: httpx.Client):
@@ -175,6 +213,10 @@ def _plate_fetch_retry_delay(exc: ApiError, *, attempt: int) -> float:
 
 def _plate_storage_key(entry: dict[str, Any], *, content_type: str) -> str:
     ext = ext_for_content_type(content_type)
+    return build_oracle_plate_storage_path(_plate_storage_slug(entry), ext)
+
+
+def _plate_storage_slug(entry: dict[str, Any]) -> str:
     parsed = urllib.parse.urlparse(str(entry["source_url"]))
     source_name = urllib.parse.unquote(parsed.path.rsplit("/", 1)[-1])
     if source_name.startswith("File:"):
@@ -183,7 +225,7 @@ def _plate_storage_key(entry: dict[str, Any], *, content_type: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", stem.lower()).strip("-")
     if not slug:
         raise RuntimeError(f"Could not derive Oracle plate storage key for {entry['source_url']}")
-    return f"oracle/plates/{slug}.{ext}"
+    return slug
 
 
 def _print_readiness(r: oracle_corpus.OracleCorpusReadiness) -> None:

@@ -126,7 +126,8 @@ def test_seed_plates_retries_transient_source_throttling(monkeypatch):
     }
     sleeps: list[float] = []
     fetches: list[str] = []
-    upserts: list[dict] = []
+    pruned_source_urls: list[str] = []
+    ensured: list[dict] = []
 
     class Storage:
         def __init__(self):
@@ -155,13 +156,18 @@ def test_seed_plates_retries_transient_source_throttling(monkeypatch):
             )
         return validated
 
-    def upsert(db, **kwargs):
-        upserts.append(kwargs)
-        return SimpleNamespace(id="plate-1")
+    def prune(db, *, source_urls):
+        pruned_source_urls.extend(source_urls)
+        return 0
+
+    def ensure(db, **kwargs):
+        ensured.append(kwargs)
+        return SimpleNamespace(plate=SimpleNamespace(id="plate-1"), object_written=True)
 
     monkeypatch.setattr(script, "fetch_validated_image", fetch)
     monkeypatch.setattr(script.time, "sleep", lambda seconds: sleeps.append(seconds))
-    monkeypatch.setattr(script.oracle_plates, "upsert_oracle_plate", upsert)
+    monkeypatch.setattr(script.oracle_plates, "prune_oracle_plates_except_source_urls", prune)
+    monkeypatch.setattr(script.oracle_plates, "ensure_oracle_plate_asset", ensure)
 
     script._seed_plates(object(), object(), storage, [entry])
 
@@ -170,5 +176,40 @@ def test_seed_plates_retries_transient_source_throttling(monkeypatch):
         script.PLATE_FETCH_RETRY_BASE_SECONDS,
         script.PLATE_FETCH_SUCCESS_DELAY_SECONDS,
     ]
-    assert storage.puts == [("oracle/plates/plate.jpg", b"image", "image/jpeg")]
-    assert upserts[0]["source_url"] == entry["resolved_source_url"]
+    assert storage.puts == []
+    assert pruned_source_urls == [entry["resolved_source_url"]]
+    assert ensured[0]["source_url"] == entry["resolved_source_url"]
+    assert ensured[0]["storage_key"] == "oracle/plates/plate.jpg"
+    assert ensured[0]["data"] == b"image"
+
+
+def test_seed_plates_rejects_duplicate_manifest_sources_before_side_effects(monkeypatch):
+    script = _load_script(
+        "oracle_seed_corpus_library_duplicate_test",
+        "scripts/oracle/seed_corpus_library.py",
+    )
+    entry = {
+        "source_repository": "wikimedia_commons",
+        "source_url": "https://commons.wikimedia.org/wiki/File:Plate.jpg",
+        "resolved_source_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/a/aa/Plate.jpg/1920px-Plate.jpg",
+        "license_text": "public domain",
+        "artist": "Artist",
+        "work_title": "Plate",
+        "year": "1900",
+        "attribution_text": "Attribution",
+        "tags": ["night"],
+    }
+
+    monkeypatch.setattr(
+        script,
+        "fetch_validated_image",
+        lambda *_args, **_kwargs: pytest.fail("fetch must not run before manifest preflight"),
+    )
+    monkeypatch.setattr(
+        script.oracle_plates,
+        "prune_oracle_plates_except_source_urls",
+        lambda *_args, **_kwargs: pytest.fail("prune must not run before manifest preflight"),
+    )
+
+    with pytest.raises(RuntimeError, match="duplicate resolved_source_url"):
+        script._seed_plates(object(), object(), object(), [entry, dict(entry)])
