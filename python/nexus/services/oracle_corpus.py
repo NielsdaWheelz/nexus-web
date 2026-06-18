@@ -45,6 +45,15 @@ ORACLE_CORPUS_SYSTEM_KEY = "oracle_corpus"
 ORACLE_CORPUS_LIBRARY_NAME = "Oracle Corpus"
 # Length of the text-quote prefix used to locate a passage's chunk during anchor resolution.
 _ANCHOR_NEEDLE_CHARS = 80
+_ANCHOR_TOKEN_PREFIX_TOKENS = 18
+_ANCHOR_MIN_TOKEN_WINDOW_TOKENS = 6
+_ANCHOR_TOKEN_WINDOW_MATCH_RATIO = 0.78
+
+
+@dataclass(frozen=True)
+class AnchorNeedle:
+    normalized_prefix: str
+    token_prefix: tuple[str, ...]
 
 
 class OracleCorpusManifestAnchor(BaseModel):
@@ -325,7 +334,7 @@ def resolve_oracle_passage_anchors(
     now = db.scalar(select(func.now()))
     resolved = 0
     failed = 0
-    chunk_cache: dict[UUID, list[tuple[UUID, UUID | None, str]]] = {}
+    chunk_cache: dict[UUID, list[tuple[UUID, UUID | None, str, tuple[str, ...]]]] = {}
     for anchor, media_id in rows:
         needle = _anchor_needle(anchor.selector)
         match = None
@@ -476,8 +485,8 @@ def _find_anchor_chunk_match(
     db: Session,
     *,
     media_id: UUID,
-    needle: str,
-    cache: dict[UUID, list[tuple[UUID, UUID | None, str]]],
+    needle: AnchorNeedle,
+    cache: dict[UUID, list[tuple[UUID, UUID | None, str, tuple[str, ...]]]],
 ) -> tuple[UUID, UUID | None] | None:
     if media_id not in cache:
         rows = db.execute(
@@ -504,26 +513,38 @@ def _find_anchor_chunk_match(
             },
         ).mappings()
         cache[media_id] = [
-            (row["chunk_id"], row["span_id"], _normalize_anchor_match_text(row["chunk_text"] or ""))
+            (
+                row["chunk_id"],
+                row["span_id"],
+                _normalize_anchor_match_text(row["chunk_text"] or ""),
+                tuple(_anchor_match_tokens(row["chunk_text"] or "")),
+            )
             for row in rows
         ]
-    for chunk_id, span_id, normalized_text in cache[media_id]:
-        if needle in normalized_text:
+    for chunk_id, span_id, normalized_text, chunk_tokens in cache[media_id]:
+        if needle.normalized_prefix and needle.normalized_prefix in normalized_text:
+            return (chunk_id, span_id)
+        if _anchor_token_window_matches(needle.token_prefix, chunk_tokens):
             return (chunk_id, span_id)
     return None
 
 
-def _anchor_needle(selector: dict[str, object]) -> str:
-    """The normalized text-quote prefix used to locate a passage's chunk, or ''.
+def _anchor_needle(selector: dict[str, object]) -> AnchorNeedle | None:
+    """The source-local text-quote needles used to locate a passage's chunk.
 
     Public-domain editions differ in line breaks, punctuation style, apostrophes, and
     Unicode dashes. The resolver still requires same-media ready chunks, but quote
-    comparison normalizes those presentation differences before matching.
+    comparison first normalizes presentation differences, then allows a small token
+    window edit budget for source editions that spell the same passage slightly
+    differently (for example ``Tyger`` vs ``Tiger`` or apostrophe expansions).
     """
     exact = selector.get("exact")
     if not isinstance(exact, str) or not exact.strip():
-        return ""
-    return _normalize_anchor_match_text(exact)[:_ANCHOR_NEEDLE_CHARS]
+        return None
+    return AnchorNeedle(
+        normalized_prefix=_normalize_anchor_match_text(exact)[:_ANCHOR_NEEDLE_CHARS],
+        token_prefix=tuple(_anchor_match_tokens(exact)[:_ANCHOR_TOKEN_PREFIX_TOKENS]),
+    )
 
 
 def _normalize_anchor_match_text(value: str) -> str:
@@ -537,3 +558,47 @@ def _normalize_anchor_match_text(value: str) -> str:
     )
     value = unicodedata.normalize("NFKD", value).lower()
     return re.sub(r"[^a-z0-9]+", "", value)
+
+
+def _anchor_match_tokens(value: str) -> list[str]:
+    value = (
+        value.replace("\u2018", "'")
+        .replace("\u2019", "'")
+        .replace("\u201c", '"')
+        .replace("\u201d", '"')
+        .replace("\u2013", "-")
+        .replace("\u2014", "-")
+    )
+    value = unicodedata.normalize("NFKD", value).lower()
+    return re.findall(r"[a-z0-9]+", value)
+
+
+def _anchor_token_window_matches(
+    selector_tokens: tuple[str, ...], chunk_tokens: tuple[str, ...]
+) -> bool:
+    if (
+        len(selector_tokens) < _ANCHOR_MIN_TOKEN_WINDOW_TOKENS
+        or len(chunk_tokens) < _ANCHOR_MIN_TOKEN_WINDOW_TOKENS
+    ):
+        return False
+    window_size = min(len(selector_tokens), _ANCHOR_TOKEN_PREFIX_TOKENS)
+    selector_window = selector_tokens[:window_size]
+    if len(chunk_tokens) < window_size:
+        return False
+    min_matches = max(
+        _ANCHOR_MIN_TOKEN_WINDOW_TOKENS,
+        int(window_size * _ANCHOR_TOKEN_WINDOW_MATCH_RATIO + 0.999),
+    )
+    for start in range(0, len(chunk_tokens) - window_size + 1):
+        matches = sum(
+            1
+            for expected, actual in zip(
+                selector_window,
+                chunk_tokens[start : start + window_size],
+                strict=True,
+            )
+            if expected == actual
+        )
+        if matches >= min_matches:
+            return True
+    return False

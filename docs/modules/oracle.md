@@ -33,10 +33,13 @@ other media. Two small Oracle-owned tables sit above that substrate:
   / `current_content_chunk_id`) into the current index. The anchor `id` is the
   durable identity; the pointers are FK-free because evidence/chunk rows are
   regenerated on reindex, and `resolve_oracle_passage_anchors` re-points them
-  against the mapped media. Resolution matches normalized text-quote prefixes
-  against active ready chunks, so edition line breaks, punctuation style, and
-  Unicode quote/dash differences do not make otherwise identical public-domain
-  passages unavailable.
+  against the mapped media. Resolution is source-local and exact-first: it
+  matches normalized text-quote prefixes against active ready chunks, then uses a
+  bounded token-window match for small source-edition spelling/punctuation
+  variants. Edition line breaks, quote/dash style, and minor public-domain
+  spelling differences do not make otherwise identical passages unavailable, but
+  a selector still fails closed if the mapped media is a version page,
+  table-of-contents-only extraction, or the wrong book.
 
 Corpus **readiness** is derived state, not a stored flag:
 `get_oracle_corpus_readiness` reports the library id, work/ready-media counts,
@@ -118,7 +121,10 @@ entries via `library_entries`, repairs reused failed/stale media through the
 source-ingest owner, upserts source mappings and anchors, and resolves anchors),
 and `scripts/oracle/check_corpus_readiness.py` (exits non-zero unless the corpus is
 ready). The manifest describes media ingestion (a direct ingestable source URL per
-work) plus passage anchors, not raw passage text or embeddings.
+work) plus passage anchors, not raw passage text or embeddings. Manifest source
+URLs must point at pages/files containing the target text itself; Wikisource
+version/disambiguation pages and Gutenberg collections that omit the selected work
+are production readiness failures, not runtime fallbacks.
 `GET /oracle/corpus` exposes the same readiness as a read-only status report
 (library ref/id, work/ready-media counts, anchor/resolved-anchor counts, plate
 count); it never seeds or repairs on read.

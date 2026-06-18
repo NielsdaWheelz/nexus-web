@@ -246,6 +246,10 @@ Anchor rules:
 - readiness validation must prove the current pointer rows exist, are ready, and are owned by the mapped `media_id`.
 - A resolved anchor must point to content owned by the mapped `media_id`.
 - A failed anchor makes the corpus not ready.
+- Text-quote resolution is exact-first against normalized active ready chunks, then
+  bounded token-window matching for small source-edition spelling/punctuation
+  variants. It is not a fallback source search: wrong books, version pages,
+  disambiguation pages, and TOC-only extractions remain hard readiness failures.
 - Anchor text may appear in selectors as a quote for resolution, but embeddings and retrieval never use anchor-owned vectors.
 
 ### 7.4 Plates
@@ -364,6 +368,8 @@ Rules:
 - every work has a direct ingest URL or packaged source artifact;
 - every anchor has a stable `passage_key`;
 - every anchor selector resolves against the indexed media text after ingest;
+- every source URL names the actual target text, not a repository landing page,
+  disambiguation page, or alternate work collection;
 - manifest tags are Oracle metadata, not user graph tags.
 
 ### 9.2 Seed service

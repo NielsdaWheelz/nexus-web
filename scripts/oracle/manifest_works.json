@@ -517,8 +517,8 @@
     "title": "Ozymandias",
     "author_text": "Percy Bysshe Shelley",
     "source_repository": "wikisource",
-    "source_url": "https://en.wikisource.org/wiki/Ozymandias_(Shelley)",
-    "source_download_url": "https://en.wikisource.org/wiki/Ozymandias_(Shelley)",
+    "source_url": "https://en.wikisource.org/wiki/The_Complete_Poetical_Works_of_Percy_Bysshe_Shelley_(ed._Hutchinson,_1914)/Ozymandias",
+    "source_download_url": "https://en.wikisource.org/wiki/The_Complete_Poetical_Works_of_Percy_Bysshe_Shelley_(ed._Hutchinson,_1914)/Ozymandias",
     "source_media_kind": "web_article",
     "display_order": 70,
     "passage_anchors": [
@@ -669,8 +669,8 @@
     "title": "Kubla Khan",
     "author_text": "Samuel Taylor Coleridge",
     "source_repository": "wikisource",
-    "source_url": "https://en.wikisource.org/wiki/Kubla_Khan",
-    "source_download_url": "https://en.wikisource.org/wiki/Kubla_Khan",
+    "source_url": "https://en.wikisource.org/wiki/Christabel%3B_Kubla_Khan%3B_The_Pains_of_Sleep_(1816)/Kubla_Khan",
+    "source_download_url": "https://en.wikisource.org/wiki/Christabel%3B_Kubla_Khan%3B_The_Pains_of_Sleep_(1816)/Kubla_Khan",
     "source_media_kind": "web_article",
     "display_order": 90,
     "passage_anchors": [
@@ -741,8 +741,8 @@
     "title": "Ode to a Nightingale",
     "author_text": "John Keats",
     "source_repository": "wikisource",
-    "source_url": "https://en.wikisource.org/wiki/Ode_to_a_Nightingale",
-    "source_download_url": "https://en.wikisource.org/wiki/Ode_to_a_Nightingale",
+    "source_url": "https://en.wikisource.org/wiki/The_Poetical_Works_of_John_Keats/Ode_to_a_Nightingale",
+    "source_download_url": "https://en.wikisource.org/wiki/The_Poetical_Works_of_John_Keats/Ode_to_a_Nightingale",
     "source_media_kind": "web_article",
     "display_order": 100,
     "passage_anchors": [
@@ -827,8 +827,8 @@
     "title": "La Belle Dame sans Merci",
     "author_text": "John Keats",
     "source_repository": "wikisource",
-    "source_url": "https://en.wikisource.org/wiki/La_Belle_Dame_sans_Merci",
-    "source_download_url": "https://en.wikisource.org/wiki/La_Belle_Dame_sans_Merci",
+    "source_url": "https://en.wikisource.org/wiki/The_Poetical_Works_of_John_Keats/La_Belle_Dame_sans_Merci",
+    "source_download_url": "https://en.wikisource.org/wiki/The_Poetical_Works_of_John_Keats/La_Belle_Dame_sans_Merci",
     "source_media_kind": "web_article",
     "display_order": 110,
     "passage_anchors": [
@@ -980,10 +980,10 @@
     "work_key": "byron-darkness",
     "title": "Darkness",
     "author_text": "Lord Byron",
-    "source_repository": "project_gutenberg",
-    "source_url": "https://www.gutenberg.org/ebooks/4388",
-    "source_download_url": "https://www.gutenberg.org/ebooks/4388.epub.noimages",
-    "source_media_kind": "epub",
+    "source_repository": "wikisource",
+    "source_url": "https://en.wikisource.org/wiki/The_Works_of_Lord_Byron_(ed._Coleridge,_Prothero)/Poetry/Volume_4/Darkness",
+    "source_download_url": "https://en.wikisource.org/wiki/The_Works_of_Lord_Byron_(ed._Coleridge,_Prothero)/Poetry/Volume_4/Darkness",
+    "source_media_kind": "web_article",
     "display_order": 130,
     "passage_anchors": [
       {
@@ -1052,8 +1052,8 @@
     "title": "Young Goodman Brown",
     "author_text": "Nathaniel Hawthorne",
     "source_repository": "project_gutenberg",
-    "source_url": "https://www.gutenberg.org/ebooks/13707",
-    "source_download_url": "https://www.gutenberg.org/ebooks/13707.epub.noimages",
+    "source_url": "https://www.gutenberg.org/ebooks/512",
+    "source_download_url": "https://www.gutenberg.org/ebooks/512.epub.noimages",
     "source_media_kind": "epub",
     "display_order": 140,
     "passage_anchors": [
@@ -1417,8 +1417,8 @@
     "author_text": "Emily Dickinson",
     "source_repository": "project_gutenberg",
     "source_url": "https://www.gutenberg.org/ebooks/12242",
-    "source_download_url": "https://www.gutenberg.org/ebooks/12242.epub.noimages",
-    "source_media_kind": "epub",
+    "source_download_url": "https://www.gutenberg.org/files/12242/12242-h/12242-h.htm",
+    "source_media_kind": "web_article",
     "display_order": 190,
     "passage_anchors": [
       {

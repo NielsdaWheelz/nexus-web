@@ -413,8 +413,10 @@ system media and removing the old media from the Oracle Corpus library.
 `oracle_passage_anchors` is stable curation identity (selector + tags + phase
 hints, plus cache pointers to current `evidence_span`/`content_chunk`) that
 doubles as the `oracle_passage_anchor:<id>` citation target; resolution normalizes
-quote text against active ready chunks so public-domain edition formatting drift
-does not break anchors. `oracle_plates`
+quote text against active ready chunks, then applies a bounded token-window match
+for small same-passage source-edition spelling/punctuation variants. It still
+fails closed when the mapped media is the wrong source or lacks the target text.
+`oracle_plates`
 (public owned plate object metadata; **no embeddings** — selection is
 deterministic over tags/phase hints), `oracle_readings`, `oracle_reading_folios`
 (the per-phase generated folio, referencing its citation `resource_edge`),

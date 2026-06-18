@@ -869,6 +869,87 @@ def test_resolve_oracle_passage_anchors_normalizes_quote_formatting(
     assert anchor.current_content_chunk_id is not None
 
 
+def test_resolve_oracle_passage_anchors_allows_small_source_token_variants(
+    db_session: Session,
+    oracle_schema,
+) -> None:
+    user_id = uuid4()
+    work_key = f"token-variant-anchor-{uuid4().hex[:8]}"
+    db_session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
+    library_id = oracle_corpus.ensure_oracle_corpus_library(db_session, owner_user_id=user_id)
+    _seed_corpus_work(
+        db_session,
+        viewer_id=user_id,
+        library_id=library_id,
+        work_key=work_key,
+        passage_text=(
+            "Tiger Tiger burning bright In the forests of the night "
+            "What immortal hand or eye Could frame thy fearful symmetry"
+        ),
+        display_order=10,
+    )
+    anchor = db_session.execute(
+        select(OraclePassageAnchor)
+        .join(OracleCorpusSource, OracleCorpusSource.id == OraclePassageAnchor.corpus_source_id)
+        .where(OracleCorpusSource.work_key == work_key)
+    ).scalar_one()
+    anchor.selector = {
+        "kind": "text_quote",
+        "exact": (
+            "Tyger Tyger, burning bright,\n"
+            "In the forests of the night;\n"
+            "What immortal hand or eye,\n"
+            "Could frame thy fearful symmetry?"
+        ),
+    }
+    db_session.flush()
+
+    resolution = oracle_corpus.resolve_oracle_passage_anchors(db_session)
+
+    assert resolution.failed == 0
+    assert anchor.resolution_status == "resolved"
+    assert anchor.current_content_chunk_id is not None
+
+
+def test_resolve_oracle_passage_anchors_rejects_title_only_chunk(
+    db_session: Session,
+    oracle_schema,
+) -> None:
+    user_id = uuid4()
+    work_key = f"title-only-anchor-{uuid4().hex[:8]}"
+    db_session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
+    library_id = oracle_corpus.ensure_oracle_corpus_library(db_session, owner_user_id=user_id)
+    _seed_corpus_work(
+        db_session,
+        viewer_id=user_id,
+        library_id=library_id,
+        work_key=work_key,
+        passage_text="Because I could not stop for Death",
+        display_order=10,
+    )
+    anchor = db_session.execute(
+        select(OraclePassageAnchor)
+        .join(OracleCorpusSource, OracleCorpusSource.id == OraclePassageAnchor.corpus_source_id)
+        .where(OracleCorpusSource.work_key == work_key)
+    ).scalar_one()
+    anchor.selector = {
+        "kind": "text_quote",
+        "exact": (
+            "Because I could not stop for Death--\n"
+            "He kindly stopped for me--\n"
+            "The Carriage held but just Ourselves--\n"
+            "And Immortality."
+        ),
+    }
+    db_session.flush()
+
+    resolution = oracle_corpus.resolve_oracle_passage_anchors(db_session)
+
+    assert resolution.failed == 1
+    assert anchor.resolution_status == "failed"
+    assert anchor.current_content_chunk_id is None
+
+
 def test_ensure_oracle_corpus_media_uses_system_ingest_without_default_membership(
     direct_db: DirectSessionManager,
     oracle_schema,
