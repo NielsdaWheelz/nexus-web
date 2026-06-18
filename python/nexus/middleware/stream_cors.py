@@ -10,7 +10,7 @@ Behavior:
 
 from starlette.datastructures import Headers, MutableHeaders
 from starlette.responses import Response
-from starlette.types import ASGIApp, Receive, Scope, Send
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from nexus.stream_paths import is_stream_path
 
@@ -51,7 +51,9 @@ class StreamCORSMiddleware:
                 headers={
                     "access-control-allow-origin": origin,
                     "access-control-allow-methods": "GET, OPTIONS",
-                    "access-control-allow-headers": "Authorization, Last-Event-ID",
+                    "access-control-allow-headers": (
+                        "Authorization, Last-Event-ID, X-Nexus-SSE-Attempt"
+                    ),
                     "access-control-max-age": "600",
                 },
             )
@@ -59,7 +61,7 @@ class StreamCORSMiddleware:
             return
 
         # Wrap send to inject CORS headers on the response
-        async def send_with_cors(message: dict) -> None:
+        async def send_with_cors(message: Message) -> None:
             if message["type"] == "http.response.start":
                 resp_headers = MutableHeaders(scope=message)
                 resp_headers.append("access-control-allow-origin", origin)

@@ -1,11 +1,16 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
 import supabaseEnv from "../supabase-env.cjs";
 
 const { buildE2eAppRuntimeEnv } = supabaseEnv;
 
 const ROOT_DIR = path.resolve(__dirname, "..", "..");
-const LOCAL_DATABASE_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
+const LOCAL_DATABASE_HOSTS = new Set([
+  "localhost",
+  "127.0.0.1",
+  "::1",
+  "[::1]",
+]);
 const LOCAL_STORAGE_HOSTS = new Set([
   "localhost",
   "127.0.0.1",
@@ -15,6 +20,7 @@ const LOCAL_STORAGE_HOSTS = new Set([
   "minio",
 ]);
 const WORKER_ITERATION_TIMEOUT_MS = 30_000;
+const STARTED_WORKER_TIMEOUT_MS = 120_000;
 
 export interface E2eWorkerIterationIndex {
   processing_status?: string | null;
@@ -26,6 +32,7 @@ export interface E2eWorkerIterationIndex {
 
 export interface E2eWorkerIterationResult {
   processed: boolean;
+  chatRunStatus?: string | null;
   index: E2eWorkerIterationIndex | null;
   stdout: string;
   stderr: string;
@@ -35,6 +42,10 @@ interface RunE2eWorkerOnceOptions {
   mediaId?: string;
   allowedNexusEnvs?: readonly string[];
   extraEnv?: Record<string, string | undefined>;
+}
+
+interface StartE2eWorkerUntilChatRunTerminalOptions extends RunE2eWorkerOnceOptions {
+  chatRunId: string;
 }
 
 function assertAllowedNexusEnv(allowedNexusEnvs: readonly string[]): string {
@@ -69,14 +80,21 @@ function assertLocalDatabaseUrl(): string {
   }
 
   if (!LOCAL_DATABASE_HOSTS.has(databaseHost)) {
-    throw new Error(`Refusing to run E2E worker against non-local database host ${databaseHost}.`);
+    throw new Error(
+      `Refusing to run E2E worker against non-local database host ${databaseHost}.`,
+    );
   }
 
   return databaseUrl;
 }
 
-function assertLocalStorageEndpoint(env: Record<string, string | undefined>): void {
-  if (env.E2E_ALLOW_NON_LOCAL_STORAGE === "1" || env.REAL_MEDIA_ALLOW_NON_LOCAL_STORAGE === "1") {
+function assertLocalStorageEndpoint(
+  env: Record<string, string | undefined>,
+): void {
+  if (
+    env.E2E_ALLOW_NON_LOCAL_STORAGE === "1" ||
+    env.REAL_MEDIA_ALLOW_NON_LOCAL_STORAGE === "1"
+  ) {
     return;
   }
 
@@ -172,7 +190,7 @@ if media_id:
         "embedding_count": row[4],
     }
 print(json.dumps(payload, sort_keys=True))
-`,
+	`,
     ],
     {
       cwd: ROOT_DIR,
@@ -190,7 +208,10 @@ print(json.dumps(payload, sort_keys=True))
   }
 
   const lines = child.stdout.trim().split(/\r?\n/).filter(Boolean);
-  const result = JSON.parse(lines[lines.length - 1] ?? "{}") as Record<string, unknown>;
+  const result = JSON.parse(lines[lines.length - 1] ?? "{}") as Record<
+    string,
+    unknown
+  >;
   const index = result.index as
     | {
         processing_status?: string | null;
@@ -216,4 +237,109 @@ print(json.dumps(payload, sort_keys=True))
     stdout: child.stdout.slice(-4000),
     stderr: child.stderr.slice(-4000),
   };
+}
+
+export function startE2eWorkerUntilChatRunTerminal({
+  chatRunId,
+  mediaId,
+  allowedNexusEnvs = ["local", "test"],
+  extraEnv = {},
+}: StartE2eWorkerUntilChatRunTerminalOptions): Promise<E2eWorkerIterationResult> {
+  const databaseUrl = assertLocalDatabaseUrl();
+  const nexusEnv = assertAllowedNexusEnv(allowedNexusEnvs);
+  const workerEnv = {
+    ...buildE2eAppRuntimeEnv(process.env),
+    DATABASE_URL: databaseUrl,
+    NEXUS_ENV: nexusEnv,
+    ...extraEnv,
+    ...(mediaId ? { NEXUS_E2E_WORKER_MEDIA_ID: mediaId } : {}),
+    NEXUS_E2E_WORKER_CHAT_RUN_ID: chatRunId,
+  };
+  assertLocalStorageEndpoint(workerEnv);
+
+  const child = spawn(
+    "uv",
+    [
+      "run",
+      "--project",
+      "python",
+      "python",
+      "-c",
+      `
+import json
+import os
+import time
+
+import psycopg
+
+from apps.worker.main import create_worker
+
+database_url = os.environ["DATABASE_URL"].replace("postgresql+psycopg://", "postgresql://", 1)
+run_id = os.environ["NEXUS_E2E_WORKER_CHAT_RUN_ID"]
+terminal = {"cancelled", "complete", "error"}
+deadline = time.monotonic() + 100
+processed = False
+status = None
+worker = create_worker()
+
+while time.monotonic() < deadline:
+    processed = bool(worker.run_once()) or processed
+    with psycopg.connect(database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT status FROM chat_runs WHERE id = %s::uuid", (run_id,))
+            row = cur.fetchone()
+    status = row[0] if row is not None else None
+    if status in terminal:
+        print(json.dumps({"processed": processed, "chatRunStatus": status}, sort_keys=True))
+        break
+    time.sleep(0.1)
+else:
+    raise TimeoutError(f"chat run {run_id} did not reach terminal status; last status={status}")
+`,
+    ],
+    { cwd: ROOT_DIR, env: workerEnv },
+  );
+  let stdout = "";
+  let stderr = "";
+  const timer = setTimeout(
+    () => child.kill("SIGKILL"),
+    STARTED_WORKER_TIMEOUT_MS,
+  );
+
+  return new Promise((resolve, reject) => {
+    child.stdout.on("data", (chunk: unknown) => {
+      stdout += String(chunk);
+    });
+    child.stderr.on("data", (chunk: unknown) => {
+      stderr += String(chunk);
+    });
+    child.on("error", (error: Error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.on("close", (code: number | null, signal: string | null) => {
+      clearTimeout(timer);
+      if (code !== 0) {
+        reject(
+          new Error(stderr || stdout || `worker exited with ${signal ?? code}`),
+        );
+        return;
+      }
+      const lines = stdout.trim().split(/\r?\n/).filter(Boolean);
+      const result = JSON.parse(lines[lines.length - 1] ?? "{}") as Record<
+        string,
+        unknown
+      >;
+      resolve({
+        processed: result.processed === true,
+        chatRunStatus:
+          typeof result.chatRunStatus === "string"
+            ? result.chatRunStatus
+            : null,
+        index: null,
+        stdout: stdout.slice(-4000),
+        stderr: stderr.slice(-4000),
+      });
+    });
+  });
 }

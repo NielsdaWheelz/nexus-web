@@ -1,11 +1,14 @@
 """Deterministic LLM boundary for real-media fixture runs."""
 
+import asyncio
 import json
+import os
 import re
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable
+from typing import cast
 
 from provider_runtime import ProviderApiKey
-from provider_runtime.types import ModelCall, ModelChunk, ModelResponse, TokenUsage, ToolCall
+from provider_runtime.types import ModelCall, ModelResponse, ModelStreamEvent, TokenUsage, ToolCall
 
 
 class RealMediaFixtureModelRuntime:
@@ -51,20 +54,56 @@ class RealMediaFixtureModelRuntime:
         *,
         key: ProviderApiKey,
         timeout_s: float,
-    ) -> AsyncIterator[ModelChunk]:
-        _ = key
+        cancel: object | None = None,
+    ) -> AsyncIterator[ModelStreamEvent]:
+        _ = key, timeout_s
         if _should_request_app_search(req):
-            yield ModelChunk(
+            query = _latest_user_query(req)
+            yield ModelStreamEvent(
+                type="tool_call_start",
+                sequence=1,
+                provider=req.model.provider,
+                model=req.model.model,
+                route=req.model.route,
+                tool_call_id="real-media-fixture-app-search",
+                tool_name=APP_SEARCH_TOOL_NAME,
+            )
+            if await _cancelled_during_fixture_delay(cancel):
+                yield _cancelled_event(req, 2)
+                return
+            yield ModelStreamEvent(
+                type="tool_call_delta",
+                sequence=2,
+                provider=req.model.provider,
+                model=req.model.model,
+                route=req.model.route,
+                tool_call_id="real-media-fixture-app-search",
+                tool_name=APP_SEARCH_TOOL_NAME,
+                tool_arguments_delta=query,
+                tool_arguments_partial={"query": query},
+            )
+            if await _cancelled_during_fixture_delay(cancel):
+                yield _cancelled_event(req, 3)
+                return
+            yield ModelStreamEvent(
+                type="tool_call_done",
+                sequence=3,
+                provider=req.model.provider,
+                model=req.model.model,
+                route=req.model.route,
+                tool_call_id="real-media-fixture-app-search",
                 tool_call=ToolCall(
                     id="real-media-fixture-app-search",
                     name=APP_SEARCH_TOOL_NAME,
-                    arguments={"query": _latest_user_query(req)},
+                    arguments={"query": query},
                 ),
-                done=False,
             )
-            yield ModelChunk(
-                delta_text="",
-                done=True,
+            yield ModelStreamEvent(
+                type="completed",
+                sequence=4,
+                provider=req.model.provider,
+                model=req.model.model,
+                route=req.model.route,
                 usage=_usage_for(req, ""),
                 provider_request_id="real-media-fixture",
                 status="completed",
@@ -76,10 +115,32 @@ class RealMediaFixtureModelRuntime:
             if _has_citable_tool_result(req) or _has_numbered_prompt_resource(req)
             else REAL_MEDIA_FIXTURE_RESPONSE
         )
-        yield ModelChunk(delta_text=response, done=False)
-        yield ModelChunk(
-            delta_text="",
-            done=True,
+        parts = [
+            "The source says SOFIA ",
+            "helped confirm water on the Moon ",
+            "by detecting a water signature ",
+            "in Clavius Crater.",
+        ]
+        if response.endswith(" [1]"):
+            parts[-1] += " [1]"
+        for index, text in enumerate(parts, start=1):
+            yield ModelStreamEvent(
+                type="text_delta",
+                sequence=index,
+                provider=req.model.provider,
+                model=req.model.model,
+                route=req.model.route,
+                text=text,
+            )
+            if await _cancelled_during_fixture_delay(cancel):
+                yield _cancelled_event(req, index + 1)
+                return
+        yield ModelStreamEvent(
+            type="completed",
+            sequence=len(parts) + 1,
+            provider=req.model.provider,
+            model=req.model.model,
+            route=req.model.route,
             usage=_usage_for(req, response),
             provider_request_id="real-media-fixture",
             status="completed",
@@ -235,6 +296,37 @@ def _latest_user_query(req: ModelCall) -> str:
                 return match.group(1).strip()
             return content
     return "attached evidence"
+
+
+async def _cancelled_during_fixture_delay(cancel: object | None) -> bool:
+    raw_delay = os.environ.get("REAL_MEDIA_FIXTURE_STREAM_DELAY_MS")
+    if raw_delay is None:
+        return False
+    delay = max(0.0, float(raw_delay) / 1000)
+    if delay == 0:
+        return False
+    wait = getattr(cancel, "wait", None)
+    if callable(wait):
+        try:
+            await asyncio.wait_for(cast(Awaitable[object], wait()), timeout=delay)
+            return True
+        except TimeoutError:
+            return False
+    await asyncio.sleep(delay)
+    is_set = getattr(cancel, "is_set", None)
+    return bool(is_set()) if callable(is_set) else False
+
+
+def _cancelled_event(req: ModelCall, sequence: int) -> ModelStreamEvent:
+    return ModelStreamEvent(
+        type="cancelled",
+        sequence=sequence,
+        provider=req.model.provider,
+        model=req.model.model,
+        route=req.model.route,
+        usage=_usage_for(req, ""),
+        provider_request_id="real-media-fixture",
+    )
 
 
 def _usage_for(req: ModelCall, response: str) -> TokenUsage:

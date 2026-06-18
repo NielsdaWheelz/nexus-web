@@ -50,21 +50,42 @@ def mark_running(db: Session, run_id: UUID) -> None:
 
 
 def is_cancel_requested(db: Session, run_id: UUID) -> bool:
-    run = db.get(ChatRun, run_id)
-    return run is not None and run.cancel_requested_at is not None
+    cancelled_at = db.execute(
+        select(ChatRun.cancel_requested_at).where(ChatRun.id == run_id)
+    ).scalar_one_or_none()
+    return cancelled_at is not None
 
 
-def has_delta_without_terminal(db: Session, run_id: UUID) -> bool:
+def has_provider_output_without_terminal(db: Session, run_id: UUID) -> bool:
     rows = db.execute(
         text(
             """
             SELECT event_type
             FROM chat_run_events
             WHERE run_id = :run_id
-              AND event_type IN ('delta', 'done')
+              AND event_type IN (
+                'assistant_activity',
+                'assistant_text_delta',
+                'tool_call_start',
+                'tool_call_delta',
+                'tool_call_done',
+                'done'
+              )
             """
         ),
         {"run_id": run_id},
     ).fetchall()
     event_types = {row[0] for row in rows}
-    return "delta" in event_types and "done" not in event_types
+    return (
+        bool(
+            event_types
+            & {
+                "assistant_activity",
+                "assistant_text_delta",
+                "tool_call_start",
+                "tool_call_delta",
+                "tool_call_done",
+            }
+        )
+        and "done" not in event_types
+    )

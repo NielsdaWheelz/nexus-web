@@ -3652,11 +3652,14 @@ class ChatRunEventType(str, PyEnum):
     """
 
     meta = "meta"
-    tool_call = "tool_call"
-    retrieval_result = "retrieval_result"
+    assistant_activity = "assistant_activity"
+    assistant_text_delta = "assistant_text_delta"
+    tool_call_start = "tool_call_start"
+    tool_call_delta = "tool_call_delta"
+    tool_call_done = "tool_call_done"
+    tool_result = "tool_result"
     citation_index = "citation_index"
     context_ref_added = "context_ref_added"
-    delta = "delta"
     done = "done"
 
 
@@ -4029,7 +4032,7 @@ class Message(Base):
             name="ck_messages_role",
         ),
         CheckConstraint(
-            "status IN ('pending', 'complete', 'error')",
+            "status IN ('pending', 'complete', 'error', 'cancelled')",
             name="ck_messages_status",
         ),
         CheckConstraint(
@@ -4963,8 +4966,9 @@ class ChatRunEvent(Base):
     __table_args__ = (
         CheckConstraint("seq >= 1", name="ck_chat_run_events_seq_positive"),
         CheckConstraint(
-            "event_type IN ('meta', 'tool_call', 'retrieval_result', "
-            "'citation_index', 'context_ref_added', 'delta', 'done')",
+            "event_type IN ('meta', 'assistant_activity', 'assistant_text_delta', "
+            "'tool_call_start', 'tool_call_delta', 'tool_call_done', 'tool_result', "
+            "'citation_index', 'context_ref_added', 'done')",
             name="ck_chat_run_events_event_type",
         ),
         UniqueConstraint("run_id", "seq", name="uix_chat_run_events_run_seq"),

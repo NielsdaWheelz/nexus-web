@@ -1,16 +1,18 @@
 """Tests for chat-run SSE delivery and stream auth boundaries."""
 
+import asyncio
 import json
 import time
+from contextlib import suppress
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import jwt
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
-from provider_runtime.types import ModelChunk, TokenUsage
+from provider_runtime.types import ModelStreamEvent, TokenUsage
 from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
 
@@ -18,10 +20,13 @@ from nexus.api.routes import _sse
 from nexus.api.routes import stream as stream_routes
 from nexus.auth.middleware import AuthMiddleware
 from nexus.db.listen import StreamListenCapacityError
+from nexus.db.models import ChatRun
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.middleware.stream_cors import StreamCORSMiddleware
 from nexus.services.billing_entitlements import grant_entitlement_override
 from nexus.services.bootstrap import ensure_user_and_default_library
+from nexus.services.chat_run_event_store import append_run_event
+from nexus.services.chat_run_finalize import finalize_run
 from nexus.services.stream_tokens import (
     STREAM_TOKEN_AUDIENCE,
     STREAM_TOKEN_ISSUER,
@@ -115,7 +120,7 @@ def _insert_terminal_run(
                 INSERT INTO chat_run_events (id, run_id, seq, event_type, payload)
                 VALUES
                     (:meta_id, :run_id, 1, 'meta', CAST(:meta_payload AS jsonb)),
-                    (:delta_id, :run_id, 2, 'delta', CAST(:delta_payload AS jsonb)),
+                    (:delta_id, :run_id, 2, 'assistant_text_delta', CAST(:delta_payload AS jsonb)),
                     (:done_id, :run_id, 3, 'done', CAST(:done_payload AS jsonb))
                 """
             ),
@@ -132,9 +137,17 @@ def _insert_terminal_run(
                         "assistant_message_id": str(assistant_message_id),
                         "model_id": str(model_id),
                         "provider": "openai",
+                        "chat_subject": None,
                     }
                 ),
-                "delta_payload": json.dumps({"delta": "Hi"}),
+                "delta_payload": json.dumps(
+                    {
+                        "assistant_message_id": str(assistant_message_id),
+                        "text": "Hi",
+                        "provider_event_seq_start": 1,
+                        "provider_event_seq_end": 1,
+                    }
+                ),
                 "done_payload": json.dumps({"status": status}),
             },
         )
@@ -169,14 +182,22 @@ class _StreamingAnswerRouter:
     def __init__(self, *deltas: str) -> None:
         self.deltas = deltas
 
-    async def stream(self, _req, *, key, timeout_s):
+    async def stream(self, _req, *, key, timeout_s, cancel=None):
+        del cancel
         for delta in self.deltas:
-            yield ModelChunk(delta_text=delta, done=False)
-        yield ModelChunk(
-            delta_text="",
-            done=True,
+            yield ModelStreamEvent(
+                type="text_delta",
+                provider="openai",
+                model="gpt-5.4-mini",
+                text=delta,
+            )
+        yield ModelStreamEvent(
+            type="completed",
+            provider="openai",
+            model="gpt-5.4-mini",
             usage=TokenUsage(input_tokens=10, output_tokens=20, total_tokens=30),
             provider_request_id="resp_source_backed_test",
+            status="completed",
         )
 
     async def generate(self, request, *, key, timeout_s):
@@ -263,6 +284,29 @@ def _parse_sse_events(body: str) -> list[dict]:
             fields["data"] = json.loads(fields["data"])
             events.append(fields)
     return events
+
+
+async def _read_streaming_response_events(response, count: int) -> list[dict]:
+    events = []
+    iterator = response.body_iterator
+    try:
+        while len(events) < count:
+            frame = await asyncio.wait_for(iterator.__anext__(), timeout=3)
+            text_frame = frame.decode("utf-8") if isinstance(frame, bytes) else frame
+            if text_frame.startswith(":"):
+                continue
+            events.extend(_parse_sse_events(text_frame))
+        return events
+    finally:
+        with suppress(Exception):
+            await iterator.aclose()
+
+
+def _request(path: str) -> Request:
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    return Request({"type": "http", "method": "GET", "path": path, "headers": []}, receive)
 
 
 def _response_start_headers(sent_messages: list[dict]) -> dict[str, str]:
@@ -428,6 +472,145 @@ class TestStreamTokenVerify:
 
 
 class TestChatRunEventStream:
+    def _insert_running_run(
+        self, direct_db: DirectSessionManager, *, owner_user_id: UUID
+    ) -> tuple[UUID, UUID, UUID]:
+        run_id, conversation_id = _insert_terminal_run(direct_db, owner_user_id=owner_user_id)
+        with direct_db.session() as session:
+            row = session.execute(
+                text(
+                    """
+                    SELECT assistant_message_id
+                    FROM chat_runs
+                    WHERE id = :run_id
+                    """
+                ),
+                {"run_id": run_id},
+            ).one()
+            assistant_message_id = row.assistant_message_id
+            session.execute(
+                text("DELETE FROM chat_run_events WHERE run_id = :run_id"), {"run_id": run_id}
+            )
+            session.execute(
+                text(
+                    """
+                    UPDATE chat_runs
+                    SET status = 'running',
+                        completed_at = NULL,
+                        error_code = NULL,
+                        error_detail = NULL
+                    WHERE id = :run_id
+                    """
+                ),
+                {"run_id": run_id},
+            )
+            session.execute(
+                text(
+                    """
+                    UPDATE messages
+                    SET status = 'pending',
+                        content = '',
+                        message_document = '{"type":"message_document","blocks":[]}'::jsonb
+                    WHERE id = :assistant_message_id
+                    """
+                ),
+                {"assistant_message_id": assistant_message_id},
+            )
+            session.commit()
+        return run_id, conversation_id, assistant_message_id
+
+    async def test_delivers_events_inserted_after_stream_open_via_notify_and_cursor_replay(
+        self, direct_db: DirectSessionManager, chat_runs_schema, log_sink
+    ):
+        user_id = uuid4()
+        run_id, _conversation_id, assistant_message_id = self._insert_running_run(
+            direct_db, owner_user_id=user_id
+        )
+
+        first_opened_at = time.monotonic()
+        response = await stream_routes.stream_chat_run_events(
+            _request(f"/stream/chat-runs/{run_id}/events"),
+            run_id=run_id,
+            viewer_id=user_id,
+            after=0,
+            last_event_id=None,
+            sse_attempt="0",
+        )
+        assert response.status_code == 200
+        read_task = asyncio.create_task(_read_streaming_response_events(response, 1))
+        await asyncio.sleep(0)
+        with direct_db.session() as session:
+            run = session.get(ChatRun, run_id)
+            assert run is not None
+            append_run_event(
+                session,
+                run,
+                "assistant_text_delta",
+                {
+                    "assistant_message_id": str(assistant_message_id),
+                    "text": "Hello",
+                    "provider_event_seq_start": 1,
+                    "provider_event_seq_end": 1,
+                },
+            )
+            session.commit()
+        events = await read_task
+        assert time.monotonic() - first_opened_at < _sse.KEEPALIVE_INTERVAL_SECONDS
+        assert [(event["id"], event["event"]) for event in events] == [
+            ("1", "assistant_text_delta")
+        ]
+
+        second_opened_at = time.monotonic()
+        response = await stream_routes.stream_chat_run_events(
+            _request(f"/stream/chat-runs/{run_id}/events"),
+            run_id=run_id,
+            viewer_id=user_id,
+            after=None,
+            last_event_id="1",
+            sse_attempt="1",
+        )
+        assert response.status_code == 200
+        read_task = asyncio.create_task(_read_streaming_response_events(response, 2))
+        await asyncio.sleep(0)
+        with direct_db.session() as session:
+            run = session.get(ChatRun, run_id)
+            assert run is not None
+            append_run_event(
+                session,
+                run,
+                "assistant_text_delta",
+                {
+                    "assistant_message_id": str(assistant_message_id),
+                    "text": " again",
+                    "provider_event_seq_start": 2,
+                    "provider_event_seq_end": 2,
+                },
+            )
+            finalize_run(
+                session,
+                run_id=run_id,
+                assistant_content="Hello again",
+                assistant_status="complete",
+                run_status="complete",
+                done_status="complete",
+                error_code=None,
+                usage=None,
+                last_provider_event_seq=2,
+                cancelled=False,
+            )
+        replayed = await read_task
+        assert time.monotonic() - second_opened_at < _sse.KEEPALIVE_INTERVAL_SECONDS
+        assert [(event["id"], event["event"]) for event in replayed] == [
+            ("2", "assistant_text_delta"),
+            ("3", "done"),
+        ]
+        assert [
+            event["event"] for event in log_sink if event.get("event") == "chat_run.sse.connected"
+        ] == [
+            "chat_run.sse.connected",
+            "chat_run.sse.connected",
+        ]
+
     def test_replays_events_after_query_cursor(
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
     ):
@@ -445,15 +628,22 @@ class TestChatRunEventStream:
         )
         events = _parse_sse_events(response.text)
         assert [(event["id"], event["event"]) for event in events] == [
-            ("2", "delta"),
+            ("2", "assistant_text_delta"),
             ("3", "done"),
         ]
-        assert events[0]["data"] == {"delta": "Hi"}
+        assert events[0]["data"] == {
+            "assistant_message_id": events[0]["data"]["assistant_message_id"],
+            "text": "Hi",
+            "provider_event_seq_start": 1,
+            "provider_event_seq_end": 1,
+        }
         assert events[1]["data"] == {
             "status": "complete",
             "usage": None,
             "error_code": None,
             "final_chars": None,
+            "last_provider_event_seq": None,
+            "cancelled": None,
         }
 
     def test_replays_strict_context_ref_added_payload(
@@ -539,6 +729,8 @@ class TestChatRunEventStream:
             "usage": None,
             "error_code": None,
             "final_chars": None,
+            "last_provider_event_seq": None,
+            "cancelled": None,
         }
 
     def test_closes_when_cursor_is_at_terminal_run(
@@ -599,6 +791,7 @@ class TestChatRunEventStream:
                 viewer_id=uuid4(),
                 after=None,
                 last_event_id=None,
+                sse_attempt=None,
             )
 
 
@@ -678,7 +871,10 @@ class TestStreamCORSMiddleware:
         headers = _response_start_headers(sent_messages)
         assert headers["access-control-allow-origin"] == "https://nexus.test"
         assert headers["access-control-allow-methods"] == "GET, OPTIONS"
-        assert headers["access-control-allow-headers"] == "Authorization, Last-Event-ID"
+        assert (
+            headers["access-control-allow-headers"]
+            == "Authorization, Last-Event-ID, X-Nexus-SSE-Attempt"
+        )
 
     @pytest.mark.asyncio
     async def test_actual_get_injects_stream_cors_headers(self):

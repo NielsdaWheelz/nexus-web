@@ -87,6 +87,7 @@ type SearchCitationBase<
   source_label: string | null;
   snippet: string;
   deep_link: string;
+  citation_target?: string | null;
   citation_label?: string | null;
   context_ref: {
     type: TContextType;
@@ -240,6 +241,7 @@ export type WebCitationEventData = {
   display_url?: string | null;
   source_name?: string | null;
   deep_link: string;
+  citation_target?: string | null;
   snippet: string;
   excerpt?: string | null;
   extra_snippets?: string[];
@@ -266,6 +268,7 @@ const SEARCH_CITATION_BASE_KEYS = [
   "source_label",
   "snippet",
   "deep_link",
+  "citation_target",
   "citation_label",
   "context_ref",
   "evidence_span_id",
@@ -390,6 +393,7 @@ function isSearchCitationBase(
       citation.source_label === null) &&
     typeof citation.snippet === "string" &&
     typeof citation.deep_link === "string" &&
+    isOptionalString(citation.citation_target) &&
     isOptionalString(citation.citation_label) &&
     isRetrievalContextRef(citation.context_ref) &&
     citation.context_ref.type === contextType &&
@@ -456,6 +460,7 @@ export function isWebCitationEventData(
       "display_url",
       "source_name",
       "deep_link",
+      "citation_target",
       "snippet",
       "excerpt",
       "extra_snippets",
@@ -484,6 +489,7 @@ export function isWebCitationEventData(
       citation.source_name === null ||
       typeof citation.source_name === "string") &&
     typeof citation.deep_link === "string" &&
+    isOptionalString(citation.citation_target) &&
     typeof citation.snippet === "string" &&
     (citation.excerpt === undefined ||
       citation.excerpt === null ||

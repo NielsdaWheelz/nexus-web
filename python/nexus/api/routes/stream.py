@@ -27,13 +27,16 @@ from nexus.api.deps import get_stream_viewer
 from nexus.api.routes._sse import open_sse_listener, tail_cursor_stream, tail_snapshot_stream
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiError, ApiErrorCode
+from nexus.logging import get_logger
 from nexus.services import chat_runs as chat_runs_service
 from nexus.services import library_intelligence_revisions as library_intelligence_revisions_service
 from nexus.services import media as media_service
 from nexus.services import oracle as oracle_service
 from nexus.services import run_kit
+from nexus.services.redact import safe_kv
 
 router = APIRouter(tags=["streaming"])
+logger = get_logger(__name__)
 
 _SSE_HEADERS = {"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"}
 
@@ -120,8 +123,21 @@ async def stream_chat_run_events(
     viewer_id: Annotated[UUID, Depends(get_stream_viewer)],
     after: int | None = Query(default=None, ge=0),
     last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
+    sse_attempt: str | None = Header(default=None, alias="X-Nexus-SSE-Attempt"),
 ) -> StreamingResponse:
     cursor = after if after is not None else _parse_last_event_id(last_event_id)
+    attempt = _parse_sse_attempt(sse_attempt)
+    logger.info(
+        "chat_run.sse.connected",
+        **safe_kv(
+            chat_run_id=str(run_id),
+            viewer_id=str(viewer_id),
+            sse_attempt=attempt,
+            is_reconnect=attempt > 0 or cursor > 0,
+            cursor=cursor,
+            cursor_source="after" if after is not None else "last_event_id" if cursor else "none",
+        ),
+    )
     return await make_cursor_stream_response(
         _CHAT_RUN_KIND, request=request, entity_id=run_id, viewer_id=viewer_id, after=cursor
     )
@@ -204,4 +220,18 @@ def _parse_last_event_id(value: str | None) -> int:
         raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Last-Event-ID must be an integer") from exc
     if parsed < 0:
         raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Last-Event-ID must be non-negative")
+    return parsed
+
+
+def _parse_sse_attempt(value: str | None) -> int:
+    if value is None or not value.strip():
+        return 0
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise ApiError(
+            ApiErrorCode.E_INVALID_REQUEST, "X-Nexus-SSE-Attempt must be an integer"
+        ) from exc
+    if parsed < 0:
+        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "X-Nexus-SSE-Attempt must be non-negative")
     return parsed

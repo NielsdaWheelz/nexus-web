@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
+from typing import Any, cast
 from uuid import UUID
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from nexus.db.models import ChatRun, Conversation, Message
+from nexus.db.models import ChatRun, ChatRunEvent, Conversation, Message
 from nexus.errors import ApiErrorCode, NotFoundError
-from nexus.schemas.conversation import ChatRunOut, ChatRunResponse
+from nexus.schemas.conversation import (
+    ChatRunOut,
+    ChatRunResponse,
+    ChatRunStreamActivityOut,
+    ChatRunStreamStateOut,
+    ChatRunStreamToolCallOut,
+)
 from nexus.services.conversations import (
     conversation_to_out,
     get_message_count,
@@ -56,4 +64,79 @@ def build_chat_run_response(db: Session, viewer_id: UUID, run: ChatRun) -> ChatR
         ),
         user_message=user_message_out,
         assistant_message=assistant_message_out,
+        stream_state=_stream_state(db, run, assistant_message.content or ""),
+    )
+
+
+def _stream_state(db: Session, run: ChatRun, assistant_content: str) -> ChatRunStreamStateOut:
+    rows = (
+        db.execute(
+            select(ChatRunEvent)
+            .where(ChatRunEvent.run_id == run.id)
+            .order_by(ChatRunEvent.seq.asc())
+        )
+        .scalars()
+        .all()
+    )
+    text = ""
+    folded_event_seq = 0
+    activity: ChatRunStreamActivityOut | None = None
+    tool_calls_by_index: dict[int, dict[str, Any]] = {}
+    for row in rows:
+        if row.event_type == "assistant_text_delta":
+            raw = row.payload.get("text")
+            if isinstance(raw, str):
+                text += raw
+        elif row.event_type == "assistant_activity":
+            phase = row.payload.get("phase")
+            if isinstance(phase, str):
+                label = row.payload.get("label")
+                activity = ChatRunStreamActivityOut(
+                    phase=cast(Any, phase),
+                    label=label if isinstance(label, str) else None,
+                )
+        elif row.event_type in {"tool_call_start", "tool_call_delta", "tool_call_done"}:
+            index = row.payload.get("tool_call_index")
+            if not isinstance(index, int):
+                folded_event_seq = row.seq
+                continue
+            item = tool_calls_by_index.setdefault(
+                index,
+                {
+                    "id": row.payload.get("tool_call_id"),
+                    "assistant_message_id": row.payload.get("assistant_message_id"),
+                    "tool_name": row.payload.get("tool_name"),
+                    "tool_call_index": index,
+                    "status": "running",
+                    "input_preview": None,
+                },
+            )
+            if row.payload.get("tool_call_id") is not None:
+                item["id"] = row.payload.get("tool_call_id")
+            if isinstance(row.payload.get("tool_name"), str):
+                item["tool_name"] = row.payload["tool_name"]
+            if isinstance(row.payload.get("input_preview"), str):
+                item["input_preview"] = row.payload["input_preview"]
+        folded_event_seq = row.seq
+    terminal = run.status in {"complete", "error", "cancelled"}
+    status = (
+        "interrupted"
+        if run.status == "error" and run.error_code == ApiErrorCode.E_LLM_INTERRUPTED.value
+        else run.status
+    )
+    return ChatRunStreamStateOut(
+        status=cast(Any, status),
+        last_event_seq=rows[-1].seq if rows else 0,
+        folded_event_seq=folded_event_seq,
+        assistant_current_text=assistant_content if terminal else text,
+        tool_calls=[
+            ChatRunStreamToolCallOut.model_validate(item)
+            for item in sorted(
+                tool_calls_by_index.values(), key=lambda value: value["tool_call_index"]
+            )
+            if item.get("assistant_message_id") and item.get("tool_name")
+        ],
+        activity=activity,
+        reconnectable=not terminal,
+        terminal=terminal,
     )

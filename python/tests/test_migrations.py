@@ -1406,11 +1406,8 @@ class TestMigrationUpgradeDowngrade:
                         """
                     ),
                     {"id": event_id},
-                ).one()
-                assert row[0] == "retrieval_result"
-                assert row[1]["tool_name"] == "app_search"
-                assert row[1]["result_count"] == 2
-                assert row[1]["citations"][0]["source_id"] == "m1"
+                ).one_or_none()
+                assert row is None, "0167 hard cutover deletes old retrieval_result event rows"
 
                 message_document = session.execute(
                     text(
@@ -1442,11 +1439,9 @@ class TestMigrationUpgradeDowngrade:
                 )
                 session.commit()
 
-                # claim / claim_evidence / tool_result / citation are all rejected
-                # at head (claim + claim_evidence dropped in 0142).
-                for seq, rejected in enumerate(
-                    ("tool_result", "citation", "claim", "claim_evidence"), start=5
-                ):
+                # claim / claim_evidence / citation are all rejected at head
+                # (claim + claim_evidence dropped in 0142; citation in 0100).
+                for seq, rejected in enumerate(("citation", "claim", "claim_evidence"), start=5):
                     with pytest.raises(IntegrityError) as exc_info:
                         session.execute(
                             text(
@@ -1460,6 +1455,30 @@ class TestMigrationUpgradeDowngrade:
                         session.commit()
                     session.rollback()
                     assert "ck_chat_run_events_event_type" in str(exc_info.value)
+
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO chat_run_events (run_id, seq, event_type, payload)
+                        VALUES (
+                            :run_id, 8, 'tool_result',
+                            jsonb_build_object(
+                                'tool_call_id', null,
+                                'assistant_message_id', CAST(:assistant_message_id AS text),
+                                'tool_name', 'app_search',
+                                'tool_call_index', 1,
+                                'status', 'complete',
+                                'scope', 'all',
+                                'types', jsonb_build_array(),
+                                'filters', '{}'::jsonb,
+                                'results', jsonb_build_array()
+                            )
+                        )
+                        """
+                    ),
+                    {"run_id": run_id, "assistant_message_id": str(assistant_message_id)},
+                )
+                session.commit()
         finally:
             reset_test_schema()
 
@@ -13638,5 +13657,209 @@ class TestMigration0166OracleCorpusLibrary:
             assert result.returncode != 0
             combined = (result.stdout or "") + (result.stderr or "")
             assert "no downgrade path" in combined or "NotImplementedError" in combined
+        finally:
+            reset_test_schema()
+
+
+class TestMigration0167SotaChatStreamingHardCutover:
+    def test_0167_deletes_legacy_events_and_enforces_new_event_names(self):
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0166")
+            assert result.returncode == 0, f"upgrade to 0166 failed: {result.stderr}"
+
+            user_id = uuid4()
+            conversation_id = uuid4()
+            user_message_id = uuid4()
+            assistant_message_id = uuid4()
+            model_id = uuid4()
+            run_id = uuid4()
+            with Session(engine) as session:
+                session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO models (id, provider, model_name, max_context_tokens)
+                        VALUES (:id, 'openai', 'migration-test', 100000)
+                        """
+                    ),
+                    {"id": model_id},
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO conversations (id, owner_user_id, sharing, next_seq)
+                        VALUES (:id, :owner_user_id, 'private', 3)
+                        """
+                    ),
+                    {"id": conversation_id, "owner_user_id": user_id},
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO messages (
+                            id, conversation_id, seq, role, content, status, parent_message_id
+                        )
+                        VALUES
+                          (:user_message_id, :conversation_id, 1, 'user', 'hi', 'complete', null),
+                          (
+                            :assistant_message_id, :conversation_id, 2, 'assistant', '', 'pending',
+                            :user_message_id
+                          )
+                        """
+                    ),
+                    {
+                        "user_message_id": user_message_id,
+                        "assistant_message_id": assistant_message_id,
+                        "conversation_id": conversation_id,
+                    },
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO chat_runs (
+                            id, owner_user_id, conversation_id, user_message_id,
+                            assistant_message_id, idempotency_key, payload_hash,
+                            status, model_id, reasoning, key_mode
+                        )
+                        VALUES (
+                            :id, :owner_user_id, :conversation_id, :user_message_id,
+                            :assistant_message_id, :idempotency_key, 'hash',
+                            'running', :model_id, 'none', 'auto'
+                        )
+                        """
+                    ),
+                    {
+                        "id": run_id,
+                        "owner_user_id": user_id,
+                        "conversation_id": conversation_id,
+                        "user_message_id": user_message_id,
+                        "assistant_message_id": assistant_message_id,
+                        "idempotency_key": f"migration-{run_id}",
+                        "model_id": model_id,
+                    },
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO chat_run_events (run_id, seq, event_type, payload)
+                        VALUES
+                          (:run_id, 1, 'delta', '{"text":"old"}'::jsonb),
+                          (:run_id, 2, 'tool_call', '{"tool_name":"old"}'::jsonb),
+                          (:run_id, 3, 'retrieval_result', '{"tool_name":"old"}'::jsonb),
+                          (:run_id, 4, 'context_ref_added', '{"tool_name":"old"}'::jsonb)
+                        """
+                    ),
+                    {"run_id": run_id},
+                )
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade to head failed: {result.stderr}"
+
+            with Session(engine) as session:
+                stale_count = session.execute(
+                    text(
+                        """
+                        SELECT count(*)
+                        FROM chat_run_events
+                        WHERE run_id = :run_id
+                          AND event_type IN (
+                            'delta', 'tool_call', 'retrieval_result', 'context_ref_added'
+                          )
+                        """
+                    ),
+                    {"run_id": run_id},
+                ).scalar_one()
+                assert stale_count == 0
+
+                constraint = session.execute(
+                    text(
+                        """
+                        SELECT pg_get_constraintdef(oid)
+                        FROM pg_constraint
+                        WHERE conrelid = 'chat_run_events'::regclass
+                          AND conname = 'ck_chat_run_events_event_type'
+                        """
+                    )
+                ).scalar_one()
+                assert "assistant_text_delta" in constraint
+                assert "tool_result" in constraint
+                assert "retrieval_result" not in constraint
+
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO messages (
+                            id, conversation_id, seq, role, content, status, parent_message_id
+                        )
+                        VALUES (
+                            :id, :conversation_id, 3, 'assistant', 'Request cancelled.',
+                            'cancelled', :user_message_id
+                        )
+                        """
+                    ),
+                    {
+                        "id": uuid4(),
+                        "conversation_id": conversation_id,
+                        "user_message_id": user_message_id,
+                    },
+                )
+                session.commit()
+
+                for seq, event_type in enumerate(("delta", "tool_call", "retrieval_result"), 10):
+                    with pytest.raises(IntegrityError):
+                        session.execute(
+                            text(
+                                """
+                                INSERT INTO chat_run_events (run_id, seq, event_type, payload)
+                                VALUES (:run_id, :seq, :event_type, '{}'::jsonb)
+                                """
+                            ),
+                            {"run_id": run_id, "seq": seq, "event_type": event_type},
+                        )
+                        session.commit()
+                    session.rollback()
+
+                for seq, event_type in enumerate(
+                    (
+                        "meta",
+                        "assistant_activity",
+                        "assistant_text_delta",
+                        "tool_call_start",
+                        "tool_call_delta",
+                        "tool_call_done",
+                        "tool_result",
+                        "citation_index",
+                        "context_ref_added",
+                        "done",
+                    ),
+                    20,
+                ):
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO chat_run_events (run_id, seq, event_type, payload)
+                            VALUES (:run_id, :seq, :event_type, '{}'::jsonb)
+                            """
+                        ),
+                        {"run_id": run_id, "seq": seq, "event_type": event_type},
+                    )
+                session.commit()
+        finally:
+            engine.dispose()
+            reset_test_schema()
+
+    def test_0167_downgrade_is_blocked(self):
+        reset_test_schema()
+        try:
+            assert run_alembic_command("upgrade head").returncode == 0
+
+            result = run_alembic_command("downgrade 0166")
+
+            assert result.returncode != 0
+            combined = (result.stdout or "") + (result.stderr or "")
+            assert "Hard cutover: 0167 is not reversible" in combined
         finally:
             reset_test_schema()

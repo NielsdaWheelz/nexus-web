@@ -122,6 +122,7 @@ export interface MessageToolCall {
   selected_count?: number;
   status: ChatToolStatus;
   error_code?: string | null;
+  input_preview?: string;
   created_at?: string;
   updated_at?: string;
   retrievals: MessageRetrieval[];
@@ -399,12 +400,34 @@ export interface ChatRun {
   updated_at: string;
 }
 
+export interface ChatRunStreamState {
+  status: "queued" | "running" | "complete" | "error" | "cancelled" | "interrupted";
+  last_event_seq: number;
+  folded_event_seq: number;
+  assistant_current_text: string;
+  tool_calls: MessageToolCall[];
+  activity: {
+    phase:
+      | "queued"
+      | "thinking"
+      | "writing"
+      | "tool_calling"
+      | "waiting"
+      | "retrying"
+      | "cancelling";
+    label: string | null;
+  } | null;
+  reconnectable: boolean;
+  terminal: boolean;
+}
+
 export interface ChatRunResponse {
   data: {
     run: ChatRun;
     conversation: ConversationSummary;
     user_message: ConversationMessage;
     assistant_message: ConversationMessage;
+    stream_state: ChatRunStreamState;
   };
 }
 

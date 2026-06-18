@@ -166,6 +166,14 @@
   flex: 0 0 auto;
 }
 
+.toolActivityPreview {
+  max-width: min(34rem, 100%);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-muted);
+}
+
 .trustInspector {
   margin-top: var(--space-2);
   color: var(--ink-muted);

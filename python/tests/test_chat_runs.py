@@ -2908,6 +2908,114 @@ class TestCitationEdgeWriteThrough:
             f"Only the assistant message carries citations; got {response.user_message.citations}"
         )
 
+    def test_build_chat_run_response_folds_live_stream_state(
+        self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
+    ):
+        from nexus.db.models import ChatRun as ChatRunModel
+        from nexus.services.chat_run_event_store import append_run_event
+        from nexus.services.chat_run_response import build_chat_run_response
+
+        (
+            user_id,
+            model_id,
+            conversation_id,
+            media_id,
+            _chunk_id,
+            user_message_id,
+            assistant_message_id,
+        ) = self._setup_conversation(auth_client, direct_db)
+        run_id = self._create_chat_run_row(
+            direct_db,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            user_message_id=user_message_id,
+            assistant_message_id=assistant_message_id,
+            model_id=model_id,
+        )
+        self._register_cleanups(
+            direct_db,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            media_id=media_id,
+            run_id=run_id,
+            tool_call_id=uuid4(),
+        )
+
+        with direct_db.session() as session:
+            run = session.get(ChatRunModel, run_id)
+            assert run is not None
+            append_run_event(
+                session,
+                run,
+                "assistant_activity",
+                {
+                    "assistant_message_id": str(assistant_message_id),
+                    "phase": "tool_calling",
+                    "label": "Searching",
+                    "provider_event_seq_start": 1,
+                    "provider_event_seq_end": 1,
+                },
+            )
+            append_run_event(
+                session,
+                run,
+                "assistant_text_delta",
+                {
+                    "assistant_message_id": str(assistant_message_id),
+                    "text": "Live",
+                    "provider_event_seq_start": 2,
+                    "provider_event_seq_end": 2,
+                },
+            )
+            append_run_event(
+                session,
+                run,
+                "tool_call_start",
+                {
+                    "tool_call_id": None,
+                    "assistant_message_id": str(assistant_message_id),
+                    "tool_name": "app_search",
+                    "tool_call_index": 1,
+                    "provider_tool_call_id": "provider-tool-1",
+                    "provider_event_seq_start": 3,
+                    "provider_event_seq_end": 3,
+                },
+            )
+            append_run_event(
+                session,
+                run,
+                "tool_call_delta",
+                {
+                    "tool_call_id": None,
+                    "assistant_message_id": str(assistant_message_id),
+                    "tool_name": "app_search",
+                    "tool_call_index": 1,
+                    "provider_tool_call_id": "provider-tool-1",
+                    "input_delta": '{"query":"ne',
+                    "input_preview": '{"query":"nexus"}',
+                    "provider_event_seq_start": 4,
+                    "provider_event_seq_end": 4,
+                },
+            )
+            session.commit()
+
+        with direct_db.session() as session:
+            run = session.get(ChatRunModel, run_id)
+            assert run is not None
+            response = build_chat_run_response(session, user_id, run)
+
+        assert response.stream_state.folded_event_seq == 4
+        assert response.stream_state.assistant_current_text == "Live"
+        assert response.stream_state.activity is not None
+        assert response.stream_state.activity.phase == "tool_calling"
+        assert response.stream_state.activity.label == "Searching"
+        assert len(response.stream_state.tool_calls) == 1
+        tool = response.stream_state.tool_calls[0]
+        assert tool.tool_name == "app_search"
+        assert tool.tool_call_index == 1
+        assert tool.status == "running"
+        assert tool.input_preview == '{"query":"nexus"}'
+
     def test_messages_http_get_replays_assistant_citations_field_for_field(
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
     ):

@@ -32,7 +32,7 @@ SHARING_MODES = Literal["private", "library", "public"]
 MESSAGE_ROLES = Literal["user", "assistant", "system"]
 
 # Valid message statuses - must match DB constraint
-MESSAGE_STATUSES = Literal["pending", "complete", "error"]
+MESSAGE_STATUSES = Literal["pending", "complete", "error", "cancelled"]
 
 # Valid assistant tool-call statuses - must match message_tool_calls.status
 MESSAGE_TOOL_STATUSES = Literal["pending", "running", "complete", "error", "cancelled"]
@@ -49,11 +49,14 @@ BRANCH_ANCHOR_KINDS = Literal[
 BRANCH_ANCHOR_OFFSET_STATUSES = Literal["mapped", "unmapped"]
 CHAT_RUN_EVENT_TYPES = Literal[
     "meta",
-    "tool_call",
-    "retrieval_result",
+    "assistant_activity",
+    "assistant_text_delta",
+    "tool_call_start",
+    "tool_call_delta",
+    "tool_call_done",
+    "tool_result",
     "citation_index",
     "context_ref_added",
-    "delta",
     "done",
 ]
 EVIDENCE_RETRIEVAL_STATUSES = Literal[
@@ -127,7 +130,7 @@ class MessageOut(BaseModel):
     branch_root_message_id: UUID | None = None
     branch_anchor_kind: BRANCH_ANCHOR_KINDS = "none"
     branch_anchor: dict[str, Any] = Field(default_factory=dict)
-    status: str  # "pending" | "complete" | "error"
+    status: str  # "pending" | "complete" | "error" | "cancelled"
     error_code: str | None = None
     can_retry_response: bool = False
     created_at: datetime
@@ -221,8 +224,84 @@ class ChatRunMetaEventPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class ChatRunToolCallEventPayload(BaseModel):
-    """Strict SSE payload for a started or updated assistant tool call."""
+class ChatRunAssistantActivityEventPayload(BaseModel):
+    """Strict SSE payload for safe assistant activity state."""
+
+    assistant_message_id: UUID
+    phase: Literal[
+        "queued",
+        "thinking",
+        "writing",
+        "tool_calling",
+        "waiting",
+        "retrying",
+        "cancelling",
+    ]
+    label: str | None = None
+    provider_event_seq_start: int | None = Field(default=None, ge=0)
+    provider_event_seq_end: int | None = Field(default=None, ge=0)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ChatRunAssistantTextDeltaEventPayload(BaseModel):
+    """Strict SSE payload for assistant text deltas."""
+
+    assistant_message_id: UUID
+    text: str = Field(min_length=1)
+    provider_event_seq_start: int = Field(ge=0)
+    provider_event_seq_end: int = Field(ge=0)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ChatRunToolCallStartEventPayload(BaseModel):
+    """Strict SSE payload for provider tool-call start."""
+
+    tool_call_id: UUID | None = None
+    assistant_message_id: UUID
+    tool_name: str = Field(min_length=1)
+    tool_call_index: int = Field(ge=0)
+    provider_tool_call_id: str | None = Field(default=None, min_length=1)
+    provider_event_seq_start: int = Field(ge=0)
+    provider_event_seq_end: int = Field(ge=0)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ChatRunToolCallDeltaEventPayload(BaseModel):
+    """Strict SSE payload for render-only provider tool argument deltas."""
+
+    tool_call_id: UUID | None = None
+    assistant_message_id: UUID
+    tool_name: str = Field(min_length=1)
+    tool_call_index: int = Field(ge=0)
+    provider_tool_call_id: str | None = Field(default=None, min_length=1)
+    input_delta: str = Field(min_length=1)
+    input_preview: str | None = Field(default=None, max_length=512)
+    provider_event_seq_start: int = Field(ge=0)
+    provider_event_seq_end: int = Field(ge=0)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ChatRunToolCallDoneEventPayload(BaseModel):
+    """Strict SSE payload for a complete provider tool call."""
+
+    tool_call_id: UUID | None = None
+    assistant_message_id: UUID
+    tool_name: str = Field(min_length=1)
+    tool_call_index: int = Field(ge=0)
+    provider_tool_call_id: str | None = Field(default=None, min_length=1)
+    input: dict[str, Any]
+    provider_event_seq_start: int = Field(ge=0)
+    provider_event_seq_end: int = Field(ge=0)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ChatRunToolResultEventPayload(BaseModel):
+    """Strict SSE payload for executed app/tool results."""
 
     tool_call_id: UUID | None = None
     assistant_message_id: UUID
@@ -233,32 +312,11 @@ class ChatRunToolCallEventPayload(BaseModel):
     types: list[str]
     filters: dict[str, Any]
     error_code: str | None = None
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class ChatRunRetrievalResultEventPayload(BaseModel):
-    """Strict SSE payload for app/web retrieval results."""
-
-    tool_call_id: UUID | None = None
-    assistant_message_id: UUID
-    tool_name: str = Field(min_length=1)
-    tool_call_index: int = Field(ge=0)
-    status: MESSAGE_TOOL_STATUSES
-    error_code: str | None = None
-    result_count: int = Field(ge=0)
-    selected_count: int = Field(ge=0)
+    result_count: int | None = Field(default=None, ge=0)
+    selected_count: int | None = Field(default=None, ge=0)
     latency_ms: int | None = Field(default=None, ge=0)
-    filters: dict[str, Any]
+    provider_request_ids: list[str] = Field(default_factory=list)
     results: list[RetrievalResultRef] = Field(default_factory=list)
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class ChatRunDeltaEventPayload(BaseModel):
-    """Strict SSE payload for assistant text deltas."""
-
-    delta: str = Field(min_length=1)
 
     model_config = ConfigDict(extra="forbid")
 
@@ -270,6 +328,8 @@ class ChatRunDoneEventPayload(BaseModel):
     usage: dict[str, Any] | None = None
     error_code: str | None = None
     final_chars: int | None = Field(default=None, ge=0)
+    last_provider_event_seq: int | None = Field(default=None, ge=0)
+    cancelled: bool | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -313,16 +373,22 @@ def chat_run_event_payload_json(event_type: str, payload: dict[str, Any]) -> dic
 
     if event_type == "meta":
         return ChatRunMetaEventPayload.model_validate(payload).model_dump(mode="json")
-    if event_type == "tool_call":
-        return ChatRunToolCallEventPayload.model_validate(payload).model_dump(mode="json")
-    if event_type == "retrieval_result":
-        return ChatRunRetrievalResultEventPayload.model_validate(payload).model_dump(mode="json")
+    if event_type == "assistant_activity":
+        return ChatRunAssistantActivityEventPayload.model_validate(payload).model_dump(mode="json")
+    if event_type == "assistant_text_delta":
+        return ChatRunAssistantTextDeltaEventPayload.model_validate(payload).model_dump(mode="json")
+    if event_type == "tool_call_start":
+        return ChatRunToolCallStartEventPayload.model_validate(payload).model_dump(mode="json")
+    if event_type == "tool_call_delta":
+        return ChatRunToolCallDeltaEventPayload.model_validate(payload).model_dump(mode="json")
+    if event_type == "tool_call_done":
+        return ChatRunToolCallDoneEventPayload.model_validate(payload).model_dump(mode="json")
+    if event_type == "tool_result":
+        return ChatRunToolResultEventPayload.model_validate(payload).model_dump(mode="json")
     if event_type == "citation_index":
         return ChatRunCitationIndexEventPayload.model_validate(payload).model_dump(mode="json")
     if event_type == "context_ref_added":
         return ChatRunContextRefAddedEventPayload.model_validate(payload).model_dump(mode="json")
-    if event_type == "delta":
-        return ChatRunDeltaEventPayload.model_validate(payload).model_dump(mode="json")
     if event_type == "done":
         return ChatRunDoneEventPayload.model_validate(payload).model_dump(mode="json")
     raise ValueError("unknown chat-run event type")
@@ -715,6 +781,51 @@ class ChatRunOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class ChatRunStreamActivityOut(BaseModel):
+    phase: Literal[
+        "queued", "thinking", "writing", "tool_calling", "waiting", "retrying", "cancelling"
+    ]
+    label: str | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ChatRunStreamToolCallOut(BaseModel):
+    id: UUID | None = None
+    assistant_message_id: UUID
+    tool_name: str
+    tool_call_index: int = Field(ge=0)
+    status: MESSAGE_TOOL_STATUSES = "running"
+    scope: str = "provider_tool"
+    requested_types: list[str] = Field(default_factory=list)
+    result_refs: list[dict[str, Any]] = Field(default_factory=list)
+    selected_context_refs: list[dict[str, Any]] = Field(default_factory=list)
+    provider_request_ids: list[str] = Field(default_factory=list)
+    result_count: int = 0
+    selected_count: int = 0
+    retrievals: list[TrustRetrievalOut] = Field(default_factory=list)
+    candidate_ledgers: list[MessageRetrievalCandidateLedgerOut] = Field(default_factory=list)
+    rerank_ledgers: list[MessageRerankLedgerOut] = Field(default_factory=list)
+    input_preview: str | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ChatRunStreamStateOut(BaseModel):
+    """Materialized cursor state for reconnecting a chat stream."""
+
+    status: Literal["queued", "running", "complete", "error", "cancelled", "interrupted"]
+    last_event_seq: int = Field(ge=0)
+    folded_event_seq: int = Field(ge=0)
+    assistant_current_text: str
+    tool_calls: list[ChatRunStreamToolCallOut] = Field(default_factory=list)
+    activity: ChatRunStreamActivityOut | None = None
+    reconnectable: bool
+    terminal: bool
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class ChatRunResponse(BaseModel):
     """Response schema for create/read chat-run endpoints."""
 
@@ -722,6 +833,7 @@ class ChatRunResponse(BaseModel):
     conversation: ConversationOut
     user_message: MessageOut
     assistant_message: MessageOut
+    stream_state: ChatRunStreamStateOut
 
 
 class ChatRunEventOut(BaseModel):

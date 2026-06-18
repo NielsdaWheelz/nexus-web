@@ -14,10 +14,13 @@ import {
   type WebCitationEventData,
 } from "@/lib/api/sse/citations";
 import type {
+  ChatToolStatus,
   SSECitationIndexEvent,
   SSEContextRefAddedEvent,
-  SSERetrievalResultEvent,
+  SSEToolCallDeltaEvent,
+  SSEToolCallDoneEvent,
   SSEToolCallEvent,
+  SSEToolResultEvent,
 } from "@/lib/api/sse/events";
 import { conversationMessageText } from "@/lib/conversations/types";
 import type {
@@ -28,6 +31,8 @@ import type {
   MessageRetrieval,
   MessageToolCall,
 } from "@/lib/conversations/types";
+
+type RenderToolCallData = SSEToolCallEvent["data"] & { status?: ChatToolStatus };
 
 function retrievalFromSearchCitation(
   citation: SearchCitationEventData,
@@ -138,6 +143,7 @@ export function useChatMessageUpdates({
   onContextRefAdded?: (data: SSEContextRefAddedEvent["data"]) => void;
 }) {
   const deltaBufferRef = useRef<Map<string, string>>(new Map());
+  const foldedSeqRef = useRef<Map<string, number>>(new Map());
   const rafRef = useRef<number | null>(null);
 
   const flushDeltas = useCallback(() => {
@@ -209,8 +215,14 @@ export function useChatMessageUpdates({
     [flushDeltas],
   );
 
+  const shouldFoldEvent = useCallback((runId: string, seq: number) => {
+    if (seq <= (foldedSeqRef.current.get(runId) ?? 0)) return false;
+    foldedSeqRef.current.set(runId, seq);
+    return true;
+  }, []);
+
   const handleToolCall = useCallback(
-    (assistantId: string, data: SSEToolCallEvent["data"]) => {
+    (assistantId: string, data: RenderToolCallData) => {
       setMessages((prev) =>
         prev.map((m) => {
           if (m.id !== assistantId) return m;
@@ -225,9 +237,10 @@ export function useChatMessageUpdates({
             assistant_message_id: data.assistant_message_id,
             tool_name: data.tool_name,
             tool_call_index: data.tool_call_index,
-            status: data.status,
-            scope: data.scope,
-            requested_types: data.types,
+            status: data.status ?? "running",
+            scope: "provider_tool",
+            requested_types: [],
+            input_preview: previous?.input_preview,
             result_refs: previous?.result_refs ?? [],
             selected_context_refs: previous?.selected_context_refs ?? [],
             provider_request_ids: previous?.provider_request_ids ?? [],
@@ -256,8 +269,64 @@ export function useChatMessageUpdates({
     [setMessages],
   );
 
+  const handleToolCallDelta = useCallback(
+    (assistantId: string, data: SSEToolCallDeltaEvent["data"]) => {
+      flushDeltas();
+      setMessages((prev) =>
+        prev.map((m) => {
+          if (m.id !== assistantId) return m;
+          const trail = trustTrailFor(m, data.assistant_message_id);
+          const existing = trail.tool_calls;
+          const index = existing.findIndex(
+            (call) => call.tool_call_index === data.tool_call_index,
+          );
+          const previous = index >= 0 ? existing[index] : null;
+          const nextCall: MessageToolCall = {
+            ...(previous ?? {}),
+            id: data.tool_call_id ?? previous?.id,
+            assistant_message_id: data.assistant_message_id,
+            tool_name: data.tool_name,
+            tool_call_index: data.tool_call_index,
+            status: "running",
+            scope: "provider_tool",
+            requested_types: previous?.requested_types ?? [],
+            input_preview: data.input_preview ?? previous?.input_preview,
+            result_refs: previous?.result_refs ?? [],
+            selected_context_refs: previous?.selected_context_refs ?? [],
+            provider_request_ids: previous?.provider_request_ids ?? [],
+            result_count: previous?.result_count ?? 0,
+            selected_count: previous?.selected_count ?? 0,
+            retrievals: previous?.retrievals ?? [],
+            candidate_ledgers: previous?.candidate_ledgers ?? [],
+            rerank_ledgers: previous?.rerank_ledgers ?? [],
+          };
+          const toolCalls =
+            index >= 0
+              ? existing.map((call, idx) => (idx === index ? nextCall : call))
+              : [...existing, nextCall];
+          return {
+            ...m,
+            trust_trail: { ...trail, status: "running", tool_calls: toolCalls },
+          };
+        }),
+      );
+    },
+    [flushDeltas, setMessages],
+  );
+
+  const handleToolCallDone = useCallback(
+    (assistantId: string, data: SSEToolCallDoneEvent["data"]) => {
+      flushDeltas();
+      handleToolCall(assistantId, {
+        ...data,
+        status: "running",
+      });
+    },
+    [flushDeltas, handleToolCall],
+  );
+
   const handleToolResult = useCallback(
-    (assistantId: string, data: SSERetrievalResultEvent["data"]) => {
+    (assistantId: string, data: SSEToolResultEvent["data"]) => {
       const results = Array.isArray(data.results) ? data.results : [];
       const retrievals: MessageRetrieval[] = results.flatMap(
         (citation, index) => {
@@ -284,15 +353,15 @@ export function useChatMessageUpdates({
             tool_name: data.tool_name,
             tool_call_index: data.tool_call_index,
             status: data.status,
-            scope: previous?.scope ?? "all",
-            requested_types: previous?.requested_types ?? [],
+            scope: data.scope,
+            requested_types: data.types,
             error_code: data.error_code ?? null,
             latency_ms: data.latency_ms,
-            result_count: data.result_count,
-            selected_count: data.selected_count,
+            result_count: data.result_count ?? 0,
+            selected_count: data.selected_count ?? 0,
             result_refs: data.results as Array<Record<string, unknown>>,
             selected_context_refs: previous?.selected_context_refs ?? [],
-            provider_request_ids: previous?.provider_request_ids ?? [],
+            provider_request_ids: data.provider_request_ids ?? previous?.provider_request_ids ?? [],
             retrievals,
             candidate_ledgers: previous?.candidate_ledgers ?? [],
             rerank_ledgers: previous?.rerank_ledgers ?? [],
@@ -411,10 +480,13 @@ export function useChatMessageUpdates({
 
   return {
     flushDeltas,
+    shouldFoldEvent,
     handleOptimisticMessages,
     handleMetaReceived,
     handleDelta,
     handleToolCall,
+    handleToolCallDelta,
+    handleToolCallDone,
     handleToolResult,
     handleCitationIndex,
     handleContextRefAdded,

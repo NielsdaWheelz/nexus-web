@@ -17,6 +17,8 @@ const DEFAULT_BACKOFF: SseBackoffConfig = {
   jitterMs: 250,
 };
 
+export type SseReconnectDecision = "continue" | "stop" | { after: string };
+
 /**
  * Generic browser→FastAPI SSE client. Owns connect/reconnect, the stream-token
  * flow, abort, content-type validation, and `Last-Event-ID` resumption. Caller
@@ -47,9 +49,10 @@ export function sseClientDirect<TEvent>(args: {
   onError: (err: Error) => void;
   onComplete?: (terminalEventSeen: boolean) => void;
   onLastEventId?: (id: string) => void;
-  /** Fired before each reconnect backoff; resolve "stop" to end cleanly. */
-  onReconnect?: (attempt: number) => Promise<"continue" | "stop">;
+  /** Fired before each reconnect backoff; may return a durable cursor to resume after. */
+  onReconnect?: (attempt: number) => Promise<SseReconnectDecision>;
   signal?: AbortSignal;
+  initialAfter?: string;
   lastEventId?: string;
   maxReconnects?: number;
   backoff?: SseBackoffConfig;
@@ -66,6 +69,7 @@ export function sseClientDirect<TEvent>(args: {
     onLastEventId,
     onReconnect,
     signal,
+    initialAfter,
     lastEventId: initialLastEventId,
     maxReconnects = 8,
     backoff = DEFAULT_BACKOFF,
@@ -77,6 +81,7 @@ export function sseClientDirect<TEvent>(args: {
     : controller.signal;
 
   let lastEventId = initialLastEventId ?? "";
+  let nextAfter = initialAfter ?? "";
   let reconnectDelayMs = backoff.baseMs;
   let reconnects = 0;
   let pendingInitialToken = initialToken ?? null;
@@ -104,7 +109,7 @@ export function sseClientDirect<TEvent>(args: {
       }
       reconnects += 1;
       if (onReconnect) {
-        let decision: "continue" | "stop";
+        let decision: SseReconnectDecision;
         try {
           decision = await onReconnect(reconnects);
         } catch (callbackErr) {
@@ -118,6 +123,10 @@ export function sseClientDirect<TEvent>(args: {
         if (decision === "stop") {
           onComplete?.(terminalEventSeen);
           return false;
+        }
+        if (typeof decision === "object") {
+          nextAfter = decision.after;
+          lastEventId = "";
         }
       }
       await delay(
@@ -139,10 +148,11 @@ export function sseClientDirect<TEvent>(args: {
         const headers: Record<string, string> = {
           Accept: "text/event-stream",
           Authorization: `Bearer ${token}`,
+          "X-Nexus-SSE-Attempt": String(reconnects),
         };
-        if (lastEventId) headers["Last-Event-ID"] = lastEventId;
+        if (!nextAfter && lastEventId) headers["Last-Event-ID"] = lastEventId;
 
-        response = await fetch(url, {
+        response = await fetch(nextAfter ? urlWithAfter(url, nextAfter) : url, {
           method: "GET",
           headers,
           signal: combinedSignal,
@@ -188,6 +198,7 @@ export function sseClientDirect<TEvent>(args: {
           (jsonEvent) => {
             if (jsonEvent.id) {
               lastEventId = jsonEvent.id;
+              nextAfter = "";
               onLastEventId?.(lastEventId);
             }
             const event = decode(jsonEvent.type, jsonEvent.data, jsonEvent.id);
@@ -250,6 +261,11 @@ export function sseClientDirect<TEvent>(args: {
   });
 
   return () => controller.abort();
+}
+
+function urlWithAfter(url: string, after: string): string {
+  const separator = url.includes("?") ? "&" : "?";
+  return `${url}${separator}after=${encodeURIComponent(after)}`;
 }
 
 async function errorResponseMessage(response: Response): Promise<string> {

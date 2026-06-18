@@ -128,6 +128,13 @@ export default function AssistantMessage({
           className={styles.messageFeedback}
         />
       ) : null}
+      {message.status === "cancelled" ? (
+        <FeedbackNotice
+          severity="neutral"
+          title="Response cancelled."
+          className={styles.messageFeedback}
+        />
+      ) : null}
       {onSelectFork ? (
         <ForkStrip
           forks={forkOptions}
@@ -168,6 +175,9 @@ function ToolActivity({ toolCalls }: { toolCalls: MessageToolCall[] }) {
     <div className={styles.toolActivity} role="status" aria-live="polite">
       <Search size={14} aria-hidden="true" />
       <span>{label}</span>
+      {active.input_preview ? (
+        <span className={styles.toolActivityPreview}>{active.input_preview}</span>
+      ) : null}
     </div>
   );
 }

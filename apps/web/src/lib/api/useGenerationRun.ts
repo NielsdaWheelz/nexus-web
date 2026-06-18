@@ -2,7 +2,11 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { sseClientDirect, type SseBackoffConfig } from "./sse-client";
+import {
+  sseClientDirect,
+  type SseBackoffConfig,
+  type SseReconnectDecision,
+} from "./sse-client";
 import { fetchStreamToken } from "./streamToken";
 
 export type GenerationRunKind =
@@ -82,7 +86,7 @@ export function useGenerationRun<TEvent>(cfg: {
   reconnect?: {
     max?: number;
     backoff?: SseBackoffConfig;
-    onReconnect?: (attempt: number) => Promise<"continue" | "stop">;
+    onReconnect?: (attempt: number) => Promise<SseReconnectDecision>;
   };
 }): { phase: GenerationRunPhase; retry: () => void; abort: () => void } {
   const { kind, id } = cfg;

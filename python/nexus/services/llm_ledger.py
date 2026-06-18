@@ -28,16 +28,17 @@ from uuid import UUID
 from provider_runtime import (
     DEFAULT_CATALOG,
     DEFAULT_PRICING_SOURCE,
+    CancelSignal,
     ModelRuntime,
     ProviderApiKey,
     lower_generate_request,
 )
 from provider_runtime.catalog import ModelCapability
-from provider_runtime.errors import ModelCallError
+from provider_runtime.errors import ModelCallError, ModelCallErrorCode
 from provider_runtime.types import (
     ModelCall,
-    ModelChunk,
     ModelResponse,
+    ModelStreamEvent,
     PromptCacheTTL,
     ProviderApiKeySource,
     RetryAttempt,
@@ -48,7 +49,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import LLMCall
-from nexus.errors import api_error_code_for_model_call, exception_error_detail
+from nexus.errors import ApiErrorCode, api_error_code_for_model_call, exception_error_detail
 from nexus.logging import get_logger
 from nexus.services.chat_run_usage import usage_log_fields, usage_provider_json, usage_tokens
 from nexus.services.redact import safe_kv
@@ -129,6 +130,7 @@ def observed_generate_stream(
     llm_operation: str,
     key_mode_requested: str,
     key_mode_used: str,
+    cancel: CancelSignal | None = None,
 ) -> ObservedModelStream:
     """One observed streamed provider call, yielding chunks through unchanged.
 
@@ -153,6 +155,7 @@ def observed_generate_stream(
             request,
             key=_provider_api_key(api_key, key_mode=key_mode_used),
             timeout_s=timeout_s,
+            cancel=cancel,
         ),
     )
 
@@ -163,7 +166,7 @@ class ObservedModelStream:
 
     db: Session
     call: _Call
-    source: AsyncIterator[ModelChunk]
+    source: AsyncIterator[ModelStreamEvent]
     recorded: bool = False
     exhausted: bool = False
     closed: bool = False
@@ -179,11 +182,11 @@ class ObservedModelStream:
     def __aiter__(self) -> ObservedModelStream:
         return self
 
-    async def __anext__(self) -> ModelChunk:
+    async def __anext__(self) -> ModelStreamEvent:
         if self.closed:
             raise StopAsyncIteration
         try:
-            chunk = await anext(self.source)
+            event = await anext(self.source)
         except StopAsyncIteration:
             self.exhausted = True
             self.closed = True
@@ -201,15 +204,40 @@ class ObservedModelStream:
                 self.call.record(self.db, usage=None, provider_request_id=None, exc=exc)
             raise
 
-        if chunk.done and not self.recorded:
+        if event.terminal and not self.recorded:
             self.recorded = True
-            self.call.record(
-                self.db,
-                usage=chunk.usage,
-                provider_request_id=chunk.provider_request_id,
-                attempts=chunk.attempts,
-            )
-        return chunk
+            if event.type == "failed":
+                try:
+                    error_class = api_error_code_for_model_call(
+                        ModelCallErrorCode(event.error_code)
+                    ).value
+                except ValueError:
+                    error_class = event.error_code or ApiErrorCode.E_LLM_PROVIDER_DOWN.value
+                self.call.record(
+                    self.db,
+                    usage=event.usage,
+                    provider_request_id=event.provider_request_id,
+                    error_class=error_class,
+                    error_detail=event.error_detail,
+                    attempts=event.attempts,
+                )
+            elif event.type == "cancelled":
+                self.call.record(
+                    self.db,
+                    usage=event.usage,
+                    provider_request_id=event.provider_request_id,
+                    error_class=ApiErrorCode.E_CANCELLED.value,
+                    error_detail="provider stream cancelled",
+                    attempts=event.attempts,
+                )
+            else:
+                self.call.record(
+                    self.db,
+                    usage=event.usage,
+                    provider_request_id=event.provider_request_id,
+                    attempts=event.attempts,
+                )
+        return event
 
     def record_abandoned(
         self,

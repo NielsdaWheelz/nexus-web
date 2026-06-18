@@ -13,10 +13,10 @@ from provider_runtime import (
 from provider_runtime.errors import ModelCallError, ModelCallErrorCode
 from provider_runtime.types import (
     ModelCall,
-    ModelChunk,
     ModelMessage,
     ModelRef,
     ModelResponse,
+    ModelStreamEvent,
     PromptCacheTTL,
     ReasoningConfig,
     RetryAttempt,
@@ -41,6 +41,29 @@ _USAGE = TokenUsage(
 )
 
 
+def _text_event(text: str) -> ModelStreamEvent:
+    return ModelStreamEvent(
+        type="text_delta", provider="anthropic", model="claude-haiku-4-5-20251001", text=text
+    )
+
+
+def _done_event(
+    *,
+    usage: TokenUsage | None = None,
+    provider_request_id: str | None = None,
+    attempts: tuple[RetryAttempt, ...] = (),
+) -> ModelStreamEvent:
+    return ModelStreamEvent(
+        type="completed",
+        provider="anthropic",
+        model="claude-haiku-4-5-20251001",
+        usage=usage,
+        provider_request_id=provider_request_id,
+        status="completed",
+        attempts=attempts,
+    )
+
+
 class _FakeRouter:
     """External-LLM boundary fake: canned response/chunks or a raised error."""
 
@@ -54,7 +77,8 @@ class _FakeRouter:
             raise self._error
         return self._response
 
-    async def stream(self, req, *, key, timeout_s):
+    async def stream(self, req, *, key, timeout_s, cancel=None):
+        del cancel
         for chunk in self._chunks:
             yield chunk
         if self._error is not None:
@@ -404,10 +428,9 @@ async def test_stream_success_writes_row_from_terminal_chunk(db_session, log_sin
     owner = LlmCallOwner(kind="chat_run", id=uuid4())
     router = _FakeRouter(
         chunks=(
-            ModelChunk(delta_text="hel"),
-            ModelChunk(delta_text="lo"),
-            ModelChunk(
-                done=True,
+            _text_event("hel"),
+            _text_event("lo"),
+            _done_event(
                 usage=_USAGE,
                 provider_request_id="req_s",
                 attempts=(
@@ -425,7 +448,7 @@ async def test_stream_success_writes_row_from_terminal_chunk(db_session, log_sin
 
     chunks = await _observe(db_session, router, owner=owner, streaming=True)
 
-    assert [chunk.delta_text for chunk in chunks] == ["hel", "lo", ""]
+    assert [event.text for event in chunks if event.type == "text_delta"] == ["hel", "lo"]
     (row,) = _rows(db_session, owner)
     assert row.streaming is True
     assert row.total_tokens == 18
@@ -451,7 +474,7 @@ async def test_stream_success_writes_row_from_terminal_chunk(db_session, log_sin
 async def test_stream_row_written_before_terminal_chunk_yields(db_session, log_sink):
     """A consumer that stops at the done chunk (the chat loop) still leaves a row."""
     owner = LlmCallOwner(kind="chat_run", id=uuid4())
-    router = _FakeRouter(chunks=(ModelChunk(delta_text="x"), ModelChunk(done=True, usage=_USAGE)))
+    router = _FakeRouter(chunks=(_text_event("x"), _done_event(usage=_USAGE)))
 
     stream = observed_generate_stream(
         db_session,
@@ -465,8 +488,8 @@ async def test_stream_row_written_before_terminal_chunk_yields(db_session, log_s
         key_mode_requested="auto",
         key_mode_used="byok",
     )
-    async for chunk in stream:
-        if chunk.done:
+    async for event in stream:
+        if event.terminal:
             break
     await stream.aclose()
 
@@ -476,9 +499,7 @@ async def test_stream_row_written_before_terminal_chunk_yields(db_session, log_s
 
 async def test_stream_aclose_before_terminal_chunk_writes_abandoned_row(db_session, log_sink):
     owner = LlmCallOwner(kind="chat_run", id=uuid4())
-    router = _FakeRouter(
-        chunks=(ModelChunk(delta_text="partial"), ModelChunk(done=True, usage=_USAGE))
-    )
+    router = _FakeRouter(chunks=(_text_event("partial"), _done_event(usage=_USAGE)))
 
     stream = observed_generate_stream(
         db_session,
@@ -493,8 +514,8 @@ async def test_stream_aclose_before_terminal_chunk_writes_abandoned_row(db_sessi
         key_mode_used="byok",
     )
 
-    chunk = await anext(stream)
-    assert chunk.delta_text == "partial"
+    event = await anext(stream)
+    assert event.text == "partial"
     await stream.aclose()
     await stream.aclose()
 
@@ -514,7 +535,7 @@ async def test_stream_aclose_before_terminal_chunk_writes_abandoned_row(db_sessi
 async def test_stream_failure_mid_iteration_writes_failure_row_and_reraises(db_session, log_sink):
     owner = LlmCallOwner(kind="li_revision", id=uuid4())
     router = _FakeRouter(
-        chunks=(ModelChunk(delta_text="partial"),),
+        chunks=(_text_event("partial"),),
         error=ModelCallError(
             ModelCallErrorCode.PROVIDER_DOWN,
             "gone",
@@ -537,7 +558,7 @@ async def test_stream_failure_mid_iteration_writes_failure_row_and_reraises(db_s
 
 async def test_stream_without_terminal_chunk_still_writes_one_row(db_session, log_sink):
     owner = LlmCallOwner(kind="chat_run", id=uuid4())
-    router = _FakeRouter(chunks=(ModelChunk(delta_text="never finishes"),))
+    router = _FakeRouter(chunks=(_text_event("never finishes"),))
 
     await _observe(db_session, router, owner=owner, streaming=True)
 

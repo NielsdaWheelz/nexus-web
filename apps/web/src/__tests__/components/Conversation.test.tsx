@@ -41,6 +41,7 @@ function paneSizing(input: {
 const tailMocks = vi.hoisted(() => ({
   tailChatRun: vi.fn(),
   abortAll: vi.fn(),
+  cancelRun: vi.fn(),
   useChatRunTail: vi.fn(),
 }));
 
@@ -293,6 +294,16 @@ function activeBranchBRun(): ChatRunResponse["data"] {
     conversation: treeResponse().conversation,
     user_message: branchBUser,
     assistant_message: branchBPendingAssistant,
+    stream_state: {
+      status: "running",
+      last_event_seq: 0,
+      folded_event_seq: 0,
+      assistant_current_text: "",
+      tool_calls: [],
+      activity: null,
+      reconnectable: true,
+      terminal: false,
+    },
   };
 }
 
@@ -364,6 +375,16 @@ function retryRun(): ChatRunResponse["data"] {
     conversation: failedRootRetryTree().conversation,
     user_message: retryUser,
     assistant_message: retryAssistant,
+    stream_state: {
+      status: "queued",
+      last_event_seq: 0,
+      folded_event_seq: 0,
+      assistant_current_text: "",
+      tool_calls: [],
+      activity: null,
+      reconnectable: true,
+      terminal: false,
+    },
   };
 }
 
@@ -460,6 +481,7 @@ describe("Conversation", () => {
   beforeEach(() => {
     tailMocks.tailChatRun.mockReset();
     tailMocks.abortAll.mockReset();
+    tailMocks.cancelRun.mockReset();
     tailMocks.useChatRunTail.mockReset();
     tailMocks.useChatRunTail.mockImplementation(
       (options?: {
@@ -477,6 +499,7 @@ describe("Conversation", () => {
           },
         ),
         abortAll: tailMocks.abortAll,
+        cancelRun: tailMocks.cancelRun,
         activeRunId: null,
       }),
     );

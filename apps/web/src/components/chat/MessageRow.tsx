@@ -31,6 +31,7 @@ interface MessageRowProps {
 }
 
 function errorLabel(message: ConversationMessage): string {
+  if (message.error_code === "E_CANCELLED") return "Response cancelled.";
   if (message.error_code === "E_LLM_INCOMPLETE")
     return "Response stopped before completion.";
   if (message.error_code === "E_STREAM_INTERRUPTED")
