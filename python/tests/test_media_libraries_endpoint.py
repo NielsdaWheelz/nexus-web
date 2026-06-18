@@ -12,6 +12,7 @@ from uuid import UUID
 import pytest
 from sqlalchemy import text
 
+from nexus.services import library_entries, library_governance
 from tests.factories import (
     add_library_member,
     create_test_library,
@@ -331,3 +332,88 @@ class TestPostMediaLibrariesEndpoint:
 
         assert response.status_code == 400, response.text
         assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
+
+
+class TestSystemMediaDeletionGuards:
+    def test_delete_media_from_system_library_is_forbidden(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        viewer_id = create_test_user_id()
+        _bootstrap_user(auth_client, viewer_id)
+
+        with direct_db.session() as session:
+            media_id = create_test_media(session, title="System Delete Media")
+            system_library_id = library_governance.ensure_system_library(
+                session,
+                system_key=f"test_delete_system_{media_id.hex[:12]}",
+                name="System Delete Library",
+                owner_user_id=viewer_id,
+            )
+            library_entries.ensure_entry(
+                session,
+                system_library_id,
+                library_entries.media_target(media_id),
+            )
+            session.commit()
+
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("memberships", "library_id", system_library_id)
+        direct_db.register_cleanup("libraries", "id", system_library_id)
+
+        response = auth_client.delete(
+            f"/media/{media_id}?library_id={system_library_id}",
+            headers=auth_headers(viewer_id),
+        )
+
+        assert response.status_code == 403, response.text
+        assert response.json()["error"]["code"] == "E_LIBRARY_FORBIDDEN"
+        assert system_library_id in _library_entry_ids_for_media(direct_db, media_id)
+
+    def test_delete_media_for_viewer_does_not_hide_system_library_media(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        viewer_id = create_test_user_id()
+        _bootstrap_user(auth_client, viewer_id)
+
+        with direct_db.session() as session:
+            media_id = create_test_media(session, title="System Hidden Media")
+            system_library_id = library_governance.ensure_system_library(
+                session,
+                system_key=f"test_hidden_system_{media_id.hex[:12]}",
+                name="System Hidden Library",
+                owner_user_id=viewer_id,
+            )
+            library_entries.ensure_entry(
+                session,
+                system_library_id,
+                library_entries.media_target(media_id),
+            )
+            session.commit()
+
+        direct_db.register_cleanup("user_media_deletions", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("memberships", "library_id", system_library_id)
+        direct_db.register_cleanup("libraries", "id", system_library_id)
+
+        response = auth_client.delete(
+            f"/media/{media_id}",
+            headers=auth_headers(viewer_id),
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["data"]["hidden_for_viewer"] is False
+        assert system_library_id in _library_entry_ids_for_media(direct_db, media_id)
+        with direct_db.session() as session:
+            tombstone = session.execute(
+                text(
+                    """
+                    SELECT 1
+                    FROM user_media_deletions
+                    WHERE user_id = :viewer_id AND media_id = :media_id
+                    """
+                ),
+                {"viewer_id": viewer_id, "media_id": media_id},
+            ).first()
+        assert tombstone is None

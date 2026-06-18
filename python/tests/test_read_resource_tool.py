@@ -40,6 +40,7 @@ from tests.test_resource_graph_resolve import (
     _make_page,
     _make_pdf,
     _make_span,
+    _seed_resolved_oracle_anchor,
 )
 
 pytestmark = pytest.mark.integration
@@ -410,6 +411,26 @@ def test_read_resource_oracle_reading_non_owner_masked(
 
     assert result.is_error, "a non-owner must not read another user's reading"
     assert result.error_code == "missing"
+
+
+def test_read_resource_oracle_passage_anchor_returns_body_non_citable(
+    db_session: Session, bootstrapped_user: UUID
+):
+    quote = "The forest lamp descends through shadow and ordeal toward dawn."
+    anchor_id = _seed_resolved_oracle_anchor(db_session, bootstrapped_user, quote=quote)
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    uri = f"oracle_passage_anchor:{anchor_id}"
+    _admit_reference(db_session, conversation_id, uri)
+
+    result = execute_read_resource(
+        db_session, viewer_id=bootstrapped_user, conversation_id=conversation_id, uri=uri
+    )
+
+    assert not result.is_error, f"Resolved Oracle passage anchor should read; got {result}"
+    assert result.kind == "oracle_passage_anchor"
+    assert result.body == quote
+    assert result.citation_result_type is None
+    assert result.citation_source_id is None
 
 
 def test_read_resource_span_returns_body(db_session: Session, bootstrapped_user: UUID):

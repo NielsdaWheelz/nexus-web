@@ -68,7 +68,8 @@ describe("resourceRef", () => {
 
   it("guards scheme membership", () => {
     expect(isResourceScheme("media")).toBe(true);
-    expect(isResourceScheme("oracle_corpus_passage")).toBe(true);
+    expect(isResourceScheme("oracle_passage_anchor")).toBe(true);
+    expect(isResourceScheme("oracle_corpus_passage")).toBe(false);
     expect(isResourceScheme("library_intelligence_revision")).toBe(true);
     expect(isResourceScheme("reader_apparatus_item")).toBe(true);
     expect(isResourceScheme("tag")).toBe(false);

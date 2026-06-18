@@ -30,7 +30,9 @@ ORACLE_EMBEDDING_MODEL = "test_hash_v2_256"
 ORACLE_EMBEDDING_DIMENSIONS = 256
 ORACLE_TOKEN_RE = re.compile(r"[a-z0-9]+")
 
-ORACLE_MANIFEST_DIR = Path(__file__).resolve().parents[3] / "scripts" / "oracle"
+# Frozen v1 seed snapshot. A historical migration must be self-contained, not read the
+# live scripts/oracle manifest (which the Oracle Corpus library cutover reformats to v2).
+ORACLE_MANIFEST_DIR = Path(__file__).resolve().parents[2] / "oracle_v1_seed"
 
 
 def _load_oracle_manifest(filename: str) -> list[dict]:

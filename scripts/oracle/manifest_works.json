@@ -1,732 +1,1495 @@
 [
   {
-    "slug": "dante-inferno-longfellow",
+    "work_key": "dante-inferno-longfellow",
     "title": "The Divine Comedy: Inferno",
-    "author": "Dante Alighieri (trans. Henry Wadsworth Longfellow)",
-    "year": "1867",
-    "edition_label": "Longfellow translation, 1867",
+    "author_text": "Dante Alighieri (trans. Henry Wadsworth Longfellow)",
     "source_repository": "project_gutenberg",
     "source_url": "https://www.gutenberg.org/ebooks/1001",
-    "passages": [
+    "source_download_url": "https://www.gutenberg.org/ebooks/1001.epub.noimages",
+    "source_media_kind": "epub",
+    "display_order": 10,
+    "passage_anchors": [
       {
-        "passage_index": 0,
-        "canonical_text": "Midway upon the journey of our life\nI found myself within a forest dark,\nFor the straightforward pathway had been lost.",
-        "locator_label": "Inferno I.1-3",
-        "tags": ["forest", "loss", "threshold", "descent"]
+        "passage_key": "dante-inferno-longfellow-p0",
+        "display_label": "Inferno I.1-3",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "Midway upon the journey of our life\nI found myself within a forest dark,\nFor the straightforward pathway had been lost."
+        },
+        "tags": [
+          "forest",
+          "loss",
+          "threshold",
+          "descent"
+        ],
+        "phase_hints": [
+          "descent"
+        ]
       },
       {
-        "passage_index": 1,
-        "canonical_text": "Ah me! how hard a thing it is to say\nWhat was this forest savage, rough, and stern,\nWhich in the very thought renews the fear.",
-        "locator_label": "Inferno I.4-6",
-        "tags": ["forest", "fear", "echo"]
+        "passage_key": "dante-inferno-longfellow-p1",
+        "display_label": "Inferno I.4-6",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "Ah me! how hard a thing it is to say\nWhat was this forest savage, rough, and stern,\nWhich in the very thought renews the fear."
+        },
+        "tags": [
+          "forest",
+          "fear",
+          "echo"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 2,
-        "canonical_text": "All hope abandon, ye who enter in!",
-        "locator_label": "Inferno III.9",
-        "tags": ["threshold", "door", "loss", "descent"]
+        "passage_key": "dante-inferno-longfellow-p2",
+        "display_label": "Inferno III.9",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "All hope abandon, ye who enter in!"
+        },
+        "tags": [
+          "threshold",
+          "door",
+          "loss",
+          "descent"
+        ],
+        "phase_hints": [
+          "descent"
+        ]
       },
       {
-        "passage_index": 3,
-        "canonical_text": "There sighs, complaints, and ululations loud\nResounded through the air without a star,\nWhence I, at the beginning, wept thereat.",
-        "locator_label": "Inferno III.22-24",
-        "tags": ["night", "echo", "star", "exile"]
+        "passage_key": "dante-inferno-longfellow-p3",
+        "display_label": "Inferno III.22-24",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "There sighs, complaints, and ululations loud\nResounded through the air without a star,\nWhence I, at the beginning, wept thereat."
+        },
+        "tags": [
+          "night",
+          "echo",
+          "star",
+          "exile"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 4,
-        "canonical_text": "Thence we came forth to rebehold the stars.",
-        "locator_label": "Inferno XXXIV.139",
-        "tags": ["star", "ascent", "threshold"]
+        "passage_key": "dante-inferno-longfellow-p4",
+        "display_label": "Inferno XXXIV.139",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "Thence we came forth to rebehold the stars."
+        },
+        "tags": [
+          "star",
+          "ascent",
+          "threshold"
+        ],
+        "phase_hints": [
+          "ascent"
+        ]
       }
     ]
   },
   {
-    "slug": "milton-paradise-lost",
+    "work_key": "milton-paradise-lost",
     "title": "Paradise Lost",
-    "author": "John Milton",
-    "year": "1667",
-    "edition_label": "First edition, 1667",
+    "author_text": "John Milton",
     "source_repository": "standard_ebooks",
     "source_url": "https://standardebooks.org/ebooks/john-milton/paradise-lost",
-    "passages": [
+    "source_download_url": "https://standardebooks.org/ebooks/john-milton/paradise-lost/downloads/john-milton_paradise-lost.epub",
+    "source_media_kind": "epub",
+    "display_order": 20,
+    "passage_anchors": [
       {
-        "passage_index": 0,
-        "canonical_text": "Of Mans First Disobedience, and the Fruit\nOf that Forbidden Tree, whose mortal tast\nBrought Death into the World, and all our woe,\nWith loss of Eden, till one greater Man\nRestore us, and regain the blissful Seat,\nSing Heav'nly Muse.",
-        "locator_label": "Paradise Lost I.1-6",
-        "tags": ["loss", "garden", "longing"]
+        "passage_key": "milton-paradise-lost-p0",
+        "display_label": "Paradise Lost I.1-6",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "Of Mans First Disobedience, and the Fruit\nOf that Forbidden Tree, whose mortal tast\nBrought Death into the World, and all our woe,\nWith loss of Eden, till one greater Man\nRestore us, and regain the blissful Seat,\nSing Heav'nly Muse."
+        },
+        "tags": [
+          "loss",
+          "garden",
+          "longing"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 1,
-        "canonical_text": "What though the field be lost?\nAll is not lost; the unconquerable Will,\nAnd study of revenge, immortal hate,\nAnd courage never to submit or yield:\nAnd what is else not to be overcome?",
-        "locator_label": "Paradise Lost I.105-109",
-        "tags": ["wrath", "ruin", "exile"]
+        "passage_key": "milton-paradise-lost-p1",
+        "display_label": "Paradise Lost I.105-109",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "What though the field be lost?\nAll is not lost; the unconquerable Will,\nAnd study of revenge, immortal hate,\nAnd courage never to submit or yield:\nAnd what is else not to be overcome?"
+        },
+        "tags": [
+          "wrath",
+          "ruin",
+          "exile"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 2,
-        "canonical_text": "The mind is its own place, and in it self\nCan make a Heav'n of Hell, a Hell of Heav'n.",
-        "locator_label": "Paradise Lost I.254-255",
-        "tags": ["mirror", "dream", "weight"]
+        "passage_key": "milton-paradise-lost-p2",
+        "display_label": "Paradise Lost I.254-255",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "The mind is its own place, and in it self\nCan make a Heav'n of Hell, a Hell of Heav'n."
+        },
+        "tags": [
+          "mirror",
+          "dream",
+          "weight"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 3,
-        "canonical_text": "Better to reign in Hell, then serve in Heav'n.",
-        "locator_label": "Paradise Lost I.263",
-        "tags": ["crown", "wrath", "exile", "ruin"]
+        "passage_key": "milton-paradise-lost-p3",
+        "display_label": "Paradise Lost I.263",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "Better to reign in Hell, then serve in Heav'n."
+        },
+        "tags": [
+          "crown",
+          "wrath",
+          "exile",
+          "ruin"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 4,
-        "canonical_text": "Long is the way\nAnd hard, that out of Hell leads up to light.",
-        "locator_label": "Paradise Lost II.432-433",
-        "tags": ["ascent", "threshold", "fire"]
+        "passage_key": "milton-paradise-lost-p4",
+        "display_label": "Paradise Lost II.432-433",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "Long is the way\nAnd hard, that out of Hell leads up to light."
+        },
+        "tags": [
+          "ascent",
+          "threshold",
+          "fire"
+        ],
+        "phase_hints": [
+          "ascent"
+        ]
       }
     ]
   },
   {
-    "slug": "blake-songs-of-experience",
+    "work_key": "blake-songs-of-experience",
     "title": "Songs of Experience",
-    "author": "William Blake",
-    "year": "1794",
-    "edition_label": "First edition, 1794",
+    "author_text": "William Blake",
     "source_repository": "project_gutenberg",
     "source_url": "https://www.gutenberg.org/ebooks/1934",
-    "passages": [
+    "source_download_url": "https://www.gutenberg.org/ebooks/1934.epub.noimages",
+    "source_media_kind": "epub",
+    "display_order": 30,
+    "passage_anchors": [
       {
-        "passage_index": 0,
-        "canonical_text": "Tyger Tyger, burning bright,\nIn the forests of the night;\nWhat immortal hand or eye,\nCould frame thy fearful symmetry?",
-        "locator_label": "Songs of Experience: The Tyger 1-4",
-        "tags": ["fire", "forest", "night", "beast", "fear"]
+        "passage_key": "blake-songs-of-experience-p0",
+        "display_label": "Songs of Experience: The Tyger 1-4",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "Tyger Tyger, burning bright,\nIn the forests of the night;\nWhat immortal hand or eye,\nCould frame thy fearful symmetry?"
+        },
+        "tags": [
+          "fire",
+          "forest",
+          "night",
+          "beast",
+          "fear"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 1,
-        "canonical_text": "When the stars threw down their spears\nAnd water'd heaven with their tears:\nDid he smile his work to see?\nDid he who made the Lamb make thee?",
-        "locator_label": "Songs of Experience: The Tyger 17-20",
-        "tags": ["star", "water", "beast", "dream"]
+        "passage_key": "blake-songs-of-experience-p1",
+        "display_label": "Songs of Experience: The Tyger 17-20",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "When the stars threw down their spears\nAnd water'd heaven with their tears:\nDid he smile his work to see?\nDid he who made the Lamb make thee?"
+        },
+        "tags": [
+          "star",
+          "water",
+          "beast",
+          "dream"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 2,
-        "canonical_text": "O Rose thou art sick.\nThe invisible worm,\nThat flies in the night\nIn the howling storm:",
-        "locator_label": "Songs of Experience: The Sick Rose 1-4",
-        "tags": ["night", "garden", "ruin", "loss"]
+        "passage_key": "blake-songs-of-experience-p2",
+        "display_label": "Songs of Experience: The Sick Rose 1-4",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "O Rose thou art sick.\nThe invisible worm,\nThat flies in the night\nIn the howling storm:"
+        },
+        "tags": [
+          "night",
+          "garden",
+          "ruin",
+          "loss"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 3,
-        "canonical_text": "Has found out thy bed\nOf crimson joy:\nAnd his dark secret love\nDoes thy life destroy.",
-        "locator_label": "Songs of Experience: The Sick Rose 5-8",
-        "tags": ["love", "blood", "ruin", "sleep"]
+        "passage_key": "blake-songs-of-experience-p3",
+        "display_label": "Songs of Experience: The Sick Rose 5-8",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "Has found out thy bed\nOf crimson joy:\nAnd his dark secret love\nDoes thy life destroy."
+        },
+        "tags": [
+          "love",
+          "blood",
+          "ruin",
+          "sleep"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 4,
-        "canonical_text": "I wander thro' each charter'd street,\nNear where the charter'd Thames does flow.\nAnd mark in every face I meet\nMarks of weakness, marks of woe.",
-        "locator_label": "Songs of Experience: London 1-4",
-        "tags": ["exile", "weight", "ghost"]
+        "passage_key": "blake-songs-of-experience-p4",
+        "display_label": "Songs of Experience: London 1-4",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "I wander thro' each charter'd street,\nNear where the charter'd Thames does flow.\nAnd mark in every face I meet\nMarks of weakness, marks of woe."
+        },
+        "tags": [
+          "exile",
+          "weight",
+          "ghost"
+        ],
+        "phase_hints": []
       }
     ]
   },
   {
-    "slug": "blake-marriage-heaven-hell",
+    "work_key": "blake-marriage-heaven-hell",
     "title": "The Marriage of Heaven and Hell",
-    "author": "William Blake",
-    "year": "1790",
-    "edition_label": "First edition, c. 1790-1793",
+    "author_text": "William Blake",
     "source_repository": "project_gutenberg",
     "source_url": "https://www.gutenberg.org/ebooks/45315",
-    "passages": [
+    "source_download_url": "https://www.gutenberg.org/ebooks/45315.epub.noimages",
+    "source_media_kind": "epub",
+    "display_order": 40,
+    "passage_anchors": [
       {
-        "passage_index": 0,
-        "canonical_text": "The road of excess leads to the palace of wisdom.",
-        "locator_label": "Proverbs of Hell",
-        "tags": ["threshold", "fire", "ascent"]
+        "passage_key": "blake-marriage-heaven-hell-p0",
+        "display_label": "Proverbs of Hell",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "The road of excess leads to the palace of wisdom."
+        },
+        "tags": [
+          "threshold",
+          "fire",
+          "ascent"
+        ],
+        "phase_hints": [
+          "ascent"
+        ]
       },
       {
-        "passage_index": 1,
-        "canonical_text": "The tygers of wrath are wiser than the horses of instruction.",
-        "locator_label": "Proverbs of Hell",
-        "tags": ["wrath", "beast", "fire"]
+        "passage_key": "blake-marriage-heaven-hell-p1",
+        "display_label": "Proverbs of Hell",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "The tygers of wrath are wiser than the horses of instruction."
+        },
+        "tags": [
+          "wrath",
+          "beast",
+          "fire"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 2,
-        "canonical_text": "If the doors of perception were cleansed every thing would appear to man as it is, Infinite.",
-        "locator_label": "A Memorable Fancy, plate 14",
-        "tags": ["door", "threshold", "mirror", "dream"]
+        "passage_key": "blake-marriage-heaven-hell-p2",
+        "display_label": "A Memorable Fancy, plate 14",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "If the doors of perception were cleansed every thing would appear to man as it is, Infinite."
+        },
+        "tags": [
+          "door",
+          "threshold",
+          "mirror",
+          "dream"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 3,
-        "canonical_text": "What is now proved was once, only imagin'd.",
-        "locator_label": "Proverbs of Hell",
-        "tags": ["dream", "echo"]
+        "passage_key": "blake-marriage-heaven-hell-p3",
+        "display_label": "Proverbs of Hell",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "What is now proved was once, only imagin'd."
+        },
+        "tags": [
+          "dream",
+          "echo"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 4,
-        "canonical_text": "Eternity is in love with the productions of time.",
-        "locator_label": "Proverbs of Hell",
-        "tags": ["love", "longing", "star"]
+        "passage_key": "blake-marriage-heaven-hell-p4",
+        "display_label": "Proverbs of Hell",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "Eternity is in love with the productions of time."
+        },
+        "tags": [
+          "love",
+          "longing",
+          "star"
+        ],
+        "phase_hints": []
       }
     ]
   },
   {
-    "slug": "poe-the-raven",
+    "work_key": "poe-the-raven",
     "title": "The Raven",
-    "author": "Edgar Allan Poe",
-    "year": "1845",
-    "edition_label": "First publication, 1845",
+    "author_text": "Edgar Allan Poe",
     "source_repository": "project_gutenberg",
     "source_url": "https://www.gutenberg.org/ebooks/1065",
-    "passages": [
+    "source_download_url": "https://www.gutenberg.org/ebooks/1065.epub.noimages",
+    "source_media_kind": "epub",
+    "display_order": 50,
+    "passage_anchors": [
       {
-        "passage_index": 0,
-        "canonical_text": "Once upon a midnight dreary, while I pondered, weak and weary,\nOver many a quaint and curious volume of forgotten lore—\nWhile I nodded, nearly napping, suddenly there came a tapping,\nAs of some one gently rapping, rapping at my chamber door.",
-        "locator_label": "The Raven 1-4",
-        "tags": ["night", "door", "ghost", "echo"]
+        "passage_key": "poe-the-raven-p0",
+        "display_label": "The Raven 1-4",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "Once upon a midnight dreary, while I pondered, weak and weary,\nOver many a quaint and curious volume of forgotten lore—\nWhile I nodded, nearly napping, suddenly there came a tapping,\nAs of some one gently rapping, rapping at my chamber door."
+        },
+        "tags": [
+          "night",
+          "door",
+          "ghost",
+          "echo"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 1,
-        "canonical_text": "Deep into that darkness peering, long I stood there wondering, fearing,\nDoubting, dreaming dreams no mortal ever dared to dream before.",
-        "locator_label": "The Raven 25-26",
-        "tags": ["night", "dream", "fear", "threshold"]
+        "passage_key": "poe-the-raven-p1",
+        "display_label": "The Raven 25-26",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "Deep into that darkness peering, long I stood there wondering, fearing,\nDoubting, dreaming dreams no mortal ever dared to dream before."
+        },
+        "tags": [
+          "night",
+          "dream",
+          "fear",
+          "threshold"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 2,
-        "canonical_text": "Quoth the Raven \"Nevermore.\"",
-        "locator_label": "The Raven 48",
-        "tags": ["echo", "loss", "ghost"]
+        "passage_key": "poe-the-raven-p2",
+        "display_label": "The Raven 48",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "Quoth the Raven \"Nevermore.\""
+        },
+        "tags": [
+          "echo",
+          "loss",
+          "ghost"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 3,
-        "canonical_text": "And the Raven, never flitting, still is sitting, still is sitting\nOn the pallid bust of Pallas just above my chamber door;\nAnd his eyes have all the seeming of a demon's that is dreaming,\nAnd the lamp-light o'er him streaming throws his shadow on the floor;",
-        "locator_label": "The Raven 103-106",
-        "tags": ["door", "ghost", "dream", "weight"]
+        "passage_key": "poe-the-raven-p3",
+        "display_label": "The Raven 103-106",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "And the Raven, never flitting, still is sitting, still is sitting\nOn the pallid bust of Pallas just above my chamber door;\nAnd his eyes have all the seeming of a demon's that is dreaming,\nAnd the lamp-light o'er him streaming throws his shadow on the floor;"
+        },
+        "tags": [
+          "door",
+          "ghost",
+          "dream",
+          "weight"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 4,
-        "canonical_text": "And my soul from out that shadow that lies floating on the floor\nShall be lifted—nevermore!",
-        "locator_label": "The Raven 107-108",
-        "tags": ["weight", "loss", "exile"]
+        "passage_key": "poe-the-raven-p4",
+        "display_label": "The Raven 107-108",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "And my soul from out that shadow that lies floating on the floor\nShall be lifted—nevermore!"
+        },
+        "tags": [
+          "weight",
+          "loss",
+          "exile"
+        ],
+        "phase_hints": []
       }
     ]
   },
   {
-    "slug": "shelley-frankenstein",
+    "work_key": "shelley-frankenstein",
     "title": "Frankenstein; or, The Modern Prometheus",
-    "author": "Mary Shelley",
-    "year": "1818",
-    "edition_label": "First edition, 1818",
+    "author_text": "Mary Shelley",
     "source_repository": "standard_ebooks",
     "source_url": "https://standardebooks.org/ebooks/mary-shelley/frankenstein",
-    "passages": [
+    "source_download_url": "https://standardebooks.org/ebooks/mary-shelley/frankenstein/downloads/mary-shelley_frankenstein.epub",
+    "source_media_kind": "epub",
+    "display_order": 60,
+    "passage_anchors": [
       {
-        "passage_index": 0,
-        "canonical_text": "You will rejoice to hear that no disaster has accompanied the commencement of an enterprise which you have regarded with such evil forebodings.",
-        "locator_label": "Frankenstein, Letter 1",
-        "tags": ["threshold", "longing"]
+        "passage_key": "shelley-frankenstein-p0",
+        "display_label": "Frankenstein, Letter 1",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "You will rejoice to hear that no disaster has accompanied the commencement of an enterprise which you have regarded with such evil forebodings."
+        },
+        "tags": [
+          "threshold",
+          "longing"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 1,
-        "canonical_text": "It was on a dreary night of November that I beheld the accomplishment of my toils.",
-        "locator_label": "Frankenstein, Chapter 5",
-        "tags": ["night", "threshold", "ghost"]
+        "passage_key": "shelley-frankenstein-p1",
+        "display_label": "Frankenstein, Chapter 5",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "It was on a dreary night of November that I beheld the accomplishment of my toils."
+        },
+        "tags": [
+          "night",
+          "threshold",
+          "ghost"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 2,
-        "canonical_text": "I saw the dull yellow eye of the creature open; it breathed hard, and a convulsive motion agitated its limbs.",
-        "locator_label": "Frankenstein, Chapter 5",
-        "tags": ["beast", "breath", "fear"]
+        "passage_key": "shelley-frankenstein-p2",
+        "display_label": "Frankenstein, Chapter 5",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "I saw the dull yellow eye of the creature open; it breathed hard, and a convulsive motion agitated its limbs."
+        },
+        "tags": [
+          "beast",
+          "breath",
+          "fear"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 3,
-        "canonical_text": "Beware; for I am fearless, and therefore powerful.",
-        "locator_label": "Frankenstein, Chapter 20",
-        "tags": ["wrath", "beast", "fear"]
+        "passage_key": "shelley-frankenstein-p3",
+        "display_label": "Frankenstein, Chapter 20",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "Beware; for I am fearless, and therefore powerful."
+        },
+        "tags": [
+          "wrath",
+          "beast",
+          "fear"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 4,
-        "canonical_text": "I am malicious because I am miserable.",
-        "locator_label": "Frankenstein, Chapter 17",
-        "tags": ["wrath", "loss", "exile"]
+        "passage_key": "shelley-frankenstein-p4",
+        "display_label": "Frankenstein, Chapter 17",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "I am malicious because I am miserable."
+        },
+        "tags": [
+          "wrath",
+          "loss",
+          "exile"
+        ],
+        "phase_hints": []
       }
     ]
   },
   {
-    "slug": "shelley-ozymandias",
+    "work_key": "shelley-ozymandias",
     "title": "Ozymandias",
-    "author": "Percy Bysshe Shelley",
-    "year": "1818",
-    "edition_label": "First publication, 1818",
+    "author_text": "Percy Bysshe Shelley",
     "source_repository": "wikisource",
     "source_url": "https://en.wikisource.org/wiki/Ozymandias_(Shelley)",
-    "passages": [
+    "source_download_url": "https://en.wikisource.org/wiki/Ozymandias_(Shelley)",
+    "source_media_kind": "web_article",
+    "display_order": 70,
+    "passage_anchors": [
       {
-        "passage_index": 0,
-        "canonical_text": "I met a traveller from an antique land,\nWho said—\"Two vast and trunkless legs of stone\nStand in the desert. . . .\"",
-        "locator_label": "Ozymandias 1-3",
-        "tags": ["dust", "exile", "ghost"]
+        "passage_key": "shelley-ozymandias-p0",
+        "display_label": "Ozymandias 1-3",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "I met a traveller from an antique land,\nWho said—\"Two vast and trunkless legs of stone\nStand in the desert. . . .\""
+        },
+        "tags": [
+          "dust",
+          "exile",
+          "ghost"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 1,
-        "canonical_text": "Near them, on the sand,\nHalf sunk a shattered visage lies, whose frown,\nAnd wrinkled lip, and sneer of cold command,\nTell that its sculptor well those passions read",
-        "locator_label": "Ozymandias 3-6",
-        "tags": ["ruin", "wrath", "ghost"]
+        "passage_key": "shelley-ozymandias-p1",
+        "display_label": "Ozymandias 3-6",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "Near them, on the sand,\nHalf sunk a shattered visage lies, whose frown,\nAnd wrinkled lip, and sneer of cold command,\nTell that its sculptor well those passions read"
+        },
+        "tags": [
+          "ruin",
+          "wrath",
+          "ghost"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 2,
-        "canonical_text": "And on the pedestal, these words appear:\nMy name is Ozymandias, King of Kings;\nLook on my Works, ye Mighty, and despair!",
-        "locator_label": "Ozymandias 9-11",
-        "tags": ["crown", "ruin", "weight"]
+        "passage_key": "shelley-ozymandias-p2",
+        "display_label": "Ozymandias 9-11",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "And on the pedestal, these words appear:\nMy name is Ozymandias, King of Kings;\nLook on my Works, ye Mighty, and despair!"
+        },
+        "tags": [
+          "crown",
+          "ruin",
+          "weight"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 3,
-        "canonical_text": "Nothing beside remains. Round the decay\nOf that colossal Wreck, boundless and bare\nThe lone and level sands stretch far away.",
-        "locator_label": "Ozymandias 12-14",
-        "tags": ["dust", "ruin", "silence"]
+        "passage_key": "shelley-ozymandias-p3",
+        "display_label": "Ozymandias 12-14",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "Nothing beside remains. Round the decay\nOf that colossal Wreck, boundless and bare\nThe lone and level sands stretch far away."
+        },
+        "tags": [
+          "dust",
+          "ruin",
+          "silence"
+        ],
+        "phase_hints": []
       }
     ]
   },
   {
-    "slug": "coleridge-rime-ancient-mariner",
+    "work_key": "coleridge-rime-ancient-mariner",
     "title": "The Rime of the Ancient Mariner",
-    "author": "Samuel Taylor Coleridge",
-    "year": "1798",
-    "edition_label": "Lyrical Ballads, first edition, 1798",
+    "author_text": "Samuel Taylor Coleridge",
     "source_repository": "project_gutenberg",
     "source_url": "https://www.gutenberg.org/ebooks/151",
-    "passages": [
+    "source_download_url": "https://www.gutenberg.org/ebooks/151.epub.noimages",
+    "source_media_kind": "epub",
+    "display_order": 80,
+    "passage_anchors": [
       {
-        "passage_index": 0,
-        "canonical_text": "It is an ancient Mariner,\nAnd he stoppeth one of three.\n'By thy long grey beard and glittering eye,\nNow wherefore stopp'st thou me?'",
-        "locator_label": "Rime I.1-4",
-        "tags": ["threshold", "echo", "ghost"]
+        "passage_key": "coleridge-rime-ancient-mariner-p0",
+        "display_label": "Rime I.1-4",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "It is an ancient Mariner,\nAnd he stoppeth one of three.\n'By thy long grey beard and glittering eye,\nNow wherefore stopp'st thou me?'"
+        },
+        "tags": [
+          "threshold",
+          "echo",
+          "ghost"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 1,
-        "canonical_text": "Water, water, every where,\nAnd all the boards did shrink;\nWater, water, every where,\nNor any drop to drink.",
-        "locator_label": "Rime II.119-122",
-        "tags": ["water", "sea", "exile"]
+        "passage_key": "coleridge-rime-ancient-mariner-p1",
+        "display_label": "Rime II.119-122",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "Water, water, every where,\nAnd all the boards did shrink;\nWater, water, every where,\nNor any drop to drink."
+        },
+        "tags": [
+          "water",
+          "sea",
+          "exile"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 2,
-        "canonical_text": "Alone, alone, all, all alone,\nAlone on a wide wide sea!\nAnd never a saint took pity on\nMy soul in agony.",
-        "locator_label": "Rime IV.232-235",
-        "tags": ["sea", "exile", "silence", "loss"]
+        "passage_key": "coleridge-rime-ancient-mariner-p2",
+        "display_label": "Rime IV.232-235",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "Alone, alone, all, all alone,\nAlone on a wide wide sea!\nAnd never a saint took pity on\nMy soul in agony."
+        },
+        "tags": [
+          "sea",
+          "exile",
+          "silence",
+          "loss"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 3,
-        "canonical_text": "He prayeth best, who loveth best\nAll things both great and small;\nFor the dear God who loveth us,\nHe made and loveth all.",
-        "locator_label": "Rime VII.614-617",
-        "tags": ["mercy", "love"]
+        "passage_key": "coleridge-rime-ancient-mariner-p3",
+        "display_label": "Rime VII.614-617",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "He prayeth best, who loveth best\nAll things both great and small;\nFor the dear God who loveth us,\nHe made and loveth all."
+        },
+        "tags": [
+          "mercy",
+          "love"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 4,
-        "canonical_text": "A sadder and a wiser man,\nHe rose the morrow morn.",
-        "locator_label": "Rime VII.624-625",
-        "tags": ["day", "ascent", "weight"]
+        "passage_key": "coleridge-rime-ancient-mariner-p4",
+        "display_label": "Rime VII.624-625",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "A sadder and a wiser man,\nHe rose the morrow morn."
+        },
+        "tags": [
+          "day",
+          "ascent",
+          "weight"
+        ],
+        "phase_hints": [
+          "ascent"
+        ]
       }
     ]
   },
   {
-    "slug": "coleridge-kubla-khan",
+    "work_key": "coleridge-kubla-khan",
     "title": "Kubla Khan",
-    "author": "Samuel Taylor Coleridge",
-    "year": "1816",
-    "edition_label": "First publication, 1816",
+    "author_text": "Samuel Taylor Coleridge",
     "source_repository": "wikisource",
     "source_url": "https://en.wikisource.org/wiki/Kubla_Khan",
-    "passages": [
+    "source_download_url": "https://en.wikisource.org/wiki/Kubla_Khan",
+    "source_media_kind": "web_article",
+    "display_order": 90,
+    "passage_anchors": [
       {
-        "passage_index": 0,
-        "canonical_text": "In Xanadu did Kubla Khan\nA stately pleasure-dome decree:\nWhere Alph, the sacred river, ran\nThrough caverns measureless to man\nDown to a sunless sea.",
-        "locator_label": "Kubla Khan 1-5",
-        "tags": ["dream", "water", "sea", "descent"]
+        "passage_key": "coleridge-kubla-khan-p0",
+        "display_label": "Kubla Khan 1-5",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "In Xanadu did Kubla Khan\nA stately pleasure-dome decree:\nWhere Alph, the sacred river, ran\nThrough caverns measureless to man\nDown to a sunless sea."
+        },
+        "tags": [
+          "dream",
+          "water",
+          "sea",
+          "descent"
+        ],
+        "phase_hints": [
+          "descent"
+        ]
       },
       {
-        "passage_index": 1,
-        "canonical_text": "A savage place! as holy and enchanted\nAs e'er beneath a waning moon was haunted\nBy woman wailing for her demon-lover!",
-        "locator_label": "Kubla Khan 14-16",
-        "tags": ["moon", "ghost", "longing", "love"]
+        "passage_key": "coleridge-kubla-khan-p1",
+        "display_label": "Kubla Khan 14-16",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "A savage place! as holy and enchanted\nAs e'er beneath a waning moon was haunted\nBy woman wailing for her demon-lover!"
+        },
+        "tags": [
+          "moon",
+          "ghost",
+          "longing",
+          "love"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 2,
-        "canonical_text": "And 'mid this tumult Kubla heard from far\nAncestral voices prophesying war!",
-        "locator_label": "Kubla Khan 29-30",
-        "tags": ["echo", "wrath", "ghost"]
+        "passage_key": "coleridge-kubla-khan-p2",
+        "display_label": "Kubla Khan 29-30",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "And 'mid this tumult Kubla heard from far\nAncestral voices prophesying war!"
+        },
+        "tags": [
+          "echo",
+          "wrath",
+          "ghost"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 3,
-        "canonical_text": "And all who heard should see them there,\nAnd all should cry, Beware! Beware!\nHis flashing eyes, his floating hair!\nWeave a circle round him thrice,\nAnd close your eyes with holy dread,",
-        "locator_label": "Kubla Khan 48-52",
-        "tags": ["fear", "dream", "threshold"]
+        "passage_key": "coleridge-kubla-khan-p3",
+        "display_label": "Kubla Khan 48-52",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "And all who heard should see them there,\nAnd all should cry, Beware! Beware!\nHis flashing eyes, his floating hair!\nWeave a circle round him thrice,\nAnd close your eyes with holy dread,"
+        },
+        "tags": [
+          "fear",
+          "dream",
+          "threshold"
+        ],
+        "phase_hints": []
       }
     ]
   },
   {
-    "slug": "keats-ode-nightingale",
+    "work_key": "keats-ode-nightingale",
     "title": "Ode to a Nightingale",
-    "author": "John Keats",
-    "year": "1819",
-    "edition_label": "First publication, 1819",
+    "author_text": "John Keats",
     "source_repository": "wikisource",
     "source_url": "https://en.wikisource.org/wiki/Ode_to_a_Nightingale",
-    "passages": [
+    "source_download_url": "https://en.wikisource.org/wiki/Ode_to_a_Nightingale",
+    "source_media_kind": "web_article",
+    "display_order": 100,
+    "passage_anchors": [
       {
-        "passage_index": 0,
-        "canonical_text": "My heart aches, and a drowsy numbness pains\nMy sense, as though of hemlock I had drunk,\nOr emptied some dull opiate to the drains\nOne minute past, and Lethe-wards had sunk:",
-        "locator_label": "Ode to a Nightingale 1-4",
-        "tags": ["sleep", "weight", "descent"]
+        "passage_key": "keats-ode-nightingale-p0",
+        "display_label": "Ode to a Nightingale 1-4",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "My heart aches, and a drowsy numbness pains\nMy sense, as though of hemlock I had drunk,\nOr emptied some dull opiate to the drains\nOne minute past, and Lethe-wards had sunk:"
+        },
+        "tags": [
+          "sleep",
+          "weight",
+          "descent"
+        ],
+        "phase_hints": [
+          "descent"
+        ]
       },
       {
-        "passage_index": 1,
-        "canonical_text": "Fade far away, dissolve, and quite forget\nWhat thou among the leaves hast never known,\nThe weariness, the fever, and the fret\nHere, where men sit and hear each other groan;",
-        "locator_label": "Ode to a Nightingale 21-24",
-        "tags": ["forest", "weight", "exile"]
+        "passage_key": "keats-ode-nightingale-p1",
+        "display_label": "Ode to a Nightingale 21-24",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "Fade far away, dissolve, and quite forget\nWhat thou among the leaves hast never known,\nThe weariness, the fever, and the fret\nHere, where men sit and hear each other groan;"
+        },
+        "tags": [
+          "forest",
+          "weight",
+          "exile"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 2,
-        "canonical_text": "Darkling I listen; and, for many a time\nI have been half in love with easeful Death,\nCalled him soft names in many a mused rhyme,\nTo take into the air my quiet breath;",
-        "locator_label": "Ode to a Nightingale 51-54",
-        "tags": ["night", "breath", "longing", "love"]
+        "passage_key": "keats-ode-nightingale-p2",
+        "display_label": "Ode to a Nightingale 51-54",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "Darkling I listen; and, for many a time\nI have been half in love with easeful Death,\nCalled him soft names in many a mused rhyme,\nTo take into the air my quiet breath;"
+        },
+        "tags": [
+          "night",
+          "breath",
+          "longing",
+          "love"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 3,
-        "canonical_text": "Thou wast not born for death, immortal Bird!\nNo hungry generations tread thee down;",
-        "locator_label": "Ode to a Nightingale 61-62",
-        "tags": ["beast", "ghost", "longing"]
+        "passage_key": "keats-ode-nightingale-p3",
+        "display_label": "Ode to a Nightingale 61-62",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "Thou wast not born for death, immortal Bird!\nNo hungry generations tread thee down;"
+        },
+        "tags": [
+          "beast",
+          "ghost",
+          "longing"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 4,
-        "canonical_text": "Was it a vision, or a waking dream?\nFled is that music:—Do I wake or sleep?",
-        "locator_label": "Ode to a Nightingale 79-80",
-        "tags": ["dream", "sleep", "echo", "mirror"]
+        "passage_key": "keats-ode-nightingale-p4",
+        "display_label": "Ode to a Nightingale 79-80",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "Was it a vision, or a waking dream?\nFled is that music:—Do I wake or sleep?"
+        },
+        "tags": [
+          "dream",
+          "sleep",
+          "echo",
+          "mirror"
+        ],
+        "phase_hints": []
       }
     ]
   },
   {
-    "slug": "keats-la-belle-dame",
+    "work_key": "keats-la-belle-dame",
     "title": "La Belle Dame sans Merci",
-    "author": "John Keats",
-    "year": "1819",
-    "edition_label": "First publication, 1820 (composed 1819)",
+    "author_text": "John Keats",
     "source_repository": "wikisource",
     "source_url": "https://en.wikisource.org/wiki/La_Belle_Dame_sans_Merci",
-    "passages": [
+    "source_download_url": "https://en.wikisource.org/wiki/La_Belle_Dame_sans_Merci",
+    "source_media_kind": "web_article",
+    "display_order": 110,
+    "passage_anchors": [
       {
-        "passage_index": 0,
-        "canonical_text": "O what can ail thee, knight-at-arms,\nAlone and palely loitering?\nThe sedge has wither'd from the lake,\nAnd no birds sing.",
-        "locator_label": "La Belle Dame sans Merci 1-4",
-        "tags": ["silence", "exile", "loss", "water"]
+        "passage_key": "keats-la-belle-dame-p0",
+        "display_label": "La Belle Dame sans Merci 1-4",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "O what can ail thee, knight-at-arms,\nAlone and palely loitering?\nThe sedge has wither'd from the lake,\nAnd no birds sing."
+        },
+        "tags": [
+          "silence",
+          "exile",
+          "loss",
+          "water"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 1,
-        "canonical_text": "I met a lady in the meads,\nFull beautiful—a faery's child,\nHer hair was long, her foot was light,\nAnd her eyes were wild.",
-        "locator_label": "La Belle Dame sans Merci 13-16",
-        "tags": ["dream", "love", "longing"]
+        "passage_key": "keats-la-belle-dame-p1",
+        "display_label": "La Belle Dame sans Merci 13-16",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "I met a lady in the meads,\nFull beautiful—a faery's child,\nHer hair was long, her foot was light,\nAnd her eyes were wild."
+        },
+        "tags": [
+          "dream",
+          "love",
+          "longing"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 2,
-        "canonical_text": "I saw pale kings and princes too,\nPale warriors, death-pale were they all;\nThey cried—\"La Belle Dame sans Merci\nHath thee in thrall!\"",
-        "locator_label": "La Belle Dame sans Merci 37-40",
-        "tags": ["ghost", "crown", "loss"]
+        "passage_key": "keats-la-belle-dame-p2",
+        "display_label": "La Belle Dame sans Merci 37-40",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "I saw pale kings and princes too,\nPale warriors, death-pale were they all;\nThey cried—\"La Belle Dame sans Merci\nHath thee in thrall!\""
+        },
+        "tags": [
+          "ghost",
+          "crown",
+          "loss"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 3,
-        "canonical_text": "And this is why I sojourn here,\nAlone and palely loitering,\nThough the sedge is wither'd from the lake,\nAnd no birds sing.",
-        "locator_label": "La Belle Dame sans Merci 45-48",
-        "tags": ["silence", "exile", "echo"]
+        "passage_key": "keats-la-belle-dame-p3",
+        "display_label": "La Belle Dame sans Merci 45-48",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "And this is why I sojourn here,\nAlone and palely loitering,\nThough the sedge is wither'd from the lake,\nAnd no birds sing."
+        },
+        "tags": [
+          "silence",
+          "exile",
+          "echo"
+        ],
+        "phase_hints": []
       }
     ]
   },
   {
-    "slug": "melville-moby-dick",
+    "work_key": "melville-moby-dick",
     "title": "Moby-Dick; or, The Whale",
-    "author": "Herman Melville",
-    "year": "1851",
-    "edition_label": "First American edition, 1851",
+    "author_text": "Herman Melville",
     "source_repository": "standard_ebooks",
     "source_url": "https://standardebooks.org/ebooks/herman-melville/moby-dick",
-    "passages": [
+    "source_download_url": "https://standardebooks.org/ebooks/herman-melville/moby-dick/downloads/herman-melville_moby-dick.epub",
+    "source_media_kind": "epub",
+    "display_order": 120,
+    "passage_anchors": [
       {
-        "passage_index": 0,
-        "canonical_text": "Call me Ishmael.",
-        "locator_label": "Moby-Dick, Chapter 1",
-        "tags": ["threshold", "exile", "sea"]
+        "passage_key": "melville-moby-dick-p0",
+        "display_label": "Moby-Dick, Chapter 1",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "Call me Ishmael."
+        },
+        "tags": [
+          "threshold",
+          "exile",
+          "sea"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 1,
-        "canonical_text": "Whenever I find myself growing grim about the mouth; whenever it is a damp, drizzly November in my soul; whenever I find myself involuntarily pausing before coffin warehouses, and bringing up the rear of every funeral I meet; then, I account it high time to get to sea as soon as I can.",
-        "locator_label": "Moby-Dick, Chapter 1",
-        "tags": ["sea", "weight", "exile", "longing"]
+        "passage_key": "melville-moby-dick-p1",
+        "display_label": "Moby-Dick, Chapter 1",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "Whenever I find myself growing grim about the mouth; whenever it is a damp, drizzly November in my soul; whenever I find myself involuntarily pausing before coffin warehouses, and bringing up the rear of every funeral I meet; then, I account it high time to get to sea as soon as I can."
+        },
+        "tags": [
+          "sea",
+          "weight",
+          "exile",
+          "longing"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 2,
-        "canonical_text": "All visible objects, man, are but as pasteboard masks. But in each event—in the living act, the undoubted deed—there, some unknown but still reasoning thing puts forth the mouldings of its features from behind the unreasoning mask.",
-        "locator_label": "Moby-Dick, Chapter 36",
-        "tags": ["mirror", "ghost", "wrath"]
+        "passage_key": "melville-moby-dick-p2",
+        "display_label": "Moby-Dick, Chapter 36",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "All visible objects, man, are but as pasteboard masks. But in each event—in the living act, the undoubted deed—there, some unknown but still reasoning thing puts forth the mouldings of its features from behind the unreasoning mask."
+        },
+        "tags": [
+          "mirror",
+          "ghost",
+          "wrath"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 3,
-        "canonical_text": "From hell's heart I stab at thee; for hate's sake I spit my last breath at thee.",
-        "locator_label": "Moby-Dick, Chapter 135",
-        "tags": ["wrath", "fire", "breath", "ruin"]
+        "passage_key": "melville-moby-dick-p3",
+        "display_label": "Moby-Dick, Chapter 135",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "From hell's heart I stab at thee; for hate's sake I spit my last breath at thee."
+        },
+        "tags": [
+          "wrath",
+          "fire",
+          "breath",
+          "ruin"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 4,
-        "canonical_text": "And I only am escaped alone to tell thee.",
-        "locator_label": "Moby-Dick, Epilogue",
-        "tags": ["exile", "echo", "loss", "sea"]
+        "passage_key": "melville-moby-dick-p4",
+        "display_label": "Moby-Dick, Epilogue",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "And I only am escaped alone to tell thee."
+        },
+        "tags": [
+          "exile",
+          "echo",
+          "loss",
+          "sea"
+        ],
+        "phase_hints": []
       }
     ]
   },
   {
-    "slug": "byron-darkness",
+    "work_key": "byron-darkness",
     "title": "Darkness",
-    "author": "Lord Byron",
-    "year": "1816",
-    "edition_label": "The Prisoner of Chillon, and Other Poems, 1816",
+    "author_text": "Lord Byron",
     "source_repository": "project_gutenberg",
     "source_url": "https://www.gutenberg.org/ebooks/4388",
-    "passages": [
+    "source_download_url": "https://www.gutenberg.org/ebooks/4388.epub.noimages",
+    "source_media_kind": "epub",
+    "display_order": 130,
+    "passage_anchors": [
       {
-        "passage_index": 0,
-        "canonical_text": "I had a dream, which was not all a dream.\nThe bright sun was extinguish'd, and the stars\nDid wander darkling in the eternal space,",
-        "locator_label": "Darkness 1-3",
-        "tags": ["night", "star", "descent", "ruin"]
+        "passage_key": "byron-darkness-p0",
+        "display_label": "Darkness 1-3",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "I had a dream, which was not all a dream.\nThe bright sun was extinguish'd, and the stars\nDid wander darkling in the eternal space,"
+        },
+        "tags": [
+          "night",
+          "star",
+          "descent",
+          "ruin"
+        ],
+        "phase_hints": [
+          "descent"
+        ]
       },
       {
-        "passage_index": 1,
-        "canonical_text": "Morn came and went—and came, and brought no day,\nAnd men forgot their passions in the dread\nOf this their desolation;",
-        "locator_label": "Darkness 6-8",
-        "tags": ["night", "fear", "loss"]
+        "passage_key": "byron-darkness-p1",
+        "display_label": "Darkness 6-8",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "Morn came and went—and came, and brought no day,\nAnd men forgot their passions in the dread\nOf this their desolation;"
+        },
+        "tags": [
+          "night",
+          "fear",
+          "loss"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 2,
-        "canonical_text": "The world was void,\nThe populous and the powerful was a lump,\nSeasonless, herbless, treeless, manless, lifeless—",
-        "locator_label": "Darkness 69-71",
-        "tags": ["dust", "ruin", "silence"]
+        "passage_key": "byron-darkness-p2",
+        "display_label": "Darkness 69-71",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "The world was void,\nThe populous and the powerful was a lump,\nSeasonless, herbless, treeless, manless, lifeless—"
+        },
+        "tags": [
+          "dust",
+          "ruin",
+          "silence"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 3,
-        "canonical_text": "Darkness had no need\nOf aid from them—She was the Universe.",
-        "locator_label": "Darkness 81-82",
-        "tags": ["night", "weight", "void"]
+        "passage_key": "byron-darkness-p3",
+        "display_label": "Darkness 81-82",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "Darkness had no need\nOf aid from them—She was the Universe."
+        },
+        "tags": [
+          "night",
+          "weight",
+          "void"
+        ],
+        "phase_hints": []
       }
     ]
   },
   {
-    "slug": "hawthorne-young-goodman-brown",
+    "work_key": "hawthorne-young-goodman-brown",
     "title": "Young Goodman Brown",
-    "author": "Nathaniel Hawthorne",
-    "year": "1835",
-    "edition_label": "Mosses from an Old Manse, 1846",
+    "author_text": "Nathaniel Hawthorne",
     "source_repository": "project_gutenberg",
     "source_url": "https://www.gutenberg.org/ebooks/13707",
-    "passages": [
+    "source_download_url": "https://www.gutenberg.org/ebooks/13707.epub.noimages",
+    "source_media_kind": "epub",
+    "display_order": 140,
+    "passage_anchors": [
       {
-        "passage_index": 0,
-        "canonical_text": "With this excellent resolve for the future, Goodman Brown felt himself justified in making more haste on his present evil purpose.",
-        "locator_label": "Young Goodman Brown, opening forest path",
-        "tags": ["forest", "threshold", "shadow"]
+        "passage_key": "hawthorne-young-goodman-brown-p0",
+        "display_label": "Young Goodman Brown, opening forest path",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "With this excellent resolve for the future, Goodman Brown felt himself justified in making more haste on his present evil purpose."
+        },
+        "tags": [
+          "forest",
+          "threshold",
+          "shadow"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 1,
-        "canonical_text": "There may be a devilish Indian behind every tree, said Goodman Brown to himself; and he glanced fearfully behind him as he added, What if the devil himself should be at my very elbow!",
-        "locator_label": "Young Goodman Brown, the lonely road",
-        "tags": ["forest", "fear", "beast"]
+        "passage_key": "hawthorne-young-goodman-brown-p1",
+        "display_label": "Young Goodman Brown, the lonely road",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "There may be a devilish Indian behind every tree, said Goodman Brown to himself; and he glanced fearfully behind him as he added, What if the devil himself should be at my very elbow!"
+        },
+        "tags": [
+          "forest",
+          "fear",
+          "beast"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 2,
-        "canonical_text": "The road grew wilder and drearier and more faintly traced, and vanished at length, leaving him in the heart of the dark wilderness.",
-        "locator_label": "Young Goodman Brown, wilderness",
-        "tags": ["forest", "descent", "loss"]
+        "passage_key": "hawthorne-young-goodman-brown-p2",
+        "display_label": "Young Goodman Brown, wilderness",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "The road grew wilder and drearier and more faintly traced, and vanished at length, leaving him in the heart of the dark wilderness."
+        },
+        "tags": [
+          "forest",
+          "descent",
+          "loss"
+        ],
+        "phase_hints": [
+          "descent"
+        ]
       },
       {
-        "passage_index": 3,
-        "canonical_text": "A stern, a sad, a darkly meditative, a distrustful, if not a desperate man did he become from the night of that fearful dream.",
-        "locator_label": "Young Goodman Brown, conclusion",
-        "tags": ["mirror", "night", "exile"]
+        "passage_key": "hawthorne-young-goodman-brown-p3",
+        "display_label": "Young Goodman Brown, conclusion",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "A stern, a sad, a darkly meditative, a distrustful, if not a desperate man did he become from the night of that fearful dream."
+        },
+        "tags": [
+          "mirror",
+          "night",
+          "exile"
+        ],
+        "phase_hints": []
       }
     ]
   },
   {
-    "slug": "whitman-song-of-myself",
+    "work_key": "whitman-song-of-myself",
     "title": "Song of Myself",
-    "author": "Walt Whitman",
-    "year": "1855",
-    "edition_label": "Leaves of Grass, 1855",
+    "author_text": "Walt Whitman",
     "source_repository": "project_gutenberg",
     "source_url": "https://www.gutenberg.org/ebooks/1322",
-    "passages": [
+    "source_download_url": "https://www.gutenberg.org/ebooks/1322.epub.noimages",
+    "source_media_kind": "epub",
+    "display_order": 150,
+    "passage_anchors": [
       {
-        "passage_index": 0,
-        "canonical_text": "I loafe and invite my soul,\nI lean and loafe at my ease observing a spear of summer grass.",
-        "locator_label": "Song of Myself 1.4-5",
-        "tags": ["breath", "garden", "day"]
+        "passage_key": "whitman-song-of-myself-p0",
+        "display_label": "Song of Myself 1.4-5",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "I loafe and invite my soul,\nI lean and loafe at my ease observing a spear of summer grass."
+        },
+        "tags": [
+          "breath",
+          "garden",
+          "day"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 1,
-        "canonical_text": "I believe in you my soul, the other I am must not abase itself to you,\nAnd you must not be abased to the other.",
-        "locator_label": "Song of Myself 5.1-2",
-        "tags": ["mirror", "soul", "threshold"]
+        "passage_key": "whitman-song-of-myself-p1",
+        "display_label": "Song of Myself 5.1-2",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "I believe in you my soul, the other I am must not abase itself to you,\nAnd you must not be abased to the other."
+        },
+        "tags": [
+          "mirror",
+          "soul",
+          "threshold"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 2,
-        "canonical_text": "The smoke of my own breath,\nEchoes, ripples, buzz'd whispers, love-root, silk-thread, crotch and vine,",
-        "locator_label": "Song of Myself 2.1-2",
-        "tags": ["breath", "echo", "vine"]
+        "passage_key": "whitman-song-of-myself-p2",
+        "display_label": "Song of Myself 2.1-2",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "The smoke of my own breath,\nEchoes, ripples, buzz'd whispers, love-root, silk-thread, crotch and vine,"
+        },
+        "tags": [
+          "breath",
+          "echo",
+          "vine"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 3,
-        "canonical_text": "I depart as air, I shake my white locks at the runaway sun,\nI effuse my flesh in eddies, and drift it in lacy jags.",
-        "locator_label": "Song of Myself 52.6-7",
-        "tags": ["ascent", "breath", "sun"]
+        "passage_key": "whitman-song-of-myself-p3",
+        "display_label": "Song of Myself 52.6-7",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "I depart as air, I shake my white locks at the runaway sun,\nI effuse my flesh in eddies, and drift it in lacy jags."
+        },
+        "tags": [
+          "ascent",
+          "breath",
+          "sun"
+        ],
+        "phase_hints": [
+          "ascent"
+        ]
       }
     ]
   },
   {
-    "slug": "rossetti-goblin-market",
+    "work_key": "rossetti-goblin-market",
     "title": "Goblin Market",
-    "author": "Christina Rossetti",
-    "year": "1862",
-    "edition_label": "First publication, 1862",
+    "author_text": "Christina Rossetti",
     "source_repository": "project_gutenberg",
     "source_url": "https://www.gutenberg.org/ebooks/19188",
-    "passages": [
+    "source_download_url": "https://www.gutenberg.org/ebooks/19188.epub.noimages",
+    "source_media_kind": "epub",
+    "display_order": 160,
+    "passage_anchors": [
       {
-        "passage_index": 0,
-        "canonical_text": "Morning and evening\nMaids heard the goblins cry:\n\"Come buy our orchard fruits,\nCome buy, come buy:\"",
-        "locator_label": "Goblin Market 1-4",
-        "tags": ["day", "echo", "garden", "longing"]
+        "passage_key": "rossetti-goblin-market-p0",
+        "display_label": "Goblin Market 1-4",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "Morning and evening\nMaids heard the goblins cry:\n\"Come buy our orchard fruits,\nCome buy, come buy:\""
+        },
+        "tags": [
+          "day",
+          "echo",
+          "garden",
+          "longing"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 1,
-        "canonical_text": "We must not look at goblin men,\nWe must not buy their fruits:\nWho knows upon what soil they fed\nTheir hungry thirsty roots?",
-        "locator_label": "Goblin Market 42-45",
-        "tags": ["threshold", "fear", "garden"]
+        "passage_key": "rossetti-goblin-market-p1",
+        "display_label": "Goblin Market 42-45",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "We must not look at goblin men,\nWe must not buy their fruits:\nWho knows upon what soil they fed\nTheir hungry thirsty roots?"
+        },
+        "tags": [
+          "threshold",
+          "fear",
+          "garden"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 2,
-        "canonical_text": "She sucked and sucked and sucked the more\nFruits which that unknown orchard bore;\nShe sucked until her lips were sore;",
-        "locator_label": "Goblin Market 134-136",
-        "tags": ["longing", "ruin", "garden"]
+        "passage_key": "rossetti-goblin-market-p2",
+        "display_label": "Goblin Market 134-136",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "She sucked and sucked and sucked the more\nFruits which that unknown orchard bore;\nShe sucked until her lips were sore;"
+        },
+        "tags": [
+          "longing",
+          "ruin",
+          "garden"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 3,
-        "canonical_text": "For there is no friend like a sister\nIn calm or stormy weather;\nTo cheer one on the tedious way,\nTo fetch one if one goes astray,\nTo lift one if one totters down,\nTo strengthen whilst one stands.",
-        "locator_label": "Goblin Market 562-567",
-        "tags": ["love", "mercy", "ascent"]
+        "passage_key": "rossetti-goblin-market-p3",
+        "display_label": "Goblin Market 562-567",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "For there is no friend like a sister\nIn calm or stormy weather;\nTo cheer one on the tedious way,\nTo fetch one if one goes astray,\nTo lift one if one totters down,\nTo strengthen whilst one stands."
+        },
+        "tags": [
+          "love",
+          "mercy",
+          "ascent"
+        ],
+        "phase_hints": [
+          "ascent"
+        ]
       }
     ]
   },
   {
-    "slug": "kjv-ecclesiastes",
+    "work_key": "kjv-ecclesiastes",
     "title": "Ecclesiastes (King James Version)",
-    "author": "Anonymous (\"The Preacher\")",
-    "year": "1611",
-    "edition_label": "Authorized King James Version, 1611",
+    "author_text": "Anonymous (\"The Preacher\")",
     "source_repository": "project_gutenberg",
     "source_url": "https://www.gutenberg.org/ebooks/30",
-    "passages": [
+    "source_download_url": "https://www.gutenberg.org/ebooks/30.epub.noimages",
+    "source_media_kind": "epub",
+    "display_order": 170,
+    "passage_anchors": [
       {
-        "passage_index": 0,
-        "canonical_text": "Vanity of vanities, saith the Preacher, vanity of vanities; all is vanity.",
-        "locator_label": "Ecclesiastes 1.2",
-        "tags": ["dust", "ruin", "echo"]
+        "passage_key": "kjv-ecclesiastes-p0",
+        "display_label": "Ecclesiastes 1.2",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "Vanity of vanities, saith the Preacher, vanity of vanities; all is vanity."
+        },
+        "tags": [
+          "dust",
+          "ruin",
+          "echo"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 1,
-        "canonical_text": "One generation passeth away, and another generation cometh: but the earth abideth for ever.",
-        "locator_label": "Ecclesiastes 1.4",
-        "tags": ["dust", "ghost", "weight"]
+        "passage_key": "kjv-ecclesiastes-p1",
+        "display_label": "Ecclesiastes 1.4",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "One generation passeth away, and another generation cometh: but the earth abideth for ever."
+        },
+        "tags": [
+          "dust",
+          "ghost",
+          "weight"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 2,
-        "canonical_text": "To every thing there is a season, and a time to every purpose under the heaven:",
-        "locator_label": "Ecclesiastes 3.1",
-        "tags": ["threshold", "day", "night"]
+        "passage_key": "kjv-ecclesiastes-p2",
+        "display_label": "Ecclesiastes 3.1",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "To every thing there is a season, and a time to every purpose under the heaven:"
+        },
+        "tags": [
+          "threshold",
+          "day",
+          "night"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 3,
-        "canonical_text": "A time to be born, and a time to die; a time to plant, and a time to pluck up that which is planted;",
-        "locator_label": "Ecclesiastes 3.2",
-        "tags": ["garden", "loss", "breath"]
+        "passage_key": "kjv-ecclesiastes-p3",
+        "display_label": "Ecclesiastes 3.2",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "A time to be born, and a time to die; a time to plant, and a time to pluck up that which is planted;"
+        },
+        "tags": [
+          "garden",
+          "loss",
+          "breath"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 4,
-        "canonical_text": "For in much wisdom is much grief: and he that increaseth knowledge increaseth sorrow.",
-        "locator_label": "Ecclesiastes 1.18",
-        "tags": ["weight", "loss"]
+        "passage_key": "kjv-ecclesiastes-p4",
+        "display_label": "Ecclesiastes 1.18",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "For in much wisdom is much grief: and he that increaseth knowledge increaseth sorrow."
+        },
+        "tags": [
+          "weight",
+          "loss"
+        ],
+        "phase_hints": []
       }
     ]
   },
   {
-    "slug": "kjv-revelation",
+    "work_key": "kjv-revelation",
     "title": "Revelation (King James Version)",
-    "author": "John of Patmos",
-    "year": "1611",
-    "edition_label": "Authorized King James Version, 1611",
+    "author_text": "John of Patmos",
     "source_repository": "project_gutenberg",
     "source_url": "https://www.gutenberg.org/ebooks/10",
-    "passages": [
+    "source_download_url": "https://www.gutenberg.org/ebooks/10.epub.noimages",
+    "source_media_kind": "epub",
+    "display_order": 180,
+    "passage_anchors": [
       {
-        "passage_index": 0,
-        "canonical_text": "And I looked, and behold a pale horse: and his name that sat on him was Death, and Hell followed with him.",
-        "locator_label": "Revelation 6.8",
-        "tags": ["beast", "ghost", "wrath", "descent"]
+        "passage_key": "kjv-revelation-p0",
+        "display_label": "Revelation 6.8",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "And I looked, and behold a pale horse: and his name that sat on him was Death, and Hell followed with him."
+        },
+        "tags": [
+          "beast",
+          "ghost",
+          "wrath",
+          "descent"
+        ],
+        "phase_hints": [
+          "descent"
+        ]
       },
       {
-        "passage_index": 1,
-        "canonical_text": "And the stars of heaven fell unto the earth, even as a fig tree casteth her untimely figs, when she is shaken of a mighty wind.",
-        "locator_label": "Revelation 6.13",
-        "tags": ["star", "ruin"]
+        "passage_key": "kjv-revelation-p1",
+        "display_label": "Revelation 6.13",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "And the stars of heaven fell unto the earth, even as a fig tree casteth her untimely figs, when she is shaken of a mighty wind."
+        },
+        "tags": [
+          "star",
+          "ruin"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 2,
-        "canonical_text": "And there was war in heaven: Michael and his angels fought against the dragon; and the dragon fought and his angels,",
-        "locator_label": "Revelation 12.7",
-        "tags": ["wrath", "fire", "beast"]
+        "passage_key": "kjv-revelation-p2",
+        "display_label": "Revelation 12.7",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "And there was war in heaven: Michael and his angels fought against the dragon; and the dragon fought and his angels,"
+        },
+        "tags": [
+          "wrath",
+          "fire",
+          "beast"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 3,
-        "canonical_text": "And God shall wipe away all tears from their eyes; and there shall be no more death, neither sorrow, nor crying, neither shall there be any more pain: for the former things are passed away.",
-        "locator_label": "Revelation 21.4",
-        "tags": ["mercy", "ascent", "loss"]
+        "passage_key": "kjv-revelation-p3",
+        "display_label": "Revelation 21.4",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "And God shall wipe away all tears from their eyes; and there shall be no more death, neither sorrow, nor crying, neither shall there be any more pain: for the former things are passed away."
+        },
+        "tags": [
+          "mercy",
+          "ascent",
+          "loss"
+        ],
+        "phase_hints": [
+          "ascent"
+        ]
       }
     ]
   },
   {
-    "slug": "dickinson-selected-poems",
+    "work_key": "dickinson-selected-poems",
     "title": "Selected Poems",
-    "author": "Emily Dickinson",
-    "year": "1890",
-    "edition_label": "Poems by Emily Dickinson, first series, 1890",
+    "author_text": "Emily Dickinson",
     "source_repository": "project_gutenberg",
     "source_url": "https://www.gutenberg.org/ebooks/12242",
-    "passages": [
+    "source_download_url": "https://www.gutenberg.org/ebooks/12242.epub.noimages",
+    "source_media_kind": "epub",
+    "display_order": 190,
+    "passage_anchors": [
       {
-        "passage_index": 0,
-        "canonical_text": "Because I could not stop for Death—\nHe kindly stopped for me—\nThe Carriage held but just Ourselves—\nAnd Immortality.",
-        "locator_label": "\"Because I could not stop for Death\" 1-4",
-        "tags": ["threshold", "ghost", "mercy"]
+        "passage_key": "dickinson-selected-poems-p0",
+        "display_label": "\"Because I could not stop for Death\" 1-4",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "Because I could not stop for Death—\nHe kindly stopped for me—\nThe Carriage held but just Ourselves—\nAnd Immortality."
+        },
+        "tags": [
+          "threshold",
+          "ghost",
+          "mercy"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 1,
-        "canonical_text": "I heard a Fly buzz—when I died—\nThe Stillness in the Room\nWas like the Stillness in the Air—\nBetween the Heaves of Storm—",
-        "locator_label": "\"I heard a Fly buzz\" 1-4",
-        "tags": ["silence", "breath", "ghost"]
+        "passage_key": "dickinson-selected-poems-p1",
+        "display_label": "\"I heard a Fly buzz\" 1-4",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "I heard a Fly buzz—when I died—\nThe Stillness in the Room\nWas like the Stillness in the Air—\nBetween the Heaves of Storm—"
+        },
+        "tags": [
+          "silence",
+          "breath",
+          "ghost"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 2,
-        "canonical_text": "There's a certain Slant of light,\nWinter Afternoons—\nThat oppresses, like the Heft\nOf Cathedral Tunes—",
-        "locator_label": "\"There's a certain Slant of light\" 1-4",
-        "tags": ["snow", "weight", "echo"]
+        "passage_key": "dickinson-selected-poems-p2",
+        "display_label": "\"There's a certain Slant of light\" 1-4",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "There's a certain Slant of light,\nWinter Afternoons—\nThat oppresses, like the Heft\nOf Cathedral Tunes—"
+        },
+        "tags": [
+          "snow",
+          "weight",
+          "echo"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 3,
-        "canonical_text": "I'm Nobody! Who are you?\nAre you—Nobody—too?",
-        "locator_label": "\"I'm Nobody! Who are you?\" 1-2",
-        "tags": ["mirror", "ghost", "exile"]
+        "passage_key": "dickinson-selected-poems-p3",
+        "display_label": "\"I'm Nobody! Who are you?\" 1-2",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "I'm Nobody! Who are you?\nAre you—Nobody—too?"
+        },
+        "tags": [
+          "mirror",
+          "ghost",
+          "exile"
+        ],
+        "phase_hints": []
       },
       {
-        "passage_index": 4,
-        "canonical_text": "\"Hope\" is the thing with feathers—\nThat perches in the soul—\nAnd sings the tune without the words—\nAnd never stops—at all—",
-        "locator_label": "\"Hope is the thing with feathers\" 1-4",
-        "tags": ["breath", "echo", "longing"]
+        "passage_key": "dickinson-selected-poems-p4",
+        "display_label": "\"Hope is the thing with feathers\" 1-4",
+        "selector": {
+          "kind": "text_quote",
+          "exact": "\"Hope\" is the thing with feathers—\nThat perches in the soul—\nAnd sings the tune without the words—\nAnd never stops—at all—"
+        },
+        "tags": [
+          "breath",
+          "echo",
+          "longing"
+        ],
+        "phase_hints": []
       }
     ]
   }

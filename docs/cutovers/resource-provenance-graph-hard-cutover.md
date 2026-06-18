@@ -232,14 +232,14 @@ Oracle writes one citation edge per phase, plus one folio content row in its own
 
 ```text
 edge:  source = oracle_reading:<reading_id>
-       target = oracle_corpus_passage:<id> | evidence_span:<span_id> | content_chunk:<chunk_id>
+       target = oracle_passage_anchor:<id> | evidence_span:<span_id> | content_chunk:<chunk_id>
        kind = context, origin = citation, ordinal = phase order (descent 1, ordeal 2, ascent 3)
 folio: oracle_reading_folios(reading_id, phase, edge_id, source_kind, locator_label, attribution_text, marginalia_text)
 ```
 
 Target rules:
 
-- **Public domain**: the stable `oracle_corpus_passage` row (§8.5). Two readings drawing the same passage share one target id by construction.
+- **Public domain**: the stable `oracle_passage_anchor` row (§8.5). Two readings drawing the same passage share one target id by construction; the anchor resolves to current media evidence after corpus reindexing.
 - **User media**: the evidence span the candidate grounds to (`evidence_span:<span_id>`), matching the harness cutover's passage `CitationOut` target; fall back to `content_chunk:<chunk_id>` when no span exists. Both are content-index rows, stable across readings within an index generation — unlike anything minted per reading. Jump precision lives in the target's own anchoring and the snapshot `deep_link`, not in target identity.
 
 **Concordance contract.** Two passages are concordant iff their edges have equal `(target_scheme, target_id)`. Locator is deliberately excluded from the key — keying on JSON equality would reintroduce the brittleness being removed. This is a pinned semantic delta from today's raw-JSONB join:
@@ -341,7 +341,7 @@ fragment
 conversation
 message
 oracle_reading
-oracle_corpus_passage
+oracle_passage_anchor
 library_intelligence_artifact
 library_intelligence_revision
 external_snapshot
@@ -366,7 +366,7 @@ ResourceScheme = Literal[
     "conversation",
     "message",
     "oracle_reading",
-    "oracle_corpus_passage",
+    "oracle_passage_anchor",
     "library_intelligence_artifact",
     "library_intelligence_revision",
     "external_snapshot",
@@ -493,15 +493,13 @@ Constraints: `unique(reading_id, phase)`; pk `(reading_id, phase)`. Snippet and 
 
 `message_retrievals`: drop `citation_ordinal`; add `cited_edge_id uuid null` (provenance pointer to the citation edge, set when a result is cited). Everything else — including `message_retrieval_candidate_ledgers` and the in-run mutation behavior — is untouched and stays under the chat owner.
 
-### 8.5 `oracle_corpus_passages`
+### 8.5 `oracle_passage_anchors`
 
-Stable target for public-domain Oracle passages when they are not already backed by ordinary `media`/`evidence_span` rows.
-
-> Note (as built): migration `0145` does **not** create this table. The live `oracle_corpus_passages` from migration `0072` — seeded, embedding-backed, and read by Oracle retrieval — already has a uuid `id` that serves the `oracle_corpus_passage:<id>` target verbatim. Recreating the shape below would collide with the live table, and dropping the live corpus would destroy Oracle retrieval, so the existing table is reused untouched and the columns below document the contract it already satisfies.
+Stable target for public-domain Oracle passages. The anchor is not a corpus text/vector store; it is curation identity that resolves to the current `evidence_span`/`content_chunk` generated from the Oracle Corpus library media.
 
 | column | type | notes |
 |---|---|---|
-| `id` | uuid pk | referenced by `oracle_corpus_passage:<id>` |
+| `id` | uuid pk | referenced by `oracle_passage_anchor:<id>` |
 | `corpus_key` | text not null | |
 | `work_key` | text not null | |
 | `passage_key` | text not null | stable locator key |
@@ -699,7 +697,7 @@ One irreversible Alembic head migration. Greenfield reset; no backfill.
 - `resource_edges`
 - `resource_external_snapshots`
 - `oracle_reading_folios`
-- `oracle_corpus_passages`
+- `oracle_passage_anchors`
 
 ### 13.2 Drop
 

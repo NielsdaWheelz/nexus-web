@@ -1,10 +1,10 @@
 """Copy pre-cutover Oracle plate objects to stable current storage keys.
 
 Run this before Alembic revision 0137 when the database still has
-``oracle_corpus_images.sha256`` and the old content-addressed storage keys.
+``oracle_plates.sha256`` and the old content-addressed storage keys.
 The script is intentionally fail-closed: every destination object must exist
 with the expected content type and byte size before the DB migration rewrites
-``oracle_corpus_images.storage_key``.
+``oracle_plates.storage_key``.
 """
 
 from __future__ import annotations
@@ -50,7 +50,7 @@ def _load_rows() -> list[PlateRepairRow]:
                 text(
                     """
                     SELECT id, work_title, storage_key, content_type, byte_size
-                    FROM oracle_corpus_images
+                    FROM oracle_plates
                     ORDER BY id
                     """
                 )

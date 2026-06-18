@@ -455,7 +455,7 @@ during implementation, but every row must keep an explicit decision.
 | `conversation` | runtime | yes | direct `/conversations/:id` | body | none | yes | label | none | label | none | none |
 | `message` | runtime | yes | conversation route | body | none | yes | readable | none | inline body | none | prompt-numbered result and citation output source; graph target policy remains explicit |
 | `oracle_reading` | runtime | yes | direct `/oracle/:id` | body | none | yes | generated output | none | inline body | none | citation output source |
-| `oracle_corpus_passage` | runtime | yes | none | none | none | no | none | none | none | none | target `oracle_corpus_passage` if graph citations continue to expose it |
+| `oracle_passage_anchor` | runtime | yes | reader target via current evidence pointer | body | none | no | none | none | inline body | none | stable Oracle public-domain citation/concordance target |
 | `library_intelligence_artifact` | runtime | yes | library intelligence tab | body via current revision | none | yes | generated output/latest alias | none | inline body | artifact revisions | none |
 | `library_intelligence_revision` | runtime | yes | exact revision tab | body | none | yes | generated output | none | inline body | none | citation output source |
 | `external_snapshot` | runtime or citation-only | yes if resolver supports | none | none | none | no | none | none | none | none | target `external_snapshot` |

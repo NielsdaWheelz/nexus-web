@@ -43,8 +43,20 @@ class LibraryMembershipContext:
     name: str
     color: str | None
     role: LibraryRole
+    system_key: str | None
     created_at: datetime
     updated_at: datetime
+
+
+def _library_capabilities(*, role: str, is_default: bool, system_key: str | None) -> dict:
+    """Derive the user-facing mutability affordances for a LibraryOut. System and
+    default libraries are immutable; otherwise rename/delete/entry-edit gate on admin."""
+    mutable = system_key is None and not is_default
+    return {
+        "can_rename": mutable and role == "admin",
+        "can_delete": mutable and role == "admin",
+        "can_edit_entries": mutable and role == "admin",
+    }
 
 
 def _library_out_from_row(row) -> LibraryOut:
@@ -55,8 +67,12 @@ def _library_out_from_row(row) -> LibraryOut:
         owner_user_id=row["owner_user_id"],
         is_default=row["is_default"],
         role=row["role"],
+        system_key=row["system_key"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        **_library_capabilities(
+            role=row["role"], is_default=row["is_default"], system_key=row["system_key"]
+        ),
     )
 
 
@@ -83,7 +99,7 @@ def lock_library_for_member(
         db.execute(
             text(f"""
             SELECT l.id, l.is_default, l.owner_user_id, l.name, l.color,
-                   m.role, l.created_at, l.updated_at
+                   m.role, l.system_key, l.created_at, l.updated_at
             FROM libraries l
             JOIN memberships m ON m.library_id = l.id AND m.user_id = :viewer_id
             WHERE l.id = :library_id
@@ -103,6 +119,7 @@ def lock_library_for_member(
         name=row["name"],
         color=row["color"],
         role=row["role"],
+        system_key=row["system_key"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -121,6 +138,12 @@ def require_non_default(is_default: bool) -> None:
             ApiErrorCode.E_DEFAULT_LIBRARY_FORBIDDEN,
             "Operation not allowed on default library",
         )
+
+
+def require_not_system(system_key: str | None) -> None:
+    """Raise E_LIBRARY_FORBIDDEN for system-owned libraries (user mutations are blocked)."""
+    if system_key is not None:
+        raise ForbiddenError(ApiErrorCode.E_LIBRARY_FORBIDDEN, "System library cannot be modified")
 
 
 def _repair_owner_admin_invariant(db: Session, library_id: UUID, owner_user_id: UUID) -> None:
@@ -199,9 +222,47 @@ def create_library(db: Session, viewer_id: UUID, name: str) -> LibraryOut:
         owner_user_id=row["owner_user_id"],
         is_default=row["is_default"],
         role="admin",
+        system_key=None,
+        can_rename=True,
+        can_delete=True,
+        can_edit_entries=True,
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
+
+
+def ensure_system_library(db: Session, *, system_key: str, name: str, owner_user_id: UUID) -> UUID:
+    """Create or return the system library identified by ``system_key`` (idempotent).
+
+    System maintenance command. System libraries are protected from user
+    rename/delete/share/entry edits (``system_key IS NOT NULL``); only explicit system
+    commands like this one create or mutate them. The owner gets an admin membership.
+    """
+    with transaction(db):
+        existing = db.execute(
+            text("SELECT id FROM libraries WHERE system_key = :system_key"),
+            {"system_key": system_key},
+        ).scalar_one_or_none()
+        if existing is not None:
+            return existing
+        library_id = db.execute(
+            text(
+                """
+                INSERT INTO libraries (name, owner_user_id, is_default, system_key)
+                VALUES (:name, :owner_user_id, false, :system_key)
+                RETURNING id
+                """
+            ),
+            {"name": name, "owner_user_id": owner_user_id, "system_key": system_key},
+        ).scalar_one()
+        db.execute(
+            text(
+                "INSERT INTO memberships (library_id, user_id, role) "
+                "VALUES (:library_id, :user_id, 'admin')"
+            ),
+            {"library_id": library_id, "user_id": owner_user_id},
+        )
+        return library_id
 
 
 def rename_library(db: Session, viewer_id: UUID, library_id: UUID, name: str) -> LibraryOut:
@@ -213,6 +274,7 @@ def rename_library(db: Session, viewer_id: UUID, library_id: UUID, name: str) ->
     with transaction(db):
         ctx = lock_library_for_member(db, viewer_id, library_id)
         require_non_default(ctx.is_default)
+        require_not_system(ctx.system_key)
         require_admin(ctx.role)
 
         now = datetime.now(UTC)
@@ -232,8 +294,12 @@ def rename_library(db: Session, viewer_id: UUID, library_id: UUID, name: str) ->
         owner_user_id=ctx.owner_user_id,
         is_default=ctx.is_default,
         role=ctx.role,
+        system_key=ctx.system_key,
         created_at=ctx.created_at,
         updated_at=now,
+        **_library_capabilities(
+            role=ctx.role, is_default=ctx.is_default, system_key=ctx.system_key
+        ),
     )
 
 
@@ -248,6 +314,7 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
     with transaction(db):
         ctx = lock_library_for_member(db, viewer_id, library_id)
         require_non_default(ctx.is_default)
+        require_not_system(ctx.system_key)
         if ctx.owner_user_id != viewer_id:
             raise ForbiddenError(
                 ApiErrorCode.E_OWNER_REQUIRED, "Only the library owner can delete it"
@@ -374,7 +441,7 @@ def list_libraries(db: Session, viewer_id: UUID, limit: int = 100) -> list[Libra
         db.execute(
             text("""
             SELECT l.id, l.name, l.color, l.owner_user_id, l.is_default,
-                   l.created_at, l.updated_at, m.role
+                   l.system_key, l.created_at, l.updated_at, m.role
             FROM libraries l
             JOIN memberships m ON m.library_id = l.id AND m.user_id = :viewer_id
             ORDER BY l.created_at ASC, l.id ASC
@@ -490,6 +557,7 @@ def list_writable_library_destinations(
                 LEFT JOIN memberships m
                   ON m.library_id = l.id AND m.user_id = :viewer_id
                 WHERE l.is_default = false
+                  AND l.system_key IS NULL
                   AND (l.owner_user_id = :viewer_id OR m.role = 'admin')
                   AND (:q = '' OR lower(l.name) LIKE :contains_q ESCAPE '\\')
             )
@@ -516,7 +584,7 @@ def get_library(db: Session, viewer_id: UUID, library_id: UUID) -> LibraryOut:
         db.execute(
             text("""
             SELECT l.id, l.name, l.color, l.owner_user_id, l.is_default,
-                   l.created_at, l.updated_at, m.role
+                   l.system_key, l.created_at, l.updated_at, m.role
             FROM libraries l
             JOIN memberships m ON m.library_id = l.id AND m.user_id = :viewer_id
             WHERE l.id = :library_id
@@ -583,6 +651,7 @@ def update_library_member_role(
         ctx = lock_library_for_member(db, viewer_id, library_id)
         require_admin(ctx.role)
         require_non_default(ctx.is_default)
+        require_not_system(ctx.system_key)
 
         _lock_memberships_and_repair_owner(db, library_id, ctx.owner_user_id)
 
@@ -640,6 +709,7 @@ def remove_library_member(
         ctx = lock_library_for_member(db, viewer_id, library_id)
         require_admin(ctx.role)
         require_non_default(ctx.is_default)
+        require_not_system(ctx.system_key)
 
         _lock_memberships_and_repair_owner(db, library_id, ctx.owner_user_id)
 
@@ -670,6 +740,7 @@ def transfer_library_ownership(
     with transaction(db):
         ctx = lock_library_for_member(db, viewer_id, library_id)
         require_non_default(ctx.is_default)
+        require_not_system(ctx.system_key)
         if ctx.owner_user_id != viewer_id:
             raise ForbiddenError(
                 ApiErrorCode.E_OWNER_REQUIRED,
@@ -686,8 +757,12 @@ def transfer_library_ownership(
                 owner_user_id=ctx.owner_user_id,
                 is_default=ctx.is_default,
                 role=ctx.role,
+                system_key=ctx.system_key,
                 created_at=ctx.created_at,
                 updated_at=ctx.updated_at,
+                **_library_capabilities(
+                    role=ctx.role, is_default=ctx.is_default, system_key=ctx.system_key
+                ),
             )
 
         target = db.execute(
@@ -727,6 +802,8 @@ def transfer_library_ownership(
         created_at=ctx.created_at,
         updated_at=now,
         role="admin",
+        system_key=ctx.system_key,
+        **_library_capabilities(role="admin", is_default=ctx.is_default, system_key=ctx.system_key),
     )
 
 
@@ -761,7 +838,7 @@ def resolve_writable_non_default_library_ids(
     rows = (
         db.execute(
             text("""
-                SELECT l.id, l.is_default, l.owner_user_id, m.role
+                SELECT l.id, l.is_default, l.owner_user_id, l.system_key, m.role
                 FROM libraries l
                 LEFT JOIN memberships m
                   ON m.library_id = l.id AND m.user_id = :viewer_id
@@ -785,6 +862,8 @@ def resolve_writable_non_default_library_ids(
                 ApiErrorCode.E_INVALID_REQUEST,
                 "Default library cannot be selected",
             )
+        if row["system_key"] is not None:
+            raise ForbiddenError(ApiErrorCode.E_LIBRARY_FORBIDDEN, "library not writable")
         targets.append(library_id)
     return targets
 

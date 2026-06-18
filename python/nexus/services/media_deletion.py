@@ -14,7 +14,7 @@ from nexus.db.session import transaction
 from nexus.errors import ApiErrorCode, ForbiddenError, InvalidRequestError, NotFoundError
 from nexus.logging import get_logger
 from nexus.schemas.media import DeleteDocumentResponse, DeleteDocumentStatus
-from nexus.services import library_entries, media_intelligence
+from nexus.services import library_entries, library_governance, media_intelligence
 from nexus.services.content_indexing import IndexOwner, delete_content_index
 from nexus.services.default_library_closure import (
     count_default_references,
@@ -46,6 +46,26 @@ def _total_reference_count(db: Session, media_id: UUID) -> int:
     library entries + default-library closure references."""
     return library_entries.count_entries_for_media(db, media_id) + count_default_references(
         db, media_id=media_id
+    )
+
+
+def _viewer_has_system_media_reference(db: Session, *, viewer_id: UUID, media_id: UUID) -> bool:
+    return bool(
+        db.execute(
+            text(
+                """
+                SELECT 1
+                FROM library_entries le
+                JOIN libraries l ON l.id = le.library_id
+                JOIN memberships m
+                  ON m.library_id = l.id AND m.user_id = :viewer_id
+                WHERE le.media_id = :media_id
+                  AND l.system_key IS NOT NULL
+                LIMIT 1
+                """
+            ),
+            {"viewer_id": viewer_id, "media_id": media_id},
+        ).first()
     )
 
 
@@ -110,6 +130,8 @@ def delete_document_for_viewer(
             if paths is not None:
                 storage_paths = paths
                 hard_deleted = True
+        elif _viewer_has_system_media_reference(db, viewer_id=viewer_id, media_id=media_id):
+            hidden_for_viewer = False
         else:
             existing = db.execute(
                 text("""
@@ -176,7 +198,7 @@ def remove_document_from_library(
 
         library = db.execute(
             text("""
-                SELECT l.id, l.is_default, m.role
+                SELECT l.id, l.is_default, m.role, l.system_key
                 FROM libraries l
                 JOIN memberships m
                   ON m.library_id = l.id
@@ -190,6 +212,7 @@ def remove_document_from_library(
             raise NotFoundError(ApiErrorCode.E_LIBRARY_NOT_FOUND, "Library not found")
         if library[2] != "admin":
             raise ForbiddenError(ApiErrorCode.E_FORBIDDEN, "Admin access required")
+        library_governance.require_not_system(library[3])
 
         if bool(library[1]):
             if not remove_media_from_default_intrinsic(

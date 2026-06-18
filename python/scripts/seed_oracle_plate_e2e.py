@@ -48,10 +48,7 @@ for key in (
 ):
     os.environ.pop(key, None)
 
-from nexus.db.models import (
-    OracleCorpusImage,
-    OracleReading,
-)
+from nexus.db.models import OracleReading
 from nexus.db.session import create_session_factory
 from nexus.oracle.seed_objects import (
     FIXTURE_BYTES,
@@ -60,7 +57,7 @@ from nexus.oracle.seed_objects import (
     ensure_oracle_seed_objects,
 )
 from nexus.services.bootstrap import ensure_user_and_default_library
-from nexus.services.oracle_plates import oracle_plate_url
+from nexus.services.oracle_plates import oracle_plate_url, upsert_oracle_plate
 from nexus.storage.client import get_storage_client
 
 PLATE_ARTIST = "E2E Engraver"
@@ -153,14 +150,12 @@ def _release_stale_e2e_user_email(db: Session, user_id: UUID, email: str) -> Non
 
 
 def _ensure_corpus_image(db: Session) -> UUID:
-    image = db.scalar(
-        select(OracleCorpusImage).where(OracleCorpusImage.storage_key == FIXTURE_STORAGE_KEY)
-    )
-    if image is not None:
-        return image.id
-    image = OracleCorpusImage(
+    image = upsert_oracle_plate(
+        db,
         source_repository="e2e-fixture",
+        source_page_url=None,
         source_url="https://example.com/oracle-e2e-owned-plate.jpg",
+        license_text="Hermetic E2E fixture",
         artist=PLATE_ARTIST,
         work_title=PLATE_WORK_TITLE,
         year=PLATE_YEAR,
@@ -172,8 +167,6 @@ def _ensure_corpus_image(db: Session) -> UUID:
         byte_size=FIXTURE_BYTES,
         tags=["forest", "lamp"],
     )
-    db.add(image)
-    db.flush()
     return image.id
 
 

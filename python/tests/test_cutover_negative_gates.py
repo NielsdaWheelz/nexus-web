@@ -34,6 +34,7 @@ _WEB_ROOT = _REPO_ROOT / "apps" / "web" / "src"
 # python/scripts (corpus seeds, e2e seed, migration helpers) is production-adjacent
 # code that the provenance-graph battery (§18.3) must also scrub.
 _SCRIPTS_ROOT = _REPO_ROOT / "python" / "scripts"
+_REPO_SCRIPTS_ROOT = _REPO_ROOT / "scripts"
 _CURRENT_CITATION_CONTRACT_DOCS = (
     _REPO_ROOT / "docs" / "architecture.md",
     _REPO_ROOT / "docs" / "modules" / "chat.md",
@@ -179,9 +180,74 @@ def test_user_graph_tag_scheme_constraints_absent_from_models():
 def test_oracle_metadata_tags_remain_allowlisted():
     models = (_PY_ROOT / "db" / "models.py").read_text(encoding="utf-8")
     oracle = (_PY_ROOT / "services" / "oracle.py").read_text(encoding="utf-8")
-    assert "ck_oracle_passages_tags_array" in models
-    assert "ck_oracle_images_tags_array" in models
-    assert 'tags=[str(tag) for tag in row["tags"] or []]' in oracle
+    assert "ck_oracle_passage_anchors_tags" in models
+    assert "ck_oracle_plates_tags_array" in models
+    assert "tags = [str(tag) for tag in anchor.tags or []]" in oracle
+
+
+def test_old_oracle_corpus_vector_store_absent_in_production_code():
+    pattern = (
+        r"\boracle_corpus_passage\b|\bOracleCorpusPassage\b|\bOracleCorpusWork\b|"
+        r"\boracle_corpus_works\b|\boracle_corpus_passages\b|"
+        r"\boracle_corpus_images\b|\bOracleCorpusImage\b"
+    )
+    hits = _filtered(
+        pattern,
+        _PY_ROOT,
+        _WEB_ROOT,
+        _SCRIPTS_ROOT,
+        _REPO_SCRIPTS_ROOT,
+        exclude=_FRONTEND_TEST,
+    )
+    assert not hits, f"old Oracle corpus vector-store symbols present:\n{_fmt(hits)}"
+
+
+def test_old_oracle_embedding_pipeline_helpers_absent_in_production_code():
+    pattern = (
+        r"\b(_retrieve_corpus_passages|_corpus_embedding_model|"
+        r"_retrieve_user_content_chunks_by_embedding)\b|"
+        r"Oracle source corpus is not fully seeded|"
+        r"\b(passage_embeddings|image_embeddings)\b"
+    )
+    hits = _filtered(
+        pattern,
+        _PY_ROOT,
+        _WEB_ROOT,
+        _SCRIPTS_ROOT,
+        _REPO_SCRIPTS_ROOT,
+        exclude=_FRONTEND_TEST,
+    )
+    assert not hits, f"old Oracle embedding pipeline helpers present:\n{_fmt(hits)}"
+
+
+def test_oracle_cutover_seed_paths_use_owner_apis():
+    library_entry_hits = _grep(r"\bLibraryEntry\(", _PY_ROOT, _SCRIPTS_ROOT, _REPO_SCRIPTS_ROOT)
+    library_entry_hits = [
+        hit
+        for hit in library_entry_hits
+        if not (
+            hit.path.endswith("/python/nexus/db/models.py")
+            or hit.path.endswith("/python/nexus/services/library_entries.py")
+        )
+    ]
+    assert not library_entry_hits, (
+        "library entries must be written through nexus.services.library_entries:\n"
+        f"{_fmt(library_entry_hits)}"
+    )
+
+    oracle_plate_hits = _grep(r"\bOraclePlate\(", _PY_ROOT, _SCRIPTS_ROOT, _REPO_SCRIPTS_ROOT)
+    oracle_plate_hits = [
+        hit
+        for hit in oracle_plate_hits
+        if not (
+            hit.path.endswith("/python/nexus/db/models.py")
+            or hit.path.endswith("/python/nexus/services/oracle_plates.py")
+        )
+    ]
+    assert not oracle_plate_hits, (
+        "Oracle plates must be written through nexus.services.oracle_plates:\n"
+        f"{_fmt(oracle_plate_hits)}"
+    )
 
 
 # =============================================================================

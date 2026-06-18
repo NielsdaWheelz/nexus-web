@@ -70,6 +70,7 @@ def create_library_invite(
         ctx = governance.lock_library_for_member(db, viewer_id, library_id, lock=False)
         governance.require_admin(ctx.role)
         governance.require_non_default(ctx.is_default)
+        governance.require_not_system(ctx.system_key)
 
         normalized_invitee_email = invitee_email.strip() if invitee_email else None
         if invitee_user_id is None and normalized_invitee_email is None:
@@ -162,6 +163,7 @@ def list_library_invites(
 
     ctx = governance.lock_library_for_member(db, viewer_id, library_id, lock=False)
     governance.require_admin(ctx.role)
+    governance.require_not_system(ctx.system_key)
 
     rows = (
         db.execute(

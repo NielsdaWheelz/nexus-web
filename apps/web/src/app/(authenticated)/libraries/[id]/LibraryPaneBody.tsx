@@ -93,6 +93,10 @@ interface Library {
   is_default: boolean;
   role: string;
   owner_user_id: string;
+  system_key: string | null;
+  can_rename: boolean;
+  can_delete: boolean;
+  can_edit_entries: boolean;
 }
 
 interface LibraryMediaEntry {
@@ -192,6 +196,10 @@ export default function LibraryPaneBody() {
     },
   });
   const currentLibrary = library?.id === id ? library : null;
+  // Entry mutation (add content, reorder, remove) is hidden for system-protected
+  // libraries (e.g. the Oracle Corpus), which report can_edit_entries === false.
+  const canEditEntries =
+    currentLibrary?.role === "admin" && currentLibrary.can_edit_entries === true;
   const loading =
     libraryResource.status === "loading" && currentLibrary === null;
   useSetPaneTitle(currentLibrary?.name ?? (loading ? null : "Library"));
@@ -719,7 +727,7 @@ export default function LibraryPaneBody() {
   );
 
   const handleReorderEntries = (nextEntries: LibraryEntry[]) => {
-    if (!currentLibrary || currentLibrary.role !== "admin") {
+    if (!canEditEntries) {
       return;
     }
     const previousEntries = entries;
@@ -753,12 +761,16 @@ export default function LibraryPaneBody() {
 
   const paneOptions = currentLibrary
     ? [
-        {
-          id: "add-content",
-          label: "Add content",
-          restoreFocusOnClose: false,
-          onSelect: () => dispatchOpenAddContent("content"),
-        },
+        ...(canEditEntries
+          ? [
+              {
+                id: "add-content",
+                label: "Add content",
+                restoreFocusOnClose: false,
+                onSelect: () => dispatchOpenAddContent("content"),
+              },
+            ]
+          : []),
         ...libraryResourceOptions({
           library: currentLibrary,
           onViewIntelligence: handleOpenLibraryIntelligence,
@@ -851,13 +863,12 @@ export default function LibraryPaneBody() {
               getItemId={(entry) => entry.id}
               onReorder={handleReorderEntries}
               renderItem={({ item, handleProps, isDragging }) => {
-                const dragHandleBindings =
-                  currentLibrary.role === "admin"
-                    ? {
-                        ...handleProps.attributes,
-                        ...handleProps.listeners,
-                      }
-                    : undefined;
+                const dragHandleBindings = canEditEntries
+                  ? {
+                      ...handleProps.attributes,
+                      ...handleProps.listeners,
+                    }
+                  : undefined;
                 if (item.kind === "podcast") {
                   const subscription = item.subscription;
                   const hasContributors = hasContributorLinks(
@@ -872,7 +883,7 @@ export default function LibraryPaneBody() {
                       : null,
                   ].filter(Boolean);
                   const rowOptions = podcastResourceOptions({
-                    canUsePodcastActions: currentLibrary.role === "admin",
+                    canUsePodcastActions: canEditEntries,
                     onManageLibraries: ({ triggerEl }) => {
                       void openLibraryPanel(item, triggerEl);
                     },
@@ -907,9 +918,9 @@ export default function LibraryPaneBody() {
                         ) : undefined
                       }
                       actions={
-                        currentLibrary.role === "admin" || rowOptions.length > 0 ? (
+                        canEditEntries || rowOptions.length > 0 ? (
                           <>
-                            {currentLibrary.role === "admin" ? (
+                            {canEditEntries ? (
                               <Button
                                 variant="secondary"
                                 size="sm"
@@ -939,15 +950,15 @@ export default function LibraryPaneBody() {
                 const refreshSourceBusy = refreshingMediaIds.ids.has(item.media.id);
                 const rowOptions = mediaResourceOptions({
                   media: item.media,
-                  canManageLibraries: true,
+                  canManageLibraries: canEditEntries,
                   retryBusy: retryProcessingBusy,
                   refreshBusy: refreshSourceBusy,
-                  onRetry: item.media.capabilities?.can_retry
+                  onRetry: canEditEntries && item.media.capabilities?.can_retry
                     ? () => {
                         void handleRetryProcessing(item.media.id);
                       }
                     : undefined,
-                  onRefreshSource: item.media.capabilities?.can_refresh_source
+                  onRefreshSource: canEditEntries && item.media.capabilities?.can_refresh_source
                     ? () => {
                         void handleRefreshSource(item.media.id);
                       }
@@ -955,10 +966,12 @@ export default function LibraryPaneBody() {
                   onOpenChat: () => {
                     void handleOpenMediaChat(item.media);
                   },
-                  onManageLibraries: ({ triggerEl }) => {
-                    void openLibraryPanel(item, triggerEl);
-                  },
-                  onDelete: item.media.capabilities?.can_delete
+                  onManageLibraries: canEditEntries
+                    ? ({ triggerEl }) => {
+                        void openLibraryPanel(item, triggerEl);
+                      }
+                    : undefined,
+                  onDelete: canEditEntries && item.media.capabilities?.can_delete
                     ? () => {
                         void handleDeleteMedia(item);
                       }
@@ -1030,9 +1043,9 @@ export default function LibraryPaneBody() {
                       ) : undefined
                     }
                     actions={
-                      currentLibrary.role === "admin" || rowOptions.length > 0 ? (
+                      canEditEntries || rowOptions.length > 0 ? (
                         <>
-                          {currentLibrary.role === "admin" ? (
+                          {canEditEntries ? (
                             <Button
                               variant="secondary"
                               size="sm"

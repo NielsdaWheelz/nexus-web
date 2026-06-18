@@ -37,6 +37,7 @@ _BACKEND_ENV = {
     "R2_ACCESS_KEY_ID": "r2-access",
     "R2_SECRET_ACCESS_KEY": "r2-secret",
     "R2_BUCKET": "media",
+    "NEXUS_ORACLE_CORPUS_OWNER_USER_ID": "00000000-0000-0000-0000-000000000001",
     "NEXUS_KEY_ENCRYPTION_KEY": "key",
     "STREAM_TOKEN_SIGNING_KEY": "stream-key",
     "STREAM_BASE_URL": "https://api.nexus.test",
@@ -106,6 +107,29 @@ def test_hetzner_sync_requires_x_api_bearer_token(tmp_path: Path):
     assert result.returncode != 0
     assert "missing or empty" in result.stderr
     assert "X_API_BEARER_TOKEN" in result.stderr
+    assert "scp must not run" not in result.stderr
+
+
+def test_hetzner_sync_requires_oracle_corpus_owner_user_id(tmp_path: Path):
+    fake_bin_dir = tmp_path / "bin"
+    fake_bin_dir.mkdir()
+    _fake_bin(fake_bin_dir, "ssh")
+    _fake_bin(fake_bin_dir, "scp")
+
+    shared_env = tmp_path / "env-prod"
+    backend_env = tmp_path / "env-prod-backend"
+    worker_env = tmp_path / "env-prod-worker"
+    backend = dict(_BACKEND_ENV)
+    backend["NEXUS_ORACLE_CORPUS_OWNER_USER_ID"] = ""
+    _write_env(shared_env, _SHARED_ENV)
+    _write_env(backend_env, backend)
+    _write_env(worker_env, _WORKER_ENV)
+
+    result = _run_sync(shared_env, backend_env, worker_env, fake_bin_dir)
+
+    assert result.returncode != 0
+    assert "missing or empty" in result.stderr
+    assert "NEXUS_ORACLE_CORPUS_OWNER_USER_ID" in result.stderr
     assert "scp must not run" not in result.stderr
 
 

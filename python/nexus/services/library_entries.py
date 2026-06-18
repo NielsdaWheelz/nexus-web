@@ -230,6 +230,7 @@ def admin_non_default_library_ids_for_media(
               ON m.library_id = l.id AND m.user_id = :viewer_id AND m.role = 'admin'
             WHERE le.media_id = :media_id
               AND l.is_default = false
+              AND l.system_key IS NULL
             ORDER BY l.created_at ASC, l.id ASC
         """),
         {"viewer_id": viewer_id, "media_id": media_id},
@@ -432,6 +433,7 @@ def list_item_libraries(
             FROM libraries l
             JOIN memberships m ON m.library_id = l.id AND m.user_id = :viewer_id
             WHERE l.is_default = false
+              AND l.system_key IS NULL
             ORDER BY l.created_at ASC, l.id ASC
         """),
             {"viewer_id": viewer_id, "target_id": target.id},
@@ -467,6 +469,7 @@ def add_media_to_library(
     with transaction(db):
         ctx = governance.lock_library_for_member(db, viewer_id, library_id)
         governance.require_admin(ctx.role)
+        governance.require_not_system(ctx.system_key)
 
         media_exists = db.execute(
             text("SELECT 1 FROM media WHERE id = :media_id"),
@@ -506,6 +509,7 @@ def add_podcast_to_library(
         ctx = governance.lock_library_for_member(db, viewer_id, library_id)
         governance.require_admin(ctx.role)
         governance.require_non_default(ctx.is_default)
+        governance.require_not_system(ctx.system_key)
 
         podcast_row = db.execute(
             text("""
@@ -544,6 +548,7 @@ def remove_podcast_from_library(
         ctx = governance.lock_library_for_member(db, viewer_id, library_id)
         governance.require_admin(ctx.role)
         governance.require_non_default(ctx.is_default)
+        governance.require_not_system(ctx.system_key)
         if not _remove_podcast_from_library_in_txn(
             db, library_id=library_id, podcast_id=podcast_id
         ):
@@ -641,6 +646,7 @@ def reorder_entries(
     with transaction(db):
         ctx = governance.lock_library_for_member(db, viewer_id, library_id)
         governance.require_admin(ctx.role)
+        governance.require_not_system(ctx.system_key)
 
         existing_ids = [
             UUID(str(row[0]))
@@ -721,6 +727,7 @@ def _add_media_to_resolved_libraries(
     for ctx in locked_contexts.values():
         governance.require_non_default(ctx.is_default)
         governance.require_admin(ctx.role)
+        governance.require_not_system(ctx.system_key)
 
     inserted: list[UUID] = []
     for library_id in library_ids:

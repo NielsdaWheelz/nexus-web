@@ -3,6 +3,7 @@ from uuid import UUID
 import pytest
 from sqlalchemy import text
 
+from nexus.services import library_entries, library_governance
 from tests.factories import (
     add_library_member,
     create_test_library,
@@ -101,6 +102,47 @@ class TestLibraryTargetPickerOptions:
             "can_add": False,
             "can_remove": False,
         }
+
+    def test_get_media_libraries_excludes_system_libraries(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+    ):
+        viewer_id = create_test_user_id()
+        _bootstrap_user(auth_client, viewer_id)
+
+        with direct_db.session() as session:
+            media_id = create_test_media(session, title="System Picker Media")
+            system_library_id = library_governance.ensure_system_library(
+                session,
+                system_key=f"test_picker_system_{media_id.hex[:12]}",
+                name="System Picker Library",
+                owner_user_id=viewer_id,
+            )
+            normal_library_id = create_test_library(session, viewer_id, "Normal Picker Library")
+            library_entries.ensure_entry(
+                session,
+                system_library_id,
+                library_entries.media_target(media_id),
+            )
+            session.commit()
+
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("libraries", "id", normal_library_id)
+        direct_db.register_cleanup("memberships", "library_id", normal_library_id)
+        direct_db.register_cleanup("libraries", "id", system_library_id)
+        direct_db.register_cleanup("memberships", "library_id", system_library_id)
+
+        response = auth_client.get(
+            f"/media/{media_id}/libraries",
+            headers=auth_headers(viewer_id),
+        )
+
+        assert response.status_code == 200, response.text
+        rows = {UUID(row["id"]): row for row in response.json()["data"]}
+        assert system_library_id not in rows
+        assert normal_library_id in rows
 
     def test_get_podcast_libraries_returns_current_membership_options(
         self,

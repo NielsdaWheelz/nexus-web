@@ -1091,7 +1091,7 @@ class TestMigrationUpgradeDowngrade:
                         text(
                             """
                             SELECT storage_key, content_type, byte_size
-                            FROM oracle_corpus_images
+                            FROM oracle_plates
                             """
                         )
                     )
@@ -1105,13 +1105,13 @@ class TestMigrationUpgradeDowngrade:
                             """
                             SELECT column_name
                             FROM information_schema.columns
-                            WHERE table_name = 'oracle_corpus_images'
+                            WHERE table_name = 'oracle_plates'
                             """
                         )
                     )
                 }
 
-            assert rows, "expected at least one seeded oracle_corpus_images row"
+            assert rows, "expected at least one seeded oracle_plates row"
             assert "sha256" not in columns
             assert "corpus_set_version_id" not in columns
             for row in rows:
@@ -1158,7 +1158,7 @@ class TestMigrationUpgradeDowngrade:
 
             insert_sql = text(
                 """
-                INSERT INTO oracle_corpus_images (
+                INSERT INTO oracle_plates (
                     id,
                     source_repository,
                     source_url,
@@ -1196,10 +1196,10 @@ class TestMigrationUpgradeDowngrade:
             negative_cases: list[tuple[dict, tuple[str, ...]]] = [
                 # 1) storage_key NULL -> NOT NULL violation.
                 ({"storage_key": None}, ("storage_key",)),
-                # 2) byte_size = 0 -> ck_oracle_images_byte_size_positive.
-                ({"byte_size": 0}, ("ck_oracle_images_byte_size_positive",)),
-                # 3) disallowed content_type -> ck_oracle_images_content_type.
-                ({"content_type": "image/svg+xml"}, ("ck_oracle_images_content_type",)),
+                # 2) byte_size = 0 -> ck_oracle_plates_byte_size_positive.
+                ({"byte_size": 0}, ("ck_oracle_plates_byte_size_positive",)),
+                # 3) disallowed content_type -> ck_oracle_plates_content_type.
+                ({"content_type": "image/svg+xml"}, ("ck_oracle_plates_content_type",)),
                 # 4) storage_key must be oracle/plates/<stable-key>.<ext>.
                 ({"storage_key": "oracle/plates/.jpg"}, ("storage_key_shape",)),
                 ({"storage_key": "media/x.jpg"}, ("storage_key_shape",)),
@@ -2761,64 +2761,6 @@ class TestSchemaConstraints:
             ).scalar_one()
 
         assert vector_type == "vector(256)"
-
-    def test_oracle_citation_metadata_columns_are_seeded(self, migrated_engine):
-        """Oracle corpus passages carry structured citation metadata."""
-        with Session(migrated_engine) as session:
-            corpus_columns = {
-                row[0]
-                for row in session.execute(
-                    text(
-                        """
-                        SELECT column_name
-                        FROM information_schema.columns
-                        WHERE table_name = 'oracle_corpus_passages'
-                        """
-                    )
-                )
-            }
-            row = (
-                session.execute(
-                    text(
-                        """
-                        SELECT locator, source, embedding_model
-                        FROM oracle_corpus_passages
-                        ORDER BY passage_index
-                        LIMIT 1
-                        """
-                    )
-                )
-                .mappings()
-                .one()
-            )
-            vector_types = dict(
-                session.execute(
-                    text(
-                        """
-                        SELECT c.relname, format_type(a.atttypid, a.atttypmod)
-                        FROM pg_attribute a
-                        JOIN pg_class c ON c.oid = a.attrelid
-                        WHERE c.relname IN ('oracle_corpus_passages', 'oracle_corpus_images')
-                          AND a.attname = 'embedding'
-                          AND NOT a.attisdropped
-                        """
-                    )
-                ).all()
-            )
-
-        assert {"locator", "source"}.issubset(corpus_columns)
-        assert {"embedding", "embedding_model"}.issubset(corpus_columns)
-        assert vector_types == {
-            "oracle_corpus_passages": "vector(256)",
-            "oracle_corpus_images": "vector(256)",
-        }
-        assert row["locator"]["type"] == "manifest_locator"
-        assert row["locator"]["label"]
-        assert isinstance(row["locator"]["passage_index"], int)
-        assert row["source"]["type"] == "public_domain_work"
-        assert row["source"]["url"].startswith("https://")
-        assert row["source"]["citation_key"] and len(row["source"]["citation_key"]) == 64
-        assert row["embedding_model"] == "test_hash_v2_256"
 
     def test_duplicate_default_library_rejected(self, migrated_engine):
         """Partial unique index prevents duplicate default libraries per user."""
@@ -9969,6 +9911,11 @@ class TestMigration0145LlmCallLedgerAndErrorFloor:
         the run row, the oracle error_message -> error_detail rename preserving
         values, the delta-event interpretation backfill (seq-order concat,
         readings without deltas stay NULL), and the generator_model_id drop.
+
+        Upgrades to 0165 (the last revision before the Oracle corpus cutover):
+        the assertions span 0145 (the move/recut) and 0152 (``provider_route``),
+        and stopping at 0165 keeps both while avoiding 0166, which wipes ALL
+        Oracle reading state and would delete the seeded readings under test.
         """
         reset_test_schema()
         engine = create_engine(get_test_database_url())
@@ -10142,8 +10089,8 @@ class TestMigration0145LlmCallLedgerAndErrorFloor:
                     )
                 session.commit()
 
-            result = run_alembic_command("upgrade head")
-            assert result.returncode == 0, f"upgrade to head failed: {result.stderr}"
+            result = run_alembic_command("upgrade 0165")
+            assert result.returncode == 0, f"upgrade to 0165 failed: {result.stderr}"
 
             with Session(engine) as session:
                 tables = {
@@ -10426,7 +10373,12 @@ class TestMigration0146OracleDoneNormalization:
 
     def test_0146_deletes_error_events_and_keeps_the_rest(self):
         """Seed a pre-0146 failed reading with an ``error`` event; upgrade deletes
-        exactly the retired rows (0142 DELETE-then-tighten pattern)."""
+        exactly the retired rows (0142 DELETE-then-tighten pattern).
+
+        Pinned to 0146 (the migration under test): 0166 later wipes ALL Oracle
+        reading state as a hard cutover, so upgrading to head would delete every
+        seeded row and mask this migration's selective deletion.
+        """
         reset_test_schema()
         engine = create_engine(get_test_database_url())
         try:
@@ -10488,8 +10440,8 @@ class TestMigration0146OracleDoneNormalization:
                     )
                 session.commit()
 
-            result = run_alembic_command("upgrade head")
-            assert result.returncode == 0, f"upgrade to head failed: {result.stderr}"
+            result = run_alembic_command("upgrade 0146")
+            assert result.returncode == 0, f"upgrade to 0146 failed: {result.stderr}"
 
             with Session(engine) as session:
                 events = {
@@ -11725,7 +11677,8 @@ class TestMigration0148NotesPagesBackfill:
 
 
 # The scannable resource-graph schemes. synapse_suppressions mirrors these, not
-# every resource_edges scheme ever introduced.
+# every resource_edges scheme ever introduced. 0166 swapped the dropped
+# oracle_corpus_passage scheme for oracle_passage_anchor across these CHECKs.
 RESOURCE_EDGE_SCHEMES = (
     "media",
     "library",
@@ -11738,7 +11691,7 @@ RESOURCE_EDGE_SCHEMES = (
     "conversation",
     "message",
     "oracle_reading",
-    "oracle_corpus_passage",
+    "oracle_passage_anchor",
     "library_intelligence_artifact",
     "external_snapshot",
     "contributor",
@@ -13329,5 +13282,361 @@ class TestMigration0163DropUserGraphTags:
                     assert kept[5] is not None
             finally:
                 engine.dispose()
+        finally:
+            reset_test_schema()
+
+
+class TestMigration0166OracleCorpusLibrary:
+    """0166: the Oracle corpus becomes a real library of indexed media.
+
+    The Oracle-owned text/vector corpus (``oracle_corpus_works`` /
+    ``oracle_corpus_passages``) is dropped, ``oracle_corpus_images`` is renamed to
+    ``oracle_plates`` (without its text embeddings), and the new
+    ``oracle_corpus_sources`` / ``oracle_passage_anchors`` mapping + ``libraries.system_key``
+    are added. The ``oracle_corpus_passage`` resource scheme is swapped for
+    ``oracle_passage_anchor`` across every scheme CHECK.
+    """
+
+    @pytest.fixture(scope="class")
+    def head_engine(self):
+        reset_test_schema()
+        result = run_alembic_command("upgrade head")
+        if result.returncode != 0:
+            pytest.fail(f"Migration upgrade failed: {result.stderr}")
+        engine = create_engine(get_test_database_url())
+        yield engine
+        engine.dispose()
+        reset_test_schema()
+
+    def _has_column(self, session, table: str, column: str) -> bool:
+        return (
+            session.execute(
+                text(
+                    """
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_name = :table AND column_name = :column
+                    """
+                ),
+                {"table": table, "column": column},
+            ).first()
+            is not None
+        )
+
+    def _constraint_def(self, session, table: str, conname: str) -> str:
+        return session.execute(
+            text(
+                """
+                SELECT pg_get_constraintdef(oid)
+                FROM pg_constraint
+                WHERE conrelid = CAST(:table AS regclass) AND conname = :conname
+                """
+            ),
+            {"table": table, "conname": conname},
+        ).scalar_one()
+
+    def test_head_oracle_corpus_library_schema_contract(self, head_engine):
+        with Session(head_engine) as session:
+            # New tables exist; the old Oracle-owned corpus vector store is gone.
+            assert (
+                session.scalar(text("SELECT to_regclass('public.oracle_corpus_sources')"))
+                is not None
+            )
+            assert (
+                session.scalar(text("SELECT to_regclass('public.oracle_passage_anchors')"))
+                is not None
+            )
+            assert session.scalar(text("SELECT to_regclass('public.oracle_plates')")) is not None
+            assert (
+                session.scalar(text("SELECT to_regclass('public.oracle_corpus_works')")) is None
+            ), "0166 must drop oracle_corpus_works"
+            assert (
+                session.scalar(text("SELECT to_regclass('public.oracle_corpus_passages')")) is None
+            ), "0166 must drop oracle_corpus_passages"
+            assert (
+                session.scalar(text("SELECT to_regclass('public.oracle_corpus_images')")) is None
+            ), "0166 must rename oracle_corpus_images -> oracle_plates"
+
+            # libraries.system_key is added.
+            assert self._has_column(session, "libraries", "system_key"), (
+                "0166 must add libraries.system_key"
+            )
+
+            # The renamed plates table drops its text embeddings.
+            assert not self._has_column(session, "oracle_plates", "embedding"), (
+                "0166 must drop oracle_plates.embedding"
+            )
+            assert not self._has_column(session, "oracle_plates", "embedding_model"), (
+                "0166 must drop oracle_plates.embedding_model"
+            )
+            resolution_check = self._constraint_def(
+                session,
+                "oracle_passage_anchors",
+                "ck_oracle_passage_anchors_resolution_state",
+            )
+            assert "resolution_status = 'resolved'" in resolution_check
+            assert "current_content_chunk_id IS NOT NULL" in resolution_check
+            assert "resolution_error IS NULL" in resolution_check
+
+            # The scheme CHECK swapped oracle_corpus_passage -> oracle_passage_anchor.
+            scheme_check = session.execute(
+                text(
+                    """
+                    SELECT pg_get_constraintdef(oid)
+                    FROM pg_constraint
+                    WHERE conrelid = 'resource_edges'::regclass
+                      AND conname = 'ck_resource_edges_target_scheme'
+                    """
+                )
+            ).scalar_one()
+        schemes = set(re.findall(r"'([^']+)'", scheme_check))
+        assert "oracle_corpus_passage" not in schemes, (
+            f"0166 must drop the oracle_corpus_passage scheme: {scheme_check}"
+        )
+        assert "oracle_passage_anchor" in schemes, (
+            f"0166 must admit the oracle_passage_anchor scheme: {scheme_check}"
+        )
+
+    def test_0166_normalizes_old_oracle_chat_contexts_before_scheme_cutover(self):
+        reset_test_schema()
+        try:
+            result = run_alembic_command("upgrade 0165")
+            assert result.returncode == 0, f"upgrade to 0165 failed: {result.stderr}"
+
+            user_id = uuid4()
+            model_id = uuid4()
+            conversation_id = uuid4()
+            old_reading_id = uuid4()
+            old_passage_id = uuid4()
+            old_edge_id = uuid4()
+            run_delete_id = uuid4()
+            run_keep_id = uuid4()
+            highlight_id = uuid4()
+            message_ids = [uuid4(), uuid4(), uuid4(), uuid4()]
+
+            engine = create_engine(get_test_database_url())
+            try:
+                with Session(engine) as session:
+                    session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO models (id, provider, model_name, max_context_tokens)
+                            VALUES (:id, 'openai', 'migration-test', 100000)
+                            """
+                        ),
+                        {"id": model_id},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO conversations (id, owner_user_id, sharing, next_seq)
+                            VALUES (:id, :owner_user_id, 'private', 5)
+                            """
+                        ),
+                        {"id": conversation_id, "owner_user_id": user_id},
+                    )
+                    for index, message_id, parent_message_id in (
+                        (1, message_ids[0], None),
+                        (2, message_ids[1], message_ids[0]),
+                        (3, message_ids[2], None),
+                        (4, message_ids[3], message_ids[2]),
+                    ):
+                        session.execute(
+                            text(
+                                """
+                                INSERT INTO messages (
+                                    id, conversation_id, seq, role, content, status,
+                                    parent_message_id, message_document
+                                )
+                                VALUES (
+                                    :id, :conversation_id, :seq, :role, :content,
+                                    'complete', :parent_message_id,
+                                    '{"type": "message_document", "blocks": []}'::jsonb
+                                )
+                                """
+                            ),
+                            {
+                                "id": message_id,
+                                "conversation_id": conversation_id,
+                                "seq": index,
+                                "role": "user" if index in {1, 3} else "assistant",
+                                "content": f"message {index}",
+                                "parent_message_id": parent_message_id,
+                            },
+                        )
+                    for run_id, user_message_id, assistant_message_id in (
+                        (run_delete_id, message_ids[0], message_ids[1]),
+                        (run_keep_id, message_ids[2], message_ids[3]),
+                    ):
+                        session.execute(
+                            text(
+                                """
+                                INSERT INTO chat_runs (
+                                    id, owner_user_id, conversation_id, user_message_id,
+                                    assistant_message_id, idempotency_key, payload_hash,
+                                    status, model_id, reasoning, key_mode
+                                )
+                                VALUES (
+                                    :id, :owner_user_id, :conversation_id, :user_message_id,
+                                    :assistant_message_id, :idempotency_key, 'hash',
+                                    'complete', :model_id, 'default', 'auto'
+                                )
+                                """
+                            ),
+                            {
+                                "id": run_id,
+                                "owner_user_id": user_id,
+                                "conversation_id": conversation_id,
+                                "user_message_id": user_message_id,
+                                "assistant_message_id": assistant_message_id,
+                                "idempotency_key": str(run_id),
+                                "model_id": model_id,
+                            },
+                        )
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO resource_edges (
+                                id, user_id, kind, origin, source_scheme, source_id,
+                                target_scheme, target_id
+                            )
+                            VALUES (
+                                :id, :user_id, 'context', 'user',
+                                'oracle_reading', :old_reading_id,
+                                'oracle_corpus_passage', :old_passage_id
+                            )
+                            """
+                        ),
+                        {
+                            "id": old_edge_id,
+                            "user_id": user_id,
+                            "old_reading_id": old_reading_id,
+                            "old_passage_id": old_passage_id,
+                        },
+                    )
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO chat_run_turn_contexts (
+                                chat_run_id, requested_subject_scheme, requested_subject_id,
+                                subject_scheme, subject_id
+                            )
+                            VALUES (
+                                :run_id, 'oracle_corpus_passage', :old_passage_id,
+                                'oracle_corpus_passage', :old_passage_id
+                            )
+                            """
+                        ),
+                        {"run_id": run_delete_id, "old_passage_id": old_passage_id},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO chat_run_turn_contexts (
+                                chat_run_id, requested_subject_scheme, requested_subject_id,
+                                subject_scheme, subject_id, subject_context_edge_id,
+                                reader_selection_media_id, reader_selection_highlight_id
+                            )
+                            VALUES (
+                                :run_id, 'oracle_reading', :old_reading_id,
+                                'oracle_reading', :old_reading_id, :old_edge_id,
+                                :media_id, :highlight_id
+                            )
+                            """
+                        ),
+                        {
+                            "run_id": run_keep_id,
+                            "old_reading_id": old_reading_id,
+                            "old_edge_id": old_edge_id,
+                            "media_id": uuid4(),
+                            "highlight_id": highlight_id,
+                        },
+                    )
+                    session.commit()
+            finally:
+                engine.dispose()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade to head failed: {result.stderr}"
+
+            engine = create_engine(get_test_database_url())
+            try:
+                with Session(engine) as session:
+                    assert (
+                        session.scalar(
+                            text(
+                                """
+                                SELECT count(*) FROM resource_edges
+                                WHERE source_scheme IN ('oracle_reading', 'oracle_corpus_passage')
+                                   OR target_scheme IN ('oracle_reading', 'oracle_corpus_passage')
+                                """
+                            )
+                        )
+                        == 0
+                    )
+                    assert (
+                        session.scalar(
+                            text(
+                                """
+                                SELECT count(*) FROM chat_run_turn_contexts
+                                WHERE requested_subject_scheme IN (
+                                    'oracle_reading', 'oracle_corpus_passage'
+                                )
+                                   OR subject_scheme IN (
+                                    'oracle_reading', 'oracle_corpus_passage'
+                                )
+                                   OR subject_context_edge_id = :old_edge_id
+                                """
+                            ),
+                            {"old_edge_id": old_edge_id},
+                        )
+                        == 0
+                    )
+                    assert (
+                        session.scalar(
+                            text(
+                                """
+                                SELECT count(*) FROM chat_run_turn_contexts
+                                WHERE chat_run_id = :run_id
+                                """
+                            ),
+                            {"run_id": run_delete_id},
+                        )
+                        == 0
+                    )
+                    kept = session.execute(
+                        text(
+                            """
+                            SELECT requested_subject_scheme, requested_subject_id,
+                                   subject_scheme, subject_id, subject_context_edge_id,
+                                   reader_selection_highlight_id
+                            FROM chat_run_turn_contexts
+                            WHERE chat_run_id = :run_id
+                            """
+                        ),
+                        {"run_id": run_keep_id},
+                    ).one()
+                    assert kept[0] is None
+                    assert kept[1] is None
+                    assert kept[2] is None
+                    assert kept[3] is None
+                    assert kept[4] is None
+                    assert kept[5] == highlight_id
+            finally:
+                engine.dispose()
+        finally:
+            reset_test_schema()
+
+    def test_0166_downgrade_is_blocked(self):
+        reset_test_schema()
+        try:
+            assert run_alembic_command("upgrade 0166").returncode == 0
+
+            result = run_alembic_command("downgrade 0165")
+
+            assert result.returncode != 0
+            combined = (result.stdout or "") + (result.stderr or "")
+            assert "no downgrade path" in combined or "NotImplementedError" in combined
         finally:
             reset_test_schema()

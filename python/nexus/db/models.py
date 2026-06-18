@@ -365,7 +365,7 @@ class ResourceVersion(Base):
                 'media', 'library', 'evidence_span', 'content_chunk',
                 'highlight', 'page', 'note_block', 'fragment',
                 'conversation', 'message', 'oracle_reading',
-                'oracle_corpus_passage', 'library_intelligence_artifact',
+                'oracle_passage_anchor', 'library_intelligence_artifact',
                 'library_intelligence_revision',
                 'external_snapshot', 'contributor', 'podcast',
                 'reader_apparatus_item'
@@ -491,7 +491,7 @@ class ResourceViewState(Base):
                 'media', 'library', 'evidence_span', 'content_chunk',
                 'highlight', 'page', 'note_block', 'fragment',
                 'conversation', 'message', 'oracle_reading',
-                'oracle_corpus_passage', 'library_intelligence_artifact',
+                'oracle_passage_anchor', 'library_intelligence_artifact',
                 'library_intelligence_revision',
                 'external_snapshot', 'contributor', 'podcast',
                 'reader_apparatus_item'
@@ -505,7 +505,7 @@ class ResourceViewState(Base):
                 'media', 'library', 'evidence_span', 'content_chunk',
                 'highlight', 'page', 'note_block', 'fragment',
                 'conversation', 'message', 'oracle_reading',
-                'oracle_corpus_passage', 'library_intelligence_artifact',
+                'oracle_passage_anchor', 'library_intelligence_artifact',
                 'library_intelligence_revision',
                 'external_snapshot', 'contributor', 'podcast',
                 'reader_apparatus_item'
@@ -591,7 +591,7 @@ class ResourceEdge(Base):
                 'media', 'library', 'evidence_span', 'content_chunk',
                 'highlight', 'page', 'note_block', 'fragment',
                 'conversation', 'message', 'oracle_reading',
-                'oracle_corpus_passage', 'library_intelligence_artifact',
+                'oracle_passage_anchor', 'library_intelligence_artifact',
                 'library_intelligence_revision',
                 'external_snapshot', 'contributor', 'podcast',
                 'reader_apparatus_item'
@@ -605,7 +605,7 @@ class ResourceEdge(Base):
                 'media', 'library', 'evidence_span', 'content_chunk',
                 'highlight', 'page', 'note_block', 'fragment',
                 'conversation', 'message', 'oracle_reading',
-                'oracle_corpus_passage', 'library_intelligence_artifact',
+                'oracle_passage_anchor', 'library_intelligence_artifact',
                 'library_intelligence_revision',
                 'external_snapshot', 'contributor', 'podcast',
                 'reader_apparatus_item'
@@ -871,7 +871,7 @@ class SynapseSuppression(Base):
                 'media', 'library', 'evidence_span', 'content_chunk',
                 'highlight', 'page', 'note_block', 'fragment',
                 'conversation', 'message', 'oracle_reading',
-                'oracle_corpus_passage', 'library_intelligence_artifact',
+                'oracle_passage_anchor', 'library_intelligence_artifact',
                 'external_snapshot', 'contributor', 'podcast'
             )
             """,
@@ -883,7 +883,7 @@ class SynapseSuppression(Base):
                 'media', 'library', 'evidence_span', 'content_chunk',
                 'highlight', 'page', 'note_block', 'fragment',
                 'conversation', 'message', 'oracle_reading',
-                'oracle_corpus_passage', 'library_intelligence_artifact',
+                'oracle_passage_anchor', 'library_intelligence_artifact',
                 'external_snapshot', 'contributor', 'podcast'
             )
             """,
@@ -981,6 +981,9 @@ class Library(Base):
     name: Mapped[str] = mapped_column(Text, nullable=False)
     color: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_default: Mapped[bool] = mapped_column(Boolean, server_default="false", nullable=False)
+    # System-owned identity for non-user-created libraries (e.g. 'oracle_corpus').
+    # NULL for ordinary user libraries; protects rename/delete/share/entry edits.
+    system_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -996,6 +999,16 @@ class Library(Base):
         CheckConstraint(
             "char_length(name) BETWEEN 1 AND 100",
             name="ck_libraries_name_length",
+        ),
+        CheckConstraint(
+            "system_key IS NULL OR char_length(system_key) BETWEEN 1 AND 80",
+            name="ck_libraries_system_key",
+        ),
+        Index(
+            "uix_libraries_system_key",
+            "system_key",
+            unique=True,
+            postgresql_where=text("system_key IS NOT NULL"),
         ),
     )
 
@@ -4772,7 +4785,7 @@ class ChatRunTurnContext(Base):
             "requested_subject_scheme IS NULL OR requested_subject_scheme IN ("
             "'media', 'library', 'evidence_span', 'content_chunk', 'highlight', 'page', "
             "'note_block', 'fragment', 'conversation', 'message', 'oracle_reading', "
-            "'oracle_corpus_passage', 'library_intelligence_artifact', "
+            "'oracle_passage_anchor', 'library_intelligence_artifact', "
             "'library_intelligence_revision', 'external_snapshot', 'contributor', "
             "'podcast', 'reader_apparatus_item')",
             name="ck_chat_run_turn_contexts_requested_subject_scheme",
@@ -4781,7 +4794,7 @@ class ChatRunTurnContext(Base):
             "subject_scheme IS NULL OR subject_scheme IN ("
             "'media', 'library', 'evidence_span', 'content_chunk', 'highlight', 'page', "
             "'note_block', 'fragment', 'conversation', 'message', 'oracle_reading', "
-            "'oracle_corpus_passage', 'library_intelligence_artifact', "
+            "'oracle_passage_anchor', 'library_intelligence_artifact', "
             "'library_intelligence_revision', 'external_snapshot', 'contributor', "
             "'podcast', 'reader_apparatus_item')",
             name="ck_chat_run_turn_contexts_subject_scheme",
@@ -6055,96 +6068,150 @@ class WorkspaceSession(Base):
     )
 
 
-class OracleCorpusWork(Base):
-    """Curated public-domain work in the oracle corpus."""
+class OracleCorpusSource(Base):
+    """Maps one curated Oracle corpus work to a real media row + library entry.
 
-    __tablename__ = "oracle_corpus_works"
+    The media row is the authoritative source text owner; corpus text, chunks,
+    and embeddings live in the shared content-index substrate, not here.
+    """
+
+    __tablename__ = "oracle_corpus_sources"
 
     id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
         primary_key=True,
         server_default=text("gen_random_uuid()"),
     )
-    slug: Mapped[str] = mapped_column(Text, nullable=False)
+    corpus_key: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'oracle'"))
+    work_key: Mapped[str] = mapped_column(Text, nullable=False)
+    library_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("libraries.id"), nullable=False
+    )
+    media_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("media.id"), nullable=False
+    )
     title: Mapped[str] = mapped_column(Text, nullable=False)
-    author: Mapped[str] = mapped_column(Text, nullable=False)
-    year: Mapped[str | None] = mapped_column(Text, nullable=True)
-    edition_label: Mapped[str] = mapped_column(Text, nullable=False)
+    author_text: Mapped[str] = mapped_column(Text, nullable=False)
     source_repository: Mapped[str] = mapped_column(Text, nullable=False)
     source_url: Mapped[str] = mapped_column(Text, nullable=False)
+    source_download_url: Mapped[str] = mapped_column(Text, nullable=False)
+    source_media_kind: Mapped[str] = mapped_column(Text, nullable=False)
+    display_order: Mapped[int] = mapped_column(Integer, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
+        TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
     )
 
     __table_args__ = (
-        CheckConstraint("char_length(slug) BETWEEN 1 AND 160", name="ck_oracle_works_slug_length"),
-        UniqueConstraint("slug", name="uix_oracle_works_slug"),
+        CheckConstraint(
+            "char_length(work_key) BETWEEN 1 AND 160", name="ck_oracle_corpus_sources_key"
+        ),
+        CheckConstraint(
+            "source_media_kind IN ('epub', 'web_article', 'pdf')",
+            name="ck_oracle_corpus_sources_kind",
+        ),
+        UniqueConstraint("corpus_key", "work_key", name="uix_oracle_corpus_sources_work"),
+        UniqueConstraint("media_id", name="uix_oracle_corpus_sources_media"),
     )
 
 
-class OracleCorpusPassage(Base):
-    """One indexed passage of a public-domain work in the oracle corpus."""
+class OraclePassageAnchor(Base):
+    """Stable Oracle curation/concordance identity that resolves to current media evidence.
 
-    __tablename__ = "oracle_corpus_passages"
+    ``current_evidence_span_id`` / ``current_content_chunk_id`` are cache pointers
+    into the current index generation and deliberately carry no FK — evidence/chunk
+    rows are regenerated on reindex and must not block content-index deletion.
+    """
+
+    __tablename__ = "oracle_passage_anchors"
 
     id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
         primary_key=True,
         server_default=text("gen_random_uuid()"),
     )
-    work_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("oracle_corpus_works.id"),
-        nullable=False,
+    corpus_source_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("oracle_corpus_sources.id"), nullable=False
     )
-    passage_index: Mapped[int] = mapped_column(Integer, nullable=False)
-    canonical_text: Mapped[str] = mapped_column(Text, nullable=False)
-    locator_label: Mapped[str] = mapped_column(Text, nullable=False)
-    locator: Mapped[dict[str, object]] = mapped_column(
-        JSONB, nullable=False, server_default=text("'{}'::jsonb")
-    )
-    source: Mapped[dict[str, object]] = mapped_column(
-        JSONB, nullable=False, server_default=text("'{}'::jsonb")
-    )
+    passage_key: Mapped[str] = mapped_column(Text, nullable=False)
+    display_label: Mapped[str] = mapped_column(Text, nullable=False)
+    selector: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
     tags: Mapped[list[str]] = mapped_column(
         JSONB, nullable=False, server_default=text("'[]'::jsonb")
     )
-    embedding_model: Mapped[str | None] = mapped_column(Text, nullable=True)
-    embedding: Mapped[list[float] | None] = mapped_column(PGVector(256), nullable=True)
+    phase_hints: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
+    current_evidence_span_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=True
+    )
+    current_content_chunk_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=True
+    )
+    resolution_status: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'pending'")
+    )
+    resolution_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
+        TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
     )
 
-    work: Mapped["OracleCorpusWork"] = relationship("OracleCorpusWork")
+    source: Mapped["OracleCorpusSource"] = relationship("OracleCorpusSource")
 
     __table_args__ = (
         CheckConstraint(
-            "char_length(canonical_text) BETWEEN 1 AND 4000",
-            name="ck_oracle_passages_text_length",
+            "jsonb_typeof(selector) = 'object'", name="ck_oracle_passage_anchors_selector"
         ),
-        CheckConstraint("passage_index >= 0", name="ck_oracle_passages_index"),
+        CheckConstraint("jsonb_typeof(tags) = 'array'", name="ck_oracle_passage_anchors_tags"),
         CheckConstraint(
-            "jsonb_typeof(locator) = 'object'", name="ck_oracle_passages_locator_object"
+            "jsonb_typeof(phase_hints) = 'array'", name="ck_oracle_passage_anchors_phase_hints"
         ),
-        CheckConstraint("jsonb_typeof(source) = 'object'", name="ck_oracle_passages_source_object"),
-        CheckConstraint("jsonb_typeof(tags) = 'array'", name="ck_oracle_passages_tags_array"),
         CheckConstraint(
-            "embedding_model IS NULL OR char_length(embedding_model) BETWEEN 1 AND 128",
-            name="ck_oracle_passages_embedding_model_length",
+            "resolution_status IN ('pending', 'resolved', 'failed')",
+            name="ck_oracle_passage_anchors_status",
         ),
-        UniqueConstraint("work_id", "passage_index", name="uix_oracle_passages_work_index"),
-        Index("idx_oracle_passages_embedding", "embedding_model"),
+        CheckConstraint(
+            """
+            (
+                resolution_status = 'pending'
+                AND current_evidence_span_id IS NULL
+                AND current_content_chunk_id IS NULL
+                AND resolved_at IS NULL
+                AND resolution_error IS NULL
+            )
+            OR (
+                resolution_status = 'resolved'
+                AND current_content_chunk_id IS NOT NULL
+                AND resolved_at IS NOT NULL
+                AND resolution_error IS NULL
+            )
+            OR (
+                resolution_status = 'failed'
+                AND current_evidence_span_id IS NULL
+                AND current_content_chunk_id IS NULL
+                AND resolved_at IS NULL
+                AND resolution_error IS NOT NULL
+            )
+            """,
+            name="ck_oracle_passage_anchors_resolution_state",
+        ),
+        UniqueConstraint("corpus_source_id", "passage_key", name="uix_oracle_passage_anchors_key"),
     )
 
 
-class OracleCorpusImage(Base):
-    """Curated public-domain image plate in the oracle corpus."""
+class OraclePlate(Base):
+    """Curated public-domain image plate, a public owned asset under oracle/plates/.
 
-    __tablename__ = "oracle_corpus_images"
+    Plate selection is deterministic over tags/phase hints (no text embeddings).
+    """
+
+    __tablename__ = "oracle_plates"
 
     id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
@@ -6167,8 +6234,6 @@ class OracleCorpusImage(Base):
     tags: Mapped[list[str]] = mapped_column(
         JSONB, nullable=False, server_default=text("'[]'::jsonb")
     )
-    embedding_model: Mapped[str | None] = mapped_column(Text, nullable=True)
-    embedding: Mapped[list[float] | None] = mapped_column(PGVector(256), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -6176,32 +6241,30 @@ class OracleCorpusImage(Base):
     )
 
     __table_args__ = (
-        CheckConstraint("width > 0", name="ck_oracle_images_width_positive"),
-        CheckConstraint("height > 0", name="ck_oracle_images_height_positive"),
-        CheckConstraint("jsonb_typeof(tags) = 'array'", name="ck_oracle_images_tags_array"),
-        CheckConstraint(
-            "embedding_model IS NULL OR char_length(embedding_model) BETWEEN 1 AND 128",
-            name="ck_oracle_images_embedding_model_length",
-        ),
+        CheckConstraint("width > 0", name="ck_oracle_plates_width_positive"),
+        CheckConstraint("width <= 4096", name="ck_oracle_plates_width_safe"),
+        CheckConstraint("height > 0", name="ck_oracle_plates_height_positive"),
+        CheckConstraint("height <= 4096", name="ck_oracle_plates_height_safe"),
+        CheckConstraint("jsonb_typeof(tags) = 'array'", name="ck_oracle_plates_tags_array"),
         CheckConstraint(
             r"storage_key ~ '^oracle/plates/[a-z0-9][a-z0-9._-]{0,191}\.(jpg|png|webp)$'",
-            name="ck_oracle_images_storage_key_shape",
+            name="ck_oracle_plates_storage_key_shape",
         ),
         CheckConstraint(
             "content_type IN ('image/jpeg', 'image/png', 'image/webp')",
-            name="ck_oracle_images_content_type",
+            name="ck_oracle_plates_content_type",
         ),
-        CheckConstraint("byte_size > 0", name="ck_oracle_images_byte_size_positive"),
+        CheckConstraint("byte_size > 0", name="ck_oracle_plates_byte_size_positive"),
+        CheckConstraint("byte_size <= 10485760", name="ck_oracle_plates_byte_size_safe"),
         CheckConstraint(
             """(
                 (content_type = 'image/jpeg' AND storage_key LIKE '%.jpg')
                 OR (content_type = 'image/png' AND storage_key LIKE '%.png')
                 OR (content_type = 'image/webp' AND storage_key LIKE '%.webp')
             )""",
-            name="ck_oracle_images_storage_key_content_type_match",
+            name="ck_oracle_plates_storage_key_content_type_match",
         ),
-        UniqueConstraint("source_url", name="uix_oracle_images_source_url"),
-        Index("idx_oracle_images_embedding", "embedding_model"),
+        UniqueConstraint("source_url", name="uix_oracle_plates_source_url"),
     )
 
 
@@ -6229,7 +6292,7 @@ class OracleReading(Base):
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'pending'"))
     image_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("oracle_corpus_images.id"),
+        ForeignKey("oracle_plates.id"),
         nullable=True,
     )
     interpretation_text: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -6245,7 +6308,7 @@ class OracleReading(Base):
         nullable=False,
     )
 
-    image: Mapped["OracleCorpusImage | None"] = relationship("OracleCorpusImage")
+    image: Mapped["OraclePlate | None"] = relationship("OraclePlate")
 
     __table_args__ = (
         CheckConstraint("folio_number > 0", name="ck_oracle_readings_folio_positive"),

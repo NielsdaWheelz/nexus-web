@@ -40,6 +40,10 @@ interface Library {
   role: string;
   created_at: string;
   updated_at: string;
+  system_key: string | null;
+  can_rename: boolean;
+  can_delete: boolean;
+  can_edit_entries: boolean;
 }
 
 export default function LibrariesPaneBody() {

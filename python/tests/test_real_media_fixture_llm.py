@@ -200,7 +200,7 @@ async def test_real_media_fixture_llm_oracle_synthesis_passes_real_validator() -
             attribution_text="Dante Alighieri",
             deep_link=None,
             title="Inferno",
-            target=ResourceRef(scheme="oracle_corpus_passage", id=uuid4()),
+            target=ResourceRef(scheme="oracle_passage_anchor", id=uuid4()),
             tags=[],
             score=1.0,
         )

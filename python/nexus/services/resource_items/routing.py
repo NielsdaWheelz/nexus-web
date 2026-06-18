@@ -12,7 +12,10 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import visible_media_ids_cte_sql
 from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.services.resource_graph.refs import ResourceRef
-from nexus.services.resource_graph.resolve import reader_target_for_citation_target
+from nexus.services.resource_graph.resolve import (
+    oracle_anchor_current_target,
+    reader_target_for_citation_target,
+)
 
 
 def resource_activation_for_ref(
@@ -156,6 +159,9 @@ def route_for_ref(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> str | No
     if ref.scheme == "contributor":
         handle = db.scalar(text("SELECT handle FROM contributors WHERE id = :id"), {"id": ref.id})
         return f"/authors/{quote(str(handle), safe='')}" if handle is not None else None
-    if ref.scheme in ("oracle_corpus_passage", "external_snapshot"):
+    if ref.scheme == "oracle_passage_anchor":
+        current = oracle_anchor_current_target(db, ref.id)
+        return route_for_ref(db, viewer_id=viewer_id, ref=current) if current is not None else None
+    if ref.scheme == "external_snapshot":
         return None
     assert_never(ref.scheme)

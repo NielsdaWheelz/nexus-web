@@ -86,10 +86,11 @@ def test_read_search_and_citation_capabilities_are_owned_together() -> None:
     assert resource_can_own_ordered_adjacency(_ref("note_block")) is True
     assert resource_can_link(_ref("external_snapshot")) is False
     assert resource_can_attach(_ref("external_snapshot")) is False
-    assert resource_can_link(_ref("oracle_corpus_passage")) is False
+    assert resource_can_link(_ref("oracle_passage_anchor")) is True
+    assert resource_can_attach(_ref("oracle_passage_anchor")) is False
     assert "tag" not in RESOURCE_ITEM_CAPABILITIES
     assert resource_can_be_ordered_adjacency_target(_ref("external_snapshot")) is False
-    assert resource_can_be_ordered_adjacency_target(_ref("oracle_corpus_passage")) is False
+    assert resource_can_be_ordered_adjacency_target(_ref("oracle_passage_anchor")) is True
     assert resource_inspect_policy(_ref("media")) == "media_document_map"
     assert resource_inspect_policy(_ref("highlight")) == "none"
     assert resource_prompt_render_policy(_ref("highlight")) == "quote"

@@ -88,6 +88,82 @@ def _delete_note_owned_content(
         )
 
 
+def _delete_oracle_corpus_for_libraries(
+    session: Session, *, library_filter: str, params: dict[str, Any]
+) -> None:
+    """Tear down a seeded Oracle Corpus hanging off the given libraries (FK-safe).
+
+    ``oracle_corpus_sources`` FK libraries.id + media.id (both non-cascading) and
+    ``oracle_passage_anchors`` FK the sources; the corpus media are real indexed rows.
+    Drop anchors, then each source's media (entry, content index, owner content, the
+    media row), then the source mappings — before the caller deletes the libraries.
+    ``library_filter`` is a SELECT returning library ids (e.g.
+    ``SELECT id FROM libraries WHERE owner_user_id = :value``).
+    """
+    corpus_media_ids = [
+        row[0]
+        for row in session.execute(
+            text(
+                f"SELECT media_id FROM oracle_corpus_sources WHERE library_id IN ({library_filter})"
+            ),
+            params,
+        ).fetchall()
+    ]
+    session.execute(
+        text(
+            "DELETE FROM oracle_passage_anchors WHERE corpus_source_id IN "
+            f"(SELECT id FROM oracle_corpus_sources WHERE library_id IN ({library_filter}))"
+        ),
+        params,
+    )
+    session.execute(
+        text(f"DELETE FROM oracle_corpus_sources WHERE library_id IN ({library_filter})"),
+        params,
+    )
+    for corpus_media_id in corpus_media_ids:
+        mp = {"media_id": corpus_media_id}
+        session.execute(
+            text("UPDATE message_retrievals SET media_id = NULL WHERE media_id = :media_id"), mp
+        )
+        session.execute(
+            text(
+                "DELETE FROM resource_edges WHERE (source_scheme = 'media' AND source_id = :media_id)"
+                " OR (target_scheme = 'media' AND target_id = :media_id)"
+            ),
+            mp,
+        )
+        # media_claims/media_summaries FK media (and claims FK evidence_spans): clear
+        # them before _delete_owner_content removes the spans.
+        session.execute(text("DELETE FROM media_claims WHERE media_id = :media_id"), mp)
+        session.execute(text("DELETE FROM media_summaries WHERE media_id = :media_id"), mp)
+        session.execute(
+            text(
+                "DELETE FROM content_index_states "
+                "WHERE owner_kind = 'media' AND owner_id = :media_id"
+            ),
+            mp,
+        )
+        _delete_owner_content(session, owner_kind="media", owner_id=corpus_media_id)
+        session.execute(text("DELETE FROM contributor_credits WHERE media_id = :media_id"), mp)
+        session.execute(text("DELETE FROM library_entries WHERE media_id = :media_id"), mp)
+        session.execute(
+            text(
+                """
+                UPDATE external_provider_events
+                SET source_attempt_id = NULL
+                WHERE source_attempt_id IN (
+                    SELECT id
+                    FROM media_source_attempts
+                    WHERE media_id = :media_id
+                )
+                """
+            ),
+            mp,
+        )
+        session.execute(text("DELETE FROM media_source_attempts WHERE media_id = :media_id"), mp)
+        session.execute(text("DELETE FROM media WHERE id = :media_id"), mp)
+
+
 def _delete_library_intelligence(session: Session, artifact_filter: str, value: Any) -> None:
     """Tear down the LI head + revisions (non-cascading, migration 0141) for cleanup.
 
@@ -517,6 +593,15 @@ class DirectSessionManager:
                         ),
                         {"value": value},
                     )
+                    # An Oracle Corpus system library owned by this user holds real
+                    # indexed corpus media; tear the corpus down fully before the user
+                    # delete cascades its libraries, or that cascade hits the dangling
+                    # oracle_corpus_sources FKs (libraries.id + media.id, non-cascading).
+                    _delete_oracle_corpus_for_libraries(
+                        session,
+                        library_filter="SELECT id FROM libraries WHERE owner_user_id = :value",
+                        params={"value": value},
+                    )
                     # library_intelligence head/revisions are non-cascading (migration
                     # 0141) and the head FKs both library_id and user_id; tear them down
                     # before the user (and its cascaded libraries).
@@ -574,6 +659,20 @@ class DirectSessionManager:
                         text("DELETE FROM contributor_credits WHERE media_id = :value"),
                         {"value": value},
                     )
+                    # oracle_corpus_sources FK media.id (non-cascading) and
+                    # oracle_passage_anchors FK oracle_corpus_sources.id; clear the anchors
+                    # then the source mapping for this media before the media row.
+                    session.execute(
+                        text(
+                            "DELETE FROM oracle_passage_anchors WHERE corpus_source_id IN "
+                            "(SELECT id FROM oracle_corpus_sources WHERE media_id = :value)"
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text("DELETE FROM oracle_corpus_sources WHERE media_id = :value"),
+                        {"value": value},
+                    )
                     # library_entries.media_id lost its ON DELETE CASCADE in migration 0131,
                     # so clear entries explicitly before the media row. (intrinsics + closure
                     # edges still cascade from media.id — the DELETE FROM media handles them.)
@@ -626,6 +725,14 @@ class DirectSessionManager:
                 # library_entries.library_id is non-cascading (migration 0131): remove a
                 # library's entries before the library row.
                 if table == "libraries" and column == "id":
+                    # A corpus library holds real indexed media via oracle_corpus_sources
+                    # (FK libraries.id + media.id, non-cascading): tear the corpus down
+                    # (anchors, corpus media, sources) before the library row.
+                    _delete_oracle_corpus_for_libraries(
+                        session,
+                        library_filter="SELECT id FROM libraries WHERE id = :value",
+                        params={"value": value},
+                    )
                     session.execute(
                         text("DELETE FROM library_entries WHERE library_id = :value"),
                         {"value": value},
@@ -636,6 +743,14 @@ class DirectSessionManager:
                     _delete_library_intelligence(session, "WHERE library_id = :value", value)
 
                 if table == "libraries" and column == "owner_user_id":
+                    # Tear down any corpus media hanging off the user's libraries
+                    # (oracle_corpus_sources FK libraries.id + media.id, non-cascading)
+                    # before the library rows.
+                    _delete_oracle_corpus_for_libraries(
+                        session,
+                        library_filter="SELECT id FROM libraries WHERE owner_user_id = :value",
+                        params={"value": value},
+                    )
                     session.execute(
                         text(
                             "DELETE FROM library_entries WHERE library_id IN "

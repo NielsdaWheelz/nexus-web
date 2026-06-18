@@ -14,7 +14,6 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-import httpx
 from provider_runtime import ModelRuntime
 from provider_runtime.errors import ModelCallError
 from provider_runtime.types import ModelCall
@@ -23,12 +22,11 @@ from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import visible_media_ids_cte_sql
 from nexus.db.errors import integrity_constraint_name
 from nexus.db.models import (
-    OracleCorpusImage,
-    OracleCorpusPassage,
-    OracleCorpusWork,
+    OracleCorpusSource,
+    OraclePassageAnchor,
+    OraclePlate,
     OracleReading,
     OracleReadingEvent,
     OracleReadingFolio,
@@ -54,7 +52,7 @@ from nexus.schemas.oracle import (
     oracle_done_payload,
     oracle_passage_payload,
 )
-from nexus.services import run_kit
+from nexus.services import oracle_corpus, run_kit
 from nexus.services.api_key_resolver import resolve_api_key, update_user_key_status
 from nexus.services.llm_ledger import LedgeredLLM, LlmCallOwner
 from nexus.services.oracle_plates import oracle_plate_url
@@ -72,13 +70,13 @@ from nexus.services.resource_graph.schemas import (
     ConnectionFilters,
     ConnectionQuery,
 )
-from nexus.services.semantic_chunks import (
-    build_deterministic_hash_embedding,
-    build_text_embedding,
-    current_transcript_embedding_model,
-    to_pgvector_literal,
-    transcript_embedding_dimensions,
+from nexus.services.search.content_chunk_candidates import (
+    ContentChunkCandidate,
+    has_searchable_content_chunks,
+    retrieve_content_chunk_candidates,
 )
+from nexus.services.search.embedding import build_query_embedding
+from nexus.services.search.query import SearchScope
 from nexus.services.structured_synthesis import (
     INDEX_GROUNDING_RULE,
     StructuredSynthesisError,
@@ -101,6 +99,7 @@ ORACLE_LLM_TIMEOUT_SECONDS = 45
 ORACLE_PUBLIC_DOMAIN_CANDIDATES = 6
 ORACLE_USER_LIBRARY_CANDIDATES = 4
 ORACLE_FOLIO_ALLOCATE_ATTEMPTS = 8
+ORACLE_MAX_PLATE_DIMENSION = 4096  # image-bomb guard on plate selection
 ORACLE_THEMES: tuple[str, ...] = (
     "Of Time",
     "Of Death",
@@ -129,30 +128,8 @@ ORACLE_THEMES: tuple[str, ...] = (
 )  # 24 entries; mirrors the DB CHECK
 ORACLE_TOKEN_RE = re.compile(r"[a-z]{3,}")
 ORACLE_PHASES: tuple[str, str, str] = ("descent", "ordeal", "ascent")
-ORACLE_CANONICAL_PUBLIC_DOMAIN_WORK_SLUGS: tuple[str, ...] = (
-    "dante-inferno-longfellow",
-    "milton-paradise-lost",
-    "blake-songs-of-experience",
-    "blake-marriage-heaven-hell",
-    "poe-the-raven",
-    "shelley-frankenstein",
-    "shelley-ozymandias",
-    "byron-darkness",
-    "coleridge-rime-ancient-mariner",
-    "coleridge-kubla-khan",
-    "keats-ode-nightingale",
-    "keats-la-belle-dame",
-    "melville-moby-dick",
-    "hawthorne-young-goodman-brown",
-    "dickinson-selected-poems",
-    "whitman-song-of-myself",
-    "rossetti-goblin-market",
-    "kjv-ecclesiastes",
-    "kjv-revelation",
-)
-ORACLE_REQUIRED_PUBLIC_DOMAIN_WORKS = len(ORACLE_CANONICAL_PUBLIC_DOMAIN_WORK_SLUGS)
-ORACLE_REQUIRED_PUBLIC_DOMAIN_PASSAGES = 75
-ORACLE_REQUIRED_PUBLIC_DOMAIN_IMAGES = 36
+# Typed cause when the worker finds the corpus library/media/index/anchors not ready (§10.5).
+E_ORACLE_CORPUS_NOT_READY = "E_ORACLE_CORPUS_NOT_READY"
 ORACLE_URL_RE = re.compile(r"\b(?:https?://|www\.)", re.IGNORECASE)
 ORACLE_CITATION_MARKER_RE = re.compile(
     r"(\[[0-9]+\]"
@@ -261,66 +238,6 @@ def _insert_reading_with_next_folio(
     return reading
 
 
-def _ensure_current_corpus_ready(db: Session) -> None:
-    """Reject the current corpus until scripts/oracle manifests have fully seeded it."""
-    embedding_model = _corpus_embedding_model()
-    counts = (
-        db.execute(
-            select(
-                func.count(func.distinct(OracleCorpusWork.id)).label("work_count"),
-                func.count(func.distinct(OracleCorpusPassage.id)).label("passage_count"),
-                func.count(func.distinct(OracleCorpusImage.id)).label("image_count"),
-                func.count(func.distinct(OracleCorpusPassage.id))
-                .filter(
-                    OracleCorpusPassage.embedding.is_not(None),
-                    OracleCorpusPassage.embedding_model == embedding_model,
-                )
-                .label("passage_embedding_count"),
-                func.count(func.distinct(OracleCorpusImage.id))
-                .filter(
-                    OracleCorpusImage.embedding.is_not(None),
-                    OracleCorpusImage.embedding_model == embedding_model,
-                )
-                .label("image_embedding_count"),
-                func.count(func.distinct(OracleCorpusImage.id))
-                .filter(
-                    OracleCorpusImage.width <= 4096,
-                    OracleCorpusImage.height <= 4096,
-                )
-                .label("safe_image_count"),
-            )
-            .select_from(OracleCorpusWork)
-            .outerjoin(OracleCorpusPassage, OracleCorpusPassage.work_id == OracleCorpusWork.id)
-            .outerjoin(OracleCorpusImage, text("true"))
-        )
-        .mappings()
-        .one()
-    )
-    seeded_slugs = set(db.execute(select(OracleCorpusWork.slug)).scalars().all())
-    missing_slugs = [
-        slug for slug in ORACLE_CANONICAL_PUBLIC_DOMAIN_WORK_SLUGS if slug not in seeded_slugs
-    ]
-    work_count = int(counts["work_count"] or 0)
-    passage_count = int(counts["passage_count"] or 0)
-    image_count = int(counts["image_count"] or 0)
-    passage_embedding_count = int(counts["passage_embedding_count"] or 0)
-    image_embedding_count = int(counts["image_embedding_count"] or 0)
-    safe_image_count = int(counts["safe_image_count"] or 0)
-    if (
-        work_count < ORACLE_REQUIRED_PUBLIC_DOMAIN_WORKS
-        or passage_count < ORACLE_REQUIRED_PUBLIC_DOMAIN_PASSAGES
-        or image_count < ORACLE_REQUIRED_PUBLIC_DOMAIN_IMAGES
-        or passage_embedding_count < passage_count
-        or image_embedding_count < image_count
-        or safe_image_count < image_count
-        or missing_slugs
-    ):
-        raise ApiError(
-            ApiErrorCode.E_INTERNAL,
-            "Oracle source corpus is not fully seeded",
-        )
-
-
 def _is_oracle_folio_conflict(exc: IntegrityError) -> bool:
     constraint_name = integrity_constraint_name(exc)
     if constraint_name:
@@ -393,7 +310,7 @@ def get_reading_detail(
     )
     image_out: OracleReadingImageOut | None = None
     if reading.image_id is not None:
-        image = db.get(OracleCorpusImage, reading.image_id)
+        image = db.get(OraclePlate, reading.image_id)
         if image is None:
             raise ApiError(
                 ApiErrorCode.E_INTERNAL,
@@ -473,7 +390,7 @@ def list_all_readings(db: Session, *, viewer_id: UUID) -> list[OracleReadingSumm
                     img.work_title AS image_work_title,
                     img.attribution_text AS image_attribution_text
                 FROM oracle_readings r
-                LEFT JOIN oracle_corpus_images img ON img.id = r.image_id
+                LEFT JOIN oracle_plates img ON img.id = r.image_id
                 WHERE r.user_id = :viewer_id
                 ORDER BY r.created_at DESC
                 """
@@ -651,8 +568,8 @@ def _surfaced_passage_citation(citation: CitationOut | None) -> CitationOut | No
 
     Every phase writes a citation edge (§5.3), but only a passage with a live
     shared reader/note locator renders a chip (``OracleReadingPassageOut.citation``).
-    Public-domain passages, span-less chunks, and deleted evidence resolve without
-    a locator and stay typographic only (citation=None).
+    Resolved public-domain anchors can surface a chip; unresolved, span-less, or
+    deleted backing targets degrade to typographic-only (citation=None).
     """
     if citation is not None and citation.locator is not None:
         return citation
@@ -700,47 +617,51 @@ async def execute_reading(
             _fail(db, reading, code=exc.code.value, detail=exc.message)
             return {"status": "failed", "error_code": exc.code.value}
 
-        try:
-            _ensure_current_corpus_ready(db)
-        except ApiError as exc:
-            _fail(db, reading, code="E_ORACLE_CORPUS_INCOMPLETE", detail=exc.message)
-            return {"status": "failed", "error_code": "E_ORACLE_CORPUS_INCOMPLETE"}
+        readiness = oracle_corpus.get_oracle_corpus_readiness(db)
+        if readiness.status != "ready" or readiness.library_id is None:
+            _fail(
+                db,
+                reading,
+                code=E_ORACLE_CORPUS_NOT_READY,
+                detail=(
+                    f"corpus not ready: {readiness.ready_media_count}/{readiness.work_count} media, "
+                    f"{readiness.resolved_anchor_count}/{readiness.anchor_count} anchors, "
+                    f"{readiness.ready_plate_count}/{readiness.plate_count} plates"
+                ),
+            )
+            return {"status": "failed", "error_code": E_ORACLE_CORPUS_NOT_READY}
 
         try:
-            corpus_query_embedding_model = _corpus_embedding_model()
-            corpus_query_embedding_model, corpus_query_embedding = _build_query_embedding_for_model(
-                question,
-                embedding_model=corpus_query_embedding_model,
+            # One active-model query embedding feeds both corpus and personal retrieval;
+            # there is no separate Oracle corpus embedding model (G4/§10.1).
+            query_embedding = build_query_embedding(
+                db, question, ["content_chunk"], transaction_active_at_entry=False
             )
-            plate = _pick_plate(
+            if query_embedding is None:
+                raise ApiError(
+                    ApiErrorCode.E_APP_SEARCH_FAILED,
+                    "Oracle requires semantic embeddings, which are unavailable",
+                )
+            corpus_media_ids = _oracle_corpus_media_ids(db)
+            candidates = _oracle_corpus_candidates(
                 db,
-                query_embedding_model=corpus_query_embedding_model,
-                query_embedding=corpus_query_embedding,
+                viewer_id=viewer_id,
+                question=question,
+                query_embedding=query_embedding,
+                library_id=readiness.library_id,
             )
             requires_user_content = _viewer_has_searchable_user_content(db, viewer_id=viewer_id)
-            user_query_embedding_model = None
-            user_query_embedding = None
             if requires_user_content:
-                user_query_embedding_model, user_query_embedding = _build_query_embedding_for_model(
-                    question,
-                    embedding_model=current_transcript_embedding_model(),
-                )
-            candidates = _retrieve_corpus_passages(
-                db,
-                question=question,
-                query_embedding_model=corpus_query_embedding_model,
-                query_embedding=corpus_query_embedding,
-            )
-            if user_query_embedding_model is not None and user_query_embedding is not None:
                 candidates = [
                     *candidates,
-                    *_retrieve_user_library_passages(
+                    *_personal_candidates(
                         db,
                         viewer_id=viewer_id,
-                        query_embedding_model=user_query_embedding_model,
-                        query_embedding=user_query_embedding,
+                        query_embedding=query_embedding,
+                        corpus_media_ids=corpus_media_ids,
                     ),
                 ]
+            plate = _pick_plate(db, question=question, candidates=candidates)
         except ApiError as exc:
             _fail(db, reading, code=exc.code.value, detail=exc.message)
             return {"status": "failed", "error_code": exc.code.value}
@@ -934,8 +855,8 @@ async def execute_reading(
             # the edge-built CitationOut read model (G6). build_citation_outs is
             # the sole producer; the just-flushed edge is visible to it, and its
             # ordinal selects this phase's chip (descent 1, ordeal 2, ascent 3).
-            # Only user-media passages with a live span jump surface a chip; the
-            # rest (public-domain, span-less) stay typographic.
+            # Any target with a live shared locator surfaces a chip, including
+            # resolved public-domain anchors; stale/span-less targets stay typographic.
             citation = _surfaced_passage_citation(
                 next(
                     (
@@ -1043,45 +964,18 @@ def _selected_user_media(
 
 
 def _viewer_has_searchable_user_content(db: Session, *, viewer_id: UUID) -> bool:
-    return bool(
-        db.execute(
-            text(
-                f"""
-                WITH visible_media AS ({visible_media_ids_cte_sql()})
-                SELECT EXISTS (
-                    SELECT 1
-                    FROM visible_media vm
-                    JOIN content_index_states mcis ON mcis.owner_kind = 'media' AND mcis.owner_id = vm.media_id
-                        AND mcis.status = 'ready'
-                    JOIN content_chunks cc ON cc.owner_kind = 'media' AND cc.owner_id = vm.media_id
-                    WHERE btrim(cc.chunk_text) <> ''
-                    LIMIT 1
-                    )
-                    OR EXISTS (
-                        SELECT 1
-                        FROM note_blocks nb
-                        JOIN content_index_states ncis
-                          ON ncis.owner_kind = 'note_block'
-                         AND ncis.owner_id = nb.id
-                         AND ncis.status = 'ready'
-                        JOIN content_chunks cc
-                          ON cc.owner_kind = 'note_block'
-                         AND cc.owner_id = nb.id
-                        WHERE nb.user_id = :viewer_id
-                          AND btrim(cc.chunk_text) <> ''
-                        LIMIT 1
-                    )
-                """
-            ),
-            {"viewer_id": viewer_id},
-        ).scalar_one()
+    return has_searchable_content_chunks(
+        db,
+        viewer_id=viewer_id,
+        scope=SearchScope(kind="all"),
+        exclude_media_ids=_oracle_corpus_media_ids(db),
     )
 
 
 # ---------- internal: SSE event emit ----------------------------------------
 
 
-def _oracle_image_payload(image: OracleCorpusImage) -> dict[str, Any]:
+def _oracle_image_payload(image: OraclePlate) -> dict[str, Any]:
     return {
         "url": oracle_plate_url(image.id),
         "attribution_text": image.attribution_text,
@@ -1114,262 +1008,140 @@ def _fail(db: Session, reading: OracleReading, *, code: str, detail: str | None 
 # ---------- internal: retrieval ---------------------------------------------
 
 
-def _build_query_embedding_for_model(
-    question: str,
-    *,
-    embedding_model: str,
-) -> tuple[str, list[float]]:
-    embedding_dims = transcript_embedding_dimensions()
-    if embedding_model in {
-        f"test_hash_v2_{embedding_dims}",
-        f"fixture_hash_v1_{embedding_dims}",
-    }:
-        return embedding_model, build_deterministic_hash_embedding(
-            question,
-            dimensions=embedding_dims,
-        )
-
-    try:
-        returned_embedding_model, query_embedding = build_text_embedding(question)
-    except ApiError as exc:
-        raise ApiError(
-            ApiErrorCode.E_APP_SEARCH_FAILED,
-            f"Oracle embeddings unavailable: {exc.message}",
-        ) from exc
-    except (httpx.HTTPError, ValueError) as exc:
-        raise ApiError(
-            ApiErrorCode.E_APP_SEARCH_FAILED,
-            "Oracle embeddings unavailable for semantic retrieval",
-        ) from exc
-
-    if returned_embedding_model != embedding_model:
-        raise ApiError(
-            ApiErrorCode.E_APP_SEARCH_FAILED,
-            "Oracle query embedding does not match the requested embedding model",
-        )
-    if len(query_embedding) != embedding_dims:
-        raise ApiError(
-            ApiErrorCode.E_APP_SEARCH_FAILED,
-            "Oracle query embedding has the wrong dimensionality",
-        )
-    return returned_embedding_model, query_embedding
+def _oracle_corpus_media_ids(db: Session) -> set[UUID]:
+    return set(db.execute(select(OracleCorpusSource.media_id)).scalars().all())
 
 
-def _retrieve_corpus_passages(
+def _oracle_corpus_candidates(
     db: Session,
     *,
+    viewer_id: UUID,
     question: str,
-    query_embedding_model: str,
-    query_embedding: list[float],
+    query_embedding: tuple[str, list[float]],
+    library_id: UUID,
 ) -> list[_Candidate]:
+    """Public-domain candidates: shared library-scoped chunk retrieval mapped to resolved anchors.
+
+    Only retrieved chunks a resolved anchor points at become candidates (cited as
+    ``oracle_passage_anchor``, the stable identity). They are boosted by anchor
+    tag/phase/question-token overlap and deduped to one per work (§10.3). The reader
+    jump is rebuilt from the anchor's current evidence by the CitationOut, so the
+    candidate carries no Oracle-owned deep link (§12.1).
+    """
     tokens = set(ORACLE_TOKEN_RE.findall(question.lower()))
-    embedding_dims = transcript_embedding_dimensions()
-    corpus_embedding_model = _corpus_embedding_model()
-    if corpus_embedding_model != query_embedding_model:
-        raise ApiError(
-            ApiErrorCode.E_APP_SEARCH_FAILED,
-            "Oracle corpus embeddings do not match the query embedding model",
-        )
-    rows = (
-        db.execute(
-            text(
-                f"""
-                WITH query_embedding AS (
-                    SELECT CAST(:query_embedding AS vector({embedding_dims})) AS embedding
-                )
-                SELECT
-                    ocp.id AS passage_id,
-                    ocp.work_id,
-                    ocp.passage_index,
-                    ocp.canonical_text,
-                    ocp.locator_label,
-                    ocp.tags,
-                    ocw.slug AS work_slug,
-                    ocw.title AS work_title,
-                    ocw.author AS work_author,
-                    ocw.source_url AS source_url,
-                    (1 - (ocp.embedding <=> qe.embedding)) AS semantic_score
-                FROM oracle_corpus_passages ocp
-                JOIN oracle_corpus_works ocw ON ocw.id = ocp.work_id
-                JOIN query_embedding qe ON true
-                WHERE ocp.embedding_model = :embedding_model
-                  AND ocp.embedding IS NOT NULL
-                ORDER BY ocp.embedding <=> qe.embedding ASC, ocw.slug ASC, ocp.passage_index ASC
-                LIMIT 200
-                """
-            ),
-            {
-                "embedding_model": query_embedding_model,
-                "query_embedding": to_pgvector_literal(query_embedding),
-            },
-        )
-        .mappings()
-        .all()
-    )
-    if not rows:
-        raise ApiError(
-            ApiErrorCode.E_APP_SEARCH_FAILED,
-            "Oracle corpus passage embeddings are unavailable",
-        )
-    scored: list[tuple[float, dict[str, Any]]] = []
-    for row in rows:
-        tags = [str(tag) for tag in row["tags"] or []]
-        tag_score = sum(2.0 for tag in tags if tag.lower() in tokens)
-        scored.append((float(row["semantic_score"] or 0.0) + tag_score, dict(row)))
-    scored.sort(key=lambda pair: (-pair[0], str(pair[1]["work_slug"]), pair[1]["passage_index"]))
-    chosen: list[_Candidate] = []
-    used_works: set[UUID] = set()
-    for score, row in scored:
-        work_id = row["work_id"]
-        if work_id in used_works:
+    by_chunk: dict[UUID, tuple[OraclePassageAnchor, OracleCorpusSource]] = {}
+    by_span: dict[UUID, tuple[OraclePassageAnchor, OracleCorpusSource]] = {}
+    for anchor, source in db.execute(
+        select(OraclePassageAnchor, OracleCorpusSource)
+        .join(OracleCorpusSource, OracleCorpusSource.id == OraclePassageAnchor.corpus_source_id)
+        .where(OraclePassageAnchor.resolution_status == "resolved")
+    ).all():
+        if anchor.current_content_chunk_id is not None:
+            by_chunk[anchor.current_content_chunk_id] = (anchor, source)
+        if anchor.current_evidence_span_id is not None:
+            by_span[anchor.current_evidence_span_id] = (anchor, source)
+
+    scored: list[tuple[float, _Candidate, UUID]] = []
+    for cand in retrieve_content_chunk_candidates(
+        db,
+        viewer_id=viewer_id,
+        query_embedding=query_embedding,
+        scope=SearchScope(kind="library", id=library_id),
+    ):
+        mapped = by_chunk.get(cand.content_chunk_id)
+        if mapped is None and cand.primary_evidence_span_id is not None:
+            mapped = by_span.get(cand.primary_evidence_span_id)
+        if mapped is None:
             continue
-        used_works.add(work_id)
-        chosen.append(
-            _Candidate(
-                source_kind="public_domain",
-                exact_snippet=str(row["canonical_text"]),
-                locator_label=str(row["locator_label"]),
-                attribution_text=(
-                    f"{row['work_author']} opened to *{row['work_title']}* {row['locator_label']}."
+        anchor, source = mapped
+        tags = [str(tag) for tag in anchor.tags or []]
+        boost = sum(2.0 for tag in tags if tag.lower() in tokens) + sum(
+            1.0 for hint in anchor.phase_hints or [] if str(hint).lower() in tokens
+        )
+        scored.append(
+            (
+                cand.semantic_score + boost,
+                _Candidate(
+                    source_kind="public_domain",
+                    exact_snippet=cand.chunk_text[:1200],
+                    locator_label=anchor.display_label,
+                    attribution_text=(
+                        f"{source.author_text} opened to *{source.title}* — {anchor.display_label}."
+                    ),
+                    deep_link=None,
+                    title=source.title,
+                    target=ResourceRef(scheme="oracle_passage_anchor", id=anchor.id),
+                    tags=tags,
+                    score=cand.semantic_score + boost,
                 ),
-                deep_link=str(row["source_url"]),
-                title=str(row["work_title"]),
-                target=ResourceRef(scheme="oracle_corpus_passage", id=row["passage_id"]),
-                tags=[str(tag) for tag in row["tags"] or []],
-                score=score,
+                source.id,
             )
         )
+    scored.sort(key=lambda item: (-item[0], item[1].exact_snippet))
+    chosen: list[_Candidate] = []
+    used_sources: set[UUID] = set()
+    for _score, candidate, source_id in scored:
+        if source_id in used_sources:
+            continue
+        used_sources.add(source_id)
+        chosen.append(candidate)
         if len(chosen) >= ORACLE_PUBLIC_DOMAIN_CANDIDATES:
             break
     return chosen
 
 
-def _retrieve_user_library_passages(
+def _personal_candidates(
     db: Session,
     *,
     viewer_id: UUID,
-    query_embedding_model: str,
-    query_embedding: list[float],
+    query_embedding: tuple[str, list[float]],
+    corpus_media_ids: set[UUID],
 ) -> list[_Candidate]:
-    semantic_rows = _retrieve_user_content_chunks_by_embedding(
-        db,
-        viewer_id=viewer_id,
-        query_embedding_model=query_embedding_model,
-        query_embedding=query_embedding,
-    )
+    """Personal candidates from the viewer's visible media/notes, excluding the corpus library."""
     chosen: list[_Candidate] = []
-    used_owners: set[tuple[str, str]] = set()
-    for row in semantic_rows:
-        owner_key = (str(row["owner_kind"]), str(row["media_id"]))
+    used_owners: set[tuple[str, UUID]] = set()
+    for cand in retrieve_content_chunk_candidates(
+        db, viewer_id=viewer_id, query_embedding=query_embedding, scope=SearchScope(kind="all")
+    ):
+        if cand.owner_kind == "media" and cand.owner_id in corpus_media_ids:
+            continue
+        owner_key = (cand.owner_kind, cand.owner_id)
         if owner_key in used_owners:
             continue
         used_owners.add(owner_key)
-        chosen.append(
-            _candidate_from_content_chunk_row(
-                row,
-                score=float(row["semantic_score"] or 0.0),
-            )
-        )
+        chosen.append(_candidate_from_chunk(cand))
         if len(chosen) >= ORACLE_USER_LIBRARY_CANDIDATES:
             break
     chosen.sort(key=lambda candidate: (-candidate.score, candidate.exact_snippet))
     return chosen
 
 
-def _retrieve_user_content_chunks_by_embedding(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    query_embedding_model: str,
-    query_embedding: list[float],
-) -> list[dict[str, Any]]:
-    embedding_dims = transcript_embedding_dimensions()
-    rows = (
-        db.execute(
-            text(
-                f"""
-                WITH
-                    visible_media AS ({visible_media_ids_cte_sql()}),
-                    query_embedding AS (
-                        SELECT CAST(:query_embedding AS vector({embedding_dims})) AS embedding
-                    )
-                SELECT
-                    cc.id AS content_chunk_id,
-                    cc.owner_kind,
-                    cc.owner_id AS media_id,
-                    cc.chunk_text,
-                    cc.source_kind,
-                    cc.heading_path,
-                    cc.primary_evidence_span_id,
-                    COALESCE(m.title, 'Note') AS media_title,
-                    (1 - (ce.embedding_vector <=> qe.embedding)) AS semantic_score
-                FROM content_chunks cc
-                LEFT JOIN media m ON m.id = cc.owner_id AND cc.owner_kind = 'media'
-                JOIN content_index_states mcis ON mcis.owner_kind = cc.owner_kind AND mcis.owner_id = cc.owner_id
-                    AND mcis.status = 'ready'
-                JOIN content_embeddings ce ON ce.chunk_id = cc.id
-                    AND ce.embedding_provider = mcis.active_embedding_provider
-                    AND ce.embedding_model = mcis.active_embedding_model
-                    AND ce.embedding_dimensions = :embedding_dims
-                    AND ce.embedding_vector IS NOT NULL
-                JOIN query_embedding qe ON true
-                WHERE btrim(cc.chunk_text) <> ''
-                  AND mcis.active_embedding_model = :query_embedding_model
-                  AND (
-                    (cc.owner_kind = 'media' AND cc.owner_id IN (SELECT media_id FROM visible_media))
-                    OR (cc.owner_kind = 'note_block' AND cc.owner_id IN (
-                        SELECT id FROM note_blocks WHERE user_id = :viewer_id))
-                  )
-                ORDER BY ce.embedding_vector <=> qe.embedding ASC, cc.id ASC
-                LIMIT 200
-                """
-            ),
-            {
-                "viewer_id": viewer_id,
-                "query_embedding_model": query_embedding_model,
-                "query_embedding": to_pgvector_literal(query_embedding),
-                "embedding_dims": embedding_dims,
-            },
-        )
-        .mappings()
-        .all()
-    )
-    return [dict(row) for row in rows]
-
-
-def _candidate_from_content_chunk_row(row: dict[str, Any], *, score: float) -> _Candidate:
-    media_title = str(row["media_title"] or "Untitled")
-    heading_path = [str(part) for part in row["heading_path"] or [] if str(part).strip()]
-    locator_label = _content_chunk_locator_label(media_title, heading_path)
-    # The citation target is the evidence span the chunk grounds to, falling
-    # back to the chunk itself when no span exists (§5.3). Both are stable
-    # content-index rows within an index generation.
-    span_id = row["primary_evidence_span_id"]
+def _candidate_from_chunk(cand: ContentChunkCandidate) -> _Candidate:
+    locator_label = _content_chunk_locator_label(cand.title, cand.heading_path)
+    # Cite the evidence span the chunk grounds to, falling back to the chunk itself
+    # when no span exists (§5.3). A media-owned span carries the in-reader jump in its
+    # snapshot deep link; note-owned chunks resolve through the CitationOut locator.
+    span_id = cand.primary_evidence_span_id
     target = (
         ResourceRef(scheme="evidence_span", id=span_id)
         if span_id is not None
-        else ResourceRef(scheme="content_chunk", id=row["content_chunk_id"])
+        else ResourceRef(scheme="content_chunk", id=cand.content_chunk_id)
     )
-    # A media-owned chunk that grounds to an evidence span carries the canonical
-    # in-reader jump in its snapshot (the chip's clickable href, mirroring LI
-    # synthesis); the CitationOut lifts deep_link from this snapshot (G6).
-    # Note-owned chunks resolve through CitationOut.locator instead of a
-    # media deep link. Span-less chunks stay typographic.
     deep_link = (
-        f"/media/{row['media_id']}#evidence-{span_id}"
-        if span_id is not None and str(row["owner_kind"]) == "media"
+        f"/media/{cand.owner_id}#evidence-{span_id}"
+        if span_id is not None and cand.owner_kind == "media"
         else None
     )
     return _Candidate(
         source_kind="user_media",
-        exact_snippet=str(row["chunk_text"] or "")[:1200],
+        exact_snippet=cand.chunk_text[:1200],
         locator_label=locator_label,
-        attribution_text=f"From *{media_title}*, your library.",
+        attribution_text=f"From *{cand.title}*, your library.",
         deep_link=deep_link,
-        title=media_title,
+        title=cand.title,
         target=target,
-        tags=["user-library", str(row["source_kind"])],
-        score=score,
+        tags=["user-library", cand.source_kind],
+        score=cand.semantic_score,
     )
 
 
@@ -1380,54 +1152,30 @@ def _content_chunk_locator_label(media_title: str, heading_path: list[str]) -> s
     return f"From your library: {media_title}"
 
 
-def _corpus_embedding_model() -> str:
-    return current_transcript_embedding_model()
+def _pick_plate(db: Session, *, question: str, candidates: Sequence[_Candidate]) -> OraclePlate:
+    """Deterministically select a safe plate by tag overlap with the question + candidates (D7).
 
-
-def _pick_plate(
-    db: Session,
-    *,
-    query_embedding_model: str,
-    query_embedding: list[float],
-) -> OracleCorpusImage:
-    corpus_embedding_model = _corpus_embedding_model()
-    if corpus_embedding_model != query_embedding_model:
-        raise ApiError(
-            ApiErrorCode.E_APP_SEARCH_FAILED,
-            "Oracle image embeddings do not match the query embedding model",
+    No text embeddings: score each plate's tags against the question tokens and the selected
+    candidates' tags; tie-break by ``source_url`` for stable selection. Readiness guarantees
+    at least one plate exists.
+    """
+    signal = {tag.lower() for candidate in candidates for tag in candidate.tags} | set(
+        ORACLE_TOKEN_RE.findall(question.lower())
+    )
+    safe_plates = [
+        plate
+        for plate in db.execute(select(OraclePlate)).scalars().all()
+        if plate.width <= ORACLE_MAX_PLATE_DIMENSION and plate.height <= ORACLE_MAX_PLATE_DIMENSION
+    ]
+    if not safe_plates:
+        raise ApiError(ApiErrorCode.E_INTERNAL, "Oracle has no plate with safe dimensions")
+    safe_plates.sort(
+        key=lambda plate: (
+            -sum(1 for tag in plate.tags or [] if str(tag).lower() in signal),
+            plate.source_url,
         )
-    embedding_dims = transcript_embedding_dimensions()
-    image_id = db.execute(
-        text(
-            f"""
-                WITH query_embedding AS (
-                    SELECT CAST(:query_embedding AS vector({embedding_dims})) AS embedding
-                )
-                SELECT oci.id
-                FROM oracle_corpus_images oci
-                JOIN query_embedding qe ON true
-                WHERE oci.embedding_model = :embedding_model
-                  AND oci.embedding IS NOT NULL
-                  AND oci.width <= 4096
-                  AND oci.height <= 4096
-                ORDER BY oci.embedding <=> qe.embedding ASC, oci.source_url ASC
-                LIMIT 1
-                """
-        ),
-        {
-            "embedding_model": query_embedding_model,
-            "query_embedding": to_pgvector_literal(query_embedding),
-        },
-    ).scalar_one_or_none()
-    if image_id is None:
-        raise ApiError(
-            ApiErrorCode.E_APP_SEARCH_FAILED,
-            "Oracle image embeddings are unavailable",
-        )
-    image = db.get(OracleCorpusImage, image_id)
-    if image is None:
-        raise ApiError(ApiErrorCode.E_INTERNAL, "Oracle image index returned a missing row")
-    return image
+    )
+    return safe_plates[0]
 
 
 # ---------- internal: prompt ------------------------------------------------

@@ -42,7 +42,7 @@ const RESOURCE_SCHEME_ICONS = {
   conversation: MessagesSquare,
   message: MessageSquare,
   oracle_reading: Sparkles,
-  oracle_corpus_passage: TextQuote,
+  oracle_passage_anchor: TextQuote,
   library_intelligence_artifact: Sparkles,
   library_intelligence_revision: Sparkles,
   external_snapshot: Globe,

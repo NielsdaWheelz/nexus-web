@@ -172,7 +172,13 @@ describe("mediaResourceOptions", () => {
 describe("libraryResourceOptions", () => {
   it("orders canonical library actions with destructive work last", () => {
     const options = libraryResourceOptions({
-      library: { is_default: false, role: "admin" },
+      library: {
+        is_default: false,
+        role: "admin",
+        can_rename: true,
+        can_delete: true,
+        can_edit_entries: true,
+      },
       onViewIntelligence: () => {},
       onEdit: () => {},
       onDelete: () => {},
@@ -191,8 +197,37 @@ describe("libraryResourceOptions", () => {
   });
 
   it("does not offer edit or delete on the default library", () => {
+    // The default library cannot be renamed or deleted (its media entries are
+    // still editable), so only intelligence remains.
     const options = libraryResourceOptions({
-      library: { is_default: true, role: "admin" },
+      library: {
+        is_default: true,
+        role: "admin",
+        can_rename: false,
+        can_delete: false,
+        can_edit_entries: true,
+      },
+      onViewIntelligence: () => {},
+      onEdit: () => {},
+      onDelete: () => {},
+    });
+
+    expect(options.map((option) => option.id)).toEqual([
+      "view-library-intelligence",
+    ]);
+  });
+
+  it("offers no mutation actions on a system-protected library", () => {
+    // A system library (e.g. the Oracle Corpus) reports every can_* flag false,
+    // so no edit/delete action is offered even to an admin owner.
+    const options = libraryResourceOptions({
+      library: {
+        is_default: false,
+        role: "admin",
+        can_rename: false,
+        can_delete: false,
+        can_edit_entries: false,
+      },
       onViewIntelligence: () => {},
       onEdit: () => {},
       onDelete: () => {},

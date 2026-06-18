@@ -33,6 +33,24 @@ The domain is split into three owned modules, each owning its own tables:
 Media capabilities call these services to attach or validate visibility, then
 return to their own owners for ingestion, playback, files, or assets.
 
+## System libraries
+
+`libraries.system_key` (nullable, unique where present) is the policy handle for
+system-maintained libraries — there are **no name-based checks**. The Oracle
+Corpus is one such library (`system_key = 'oracle_corpus'`). A system library
+behaves like any library for reads (it appears in `GET /libraries`, opens, and is
+searchable with `scope=library:<id>`) but is **protected from user mutation**:
+rename, delete, share, and entry edits are blocked. `ensure_system_library` is the
+idempotent (by `system_key`) creator, and the seed is an explicit system-maintenance
+command, never a user request — system libraries still never bypass
+`library_entries`.
+
+`LibraryOut` carries the policy to the client so UI never infers protection from
+the name: `system_key`, plus the booleans `can_rename` / `can_delete` /
+`can_edit_entries`. `library_governance._library_capabilities` is the one place
+they are computed — a library is mutable only when `system_key IS NULL`, it is not
+the default library, and the viewer is an admin.
+
 ## The `library_entries` sole-writer rule
 
 Every INSERT/UPDATE/DELETE on `library_entries` goes through

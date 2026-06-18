@@ -64,9 +64,10 @@ class OracleReadingSummaryOut(BaseModel):
 class OracleReadingPassageOut(BaseModel):
     """One persisted citation in a reading.
 
-    ``citation`` is the read-model CitationOut for user-library passages with a
-    live shared reader/note locator (chip + media or note activation);
-    public-domain and span-less passages carry ``None`` (typographic only).
+    ``citation`` is the read-model CitationOut when the persisted citation edge
+    resolves to a live shared reader/note locator. Resolved public-domain anchors
+    render the same chip path as user content; unresolved or span-less targets
+    carry ``None`` and remain typographic only.
     """
 
     phase: str
@@ -158,3 +159,17 @@ class ConcordanceEntryOut(BaseModel):
     shared_plate: bool
     shared_theme: bool
     shared_passage_count: int
+
+
+class OracleCorpusStatusOut(BaseModel):
+    """Read-only Oracle Corpus library readiness for discovery/inspection surfaces."""
+
+    library_ref: str | None
+    library_id: UUID | None
+    status: str
+    work_count: int
+    ready_media_count: int
+    anchor_count: int
+    resolved_anchor_count: int
+    plate_count: int
+    ready_plate_count: int

@@ -16,6 +16,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
+from nexus.services import library_entries, library_governance
 from tests.factories import create_test_media
 from tests.helpers import auth_headers, create_test_user_id
 from tests.support.storage import FakeStorageClient
@@ -237,10 +238,16 @@ class TestWritableLibraryDestinations:
             owned_id = create_test_library(session, viewer_id, "Owned Writable")
             admin_id = create_test_library(session, other_owner_id, "Shared Admin")
             member_id = create_test_library(session, other_owner_id, "Shared Member")
+            system_id = library_governance.ensure_system_library(
+                session,
+                system_key=f"test_destination_system_{viewer_id.hex[:12]}",
+                name="System Destination",
+                owner_user_id=viewer_id,
+            )
             add_library_member(session, admin_id, viewer_id, role="admin")
             add_library_member(session, member_id, viewer_id, role="member")
 
-        for library_id in (owned_id, admin_id, member_id):
+        for library_id in (owned_id, admin_id, member_id, system_id):
             direct_db.register_cleanup("memberships", "library_id", library_id)
             direct_db.register_cleanup("libraries", "id", library_id)
 
@@ -254,6 +261,7 @@ class TestWritableLibraryDestinations:
         assert owned_id in ids
         assert admin_id in ids
         assert member_id not in ids
+        assert system_id not in ids
         assert default_library_id not in ids
 
     def test_search_finds_library_beyond_default_library_limit(self, auth_client):
@@ -319,6 +327,83 @@ class TestWritableLibraryDestinations:
 
         assert response.status_code == 400
         assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
+
+
+class TestSystemLibraryMutationGuards:
+    """System libraries are normal read surfaces but not user-mutable."""
+
+    @staticmethod
+    def _assert_system_forbidden(response) -> None:
+        assert response.status_code == 403, response.text
+        assert response.json()["error"]["code"] == "E_LIBRARY_FORBIDDEN"
+
+    def test_system_library_mutation_endpoints_are_forbidden(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        owner_id = create_test_user_id()
+        invitee_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(owner_id))
+        auth_client.get("/me", headers=auth_headers(invitee_id))
+
+        with direct_db.session() as session:
+            system_id = library_governance.ensure_system_library(
+                session,
+                system_key=f"test_system_guard_{owner_id.hex[:12]}",
+                name="System Guard",
+                owner_user_id=owner_id,
+            )
+            existing_media_id = create_test_media(session, title="System Corpus Work")
+            new_media_id = create_test_media(session, title="Unowned Addition")
+            library_entries.ensure_entry(
+                session, system_id, library_entries.media_target(existing_media_id)
+            )
+            session.commit()
+
+        for media_id in (existing_media_id, new_media_id):
+            direct_db.register_cleanup("library_entries", "media_id", media_id)
+            direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("memberships", "library_id", system_id)
+        direct_db.register_cleanup("libraries", "id", system_id)
+
+        entries = _list_library_entries(auth_client, owner_id, str(system_id)).json()["data"]
+        entry_ids = [row["id"] for row in entries]
+        assert entry_ids, "expected a seeded system-library entry"
+
+        mutation_responses = [
+            auth_client.patch(
+                f"/libraries/{system_id}",
+                json={"name": "Renamed System"},
+                headers=auth_headers(owner_id),
+            ),
+            auth_client.delete(f"/libraries/{system_id}", headers=auth_headers(owner_id)),
+            auth_client.post(
+                f"/libraries/{system_id}/invites",
+                json={"invitee_user_id": str(invitee_id), "role": "member"},
+                headers=auth_headers(owner_id),
+            ),
+            auth_client.get(f"/libraries/{system_id}/invites", headers=auth_headers(owner_id)),
+            auth_client.patch(
+                f"/libraries/{system_id}/members/{owner_id}",
+                json={"role": "admin"},
+                headers=auth_headers(owner_id),
+            ),
+            auth_client.delete(
+                f"/libraries/{system_id}/members/{owner_id}",
+                headers=auth_headers(owner_id),
+            ),
+            auth_client.post(
+                f"/libraries/{system_id}/media",
+                json={"media_id": str(new_media_id)},
+                headers=auth_headers(owner_id),
+            ),
+            auth_client.patch(
+                f"/libraries/{system_id}/entries/reorder",
+                json={"entry_ids": entry_ids},
+                headers=auth_headers(owner_id),
+            ),
+        ]
+        for response in mutation_responses:
+            self._assert_system_forbidden(response)
 
 
 # =============================================================================

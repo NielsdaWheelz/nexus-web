@@ -1,14 +1,17 @@
-"""Backend tests for the Black Forest Oracle service contract."""
+"""Backend tests for the Black Forest Oracle service contract.
+
+Post Oracle-corpus-library cutover: the corpus is a real system library of real
+indexed media (``oracle_corpus_sources`` -> ``media`` -> shared content index),
+with stable ``oracle_passage_anchors`` resolving to current media evidence and
+``oracle_plates`` owned image assets. There is no Oracle-owned text/vector corpus.
+"""
 
 from __future__ import annotations
 
 import asyncio
-import importlib
-import importlib.util
 import json
 import re
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -22,26 +25,24 @@ from sqlalchemy.orm import Session
 from nexus.config import clear_settings_cache
 from nexus.db.models import (
     Fragment,
-    OracleCorpusImage,
-    OracleCorpusPassage,
-    OracleCorpusWork,
+    Media,
+    MediaKind,
+    OracleCorpusSource,
+    OraclePassageAnchor,
+    OraclePlate,
     OracleReading,
+    ProcessingStatus,
 )
 from nexus.schemas.oracle import oracle_done_payload
-from nexus.services import run_kit
+from nexus.services import library_entries, library_governance, oracle_corpus, run_kit
 from nexus.services.billing_entitlements import grant_entitlement_override
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.content_indexing import rebuild_fragment_content_index
-from nexus.services.image_validation import ValidatedImage
+from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
 from nexus.services.note_indexing import rebuild_note_content_index
 from nexus.services.oracle import (
-    ORACLE_CANONICAL_PUBLIC_DOMAIN_WORK_SLUGS,
-    ORACLE_REQUIRED_PUBLIC_DOMAIN_IMAGES,
-    ORACLE_REQUIRED_PUBLIC_DOMAIN_PASSAGES,
-    ORACLE_REQUIRED_PUBLIC_DOMAIN_WORKS,
     ORACLE_THEMES,
-    _retrieve_user_content_chunks_by_embedding,
-    _retrieve_user_library_passages,
+    _personal_candidates,
     _viewer_has_searchable_user_content,
     compute_concordance,
     create_reading,
@@ -49,12 +50,13 @@ from nexus.services.oracle import (
     get_reading_detail,
     is_reading_terminal,
 )
+from nexus.services.search import search as run_search
+from nexus.services.search.query import SearchQuery, SearchScope
 from nexus.services.semantic_chunks import (
     build_text_embedding,
     current_transcript_embedding_model,
-    to_pgvector_literal,
+    current_transcript_embedding_provider,
 )
-from nexus.storage.client import ObjectMetadata
 from nexus.tasks.oracle_reading import oracle_reading_generate
 from tests.factories import create_searchable_media
 from tests.helpers import auth_headers
@@ -62,10 +64,9 @@ from tests.utils.db import DirectSessionManager, task_session_factory
 
 pytestmark = pytest.mark.integration
 
-ORACLE_TEST_SOURCE_REPOSITORY = "test:oracle-current-corpus"
-ORACLE_TEST_WORK_SLUGS = tuple(
-    f"oracle-test-work-{index + 1}" for index in range(ORACLE_REQUIRED_PUBLIC_DOMAIN_WORKS)
-)
+# >=3 corpus works so the LLM always sees >=3 distinct public-domain candidates
+# (corpus retrieval dedupes to one candidate per source/work).
+ORACLE_TEST_WORK_COUNT = 4
 
 
 @pytest.fixture(autouse=True)
@@ -83,9 +84,9 @@ def _require_oracle_schema(engine: Engine) -> None:
         "oracle_reading_events",
         "oracle_reading_folios",
         "resource_edges",
-        "oracle_corpus_works",
-        "oracle_corpus_passages",
-        "oracle_corpus_images",
+        "oracle_corpus_sources",
+        "oracle_passage_anchors",
+        "oracle_plates",
     } - tables
     if missing:
         pytest.fail(f"oracle schema not present: {', '.join(sorted(missing))}")
@@ -96,154 +97,133 @@ def oracle_schema(engine: Engine) -> None:
     _require_oracle_schema(engine)
 
 
-def _oracle_test_embedding_literal(text_value: str) -> str:
-    _model, embedding = build_text_embedding(text_value)
-    return to_pgvector_literal(embedding)
-
-
-def _set_oracle_passage_embedding(
+def _seed_corpus_work(
     db: Session,
     *,
-    passage_id: UUID,
-    text_value: str,
-) -> None:
-    db.execute(
-        text(
-            """
-            UPDATE oracle_corpus_passages
-            SET embedding_model = :embedding_model,
-                embedding = CAST(:embedding AS vector(256))
-            WHERE id = :passage_id
-            """
-        ),
-        {
-            "passage_id": passage_id,
-            "embedding_model": current_transcript_embedding_model(),
-            "embedding": _oracle_test_embedding_literal(text_value),
-        },
+    viewer_id: UUID,
+    library_id: UUID,
+    work_key: str,
+    passage_text: str,
+    display_order: int,
+) -> UUID:
+    """Seed one corpus work as real indexed media with a controllable quote.
+
+    Built like ``create_searchable_media`` but with a custom ``canonical_text`` so
+    the anchor's selector quote appears verbatim in a content chunk (the substring
+    the resolver matches). Returns the media id.
+    """
+    media = Media(
+        id=uuid4(),
+        kind=MediaKind.web_article.value,
+        title=f"Corpus {work_key}",
+        processing_status=ProcessingStatus.ready_for_reading,
+        created_by_user_id=viewer_id,
     )
-
-
-def _set_oracle_image_embedding(
-    db: Session,
-    *,
-    image_id: UUID,
-    text_value: str,
-) -> None:
-    db.execute(
-        text(
-            """
-            UPDATE oracle_corpus_images
-            SET embedding_model = :embedding_model,
-                embedding = CAST(:embedding AS vector(256))
-            WHERE id = :image_id
-            """
-        ),
-        {
-            "image_id": image_id,
-            "embedding_model": current_transcript_embedding_model(),
-            "embedding": _oracle_test_embedding_literal(text_value),
-        },
+    db.add(media)
+    db.flush()
+    fragment = Fragment(
+        id=uuid4(),
+        media_id=media.id,
+        idx=0,
+        html_sanitized=f"<p>{passage_text}</p>",
+        canonical_text=passage_text,
     )
-
-
-def _clear_oracle_corpus(db: Session) -> None:
-    db.execute(text("DELETE FROM oracle_corpus_images"))
-    db.execute(text("DELETE FROM oracle_corpus_passages"))
-    db.execute(text("DELETE FROM oracle_corpus_works"))
-
-
-def _seed_oracle_corpus(db: Session) -> tuple[UUID, list[UUID], UUID]:
-    corpus_id = uuid4()
-    source_repository = ORACLE_TEST_SOURCE_REPOSITORY
-    work_ids: list[UUID] = []
-    passage_index = 0
-    for index, slug in enumerate(ORACLE_TEST_WORK_SLUGS):
-        work = OracleCorpusWork(
-            id=uuid4(),
-            slug=slug,
-            title=f"Oracle Test Work {index}",
-            author="A. Scribe",
-            year="1850",
-            edition_label="Test edition",
-            source_repository=source_repository,
-            source_url=f"https://example.com/oracle-test-work-{index + 1}",
+    db.add(fragment)
+    db.flush()
+    insert_fragment_blocks(db, fragment.id, parse_fragment_blocks(fragment.canonical_text))
+    rebuild_fragment_content_index(
+        db,
+        media_id=media.id,
+        source_kind="web_article",
+        fragments=[fragment],
+        reason="oracle_test",
+    )
+    library_entries.ensure_entry(db, library_id, library_entries.media_target(media.id))
+    source = OracleCorpusSource(
+        corpus_key="oracle",
+        work_key=work_key,
+        library_id=library_id,
+        media_id=media.id,
+        title=f"Work {work_key}",
+        author_text="A. Scribe",
+        source_repository="test",
+        source_url=f"https://ex/{work_key}",
+        source_download_url=f"https://ex/{work_key}.epub",
+        source_media_kind="epub",
+        display_order=display_order,
+    )
+    db.add(source)
+    db.flush()
+    db.add(
+        OraclePassageAnchor(
+            corpus_source_id=source.id,
+            passage_key=f"{work_key}-a0",
+            display_label=f"{work_key} I",
+            selector={"kind": "text_quote", "exact": passage_text},
+            tags=["forest", "lamp"],
+            phase_hints=["descent"],
         )
-        db.add(work)
-        db.flush()
-        work_ids.append(work.id)
-        work_passage_count = ORACLE_REQUIRED_PUBLIC_DOMAIN_PASSAGES // (
-            ORACLE_REQUIRED_PUBLIC_DOMAIN_WORKS
-        )
-        if index < ORACLE_REQUIRED_PUBLIC_DOMAIN_PASSAGES % ORACLE_REQUIRED_PUBLIC_DOMAIN_WORKS:
-            work_passage_count += 1
-        for local_index in range(work_passage_count):
-            passage_id = uuid4()
-            canonical_text = (
-                f"The forest lamp descends through test passage {passage_index}, "
-                "bearing shadow, ordeal, and dawn."
-            )
-            tags = ["forest", "lamp", "dawn"]
-            db.add(
-                OracleCorpusPassage(
-                    id=passage_id,
-                    work_id=work.id,
-                    passage_index=local_index,
-                    canonical_text=canonical_text,
-                    locator_label=f"Test Work {index}, passage {local_index + 1}",
-                    source={"repository": source_repository},
-                    tags=tags,
-                )
-            )
-            db.flush()
-            _set_oracle_passage_embedding(
-                db,
-                passage_id=passage_id,
-                text_value=" ".join([canonical_text, *tags]),
-            )
-            passage_index += 1
+    )
+    db.flush()
+    return media.id
 
-    image_ids: list[UUID] = []
-    for index in range(ORACLE_REQUIRED_PUBLIC_DOMAIN_IMAGES):
-        image = OracleCorpusImage(
-            id=uuid4(),
-            source_repository=source_repository,
-            source_url=f"https://example.com/oracle-test-plate-{index + 1}.jpg",
-            artist="Test Engraver",
-            work_title=f"The Test Plate {index}",
-            year="1860",
-            attribution_text=f"Test Engraver, The Test Plate {index}, test collection.",
+
+def _seed_oracle_corpus(db: Session, *, viewer_id: UUID) -> UUID:
+    """Seed the Oracle Corpus system library, owned by the reading's viewer.
+
+    Single-line evocative passages so each anchor selector's quote resolves to a
+    ready content chunk, and the deterministic test embedding (bag-of-words) ranks
+    them for forest/lamp questions. Returns the corpus library id.
+    """
+    library_id = oracle_corpus.ensure_oracle_corpus_library(db, owner_user_id=viewer_id)
+    for i in range(ORACLE_TEST_WORK_COUNT):
+        _seed_corpus_work(
+            db,
+            viewer_id=viewer_id,
+            library_id=library_id,
+            work_key=f"w{i}",
+            passage_text=(
+                f"The forest lamp descends through shadow and ordeal toward dawn, passage {i}."
+            ),
+            display_order=(i + 1) * 10,
+        )
+    # At least one safe plate (no embeddings) under oracle/plates/. Unique source_url +
+    # storage_key per seed so committed direct_db plates never collide on the UNIQUE
+    # constraint with a later test's plate (savepoint tests roll their plate back).
+    plate_token = uuid4().hex[:12]
+    db.add(
+        OraclePlate(
+            source_repository="test",
+            source_url=f"https://ex/p1-{plate_token}.jpg",
+            artist="Engraver",
+            work_title="Plate I",
+            attribution_text="Engraver, Plate I.",
             width=800,
             height=1200,
-            storage_key=f"oracle/plates/test-plate-{index + 1}.jpg",
+            storage_key=f"oracle/plates/test-plate-{plate_token}.jpg",
             content_type="image/jpeg",
-            byte_size=1000 + index,
+            byte_size=1000,
             tags=["forest", "lamp"],
         )
-        db.add(image)
-        db.flush()
-        _set_oracle_image_embedding(
-            db,
-            image_id=image.id,
-            text_value=f"{image.work_title} {' '.join(image.tags)}",
-        )
-        image_ids.append(image.id)
-    return corpus_id, work_ids, image_ids[0]
+    )
+    db.flush()
+    resolution = oracle_corpus.resolve_oracle_passage_anchors(db)
+    assert resolution.failed == 0, f"anchors failed to resolve: {resolution}"
+    return library_id
 
 
-def _register_oracle_corpus_cleanup(
-    direct_db: DirectSessionManager,
-    corpus_id: UUID,
-    work_ids: list[UUID] | None = None,
-) -> None:
-    direct_db.register_cleanup(
-        "oracle_corpus_works", "source_repository", ORACLE_TEST_SOURCE_REPOSITORY
-    )
-    for work_id in work_ids or []:
-        direct_db.register_cleanup("oracle_corpus_passages", "work_id", work_id)
-    direct_db.register_cleanup(
-        "oracle_corpus_images", "source_repository", ORACLE_TEST_SOURCE_REPOSITORY
-    )
+def _register_oracle_corpus_cleanup(direct_db: DirectSessionManager, viewer_id: UUID) -> None:
+    """Register FK-safe teardown for a viewer-owned corpus (LIFO).
+
+    The corpus media (with its content index, anchors, source mappings) hang off the
+    viewer's system library; the ``DirectSessionManager`` ``users``/``libraries``
+    special-cases tear those down (incl. the corpus media) before the cascade.
+    Plates are global owned assets, so the seed tags them ``source_repository='test'``
+    and we delete those here. Double-registration is an idempotent no-op delete.
+    """
+    direct_db.register_cleanup("oracle_plates", "source_repository", "test")
+    direct_db.register_cleanup("libraries", "owner_user_id", viewer_id)
+    direct_db.register_cleanup("memberships", "user_id", viewer_id)
 
 
 def _grant_platform_llm(db: Session, user_id: UUID) -> None:
@@ -707,120 +687,17 @@ class _SemanticRepairRouter:
         )
 
 
-def test_create_reading_accepts_fresh_migrated_manifest_seed(
+def test_create_reading_accepts_when_corpus_library_is_seeded(
     db_session: Session,
     oracle_schema,
     monkeypatch,
 ) -> None:
+    """create_reading admits-and-enqueues against a real seeded corpus library
+    (worker-time readiness is checked in execute_reading, not here)."""
     user_id = uuid4()
     db_session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
+    _seed_oracle_corpus(db_session, viewer_id=user_id)
     monkeypatch.setattr("nexus.services.oracle.enqueue_job", lambda *args, **kwargs: None)
-
-    corpus = (
-        db_session.execute(
-            text(
-                """
-                SELECT
-                    (SELECT count(*) FROM oracle_corpus_works) AS work_count,
-                    (SELECT count(*) FROM oracle_corpus_passages) AS passage_count,
-                    (SELECT count(*) FROM oracle_corpus_images) AS image_count,
-                    (
-                        SELECT embedding_model
-                        FROM oracle_corpus_passages
-                        WHERE embedding_model IS NOT NULL
-                        LIMIT 1
-                    ) AS embedding_model
-                """
-            )
-        )
-        .mappings()
-        .one()
-    )
-
-    assert corpus["work_count"] >= ORACLE_REQUIRED_PUBLIC_DOMAIN_WORKS
-    assert corpus["passage_count"] >= ORACLE_REQUIRED_PUBLIC_DOMAIN_PASSAGES
-    assert corpus["image_count"] >= ORACLE_REQUIRED_PUBLIC_DOMAIN_IMAGES
-    seeded_slugs = set(
-        db_session.execute(
-            text(
-                """
-                SELECT slug
-                FROM oracle_corpus_works
-                """
-            ),
-        ).scalars()
-    )
-    unsafe_plate_count = db_session.execute(
-        text(
-            """
-            SELECT count(*)
-            FROM oracle_corpus_images
-            WHERE width > 4096 OR height > 4096
-            """
-        ),
-    ).scalar_one()
-    plate_audit_row = (
-        db_session.execute(
-            text(
-                """
-                SELECT source_page_url, source_url, license_text, attribution_text
-                FROM oracle_corpus_images
-                WHERE source_page_url IS NOT NULL
-                ORDER BY source_page_url
-                LIMIT 1
-                """
-            ),
-        )
-        .mappings()
-        .one_or_none()
-    )
-    missing_embedding_count = db_session.execute(
-        text(
-            """
-            SELECT
-                (SELECT count(*)
-                 FROM oracle_corpus_passages
-                 WHERE embedding_model IS NULL OR embedding IS NULL)
-              + (SELECT count(*)
-                 FROM oracle_corpus_images
-                 WHERE embedding_model IS NULL OR embedding IS NULL)
-            """
-        ),
-    ).scalar_one()
-    mismatched_embedding_count = db_session.execute(
-        text(
-            """
-            SELECT
-                (SELECT count(*)
-                 FROM oracle_corpus_passages
-                 WHERE embedding_model != :embedding_model)
-              + (SELECT count(*)
-                 FROM oracle_corpus_images
-                 WHERE embedding_model != :embedding_model)
-            """
-        ),
-        {
-            "embedding_model": corpus["embedding_model"],
-        },
-    ).scalar_one()
-
-    assert seeded_slugs.issuperset(ORACLE_CANONICAL_PUBLIC_DOMAIN_WORK_SLUGS), (
-        "migration seed should include every documented current-corpus work slug; "
-        f"missing={sorted(set(ORACLE_CANONICAL_PUBLIC_DOMAIN_WORK_SLUGS) - seeded_slugs)}"
-    )
-    assert corpus["embedding_model"] == "test_hash_v2_256"
-    assert unsafe_plate_count == 0, "all Oracle plates should fit the 4096px image proxy limit"
-    assert missing_embedding_count == 0, "migration seed should include passage and plate vectors"
-    assert mismatched_embedding_count == 0, (
-        "migration seed vectors should be tagged with the corpus embedding model"
-    )
-    assert plate_audit_row is not None, "migration seed should retain plate audit/source page URLs"
-    assert str(plate_audit_row["source_page_url"]).startswith(
-        "https://commons.wikimedia.org/wiki/File:"
-    )
-    assert plate_audit_row["source_url"] != plate_audit_row["source_page_url"]
-    assert plate_audit_row["license_text"] == "public domain"
-    assert "public domain" in str(plate_audit_row["attribution_text"]).lower()
 
     reading = create_reading(
         db_session,
@@ -832,6 +709,228 @@ def test_create_reading_accepts_fresh_migrated_manifest_seed(
     assert not hasattr(reading, "corpus_set_version_id")
 
 
+def test_oracle_corpus_readiness_derives_from_library_media_index_anchor_plate(
+    db_session: Session,
+    oracle_schema,
+) -> None:
+    """AC-B1: readiness is computed from the live library/media/index/anchor/plate
+    state — ready when every required work has a ready index and resolved anchor and
+    at least one plate exists; flips to not_ready when any leg fails."""
+    user_id = uuid4()
+    db_session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
+    library_id = _seed_oracle_corpus(db_session, viewer_id=user_id)
+
+    ready = oracle_corpus.get_oracle_corpus_readiness(db_session)
+    assert ready.status == "ready"
+    assert ready.library_id == library_id
+    assert ready.work_count == ORACLE_TEST_WORK_COUNT
+    assert ready.ready_media_count == ORACLE_TEST_WORK_COUNT
+    assert ready.anchor_count == ORACLE_TEST_WORK_COUNT
+    assert ready.resolved_anchor_count == ORACLE_TEST_WORK_COUNT
+    assert ready.plate_count >= 1
+    assert ready.ready_plate_count == ready.plate_count
+
+    db_session.execute(
+        text(
+            """
+            UPDATE content_index_states
+            SET active_embedding_provider = 'stale-provider'
+            WHERE owner_kind = 'media'
+              AND owner_id = (
+                SELECT media_id
+                FROM oracle_corpus_sources
+                WHERE corpus_key = 'oracle'
+                ORDER BY display_order ASC
+                LIMIT 1
+              )
+            """
+        )
+    )
+    db_session.flush()
+    provider_mismatch = oracle_corpus.get_oracle_corpus_readiness(db_session)
+    assert provider_mismatch.status == "not_ready"
+    assert provider_mismatch.ready_media_count == ORACLE_TEST_WORK_COUNT - 1
+    assert provider_mismatch.resolved_anchor_count == ORACLE_TEST_WORK_COUNT - 1
+    db_session.execute(
+        text(
+            """
+            UPDATE content_index_states
+            SET active_embedding_provider = :provider
+            WHERE owner_kind = 'media'
+              AND active_embedding_model = :model
+            """
+        ),
+        {
+            "provider": current_transcript_embedding_provider(),
+            "model": current_transcript_embedding_model(),
+        },
+    )
+    db_session.flush()
+
+    # A stale evidence-span pointer must fail readiness even if the chunk pointer remains valid,
+    # because activation prefers the evidence span when present.
+    db_session.execute(
+        text(
+            """
+            UPDATE oracle_passage_anchors
+            SET current_evidence_span_id = :missing_span_id
+            WHERE id = (
+                SELECT id FROM oracle_passage_anchors ORDER BY created_at ASC, id ASC LIMIT 1
+            )
+            """
+        ),
+        {"missing_span_id": uuid4()},
+    )
+    db_session.flush()
+    stale_anchor = oracle_corpus.get_oracle_corpus_readiness(db_session)
+    assert stale_anchor.status == "not_ready"
+    assert stale_anchor.resolved_anchor_count == ORACLE_TEST_WORK_COUNT - 1
+
+    resolution = oracle_corpus.resolve_oracle_passage_anchors(db_session)
+    assert resolution.failed == 0
+
+    # Dropping every plate is enough to make the corpus not ready.
+    db_session.execute(text("DELETE FROM oracle_plates"))
+    db_session.flush()
+    not_ready = oracle_corpus.get_oracle_corpus_readiness(db_session)
+    assert not_ready.status == "not_ready"
+    assert not_ready.plate_count == 0
+    assert not_ready.ready_plate_count == 0
+
+
+def test_search_scoped_to_oracle_corpus_library_returns_corpus_chunks(
+    db_session: Session,
+    oracle_schema,
+) -> None:
+    """AC-G7/AC-B7: the Oracle Corpus is searchable through normal library scope."""
+    user_id = uuid4()
+    db_session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
+    library_id = _seed_oracle_corpus(db_session, viewer_id=user_id)
+
+    response = run_search(
+        db_session,
+        user_id,
+        SearchQuery(
+            text="forest lamp",
+            requested_kinds=frozenset({"documents"}),
+            scope=SearchScope(kind="library", id=library_id),
+            limit=20,
+        ),
+    )
+
+    corpus_media_ids = set(db_session.execute(select(OracleCorpusSource.media_id)).scalars())
+    chunk_results = [row for row in response.results if row.type == "content_chunk"]
+    assert chunk_results, (
+        "library-scoped search should return content_chunk rows from Oracle Corpus media"
+    )
+    assert any(row.source.media_id in corpus_media_ids for row in chunk_results)
+    assert all(row.source.media_id in corpus_media_ids for row in chunk_results)
+
+
+def test_ensure_oracle_corpus_media_uses_system_ingest_without_default_membership(
+    direct_db: DirectSessionManager,
+    oracle_schema,
+) -> None:
+    user_id = uuid4()
+    with direct_db.session() as db:
+        ensure_user_and_default_library(db, user_id)
+        library_id = oracle_corpus.ensure_oracle_corpus_library(db, owner_user_id=user_id)
+        work = oracle_corpus.OracleCorpusManifestWork(
+            work_key=f"system-ingest-{uuid4().hex[:8]}",
+            title="System Ingest Work",
+            author_text="A. Scribe",
+            source_repository="test",
+            source_url="https://example.org/system-ingest",
+            source_download_url=f"https://example.org/system-ingest-{uuid4().hex[:8]}.epub",
+            source_media_kind="epub",
+            display_order=10,
+            passage_anchors=[],
+        )
+        result = oracle_corpus.ensure_oracle_corpus_media(
+            db,
+            owner_user_id=user_id,
+            library_id=library_id,
+            work=work,
+        )
+        rerun = oracle_corpus.ensure_oracle_corpus_media(
+            db,
+            owner_user_id=user_id,
+            library_id=library_id,
+            work=work,
+        )
+        db.commit()
+        assert rerun.media_id == result.media_id
+        assert rerun.created_media is False
+
+        default_library_id = library_governance.default_library_id_for_user(db, user_id)
+        corpus_entry = db.execute(
+            text(
+                """
+                SELECT 1
+                FROM library_entries
+                WHERE library_id = :library_id AND media_id = :media_id
+                """
+            ),
+            {"library_id": library_id, "media_id": result.media_id},
+        ).first()
+        default_entry = db.execute(
+            text(
+                """
+                SELECT 1
+                FROM library_entries
+                WHERE library_id = :library_id AND media_id = :media_id
+                """
+            ),
+            {"library_id": default_library_id, "media_id": result.media_id},
+        ).first()
+        default_intrinsic = db.execute(
+            text(
+                """
+                SELECT 1
+                FROM default_library_intrinsics
+                WHERE default_library_id = :library_id AND media_id = :media_id
+                """
+            ),
+            {"library_id": default_library_id, "media_id": result.media_id},
+        ).first()
+        source_payload = db.execute(
+            text(
+                """
+                SELECT source_payload
+                FROM media_source_attempts
+                WHERE media_id = :media_id
+                ORDER BY attempt_no ASC
+                LIMIT 1
+                """
+            ),
+            {"media_id": result.media_id},
+        ).scalar_one()
+        job_ids = [
+            row[0]
+            for row in db.execute(
+                text(
+                    """
+                    SELECT job_id
+                    FROM media_source_attempts
+                    WHERE media_id = :media_id AND job_id IS NOT NULL
+                    """
+                ),
+                {"media_id": result.media_id},
+            ).fetchall()
+        ]
+
+    for job_id in job_ids:
+        direct_db.register_cleanup("background_jobs", "id", job_id)
+    _register_oracle_corpus_cleanup(direct_db, user_id)
+    direct_db.register_cleanup("users", "id", user_id)
+
+    assert corpus_entry is not None
+    assert default_entry is None
+    assert default_intrinsic is None
+    assert source_payload["system_source"] == oracle_corpus.ORACLE_CORPUS_SYSTEM_KEY
+    assert "library_ids" not in source_payload
+
+
 def test_create_reading_checks_llm_limits_before_enqueue(
     db_session: Session,
     oracle_schema,
@@ -840,7 +939,7 @@ def test_create_reading_checks_llm_limits_before_enqueue(
 ) -> None:
     user_id = uuid4()
     db_session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
-    _seed_oracle_corpus(db_session)
+    _seed_oracle_corpus(db_session, viewer_id=user_id)
 
     def record_enqueue(*args, **kwargs):
         oracle_rate_limiter.events.append(("enqueue", None, None, None))
@@ -861,196 +960,6 @@ def test_create_reading_checks_llm_limits_before_enqueue(
     ]
 
 
-def test_build_corpus_validation_exits_nonzero_when_counts_are_short(
-    db_session: Session,
-    oracle_schema,
-) -> None:
-    oracle_build_corpus = importlib.import_module("scripts.oracle.build_corpus")
-    _clear_oracle_corpus(db_session)
-
-    with pytest.raises(SystemExit) as exc_info:
-        oracle_build_corpus._validate_corpus_counts(
-            db_session,
-            expected_works=ORACLE_REQUIRED_PUBLIC_DOMAIN_WORKS,
-            expected_passages=ORACLE_REQUIRED_PUBLIC_DOMAIN_PASSAGES,
-            expected_images=ORACLE_REQUIRED_PUBLIC_DOMAIN_IMAGES,
-        )
-
-    message = str(exc_info.value)
-    assert "Oracle current corpus seed incomplete" in message
-    assert f"works=0/{ORACLE_REQUIRED_PUBLIC_DOMAIN_WORKS}" in message
-    assert f"passages=0/{ORACLE_REQUIRED_PUBLIC_DOMAIN_PASSAGES}" in message
-    assert f"images=0/{ORACLE_REQUIRED_PUBLIC_DOMAIN_IMAGES}" in message
-
-
-def test_build_corpus_validation_requires_embeddings(
-    db_session: Session,
-    oracle_schema,
-) -> None:
-    oracle_build_corpus = importlib.import_module("scripts.oracle.build_corpus")
-    _clear_oracle_corpus(db_session)
-    _seed_oracle_corpus(db_session)
-    db_session.execute(
-        text("""
-            UPDATE oracle_corpus_passages
-            SET embedding_model = NULL,
-                embedding = NULL
-            WHERE id = (
-                SELECT id
-                FROM oracle_corpus_passages
-                ORDER BY passage_index ASC, id ASC
-                LIMIT 1
-            )
-        """),
-    )
-
-    with pytest.raises(SystemExit) as exc_info:
-        oracle_build_corpus._validate_corpus_counts(
-            db_session,
-            expected_works=ORACLE_REQUIRED_PUBLIC_DOMAIN_WORKS,
-            expected_passages=ORACLE_REQUIRED_PUBLIC_DOMAIN_PASSAGES,
-            expected_images=ORACLE_REQUIRED_PUBLIC_DOMAIN_IMAGES,
-        )
-
-    assert f"passage_embeddings={ORACLE_REQUIRED_PUBLIC_DOMAIN_PASSAGES - 1}/" in str(
-        exc_info.value
-    )
-
-
-def test_build_corpus_has_no_version_metadata_row(
-    db_session: Session,
-    oracle_schema,
-) -> None:
-    oracle_build_corpus = importlib.import_module("scripts.oracle.build_corpus")
-    assert not hasattr(oracle_build_corpus, "_ensure_current_corpus_metadata")
-
-
-def test_build_corpus_preserves_plate_audit_url_license_and_asset_url(
-    db_session: Session,
-    oracle_schema,
-    monkeypatch,
-) -> None:
-    oracle_build_corpus = importlib.import_module("scripts.oracle.build_corpus")
-
-    fake_data = b"\xff\xd8\xff" + b"x" * 100
-
-    class _FakeStorage:
-        def __init__(self) -> None:
-            self.put_calls: list[tuple[str, bytes, str]] = []
-
-        def head_object(self, path):
-            return None
-
-        def put_object(self, path, content, content_type):
-            self.put_calls.append((path, content, content_type))
-
-    storage = _FakeStorage()
-
-    monkeypatch.setattr(
-        oracle_build_corpus,
-        "fetch_validated_image",
-        lambda url, client: ValidatedImage(
-            data=fake_data,
-            content_type="image/jpeg",
-            width=640,
-            height=960,
-        ),
-    )
-
-    manifest = [
-        {
-            "source_repository": "wikimedia_commons",
-            "source_url": "https://commons.wikimedia.org/wiki/File:Oracle_Audit.jpg",
-            "resolved_source_url": "https://upload.wikimedia.org/oracle-asset.jpg",
-            "license_text": "public domain",
-            "artist": "Test Artist",
-            "work_title": "Audit Plate",
-            "year": "1888",
-            "attribution_text": "Test Artist, Audit Plate. Public domain.",
-            "width": 640,
-            "height": 960,
-            "tags": ["audit"],
-        }
-    ]
-
-    oracle_build_corpus._seed_plates(
-        db_session,
-        client=None,
-        storage=storage,
-        manifest=manifest,
-    )
-
-    row = (
-        db_session.execute(
-            text(
-                """
-                SELECT source_page_url, source_url, license_text, attribution_text,
-                       storage_key, content_type, byte_size
-                FROM oracle_corpus_images
-                WHERE source_url = :source_url
-                """
-            ),
-            {"source_url": "https://upload.wikimedia.org/oracle-asset.jpg"},
-        )
-        .mappings()
-        .one()
-    )
-
-    assert row["source_page_url"] == "https://commons.wikimedia.org/wiki/File:Oracle_Audit.jpg"
-    assert row["source_url"] == "https://upload.wikimedia.org/oracle-asset.jpg"
-    assert row["license_text"] == "public domain"
-    assert row["attribution_text"] == "Test Artist, Audit Plate. Public domain."
-
-    # New owned-asset columns are derived from the decoded image bytes.
-    expected_storage_key = "oracle/plates/oracle-audit.jpg"
-    assert row["storage_key"] == expected_storage_key
-    assert row["content_type"] == "image/jpeg"
-    assert row["byte_size"] == len(fake_data)
-
-    # The validated bytes are uploaded exactly once, to the stable current key.
-    assert storage.put_calls == [(expected_storage_key, fake_data, "image/jpeg")]
-
-    # A re-seed against an existing object skips the upload (idempotent), while the
-    # immutable-release guard still refuses to mutate the row.
-    class _ExistingStorage(_FakeStorage):
-        def head_object(self, path):
-            return ObjectMetadata(content_type="image/jpeg", size_bytes=len(fake_data))
-
-    existing_storage = _ExistingStorage()
-    with pytest.raises(SystemExit):
-        oracle_build_corpus._seed_plates(
-            db_session,
-            client=None,
-            storage=existing_storage,
-            manifest=manifest,
-        )
-    assert existing_storage.put_calls == []
-
-
-def test_oracle_migration_does_not_load_seed_manifests_at_import(monkeypatch) -> None:
-    original_read_text = Path.read_text
-
-    def fail_read_text(self, *args, **kwargs):
-        if self.name.startswith("manifest_") and "scripts/oracle" in str(self):
-            raise AssertionError(f"migration import should not read seed manifest: {self}")
-        return original_read_text(self, *args, **kwargs)
-
-    repo_root = Path(__file__).resolve().parents[2]
-    migration_path = repo_root / "migrations" / "alembic" / "versions" / "0072_oracle.py"
-    spec = importlib.util.spec_from_file_location(
-        f"oracle_0072_import_test_{uuid4().hex}",
-        migration_path,
-    )
-    assert spec is not None and spec.loader is not None, "expected importable 0072 migration spec"
-    module = importlib.util.module_from_spec(spec)
-
-    monkeypatch.setattr(Path, "read_text", fail_read_text)
-
-    spec.loader.exec_module(module)
-    assert not hasattr(module, "ORACLE_WORKS")
-    assert not hasattr(module, "ORACLE_IMAGES")
-
-
 def test_create_reading_allocates_unique_folios_under_concurrent_requests(
     direct_db: DirectSessionManager,
     oracle_schema,
@@ -1059,11 +968,11 @@ def test_create_reading_allocates_unique_folios_under_concurrent_requests(
     user_id = uuid4()
     with direct_db.session() as db:
         db.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
-        corpus_id, _work_ids, _image_id = _seed_oracle_corpus(db)
+        _seed_oracle_corpus(db, viewer_id=user_id)
         db.commit()
 
     direct_db.register_cleanup("users", "id", user_id)
-    _register_oracle_corpus_cleanup(direct_db, corpus_id, _work_ids)
+    _register_oracle_corpus_cleanup(direct_db, user_id)
     direct_db.register_cleanup("oracle_readings", "user_id", user_id)
     monkeypatch.setattr("nexus.services.oracle.enqueue_job", lambda *args, **kwargs: None)
 
@@ -1094,13 +1003,12 @@ def test_post_oracle_reading_returns_reading_ref_without_stream_block(
     the generic /stream-tokens flow."""
     user_id = uuid4()
     with direct_db.session() as db:
-        corpus_id, _work_ids, _image_id = _seed_oracle_corpus(db)
+        db.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
+        _seed_oracle_corpus(db, viewer_id=user_id)
         db.commit()
 
     direct_db.register_cleanup("users", "id", user_id)
-    direct_db.register_cleanup("libraries", "owner_user_id", user_id)
-    direct_db.register_cleanup("memberships", "user_id", user_id)
-    _register_oracle_corpus_cleanup(direct_db, corpus_id, _work_ids)
+    _register_oracle_corpus_cleanup(direct_db, user_id)
     direct_db.register_cleanup("oracle_readings", "user_id", user_id)
     monkeypatch.setattr("nexus.services.oracle.enqueue_job", lambda *args, **kwargs: None)
 
@@ -1128,13 +1036,12 @@ def test_post_oracle_reading_replays_idempotency_key(
     fresh folio."""
     user_id = uuid4()
     with direct_db.session() as db:
-        corpus_id, _work_ids, _image_id = _seed_oracle_corpus(db)
+        db.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
+        _seed_oracle_corpus(db, viewer_id=user_id)
         db.commit()
 
     direct_db.register_cleanup("users", "id", user_id)
-    direct_db.register_cleanup("libraries", "owner_user_id", user_id)
-    direct_db.register_cleanup("memberships", "user_id", user_id)
-    _register_oracle_corpus_cleanup(direct_db, corpus_id, _work_ids)
+    _register_oracle_corpus_cleanup(direct_db, user_id)
     direct_db.register_cleanup("oracle_readings", "user_id", user_id)
     enqueued: list[dict] = []
     monkeypatch.setattr(
@@ -1174,7 +1081,7 @@ def test_execute_reading_uses_indexed_user_library_content_chunks(
         user_id,
         title="Lantern Monograph",
     )
-    corpus_id, _work_ids, _image_id = _seed_oracle_corpus(db_session)
+    _seed_oracle_corpus(db_session, viewer_id=user_id)
     reading_id = _insert_pending_reading(
         db_session,
         user_id=user_id,
@@ -1239,7 +1146,7 @@ def test_execute_reading_cites_content_chunk_when_user_chunk_has_no_span(
         ).scalars()
     )
     assert chunk_ids, "expected the searchable media to index at least one content chunk"
-    _seed_oracle_corpus(db_session)
+    _seed_oracle_corpus(db_session, viewer_id=user_id)
     reading_id = _insert_pending_reading(
         db_session,
         user_id=user_id,
@@ -1270,13 +1177,14 @@ def test_execute_reading_user_media_passage_carries_citation_out(
     db_session: Session,
     oracle_schema,
 ) -> None:
-    """S7: a user-library passage whose chunk owns an evidence span mints a
-    CitationOut (chip + canonical deep link, ordinal = phase order); public-domain
-    passages stay typographic (citation=None)."""
+    """S7/cutover: a user-library passage whose chunk owns an evidence span mints a
+    CitationOut (chip + canonical deep link, ordinal = phase order). Public-domain
+    passages now also carry a CitationOut, because a resolved ``oracle_passage_anchor``
+    resolves to a current media reader jump (non-null locator)."""
     user_id = uuid4()
     ensure_user_and_default_library(db_session, user_id)
     create_searchable_media(db_session, user_id, title="Lantern Monograph")
-    _seed_oracle_corpus(db_session)
+    _seed_oracle_corpus(db_session, viewer_id=user_id)
     reading_id = _insert_pending_reading(
         db_session,
         user_id=user_id,
@@ -1308,8 +1216,15 @@ def test_execute_reading_user_media_passage_carries_citation_out(
     for phase in ("descent", "ascent"):
         passage = by_phase[phase]
         assert passage.source_kind == "public_domain"
-        assert passage.citation is None, (
-            f"public-domain {phase} passage must stay typographic, got {passage.citation}"
+        # A resolved anchor jumps into the corpus media's reader, so the chip is live.
+        assert passage.citation is not None, (
+            f"public-domain {phase} passage cites a resolved anchor, got {passage.citation}"
+        )
+        assert passage.citation.target_ref.type == "oracle_passage_anchor", (
+            f"public-domain {phase} passage must cite an anchor, got {passage.citation.target_ref}"
+        )
+        assert passage.citation.locator is not None, (
+            f"a resolved anchor must surface a reader locator, got {passage.citation}"
         )
 
 
@@ -1318,11 +1233,12 @@ def test_execute_reading_passage_event_carries_citation_for_user_media(
     oracle_schema,
 ) -> None:
     """The streamed ``passage`` event payload mirrors the REST out: the user-media
-    phase carries the citation, public-domain phases carry ``citation: null``."""
+    phase carries an evidence-span citation, and (post-cutover) public-domain phases
+    carry an ``oracle_passage_anchor`` citation resolving to a media reader jump."""
     user_id = uuid4()
     ensure_user_and_default_library(db_session, user_id)
     create_searchable_media(db_session, user_id, title="Lantern Monograph")
-    _seed_oracle_corpus(db_session)
+    _seed_oracle_corpus(db_session, viewer_id=user_id)
     reading_id = _insert_pending_reading(
         db_session,
         user_id=user_id,
@@ -1353,8 +1269,12 @@ def test_execute_reading_passage_event_carries_citation_for_user_media(
     assert by_phase["ordeal"]["citation"] is not None
     assert by_phase["ordeal"]["citation"]["ordinal"] == 2
     assert by_phase["ordeal"]["citation"]["target_ref"]["type"] == "evidence_span"
-    assert by_phase["descent"]["citation"] is None
-    assert by_phase["ascent"]["citation"] is None
+    for phase in ("descent", "ascent"):
+        assert by_phase[phase]["source_kind"] == "public_domain"
+        assert by_phase[phase]["citation"] is not None, (
+            f"public-domain {phase} event must carry a resolved-anchor citation"
+        )
+        assert by_phase[phase]["citation"]["target_ref"]["type"] == "oracle_passage_anchor"
 
 
 def test_execute_reading_note_owned_passage_carries_note_citation_out(
@@ -1373,7 +1293,7 @@ def test_execute_reading_note_owned_passage_carries_note_citation_out(
         page_title="Lantern Notebook",
         body_text=_NOTE_BODY_TEXT,
     )
-    _seed_oracle_corpus(db_session)
+    _seed_oracle_corpus(db_session, viewer_id=user_id)
     reading_id = _insert_pending_reading(
         db_session,
         user_id=user_id,
@@ -1420,14 +1340,16 @@ def test_execute_reading_note_owned_passage_carries_note_citation_out(
     assert ordeal_event["citation"]["locator"]["block_id"] == str(note_block_id)
 
 
-def test_execute_reading_public_only_passages_have_no_citation(
+def test_execute_reading_public_only_passages_cite_resolved_anchors(
     db_session: Session,
     oracle_schema,
 ) -> None:
-    """A reading with no user library (public-domain only) mints no citations."""
+    """A public-domain-only reading cites resolved ``oracle_passage_anchor`` identities
+    (AC-G8). Each resolves to a current corpus-media reader jump, so every passage now
+    surfaces a CitationOut chip (the old typographic-only behavior is gone)."""
     user_id = uuid4()
     db_session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
-    _seed_oracle_corpus(db_session)
+    _seed_oracle_corpus(db_session, viewer_id=user_id)
     reading_id = _insert_pending_reading(
         db_session,
         user_id=user_id,
@@ -1439,8 +1361,17 @@ def test_execute_reading_public_only_passages_have_no_citation(
     detail = get_reading_detail(db_session, viewer_id=user_id, reading_id=reading_id)
     assert detail.passages, "expected three persisted passages"
     assert all(passage.source_kind == "public_domain" for passage in detail.passages)
-    assert all(passage.citation is None for passage in detail.passages), (
-        "public-domain passages are typographic only — no CitationOut"
+    assert all(passage.citation is not None for passage in detail.passages), (
+        "public-domain passages now cite resolved anchors with a live reader jump"
+    )
+    assert all(
+        passage.citation.target_ref.type == "oracle_passage_anchor" for passage in detail.passages
+    ), "public-domain passages must cite oracle_passage_anchor (AC-G8)"
+
+    # The persisted citation edges target anchors, never the deleted corpus_passage scheme.
+    target_schemes = {row["target_scheme"] for row in _folio_edge_rows(db_session, reading_id)}
+    assert target_schemes == {"oracle_passage_anchor"}, (
+        f"public-domain folio edges must target anchors, got {target_schemes}"
     )
 
 
@@ -1456,7 +1387,7 @@ def test_get_reading_detail_degrades_citation_to_none_when_backing_span_is_gone(
     user_id = uuid4()
     ensure_user_and_default_library(db_session, user_id)
     create_searchable_media(db_session, user_id, title="Lantern Monograph")
-    _seed_oracle_corpus(db_session)
+    _seed_oracle_corpus(db_session, viewer_id=user_id)
     reading_id = _insert_pending_reading(
         db_session,
         user_id=user_id,
@@ -1517,7 +1448,7 @@ def test_execute_reading_repairs_semantic_rejection_once_and_ledgers_both_attemp
     attempts."""
     user_id = uuid4()
     db_session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
-    corpus_id, _work_ids, _image_id = _seed_oracle_corpus(db_session)
+    _seed_oracle_corpus(db_session, viewer_id=user_id)
     reading_id = _insert_pending_reading(
         db_session,
         user_id=user_id,
@@ -1590,7 +1521,7 @@ def test_execute_reading_fails_without_platform_llm_entitlement(
     failure routes through the normalized done grammar with the error floor set."""
     user_id = uuid4()
     db_session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
-    _seed_oracle_corpus(db_session)
+    _seed_oracle_corpus(db_session, viewer_id=user_id)
     reading = OracleReading(
         id=uuid4(),
         user_id=user_id,
@@ -1663,7 +1594,7 @@ def test_execute_reading_fails_when_required_user_embeddings_are_unavailable(
         ),
         {"media_id": media_id},
     )
-    corpus_id, _work_ids, _image_id = _seed_oracle_corpus(db_session)
+    _seed_oracle_corpus(db_session, viewer_id=user_id)
     reading_id = _insert_pending_reading(
         db_session,
         user_id=user_id,
@@ -1704,7 +1635,7 @@ def test_execute_reading_requires_user_passage_when_visible_media_is_searchable(
         user_id,
         title="Indexed Lantern Monograph",
     )
-    corpus_id, _work_ids, _image_id = _seed_oracle_corpus(db_session)
+    _seed_oracle_corpus(db_session, viewer_id=user_id)
     reading_id = _insert_pending_reading(
         db_session,
         user_id=user_id,
@@ -1712,7 +1643,7 @@ def test_execute_reading_requires_user_passage_when_visible_media_is_searchable(
     )
     router = _UnexpectedRouter()
 
-    monkeypatch.setattr("nexus.services.oracle._retrieve_user_library_passages", lambda *a, **k: [])
+    monkeypatch.setattr("nexus.services.oracle._personal_candidates", lambda *a, **k: [])
 
     result = asyncio.run(execute_reading(db_session, reading_id=reading_id, llm_router=router))
 
@@ -1760,7 +1691,7 @@ def test_execute_reading_has_no_provider_or_corpus_identity_columns(
 ) -> None:
     user_id = uuid4()
     db_session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
-    _seed_oracle_corpus(db_session)
+    _seed_oracle_corpus(db_session, viewer_id=user_id)
     first_reading_id = _insert_pending_reading(
         db_session,
         user_id=user_id,
@@ -1814,7 +1745,7 @@ def test_execute_reading_reserves_and_commits_oracle_token_budget(
 ) -> None:
     user_id = uuid4()
     db_session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
-    corpus_id, _work_ids, _image_id = _seed_oracle_corpus(db_session)
+    _seed_oracle_corpus(db_session, viewer_id=user_id)
     reading_id = _insert_pending_reading(
         db_session,
         user_id=user_id,
@@ -1850,12 +1781,12 @@ def test_execute_reading_persists_folio_and_citation_edge_per_phase(
     """Each phase writes one folio row paired with one citation edge (§5.3, AC8):
     source ``oracle_reading:<id>``, ``kind=context``/``origin=citation``, dense
     phase ordinals (descent 1, ordeal 2, ascent 3), and a display snapshot
-    carrying snippet/locator/deep link. Public-domain citations target the
-    stable ``oracle_corpus_passages`` rows.
+    carrying snippet/locator. Public-domain citations target the stable
+    ``oracle_passage_anchor`` identity rows (AC-G8).
     """
     user_id = uuid4()
     db_session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
-    _seed_oracle_corpus(db_session)
+    _seed_oracle_corpus(db_session, viewer_id=user_id)
     reading_id = _insert_pending_reading(
         db_session,
         user_id=user_id,
@@ -1885,17 +1816,17 @@ def test_execute_reading_persists_folio_and_citation_edge_per_phase(
             f"edge source must be the reading, got {row}"
         )
         assert row["source_kind"] == "public_domain"
-        assert row["target_scheme"] == "oracle_corpus_passage", (
-            f"public-domain citations target corpus passage rows, got {row}"
+        assert row["target_scheme"] == "oracle_passage_anchor", (
+            f"public-domain citations target the stable passage anchor (AC-G8), got {row}"
         )
-        corpus = (
+        anchor = (
             db_session.execute(
                 text(
                     """
-                    SELECT p.canonical_text, p.locator_label, w.title, w.source_url
-                    FROM oracle_corpus_passages p
-                    JOIN oracle_corpus_works w ON w.id = p.work_id
-                    WHERE p.id = :target_id
+                    SELECT a.display_label, s.title
+                    FROM oracle_passage_anchors a
+                    JOIN oracle_corpus_sources s ON s.id = a.corpus_source_id
+                    WHERE a.id = :target_id
                     """
                 ),
                 {"target_id": row["target_id"]},
@@ -1904,17 +1835,89 @@ def test_execute_reading_persists_folio_and_citation_edge_per_phase(
             .one()
         )
         snapshot = row["snapshot"]
-        assert snapshot["excerpt"] == corpus["canonical_text"], (
-            f"snapshot excerpt must be the exact snippet, got {snapshot} for {corpus}"
+        # The snapshot excerpt is the live chunk text the anchor resolved to.
+        assert "forest lamp descends" in snapshot["excerpt"].lower(), (
+            f"snapshot excerpt must be the resolved chunk text, got {snapshot}"
         )
-        assert snapshot["section_label"] == row["locator_label"] == corpus["locator_label"], (
-            f"snapshot section label and folio locator label must match, got {row}"
+        assert snapshot["section_label"] == row["locator_label"] == anchor["display_label"], (
+            f"snapshot section label and folio locator label must match the anchor, got {row}"
         )
-        assert snapshot["title"] == corpus["title"], f"snapshot title is the work title: {snapshot}"
-        assert snapshot["deep_link"] == corpus["source_url"], (
-            f"deep link rides the snapshot, not the edge (D11): {snapshot}"
+        assert snapshot["title"] == anchor["title"], (
+            f"snapshot title is the corpus source title: {snapshot}"
         )
-        assert snapshot["result_type"] == "oracle_corpus_passage", snapshot
+        # Public-domain candidates carry no Oracle-owned deep link; the reader jump is
+        # rebuilt from the anchor's current evidence by the CitationOut (§12.1). A None
+        # snapshot field is omitted from the stored JSONB, so the key is simply absent.
+        assert "deep_link" not in snapshot, (
+            f"public-domain snapshot must not carry an Oracle deep link, got {snapshot}"
+        )
+        assert snapshot["result_type"] == "oracle_passage_anchor", snapshot
+
+
+def test_get_oracle_corpus_status_reports_ready_library_without_mutating_rows(
+    auth_client,
+    direct_db: DirectSessionManager,
+    oracle_schema,
+) -> None:
+    user_id = uuid4()
+    with direct_db.session() as session:
+        session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
+        library_id = _seed_oracle_corpus(session, viewer_id=user_id)
+        before_counts = (
+            session.execute(
+                text(
+                    """
+                    SELECT
+                        (SELECT count(*) FROM oracle_corpus_sources) AS sources,
+                        (SELECT count(*) FROM oracle_passage_anchors) AS anchors,
+                        (SELECT count(*) FROM oracle_plates) AS plates,
+                        (SELECT count(*) FROM library_entries WHERE library_id = :library_id)
+                            AS entries
+                    """
+                ),
+                {"library_id": library_id},
+            )
+            .mappings()
+            .one()
+        )
+        session.commit()
+
+    direct_db.register_cleanup("users", "id", user_id)
+    _register_oracle_corpus_cleanup(direct_db, user_id)
+
+    response = auth_client.get("/oracle/corpus", headers=auth_headers(user_id))
+
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["library_id"] == str(library_id)
+    assert data["library_ref"] == f"library:{library_id}"
+    assert data["status"] == "ready"
+    assert data["work_count"] == ORACLE_TEST_WORK_COUNT
+    assert data["ready_media_count"] == ORACLE_TEST_WORK_COUNT
+    assert data["anchor_count"] == ORACLE_TEST_WORK_COUNT
+    assert data["resolved_anchor_count"] == ORACLE_TEST_WORK_COUNT
+    assert data["plate_count"] >= 1
+    assert data["ready_plate_count"] == data["plate_count"]
+
+    with direct_db.session() as session:
+        after_counts = (
+            session.execute(
+                text(
+                    """
+                    SELECT
+                        (SELECT count(*) FROM oracle_corpus_sources) AS sources,
+                        (SELECT count(*) FROM oracle_passage_anchors) AS anchors,
+                        (SELECT count(*) FROM oracle_plates) AS plates,
+                        (SELECT count(*) FROM library_entries WHERE library_id = :library_id)
+                            AS entries
+                    """
+                ),
+                {"library_id": library_id},
+            )
+            .mappings()
+            .one()
+        )
+    assert dict(after_counts) == dict(before_counts)
 
 
 def test_get_oracle_reading_returns_proxied_plate_urls(
@@ -1925,7 +1928,7 @@ def test_get_oracle_reading_returns_proxied_plate_urls(
     user_id = uuid4()
     with direct_db.session() as session:
         session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
-        corpus_id, _work_ids, _image_id = _seed_oracle_corpus(session)
+        _seed_oracle_corpus(session, viewer_id=user_id)
         reading_id = _insert_pending_reading(
             session,
             user_id=user_id,
@@ -1938,8 +1941,8 @@ def test_get_oracle_reading_returns_proxied_plate_urls(
         assert reading is not None and reading.image_id is not None, (
             f"expected completed reading to persist an image, got {reading}"
         )
-        image = session.get(OracleCorpusImage, reading.image_id)
-        assert image is not None, "expected completed reading image to resolve to corpus image"
+        image = session.get(OraclePlate, reading.image_id)
+        assert image is not None, "expected completed reading image to resolve to a corpus plate"
         raw_source_url = image.source_url
 
     response = auth_client.get(
@@ -1961,7 +1964,7 @@ def test_get_oracle_reading_returns_proxied_plate_urls(
     )
 
     direct_db.register_cleanup("users", "id", user_id)
-    _register_oracle_corpus_cleanup(direct_db, corpus_id, _work_ids)
+    _register_oracle_corpus_cleanup(direct_db, user_id)
     direct_db.register_cleanup("oracle_readings", "id", reading_id)
     direct_db.register_cleanup("resource_edges", "source_id", reading_id)
     direct_db.register_cleanup("oracle_reading_folios", "reading_id", reading_id)
@@ -1982,7 +1985,7 @@ def test_reading_detail_renders_passages_from_folio_and_edge_field_for_field(
     user_id = uuid4()
     with direct_db.session() as session:
         session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
-        corpus_id, _work_ids, _image_id = _seed_oracle_corpus(session)
+        _seed_oracle_corpus(session, viewer_id=user_id)
         reading_id = _insert_pending_reading(
             session,
             user_id=user_id,
@@ -1993,7 +1996,7 @@ def test_reading_detail_renders_passages_from_folio_and_edge_field_for_field(
         )
 
     direct_db.register_cleanup("users", "id", user_id)
-    _register_oracle_corpus_cleanup(direct_db, corpus_id, _work_ids)
+    _register_oracle_corpus_cleanup(direct_db, user_id)
     direct_db.register_cleanup("oracle_readings", "id", reading_id)
     direct_db.register_cleanup("resource_edges", "source_id", reading_id)
     direct_db.register_cleanup("oracle_reading_folios", "reading_id", reading_id)
@@ -2046,7 +2049,7 @@ def test_execute_reading_rejects_omens_unless_exactly_three_nonblank_lines(
 ) -> None:
     user_id = uuid4()
     db_session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
-    corpus_id, _work_ids, _image_id = _seed_oracle_corpus(db_session)
+    _seed_oracle_corpus(db_session, viewer_id=user_id)
     reading_id = _insert_pending_reading(
         db_session,
         user_id=user_id,
@@ -2109,7 +2112,7 @@ def test_execute_reading_rejects_non_strict_provider_json(
 ) -> None:
     user_id = uuid4()
     db_session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
-    corpus_id, _work_ids, _image_id = _seed_oracle_corpus(db_session)
+    _seed_oracle_corpus(db_session, viewer_id=user_id)
     reading_id = _insert_pending_reading(
         db_session,
         user_id=user_id,
@@ -2153,7 +2156,7 @@ def test_execute_reading_provider_failure_uses_feedback_safe_error_message(
     user_id = uuid4()
     with direct_db.session() as db_session:
         db_session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
-        corpus_id, _work_ids, _image_id = _seed_oracle_corpus(db_session)
+        _seed_oracle_corpus(db_session, viewer_id=user_id)
         reading_id = _insert_pending_reading(
             db_session,
             user_id=user_id,
@@ -2220,7 +2223,7 @@ def test_execute_reading_provider_failure_uses_feedback_safe_error_message(
         db_session.commit()
 
     direct_db.register_cleanup("users", "id", user_id)
-    _register_oracle_corpus_cleanup(direct_db, corpus_id, _work_ids)
+    _register_oracle_corpus_cleanup(direct_db, user_id)
     direct_db.register_cleanup("oracle_readings", "id", reading_id)
     direct_db.register_cleanup("resource_edges", "source_id", reading_id)
     direct_db.register_cleanup("oracle_reading_folios", "reading_id", reading_id)
@@ -2280,7 +2283,7 @@ def test_execute_reading_maps_provider_error_codes_explicitly(
 ) -> None:
     user_id = uuid4()
     db_session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
-    corpus_id, _work_ids, _image_id = _seed_oracle_corpus(db_session)
+    _seed_oracle_corpus(db_session, viewer_id=user_id)
     reading_id = _insert_pending_reading(
         db_session,
         user_id=user_id,
@@ -2330,24 +2333,36 @@ def test_execute_reading_maps_provider_error_codes_explicitly(
     assert event_payloads[-1] == {"status": "failed", "error_code": api_error_code}
 
 
-def test_execute_reading_fails_closed_before_meta_when_corpus_seed_is_incomplete(
+def test_execute_reading_fails_closed_before_meta_when_corpus_not_ready(
     db_session: Session,
     oracle_schema,
 ) -> None:
+    """AC-G4: an unresolved anchor makes the corpus not ready, so the worker fails
+    with E_ORACLE_CORPUS_NOT_READY before emitting meta/plate (no LLM call)."""
     user_id = uuid4()
-    _clear_oracle_corpus(db_session)
     db_session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
+    _seed_oracle_corpus(db_session, viewer_id=user_id)
+    # Repoint one anchor's selector at a quote no chunk contains, then re-resolve:
+    # it goes 'failed', and a failed anchor makes the whole corpus not ready.
+    anchor = db_session.execute(select(OraclePassageAnchor).limit(1)).scalar_one()
+    anchor.selector = {"kind": "text_quote", "exact": "this quote appears in no corpus chunk"}
+    db_session.flush()
+    resolution = oracle_corpus.resolve_oracle_passage_anchors(db_session)
+    assert resolution.failed == 1, f"expected exactly one failed anchor, got {resolution}"
+    assert oracle_corpus.get_oracle_corpus_readiness(db_session).status == "not_ready"
+
     reading_id = _insert_pending_reading(
         db_session,
         user_id=user_id,
         question="What does the lamp reveal?",
     )
 
+    router = _UnexpectedRouter()
     result = asyncio.run(
         execute_reading(
             db_session,
             reading_id=reading_id,
-            llm_router=_PublicOnlyRouter(),
+            llm_router=router,
         )
     )
 
@@ -2365,8 +2380,9 @@ def test_execute_reading_fails_closed_before_meta_when_corpus_seed_is_incomplete
         ).scalars()
     )
 
-    assert result == {"status": "failed", "error_code": "E_ORACLE_CORPUS_INCOMPLETE"}
-    assert events == ["done"], f"incomplete setup should not emit meta or plate, got {events}"
+    assert result == {"status": "failed", "error_code": "E_ORACLE_CORPUS_NOT_READY"}
+    assert router.called is False, "a not-ready corpus must fail before any LLM call"
+    assert events == ["done"], f"not-ready corpus should not emit meta or plate, got {events}"
 
 
 @pytest.mark.parametrize(
@@ -2393,7 +2409,7 @@ def test_execute_reading_rejects_model_minted_citation_details(
 ) -> None:
     user_id = uuid4()
     db_session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
-    corpus_id, _work_ids, _image_id = _seed_oracle_corpus(db_session)
+    _seed_oracle_corpus(db_session, viewer_id=user_id)
     reading_id = _insert_pending_reading(
         db_session,
         user_id=user_id,
@@ -2455,7 +2471,7 @@ def test_execute_reading_emits_events_in_eternal_order(
     with direct_db.session() as db:
         db.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
         _grant_platform_llm(db, user_id)
-        corpus_id, _work_ids, _image_id = _seed_oracle_corpus(db)
+        _seed_oracle_corpus(db, viewer_id=user_id)
         db.add(
             OracleReading(
                 id=reading_id,
@@ -2468,7 +2484,7 @@ def test_execute_reading_emits_events_in_eternal_order(
         db.commit()
 
     direct_db.register_cleanup("users", "id", user_id)
-    _register_oracle_corpus_cleanup(direct_db, corpus_id, _work_ids)
+    _register_oracle_corpus_cleanup(direct_db, user_id)
     direct_db.register_cleanup("oracle_readings", "id", reading_id)
     direct_db.register_cleanup("resource_edges", "source_id", reading_id)
     direct_db.register_cleanup("oracle_reading_folios", "reading_id", reading_id)
@@ -2593,7 +2609,7 @@ def test_post_synthesis_fault_keeps_synthesis_llm_call_through_worker_rollback(
     the boundary's E_INTERNAL failure leaves >=1 oracle_reading llm_calls row."""
     user_id = uuid4()
     db_session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
-    _seed_oracle_corpus(db_session)
+    _seed_oracle_corpus(db_session, viewer_id=user_id)
     reading_id = _insert_pending_reading(
         db_session,
         user_id=user_id,
@@ -2664,7 +2680,7 @@ def test_execute_reading_rejects_out_of_list_theme(
 ) -> None:
     user_id = uuid4()
     db_session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
-    corpus_id, _work_ids, _image_id = _seed_oracle_corpus(db_session)
+    _seed_oracle_corpus(db_session, viewer_id=user_id)
     reading_id = _insert_pending_reading(
         db_session,
         user_id=user_id,
@@ -2708,7 +2724,7 @@ def test_execute_reading_sortes_attribution_format(
 ) -> None:
     user_id = uuid4()
     db_session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
-    corpus_id, _work_ids, _image_id = _seed_oracle_corpus(db_session)
+    _seed_oracle_corpus(db_session, viewer_id=user_id)
     reading_id = _insert_pending_reading(
         db_session,
         user_id=user_id,
@@ -2757,7 +2773,7 @@ def test_concordance_ordering_by_score(
     """
     user_id = uuid4()
     db_session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
-    corpus_id, _work_ids, image_id = _seed_oracle_corpus(db_session)
+    _seed_oracle_corpus(db_session, viewer_id=user_id)
     question = "Reference question for concordance test."
 
     # Reference reading — folio 1
@@ -2836,6 +2852,71 @@ def test_concordance_ordering_by_score(
     )
 
 
+def test_oracle_anchor_resolution_refreshes_after_corpus_media_reindex(
+    db_session: Session,
+    oracle_schema,
+) -> None:
+    """AC-G10: corpus media reindex regenerates chunks/spans, then the resolver refreshes
+    current pointers while preserving the stable anchor identity."""
+    user_id = uuid4()
+    db_session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
+    _seed_oracle_corpus(db_session, viewer_id=user_id)
+
+    before = (
+        db_session.execute(
+            text(
+                """
+                SELECT a.id AS anchor_id, s.media_id, a.current_content_chunk_id,
+                       a.current_evidence_span_id
+                FROM oracle_passage_anchors a
+                JOIN oracle_corpus_sources s ON s.id = a.corpus_source_id
+                ORDER BY s.display_order ASC, a.passage_key ASC
+                LIMIT 1
+                """
+            )
+        )
+        .mappings()
+        .one()
+    )
+    fragments = (
+        db_session.execute(select(Fragment).where(Fragment.media_id == before["media_id"]))
+        .scalars()
+        .all()
+    )
+    rebuild_fragment_content_index(
+        db_session,
+        media_id=before["media_id"],
+        source_kind="web_article",
+        fragments=fragments,
+        reason="oracle_corpus_reindex_test",
+    )
+    db_session.flush()
+
+    stale = oracle_corpus.get_oracle_corpus_readiness(db_session)
+    assert stale.status == "not_ready"
+    assert stale.resolved_anchor_count == ORACLE_TEST_WORK_COUNT - 1
+
+    resolution = oracle_corpus.resolve_oracle_passage_anchors(db_session)
+    assert resolution.failed == 0
+    after = (
+        db_session.execute(
+            text(
+                """
+                SELECT current_content_chunk_id, current_evidence_span_id
+                FROM oracle_passage_anchors
+                WHERE id = :anchor_id
+                """
+            ),
+            {"anchor_id": before["anchor_id"]},
+        )
+        .mappings()
+        .one()
+    )
+    assert after["current_content_chunk_id"] != before["current_content_chunk_id"]
+    assert after["current_evidence_span_id"] != before["current_evidence_span_id"]
+    assert oracle_corpus.get_oracle_corpus_readiness(db_session).status == "ready"
+
+
 def test_concordance_parity_shared_corpus_span_and_reindex_fixture(
     db_session: Session,
     oracle_schema,
@@ -2853,7 +2934,7 @@ def test_concordance_parity_shared_corpus_span_and_reindex_fixture(
     user_id = uuid4()
     ensure_user_and_default_library(db_session, user_id)
     media_id = create_searchable_media(db_session, user_id, title="Lantern Monograph")
-    _seed_oracle_corpus(db_session)
+    _seed_oracle_corpus(db_session, viewer_id=user_id)
     question = "Where does the lantern lead?"
 
     reading_a = _insert_pending_reading(
@@ -2944,13 +3025,12 @@ def test_list_oracle_readings_returns_all_readings(
 ) -> None:
     user_id = uuid4()
     with direct_db.session() as db:
-        corpus_id, _work_ids, _image_id = _seed_oracle_corpus(db)
+        db.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
+        _seed_oracle_corpus(db, viewer_id=user_id)
         db.commit()
 
     direct_db.register_cleanup("users", "id", user_id)
-    direct_db.register_cleanup("libraries", "owner_user_id", user_id)
-    direct_db.register_cleanup("memberships", "user_id", user_id)
-    _register_oracle_corpus_cleanup(direct_db, corpus_id, _work_ids)
+    _register_oracle_corpus_cleanup(direct_db, user_id)
     direct_db.register_cleanup("oracle_readings", "user_id", user_id)
     monkeypatch.setattr("nexus.services.oracle.enqueue_job", lambda *args, **kwargs: None)
 
@@ -2987,13 +3067,12 @@ def test_concordance_endpoint_returns_empty_list_when_reading_not_complete(
 ) -> None:
     user_id = uuid4()
     with direct_db.session() as db:
-        corpus_id, _work_ids, _image_id = _seed_oracle_corpus(db)
+        db.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
+        _seed_oracle_corpus(db, viewer_id=user_id)
         db.commit()
 
     direct_db.register_cleanup("users", "id", user_id)
-    direct_db.register_cleanup("libraries", "owner_user_id", user_id)
-    direct_db.register_cleanup("memberships", "user_id", user_id)
-    _register_oracle_corpus_cleanup(direct_db, corpus_id, _work_ids)
+    _register_oracle_corpus_cleanup(direct_db, user_id)
     direct_db.register_cleanup("oracle_readings", "user_id", user_id)
     monkeypatch.setattr("nexus.services.oracle.enqueue_job", lambda *args, **kwargs: None)
 
@@ -3022,14 +3101,13 @@ def test_concordance_endpoint_returns_404_for_another_users_reading(
     owner_id = uuid4()
     other_id = uuid4()
     with direct_db.session() as db:
-        corpus_id, _work_ids, _image_id = _seed_oracle_corpus(db)
+        db.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": owner_id})
+        _seed_oracle_corpus(db, viewer_id=owner_id)
         db.commit()
 
     direct_db.register_cleanup("users", "id", owner_id)
     direct_db.register_cleanup("users", "id", other_id)
-    direct_db.register_cleanup("libraries", "owner_user_id", owner_id)
-    direct_db.register_cleanup("memberships", "user_id", owner_id)
-    _register_oracle_corpus_cleanup(direct_db, corpus_id, _work_ids)
+    _register_oracle_corpus_cleanup(direct_db, owner_id)
     direct_db.register_cleanup("oracle_readings", "user_id", owner_id)
     monkeypatch.setattr("nexus.services.oracle.enqueue_job", lambda *args, **kwargs: None)
 
@@ -3131,15 +3209,14 @@ _NOTE_BODY_TEXT = (
 )
 
 
-def test_retrieve_user_library_passages_includes_note_owned_notes(
+def test_personal_candidates_includes_note_owned_notes(
     db_session: Session,
     oracle_schema,
 ) -> None:
-    """Oracle can cite your notes: a note-owned note body whose
-    embedding matches the oracle user-content retrieval query surfaces as a user-library
-    candidate targeting the note's content-index row (§5.3) and tagged with the 'note'
-    content source kind. This pins the AC-9 headline that note evidence joins media
-    evidence in oracle retrieval.
+    """Oracle can cite your notes: a note-owned note body whose embedding matches the
+    oracle personal-retrieval query surfaces as a ``user_media`` candidate targeting
+    the note's content-index row (§5.3), titled generically and tagged with the 'note'
+    content source kind. Pins the AC-9 headline at the shared-retrieval seam.
     """
     user_id = uuid4()
     ensure_user_and_default_library(db_session, user_id)
@@ -3155,17 +3232,17 @@ def test_retrieve_user_library_passages_includes_note_owned_notes(
     )
     db_session.commit()
 
-    query_embedding_model, query_embedding = build_text_embedding(_NOTE_ORACLE_QUESTION)
-    assert query_embedding_model == current_transcript_embedding_model(), (
-        "the note index and the oracle query must share the embedding model, "
-        f"got index model {current_transcript_embedding_model()} vs query {query_embedding_model}"
+    query_embedding = build_text_embedding(_NOTE_ORACLE_QUESTION)
+    assert query_embedding[0] == current_transcript_embedding_model(), (
+        "the note index and the oracle query must share the embedding model, got index "
+        f"model {current_transcript_embedding_model()} vs query {query_embedding[0]}"
     )
 
-    candidates = _retrieve_user_library_passages(
+    candidates = _personal_candidates(
         db_session,
         viewer_id=user_id,
-        query_embedding_model=query_embedding_model,
         query_embedding=query_embedding,
+        corpus_media_ids=set(),
     )
 
     note_target_ids = _owner_chunk_target_ids(db_session, "note_block", note_block_id)
@@ -3174,7 +3251,7 @@ def test_retrieve_user_library_passages_includes_note_owned_notes(
         candidate for candidate in candidates if candidate.target.id in note_target_ids
     ]
     assert note_candidates, (
-        "expected a note-owned note among the oracle user-library candidates "
+        "expected a note-owned note among the oracle personal candidates "
         f"(oracle cites your notes); got targets {[c.target.uri for c in candidates]}"
     )
     note_candidate = note_candidates[0]
@@ -3188,7 +3265,8 @@ def test_retrieve_user_library_passages_includes_note_owned_notes(
         f"note candidate title should be generic, got {note_candidate.title!r}"
     )
     assert note_candidate.source_kind == "user_media", (
-        f"note candidate should be offered as a user_media candidate, got {note_candidate.source_kind}"
+        f"note candidate should be offered as a user_media candidate, got "
+        f"{note_candidate.source_kind}"
     )
 
 
@@ -3217,16 +3295,15 @@ def test_viewer_has_searchable_user_content_counts_note_only_corpus(
     )
 
 
-def test_retrieve_user_content_keeps_note_when_id_collides_with_media(
+def test_personal_candidates_keep_note_when_id_collides_with_media(
     db_session: Session,
     oracle_schema,
 ) -> None:
     """Owner-collision dedup (the load-bearing half of AC-9): a media-owned chunk and a
     note-owned chunk that share the SAME uuid value across the two owner keyspaces
-    must BOTH survive dedup, because the dedup key is (owner_kind, owner_id) and not the
-    bare id. Under the pre-cutover set[str] dedup the note would be dropped as a duplicate
-    of the media id. We assert at both the embedding-row seam and the deduped
-    user-library seam.
+    must BOTH survive ``_personal_candidates`` dedup, because the dedup key is
+    (owner_kind, owner_id) and not the bare id. A bare-id dedup would drop the note as
+    a duplicate of the media id.
     """
     user_id = uuid4()
     ensure_user_and_default_library(db_session, user_id)
@@ -3250,27 +3327,13 @@ def test_retrieve_user_content_keeps_note_when_id_collides_with_media(
     )
     db_session.commit()
 
-    query_embedding_model, query_embedding = build_text_embedding(_NOTE_ORACLE_QUESTION)
+    query_embedding = build_text_embedding(_NOTE_ORACLE_QUESTION)
 
-    rows = _retrieve_user_content_chunks_by_embedding(
+    candidates = _personal_candidates(
         db_session,
         viewer_id=user_id,
-        query_embedding_model=query_embedding_model,
         query_embedding=query_embedding,
-    )
-    owner_kinds_for_id = {
-        str(row["owner_kind"]) for row in rows if str(row["media_id"]) == str(media_id)
-    }
-    assert owner_kinds_for_id == {"media", "note_block"}, (
-        "both a media-owned and a note-owned chunk should share the colliding id at the "
-        f"embedding-row seam, got {owner_kinds_for_id} for id {media_id}"
-    )
-
-    candidates = _retrieve_user_library_passages(
-        db_session,
-        viewer_id=user_id,
-        query_embedding_model=query_embedding_model,
-        query_embedding=query_embedding,
+        corpus_media_ids=set(),
     )
     candidate_target_ids = {candidate.target.id for candidate in candidates}
     media_target_ids = _owner_chunk_target_ids(db_session, "media", media_id)

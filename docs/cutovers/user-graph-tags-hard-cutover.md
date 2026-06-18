@@ -195,8 +195,8 @@ It removes user graph tags only.
 Out of scope and must remain unless a separate owner-specific spec changes
 them:
 
-- Oracle corpus metadata arrays such as `oracle_corpus_passages.tags` and
-  `oracle_corpus_images.tags`;
+- Oracle metadata arrays such as `oracle_passage_anchors.tags` and
+  `oracle_plates.tags`;
 - in-memory Oracle retrieval candidate metadata named `tags`;
 - FastAPI/OpenAPI router metadata such as `APIRouter(tags=[...])`;
 - HTML tags, ProseMirror document tags, syntax-highlighting CSS tokens such as

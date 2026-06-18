@@ -10,7 +10,7 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from nexus import web_paths
-from nexus.db.models import OracleCorpusImage
+from nexus.db.models import OraclePlate
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.logging import get_logger
 from nexus.storage.client import StorageClientBase, StorageError, get_storage_client
@@ -33,7 +33,68 @@ class OraclePlateMetadata:
     storage_key: str
     content_type: str
     byte_size: int
+    width: int
+    height: int
     etag: str
+
+
+@dataclass(frozen=True)
+class OraclePlateStorageReadiness:
+    total: int
+    valid: int
+    invalid: tuple[str, ...]
+
+    @property
+    def ready(self) -> bool:
+        return self.total > 0 and self.valid == self.total
+
+
+def upsert_oracle_plate(
+    db: Session,
+    *,
+    source_repository: str,
+    source_page_url: str | None,
+    source_url: str,
+    license_text: str,
+    artist: str,
+    work_title: str,
+    year: str | None,
+    attribution_text: str,
+    width: int,
+    height: int,
+    storage_key: str,
+    content_type: str,
+    byte_size: int,
+    tags: list[str],
+) -> OraclePlate:
+    """Create or update one owned Oracle plate row by stable source URL."""
+    existing = db.query(OraclePlate).filter(OraclePlate.source_url == source_url).one_or_none()
+    plate = existing or OraclePlate(source_url=source_url)
+    _validate_plate_metadata(
+        image_id=plate.id,
+        storage_key=storage_key,
+        byte_size=byte_size,
+        content_type=content_type,
+        width=width,
+        height=height,
+    )
+    plate.source_repository = source_repository
+    plate.source_page_url = source_page_url
+    plate.license_text = license_text
+    plate.artist = artist
+    plate.work_title = work_title
+    plate.year = year
+    plate.attribution_text = attribution_text
+    plate.width = width
+    plate.height = height
+    plate.storage_key = storage_key
+    plate.content_type = content_type
+    plate.byte_size = byte_size
+    plate.tags = tags
+    if existing is None:
+        db.add(plate)
+    db.flush()
+    return plate
 
 
 def oracle_plate_url(image_id: UUID) -> str:
@@ -46,24 +107,30 @@ def get_oracle_plate_metadata(
     image_id: UUID,
 ) -> OraclePlateMetadata:
     with session_factory() as db:
-        img = db.get(OracleCorpusImage, image_id)
+        img = db.get(OraclePlate, image_id)
         if img is None:
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Oracle plate not found")
         storage_key = img.storage_key
         byte_size = img.byte_size
         content_type = img.content_type
+        width = img.width
+        height = img.height
 
     _validate_plate_metadata(
         image_id=image_id,
         storage_key=storage_key,
         byte_size=byte_size,
         content_type=content_type,
+        width=width,
+        height=height,
     )
     return OraclePlateMetadata(
         image_id=image_id,
         storage_key=storage_key,
         content_type=content_type,
         byte_size=byte_size,
+        width=width,
+        height=height,
         etag=f'"oracle-plate-{image_id}"',
     )
 
@@ -116,13 +183,59 @@ def read_oracle_plate_bytes(
     )
 
 
+def validate_oracle_plate_storage_objects(
+    db: Session, *, storage_client: StorageClientBase | None = None
+) -> OraclePlateStorageReadiness:
+    """Validate every Oracle plate row against the owned object-store asset."""
+    rows = db.query(OraclePlate).order_by(OraclePlate.created_at.asc(), OraclePlate.id.asc()).all()
+    sc = storage_client or get_storage_client()
+    invalid: list[str] = []
+    valid = 0
+    for row in rows:
+        try:
+            _validate_plate_metadata(
+                image_id=row.id,
+                storage_key=row.storage_key,
+                byte_size=row.byte_size,
+                content_type=row.content_type,
+                width=row.width,
+                height=row.height,
+            )
+            object_metadata = sc.head_object(row.storage_key)
+        except (ApiError, StorageError) as exc:
+            invalid.append(f"{row.id}: {exc}")
+            continue
+        if object_metadata is None:
+            invalid.append(f"{row.id}: missing object {row.storage_key}")
+            continue
+        if object_metadata.size_bytes != row.byte_size:
+            invalid.append(
+                f"{row.id}: size mismatch for {row.storage_key} "
+                f"({object_metadata.size_bytes} != {row.byte_size})"
+            )
+            continue
+        object_content_type = object_metadata.content_type.lower().split(";", 1)[0].strip()
+        if object_content_type != row.content_type:
+            invalid.append(
+                f"{row.id}: content-type mismatch for {row.storage_key} "
+                f"({object_content_type} != {row.content_type})"
+            )
+            continue
+        valid += 1
+    return OraclePlateStorageReadiness(total=len(rows), valid=valid, invalid=tuple(invalid))
+
+
 def _validate_plate_metadata(
     *,
     image_id: UUID,
     storage_key: str,
     byte_size: int,
     content_type: str,
+    width: int,
+    height: int,
 ) -> None:
+    from nexus.services.image_validation import MAX_IMAGE_BYTES, MAX_IMAGE_DIMENSION
+
     try:
         expected_ext = ext_for_content_type(content_type)
     except ValueError as exc:
@@ -147,6 +260,12 @@ def _validate_plate_metadata(
         )
     if byte_size <= 0:
         _raise_invalid_plate_metadata(image_id, storage_key, "byte_size must be positive")
+    if byte_size > MAX_IMAGE_BYTES:
+        _raise_invalid_plate_metadata(image_id, storage_key, "byte_size exceeds image limit")
+    if width <= 0 or height <= 0:
+        _raise_invalid_plate_metadata(image_id, storage_key, "dimensions must be positive")
+    if width > MAX_IMAGE_DIMENSION or height > MAX_IMAGE_DIMENSION:
+        _raise_invalid_plate_metadata(image_id, storage_key, "dimensions exceed image limit")
 
 
 def _raise_invalid_plate_metadata(image_id: UUID, storage_key: str, reason: str) -> NoReturn:

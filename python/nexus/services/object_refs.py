@@ -165,9 +165,9 @@ def _hydrated_from_loaded(
             route=route,
             icon="sparkles",
         )
-    if object_type == "oracle_corpus_passage":
+    if object_type == "oracle_passage_anchor":
         return HydratedObjectRef(
-            object_type="oracle_corpus_passage",
+            object_type="oracle_passage_anchor",
             object_id=object_id,
             label=loaded.title or "",
             snippet=(loaded.body or "")[:300],

@@ -432,6 +432,80 @@ describe("OracleReadingPaneBody", () => {
     expect(streamMocks.routerPush).toHaveBeenCalledWith("/notes/block-1");
   });
 
+  it("renders and opens an anchor citation chip for a public-domain passage", async () => {
+    // After the Oracle corpus cutover, public-domain passages can carry a
+    // server-built CitationOut whose target is an oracle_passage_anchor that
+    // resolves to a media reader jump. The chip must render uniformly from the
+    // CitationOut — no source_kind === "public_domain" suppression.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (path: string) => {
+        if (path === "/api/oracle/readings/reading-1") {
+          return jsonResponse({
+            data: readingDetail({
+              id: "reading-1",
+              question: "What does the corpus say?",
+              folioNumber: 1,
+              passages: [
+                {
+                  phase: "descent",
+                  source_kind: "public_domain",
+                  exact_snippet: "Midway upon the journey of our life.",
+                  locator_label: "Inferno I",
+                  attribution_text: "Dante, The Divine Comedy",
+                  marginalia_text: "A note in the margin.",
+                  deep_link: null,
+                  citation: {
+                    ordinal: 1,
+                    role: "context",
+                    target_ref: {
+                      type: "oracle_passage_anchor",
+                      id: "anchor-1",
+                    },
+                    activation: {
+                      resourceRef: "oracle_passage_anchor:anchor-1",
+                      kind: "route",
+                      href: "/media/media-9#fragment-fragment-9",
+                      unresolvedReason: null,
+                    },
+                    media_id: "media-9",
+                    locator: {
+                      type: "web_text_offsets",
+                      media_id: "media-9",
+                      fragment_id: "fragment-9",
+                      start_offset: 0,
+                      end_offset: 36,
+                    },
+                    deep_link: "/media/media-9#fragment-fragment-9",
+                    snapshot: {
+                      title: "The Divine Comedy",
+                      excerpt: "Midway upon the journey of our life.",
+                      section_label: "Inferno I",
+                      result_type: "content_chunk",
+                    },
+                  },
+                },
+              ],
+            }),
+          });
+        }
+        throw new Error(`Unexpected fetch path: ${path}`);
+      }),
+    );
+
+    render(<OracleReadingPaneBody readingId="reading-1" />);
+
+    const chip = await screen.findByRole("link", { name: "Open citation 1" });
+    expect(chip).toHaveAttribute("href", "/media/media-9#fragment-fragment-9");
+    chip.addEventListener("click", (event) => event.preventDefault(), {
+      once: true,
+    });
+    await userEvent.click(chip);
+    expect(streamMocks.routerPush).toHaveBeenCalledWith(
+      "/media/media-9#fragment-fragment-9",
+    );
+  });
+
   it("shows chat-open failure copy when starting a conversation fails", async () => {
     vi.stubGlobal(
       "fetch",

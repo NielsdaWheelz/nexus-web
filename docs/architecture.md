@@ -50,7 +50,7 @@ model. On top of that model it layers:
 - a **podcast** subsystem with subscriptions, transcription, and a playback
   queue;
 - the **Oracle**, an agentic "reading" feature over a curated public-domain
-  literary corpus.
+  literary corpus that is itself a real Nexus library of indexed media.
 
 It ships on the web, as a first-party **Android shell**, and through a browser
 **capture extension**.
@@ -404,11 +404,17 @@ message API responses include a
 tables (`rate_limit_request_log`, `rate_limit_inflight`, `token_budget_*`) and
 stream-token replay claims.
 
-**Oracle** — `oracle_corpus_works`, `oracle_corpus_passages` (PGVector 256; their
-uuid `id` doubles as the stable `oracle_corpus_passage:<id>` citation target),
-`oracle_corpus_images` (PGVector 256 + public owned plate object metadata),
-`oracle_readings`, `oracle_reading_folios` (the per-phase generated folio,
-referencing its citation `resource_edge`), `oracle_reading_events`.
+**Oracle** — the public-domain corpus is a real `libraries` row
+(`system_key = 'oracle_corpus'`) of ordinary `media`; its text and embeddings live
+in the shared content index (`content_chunks`/`content_embeddings`), not an
+Oracle-owned vector store. `oracle_corpus_sources` maps each curated `work_key` to
+its `media_id`; `oracle_passage_anchors` is stable curation identity (selector +
+tags + phase hints, plus cache pointers to current `evidence_span`/`content_chunk`)
+that doubles as the `oracle_passage_anchor:<id>` citation target. `oracle_plates`
+(public owned plate object metadata; **no embeddings** — selection is
+deterministic over tags/phase hints), `oracle_readings`, `oracle_reading_folios`
+(the per-phase generated folio, referencing its citation `resource_edge`),
+`oracle_reading_events`.
 
 > Two things to know when reasoning about the schema: (1) `background_jobs` is
 > invisible if you only read `models.py` — it's raw SQL. (2) Because migrations
@@ -598,7 +604,7 @@ result-type grid. The package owns one concern per module (`kinds`, `query`, `sc
 - **The `ResourceRef` grammar** (`services/resource_graph/refs.py`): a
   `<scheme>:<uuid>` ref over a closed scheme set (`media`, `library`,
   `evidence_span`, `content_chunk`, `highlight`, `page`, `note_block`, `fragment`,
-  `conversation`, `message`, `oracle_reading`, `oracle_corpus_passage`,
+  `conversation`, `message`, `oracle_reading`, `oracle_passage_anchor`,
   `library_intelligence_artifact`, `library_intelligence_revision`,
   `reader_apparatus_item`, `external_snapshot`, `contributor`, `podcast`)
   is the one persisted resource-identity vocabulary. The same ref identifies a
@@ -811,14 +817,26 @@ push a reader target (`lib/conversations/*`).
 ### 8.4 Oracle
 
 An agentic "reading" feature over one current curated **public-domain literary
-corpus**. `services/oracle.py` owns reading generation: question validation,
-current corpus/library retrieval, plate selection, LLM prompt/call, parse,
-persistence, and SSE event emission. A short question → retrieve corpus passages
-(+ the user's library) and pick a plate image → one LLM call produces a
-structured three-phase interpretation → stream + persist as
+corpus**, which is a real Nexus library (`system_key = 'oracle_corpus'`) of
+ordinary indexed media — not an Oracle-owned text/vector store.
+`services/oracle.py` owns reading generation: question validation, corpus/personal
+retrieval, plate selection, LLM prompt/call, parse, persistence, and SSE event
+emission. A short question → retrieve candidates and pick a plate image → one LLM
+call produces a structured three-phase interpretation → stream + persist as
 `oracle_reading_events` + citation "folios". It has its **own**
-retrieval/prompt/persistence and does **not** use the four chat agent tools, but
-it **reuses the SSE transport**.
+prompt/persistence and does **not** use the four chat agent tools, but it
+**reuses the SSE transport**. Retrieval consumes the shared search substrate:
+`services/search/embedding.build_query_embedding` (one active-model embedding for
+both lanes) feeds `search/content_chunk_candidates.retrieve_content_chunk_candidates`,
+scoped to the Oracle Corpus library for public-domain candidates (mapped to
+resolved `oracle_passage_anchors`, cited as `oracle_passage_anchor:<id>`) and to
+the viewer's visible media/notes — excluding the corpus — for personal candidates
+(cited `evidence_span`/`content_chunk`). Corpus readiness derives from
+`media.processing_status` + `content_index_states` + anchor resolution
+(`services/oracle_corpus.py`); the generation worker fails typed
+`E_ORACLE_CORPUS_NOT_READY` rather than falling back. Anchor identity is stable
+across reindex; opening an anchor citation routes to its current evidence/media
+target.
 
 Oracle plate bytes and URLs are separate owned assets. `services/oracle_plates.py`
 owns `oracle_plate_url`, DB metadata lookup, stable DB-owned plate storage-key
@@ -1053,9 +1071,11 @@ The `Makefile` is the single entrypoint; `make help` is canonical. Targets group
 **Deploy** (`deployment.md`, `deploy/`): the frontend deploys to **Vercel on push
 to `main`** (Git integration). The backend deploys via `deploy/hetzner/deploy.sh`:
 sync env → rsync repo to the VPS → `compose build` → stop worker+api → **run
-`python /app/scripts/ensure_oracle_seed_objects.py`** → **run
-`alembic upgrade head`** via one-off `compose run` commands → `compose up -d
---force-recreate`. Env contracts live in `deploy/env/*` (real values untracked,
+	`alembic upgrade head`** via one-off `compose run` commands → **run
+	`python /app/scripts/ensure_oracle_seed_objects.py`** →
+	`python /app/scripts/oracle/seed_corpus_library.py --owner-user $NEXUS_ORACLE_CORPUS_OWNER_USER_ID --drain` →
+`python /app/scripts/oracle/check_corpus_readiness.py` →
+`compose up -d --force-recreate`. Env contracts live in `deploy/env/*` (real values untracked,
 `.example` tracked); the sync scripts strongly validate them and reject legacy
 Supabase/`STORAGE_*` keys. R2 CORS/lifecycle are applied as code via
 `deploy/cloudflare/*`. Supabase hosted Auth redirect config is verified as
@@ -1180,7 +1200,7 @@ attached-reference citation regression came from breaking this density.
 | Media catalog and ingest owners | `python/nexus/services/media.py`, `media_ingest.py`, `media_source_ingest.py`, `x_ingest.py`, `youtube_video_ingest.py`, `remote_file_ingest.py`, `remote_file_client.py`, `media_processing_state.py` |
 | Reader/highlights backend | `python/nexus/services/{reader,epub_*,pdf_*,fragment_blocks,highlights}.py` |
 | Chat / conversations | `python/nexus/services/chat_runs.py` + `chat_run_*`, `context_assembler.py`, `conversations.py` |
-| Oracle | `python/nexus/services/oracle.py`, `python/nexus/services/oracle_plates.py` |
+| Oracle | `python/nexus/services/oracle.py`, `python/nexus/services/oracle_corpus.py`, `python/nexus/services/oracle_plates.py` |
 | Search / retrieval / indexing | `python/nexus/services/{search,content_indexing,semantic_chunks,retrieval_citation}.py` |
 | Resource graph (edges, refs, citations, connections) | `python/nexus/services/resource_graph/` (`refs`, `resolve`, `edges`, `connections`, `context`, `citations`, `cleanup`) |
 | Agent tools | `python/nexus/services/agent_tools/` |

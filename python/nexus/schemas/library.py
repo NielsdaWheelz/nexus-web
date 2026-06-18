@@ -73,6 +73,10 @@ class LibraryOut(BaseModel):
     owner_user_id: UUID
     is_default: bool
     role: LibraryRole
+    system_key: str | None = None
+    can_rename: bool
+    can_delete: bool
+    can_edit_entries: bool
     created_at: datetime
     updated_at: datetime
 

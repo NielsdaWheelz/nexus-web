@@ -20,6 +20,10 @@ R2_SECRET_ACCESS_KEY=<r2-secret-access-key>
 R2_BUCKET=media
 # R2_REGION=auto
 
+# Production Oracle Corpus system library owner. The deploy script fails closed
+# if this is unset because corpus media must be seeded before API/worker start.
+NEXUS_ORACLE_CORPUS_OWNER_USER_ID=<prod-user-uuid>
+
 # Generate both with:
 # python -c "import secrets,base64; print(base64.b64encode(secrets.token_bytes(32)).decode())"
 NEXUS_KEY_ENCRYPTION_KEY=<base64-encoded-32-byte-key>

@@ -33,7 +33,9 @@ describe("resourceKind", () => {
     expect(resourceObjectTypeForScheme("library_intelligence_revision")).toBe(
       "library_intelligence_revision",
     );
-    expect(resourceObjectTypeForScheme("oracle_corpus_passage")).toBeNull();
+    expect(resourceObjectTypeForScheme("oracle_passage_anchor")).toBe(
+      "oracle_passage_anchor",
+    );
     expect(resourceObjectTypeForScheme("external_snapshot")).toBeNull();
   });
 

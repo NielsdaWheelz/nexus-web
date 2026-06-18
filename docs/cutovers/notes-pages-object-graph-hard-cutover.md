@@ -1035,7 +1035,7 @@ Projection invalidation:
   - `evidence_span`;
   - `content_chunk`;
   - `external_snapshot`;
-  - `oracle_corpus_passage`.
+  - `oracle_passage_anchor`.
 - `page` and `highlight` remain readable/linkable `ResourceRef` object types,
   but they are not citation-chip targets. Page/highlight relationships should be
   expressed as containment/reference/annotation edges, while citations point at

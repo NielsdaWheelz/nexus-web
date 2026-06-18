@@ -9,9 +9,13 @@ from sqlalchemy.orm import Session
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db, get_session_factory
 from nexus.responses import ok
-from nexus.schemas.oracle import OracleReadingCreateRequest, OracleReadingCreateResponse
+from nexus.schemas.oracle import (
+    OracleCorpusStatusOut,
+    OracleReadingCreateRequest,
+    OracleReadingCreateResponse,
+)
 from nexus.services import oracle as oracle_service
-from nexus.services import oracle_plates
+from nexus.services import oracle_corpus, oracle_plates
 from nexus.services.image_proxy import etags_match
 
 router = APIRouter(tags=["oracle"])
@@ -48,6 +52,28 @@ def list_oracle_readings(
 ) -> dict:
     rows = oracle_service.list_all_readings(db, viewer_id=viewer.user_id)
     return ok(rows)
+
+
+@router.get("/oracle/corpus")
+def get_oracle_corpus_status(
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    r = oracle_corpus.get_oracle_corpus_readiness(db)
+    library_ref = f"library:{r.library_id}" if r.library_id else None
+    return ok(
+        OracleCorpusStatusOut(
+            library_ref=library_ref,
+            library_id=r.library_id,
+            status=r.status,
+            work_count=r.work_count,
+            ready_media_count=r.ready_media_count,
+            anchor_count=r.anchor_count,
+            resolved_anchor_count=r.resolved_anchor_count,
+            plate_count=r.plate_count,
+            ready_plate_count=r.ready_plate_count,
+        )
+    )
 
 
 @router.get("/oracle/readings/{reading_id}/concordance")

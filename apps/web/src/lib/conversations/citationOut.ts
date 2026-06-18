@@ -22,7 +22,7 @@ export type CitationTargetType =
   | "note_block"
   | "message"
   | "external_snapshot"
-  | "oracle_corpus_passage"
+  | "oracle_passage_anchor"
   | "reader_apparatus_item";
 
 export interface CitationTargetRef {
@@ -66,7 +66,7 @@ const CITATION_TARGET_TYPES = new Set<CitationTargetType>([
   "note_block",
   "message",
   "external_snapshot",
-  "oracle_corpus_passage",
+  "oracle_passage_anchor",
   "reader_apparatus_item",
 ]);
 

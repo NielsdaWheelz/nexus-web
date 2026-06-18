@@ -459,7 +459,7 @@ Final scheme/product decisions:
 | Conversation | `conversation:<id>` | routeable/searchable transcript/container, not evidence citation by default |
 | Message | `message:<id>` | readable/citable generated/user message as policy says |
 | Oracle reading | `oracle_reading:<id>` | generated-output citation source/chat subject |
-| Oracle corpus passage | `oracle_corpus_passage:<id>` | citable target, not user routeable by default |
+| Oracle passage anchor | `oracle_passage_anchor:<id>` | stable citable/concordance target that resolves to current corpus media evidence |
 | LI artifact head | `library_intelligence_artifact:<id>` | routeable mutable head, not citation source |
 | LI revision | `library_intelligence_revision:<id>` | immutable generated-output citation source |
 | External web snapshot | `external_snapshot:<id>` | citable external target, not user-created link target |

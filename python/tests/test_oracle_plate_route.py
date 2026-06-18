@@ -20,11 +20,12 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy.orm import Session
 
-from nexus.db.models import OracleCorpusImage
+from nexus.db.models import OraclePlate
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.services.oracle_plates import (
     get_oracle_plate_bytes,
     oracle_plate_url,
+    validate_oracle_plate_storage_objects,
 )
 from tests.support.storage import FakeStorageClient
 from tests.utils.db import DirectSessionManager
@@ -75,6 +76,8 @@ class _FakeImage:
     storage_key: str
     byte_size: int
     content_type: str
+    width: int = 800
+    height: int = 1200
 
 
 # ---------------------------------------------------------------------------
@@ -143,6 +146,8 @@ def test_get_oracle_plate_bytes_releases_session_before_read():
         storage_key="oracle/plates/test-plate.jpg",
         byte_size=len(data),
         content_type="image/jpeg",
+        width=800,
+        height=1200,
     )
     events: list[str] = []
 
@@ -165,6 +170,8 @@ def test_get_oracle_plate_bytes_rejects_invalid_storage_key_before_read():
         storage_key="media/plates/not-the-digest.jpg",
         byte_size=len(data),
         content_type="image/jpeg",
+        width=800,
+        height=1200,
     )
     events: list[str] = []
 
@@ -196,9 +203,9 @@ def _seed_oracle_plate(
     data: bytes,
     content_type: str = "image/jpeg",
 ) -> tuple[UUID, str]:
-    """Commit one current OracleCorpusImage row."""
+    """Commit one current OraclePlate row."""
     storage_key = f"oracle/plates/test-plate-{uuid4().hex[:12]}.jpg"
-    image = OracleCorpusImage(
+    image = OraclePlate(
         id=uuid4(),
         source_repository="test",
         source_url=f"https://example.com/oracle-plate-{uuid4()}.jpg",
@@ -221,7 +228,33 @@ def _seed_oracle_plate(
 
 
 def _register_plate_cleanup(direct_db: DirectSessionManager, image_id: UUID) -> None:
-    direct_db.register_cleanup("oracle_corpus_images", "id", image_id)
+    direct_db.register_cleanup("oracle_plates", "id", image_id)
+
+
+@pytest.mark.integration
+def test_validate_oracle_plate_storage_objects_checks_object_metadata(
+    direct_db: DirectSessionManager,
+):
+    data = b"\xff\xd8\xff" + b"\x00" * 64
+    content_type = "image/jpeg"
+    with direct_db.session() as session:
+        image_id, storage_key = _seed_oracle_plate(session, data=data, content_type=content_type)
+    _register_plate_cleanup(direct_db, image_id)
+
+    fake = FakeStorageClient()
+    with direct_db.session() as session:
+        missing = validate_oracle_plate_storage_objects(session, storage_client=fake)
+
+    assert missing.total >= 1
+    assert not missing.ready
+    assert any(str(image_id) in reason and "missing object" in reason for reason in missing.invalid)
+
+    fake.put_object(storage_key, data, content_type)
+    with direct_db.session() as session:
+        after_put = validate_oracle_plate_storage_objects(session, storage_client=fake)
+
+    assert after_put.valid == missing.valid + 1
+    assert not any(str(image_id) in reason for reason in after_put.invalid)
 
 
 @pytest.mark.integration

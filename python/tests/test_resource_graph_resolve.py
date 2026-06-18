@@ -12,6 +12,7 @@ from __future__ import annotations
 from uuid import UUID, uuid4
 
 import pytest
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import (
@@ -24,8 +25,8 @@ from nexus.db.models import (
     MediaKind,
     Message,
     NoteBlock,
-    OracleCorpusPassage,
-    OracleCorpusWork,
+    OracleCorpusSource,
+    OraclePassageAnchor,
     OracleReading,
     Page,
     PdfPageTextSpan,
@@ -35,14 +36,18 @@ from nexus.db.models import (
     ResourceEdge,
     ResourceExternalSnapshot,
 )
+from nexus.services import oracle_corpus
 from nexus.services.bootstrap import ensure_user_and_default_library
+from nexus.services.content_indexing import rebuild_fragment_content_index
 from nexus.services.contributor_credits import replace_media_contributor_credits
-from nexus.services.resource_graph.refs import assert_resource_ref
+from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
+from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
 from nexus.services.resource_graph.resolve import (
     INLINE_THRESHOLD_CHARS,
     ResolvedResource,
     resolve_refs,
 )
+from nexus.services.resource_items.routing import route_for_ref
 from tests.factories import (
     add_media_to_library,
     create_test_conversation,
@@ -344,6 +349,86 @@ def _make_oracle_reading(
     ).scalar_one()
     db.commit()
     return UUID(str(reading_id))
+
+
+def _seed_resolved_oracle_anchor(
+    db: Session,
+    viewer_id: UUID,
+    *,
+    quote: str = "The universe is change; our life is what our thoughts make it.",
+    title: str = "The Work",
+    author_text: str = "A. Author",
+    display_label: str = "Work I",
+) -> UUID:
+    """Seed one corpus source + passage anchor over real indexed media, resolved.
+
+    Mirrors ``test_oracle.py``'s ``_seed_corpus_work``: builds a ready web-article
+    media whose content chunk contains the anchor's selector quote verbatim, maps it
+    via ``oracle_corpus_sources``, then resolves the anchor so its current evidence
+    span / content chunk pointers are set. Returns the anchor id.
+    """
+    library_id = create_test_library(db, viewer_id, "Oracle Corpus Library")
+    media = Media(
+        id=uuid4(),
+        kind=MediaKind.web_article.value,
+        title=title,
+        processing_status=ProcessingStatus.ready_for_reading,
+        created_by_user_id=viewer_id,
+    )
+    db.add(media)
+    db.flush()
+    fragment = Fragment(
+        id=uuid4(),
+        media_id=media.id,
+        idx=0,
+        html_sanitized=f"<p>{quote}</p>",
+        canonical_text=quote,
+    )
+    db.add(fragment)
+    db.flush()
+    insert_fragment_blocks(db, fragment.id, parse_fragment_blocks(fragment.canonical_text))
+    rebuild_fragment_content_index(
+        db,
+        media_id=media.id,
+        source_kind="web_article",
+        fragments=[fragment],
+        reason="resolve_test",
+    )
+    add_media_to_library(db, library_id, media.id)
+    source = OracleCorpusSource(
+        corpus_key="oracle",
+        work_key=f"w-{uuid4().hex[:8]}",
+        library_id=library_id,
+        media_id=media.id,
+        title=title,
+        author_text=author_text,
+        source_repository="test",
+        source_url=f"https://ex/{uuid4().hex[:8]}",
+        source_download_url=f"https://ex/{uuid4().hex[:8]}.epub",
+        source_media_kind="epub",
+        display_order=10,
+    )
+    db.add(source)
+    db.flush()
+    anchor = OraclePassageAnchor(
+        corpus_source_id=source.id,
+        passage_key=f"w0-a0-{uuid4().hex[:8]}",
+        display_label=display_label,
+        selector={"kind": "text_quote", "exact": quote},
+        tags=[],
+        phase_hints=[],
+    )
+    db.add(anchor)
+    db.flush()
+    resolution = oracle_corpus.resolve_oracle_passage_anchors(db)
+    assert resolution.failed == 0, f"anchor failed to resolve: {resolution}"
+    db.commit()
+    db.refresh(anchor)
+    assert anchor.resolution_status == "resolved"
+    assert (
+        anchor.current_evidence_span_id is not None or anchor.current_content_chunk_id is not None
+    ), "a resolved anchor must point at a current evidence span or content chunk"
+    return anchor.id
 
 
 # =============================================================================
@@ -983,44 +1068,79 @@ def test_resolve_oracle_reading_non_owner_returns_missing(
     assert resolved.missing, "Non-owner must see the oracle reading as missing"
 
 
-def test_resolve_oracle_corpus_passage_is_global(db_session: Session, bootstrapped_user: UUID):
-    work = OracleCorpusWork(
-        id=uuid4(),
-        slug=f"meditations-{uuid4().hex[:8]}",
+def test_resolve_oracle_passage_anchor_is_global(db_session: Session, bootstrapped_user: UUID):
+    """A resolved anchor is global: it resolves to the source title, its display
+    label as locator, and the current media-evidence span text as a non-empty body."""
+    quote = "The universe is change; our life is what our thoughts make it."
+    anchor_id = _seed_resolved_oracle_anchor(
+        db_session,
+        bootstrapped_user,
+        quote=quote,
         title="Meditations",
-        author="Marcus Aurelius",
-        edition_label="Long tr.",
-        source_repository="gutenberg",
-        source_url="https://example.org/meditations",
+        author_text="Marcus Aurelius",
+        display_label="Book IV, 3",
     )
-    db_session.add(work)
-    db_session.flush()
-    passage = OracleCorpusPassage(
-        id=uuid4(),
-        work_id=work.id,
-        passage_index=0,
-        canonical_text="The universe is change; our life is what our thoughts make it.",
-        locator_label="Book IV, 3",
+
+    resolved = _resolve(
+        db_session, f"oracle_passage_anchor:{anchor_id}", viewer_id=bootstrapped_user
     )
-    db_session.add(passage)
+
+    assert not resolved.missing, f"Passage anchors are global; got {resolved}"
+    assert resolved.label == "Meditations — Book IV, 3", (
+        f"Anchor label should be source title + display label; got {resolved.label!r}"
+    )
+    assert quote in (resolved.summary or ""), (
+        f"Resolved anchor body/summary should carry the current span text; got {resolved.summary!r}"
+    )
+
+    # A resolved anchor routes into its corpus media's reader through the current pointer.
+    href = route_for_ref(
+        db_session,
+        viewer_id=bootstrapped_user,
+        ref=ResourceRef(scheme="oracle_passage_anchor", id=anchor_id),
+    )
+    assert href is not None and href.startswith("/media/"), (
+        f"a resolved anchor must route to the media reader; got {href!r}"
+    )
+
+
+def test_resolve_oracle_passage_anchor_unknown_returns_missing(
+    db_session: Session, bootstrapped_user: UUID
+):
+    resolved = _resolve(db_session, f"oracle_passage_anchor:{uuid4()}", viewer_id=bootstrapped_user)
+    assert resolved.missing, "Unknown passage anchor must resolve as missing"
+
+
+def test_resolve_oracle_passage_anchor_unresolved_fails_closed(
+    db_session: Session, bootstrapped_user: UUID
+):
+    anchor_id = _seed_resolved_oracle_anchor(db_session, bootstrapped_user)
+    db_session.execute(
+        text(
+            """
+            UPDATE oracle_passage_anchors
+            SET resolution_status = 'pending',
+                current_evidence_span_id = NULL,
+                current_content_chunk_id = NULL,
+                resolved_at = NULL
+            WHERE id = :anchor_id
+            """
+        ),
+        {"anchor_id": anchor_id},
+    )
     db_session.commit()
 
     resolved = _resolve(
-        db_session, f"oracle_corpus_passage:{passage.id}", viewer_id=bootstrapped_user
+        db_session, f"oracle_passage_anchor:{anchor_id}", viewer_id=bootstrapped_user
+    )
+    href = route_for_ref(
+        db_session,
+        viewer_id=bootstrapped_user,
+        ref=ResourceRef(scheme="oracle_passage_anchor", id=anchor_id),
     )
 
-    assert not resolved.missing, f"Corpus passages are global; got {resolved}"
-    assert resolved.label == "Meditations — Book IV, 3", (
-        f"Passage label should be work title + locator; got {resolved.label!r}"
-    )
-    assert "The universe is change" in resolved.summary
-
-
-def test_resolve_oracle_corpus_passage_unknown_returns_missing(
-    db_session: Session, bootstrapped_user: UUID
-):
-    resolved = _resolve(db_session, f"oracle_corpus_passage:{uuid4()}", viewer_id=bootstrapped_user)
-    assert resolved.missing, "Unknown corpus passage must resolve as missing"
+    assert resolved.missing, "Unresolved passage anchors must not hydrate with an empty body"
+    assert href is None, "Unresolved passage anchors must not route into the reader"
 
 
 def test_resolve_external_snapshot_owner_returns_title_and_snippet(

@@ -21,7 +21,7 @@ export const RESOURCE_SCHEMES = [
   "conversation",
   "message",
   "oracle_reading",
-  "oracle_corpus_passage",
+  "oracle_passage_anchor",
   "library_intelligence_artifact",
   "library_intelligence_revision",
   "external_snapshot",

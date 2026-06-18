@@ -134,14 +134,73 @@ def accept_url_source(
 ) -> FromUrlResponse:
     """Accept a URL source intent before any provider/network/storage work runs."""
     library_governance.validate_writable_library_destinations(db, viewer_id, library_ids)
+    return _accept_url_source(
+        db=db,
+        viewer_id=viewer_id,
+        url=url,
+        library_ids=library_ids,
+        request_id=request_id,
+        idempotency_key=idempotency_key,
+        assign_viewer_libraries=True,
+    )
+
+
+def accept_system_url_source(
+    *,
+    db: Session,
+    actor_user_id: UUID,
+    url: str,
+    expected_kind: str,
+    system_source: str,
+    request_id: str | None = None,
+    idempotency_key: str | None = None,
+) -> FromUrlResponse:
+    """Accept a system-owned URL source without attaching it to the actor's libraries.
+
+    This is the durable source-ingest boundary for maintenance-owned media such as the
+    Oracle Corpus. It creates the same media/source-attempt/job records as
+    ``accept_url_source`` but intentionally skips default-library intrinsic membership;
+    the owning system service must attach the media through its explicit library-entry
+    command after acceptance.
+    """
+    return _accept_url_source(
+        db=db,
+        viewer_id=actor_user_id,
+        url=url,
+        library_ids=[],
+        request_id=request_id,
+        idempotency_key=idempotency_key,
+        assign_viewer_libraries=False,
+        expected_kind=expected_kind,
+        source_payload_extra={"system_source": system_source},
+    )
+
+
+def _accept_url_source(
+    *,
+    db: Session,
+    viewer_id: UUID,
+    url: str,
+    library_ids: list[UUID],
+    request_id: str | None,
+    idempotency_key: str | None,
+    assign_viewer_libraries: bool,
+    expected_kind: str | None = None,
+    source_payload_extra: dict[str, object] | None = None,
+) -> FromUrlResponse:
     validate_requested_url(url)
 
     spec = _url_source_spec(url)
+    if expected_kind is not None and str(spec["kind"]) != expected_kind:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_KIND,
+            f"URL source produced {spec['kind']!r}; expected {expected_kind!r}.",
+        )
     intent_key = _intent_key(
         spec["source_type"],
         url,
         spec["provider_target_ref"],
-        library_ids=library_ids,
+        library_ids=library_ids if assign_viewer_libraries else None,
     )
     clean_idempotency_key = _clean_idempotency_key(idempotency_key)
     if clean_idempotency_key is not None:
@@ -187,10 +246,20 @@ def accept_url_source(
         db.add(media)
         db.flush()
 
-    library_entries.assign_libraries_for_media_in_current_transaction(
-        db, viewer_id, media.id, library_ids
-    )
+    if assign_viewer_libraries:
+        library_entries.assign_libraries_for_media_in_current_transaction(
+            db, viewer_id, media.id, library_ids
+        )
     attempt_status = _ATTEMPT_ACCEPTED if created else _reused_url_attempt_status(media)
+    source_payload: dict[str, object] = {
+        "url": url,
+        "kind": spec["kind"],
+        **dict(spec["source_payload"]),
+    }
+    if assign_viewer_libraries:
+        source_payload["library_ids"] = [str(library_id) for library_id in library_ids]
+    if source_payload_extra:
+        source_payload.update(source_payload_extra)
     attempt = _create_attempt(
         db,
         media=media,
@@ -201,12 +270,7 @@ def accept_url_source(
         canonical_source_url=spec["canonical_source_url"],
         provider=spec["provider"],
         provider_target_ref=spec["provider_target_ref"],
-        source_payload={
-            "url": url,
-            "kind": spec["kind"],
-            "library_ids": [str(library_id) for library_id in library_ids],
-            **dict(spec["source_payload"]),
-        },
+        source_payload=source_payload,
         request_id=request_id,
         idempotency_key=clean_idempotency_key,
         status=attempt_status,

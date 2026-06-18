@@ -78,8 +78,17 @@ for i in $(seq 1 30); do
   sleep 2
 done
 compose stop worker api
-compose run -T --rm api /app/.venv/bin/python /app/scripts/ensure_oracle_seed_objects.py </dev/null
 compose run -T --rm api sh -c 'cd /app/migrations && /app/.venv/bin/alembic upgrade head' </dev/null
+compose run -T --rm api /app/.venv/bin/python /app/scripts/ensure_oracle_seed_objects.py </dev/null
+ORACLE_CORPUS_OWNER_USER_ID="$(
+  compose run -T --rm api /app/.venv/bin/python -c 'import os; print(os.environ.get("NEXUS_ORACLE_CORPUS_OWNER_USER_ID", "").strip())' </dev/null
+)"
+if [ -z "$ORACLE_CORPUS_OWNER_USER_ID" ]; then
+  echo "error: set NEXUS_ORACLE_CORPUS_OWNER_USER_ID in ${ENV_FILE} for Oracle Corpus seeding" >&2
+  exit 1
+fi
+compose run -T --rm api /app/.venv/bin/python /app/scripts/oracle/seed_corpus_library.py --owner-user "$ORACLE_CORPUS_OWNER_USER_ID" --drain </dev/null
+compose run -T --rm api /app/.venv/bin/python /app/scripts/oracle/check_corpus_readiness.py </dev/null
 compose up -d --remove-orphans --force-recreate
 compose ps
 REMOTE

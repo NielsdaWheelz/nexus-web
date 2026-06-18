@@ -35,13 +35,11 @@ from nexus.config import get_settings
 from nexus.db.models import (
     Conversation,
     ConversationMedia,
-    DefaultLibraryIntrinsic,
     EpubTocNode,
     Fragment,
     Highlight,
     HighlightFragmentAnchor,
     Library,
-    LibraryEntry,
     Media,
     MediaKind,
     Membership,
@@ -53,7 +51,9 @@ from nexus.db.models import (
     ProcessingStatus,
 )
 from nexus.db.session import create_session_factory
+from nexus.services import library_entries
 from nexus.services.bootstrap import ensure_user_and_default_library
+from nexus.services.default_library_closure import ensure_default_intrinsic
 from nexus.services.notes import set_highlight_note_body
 
 DEV_EMAIL = "dev@nexus.local"
@@ -850,24 +850,13 @@ def main() -> None:
         else:
             track("subscription: Hardcore History", False)
 
-        existing_podcast_entry = db.execute(
-            select(LibraryEntry).where(
-                LibraryEntry.library_id == history_lib_id,
-                LibraryEntry.podcast_id == podcast_id,
-            )
-        ).scalar_one_or_none()
-        if not existing_podcast_entry:
-            db.add(
-                LibraryEntry(
-                    library_id=history_lib_id,
-                    podcast_id=podcast_id,
-                    position=0,
-                )
-            )
-            db.flush()
-            track("library entry: History -> Hardcore History", True)
-        else:
-            track("library entry: History -> Hardcore History", False)
+        created_podcast_entry = library_entries.ensure_entry(
+            db,
+            history_lib_id,
+            library_entries.podcast_target(podcast_id),
+        )
+        db.flush()
+        track("library entry: History -> Hardcore History", created_podcast_entry)
 
         # ── Assign media to libraries ─────────────────────────────────
         default_lib_media = [
@@ -876,45 +865,15 @@ def main() -> None:
             colder_media_id,
             pdf_media_id,
         ] + episode_media_ids
-        for pos, media_id in enumerate(default_lib_media):
-            existing_lm = db.execute(
-                select(LibraryEntry).where(
-                    LibraryEntry.library_id == default_library_id,
-                    LibraryEntry.media_id == media_id,
-                )
-            ).scalar_one_or_none()
-            if not existing_lm:
-                db.add(
-                    LibraryEntry(
-                        library_id=default_library_id,
-                        media_id=media_id,
-                        position=pos,
-                    )
-                )
-                db.add(
-                    DefaultLibraryIntrinsic(
-                        default_library_id=default_library_id,
-                        media_id=media_id,
-                    )
-                )
+        for media_id in default_lib_media:
+            ensure_default_intrinsic(db, default_library_id, media_id)
         db.flush()
 
         research_lib_media = [epub_media_id, karpathy_media_id, gomez_media_id]
-        for pos, media_id in enumerate(research_lib_media):
-            existing_lm = db.execute(
-                select(LibraryEntry).where(
-                    LibraryEntry.library_id == research_lib_id,
-                    LibraryEntry.media_id == media_id,
-                )
-            ).scalar_one_or_none()
-            if not existing_lm:
-                db.add(
-                    LibraryEntry(
-                        library_id=research_lib_id,
-                        media_id=media_id,
-                        position=pos,
-                    )
-                )
+        for media_id in research_lib_media:
+            library_entries.ensure_entry(
+                db, research_lib_id, library_entries.media_target(media_id)
+            )
         db.flush()
 
         # ── Highlights + annotations ──────────────────────────────────

@@ -72,19 +72,18 @@ def test_real_media_fixture_embeddings_are_deterministic_without_openai(
 
 
 @respx.mock
-def test_oracle_fixture_query_embedding_matches_semantic_chunk_projection(
+def test_fixture_query_embedding_matches_semantic_chunk_projection(
     monkeypatch: pytest.MonkeyPatch,
 ):
+    """The single-text query embedding (the shared path Oracle/search consume) matches
+    the batch-indexed embedding for fixtures, with no provider HTTP call."""
     _configure_real_media_fixture_embeddings(monkeypatch)
     route = respx.post(OPENAI_EMBEDDINGS_URL).respond(401)
 
-    from nexus.services.oracle import _build_query_embedding_for_model
+    from nexus.services.semantic_chunks import build_text_embedding
 
     model_name, indexed_vectors = build_text_embeddings(["B-52 H2O AI"])
-    returned_model, query_vector = _build_query_embedding_for_model(
-        "B-52 H2O AI",
-        embedding_model=model_name,
-    )
+    returned_model, query_vector = build_text_embedding("B-52 H2O AI")
 
     assert returned_model == model_name
     assert query_vector == indexed_vectors[0]

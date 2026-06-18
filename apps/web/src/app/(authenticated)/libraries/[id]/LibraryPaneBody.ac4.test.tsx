@@ -1,4 +1,5 @@
 import { screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderHydratedPane } from "@/__tests__/helpers/authenticatedPane";
 import {
@@ -30,6 +31,50 @@ function seededLibrary() {
     is_default: false,
     role: "admin",
     owner_user_id: "user-1",
+    system_key: null,
+    can_rename: true,
+    can_delete: true,
+    can_edit_entries: true,
+  };
+}
+
+function seededSystemLibraryWithMutableMedia() {
+  return {
+    library: {
+      id: LIBRARY_ID,
+      name: "Oracle Corpus",
+      is_default: false,
+      role: "admin",
+      owner_user_id: "user-1",
+      system_key: "oracle_corpus",
+      can_rename: false,
+      can_delete: false,
+      can_edit_entries: false,
+    },
+    entries: [
+      {
+        id: "entry-1",
+        kind: "media",
+        position: 0,
+        created_at: "2026-01-01T00:00:00Z",
+        media: {
+          id: "media-1",
+          kind: "web_article",
+          title: "Corpus Work",
+          contributors: [],
+          published_date: null,
+          publisher: null,
+          canonical_source_url: null,
+          processing_status: "ready_for_reading",
+          capabilities: {
+            can_delete: true,
+            can_refresh_source: true,
+            can_retry: true,
+            can_retry_metadata: true,
+          },
+        },
+      },
+    ],
   };
 }
 
@@ -77,5 +122,50 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       `/api/libraries/${LIBRARY_ID}`,
     );
     expect(libraryCalls).toHaveLength(0);
+  });
+
+  it("does not expose media mutation actions for system-library entries", async () => {
+    const user = userEvent.setup();
+    stubFetch(async () => {
+      return new Response("{}", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    const href = `/libraries/${LIBRARY_ID}`;
+    renderHydratedPane({
+      href,
+      resources: { [LIBRARY_ID]: seededSystemLibraryWithMutableMedia() },
+      children: <LibraryPaneBody />,
+    });
+
+    expect(await screen.findByText("Corpus Work")).toBeInTheDocument();
+
+    const actionButtons = await screen.findAllByRole("button", {
+      name: "Actions",
+    });
+    await user.click(actionButtons[actionButtons.length - 1]);
+
+    expect(
+      await screen.findByRole("menuitem", {
+        name: "Chat about this resource",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("menuitem", { name: "Retry processing" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("menuitem", { name: "Refresh source" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("menuitem", { name: "Re-enrich metadata" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("menuitem", { name: "Libraries..." }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("menuitem", { name: "Delete document" }),
+    ).not.toBeInTheDocument();
   });
 });

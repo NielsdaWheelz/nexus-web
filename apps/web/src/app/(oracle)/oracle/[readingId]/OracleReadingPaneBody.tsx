@@ -70,8 +70,8 @@ interface PassagePayload {
   attribution_text: string;
   marginalia_text: string;
   deep_link: string | null;
-  // A server-built CitationOut for user-media passages with an evidence span;
-  // null for public-domain / span-less passages.
+  // Server-built CitationOut for passages with a live shared locator, including
+  // resolved public-domain anchors; null for stale or span-less targets.
   citation: CitationOut | null;
 }
 

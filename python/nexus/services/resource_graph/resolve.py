@@ -180,8 +180,8 @@ def load_resource_batch(
             loaded = _load_message(db, items, viewer_id=viewer_id)
         elif scheme == "oracle_reading":
             loaded = _load_oracle_reading(db, items, viewer_id=viewer_id)
-        elif scheme == "oracle_corpus_passage":
-            loaded = _load_oracle_corpus_passage(db, items)
+        elif scheme == "oracle_passage_anchor":
+            loaded = _load_oracle_passage_anchor(db, items)
         elif scheme == "external_snapshot":
             loaded = _load_external_snapshot(db, items, viewer_id=viewer_id)
         elif scheme == "contributor":
@@ -268,6 +268,11 @@ def reader_target_for_citation_target(
         return None, _note_block_locator_for_block(db, viewer_id=viewer_id, block_id=target.id)
     if target.scheme == "content_chunk":
         return _reader_target_for_content_chunk(db, viewer_id=viewer_id, chunk_id=target.id)
+    if target.scheme == "oracle_passage_anchor":
+        current = oracle_anchor_current_target(db, target.id)
+        if current is None:
+            return None, None
+        return reader_target_for_citation_target(db, viewer_id=viewer_id, target=current)
     if target.scheme != "evidence_span":
         return None, None
     try:
@@ -917,16 +922,61 @@ def _oracle_reading_body(
     return "\n".join(lines)
 
 
-def _load_oracle_corpus_passage(db: Session, items: list[ResourceRef]) -> list[LoadedResource]:
-    """Public-domain corpus passages are global: any existing row is visible."""
+def oracle_anchor_current_target(db: Session, anchor_id: UUID) -> ResourceRef | None:
+    """The current index pointer a resolved Oracle passage anchor points at, or None.
+
+    Prefers the evidence span, falling back to the content chunk. None when the
+    anchor is unresolved or its cached pointers were cleared by a reindex — the
+    citation then fails closed (typographic, no jump) until re-resolution.
+    """
+    row = db.execute(
+        text(
+            """
+            SELECT current_evidence_span_id, current_content_chunk_id
+            FROM oracle_passage_anchors
+            WHERE id = :id AND resolution_status = 'resolved'
+            """
+        ),
+        {"id": anchor_id},
+    ).first()
+    if row is None:
+        return None
+    if row[0] is not None:
+        return ResourceRef(scheme="evidence_span", id=row[0])
+    if row[1] is not None:
+        return ResourceRef(scheme="content_chunk", id=row[1])
+    return None
+
+
+def _load_oracle_passage_anchor(db: Session, items: list[ResourceRef]) -> list[LoadedResource]:
+    """Public-domain passage anchors are global: any existing row is visible.
+
+    ``body`` resolves to the current evidence-span text (the live media evidence the
+    anchor points at). Unresolved or stale anchors fail closed as missing until the
+    corpus anchor resolver refreshes them.
+    """
     ids = [ref.id for ref in items]
     rows = db.execute(
         text(
             """
-            SELECT p.id, p.canonical_text, p.locator_label, w.title, w.author
-            FROM oracle_corpus_passages p
-            JOIN oracle_corpus_works w ON w.id = p.work_id
-            WHERE p.id = ANY(:ids)
+            SELECT
+                a.id,
+                a.display_label,
+                s.title,
+                s.author_text,
+                COALESCE(es.span_text, cc.chunk_text) AS body
+            FROM oracle_passage_anchors a
+            JOIN oracle_corpus_sources s ON s.id = a.corpus_source_id
+            JOIN content_chunks cc ON cc.id = a.current_content_chunk_id
+                AND cc.owner_kind = 'media' AND cc.owner_id = s.media_id
+            LEFT JOIN evidence_spans es ON es.id = a.current_evidence_span_id
+                AND es.owner_kind = 'media' AND es.owner_id = s.media_id
+            WHERE a.id = ANY(:ids)
+              AND a.resolution_status = 'resolved'
+              AND (
+                a.current_evidence_span_id IS NULL
+                OR es.id IS NOT NULL
+              )
             """
         ),
         {"ids": ids},
@@ -936,16 +986,16 @@ def _load_oracle_corpus_passage(db: Session, items: list[ResourceRef]) -> list[L
     for ref in items:
         row = by_id.get(ref.id)
         if row is None:
-            out.append(_missing(ref.uri, "oracle_corpus_passage"))
+            out.append(_missing(ref.uri, "oracle_passage_anchor"))
             continue
         out.append(
             LoadedResource(
                 uri=ref.uri,
-                scheme="oracle_corpus_passage",
-                body=str(row[1] or ""),
-                title=str(row[3]),
-                author=str(row[4] or "") or None,
-                locator_label=str(row[2] or ""),
+                scheme="oracle_passage_anchor",
+                body=str(row[4] or ""),
+                title=str(row[2]),
+                author=str(row[3] or "") or None,
+                locator_label=str(row[1] or ""),
             )
         )
     return out
@@ -1232,7 +1282,7 @@ def _present(loaded: LoadedResource) -> ResolvedResource:
             inline_body=None,
             fetch_hint="",
         )
-    if scheme == "oracle_corpus_passage":
+    if scheme == "oracle_passage_anchor":
         return ResolvedResource(
             uri=loaded.uri,
             label=f"{loaded.title} — {loaded.locator_label}",

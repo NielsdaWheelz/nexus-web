@@ -121,8 +121,21 @@ export function mediaResourceOptions(input: {
   return options;
 }
 
+export interface LibraryActionSubject {
+  is_default: boolean;
+  role: string;
+  /**
+   * Backend-backed capability flags (LibraryOut). A system-protected library
+   * (e.g. the Oracle Corpus, `system_key != null`) reports all of these false,
+   * which hides every mutation action below.
+   */
+  can_rename: boolean;
+  can_delete: boolean;
+  can_edit_entries: boolean;
+}
+
 export function libraryResourceOptions(input: {
-  library: { is_default: boolean; role: string } | null | undefined;
+  library: LibraryActionSubject | null | undefined;
   onViewIntelligence?: () => void;
   onEdit?: () => void;
   onDelete?: () => void;
@@ -140,7 +153,10 @@ export function libraryResourceOptions(input: {
     });
   }
 
-  if (!library.is_default && input.onEdit) {
+  // The edit dialog owns rename + sharing/membership (not media-entry
+  // editing), so it is gated on can_rename. The default library reports
+  // can_rename === false; a system library reports all can_* false.
+  if (library.can_rename && input.onEdit) {
     options.push({
       id: "edit-library",
       label: "Edit library",
@@ -148,7 +164,7 @@ export function libraryResourceOptions(input: {
     });
   }
 
-  if (!library.is_default && library.role === "admin" && input.onDelete) {
+  if (library.can_delete && input.onDelete) {
     options.push({
       id: "delete-library",
       label: "Delete library",

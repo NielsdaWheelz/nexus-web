@@ -374,6 +374,13 @@ def _present_read(loaded: LoadedResource) -> ReadResourceResult:
             body=loaded.body or "",
             kind="oracle_reading",
         )
+    if scheme == "oracle_passage_anchor":
+        return ReadResourceResult(
+            uri=loaded.uri,
+            status="complete",
+            body=loaded.body or "",
+            kind="oracle_passage_anchor",
+        )
     if scheme in ("evidence_span", "content_chunk", "page", "note_block", "reader_apparatus_item"):
         return ReadResourceResult(
             uri=loaded.uri,

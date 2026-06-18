@@ -455,7 +455,7 @@ Rules:
 - Prompt: inline body under budget or clear `read_resource` fetch hint.
 - Route: openable through resource item route resolution.
 
-`oracle_corpus_passage:<id>`
+`oracle_passage_anchor:<id>`
 
 - Chat subject: no.
 - Context ref: no.
@@ -1399,7 +1399,7 @@ AC13. LI chat from the pane sends a revision subject and library companion.
 AC14. Oracle reading chat uses `oracle_reading:<id>` and renders/fetches the
 reading body.
 
-AC15. `oracle_corpus_passage:<id>` is rejected as a chat subject.
+AC15. `oracle_passage_anchor:<id>` is rejected as a chat subject.
 
 AC16. `external_snapshot:<id>` is rejected as a chat subject.
 

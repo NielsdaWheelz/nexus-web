@@ -1,6 +1,13 @@
 "use client";
 
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import {
+  createContext,
+  startTransition,
+  useContext,
+  useEffect,
+  useState,
+  type ReactNode,
+} from "react";
 import type { RenderEnvironment, ViewportKind } from "./types";
 
 const MOBILE_QUERY = "(max-width: 768px)";
@@ -23,19 +30,25 @@ export function RenderEnvironmentProvider({
   const [viewportHydrated, setViewportHydrated] = useState(false);
 
   useEffect(() => {
+    const publishViewport = (kind: ViewportKind) => {
+      startTransition(() => {
+        setViewportKind(kind);
+        setViewportHydrated(true);
+      });
+    };
+
     if (typeof window.matchMedia !== "function") {
-      setViewportHydrated(true);
+      publishViewport(value.initialViewport);
       return;
     }
     const query = window.matchMedia(MOBILE_QUERY);
     const update = () => {
-      setViewportKind(query.matches ? "mobile" : "desktop");
-      setViewportHydrated(true);
+      publishViewport(query.matches ? "mobile" : "desktop");
     };
     update();
     query.addEventListener("change", update);
     return () => query.removeEventListener("change", update);
-  }, []);
+  }, [value.initialViewport]);
 
   return (
     <RenderEnvironmentContext.Provider value={{ ...value, viewportKind, viewportHydrated }}>
