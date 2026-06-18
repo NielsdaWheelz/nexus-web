@@ -44,6 +44,7 @@ from nexus.db.models import (
 from nexus.errors import (
     ApiError,
     ApiErrorCode,
+    InvalidRequestError,
     NotFoundError,
     api_error_code_for_model_call,
     exception_error_detail,
@@ -135,7 +136,12 @@ from nexus.services.llm_ledger import LlmCallOwner, observed_generate_stream
 from nexus.services.prompt_budget import ContextBudgetError, estimate_tokens
 from nexus.services.rate_limit import get_rate_limiter
 from nexus.services.resource_graph import cleanup as graph_cleanup
-from nexus.services.resource_graph.citations import build_citation_outs, record_citation
+from nexus.services.resource_graph.citations import (
+    build_citation_outs,
+    generated_markdown_citation_ordinals,
+    record_citation,
+    validate_generated_markdown_citations,
+)
 from nexus.services.resource_graph.connections import query_connections
 from nexus.services.resource_graph.context import (
     add_context_ref_without_commit,
@@ -148,6 +154,7 @@ from nexus.services.resource_graph.refs import (
     parse_resource_ref,
 )
 from nexus.services.resource_graph.schemas import (
+    CitationInput,
     CitationSnapshot,
     ConnectionFilters,
     ConnectionQuery,
@@ -306,14 +313,16 @@ def _record_tool_citations(
         .mappings()
         .all()
     )
-    for offset, row in enumerate(rows):
-        _record_retrieval_citation(db, run=run, row=dict(row), ordinal=start_ordinal + offset)
-    return start_ordinal + len(rows)
+    next_ordinal = start_ordinal
+    for row in rows:
+        if _record_retrieval_citation(db, run=run, row=dict(row), ordinal=next_ordinal):
+            next_ordinal += 1
+    return next_ordinal
 
 
 def _record_retrieval_citation(
     db: Session, *, run: ChatRun, row: Mapping[str, Any], ordinal: int
-) -> None:
+) -> bool:
     """Write one citation edge for a selected telemetry row and point the row at it.
 
     Replace-by-ordinal: a re-executed run owns its message's citation set, so an
@@ -323,7 +332,7 @@ def _record_retrieval_citation(
     """
     target = _citation_target_ref(db, run=run, row=row)
     if target is None:
-        return
+        return False
     existing = db.execute(
         select(ResourceEdge.id).where(
             ResourceEdge.source_scheme == "message",
@@ -359,11 +368,12 @@ def _record_retrieval_citation(
             target=target.uri,
             ordinal=ordinal,
         )
-        return
+        return False
     db.execute(
         text("UPDATE message_retrievals SET cited_edge_id = :edge_id WHERE id = :id"),
         {"edge_id": edge.id, "id": row["id"]},
     )
+    return True
 
 
 def _citation_target_ref(
@@ -404,16 +414,19 @@ def _uuid_or_none(raw: object) -> UUID | None:
 
 
 def _app_search_tool_output(run_result: Any, start_ordinal: int) -> str:
-    results = [
-        {
-            "n": start_ordinal + i,
+    next_ordinal = start_ordinal
+    results = []
+    for citation in run_result.selected_citations:
+        item: dict[str, object] = {
             "title": citation.title,
             "snippet": citation.snippet,
             "kind": citation.result_type,
             "source_label": citation.source_label,
         }
-        for i, citation in enumerate(run_result.selected_citations)
-    ]
+        if citation.citation_target is not None:
+            item["n"] = next_ordinal
+            next_ordinal += 1
+        results.append(item)
     return json.dumps(
         {
             "results": results,
@@ -610,6 +623,26 @@ def _delete_citation_edge(db: Session, *, viewer_id: UUID, edge_id: UUID) -> Non
     delete_edge(db, viewer_id=viewer_id, edge_id=edge_id)
     if target_scheme == "external_snapshot":
         graph_cleanup.delete_orphaned_external_snapshots(db, snapshot_ids=[target_id])
+
+
+def _clear_message_citations(db: Session, run: ChatRun) -> None:
+    edge_ids = (
+        db.execute(
+            select(ResourceEdge.id).where(
+                ResourceEdge.source_scheme == "message",
+                ResourceEdge.source_id == run.assistant_message_id,
+                ResourceEdge.origin == "citation",
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for edge_id in edge_ids:
+        db.execute(
+            text("UPDATE message_retrievals SET cited_edge_id = NULL WHERE cited_edge_id = :id"),
+            {"id": edge_id},
+        )
+        _delete_citation_edge(db, viewer_id=run.owner_user_id, edge_id=edge_id)
 
 
 def _persist_read_evidence_citation(
@@ -903,7 +936,7 @@ def _tool_trace_event(
     }
 
 
-def _emit_citation_index(db: Session, run: ChatRun) -> None:
+def _emit_citation_index(db: Session, run: ChatRun, content_md: str) -> None:
     """Emit the message's citation set (from edges) + graduate cited local targets.
 
     The citation_index event carries the graph-built ``CitationOut`` read model
@@ -932,6 +965,52 @@ def _emit_citation_index(db: Session, run: ChatRun) -> None:
             break
         cursor = page.next_cursor
     edges.sort(key=lambda edge: edge.ordinal or 0)
+    marker_ordinals = generated_markdown_citation_ordinals(content_md)
+    edge_ordinals = [edge.ordinal for edge in edges]
+    if marker_ordinals != list(range(1, len(marker_ordinals) + 1)):
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Generated markdown citation markers must match citation ordinals exactly; "
+            f"markers={marker_ordinals}, citations={edge_ordinals}",
+        )
+    if not marker_ordinals:
+        if edge_ordinals:
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST,
+                "Generated markdown citation markers must match citation ordinals exactly; "
+                f"markers={marker_ordinals}, citations={edge_ordinals}",
+            )
+        return
+    missing_ordinals = sorted(set(marker_ordinals) - set(edge_ordinals))
+    if missing_ordinals:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Generated markdown citation markers must match citation ordinals exactly; "
+            f"markers={marker_ordinals}, citations={edge_ordinals}",
+        )
+    marker_set = set(marker_ordinals)
+    for edge in edges:
+        if edge.ordinal in marker_set:
+            continue
+        db.execute(
+            text("UPDATE message_retrievals SET cited_edge_id = NULL WHERE cited_edge_id = :id"),
+            {"id": edge.edge_id},
+        )
+        _delete_citation_edge(db, viewer_id=run.owner_user_id, edge_id=edge.edge_id)
+    edges = [edge for edge in edges if edge.ordinal in marker_set]
+    citation_inputs = []
+    for edge in edges:
+        assert edge.ordinal is not None, f"citation edge {edge.edge_id} lost its ordinal"
+        assert edge.snapshot is not None, f"citation edge {edge.edge_id} lost its snapshot"
+        citation_inputs.append(
+            CitationInput(
+                target=edge.target_ref,
+                ordinal=edge.ordinal,
+                kind=edge.kind,
+                snapshot=edge.snapshot,
+            )
+        )
+    validate_generated_markdown_citations(content_md, citation_inputs)
     if not edges:
         return
     edge_id_by_ordinal = {edge.ordinal: edge.edge_id for edge in edges}
@@ -2130,7 +2209,18 @@ async def _execute_chat_run(
             )
             return {"status": "error", "error_code": error_code}
 
-        _emit_citation_index(db, run)
+        try:
+            _emit_citation_index(db, run, full_content)
+        except InvalidRequestError as exc:
+            _clear_message_citations(db, run)
+            finalize_error(
+                db,
+                run_id=run.id,
+                error_code=ApiErrorCode.E_LLM_BAD_REQUEST.value,
+                error_detail=f"assistant citation markers invalid: {exc.message}",
+                resolved_key=resolved_key,
+            )
+            return {"status": "error", "error_code": ApiErrorCode.E_LLM_BAD_REQUEST.value}
         finalize_run(
             db,
             run_id=run.id,

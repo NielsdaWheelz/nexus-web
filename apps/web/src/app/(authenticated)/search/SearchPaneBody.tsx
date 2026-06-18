@@ -76,7 +76,12 @@ export default function SearchPaneBody() {
   const [error, setError] = useState<FeedbackContent | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [hasSearched, setHasSearched] = useState(false);
+  const [mounted, setMounted] = useState(false);
   const requestIdRef = useRef(0);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const replaceQuery = useCallback(
     (next: SearchQuery) => {
@@ -257,6 +262,7 @@ export default function SearchPaneBody() {
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
             placeholder="Search your Nexus… (try format:pdf or author:le-guin)"
+            disabled={!mounted}
             autoFocus
           />
 

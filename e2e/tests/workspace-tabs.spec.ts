@@ -552,12 +552,12 @@ test.describe("workspace tabs", () => {
     const firstActivator = activators.first();
     await expect(firstActivator).toBeVisible({ timeout: 10_000 });
 
-    const isBusy = await firstActivator
-      .getAttribute("aria-busy")
-      .catch(() => null);
+    const { isBusy, label } = await firstActivator.evaluate((element) => ({
+      isBusy: element.getAttribute("aria-busy"),
+      label: element.getAttribute("aria-label"),
+    }));
 
     if (isBusy === "true") {
-      const label = await firstActivator.getAttribute("aria-label");
       expect(
         label,
         "A pending tab (aria-busy=true) must carry an aria-label for accessibility",

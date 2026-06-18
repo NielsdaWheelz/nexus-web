@@ -293,6 +293,23 @@ def execute_app_search(
         citations = [
             citation_from_search_result(result, filters=filters) for result in response.results
         ]
+        prompt_order = {
+            "content_chunk": 0,
+            "evidence_span": 0,
+            "fragment": 0,
+            "highlight": 0,
+            "note_block": 0,
+            "reader_apparatus_item": 0,
+            "message": 0,
+            "media": 1,
+            "episode": 1,
+            "video": 1,
+            "podcast": 1,
+            "page": 1,
+            "conversation": 1,
+            "contributor": 1,
+        }
+        citations.sort(key=lambda citation: prompt_order.get(citation.result_type, 2))
         context_text, context_chars, selected = render_retrieved_context_blocks(
             db,
             viewer_id=viewer_id,
@@ -689,7 +706,7 @@ def persist_app_search_run(db: Session, run: AppSearchRun) -> None:
             )
             VALUES (
                 :tool_call_id,
-                'search_score_then_context_budget',
+                'prompt_evidence_then_context_budget',
                 :input_count,
                 :selected_count,
                 :budget_chars,

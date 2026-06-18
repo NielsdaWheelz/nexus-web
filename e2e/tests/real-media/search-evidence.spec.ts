@@ -60,9 +60,10 @@ test("@real-media search returns resolver-backed evidence for every configured m
       result.context_ref.evidence_span_ids,
     );
     const evidenceSpanId = result.evidence_span_ids[0];
-    expect(result.deep_link).toBe(
+    expect(result.activation.href).toBe(
       `/media/${mediaId}#evidence-${evidenceSpanId}`,
     );
+    expect("deep_link" in result).toBe(false);
     const resolverResponse = await page.request.get(
       `/api/media/${mediaId}/evidence/${evidenceSpanId}`,
     );

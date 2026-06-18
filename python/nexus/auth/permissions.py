@@ -42,6 +42,7 @@ from nexus.db.models import (
     Highlight,
     Library,
     LibraryEntry,
+    Media,
     Membership,
     UserMediaDeletion,
 )
@@ -91,7 +92,9 @@ def can_read_media(session: Session, viewer_user_id: UUID, media_id: UUID) -> bo
         UserMediaDeletion.media_id == media_id,
     )
 
-    query = select((non_default | default_intrinsic | default_closure) & not_deleted)
+    media_exists = exists().where(Media.id == media_id)
+
+    query = select(media_exists & (non_default | default_intrinsic | default_closure) & not_deleted)
     result = session.execute(query)
     return bool(result.scalar())
 
@@ -125,6 +128,7 @@ def visible_media_ids_cte_sql() -> str:
                                AND m.user_id = :viewer_id
             WHERE l.owner_user_id = :viewer_id AND l.is_default = true
         ) visible
+        JOIN media md ON md.id = visible.media_id
         WHERE NOT EXISTS (
             SELECT 1
             FROM user_media_deletions umd

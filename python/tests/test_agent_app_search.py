@@ -167,12 +167,98 @@ def test_execute_app_search_persists_retrieval_metadata(
             ),
             {"tool_call_id": run.tool_call_id},
         ).one()
-        assert rerank_row[0] == "search_score_then_context_budget"
+        assert rerank_row[0] == "prompt_evidence_then_context_budget"
         assert rerank_row[1] == len(run.citations)
         assert rerank_row[2] == len(run.selected_citations)
         assert rerank_row[3] > 0
         assert rerank_row[4] == run.context_chars
         assert rerank_row[5] == run.status
+
+    direct_db.register_cleanup("fragments", "media_id", media_id)
+    direct_db.register_cleanup("library_entries", "media_id", media_id)
+    direct_db.register_cleanup("media", "id", media_id)
+    direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+    direct_db.register_cleanup("conversations", "id", conversation_id)
+    direct_db.register_cleanup("memberships", "library_id", library_id)
+    direct_db.register_cleanup("libraries", "id", library_id)
+    direct_db.register_cleanup("users", "id", user_id)
+
+
+def test_execute_app_search_prioritizes_prompt_evidence_over_container_rows(
+    direct_db: DirectSessionManager,
+) -> None:
+    user_id = create_test_user_id()
+    needle = f"Prompt Evidence Needle {uuid4().hex}"
+
+    with direct_db.session() as session:
+        session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+        library_id = create_test_library(session, user_id, "Prompt Evidence Search Library")
+        conversation_id = create_test_conversation(session, user_id)
+        user_message_id = create_test_message(
+            session,
+            conversation_id,
+            seq=1,
+            role="user",
+            content=needle,
+        )
+        assistant_message_id = create_test_message(
+            session,
+            conversation_id,
+            seq=2,
+            role="assistant",
+            content="",
+            status="pending",
+        )
+        media_id = create_searchable_media_in_library(
+            session,
+            user_id,
+            library_id,
+            title=needle,
+        )
+
+        run = execute_app_search(
+            session,
+            viewer_id=user_id,
+            conversation_id=conversation_id,
+            user_message_id=user_message_id,
+            assistant_message_id=assistant_message_id,
+            scopes=[],
+            query=needle,
+        )
+
+        assert run.status == "complete"
+        assert {citation.result_type for citation in run.citations} >= {
+            "media",
+            "content_chunk",
+        }
+        assert run.selected_citations
+        assert run.selected_citations[0].result_type in {
+            "content_chunk",
+            "evidence_span",
+            "fragment",
+            "highlight",
+            "note_block",
+            "reader_apparatus_item",
+            "message",
+        }
+        assert run.selected_citations[0].deep_link != f"/media/{media_id}"
+
+        retrieval_rows = session.execute(
+            text(
+                """
+                SELECT result_type, result_ref, selected, deep_link
+                FROM message_retrievals
+                WHERE tool_call_id = :tool_call_id
+                ORDER BY ordinal ASC
+                """
+            ),
+            {"tool_call_id": run.tool_call_id},
+        ).fetchall()
+        assert retrieval_rows[0][0] == run.selected_citations[0].result_type
+        assert retrieval_rows[0][1]["citation_target"]
+        assert retrieval_rows[0][2] is True
+        assert retrieval_rows[0][3] == run.selected_citations[0].deep_link
+        assert any(row[0] == "media" for row in retrieval_rows)
 
     direct_db.register_cleanup("fragments", "media_id", media_id)
     direct_db.register_cleanup("library_entries", "media_id", media_id)

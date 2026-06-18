@@ -73,7 +73,7 @@ class RealMediaFixtureModelRuntime:
 
         response = (
             REAL_MEDIA_FIXTURE_RESPONSE_WITH_CITATION
-            if _has_citable_tool_result(req)
+            if _has_citable_tool_result(req) or _has_numbered_prompt_resource(req)
             else REAL_MEDIA_FIXTURE_RESPONSE
         )
         yield ModelChunk(delta_text=response, done=False)
@@ -201,6 +201,10 @@ def _has_citable_tool_result(req: ModelCall) -> bool:
             if _tool_output_has_numbered_result(result.output):
                 return True
     return False
+
+
+def _has_numbered_prompt_resource(req: ModelCall) -> bool:
+    return any(re.search(r'<resource\b[^>]*\bn="\d+"', turn.content) for turn in req.messages)
 
 
 def _tool_output_has_numbered_result(output: str) -> bool:

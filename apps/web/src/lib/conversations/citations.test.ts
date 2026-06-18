@@ -89,6 +89,23 @@ describe("toReaderCitationData", () => {
     expect(data.activation.href).toBe("https://example.com/source");
   });
 
+  it("keeps activation href for content_chunk citations without a locator", () => {
+    const data = toReaderCitationData(
+      mediaCitation({
+        target_ref: { type: "content_chunk", id: "chunk-1" },
+        activation: {
+          resourceRef: "content_chunk:chunk-1",
+          kind: "route",
+          href: "/media/media-1#evidence-span-1",
+          unresolvedReason: null,
+        },
+        locator: null,
+      }),
+    );
+    expect(data.target).toBeNull();
+    expect(data.activation.href).toBe("/media/media-1#evidence-span-1");
+  });
+
   it("builds a note reader target from note locators", () => {
     expect(
       toReaderCitationData(

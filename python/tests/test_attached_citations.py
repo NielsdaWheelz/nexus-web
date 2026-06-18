@@ -347,6 +347,78 @@ def test_anchored_highlight_is_numbered_and_persists_valid_row(direct_db: Direct
     direct_db.register_cleanup("message_tool_calls", "id", tool_call_id)
 
 
+def test_attached_content_chunk_citation_activates_primary_evidence(
+    direct_db: DirectSessionManager,
+):
+    with direct_db.session() as session:
+        user_id = _bootstrap_user(session)
+        conversation_id = create_test_conversation(session, user_id)
+        media_id = create_searchable_media(session, user_id, title="Attached Chunk Source")
+        chunk_id, evidence_span_id = session.execute(
+            sql_text(
+                """
+                SELECT id, primary_evidence_span_id
+                FROM content_chunks
+                WHERE owner_kind = 'media'
+                  AND owner_id = :media_id
+                ORDER BY chunk_idx ASC
+                LIMIT 1
+                """
+            ),
+            {"media_id": media_id},
+        ).one()
+        assert evidence_span_id is not None
+        long_chunk_text = "Attached chunk evidence. " * 80
+        session.execute(
+            sql_text("UPDATE content_chunks SET chunk_text = :text WHERE id = :id"),
+            {"id": chunk_id, "text": long_chunk_text},
+        )
+        session.commit()
+
+        _attach(session, user_id, conversation_id, f"media:{media_id}")
+        _attach(session, user_id, conversation_id, f"content_chunk:{chunk_id}")
+
+        block, _metadata, citations, _revision_refs = context_assembler._build_resources_block(
+            session, conversation_id=conversation_id, viewer_id=user_id
+        )
+        assert block is not None
+        assert f'uri="media:{media_id}"' in block.text
+        assert f'uri="content_chunk:{chunk_id}" n="1"' in block.text
+        assert "<excerpt>Attached chunk evidence." in block.text
+        assert len(citations) == 1
+        assert citations[0].result_type == "content_chunk"
+        assert citations[0].citation_target == f"content_chunk:{chunk_id}"
+        assert citations[0].deep_link == f"/media/{media_id}#evidence-{evidence_span_id}"
+
+        run = _make_chat_run(session, conversation_id, user_id)
+        chat_runs._persist_attached_citations(session, run, citations)
+        tool_call_id, _tool_name, _tool_index = _tool_calls(session, run.assistant_message_id)[0]
+
+        rows = _retrievals_under(session, tool_call_id)
+        assert len(rows) == 1
+        assert rows[0]["result_type"] == "content_chunk"
+        assert rows[0]["result_ref"]["citation_target"] == f"content_chunk:{chunk_id}"
+        assert rows[0]["cited_edge_id"] is not None
+
+        from nexus.services.conversation_branches import _message_outs_by_id
+
+        assistant = session.get(Message, run.assistant_message_id)
+        assert assistant is not None
+        rehydrated = _message_outs_by_id(session, user_id, [assistant])[run.assistant_message_id]
+        assert len(rehydrated.citations) == 1
+        citation = rehydrated.citations[0]
+        assert citation.target_ref.type == "content_chunk"
+        assert str(citation.target_ref.id) == str(chunk_id)
+        assert citation.activation.href == f"/media/{media_id}#evidence-{evidence_span_id}"
+
+    _register_user_cleanup(direct_db, user_id)
+    direct_db.register_cleanup("conversations", "id", conversation_id)
+    _register_media_cleanup(direct_db, media_id)
+    direct_db.register_cleanup("chat_runs", "id", run.id)
+    direct_db.register_cleanup("message_retrievals", "tool_call_id", tool_call_id)
+    direct_db.register_cleanup("message_tool_calls", "id", tool_call_id)
+
+
 # =============================================================================
 # B. Un-anchored highlight is NOT numbered.
 # =============================================================================

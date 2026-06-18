@@ -572,7 +572,14 @@ def _build_resources_block(
             lines.append(_render_resource(ctx.resolved, compact=compact))
         else:
             citations.append(citation)
-            lines.append(_render_resource(ctx.resolved, n=len(citations), compact=compact))
+            lines.append(
+                _render_resource(
+                    ctx.resolved,
+                    n=len(citations),
+                    compact=compact,
+                    citation=citation,
+                )
+            )
         source_refs.append(
             {"type": "context_ref", "id": str(ctx.edge_id), "resource_uri": ctx.target.uri}
         )
@@ -608,15 +615,21 @@ def _materialize_attached_citation(
 ) -> RetrievalCitation | None:
     """The validated citation for a citable attached resource, or None.
 
-    Citable = carries in-prompt content (a `<quote>` or inline `<body>`) AND a
-    durable retrieval row materializes via `get_search_result`. An un-anchored
-    highlight (no locator) returns None: it stays in the prompt but is not
-    numbered, so no `[N]` ever renders without a backing row.
+    Citable = a body/quote prompt-render resource AND a durable retrieval row
+    materializes via `get_search_result`. Long body resources can still cite:
+    `_render_resource` falls back to the retrieval snippet so attached evidence
+    does not silently become a label-only container.
     """
-    if resource.missing or (resource.quote is None and resource.inline_body is None):
+    if resource.missing:
         return None
     parsed = parse_resource_ref(resource.uri)
     if isinstance(parsed, ResourceRefParseFailure):
+        return None
+    if (
+        resource.quote is None
+        and resource.inline_body is None
+        and resource_prompt_render_policy(parsed) not in ("inline_body", "quote")
+    ):
         return None
     result_type = resource_citation_result_type(parsed)
     if result_type is None:
@@ -638,6 +651,7 @@ def _render_resource(
     *,
     tag: Literal["resource", "subject"] = "resource",
     compact: bool = False,
+    citation: RetrievalCitation | None = None,
 ) -> str:
     uri_attr = xml_escape(resource.uri, {'"': "&quot;"})
     if resource.missing:
@@ -667,7 +681,11 @@ def _render_resource(
             note=quote.note,
         )
         return f"{open_tag}\n{inner}\n</{tag}>"
-    if compact or resource.inline_body is None:
+    if compact:
+        return f"{open_tag}</{tag}>"
+    if resource.inline_body is None:
+        if citation is not None and citation.snippet:
+            return f"{open_tag}\n<excerpt>{xml_escape(citation.snippet)}</excerpt>\n</{tag}>"
         return f"{open_tag}</{tag}>"
     body = xml_escape(resource.inline_body)
     return f"{open_tag}\n<body>{body}</body>\n</{tag}>"

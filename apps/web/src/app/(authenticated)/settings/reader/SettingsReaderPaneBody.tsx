@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { useReaderContext } from "@/lib/reader/ReaderContext";
 import {
   isReaderFocusMode,
@@ -34,6 +35,12 @@ export default function SettingsReaderPaneBody() {
     updateLineHeight,
     updateColumnWidth,
   } = useReaderContext();
+  const [mounted, setMounted] = useState(false);
+  const disabled = !mounted || saving;
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   return (
     <PaneSurface>
@@ -52,7 +59,7 @@ export default function SettingsReaderPaneBody() {
               onChange={(e) => {
                 if (isReaderTheme(e.target.value)) updateTheme(e.target.value);
               }}
-              disabled={saving}
+              disabled={disabled}
             >
               <option value="light">Light</option>
               <option value="dark">Dark</option>
@@ -71,7 +78,7 @@ export default function SettingsReaderPaneBody() {
                   updateFontFamily(e.target.value);
                 }
               }}
-              disabled={saving}
+              disabled={disabled}
             >
               <option value="serif">Serif</option>
               <option value="sans">Sans-serif</option>
@@ -93,7 +100,7 @@ export default function SettingsReaderPaneBody() {
               onChange={(e) =>
                 updateFontSize(Number.parseInt(e.target.value, 10))
               }
-              disabled={saving}
+              disabled={disabled}
               className={styles.range}
             />
           </div>
@@ -114,7 +121,7 @@ export default function SettingsReaderPaneBody() {
               onChange={(e) =>
                 updateLineHeight(Number.parseFloat(e.target.value))
               }
-              disabled={saving}
+              disabled={disabled}
               className={styles.range}
             />
           </div>
@@ -134,7 +141,7 @@ export default function SettingsReaderPaneBody() {
               onChange={(e) =>
                 updateColumnWidth(Number.parseInt(e.target.value, 10))
               }
-              disabled={saving}
+              disabled={disabled}
               className={styles.range}
             />
           </div>
@@ -155,7 +162,7 @@ export default function SettingsReaderPaneBody() {
                   <TabsTrigger
                     key={option.value}
                     value={option.value}
-                    disabled={saving}
+                    disabled={disabled}
                   >
                     {option.label}
                   </TabsTrigger>
@@ -172,7 +179,7 @@ export default function SettingsReaderPaneBody() {
               onCheckedChange={(checked) =>
                 save({ hyphenation: checked ? "auto" : "off" })
               }
-              disabled={saving}
+              disabled={disabled}
               label="Hyphenation on narrow screens"
             />
           </div>

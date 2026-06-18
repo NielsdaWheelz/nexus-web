@@ -58,6 +58,12 @@ export default function SettingsAccountPaneBody() {
   const [displayNameFeedback, setDisplayNameFeedback] =
     useState<FeedbackContent | null>(null);
   const [displayNamePending, startDisplayNameTransition] = useTransition();
+  const [mounted, setMounted] = useState(false);
+  const accountReady = mounted && accountResource.status === "ready";
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     if (accountResource.status === "ready") {
@@ -159,14 +165,18 @@ export default function SettingsAccountPaneBody() {
                 emailDirtyRef.current = true;
                 setEmailInput(event.target.value);
               }}
-              disabled={emailPending}
+              disabled={!accountReady || emailPending}
             />
           </label>
           <Button
             type="submit"
             variant="primary"
             loading={emailPending}
-            disabled={!emailInput.trim() || emailInput.trim().toLowerCase() === currentEmail}
+            disabled={
+              !accountReady ||
+              !emailInput.trim() ||
+              emailInput.trim().toLowerCase() === currentEmail
+            }
           >
             Update email
           </Button>
@@ -192,7 +202,7 @@ export default function SettingsAccountPaneBody() {
                 displayNameDirtyRef.current = true;
                 setDisplayNameInput(event.target.value);
               }}
-              disabled={displayNamePending}
+              disabled={!accountReady || displayNamePending}
             />
           </label>
           <Button
@@ -200,6 +210,7 @@ export default function SettingsAccountPaneBody() {
             variant="primary"
             loading={displayNamePending}
             disabled={
+              !accountReady ||
               !displayNameInput.trim() ||
               displayNameInput.trim() === currentDisplayName
             }

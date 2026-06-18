@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useLayoutEffect, useRef } from "react";
 import { isRecord } from "@/lib/validation";
 
 /**
@@ -24,7 +24,7 @@ export function useHistoryDismiss(active: boolean, onDismiss: () => void): void 
   onDismissRef.current = onDismiss;
   const entryActiveRef = useRef(false);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!active) {
       if (entryActiveRef.current) {
         // Closed via the overlay's own UI — remove the entry we pushed. The

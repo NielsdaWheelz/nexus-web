@@ -23,44 +23,35 @@ DEFAULT_FOCUS_MODE = "off"
 DEFAULT_HYPHENATION = "auto"
 READER_RESUME_STATE_ADAPTER = TypeAdapter(ReaderResumeState)
 _VISIBLE_MEDIA_IDS_CTE_SQL = visible_media_ids_cte_sql().strip()
-_UPSERT_READER_MEDIA_STATE_SQL = text(f"""
+_LOCK_VISIBLE_READER_MEDIA_SQL = text(f"""
 WITH visible_media AS (
     {_VISIBLE_MEDIA_IDS_CTE_SQL}
-),
-upserted AS (
+)
+SELECT md.kind
+FROM media md
+WHERE md.id = :media_id
+  AND EXISTS (
+      SELECT 1 FROM visible_media WHERE media_id = md.id
+  )
+FOR UPDATE
+""")
+_SELECT_READER_MEDIA_STATE_ID_SQL = text("""
+    SELECT id
+    FROM reader_media_state
+    WHERE user_id = :viewer_id AND media_id = :media_id
+""")
+_INSERT_READER_MEDIA_STATE_SQL = text("""
     INSERT INTO reader_media_state (user_id, media_id, locator)
-    SELECT :viewer_id, :media_id, CAST(:locator AS jsonb)
-    WHERE EXISTS (
-        SELECT 1 FROM visible_media WHERE media_id = :media_id
-    )
-    ON CONFLICT (user_id, media_id)
-    DO UPDATE SET
-        locator = EXCLUDED.locator,
-        updated_at = now()
-    RETURNING 1
-)
-SELECT
-    EXISTS (SELECT 1 FROM visible_media WHERE media_id = :media_id) AS visible,
-    EXISTS (SELECT 1 FROM upserted) AS written
+    VALUES (:viewer_id, :media_id, CAST(:locator AS jsonb))
 """).bindparams(bindparam("locator", type_=JSONB))
-
-_CLEAR_READER_MEDIA_STATE_SQL = text(f"""
-WITH visible_media AS (
-    {_VISIBLE_MEDIA_IDS_CTE_SQL}
-),
-updated AS (
+_UPDATE_READER_MEDIA_STATE_SQL = text("""
     UPDATE reader_media_state
-    SET locator = NULL, updated_at = now()
-    WHERE user_id = :viewer_id
-      AND media_id = :media_id
-      AND EXISTS (
-          SELECT 1 FROM visible_media WHERE media_id = :media_id
-      )
-    RETURNING 1
-)
-SELECT
-    EXISTS (SELECT 1 FROM visible_media WHERE media_id = :media_id) AS visible,
-    EXISTS (SELECT 1 FROM updated) AS written
+    SET locator = CAST(:locator AS jsonb), updated_at = now()
+    WHERE id = :state_id
+""").bindparams(bindparam("locator", type_=JSONB))
+_DELETE_READER_MEDIA_STATE_SQL = text("""
+    DELETE FROM reader_media_state
+    WHERE id = :state_id
 """)
 
 
@@ -220,43 +211,46 @@ def put_reader_media_state(
     locator: ReaderResumeState | None,
 ) -> ReaderResumeState | None:
     """Replace per-media reader resume state."""
-    if not can_read_media(db, viewer_id, media_id):
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-
-    media = db.query(Media).filter(Media.id == media_id).first()
-    if media is None:
+    # justify-concurrency: request transactions are READ COMMITTED; locking the
+    # one visible media row serializes reader-state writes for that media and
+    # prevents a concurrent media delete from racing the reader_media_state FK.
+    media_kind = db.execute(
+        _LOCK_VISIBLE_READER_MEDIA_SQL,
+        {"viewer_id": viewer_id, "media_id": media_id},
+    ).scalar_one_or_none()
+    if media_kind is None:
+        db.rollback()
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
 
     if locator is not None:
-        _validate_reader_state_for_media(media.kind, locator)
+        _validate_reader_state_for_media(str(media_kind), locator)
 
     locator_payload = locator.model_dump(mode="json") if locator else None
+    state_id = db.execute(
+        _SELECT_READER_MEDIA_STATE_ID_SQL,
+        {"viewer_id": viewer_id, "media_id": media_id},
+    ).scalar_one_or_none()
 
     if locator_payload is None:
-        result = (
-            db.execute(
-                _CLEAR_READER_MEDIA_STATE_SQL,
-                {"viewer_id": viewer_id, "media_id": media_id},
-            )
-            .mappings()
-            .one()
-        )
-        if not result["visible"]:
-            db.rollback()
-            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+        if state_id is not None:
+            result = db.execute(_DELETE_READER_MEDIA_STATE_SQL, {"state_id": state_id})
+            assert result.rowcount == 1
         db.commit()
         return None
 
-    result = (
+    if state_id is None:
         db.execute(
-            _UPSERT_READER_MEDIA_STATE_SQL,
+            _INSERT_READER_MEDIA_STATE_SQL,
             {"viewer_id": viewer_id, "media_id": media_id, "locator": locator_payload},
         )
-        .mappings()
-        .one()
+        db.commit()
+        return locator
+
+    result = db.execute(
+        _UPDATE_READER_MEDIA_STATE_SQL,
+        {"state_id": state_id, "locator": locator_payload},
     )
-    if not result["visible"]:
-        db.rollback()
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+    assert result.rowcount == 1
+
     db.commit()
     return locator

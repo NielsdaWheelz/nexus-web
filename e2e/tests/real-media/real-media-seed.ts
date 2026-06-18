@@ -57,13 +57,17 @@ export interface RealMediaSearchResult {
   type: string;
   snippet: string;
   source: { media_id: string };
+  activation: {
+    href: string;
+    kind: string;
+    unresolved_reason: string | null;
+  };
   context_ref: {
     type: string;
     id: string;
     evidence_span_ids: string[];
   };
   evidence_span_ids: string[];
-  deep_link: string;
   resolver?: unknown;
 }
 

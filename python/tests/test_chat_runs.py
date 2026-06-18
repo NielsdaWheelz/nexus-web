@@ -18,12 +18,13 @@ from nexus.db.models import (
     ResourceEdge,
     ResourceExternalSnapshot,
 )
-from nexus.errors import ApiError, ApiErrorCode
+from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError
 from nexus.schemas.conversation import NoBranchAnchorRequest, chat_run_event_payload_json
 from nexus.services.billing_entitlements import grant_entitlement_override
 from nexus.services.chat_run_validation import validate_pre_phase
 from nexus.services.chat_runs import (
     _app_search_scopes_from_tool_args,
+    _app_search_tool_output,
     _citation_target_ref,
 )
 from nexus.services.conversation_branches import persist_active_leaf
@@ -2074,7 +2075,7 @@ class TestCitationEdgeWriteThrough:
 
         with direct_db.session() as session:
             run = session.get(ChatRunModel, run_id)
-            _emit_citation_index(session, run)
+            _emit_citation_index(session, run, "Answer [1].")
             session.commit()
 
         with direct_db.session() as session:
@@ -2198,7 +2199,7 @@ class TestCitationEdgeWriteThrough:
                 session, run=run, tool_call_id=tool_call_id, start_ordinal=1
             )
             assert next_ordinal == 1, "Unselected rows must not consume ordinals"
-            _emit_citation_index(session, run)
+            _emit_citation_index(session, run, "Answer.")
             session.commit()
 
         with direct_db.session() as session:
@@ -2226,6 +2227,261 @@ class TestCitationEdgeWriteThrough:
         assert edge_count == 0, "Unselected retrievals must not mint citation edges"
         assert event_count == 0, "No citations → no citation_index / context_ref_added events"
         assert cited_edge_id is None
+
+    def test_citation_index_rejects_missing_assistant_marker(
+        self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
+    ):
+        from nexus.db.models import ChatRun as ChatRunModel
+        from nexus.services.chat_runs import _emit_citation_index, _record_tool_citations
+
+        (
+            user_id,
+            model_id,
+            conversation_id,
+            media_id,
+            chunk_id,
+            user_message_id,
+            assistant_message_id,
+        ) = self._setup_conversation(auth_client, direct_db)
+        run_id = self._create_chat_run_row(
+            direct_db,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            user_message_id=user_message_id,
+            assistant_message_id=assistant_message_id,
+            model_id=model_id,
+        )
+        tool_call_id = self._seed_tool_call_with_chunk_row(
+            direct_db,
+            conversation_id=conversation_id,
+            user_message_id=user_message_id,
+            assistant_message_id=assistant_message_id,
+            media_id=media_id,
+            chunk_id=chunk_id,
+            selected=True,
+        )
+        self._register_cleanups(
+            direct_db,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            media_id=media_id,
+            run_id=run_id,
+            tool_call_id=tool_call_id,
+        )
+
+        with direct_db.session() as session:
+            run = session.get(ChatRunModel, run_id)
+            assert run is not None
+            _record_tool_citations(session, run=run, tool_call_id=tool_call_id, start_ordinal=1)
+            with pytest.raises(InvalidRequestError, match=r"markers=\[\], citations=\[1\]"):
+                _emit_citation_index(session, run, "Answer without marker.")
+            session.rollback()
+
+    def test_citation_index_prunes_uncited_selected_retrieval(
+        self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
+    ):
+        from nexus.db.models import ChatRun as ChatRunModel
+        from nexus.services.chat_runs import _emit_citation_index, _record_tool_citations
+
+        (
+            user_id,
+            model_id,
+            conversation_id,
+            media_id,
+            chunk_id,
+            user_message_id,
+            assistant_message_id,
+        ) = self._setup_conversation(auth_client, direct_db)
+        run_id = self._create_chat_run_row(
+            direct_db,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            user_message_id=user_message_id,
+            assistant_message_id=assistant_message_id,
+            model_id=model_id,
+        )
+        tool_call_id = self._seed_tool_call_with_chunk_row(
+            direct_db,
+            conversation_id=conversation_id,
+            user_message_id=user_message_id,
+            assistant_message_id=assistant_message_id,
+            media_id=media_id,
+            chunk_id=chunk_id,
+            selected=True,
+        )
+        self._register_cleanups(
+            direct_db,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            media_id=media_id,
+            run_id=run_id,
+            tool_call_id=tool_call_id,
+        )
+
+        with direct_db.session() as session:
+            session.execute(
+                text(
+                    """
+                    INSERT INTO message_retrievals (
+                        tool_call_id, ordinal, result_type, source_id, media_id,
+                        scope, context_ref, result_ref, selected, source_title,
+                        section_label, exact_snippet, deep_link, locator
+                    )
+                    SELECT
+                        tool_call_id, 2, result_type, source_id, media_id,
+                        scope, context_ref, result_ref, selected, source_title,
+                        section_label, exact_snippet, deep_link, locator
+                    FROM message_retrievals
+                    WHERE tool_call_id = :tool_call_id AND ordinal = 1
+                    """
+                ),
+                {"tool_call_id": tool_call_id},
+            )
+            run = session.get(ChatRunModel, run_id)
+            assert run is not None
+            assert (
+                _record_tool_citations(session, run=run, tool_call_id=tool_call_id, start_ordinal=1)
+                == 3
+            )
+            _emit_citation_index(session, run, "Answer [1].")
+            session.commit()
+
+        with direct_db.session() as session:
+            edge_ordinals = (
+                session.execute(
+                    text(
+                        "SELECT ordinal FROM resource_edges WHERE source_scheme = 'message' "
+                        "AND source_id = :assistant_message_id AND origin = 'citation' "
+                        "ORDER BY ordinal"
+                    ),
+                    {"assistant_message_id": assistant_message_id},
+                )
+                .scalars()
+                .all()
+            )
+            cited_edge_ids = session.execute(
+                text(
+                    "SELECT ordinal, cited_edge_id FROM message_retrievals "
+                    "WHERE tool_call_id = :tool_call_id ORDER BY ordinal"
+                ),
+                {"tool_call_id": tool_call_id},
+            ).fetchall()
+            citation_payload = session.execute(
+                text(
+                    "SELECT payload FROM chat_run_events WHERE run_id = :run_id "
+                    "AND event_type = 'citation_index'"
+                ),
+                {"run_id": run_id},
+            ).scalar_one()
+
+        assert edge_ordinals == [1]
+        assert cited_edge_ids[0][1] is not None
+        assert cited_edge_ids[1][1] is None
+        assert [item["citation"]["ordinal"] for item in citation_payload["citations"]] == [1]
+
+    def test_selected_uncitable_retrieval_is_unnumbered(
+        self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
+    ):
+        from nexus.db.models import ChatRun as ChatRunModel
+        from nexus.services.chat_runs import _record_tool_citations
+
+        (
+            user_id,
+            model_id,
+            conversation_id,
+            media_id,
+            _chunk_id,
+            user_message_id,
+            assistant_message_id,
+        ) = self._setup_conversation(auth_client, direct_db)
+        run_id = self._create_chat_run_row(
+            direct_db,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            user_message_id=user_message_id,
+            assistant_message_id=assistant_message_id,
+            model_id=model_id,
+        )
+        tool_call_id = self._seed_tool_call_with_chunk_row(
+            direct_db,
+            conversation_id=conversation_id,
+            user_message_id=user_message_id,
+            assistant_message_id=assistant_message_id,
+            media_id=media_id,
+            chunk_id=uuid4(),
+            selected=True,
+        )
+        self._register_cleanups(
+            direct_db,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            media_id=media_id,
+            run_id=run_id,
+            tool_call_id=tool_call_id,
+        )
+
+        with direct_db.session() as session:
+            session.execute(
+                text(
+                    "UPDATE message_retrievals "
+                    "SET result_ref = result_ref - 'citation_target' "
+                    "WHERE tool_call_id = :tool_call_id"
+                ),
+                {"tool_call_id": tool_call_id},
+            )
+            run = session.get(ChatRunModel, run_id)
+            assert run is not None
+            next_ordinal = _record_tool_citations(
+                session, run=run, tool_call_id=tool_call_id, start_ordinal=4
+            )
+            session.commit()
+
+        with direct_db.session() as session:
+            edge_count = session.execute(
+                text(
+                    "SELECT COUNT(*) FROM resource_edges WHERE source_scheme = 'message' "
+                    "AND source_id = :assistant_message_id AND origin = 'citation'"
+                ),
+                {"assistant_message_id": assistant_message_id},
+            ).scalar_one()
+            cited_edge_id = session.execute(
+                text(
+                    "SELECT cited_edge_id FROM message_retrievals "
+                    "WHERE tool_call_id = :tool_call_id"
+                ),
+                {"tool_call_id": tool_call_id},
+            ).scalar_one()
+
+        assert next_ordinal == 4
+        assert edge_count == 0
+        assert cited_edge_id is None
+        payload = json.loads(
+            _app_search_tool_output(
+                SimpleNamespace(
+                    selected_citations=[
+                        SimpleNamespace(
+                            citation_target=None,
+                            title="Uncitable row",
+                            snippet="Still visible",
+                            result_type="conversation",
+                            source_label=None,
+                        )
+                    ],
+                    citations=[],
+                    status="complete",
+                    error_code=None,
+                ),
+                4,
+            )
+        )
+        assert payload["results"] == [
+            {
+                "title": "Uncitable row",
+                "snippet": "Still visible",
+                "kind": "conversation",
+                "source_label": None,
+            }
+        ]
 
     def test_emit_citation_index_streams_note_block_locator(
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
@@ -2300,7 +2556,7 @@ class TestCitationEdgeWriteThrough:
         with direct_db.session() as session:
             run = session.get(ChatRunModel, run_id)
             assert run is not None, "Test setup must persist the chat run row"
-            _emit_citation_index(session, run)
+            _emit_citation_index(session, run, "Answer [1].")
             session.commit()
 
         with direct_db.session() as session:
@@ -2424,7 +2680,7 @@ class TestCitationEdgeWriteThrough:
                 session, run=run, tool_call_id=tool_call_id, start_ordinal=1
             )
             assert next_ordinal == 2, "Only the selected web result consumes an ordinal"
-            _emit_citation_index(session, run)
+            _emit_citation_index(session, run, "Web answer [1].")
             session.commit()
 
         with direct_db.session() as session:

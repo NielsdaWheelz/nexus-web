@@ -110,6 +110,17 @@ def validate_generated_markdown_citations(
 ) -> None:
     """Validate generated prose markers against the citation-edge input set."""
     citation_ordinals = _dense_citation_ordinals(citations)
+    marker_ordinals = generated_markdown_citation_ordinals(content_md)
+    if marker_ordinals != citation_ordinals:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Generated markdown citation markers must match citation ordinals exactly; "
+            f"markers={marker_ordinals}, citations={citation_ordinals}",
+        )
+
+
+def generated_markdown_citation_ordinals(content_md: str) -> list[int]:
+    """Return plain generated citation markers; reject linked marker syntax."""
     linked_marker_ordinals = sorted(
         {int(match.group(1)) for match in _MARKDOWN_LINKED_CITATION_MARKER_RE.finditer(content_md)}
     )
@@ -119,15 +130,9 @@ def validate_generated_markdown_citations(
             "Generated markdown citation markers must be plain [N] markers, not links; "
             f"linked_markers={linked_marker_ordinals}",
         )
-    marker_ordinals = sorted(
+    return sorted(
         {int(match.group(1)) for match in _MARKDOWN_CITATION_MARKER_RE.finditer(content_md)}
     )
-    if marker_ordinals != citation_ordinals:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            "Generated markdown citation markers must match citation ordinals exactly; "
-            f"markers={marker_ordinals}, citations={citation_ordinals}",
-        )
 
 
 def build_citation_outs(db: Session, *, viewer_id: UUID, source: ResourceRef) -> list[CitationOut]:

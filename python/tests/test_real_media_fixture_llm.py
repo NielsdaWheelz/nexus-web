@@ -115,6 +115,30 @@ async def test_real_media_fixture_llm_cites_tool_result() -> None:
     assert chunks[1].done is True
 
 
+async def test_real_media_fixture_llm_cites_numbered_prompt_resource() -> None:
+    chunks = await _chunks(
+        _request(
+            ModelMessage(
+                role="system",
+                content='<resources><resource uri="content_chunk:1" n="1">text</resource></resources>',
+            ),
+            ModelMessage(role="user", content="What does this source say about SOFIA?"),
+            ModelMessage(
+                role="tool",
+                tool_results=(
+                    ToolResult(
+                        call_id="real-media-fixture-app-search",
+                        output='{"results":[],"total_candidates":0,"status":"empty"}',
+                    ),
+                ),
+            ),
+        )
+    )
+
+    assert chunks[0].delta_text == REAL_MEDIA_FIXTURE_RESPONSE_WITH_CITATION
+    assert chunks[1].done is True
+
+
 async def test_real_media_fixture_llm_does_not_cite_empty_tool_result() -> None:
     chunks = await _chunks(
         _request(
