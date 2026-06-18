@@ -2,7 +2,10 @@
 
 ## Scope
 
-This document covers repository-wide code organization, imports, and module boundary rules.
+Nexus-web repository structure, module ownership, and import specifics. This
+complements the shared, language-agnostic rules in
+[../rules/codebase.md](../rules/codebase.md), which owns the generic
+technology-ownership, import, and module-boundary model.
 
 ## Structure
 
@@ -53,5 +56,4 @@ This document covers repository-wide code organization, imports, and module boun
   stays server-side.
 - Password identities are managed via Supabase Auth's `auth.identities` table;
   the application stores no password material. Password-auth Server Actions
-  live in `apps/web/src/lib/auth/password-actions.ts`. See
-  `docs/password-auth.md`.
+  live in `apps/web/src/lib/auth/password-actions.ts`.
