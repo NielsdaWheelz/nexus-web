@@ -248,8 +248,14 @@ Anchor rules:
 - A failed anchor makes the corpus not ready.
 - Text-quote resolution is exact-first against normalized active ready chunks, then
   bounded token-window matching for small source-edition spelling/punctuation
-  variants. It is not a fallback source search: wrong books, version pages,
+  variants, line-number/note insertions, and small public-domain edition word
+  drift. It is not a fallback source search: wrong books, version pages,
   disambiguation pages, and TOC-only extractions remain hard readiness failures.
+- Wikisource proofread pages are extracted through the shared web article
+  boundary from the source DOM body (`.mw-parser-output > .prp-pages-output`)
+  before generic Readability scoring. Oracle does not own a private Wikisource
+  scraper; when production must hard-cut over already-ready bad media, the
+  manifest pins a revision URL as a source replacement.
 - Anchor text may appear in selectors as a quote for resolution, but embeddings and retrieval never use anchor-owned vectors.
 
 ### 7.4 Plates

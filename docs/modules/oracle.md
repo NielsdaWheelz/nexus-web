@@ -36,10 +36,19 @@ other media. Two small Oracle-owned tables sit above that substrate:
   against the mapped media. Resolution is source-local and exact-first: it
   matches normalized text-quote prefixes against active ready chunks, then uses a
   bounded token-window match for small source-edition spelling/punctuation
-  variants. Edition line breaks, quote/dash style, and minor public-domain
-  spelling differences do not make otherwise identical passages unavailable, but
-  a selector still fails closed if the mapped media is a version page,
+  variants. The fallback tolerates line-number/note tokens and small word-level
+  insertions where the quote still matches the same passage in the same mapped
+  media. Edition line breaks, quote/dash style, and minor public-domain spelling
+  differences do not make otherwise identical passages unavailable, but a
+  selector still fails closed if the mapped media is a version page,
   table-of-contents-only extraction, or the wrong book.
+
+Some Wikisource works use proofread-page HTML where the poem body and reference
+sections share similar page wrappers. The shared web article extractor recognizes
+the proofread-page body shape and extracts the `.prp-pages-output` body before
+Readability can prefer notes. Corpus entries may pin a Wikisource revision URL as
+`source_download_url` when deterministic re-ingest is required; the user-facing
+`source_url` remains the canonical readable page.
 
 Corpus **readiness** is derived state, not a stored flag:
 `get_oracle_corpus_readiness` reports the library id, work/ready-media counts,

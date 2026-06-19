@@ -911,6 +911,90 @@ def test_resolve_oracle_passage_anchors_allows_small_source_token_variants(
     assert anchor.current_content_chunk_id is not None
 
 
+def test_resolve_oracle_passage_anchors_allows_line_numbered_source_chunks(
+    db_session: Session,
+    oracle_schema,
+) -> None:
+    user_id = uuid4()
+    work_key = f"line-numbered-anchor-{uuid4().hex[:8]}"
+    db_session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
+    library_id = oracle_corpus.ensure_oracle_corpus_library(db_session, owner_user_id=user_id)
+    _seed_corpus_work(
+        db_session,
+        viewer_id=user_id,
+        library_id=library_id,
+        work_key=work_key,
+        passage_text=(
+            "And on the pedestal these words appear:[1] "
+            "'My name is Ozymandias, king of kings: 10 "
+            "Look on my works, ye Mighty, and despair!'"
+        ),
+        display_order=10,
+    )
+    anchor = db_session.execute(
+        select(OraclePassageAnchor)
+        .join(OracleCorpusSource, OracleCorpusSource.id == OraclePassageAnchor.corpus_source_id)
+        .where(OracleCorpusSource.work_key == work_key)
+    ).scalar_one()
+    anchor.selector = {
+        "kind": "text_quote",
+        "exact": (
+            "And on the pedestal, these words appear:\n"
+            "My name is Ozymandias, King of Kings;\n"
+            "Look on my Works, ye Mighty, and despair!"
+        ),
+    }
+    db_session.flush()
+
+    resolution = oracle_corpus.resolve_oracle_passage_anchors(db_session)
+
+    assert resolution.failed == 0
+    assert anchor.resolution_status == "resolved"
+    assert anchor.current_content_chunk_id is not None
+
+
+def test_resolve_oracle_passage_anchors_allows_edition_word_insertions(
+    db_session: Session,
+    oracle_schema,
+) -> None:
+    user_id = uuid4()
+    work_key = f"edition-insertion-anchor-{uuid4().hex[:8]}"
+    db_session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
+    library_id = oracle_corpus.ensure_oracle_corpus_library(db_session, owner_user_id=user_id)
+    _seed_corpus_work(
+        db_session,
+        viewer_id=user_id,
+        library_id=library_id,
+        work_key=work_key,
+        passage_text=(
+            "There's a certain slant of light, On winter afternoons, "
+            "That oppresses, like the weight Of cathedral tunes."
+        ),
+        display_order=10,
+    )
+    anchor = db_session.execute(
+        select(OraclePassageAnchor)
+        .join(OracleCorpusSource, OracleCorpusSource.id == OraclePassageAnchor.corpus_source_id)
+        .where(OracleCorpusSource.work_key == work_key)
+    ).scalar_one()
+    anchor.selector = {
+        "kind": "text_quote",
+        "exact": (
+            "There's a certain Slant of light,\n"
+            "Winter Afternoons-\n"
+            "That oppresses, like the Heft\n"
+            "Of Cathedral Tunes-"
+        ),
+    }
+    db_session.flush()
+
+    resolution = oracle_corpus.resolve_oracle_passage_anchors(db_session)
+
+    assert resolution.failed == 0
+    assert anchor.resolution_status == "resolved"
+    assert anchor.current_content_chunk_id is not None
+
+
 def test_resolve_oracle_passage_anchors_rejects_title_only_chunk(
     db_session: Session,
     oracle_schema,

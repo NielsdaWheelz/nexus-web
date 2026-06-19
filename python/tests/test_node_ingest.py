@@ -330,6 +330,58 @@ class TestNodeIngestReadability:
         assert 'class="marginnote"' in result.content_html
         assert 'class="marginnote"' in result.source_html
 
+    def test_wikisource_proofread_pages_extract_body_before_references(self, httpserver):
+        html = """\
+        <!DOCTYPE html>
+        <html>
+        <head><meta charset="utf-8"><title>Darkness - Wikisource</title></head>
+        <body>
+          <h1 id="firstHeading">The Works of Lord Byron/Poetry/Darkness</h1>
+          <div class="mw-parser-output">
+            <div class="ws-noexport">navigation chrome</div>
+            <div class="prp-pages-output" lang="en">
+              <p><span style="font-size:120%;">DARKNESS.<sup class="reference">[1]</sup></span></p>
+              <p><span class="smallcaps">I had</span> a dream, which was not all a dream.<br>
+              The bright sun was extinguished, and the stars<br>
+              Did wander darkling in the eternal space,<br>
+              Rayless, and pathless, and the icy Earth<br>
+              Swung blind and blackening in the moonless air;<br>
+              Morn came and went-and came, and brought no day,<br>
+              And men forgot their passions in the dread<br>
+              Of this their desolation; and all hearts<br>
+              Were chilled into a selfish prayer for light:<br>
+              And they did live by watchfires-and the thrones,<span class="wst-pline">10</span><br>
+              The palaces of crowned kings-the huts,<br>
+              The habitations of all things which dwell,<br>
+              Were burnt for beacons; cities were consumed.</p>
+            </div>
+            <div class="prp-pages-output">
+              <div class="reflist">
+                <ol class="references">
+                  <li id="cite_note-1">Sir Walter Scott did not take kindly to Darkness.</li>
+                </ol>
+              </div>
+            </div>
+          </div>
+        </body>
+        </html>
+        """
+        httpserver.expect_request("/wikisource-darkness").respond_with_data(
+            html,
+            content_type="text/html; charset=utf-8",
+        )
+        url = httpserver.url_for("/wikisource-darkness")
+
+        result = run_node_ingest(url)
+
+        assert isinstance(result, IngestResult), (
+            f"Expected IngestResult, got {type(result).__name__}: "
+            f"{result.message if isinstance(result, IngestError) else result}"
+        )
+        assert "I had" in result.content_html
+        assert "Morn came" in result.content_html
+        assert "Sir Walter Scott" not in result.content_html
+
     def test_readability_extracts_metadata(self, httpserver):
         httpserver.expect_request("/meta").respond_with_data(
             METADATA_HTML,

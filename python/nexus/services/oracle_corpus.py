@@ -48,6 +48,15 @@ _ANCHOR_NEEDLE_CHARS = 80
 _ANCHOR_TOKEN_PREFIX_TOKENS = 18
 _ANCHOR_MIN_TOKEN_WINDOW_TOKENS = 6
 _ANCHOR_TOKEN_WINDOW_MATCH_RATIO = 0.78
+_ANCHOR_TOKEN_WINDOW_EXTRA_TOKENS = 4
+_ANCHOR_TOKEN_WINDOW_MISSING_TOKENS = 2
+_ANCHOR_TOKEN_ALIASES = {
+    "thro": "through",
+    "tho": "though",
+    "neer": "never",
+    "oer": "over",
+    "eer": "ever",
+}
 
 
 @dataclass(frozen=True)
@@ -548,19 +557,19 @@ def _anchor_needle(selector: dict[str, object]) -> AnchorNeedle | None:
 
 
 def _normalize_anchor_match_text(value: str) -> str:
-    value = (
-        value.replace("\u2018", "'")
-        .replace("\u2019", "'")
-        .replace("\u201c", '"')
-        .replace("\u201d", '"')
-        .replace("\u2013", "-")
-        .replace("\u2014", "-")
-    )
+    value = _normalize_anchor_source_text(value)
     value = unicodedata.normalize("NFKD", value).lower()
     return re.sub(r"[^a-z0-9]+", "", value)
 
 
 def _anchor_match_tokens(value: str) -> list[str]:
+    value = _normalize_anchor_source_text(value)
+    value = unicodedata.normalize("NFKD", value).lower()
+    tokens = re.findall(r"[a-z0-9]+", value)
+    return [_ANCHOR_TOKEN_ALIASES.get(token, token) for token in tokens if not token.isdigit()]
+
+
+def _normalize_anchor_source_text(value: str) -> str:
     value = (
         value.replace("\u2018", "'")
         .replace("\u2019", "'")
@@ -569,8 +578,12 @@ def _anchor_match_tokens(value: str) -> list[str]:
         .replace("\u2013", "-")
         .replace("\u2014", "-")
     )
-    value = unicodedata.normalize("NFKD", value).lower()
-    return re.findall(r"[a-z0-9]+", value)
+    value = re.sub(r"\bthro'\b", "through", value, flags=re.IGNORECASE)
+    value = re.sub(r"\btho'\b", "though", value, flags=re.IGNORECASE)
+    value = re.sub(r"\bne'er\b", "never", value, flags=re.IGNORECASE)
+    value = re.sub(r"\bo'er\b", "over", value, flags=re.IGNORECASE)
+    value = re.sub(r"\be'er\b", "ever", value, flags=re.IGNORECASE)
+    return re.sub(r"\b([a-zA-Z]+)'d\b", r"\1ed", value)
 
 
 def _anchor_token_window_matches(
@@ -581,24 +594,45 @@ def _anchor_token_window_matches(
         or len(chunk_tokens) < _ANCHOR_MIN_TOKEN_WINDOW_TOKENS
     ):
         return False
-    window_size = min(len(selector_tokens), _ANCHOR_TOKEN_PREFIX_TOKENS)
-    selector_window = selector_tokens[:window_size]
-    if len(chunk_tokens) < window_size:
+    selector_window_size = min(len(selector_tokens), _ANCHOR_TOKEN_PREFIX_TOKENS)
+    selector_window = selector_tokens[:selector_window_size]
+    if len(chunk_tokens) < _ANCHOR_MIN_TOKEN_WINDOW_TOKENS:
         return False
-    min_matches = max(
+    min_match_count = max(
         _ANCHOR_MIN_TOKEN_WINDOW_TOKENS,
-        int(window_size * _ANCHOR_TOKEN_WINDOW_MATCH_RATIO + 0.999),
+        int(selector_window_size * _ANCHOR_TOKEN_WINDOW_MATCH_RATIO + 0.999),
     )
-    for start in range(0, len(chunk_tokens) - window_size + 1):
-        matches = sum(
-            1
-            for expected, actual in zip(
-                selector_window,
-                chunk_tokens[start : start + window_size],
-                strict=True,
-            )
-            if expected == actual
-        )
-        if matches >= min_matches:
-            return True
+    min_window_size = max(
+        _ANCHOR_MIN_TOKEN_WINDOW_TOKENS,
+        selector_window_size - _ANCHOR_TOKEN_WINDOW_MISSING_TOKENS,
+    )
+    max_window_size = min(
+        len(chunk_tokens),
+        selector_window_size + _ANCHOR_TOKEN_WINDOW_EXTRA_TOKENS,
+    )
+    for start in range(0, len(chunk_tokens) - min_window_size + 1):
+        for window_size in range(min_window_size, max_window_size + 1):
+            if start + window_size > len(chunk_tokens):
+                break
+            chunk_window = chunk_tokens[start : start + window_size]
+            matches = _anchor_token_lcs_length(selector_window, chunk_window)
+            match_ratio = matches / max(selector_window_size, window_size)
+            if matches >= min_match_count and match_ratio >= _ANCHOR_TOKEN_WINDOW_MATCH_RATIO:
+                return True
     return False
+
+
+def _anchor_token_lcs_length(
+    selector_tokens: tuple[str, ...], chunk_tokens: tuple[str, ...]
+) -> int:
+    previous = [0] * (len(chunk_tokens) + 1)
+    for selector_token in selector_tokens:
+        current = [0]
+        for index, chunk_token in enumerate(chunk_tokens, start=1):
+            current.append(
+                previous[index - 1] + 1
+                if selector_token == chunk_token
+                else max(previous[index], current[index - 1])
+            )
+        previous = current
+    return previous[-1]

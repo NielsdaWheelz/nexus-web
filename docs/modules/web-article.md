@@ -19,6 +19,11 @@ by provenance.
   preparation.
 - `web_article_indexing.py`: content-index rebuild and failure marking for web
   article fragments.
+- `node/ingest/ingest.mjs`: generic web fetch and extraction. Mozilla
+  Readability is the default extractor, with a source-shape-specific
+  pre-extraction for Wikisource proofread pages (`.mw-parser-output >
+  .prp-pages-output`) so page-body text wins over reference sections before the
+  normal Python sanitization/indexing path consumes it.
 
 Routes stay transport-only. X URLs fail closed through `x_ingest.py`; they do
 not fall back to generic web article capture or oEmbed. X author-thread media

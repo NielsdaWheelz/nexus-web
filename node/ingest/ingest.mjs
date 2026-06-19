@@ -174,6 +174,54 @@ function decodeBody(bytes, contentType) {
     return new TextDecoder('utf-8', { fatal: false }).decode(bytes);
 }
 
+function extractWikisourceArticle(document) {
+    const contentRoot = document.querySelector('.mw-parser-output');
+    if (!contentRoot) return null;
+
+    const body = contentRoot.querySelector(':scope > .prp-pages-output:not(.reflist)')
+        || contentRoot.querySelector(':scope > .prp-pages-output');
+    if (!body) return null;
+
+    const clone = body.cloneNode(true);
+    for (const selector of [
+        '.reference',
+        '.references',
+        '.reflist',
+        '.ws-noexport',
+        '.noprint',
+        '.pagenum',
+        'style',
+        'script',
+    ]) {
+        for (const element of clone.querySelectorAll(selector)) {
+            element.remove();
+        }
+    }
+
+    const text = (clone.textContent || '').replace(/\s+/g, ' ').trim();
+    if (text.length < 200) return null;
+
+    const title = document.querySelector('#firstHeading')?.textContent?.trim()
+        || document.title
+        || '';
+    return {
+        title,
+        content: `<article>${clone.innerHTML}</article>`,
+        byline: '',
+        excerpt: '',
+        siteName: 'Wikisource',
+        publishedTime: '',
+    };
+}
+
+function extractArticle(document) {
+    const wikisourceArticle = extractWikisourceArticle(document);
+    if (wikisourceArticle) return wikisourceArticle;
+
+    const reader = new Readability(document, { keepClasses: true });
+    return reader.parse();
+}
+
 /**
  * Read response body with a bounded in-memory budget.
  */
@@ -269,10 +317,10 @@ async function ingest(url, timeoutMs) {
     const bytes = await readResponseBytes(response);
     const fullHtml = decodeBody(bytes, contentType);
 
-    // Extract article with jsdom + Readability
+    // Extract article with jsdom + Readability, plus source-aware handling for
+    // Wikisource proofread pages whose poem/body text can score below notes.
     const dom = new JSDOM(fullHtml, { url: finalUrl });
-    const reader = new Readability(dom.window.document, { keepClasses: true });
-    const article = reader.parse();
+    const article = extractArticle(dom.window.document);
 
     if (!article || !article.content) {
         throw new IngestError(EXIT_READABILITY_FAILED, 'Readability could not extract article content');
