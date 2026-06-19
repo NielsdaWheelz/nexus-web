@@ -19,6 +19,7 @@ from nexus.storage.paths import (
     PLATE_CONTENT_TYPE_TO_EXT,
     build_epub_asset_storage_path,
     build_oracle_plate_storage_path,
+    build_source_artifact_storage_path,
     build_storage_path,
     build_upload_staging_storage_path,
     ext_for_content_type,
@@ -124,6 +125,31 @@ class TestPathBuilding:
 
         assert path == f"media/{media_id}/original.pdf"
 
+    @pytest.mark.parametrize(
+        "ext",
+        ["", ".pdf", "pdf/evil", "pdf\\evil", "tar.gz", "PDF", "pdf "],
+    )
+    def test_build_storage_path_rejects_unsafe_ext(self, ext: str):
+        with pytest.raises(ValueError, match="bare file extension"):
+            build_storage_path(uuid4(), ext)
+
+    def test_build_source_artifact_storage_path(self):
+        media_id = uuid4()
+        attempt_id = uuid4()
+
+        assert (
+            build_source_artifact_storage_path(media_id, attempt_id, "html")
+            == f"media/{media_id}/source/{attempt_id}.html"
+        )
+
+    @pytest.mark.parametrize(
+        "ext",
+        ["", ".html", "html/evil", "html\\evil", "tar.gz", "HTML", "html "],
+    )
+    def test_build_source_artifact_storage_path_rejects_unsafe_ext(self, ext: str):
+        with pytest.raises(ValueError, match="bare file extension"):
+            build_source_artifact_storage_path(uuid4(), uuid4(), ext)
+
     def test_build_upload_staging_storage_path(self):
         media_id = uuid4()
 
@@ -131,6 +157,14 @@ class TestPathBuilding:
             build_upload_staging_storage_path(media_id, "pdf")
             == f"uploads/media/{media_id}/original.pdf"
         )
+
+    @pytest.mark.parametrize(
+        "ext",
+        ["", ".pdf", "pdf/evil", "pdf\\evil", "tar.gz", "PDF", "pdf "],
+    )
+    def test_build_upload_staging_storage_path_rejects_unsafe_ext(self, ext: str):
+        with pytest.raises(ValueError, match="bare file extension"):
+            build_upload_staging_storage_path(uuid4(), ext)
 
     def test_build_epub_asset_storage_path(self):
         media_id = uuid4()
@@ -164,6 +198,14 @@ class TestPathBuilding:
     def test_build_oracle_plate_storage_path_rejects_unsupported_ext(self):
         with pytest.raises(ValueError, match="jpg|png|webp"):
             build_oracle_plate_storage_path("seed-plate", "gif")
+
+    @pytest.mark.parametrize(
+        "ext",
+        ["", ".jpg", "jpg/evil", "jpg\\evil", "jpg.png", "JPG", "jpg "],
+    )
+    def test_build_oracle_plate_storage_path_rejects_unsafe_ext(self, ext: str):
+        with pytest.raises(ValueError, match="bare file extension"):
+            build_oracle_plate_storage_path("seed-plate", ext)
 
     @pytest.mark.parametrize(
         ("content_type", "ext"),

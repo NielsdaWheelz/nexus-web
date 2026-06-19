@@ -19,6 +19,7 @@ from sqlalchemy import text
 
 from nexus.db.session import create_session_factory
 from nexus.storage.client import StorageClientBase, get_storage_client
+from nexus.storage.paths import build_oracle_plate_storage_path, ext_for_content_type
 
 
 @dataclass(frozen=True)
@@ -34,12 +35,10 @@ class PlateRepairRow:
 def _stable_plate_key(*, image_id: UUID, work_title: str, content_type: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", work_title.lower()).strip("-") or "plate"
     slug = slug[:96]
-    extension = {
-        "image/jpeg": ".jpg",
-        "image/png": ".png",
-        "image/webp": ".webp",
-    }.get(content_type, ".webp")
-    return f"oracle/plates/{slug}-{str(image_id)[:8]}{extension}"
+    return build_oracle_plate_storage_path(
+        f"{slug}-{str(image_id)[:8]}",
+        ext_for_content_type(content_type),
+    )
 
 
 def _load_rows() -> list[PlateRepairRow]:

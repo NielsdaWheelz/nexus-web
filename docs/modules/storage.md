@@ -9,12 +9,15 @@ does not authorize access and must not encode user identity.
 |---|---|---|---|
 | Original PDF/EPUB uploads | `media_file` | `media/{media_id}/original.{pdf|epub}` | viewer-authenticated media/file services |
 | Direct-upload staging | transient upload flow | `uploads/media/{media_id}/original.{pdf|epub}` | private upload lifecycle only |
+| Media source artifacts | `media_source_attempts.source_payload` | `media/{media_id}/source/{attempt_id}.{html|tar}` | private source lifecycle only |
 | Extracted EPUB resources | `epub_resources` | `media/{media_id}/assets/{asset_key}` | viewer-authenticated EPUB asset route |
 | Oracle plates | `oracle_plates` | `oracle/plates/{slug}.{jpg|png|webp}` | public owned-asset route, internal-header protected |
 
 All storage path construction goes through `python/nexus/storage/paths.py`.
-Storage keys are owner IDs or stable source keys, not content hashes. Object
-reads enforce DB-owned byte-size metadata at read time.
+Extension-taking builders accept only bare extensions: no leading dot, dot,
+slash, backslash, or empty value. Storage keys are owner IDs or stable source
+keys, not content hashes. Object reads enforce DB-owned byte-size metadata at
+read time.
 
 Oracle plates remain a public owned-asset lane (`oracle/plates/...`) holding plate
 image metadata only — no embeddings. The Oracle public-domain corpus is ordinary

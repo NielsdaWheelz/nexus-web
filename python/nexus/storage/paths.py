@@ -14,11 +14,21 @@ Path Invariants:
 Rules:
     - No leading slash
     - No user identifiers in paths
+    - Extension parameters are bare extensions: no dot, slash, backslash, or empty value
     - Storage paths are independent of test environment state
 """
 
 import re
 from uuid import UUID
+
+_BARE_STORAGE_EXTENSION_RE = re.compile(r"[a-z0-9][a-z0-9_-]*")
+
+
+def _require_bare_storage_extension(ext: str) -> str:
+    """Validate a storage-path extension parameter and return it unchanged."""
+    if not _BARE_STORAGE_EXTENSION_RE.fullmatch(ext):
+        raise ValueError("Storage extension must be a bare file extension.")
+    return ext
 
 
 def get_file_extension(kind: str) -> str:
@@ -58,6 +68,7 @@ def build_storage_path(media_id: UUID | str, ext: str) -> str:
         >>> build_storage_path(uuid4(), "pdf")
         'media/abc123.../original.pdf'
     """
+    ext = _require_bare_storage_extension(ext)
     return f"media/{media_id}/original.{ext}"
 
 
@@ -67,13 +78,13 @@ def build_source_artifact_storage_path(
     ext: str,
 ) -> str:
     """Build the private path for a durable source artifact captured at accept time."""
-    if not ext or ext.startswith(".") or "/" in ext:
-        raise ValueError("Source artifact extension must be a bare file extension.")
+    ext = _require_bare_storage_extension(ext)
     return f"media/{media_id}/source/{attempt_id}.{ext}"
 
 
 def build_upload_staging_storage_path(media_id: UUID | str, ext: str) -> str:
     """Build the private staging path used only by direct browser uploads."""
+    ext = _require_bare_storage_extension(ext)
     return f"uploads/media/{media_id}/original.{ext}"
 
 
@@ -105,6 +116,7 @@ def build_oracle_plate_storage_path(slug: str, ext: str) -> str:
         raise ValueError(
             "oracle plate slug must be lowercase letters, numbers, dots, underscores, or hyphens"
         )
+    ext = _require_bare_storage_extension(ext)
     if ext not in set(PLATE_CONTENT_TYPE_TO_EXT.values()):
         raise ValueError("oracle plate ext must be jpg|png|webp")
     return f"oracle/plates/{slug}.{ext}"
