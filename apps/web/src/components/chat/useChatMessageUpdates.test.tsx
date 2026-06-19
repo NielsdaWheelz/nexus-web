@@ -172,6 +172,48 @@ function foldedRows(): string[] {
   );
 }
 
+function ToolDeltaHarness() {
+  const [messages, setMessages] = useState<ConversationMessage[]>([
+    {
+      ...assistantMessage(),
+      message_document: { type: "message_document", blocks: [] },
+    },
+  ]);
+  const { handleToolCallDelta } = useChatMessageUpdates({ setMessages });
+  const tool = messages[0].trust_trail?.tool_calls[0];
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() =>
+          handleToolCallDelta(ASSISTANT_ID, {
+            assistant_message_id: ASSISTANT_ID,
+            tool_name: "app_search",
+            tool_call_index: 1,
+            provider_tool_call_id: "provider-tool-1",
+            input_delta: "{\"query\":\"ne",
+            input_preview: "{\"query\":\"nexus\"}",
+            provider_event_seq_start: 4,
+            provider_event_seq_end: 4,
+          })
+        }
+      >
+        Fold tool delta
+      </button>
+      <output aria-label="tool preview">
+        {tool
+          ? [
+              tool.tool_name,
+              tool.tool_call_index,
+              tool.status,
+              tool.input_preview ?? "",
+            ].join(":")
+          : ""}
+      </output>
+    </div>
+  );
+}
+
 describe("useChatMessageUpdates citation_index fold", () => {
   it("folds a citation_index event into chips with backend-built citations", async () => {
     const user = userEvent.setup();
@@ -228,5 +270,18 @@ describe("useChatMessageUpdates citation_index fold", () => {
     expect(foldedRows()).toEqual([
       `1:supports:note_block:${NOTE_BLOCK_ID}:none:note_block_offsets`,
     ]);
+  });
+});
+
+describe("useChatMessageUpdates tool-call fold", () => {
+  it("folds tool_call_delta into live tool state", async () => {
+    const user = userEvent.setup();
+    render(<ToolDeltaHarness />);
+
+    await user.click(screen.getByRole("button", { name: "Fold tool delta" }));
+
+    expect(screen.getByLabelText("tool preview")).toHaveTextContent(
+      "app_search:1:running:{\"query\":\"nexus\"}",
+    );
   });
 });

@@ -130,6 +130,8 @@ interface UseConversation {
   // send pipeline (passed straight into <ChatComposer/>)
   resolveConversation: () => Promise<string>;
   onChatRunCreated: (data: ChatRunResponse["data"]) => void;
+  activeRunId: string | null;
+  cancelActiveRun: () => Promise<void>;
 
   // retry
   retryingAssistantMessageIds: StringIdSet;
@@ -238,7 +240,7 @@ export function useConversation(
     [],
   );
 
-  const { tailChatRun, abortAll } = useChatRunTail(
+  const { activeRunId, tailChatRun, abortAll, cancelRun } = useChatRunTail(
     branching
       ? {
           setMessages,
@@ -260,6 +262,10 @@ export function useConversation(
   useEffect(() => {
     tailChatRunRef.current = tailChatRun;
   }, [tailChatRun]);
+
+  const cancelActiveRun = useCallback(async () => {
+    await cancelRun(activeRunId);
+  }, [activeRunId, cancelRun]);
 
   // --------------------------------------------------------------------------
   // Branching: active-runs resumption + tree application
@@ -883,6 +889,8 @@ export function useConversation(
     title,
     resolveConversation,
     onChatRunCreated,
+    activeRunId,
+    cancelActiveRun,
     retryingAssistantMessageIds,
     retryAssistantResponse,
     branch,

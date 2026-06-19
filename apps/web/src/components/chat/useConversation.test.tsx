@@ -14,6 +14,7 @@ import type {
 const tailMocks = vi.hoisted(() => ({
   tailChatRun: vi.fn(),
   abortAll: vi.fn(),
+  cancelRun: vi.fn(),
   useChatRunTail: vi.fn(),
 }));
 
@@ -212,6 +213,16 @@ function chatRunData(): ChatRunResponse["data"] {
     conversation: conversationSummary,
     user_message: message("user-new", 1, "user", "Hello there"),
     assistant_message: message("assistant-new", 2, "assistant", "", "user-new", "pending"),
+    stream_state: {
+      status: "running",
+      last_event_seq: 0,
+      folded_event_seq: 0,
+      assistant_current_text: "",
+      tool_calls: [],
+      activity: null,
+      reconnectable: true,
+      terminal: false,
+    },
   };
 }
 
@@ -262,10 +273,12 @@ describe("useConversation", () => {
   beforeEach(() => {
     tailMocks.tailChatRun.mockReset();
     tailMocks.abortAll.mockReset();
+    tailMocks.cancelRun.mockReset();
     tailMocks.useChatRunTail.mockReset();
     tailMocks.useChatRunTail.mockReturnValue({
       tailChatRun: tailMocks.tailChatRun,
       abortAll: tailMocks.abortAll,
+      cancelRun: tailMocks.cancelRun,
       activeRunId: null,
     });
   });
@@ -544,6 +557,7 @@ describe("useConversation", () => {
     tailMocks.useChatRunTail.mockImplementation(() => ({
       tailChatRun: vi.fn(),
       abortAll: tailMocks.abortAll,
+      cancelRun: tailMocks.cancelRun,
       activeRunId: null,
     }));
     const fetchMock = stubFetch((input, init) => {

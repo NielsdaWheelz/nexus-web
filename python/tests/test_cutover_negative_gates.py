@@ -645,6 +645,11 @@ def test_provider_runtime_router_import_absent_from_app_code():
     assert not hits, f"provider_runtime.router import path present in app code:\n{_fmt(hits)}"
 
 
+def test_modelchunk_absent_from_nexus_runtime_edges():
+    hits = _filtered(r"\bModelChunk\b", _PY_ROOT, _WEB_ROOT, exclude=_FRONTEND_TEST)
+    assert not hits, f"legacy provider-runtime ModelChunk in app code:\n{_fmt(hits)}"
+
+
 def test_nexus_owned_llm_request_lowering_absent():
     lowering_path = _PY_ROOT / "services" / "llm_request_lowering.py"
     assert not lowering_path.exists(), f"{lowering_path} must not exist"
@@ -736,6 +741,59 @@ def test_raw_model_runtime_calls_stay_inside_ledger_or_explicit_exceptions():
         "services/user_keys.py",
     )
     assert not hits, f"raw ModelRuntime generate/stream call outside ledger owners:\n{_fmt(hits)}"
+
+
+def test_chat_stream_legacy_event_literals_absent_from_chat_owners():
+    roots = (
+        _PY_ROOT / "schemas" / "conversation.py",
+        _PY_ROOT / "services" / "chat_runs.py",
+        _PY_ROOT / "services" / "chat_run_event_store.py",
+        _PY_ROOT / "services" / "chat_run_response.py",
+        _WEB_ROOT / "components" / "chat",
+        _WEB_ROOT / "lib" / "api" / "sse" / "events.ts",
+        _WEB_ROOT / "lib" / "conversations" / "types.ts",
+    )
+    hits = _filtered(
+        r"['\"](?:delta|tool_call|retrieval_result)['\"]",
+        *roots,
+        exclude=_FRONTEND_TEST,
+    )
+    assert not hits, f"legacy chat stream event literal in chat owner:\n{_fmt(hits)}"
+
+
+def test_chat_run_events_check_is_new_stream_grammar_only():
+    src = (_PY_ROOT / "db" / "models.py").read_text(encoding="utf-8")
+    start = src.index("class ChatRunEvent(Base):")
+    body = src[start : src.index("\nclass ", start + 1)]
+    match = re.search(
+        r"CheckConstraint\((?P<check>[\s\S]*?)name=\"ck_chat_run_events_event_type\"",
+        body,
+    )
+    assert match is not None, "chat_run_events event_type CHECK is missing"
+    check = match.group("check")
+    for event_type in (
+        "meta",
+        "assistant_activity",
+        "assistant_text_delta",
+        "tool_call_start",
+        "tool_call_delta",
+        "tool_call_done",
+        "tool_result",
+        "citation_index",
+        "context_ref_added",
+        "done",
+    ):
+        assert f"'{event_type}'" in check, f"chat_run_events CHECK missing {event_type}"
+    for old_event_type in ("'delta'", "'tool_call'", "'retrieval_result'"):
+        assert old_event_type not in check, f"chat_run_events CHECK still allows {old_event_type}"
+
+
+def test_chat_tail_resume_uses_event_sequence_not_text_length():
+    src = (_WEB_ROOT / "components" / "chat" / "useChatRunTail.ts").read_text(encoding="utf-8")
+    assert "folded_event_seq" in src, "chat tail is not resuming from server event cursor"
+    assert "initialAfter" in src, "chat tail is not passing the server cursor to SSE transport"
+    assert "conversationMessageText" not in src
+    assert "replayDeltaCharsToSkip" not in src
 
 
 def test_frontend_chat_model_policy_has_no_static_provider_or_model_literals():

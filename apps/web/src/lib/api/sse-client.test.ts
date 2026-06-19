@@ -98,7 +98,7 @@ function installFetch(connections: Array<() => Response>) {
   );
   return {
     requests,
-    streamRequests: () => requests.filter((request) => request.url === STREAM_URL),
+    streamRequests: () => requests.filter((request) => request.url.startsWith(STREAM_URL)),
     tokenRequests: () => requests.filter((request) => request.url === TOKEN_PATH),
   };
 }
@@ -153,9 +153,11 @@ describe("sseClientDirect", () => {
     const streams = fetchBoundary.streamRequests();
     expect(streams).toHaveLength(2);
     expect(streams[0].headers.authorization).toBe("Bearer initial-token");
+    expect(streams[0].headers["x-nexus-sse-attempt"]).toBe("0");
     expect(fetchBoundary.tokenRequests()).toHaveLength(1);
     expect(streams[1].headers.authorization).toBe("Bearer minted-1");
     expect(streams[1].headers["last-event-id"]).toBe("1");
+    expect(streams[1].headers["x-nexus-sse-attempt"]).toBe("1");
     expect(client.completions).toEqual([true]);
     expect(client.errors).toEqual([]);
   });
@@ -349,6 +351,25 @@ describe("sseClientDirect", () => {
 
     expect(client.seen.map((event) => event.id)).toEqual(["1", "2", "3", "4"]);
     expect(fetchBoundary.streamRequests()[1].headers["last-event-id"]).toBe("2");
+    expect(client.completions).toEqual([true]);
+    expect(client.errors).toEqual([]);
+  });
+
+  it("uses a reconciled after cursor instead of stale Last-Event-ID on reconnect", async () => {
+    const fetchBoundary = installFetch([
+      sseConnection([{ id: "2", type: "delta", data: { delta: "a" } }]),
+      sseConnection([{ id: "6", type: "done", data: {} }]),
+    ]);
+
+    const client = startClient({
+      onReconnect: async () => ({ after: "5" }),
+    });
+    await client.settled;
+
+    const streams = fetchBoundary.streamRequests();
+    expect(streams[1].url).toBe(`${STREAM_URL}?after=5`);
+    expect(streams[1].headers["last-event-id"]).toBeUndefined();
+    expect(streams[1].headers["x-nexus-sse-attempt"]).toBe("1");
     expect(client.completions).toEqual([true]);
     expect(client.errors).toEqual([]);
   });

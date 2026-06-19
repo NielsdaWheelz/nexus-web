@@ -43,11 +43,32 @@ interface SSEMetaEvent {
   };
 }
 
-/** Delta event: incremental content chunk. */
-interface SSEDeltaEvent {
-  type: "delta";
+interface SSEAssistantActivityEvent {
+  type: "assistant_activity";
   data: {
-    delta: string;
+    assistant_message_id: string;
+    phase:
+      | "queued"
+      | "thinking"
+      | "writing"
+      | "tool_calling"
+      | "waiting"
+      | "retrying"
+      | "cancelling";
+    label?: string | null;
+    provider_event_seq_start?: number | null;
+    provider_event_seq_end?: number | null;
+  };
+}
+
+/** Incremental assistant content. */
+interface SSEAssistantTextDeltaEvent {
+  type: "assistant_text_delta";
+  data: {
+    assistant_message_id: string;
+    text: string;
+    provider_event_seq_start: number;
+    provider_event_seq_end: number;
   };
 }
 
@@ -56,8 +77,11 @@ interface SSEDoneEvent {
   type: "done";
   data: {
     status: "complete" | "error" | "cancelled";
+    usage?: Record<string, unknown> | null;
     error_code: string | null;
     final_chars?: number | null;
+    last_provider_event_seq?: number | null;
+    cancelled?: boolean | null;
   };
 }
 
@@ -69,7 +93,35 @@ export type ChatToolStatus =
   | "cancelled";
 
 export interface SSEToolCallEvent {
-  type: "tool_call";
+  type: "tool_call_start";
+  data: {
+    tool_call_id?: string | null;
+    assistant_message_id: string;
+    tool_name: string;
+    tool_call_index: number;
+    provider_tool_call_id?: string | null;
+    provider_event_seq_start: number;
+    provider_event_seq_end: number;
+  };
+}
+
+export interface SSEToolCallDeltaEvent {
+  type: "tool_call_delta";
+  data: SSEToolCallEvent["data"] & {
+    input_delta: string;
+    input_preview?: string | null;
+  };
+}
+
+export interface SSEToolCallDoneEvent {
+  type: "tool_call_done";
+  data: SSEToolCallEvent["data"] & {
+    input: Record<string, unknown>;
+  };
+}
+
+export interface SSEToolResultEvent {
+  type: "tool_result";
   data: {
     tool_call_id?: string | null;
     assistant_message_id: string;
@@ -78,23 +130,11 @@ export interface SSEToolCallEvent {
     status: ChatToolStatus;
     scope: string;
     types: string[];
-    filters: Record<string, unknown>;
     error_code?: string | null;
-  };
-}
-
-export interface SSERetrievalResultEvent {
-  type: "retrieval_result";
-  data: {
-    tool_call_id?: string | null;
-    assistant_message_id: string;
-    tool_name: string;
-    tool_call_index: number;
-    status: ChatToolStatus;
-    error_code?: string | null;
-    result_count: number;
-    selected_count: number;
+    result_count?: number | null;
+    selected_count?: number | null;
     latency_ms?: number | null;
+    provider_request_ids?: string[];
     filters: Record<string, unknown>;
     results: CitationEventData[];
   };
@@ -130,14 +170,18 @@ export interface SSEContextRefAddedEvent {
   };
 }
 
-export type SSEEvent =
+export type SSEEvent = (
   | SSEMetaEvent
-  | SSEDeltaEvent
+  | SSEAssistantActivityEvent
+  | SSEAssistantTextDeltaEvent
   | SSEDoneEvent
   | SSEToolCallEvent
-  | SSERetrievalResultEvent
+  | SSEToolCallDeltaEvent
+  | SSEToolCallDoneEvent
+  | SSEToolResultEvent
   | SSECitationIndexEvent
-  | SSEContextRefAddedEvent;
+  | SSEContextRefAddedEvent
+) & { seq: number };
 
 function parseMetaData(data: unknown): SSEMetaEvent["data"] {
   if (
@@ -186,28 +230,98 @@ function isMetaSubject(
   );
 }
 
-function parseDeltaData(data: unknown): SSEDeltaEvent["data"] {
-  if (!isRecord(data) || !hasOnlyKeys(data, ["delta"]) || typeof data.delta !== "string") {
-    throw new Error("Invalid SSE payload for delta");
+function isOptionalNonNegativeInteger(value: unknown): boolean {
+  return (
+    value === undefined ||
+    value === null ||
+    (typeof value === "number" && Number.isInteger(value) && value >= 0)
+  );
+}
+
+function isAssistantActivityPhase(
+  value: unknown,
+): value is SSEAssistantActivityEvent["data"]["phase"] {
+  return (
+    value === "queued" ||
+    value === "thinking" ||
+    value === "writing" ||
+    value === "tool_calling" ||
+    value === "waiting" ||
+    value === "retrying" ||
+    value === "cancelling"
+  );
+}
+
+function parseAssistantActivityData(data: unknown): SSEAssistantActivityEvent["data"] {
+  if (
+    !isRecord(data) ||
+    !hasOnlyKeys(data, [
+      "assistant_message_id",
+      "phase",
+      "label",
+      "provider_event_seq_start",
+      "provider_event_seq_end",
+    ]) ||
+    typeof data.assistant_message_id !== "string" ||
+    !isAssistantActivityPhase(data.phase) ||
+    !isOptionalString(data.label) ||
+    !isOptionalNonNegativeInteger(data.provider_event_seq_start) ||
+    !isOptionalNonNegativeInteger(data.provider_event_seq_end)
+  ) {
+    throw new Error("Invalid SSE payload for assistant_activity");
   }
-  // justify-type-assertion: the guard above exhaustively validated every
-  // field of the delta payload.
-  return data as SSEDeltaEvent["data"];
+  return data as SSEAssistantActivityEvent["data"];
+}
+
+function parseAssistantTextDeltaData(data: unknown): SSEAssistantTextDeltaEvent["data"] {
+  if (
+    !isRecord(data) ||
+    !hasOnlyKeys(data, [
+      "assistant_message_id",
+      "text",
+      "provider_event_seq_start",
+      "provider_event_seq_end",
+    ]) ||
+    typeof data.assistant_message_id !== "string" ||
+    typeof data.text !== "string" ||
+    data.text.length === 0 ||
+    typeof data.provider_event_seq_start !== "number" ||
+    !Number.isInteger(data.provider_event_seq_start) ||
+    data.provider_event_seq_start < 0 ||
+    typeof data.provider_event_seq_end !== "number" ||
+    !Number.isInteger(data.provider_event_seq_end) ||
+    data.provider_event_seq_end < 0
+  ) {
+    throw new Error("Invalid SSE payload for assistant_text_delta");
+  }
+  return data as SSEAssistantTextDeltaEvent["data"];
 }
 
 function parseDoneData(data: unknown): SSEDoneEvent["data"] {
   if (
     !isRecord(data) ||
-    !hasOnlyKeys(data, ["status", "error_code", "final_chars"]) ||
+    !hasOnlyKeys(data, [
+      "status",
+      "usage",
+      "error_code",
+      "final_chars",
+      "last_provider_event_seq",
+      "cancelled",
+    ]) ||
     (data.status !== "complete" &&
       data.status !== "error" &&
       data.status !== "cancelled") ||
+    (data.usage !== undefined && data.usage !== null && !isRecord(data.usage)) ||
     !(typeof data.error_code === "string" || data.error_code === null) ||
     (data.final_chars !== undefined &&
       data.final_chars !== null &&
       (typeof data.final_chars !== "number" ||
         !Number.isInteger(data.final_chars) ||
-        data.final_chars < 0))
+        data.final_chars < 0)) ||
+    !isOptionalNonNegativeInteger(data.last_provider_event_seq) ||
+    (data.cancelled !== undefined &&
+      data.cancelled !== null &&
+      typeof data.cancelled !== "boolean")
   ) {
     throw new Error("Invalid SSE payload for done");
   }
@@ -216,7 +330,95 @@ function parseDoneData(data: unknown): SSEDoneEvent["data"] {
   return data as SSEDoneEvent["data"];
 }
 
-function parseToolCallData(data: unknown): SSEToolCallEvent["data"] {
+function parseToolCallStartData(data: unknown): SSEToolCallEvent["data"] {
+  if (
+    !isRecord(data) ||
+    !hasOnlyKeys(data, [
+      "tool_call_id",
+      "assistant_message_id",
+      "tool_name",
+      "tool_call_index",
+      "provider_tool_call_id",
+      "provider_event_seq_start",
+      "provider_event_seq_end",
+    ]) ||
+    typeof data.assistant_message_id !== "string" ||
+    typeof data.tool_name !== "string" ||
+    data.tool_name.length === 0 ||
+    typeof data.tool_call_index !== "number" ||
+    !Number.isInteger(data.tool_call_index) ||
+    data.tool_call_index < 0 ||
+    (data.tool_call_id !== undefined &&
+      data.tool_call_id !== null &&
+      typeof data.tool_call_id !== "string") ||
+    !isOptionalString(data.provider_tool_call_id) ||
+    typeof data.provider_event_seq_start !== "number" ||
+    !Number.isInteger(data.provider_event_seq_start) ||
+    data.provider_event_seq_start < 0 ||
+    typeof data.provider_event_seq_end !== "number" ||
+    !Number.isInteger(data.provider_event_seq_end) ||
+    data.provider_event_seq_end < 0
+  ) {
+    throw new Error("Invalid SSE payload for tool_call_start");
+  }
+  return data as SSEToolCallEvent["data"];
+}
+
+function parseToolCallDeltaData(data: unknown): SSEToolCallDeltaEvent["data"] {
+  if (
+    !isRecord(data) ||
+    !hasOnlyKeys(data, [
+      "tool_call_id",
+      "assistant_message_id",
+      "tool_name",
+      "tool_call_index",
+      "provider_tool_call_id",
+      "input_delta",
+      "input_preview",
+      "provider_event_seq_start",
+      "provider_event_seq_end",
+    ]) ||
+    typeof data.input_delta !== "string" ||
+    data.input_delta.length === 0 ||
+    !isOptionalString(data.input_preview)
+  ) {
+    throw new Error("Invalid SSE payload for tool_call_delta");
+  }
+  const { input_delta, input_preview, ...base } = data;
+  return {
+    ...parseToolCallStartData(base),
+    input_delta: input_delta as string,
+    input_preview,
+  };
+}
+
+function parseToolCallDoneData(data: unknown): SSEToolCallDoneEvent["data"] {
+  if (
+    !isRecord(data) ||
+    !hasOnlyKeys(data, [
+      "tool_call_id",
+      "assistant_message_id",
+      "tool_name",
+      "tool_call_index",
+      "provider_tool_call_id",
+      "input",
+      "provider_event_seq_start",
+      "provider_event_seq_end",
+    ]) ||
+    !isRecord(data.input)
+  ) {
+    throw new Error("Invalid SSE payload for tool_call_done");
+  }
+  const { input, ...base } = data;
+  return {
+    ...parseToolCallStartData(base),
+    input: input as Record<string, unknown>,
+  };
+}
+
+function parseToolResultData(
+  data: unknown,
+): SSEToolResultEvent["data"] {
   if (
     !isRecord(data) ||
     !hasOnlyKeys(data, [
@@ -227,47 +429,11 @@ function parseToolCallData(data: unknown): SSEToolCallEvent["data"] {
       "status",
       "scope",
       "types",
-      "filters",
-      "error_code",
-    ]) ||
-    typeof data.assistant_message_id !== "string" ||
-    typeof data.tool_name !== "string" ||
-    data.tool_name.length === 0 ||
-    typeof data.tool_call_index !== "number" ||
-    !Number.isInteger(data.tool_call_index) ||
-    data.tool_call_index < 0 ||
-    !isChatToolStatus(data.status) ||
-    (data.tool_call_id !== undefined &&
-      data.tool_call_id !== null &&
-      typeof data.tool_call_id !== "string") ||
-    typeof data.scope !== "string" ||
-    !Array.isArray(data.types) ||
-    !data.types.every((item) => typeof item === "string") ||
-    !isRecord(data.filters) ||
-    !isOptionalString(data.error_code)
-  ) {
-    throw new Error("Invalid SSE payload for tool_call");
-  }
-  // justify-type-assertion: the guard above exhaustively validated every
-  // field of the tool_call payload.
-  return data as SSEToolCallEvent["data"];
-}
-
-function parseRetrievalResultData(
-  data: unknown,
-): SSERetrievalResultEvent["data"] {
-  if (
-    !isRecord(data) ||
-    !hasOnlyKeys(data, [
-      "tool_call_id",
-      "assistant_message_id",
-      "tool_name",
-      "tool_call_index",
-      "status",
       "error_code",
       "result_count",
       "selected_count",
       "latency_ms",
+      "provider_request_ids",
       "filters",
       "results",
     ]) ||
@@ -279,27 +445,28 @@ function parseRetrievalResultData(
     !Number.isInteger(data.tool_call_index) ||
     data.tool_call_index < 0 ||
     !isChatToolStatus(data.status) ||
+    typeof data.scope !== "string" ||
+    data.scope.length === 0 ||
+    !Array.isArray(data.types) ||
+    !data.types.every((item) => typeof item === "string") ||
     !isOptionalString(data.error_code) ||
-    typeof data.result_count !== "number" ||
-    !Number.isInteger(data.result_count) ||
-    data.result_count < 0 ||
-    typeof data.selected_count !== "number" ||
-    !Number.isInteger(data.selected_count) ||
-    data.selected_count < 0 ||
+    !isOptionalNonNegativeInteger(data.result_count) ||
+    !isOptionalNonNegativeInteger(data.selected_count) ||
     (data.latency_ms !== undefined &&
       data.latency_ms !== null &&
       (typeof data.latency_ms !== "number" ||
         !Number.isInteger(data.latency_ms) ||
         data.latency_ms < 0)) ||
+    (data.provider_request_ids !== undefined &&
+      (!Array.isArray(data.provider_request_ids) ||
+        !data.provider_request_ids.every((item) => typeof item === "string"))) ||
     !isRecord(data.filters) ||
     !Array.isArray(data.results) ||
     !data.results.every(isCitationEventData)
   ) {
-    throw new Error("Invalid SSE payload for retrieval_result");
+    throw new Error("Invalid SSE payload for tool_result");
   }
-  // justify-type-assertion: the guard above exhaustively validated every
-  // field of the retrieval_result payload.
-  return data as SSERetrievalResultEvent["data"];
+  return data as SSEToolResultEvent["data"];
 }
 
 function isChatToolStatus(value: unknown): value is ChatToolStatus {
@@ -388,22 +555,32 @@ function parseContextRefAddedData(
   };
 }
 
-export function toChatSSEEvent(eventType: string, data: unknown): SSEEvent {
+export function toChatSSEEvent(eventType: string, data: unknown, id = "0"): SSEEvent {
+  const seq = Number(id || 0);
+  if (!Number.isInteger(seq) || seq < 0) {
+    throw new Error("Invalid SSE event id");
+  }
   switch (eventType) {
     case "meta":
-      return { type: "meta", data: parseMetaData(data) };
-    case "delta":
-      return { type: "delta", data: parseDeltaData(data) };
+      return { seq, type: "meta", data: parseMetaData(data) };
+    case "assistant_activity":
+      return { seq, type: "assistant_activity", data: parseAssistantActivityData(data) };
+    case "assistant_text_delta":
+      return { seq, type: "assistant_text_delta", data: parseAssistantTextDeltaData(data) };
     case "done":
-      return { type: "done", data: parseDoneData(data) };
-    case "tool_call":
-      return { type: "tool_call", data: parseToolCallData(data) };
-    case "retrieval_result":
-      return { type: "retrieval_result", data: parseRetrievalResultData(data) };
+      return { seq, type: "done", data: parseDoneData(data) };
+    case "tool_call_start":
+      return { seq, type: "tool_call_start", data: parseToolCallStartData(data) };
+    case "tool_call_delta":
+      return { seq, type: "tool_call_delta", data: parseToolCallDeltaData(data) };
+    case "tool_call_done":
+      return { seq, type: "tool_call_done", data: parseToolCallDoneData(data) };
+    case "tool_result":
+      return { seq, type: "tool_result", data: parseToolResultData(data) };
     case "citation_index":
-      return { type: "citation_index", data: parseCitationIndexData(data) };
+      return { seq, type: "citation_index", data: parseCitationIndexData(data) };
     case "context_ref_added":
-      return { type: "context_ref_added", data: parseContextRefAddedData(data) };
+      return { seq, type: "context_ref_added", data: parseContextRefAddedData(data) };
     default:
       throw new Error(`Unknown SSE event type: ${eventType || "message"}`);
   }

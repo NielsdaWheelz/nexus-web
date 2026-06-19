@@ -8,7 +8,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowUp, Quote, X } from "lucide-react";
+import { ArrowUp, Quote, Square, X } from "lucide-react";
 import { apiFetch } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createRandomId } from "@/lib/createRandomId";
@@ -72,6 +72,10 @@ interface ChatComposerProps {
   readerSelection?: ReaderSelectionInput | null;
   /** Blocks sending while caller-owned conversation state is not safe to continue. */
   disabledReason?: string;
+  /** Active run that can be semantically cancelled without closing the SSE tail. */
+  activeRunId?: string | null;
+  /** Backend cancel action for the active run. */
+  onCancelRun?: () => Promise<void> | void;
 }
 
 // ============================================================================
@@ -97,8 +101,11 @@ export default function ChatComposer({
   chatSubject = null,
   readerSelection = null,
   disabledReason,
+  activeRunId = null,
+  onCancelRun,
 }: ChatComposerProps) {
   const [sending, setSending] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -201,6 +208,20 @@ export default function ChatComposer({
     onSendStarted,
   ]);
 
+  const handleCancelRun = useCallback(async () => {
+    if (!activeRunId || !onCancelRun || cancelling) return;
+    setCancelling(true);
+    setError(null);
+    try {
+      await onCancelRun();
+    } catch (err) {
+      if (handleUnauthenticatedApiError(err)) return;
+      setError(toFeedback(err, { fallback: "Failed to stop chat run" }).title);
+    } finally {
+      setCancelling(false);
+    }
+  }, [activeRunId, cancelling, onCancelRun]);
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -278,29 +299,43 @@ export default function ChatComposer({
             buttonRef={settingsButtonRef}
           />
 
-          <Button
-            variant="primary"
-            size="md"
-            className={styles.sendButton}
-            iconOnly={!branchDraft}
-            leadingIcon={branchDraft ? <ArrowUp size={16} aria-hidden="true" /> : undefined}
-            onClick={handleSend}
-            aria-label={
-              sending
-                ? branchDraft
-                  ? "Sending fork reply"
-                  : "Sending message"
-                : sendLabel
-            }
-            disabled={
-              sendDisabled ||
-              !content.trim() ||
-              !selectedProvider ||
-              !modelSelectionReady
-            }
-          >
-            {branchDraft ? sendLabel : <ArrowUp size={18} aria-hidden="true" />}
-          </Button>
+          {activeRunId && onCancelRun ? (
+            <Button
+              variant="danger"
+              size="md"
+              className={styles.sendButton}
+              iconOnly
+              loading={cancelling}
+              onClick={handleCancelRun}
+              aria-label={cancelling ? "Stopping response" : "Stop response"}
+            >
+              <Square size={16} aria-hidden="true" />
+            </Button>
+          ) : (
+            <Button
+              variant="primary"
+              size="md"
+              className={styles.sendButton}
+              iconOnly={!branchDraft}
+              leadingIcon={branchDraft ? <ArrowUp size={16} aria-hidden="true" /> : undefined}
+              onClick={handleSend}
+              aria-label={
+                sending
+                  ? branchDraft
+                    ? "Sending fork reply"
+                    : "Sending message"
+                  : sendLabel
+              }
+              disabled={
+                sendDisabled ||
+                !content.trim() ||
+                !selectedProvider ||
+                !modelSelectionReady
+              }
+            >
+              {branchDraft ? sendLabel : <ArrowUp size={18} aria-hidden="true" />}
+            </Button>
+          )}
         </div>
       </div>
     </div>

@@ -52,8 +52,9 @@ describe("toChatSSEEvent", () => {
       },
     };
 
-    expect(toChatSSEEvent("meta", data)).toEqual({ type: "meta", data });
+    expect(toChatSSEEvent("meta", data)).toEqual({ seq: 0, type: "meta", data });
     expect(toChatSSEEvent("meta", { ...data, chat_subject: null })).toEqual({
+      seq: 0,
       type: "meta",
       data: { ...data, chat_subject: null },
     });
@@ -78,6 +79,7 @@ describe("toChatSSEEvent", () => {
         citations: [item],
       }),
     ).toEqual({
+      seq: 0,
       type: "citation_index",
       data: { assistant_message_id: "msg-1", citations: [item] },
     });
@@ -154,6 +156,7 @@ describe("toChatSSEEvent", () => {
       citation_edge_id: "55555555-5555-4555-8555-555555555555",
     };
     expect(toChatSSEEvent("context_ref_added", data)).toEqual({
+      seq: 0,
       type: "context_ref_added",
       data,
     });
@@ -181,52 +184,150 @@ describe("toChatSSEEvent", () => {
 
   it("accepts generic non-empty tool names", () => {
     expect(
-      toChatSSEEvent("tool_call", {
+      toChatSSEEvent("tool_call_start", {
         tool_call_id: "tool-1",
         assistant_message_id: "assistant-1",
         tool_name: "read_resource",
         tool_call_index: 2,
-        status: "running",
-        scope: "conversation_context",
-        types: [],
-        filters: { uri: "media:1" },
-        error_code: null,
+        provider_tool_call_id: "provider-tool-1",
+        provider_event_seq_start: 4,
+        provider_event_seq_end: 4,
       }),
     ).toEqual({
-      type: "tool_call",
+      seq: 0,
+      type: "tool_call_start",
       data: {
         tool_call_id: "tool-1",
         assistant_message_id: "assistant-1",
         tool_name: "read_resource",
         tool_call_index: 2,
-        status: "running",
-        scope: "conversation_context",
-        types: [],
-        filters: { uri: "media:1" },
+        provider_tool_call_id: "provider-tool-1",
+        provider_event_seq_start: 4,
+        provider_event_seq_end: 4,
+      },
+    });
+  });
+
+  it("accepts parsed tool-call delta previews", () => {
+    expect(
+      toChatSSEEvent("tool_call_delta", {
+        tool_call_id: "tool-1",
+        assistant_message_id: "assistant-1",
+        tool_name: "app_search",
+        tool_call_index: 1,
+        provider_tool_call_id: "provider-tool-1",
+        input_delta: "{\"query\":\"ne",
+        input_preview: "{\"query\":\"nexus\"}",
+        provider_event_seq_start: 5,
+        provider_event_seq_end: 5,
+      }),
+    ).toEqual({
+      seq: 0,
+      type: "tool_call_delta",
+      data: {
+        tool_call_id: "tool-1",
+        assistant_message_id: "assistant-1",
+        tool_name: "app_search",
+        tool_call_index: 1,
+        provider_tool_call_id: "provider-tool-1",
+        input_delta: "{\"query\":\"ne",
+        input_preview: "{\"query\":\"nexus\"}",
+        provider_event_seq_start: 5,
+        provider_event_seq_end: 5,
+      },
+    });
+  });
+
+  it("accepts backend tool_result payloads with scope and types", () => {
+    const result = {
+      type: "message",
+      id: "message-1",
+      result_type: "message",
+      source_id: "message-1",
+      conversation_id: "conversation-1",
+      seq: 1,
+      title: "Conversation message #1",
+      source_label: null,
+      snippet: "water on the Moon",
+      deep_link: "/conversations/conversation-1",
+      citation_target: null,
+      context_ref: { type: "message", id: "message-1", evidence_span_ids: [] },
+      locator: {
+        type: "message_offsets",
+        conversation_id: "conversation-1",
+        message_id: "message-1",
+        start_offset: 0,
+        end_offset: 18,
+        message_seq: 1,
+      },
+      media_id: null,
+      media_kind: null,
+      score: 1,
+      selected: true,
+    };
+
+    expect(
+      toChatSSEEvent(
+        "tool_result",
+        {
+          tool_call_id: "tool-1",
+          assistant_message_id: "assistant-1",
+          tool_name: "app_search",
+          tool_call_index: 1,
+          status: "complete",
+          scope: "all",
+          types: ["media"],
+          error_code: null,
+          result_count: 1,
+          selected_count: 1,
+          latency_ms: 12,
+          provider_request_ids: [],
+          filters: {},
+          results: [result],
+        },
+        "7",
+      ),
+    ).toEqual({
+      seq: 7,
+      type: "tool_result",
+      data: {
+        tool_call_id: "tool-1",
+        assistant_message_id: "assistant-1",
+        tool_name: "app_search",
+        tool_call_index: 1,
+        status: "complete",
+        scope: "all",
+        types: ["media"],
         error_code: null,
+        result_count: 1,
+        selected_count: 1,
+        latency_ms: 12,
+        provider_request_ids: [],
+        filters: {},
+        results: [result],
       },
     });
   });
 
   it("rejects negative tool and retrieval counters", () => {
     expect(() =>
-      toChatSSEEvent("tool_call", {
+      toChatSSEEvent("tool_call_start", {
         assistant_message_id: "assistant-1",
         tool_name: "app_search",
         tool_call_index: -1,
-        status: "running",
-        scope: "all",
-        types: [],
-        filters: {},
+        provider_event_seq_start: 1,
+        provider_event_seq_end: 1,
       }),
-    ).toThrow("Invalid SSE payload for tool_call");
+    ).toThrow("Invalid SSE payload for tool_call_start");
 
     expect(() =>
-      toChatSSEEvent("retrieval_result", {
+      toChatSSEEvent("tool_result", {
         assistant_message_id: "assistant-1",
         tool_name: "app_search",
         tool_call_index: 0,
         status: "complete",
+        scope: "all",
+        types: [],
         error_code: null,
         result_count: -1,
         selected_count: 0,
@@ -234,21 +335,28 @@ describe("toChatSSEEvent", () => {
         filters: {},
         results: [],
       }),
-    ).toThrow("Invalid SSE payload for retrieval_result");
+    ).toThrow("Invalid SSE payload for tool_result");
   });
 
   it("rejects extra keys on tool payloads", () => {
     expect(() =>
-      toChatSSEEvent("tool_call", {
+      toChatSSEEvent("tool_call_start", {
         assistant_message_id: "assistant-1",
         tool_name: "app_search",
         tool_call_index: 0,
-        status: "running",
-        scope: "all",
-        types: [],
-        filters: {},
+        provider_event_seq_start: 1,
+        provider_event_seq_end: 1,
         freshness_days: 1,
       }),
-    ).toThrow("Invalid SSE payload for tool_call");
+    ).toThrow("Invalid SSE payload for tool_call_start");
   });
+
+  it.each(["delta", "tool_call", "retrieval_result"])(
+    "rejects old %s event names",
+    (eventType) => {
+      expect(() => toChatSSEEvent(eventType, {})).toThrow(
+        `Unknown SSE event type: ${eventType}`,
+      );
+    },
+  );
 });

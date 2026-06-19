@@ -395,6 +395,8 @@ export default function Conversation() {
                 branchDraft={branchDraft}
                 parentMessageId={activeReplyParentMessageId}
                 disabledReason={convo.sendDisabledReason ?? undefined}
+                activeRunId={convo.activeRunId}
+                onCancelRun={convo.cancelActiveRun}
                 onResolveConversation={convo.resolveConversation}
                 onChatRunCreated={convo.onChatRunCreated}
                 onClearBranchDraft={

@@ -7,19 +7,22 @@ events.
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import json
+import time
 from collections.abc import AsyncIterator, Mapping
+from contextlib import suppress
 from datetime import UTC, datetime
 from typing import Any, Protocol, cast
 from uuid import UUID
 
 from provider_runtime import ModelRuntime
-from provider_runtime.errors import ModelCallError
+from provider_runtime.errors import ModelCallError, ModelCallErrorCode
 from provider_runtime.types import (
     ModelCall,
-    ModelChunk,
     ModelMessage,
+    ModelStreamEvent,
     ProviderApiKey,
     ProviderArtifact,
     TokenUsage,
@@ -93,7 +96,7 @@ from nexus.services.chat_run_event_store import (
     TERMINAL_RUN_STATUSES,
     append_and_commit,
     append_run_event,
-    has_delta_without_terminal,
+    has_provider_output_without_terminal,
     is_cancel_requested,
     mark_running,
 )
@@ -122,7 +125,7 @@ from nexus.services.chat_run_prompt_tracking import (
     reconcile_prompt_retrievals,
 )
 from nexus.services.chat_run_response import build_chat_run_response
-from nexus.services.chat_run_usage import usage_tokens
+from nexus.services.chat_run_usage import usage_provider_json, usage_tokens
 from nexus.services.chat_run_validation import validate_pre_phase
 from nexus.services.context_assembler import (
     assemble_chat_context,
@@ -135,6 +138,7 @@ from nexus.services.conversation_branches import (
 from nexus.services.llm_ledger import LlmCallOwner, observed_generate_stream
 from nexus.services.prompt_budget import ContextBudgetError, estimate_tokens
 from nexus.services.rate_limit import get_rate_limiter
+from nexus.services.redact import safe_kv
 from nexus.services.resource_graph import cleanup as graph_cleanup
 from nexus.services.resource_graph.citations import (
     build_citation_outs,
@@ -176,6 +180,10 @@ REASONING_OUTPUT_TOKENS = 25000
 DEFAULT_OUTPUT_TOKENS = 4096
 LLM_TIMEOUT_SECONDS = 45.0
 MAX_TOOL_ITERATIONS = 8
+CHAT_TEXT_FLUSH_INTERVAL_MS = 33
+CHAT_TEXT_FLUSH_MAX_CHARS = 512
+CHAT_TEXT_FLUSH_MAX_BYTES = 2048
+CHAT_CANCEL_POLL_INTERVAL_SECONDS = 0.25
 
 _CHAT_TOOL_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec(
@@ -250,7 +258,8 @@ class ChatRunModelRuntime(Protocol):
         *,
         key: ProviderApiKey,
         timeout_s: float,
-    ) -> AsyncIterator[ModelChunk]: ...
+        cancel: asyncio.Event | None = None,
+    ) -> AsyncIterator[ModelStreamEvent]: ...
 
 
 def _max_output_tokens_for_reasoning(model: Model, reasoning: str) -> int:
@@ -794,6 +803,32 @@ def _persist_tool_call_error(db: Session, *, tool_call_id: UUID, error_code: str
             """
         ),
         {"tool_call_id": tool_call_id, "error_code": error_code},
+    )
+
+
+def _bind_provider_tool_call_events(
+    db: Session, *, run: ChatRun, tool_call_index: int, tool_call_id: UUID
+) -> None:
+    db.execute(
+        text(
+            """
+            UPDATE chat_run_events
+            SET payload = jsonb_set(
+                payload,
+                '{tool_call_id}',
+                to_jsonb(CAST(:tool_call_id AS text)),
+                true
+            )
+            WHERE run_id = :run_id
+              AND event_type IN ('tool_call_start', 'tool_call_delta', 'tool_call_done')
+              AND payload->>'tool_call_index' = :tool_call_index
+            """
+        ),
+        {
+            "run_id": run.id,
+            "tool_call_index": str(tool_call_index),
+            "tool_call_id": str(tool_call_id),
+        },
     )
 
 
@@ -1456,6 +1491,10 @@ def cancel_chat_run(db: Session, *, viewer_id: UUID, run_id: UUID) -> ChatRunRes
         run.cancel_requested_at = datetime.now(UTC)
         run.updated_at = datetime.now(UTC)
         db.commit()
+        logger.info(
+            "chat_run.cancel_requested",
+            **safe_kv(chat_run_id=str(run.id), status=run.status),
+        )
     return build_chat_run_response(db, viewer_id, run)
 
 
@@ -1494,6 +1533,19 @@ def is_chat_run_terminal(db: Session, *, viewer_id: UUID, run_id: UUID) -> bool:
 
 def assert_chat_run_owner(db: Session, *, viewer_id: UUID, run_id: UUID) -> None:
     get_run_for_owner(db, viewer_id, run_id)
+
+
+async def _watch_chat_run_cancel(
+    db: Session, *, run_id: UUID, cancel_signal: asyncio.Event
+) -> None:
+    # justify-polling: cancel_requested_at is an UPDATE on the run row, while the
+    # existing SSE push channel only notifies appended event rows. This watcher is
+    # scoped to one active provider stream and exits as soon as the stream ends.
+    while not cancel_signal.is_set():
+        if is_cancel_requested(db, run_id):
+            cancel_signal.set()
+            return
+        await asyncio.sleep(CHAT_CANCEL_POLL_INTERVAL_SECONDS)
 
 
 async def execute_chat_run(
@@ -1561,7 +1613,7 @@ async def _execute_chat_run(
     if run.status in TERMINAL_RUN_STATUSES:
         return {"status": "skipped", "reason": "terminal"}
 
-    if has_delta_without_terminal(db, run.id):
+    if has_provider_output_without_terminal(db, run.id):
         finalize_interrupted(db, run)
         return {"status": "error", "error_code": ApiErrorCode.E_LLM_INTERRUPTED.value}
 
@@ -1669,13 +1721,79 @@ async def _execute_chat_run(
         full_content = ""
         usage: TokenUsage | None = None
         provider_request_id: str | None = None
+        provider_request_ids: list[str] = []
+        last_provider_event_seq: int | None = None
         actual_budget_tokens = 0
         incomplete_reason: str | None = None
         terminal_seen = False
         locally_truncated = False
         citation_n_next = len(assembly.attached_citations) + 1
         tool_call_index_next = 0
+        stream_error_code: str | None = None
+        stream_error_detail: str | None = None
         call_owner = LlmCallOwner(kind="chat_run", id=run.id)
+        stream_started_at = time.monotonic()
+        first_provider_event_ms: int | None = None
+        first_visible_text_ms: int | None = None
+        provider_event_count = 0
+        durable_flush_count = 0
+        stream_observed_logged = False
+
+        def log_stream_observed(
+            *, status: str, error_code: str | None, terminal_cause: str
+        ) -> None:
+            nonlocal stream_observed_logged
+            if stream_observed_logged:
+                return
+            stream_observed_logged = True
+            cancel_requested_at = db.execute(
+                select(ChatRun.cancel_requested_at).where(ChatRun.id == run.id)
+            ).scalar_one_or_none()
+            cancel_latency_ms = (
+                max(0, int((datetime.now(UTC) - cancel_requested_at).total_seconds() * 1000))
+                if cancel_requested_at is not None
+                else None
+            )
+            logger.info(
+                "chat_run.stream.finished",
+                **safe_kv(
+                    chat_run_id=str(run.id),
+                    status=status,
+                    error_code=error_code,
+                    terminal_cause=terminal_cause,
+                    first_provider_event_ms=first_provider_event_ms,
+                    first_visible_text_ms=first_visible_text_ms,
+                    provider_event_count=provider_event_count,
+                    durable_flush_count=durable_flush_count,
+                    cancel_latency_ms=cancel_latency_ms,
+                    provider_request_id=provider_request_id,
+                    provider_request_ids=provider_request_ids,
+                ),
+            )
+
+        def flush_text_buffer(
+            text_buffer: str,
+            text_seq_start: int | None,
+            text_seq_end: int,
+            last_text_flush: float,
+        ) -> tuple[str, int | None, float]:
+            nonlocal durable_flush_count
+            if not text_buffer:
+                return text_buffer, text_seq_start, last_text_flush
+            append_and_commit(
+                db,
+                run.id,
+                "assistant_text_delta",
+                {
+                    "assistant_message_id": str(run.assistant_message_id),
+                    "text": text_buffer,
+                    "provider_event_seq_start": text_seq_start or text_seq_end,
+                    "provider_event_seq_end": text_seq_end,
+                },
+            )
+            durable_flush_count += 1
+            return "", None, time.monotonic()
+
         try:
             for _iteration in range(MAX_TOOL_ITERATIONS):
                 pending_tool_calls: list[Any] = []
@@ -1683,6 +1801,10 @@ async def _execute_chat_run(
                 iter_text = ""
                 iter_terminal = False
                 iter_request = dataclasses.replace(llm_request, messages=turns)
+                cancel_signal = asyncio.Event()
+                cancel_watcher = asyncio.create_task(
+                    _watch_chat_run_cancel(db, run_id=run.id, cancel_signal=cancel_signal)
+                )
                 stream = observed_generate_stream(
                     db,
                     owner=call_owner,
@@ -1697,18 +1819,51 @@ async def _execute_chat_run(
                     llm_operation="chat_send",
                     key_mode_requested=run.key_mode,
                     key_mode_used=resolved_key.mode,
+                    cancel=cancel_signal,
                 )
                 try:
-                    async for chunk in stream:
-                        if chunk.delta_text:
-                            delta = chunk.delta_text
+                    text_buffer = ""
+                    text_seq_start: int | None = None
+                    text_seq_end = 0
+                    last_text_flush = time.monotonic()
+                    provider_tool_indices: dict[str, int] = {}
+
+                    async for event in stream:
+                        provider_event_count += 1
+                        if first_provider_event_ms is None:
+                            first_provider_event_ms = int(
+                                (time.monotonic() - stream_started_at) * 1000
+                            )
+                        last_provider_event_seq = event.sequence
+                        if event.type == "text_delta":
+                            delta = event.text
                             if len(full_content) + len(delta) > MAX_ASSISTANT_CONTENT_LENGTH:
                                 remaining = MAX_ASSISTANT_CONTENT_LENGTH - len(full_content)
                                 delta = delta[: max(remaining, 0)] + TRUNCATION_NOTICE
                             if delta:
+                                if first_visible_text_ms is None:
+                                    first_visible_text_ms = int(
+                                        (time.monotonic() - stream_started_at) * 1000
+                                    )
                                 full_content += delta
                                 iter_text += delta
-                                append_and_commit(db, run.id, "delta", {"delta": delta})
+                                text_buffer += delta
+                                text_seq_start = text_seq_start or event.sequence
+                                text_seq_end = event.sequence
+                                if (
+                                    len(text_buffer) >= CHAT_TEXT_FLUSH_MAX_CHARS
+                                    or len(text_buffer.encode("utf-8")) >= CHAT_TEXT_FLUSH_MAX_BYTES
+                                    or (time.monotonic() - last_text_flush) * 1000
+                                    >= CHAT_TEXT_FLUSH_INTERVAL_MS
+                                ):
+                                    text_buffer, text_seq_start, last_text_flush = (
+                                        flush_text_buffer(
+                                            text_buffer,
+                                            text_seq_start,
+                                            text_seq_end,
+                                            last_text_flush,
+                                        )
+                                    )
                             if len(full_content) >= MAX_ASSISTANT_CONTENT_LENGTH:
                                 locally_truncated = True
                                 stream.record_abandoned(
@@ -1717,36 +1872,268 @@ async def _execute_chat_run(
                                         "stream abandoned after local assistant content limit"
                                     ),
                                 )
+                                text_buffer, text_seq_start, last_text_flush = flush_text_buffer(
+                                    text_buffer,
+                                    text_seq_start,
+                                    text_seq_end,
+                                    last_text_flush,
+                                )
                                 break
-                        if chunk.done:
+                            if is_cancel_requested(db, run.id):
+                                stream.record_abandoned(
+                                    error_class=ApiErrorCode.E_CANCELLED.value,
+                                    error_detail="chat run cancelled during provider stream",
+                                )
+                                await stream.aclose()
+                                text_buffer, text_seq_start, last_text_flush = flush_text_buffer(
+                                    text_buffer,
+                                    text_seq_start,
+                                    text_seq_end,
+                                    last_text_flush,
+                                )
+                                finalize_cancelled(
+                                    db,
+                                    run,
+                                    resolved_key,
+                                    last_provider_event_seq=last_provider_event_seq,
+                                )
+                                log_stream_observed(
+                                    status="cancelled",
+                                    error_code=ApiErrorCode.E_CANCELLED.value,
+                                    terminal_cause="cancelled",
+                                )
+                                return {"status": "cancelled"}
+                            continue
+                        if event.type in {"stream_start", "activity"}:
+                            text_buffer, text_seq_start, last_text_flush = flush_text_buffer(
+                                text_buffer,
+                                text_seq_start,
+                                text_seq_end,
+                                last_text_flush,
+                            )
+                            phase = event.activity or "thinking"
+                            append_and_commit(
+                                db,
+                                run.id,
+                                "assistant_activity",
+                                {
+                                    "assistant_message_id": str(run.assistant_message_id),
+                                    "phase": phase,
+                                    "label": None,
+                                    "provider_event_seq_start": event.sequence,
+                                    "provider_event_seq_end": event.sequence,
+                                },
+                            )
+                            continue
+                        if event.type in {"tool_call_start", "tool_call_delta", "tool_call_done"}:
+                            text_buffer, text_seq_start, last_text_flush = flush_text_buffer(
+                                text_buffer,
+                                text_seq_start,
+                                text_seq_end,
+                                last_text_flush,
+                            )
+                            provider_tool_call_id = event.tool_call_id or (
+                                event.tool_call.id if event.tool_call is not None else ""
+                            )
+                            if not provider_tool_call_id:
+                                continue
+                            if provider_tool_call_id not in provider_tool_indices:
+                                provider_tool_indices[provider_tool_call_id] = (
+                                    tool_call_index_next + len(provider_tool_indices) + 1
+                                )
+                            index = provider_tool_indices[provider_tool_call_id]
+                            if event.type == "tool_call_start":
+                                append_and_commit(
+                                    db,
+                                    run.id,
+                                    "tool_call_start",
+                                    {
+                                        "tool_call_id": None,
+                                        "assistant_message_id": str(run.assistant_message_id),
+                                        "tool_name": event.tool_name or "",
+                                        "tool_call_index": index,
+                                        "provider_tool_call_id": provider_tool_call_id,
+                                        "provider_event_seq_start": event.sequence,
+                                        "provider_event_seq_end": event.sequence,
+                                    },
+                                )
+                            elif event.type == "tool_call_delta":
+                                input_preview = (
+                                    json.dumps(
+                                        event.tool_arguments_partial,
+                                        sort_keys=True,
+                                        default=str,
+                                    )[:512]
+                                    if event.tool_arguments_partial is not None
+                                    else None
+                                )
+                                append_and_commit(
+                                    db,
+                                    run.id,
+                                    "tool_call_delta",
+                                    {
+                                        "tool_call_id": None,
+                                        "assistant_message_id": str(run.assistant_message_id),
+                                        "tool_name": event.tool_name or "",
+                                        "tool_call_index": index,
+                                        "provider_tool_call_id": provider_tool_call_id,
+                                        "input_delta": event.tool_arguments_delta,
+                                        "input_preview": input_preview,
+                                        "provider_event_seq_start": event.sequence,
+                                        "provider_event_seq_end": event.sequence,
+                                    },
+                                )
+                            elif event.tool_call is not None:
+                                pending_tool_calls.append(event.tool_call)
+                                append_and_commit(
+                                    db,
+                                    run.id,
+                                    "tool_call_done",
+                                    {
+                                        "tool_call_id": None,
+                                        "assistant_message_id": str(run.assistant_message_id),
+                                        "tool_name": event.tool_call.name,
+                                        "tool_call_index": index,
+                                        "provider_tool_call_id": provider_tool_call_id,
+                                        "input": event.tool_call.arguments,
+                                        "provider_event_seq_start": event.sequence,
+                                        "provider_event_seq_end": event.sequence,
+                                    },
+                                )
+                            if is_cancel_requested(db, run.id):
+                                stream.record_abandoned(
+                                    error_class=ApiErrorCode.E_CANCELLED.value,
+                                    error_detail="chat run cancelled during provider stream",
+                                )
+                                await stream.aclose()
+                                text_buffer, text_seq_start, last_text_flush = flush_text_buffer(
+                                    text_buffer,
+                                    text_seq_start,
+                                    text_seq_end,
+                                    last_text_flush,
+                                )
+                                finalize_cancelled(
+                                    db,
+                                    run,
+                                    resolved_key,
+                                    last_provider_event_seq=last_provider_event_seq,
+                                )
+                                log_stream_observed(
+                                    status="cancelled",
+                                    error_code=ApiErrorCode.E_CANCELLED.value,
+                                    terminal_cause="cancelled",
+                                )
+                                return {"status": "cancelled"}
+                            continue
+                        if event.type == "provider_artifact":
+                            text_buffer, text_seq_start, last_text_flush = flush_text_buffer(
+                                text_buffer,
+                                text_seq_start,
+                                text_seq_end,
+                                last_text_flush,
+                            )
+                            if event.provider_artifact is not None:
+                                provider_artifacts.append(event.provider_artifact)
+                            continue
+                        if event.type == "usage_delta":
+                            usage = event.usage
+                            continue
+                        if event.type == "cancelled":
+                            text_buffer, text_seq_start, last_text_flush = flush_text_buffer(
+                                text_buffer,
+                                text_seq_start,
+                                text_seq_end,
+                                last_text_flush,
+                            )
+                            provider_request_id = event.provider_request_id
+                            if provider_request_id is not None:
+                                provider_request_ids.append(provider_request_id)
+                            finalize_cancelled(
+                                db,
+                                run,
+                                resolved_key,
+                                usage=usage_provider_json(event.usage),
+                                last_provider_event_seq=last_provider_event_seq,
+                            )
+                            log_stream_observed(
+                                status="cancelled",
+                                error_code=ApiErrorCode.E_CANCELLED.value,
+                                terminal_cause="cancelled",
+                            )
+                            return {"status": "cancelled"}
+                        if event.type == "failed":
+                            text_buffer, text_seq_start, last_text_flush = flush_text_buffer(
+                                text_buffer,
+                                text_seq_start,
+                                text_seq_end,
+                                last_text_flush,
+                            )
+                            terminal_seen = True
+                            iter_terminal = True
+                            usage = event.usage
+                            provider_request_id = event.provider_request_id
+                            if provider_request_id is not None:
+                                provider_request_ids.append(provider_request_id)
+                            try:
+                                stream_error_code = api_error_code_for_model_call(
+                                    ModelCallErrorCode(event.error_code)
+                                ).value
+                            except ValueError:
+                                stream_error_code = ApiErrorCode.E_LLM_PROVIDER_DOWN.value
+                            stream_error_detail = event.error_detail
+                            break
+                        if event.type in {"completed", "incomplete"}:
+                            text_buffer, text_seq_start, last_text_flush = flush_text_buffer(
+                                text_buffer,
+                                text_seq_start,
+                                text_seq_end,
+                                last_text_flush,
+                            )
                             iter_terminal = True
                             terminal_seen = True
-                            usage = chunk.usage
-                            provider_request_id = chunk.provider_request_id
-                            terminal_tokens = usage_tokens(chunk.usage)["total_tokens"]
+                            usage = event.usage
+                            provider_request_id = event.provider_request_id
+                            if provider_request_id is not None:
+                                provider_request_ids.append(provider_request_id)
+                            terminal_tokens = usage_tokens(event.usage)["total_tokens"]
                             if terminal_tokens is not None:
                                 actual_budget_tokens += terminal_tokens
-                            if chunk.status == "incomplete":
+                            if event.type == "incomplete":
                                 incomplete_reason = "unknown"
-                                if chunk.incomplete_details is not None:
-                                    reason = chunk.incomplete_details.get("reason")
+                                if event.incomplete_details is not None:
+                                    reason = event.incomplete_details.get("reason")
                                     incomplete_reason = (
                                         reason if isinstance(reason, str) else "unknown"
                                     )
                             break
-                        if chunk.tool_call is not None:
-                            pending_tool_calls.append(chunk.tool_call)
-                        if chunk.provider_artifact is not None:
-                            provider_artifacts.append(chunk.provider_artifact)
                         if is_cancel_requested(db, run.id):
                             stream.record_abandoned(
                                 error_class=ApiErrorCode.E_CANCELLED.value,
                                 error_detail="chat run cancelled during provider stream",
                             )
                             await stream.aclose()
-                            finalize_cancelled(db, run, resolved_key)
+                            text_buffer, text_seq_start, last_text_flush = flush_text_buffer(
+                                text_buffer,
+                                text_seq_start,
+                                text_seq_end,
+                                last_text_flush,
+                            )
+                            finalize_cancelled(
+                                db,
+                                run,
+                                resolved_key,
+                                last_provider_event_seq=last_provider_event_seq,
+                            )
+                            log_stream_observed(
+                                status="cancelled",
+                                error_code=ApiErrorCode.E_CANCELLED.value,
+                                terminal_cause="cancelled",
+                            )
                             return {"status": "cancelled"}
                 finally:
+                    cancel_watcher.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await cancel_watcher
                     await stream.aclose()
                 if locally_truncated or not pending_tool_calls:
                     break
@@ -1801,10 +2188,16 @@ async def _execute_chat_run(
                             scope="all",
                             requested_types=[],
                         )
+                        _bind_provider_tool_call_events(
+                            db,
+                            run=run,
+                            tool_call_index=tool_call_index_next,
+                            tool_call_id=app_tool_call_id,
+                        )
                         append_run_event(
                             db,
                             run,
-                            "tool_call",
+                            "tool_result",
                             _tool_start_event(
                                 run=run,
                                 tool_call_id=app_tool_call_id,
@@ -1842,15 +2235,13 @@ async def _execute_chat_run(
                         append_run_event(
                             db,
                             run,
-                            "tool_call",
+                            "tool_result",
                             {
                                 **run_result.tool_call_event(),
+                                **run_result.retrieval_result_event(),
                                 "status": run_result.status,
                                 "error_code": run_result.error_code,
                             },
-                        )
-                        append_run_event(
-                            db, run, "retrieval_result", run_result.retrieval_result_event()
                         )
                         db.commit()
                         tool_results.append(
@@ -1877,10 +2268,16 @@ async def _execute_chat_run(
                             scope="public_web",
                             requested_types=["mixed"],
                         )
+                        _bind_provider_tool_call_events(
+                            db,
+                            run=run,
+                            tool_call_index=tool_call_index_next,
+                            tool_call_id=web_tool_call_id,
+                        )
                         append_run_event(
                             db,
                             run,
-                            "tool_call",
+                            "tool_result",
                             _tool_start_event(
                                 run=run,
                                 tool_call_id=web_tool_call_id,
@@ -1902,7 +2299,7 @@ async def _execute_chat_run(
                             append_run_event(
                                 db,
                                 run,
-                                "tool_call",
+                                "tool_result",
                                 {
                                     **_tool_start_event(
                                         run=run,
@@ -1947,15 +2344,13 @@ async def _execute_chat_run(
                         append_run_event(
                             db,
                             run,
-                            "tool_call",
+                            "tool_result",
                             {
                                 **run_result.tool_call_event(),
+                                **run_result.retrieval_result_event(),
                                 "status": run_result.status,
                                 "error_code": run_result.error_code,
                             },
-                        )
-                        append_run_event(
-                            db, run, "retrieval_result", run_result.retrieval_result_event()
                         )
                         db.commit()
                         tool_results.append(
@@ -1976,10 +2371,16 @@ async def _execute_chat_run(
                             scope="conversation_context",
                             requested_types=[],
                         )
+                        _bind_provider_tool_call_events(
+                            db,
+                            run=run,
+                            tool_call_index=tool_call_index_next,
+                            tool_call_id=read_tool_call_id,
+                        )
                         append_run_event(
                             db,
                             run,
-                            "tool_call",
+                            "tool_result",
                             _tool_start_event(
                                 run=run,
                                 tool_call_id=read_tool_call_id,
@@ -2016,7 +2417,7 @@ async def _execute_chat_run(
                         append_run_event(
                             db,
                             run,
-                            "tool_call",
+                            "tool_result",
                             _tool_trace_event(
                                 run=run,
                                 tool_call_id=read_tool_call_id,
@@ -2044,10 +2445,16 @@ async def _execute_chat_run(
                             scope="conversation_context",
                             requested_types=[],
                         )
+                        _bind_provider_tool_call_events(
+                            db,
+                            run=run,
+                            tool_call_index=tool_call_index_next,
+                            tool_call_id=inspect_tool_call_id,
+                        )
                         append_run_event(
                             db,
                             run,
-                            "tool_call",
+                            "tool_result",
                             _tool_start_event(
                                 run=run,
                                 tool_call_id=inspect_tool_call_id,
@@ -2075,7 +2482,7 @@ async def _execute_chat_run(
                         append_run_event(
                             db,
                             run,
-                            "tool_call",
+                            "tool_result",
                             _tool_trace_event(
                                 run=run,
                                 tool_call_id=inspect_tool_call_id,
@@ -2102,10 +2509,16 @@ async def _execute_chat_run(
                             scope="provider_tool",
                             requested_types=[],
                         )
+                        _bind_provider_tool_call_events(
+                            db,
+                            run=run,
+                            tool_call_index=tool_call_index_next,
+                            tool_call_id=tool_call_id,
+                        )
                         append_run_event(
                             db,
                             run,
-                            "tool_call",
+                            "tool_result",
                             _tool_start_event(
                                 run=run,
                                 tool_call_id=tool_call_id,
@@ -2124,7 +2537,7 @@ async def _execute_chat_run(
                         append_run_event(
                             db,
                             run,
-                            "tool_call",
+                            "tool_result",
                             {
                                 **_tool_start_event(
                                     run=run,
@@ -2166,7 +2579,30 @@ async def _execute_chat_run(
                 ),
                 resolved_key=resolved_key,
             )
+            log_stream_observed(
+                status="error",
+                error_code=error_code,
+                terminal_cause="provider_exception",
+            )
             return {"status": "error", "error_code": error_code}
+
+        if stream_error_code is not None:
+            finalize_error(
+                db,
+                run_id=run.id,
+                error_code=stream_error_code,
+                error_detail=stream_error_detail,
+                assistant_content=full_content or None,
+                resolved_key=resolved_key,
+                usage=usage_provider_json(usage),
+                last_provider_event_seq=last_provider_event_seq,
+            )
+            log_stream_observed(
+                status="error",
+                error_code=stream_error_code,
+                terminal_cause="failed",
+            )
+            return {"status": "error", "error_code": stream_error_code}
 
         if not terminal_seen and not locally_truncated:
             finalize_error(
@@ -2174,6 +2610,11 @@ async def _execute_chat_run(
                 run_id=run.id,
                 error_code=ApiErrorCode.E_LLM_INTERRUPTED.value,
                 resolved_key=resolved_key,
+            )
+            log_stream_observed(
+                status="error",
+                error_code=ApiErrorCode.E_LLM_INTERRUPTED.value,
+                terminal_cause="abandoned",
             )
             return {"status": "error", "error_code": ApiErrorCode.E_LLM_INTERRUPTED.value}
 
@@ -2185,6 +2626,12 @@ async def _execute_chat_run(
                 error_detail="stream abandoned after local assistant content limit",
                 assistant_content=full_content,
                 resolved_key=resolved_key,
+                last_provider_event_seq=last_provider_event_seq,
+            )
+            log_stream_observed(
+                status="error",
+                error_code=ApiErrorCode.E_LLM_INTERRUPTED.value,
+                terminal_cause="local_truncation",
             )
             return {"status": "error", "error_code": ApiErrorCode.E_LLM_INTERRUPTED.value}
 
@@ -2194,7 +2641,15 @@ async def _execute_chat_run(
                 run_id=run.id,
                 error_code=ApiErrorCode.E_LLM_INCOMPLETE.value,
                 error_detail=f"provider stopped early: {incomplete_reason}",
+                assistant_content=full_content or None,
                 resolved_key=resolved_key,
+                usage=usage_provider_json(usage),
+                last_provider_event_seq=last_provider_event_seq,
+            )
+            log_stream_observed(
+                status="error",
+                error_code=ApiErrorCode.E_LLM_INCOMPLETE.value,
+                terminal_cause="incomplete",
             )
             return {"status": "error", "error_code": ApiErrorCode.E_LLM_INCOMPLETE.value}
 
@@ -2206,6 +2661,13 @@ async def _execute_chat_run(
                 error_code=error_code,
                 error_detail="provider terminal chunk carried no usage",
                 resolved_key=resolved_key,
+                usage=usage_provider_json(usage),
+                last_provider_event_seq=last_provider_event_seq,
+            )
+            log_stream_observed(
+                status="error",
+                error_code=error_code,
+                terminal_cause="missing_usage",
             )
             return {"status": "error", "error_code": error_code}
 
@@ -2219,6 +2681,13 @@ async def _execute_chat_run(
                 error_code=ApiErrorCode.E_LLM_BAD_REQUEST.value,
                 error_detail=f"assistant citation markers invalid: {exc.message}",
                 resolved_key=resolved_key,
+                usage=usage_provider_json(usage),
+                last_provider_event_seq=last_provider_event_seq,
+            )
+            log_stream_observed(
+                status="error",
+                error_code=ApiErrorCode.E_LLM_BAD_REQUEST.value,
+                terminal_cause="bad_citations",
             )
             return {"status": "error", "error_code": ApiErrorCode.E_LLM_BAD_REQUEST.value}
         finalize_run(
@@ -2230,6 +2699,9 @@ async def _execute_chat_run(
             done_status="complete",
             error_code=None,
             resolved_key=resolved_key,
+            usage=usage_provider_json(usage),
+            last_provider_event_seq=last_provider_event_seq,
+            cancelled=False,
         )
         db.commit()
         if resolved_key.mode == "platform":
@@ -2239,6 +2711,7 @@ async def _execute_chat_run(
                 run.owner_user_id, run.assistant_message_id, actual_tokens
             )
             budget_reserved = False
+        log_stream_observed(status="complete", error_code=None, terminal_cause="complete")
         return {"status": "complete"}
     finally:
         if budget_reserved:

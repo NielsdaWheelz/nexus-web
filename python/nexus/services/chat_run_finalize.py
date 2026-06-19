@@ -49,6 +49,9 @@ def finalize_error(
     error_detail: str | None = None,
     resolved_key: ResolvedKey | None = None,
     assistant_content: str | None = None,
+    usage: dict[str, Any] | None = None,
+    last_provider_event_seq: int | None = None,
+    cancelled: bool | None = None,
     commit: bool = True,
 ) -> None:
     """Finalize a run as an error using the standard error/error/error status shape.
@@ -73,6 +76,9 @@ def finalize_error(
         error_code=error_code,
         error_detail=error_detail,
         resolved_key=resolved_key,
+        usage=usage,
+        last_provider_event_seq=last_provider_event_seq,
+        cancelled=cancelled,
         commit=commit,
     )
 
@@ -81,16 +87,26 @@ def finalize_interrupted(db: Session, run: ChatRun) -> None:
     finalize_error(db, run_id=run.id, error_code=ApiErrorCode.E_LLM_INTERRUPTED.value)
 
 
-def finalize_cancelled(db: Session, run: ChatRun, resolved_key: ResolvedKey | None) -> None:
+def finalize_cancelled(
+    db: Session,
+    run: ChatRun,
+    resolved_key: ResolvedKey | None,
+    *,
+    usage: dict[str, Any] | None = None,
+    last_provider_event_seq: int | None = None,
+) -> None:
     finalize_run(
         db,
         run_id=run.id,
         assistant_content=ERROR_CODE_TO_MESSAGE["E_CANCELLED"],
-        assistant_status="error",
+        assistant_status="cancelled",
         run_status="cancelled",
         done_status="cancelled",
         error_code=ApiErrorCode.E_CANCELLED.value,
         resolved_key=resolved_key,
+        usage=usage,
+        last_provider_event_seq=last_provider_event_seq,
+        cancelled=True,
     )
 
 
@@ -105,6 +121,9 @@ def finalize_run(
     error_code: str | None,
     error_detail: str | None = None,
     resolved_key: ResolvedKey | None = None,
+    usage: dict[str, Any] | None = None,
+    last_provider_event_seq: int | None = None,
+    cancelled: bool | None = None,
     commit: bool = True,
 ) -> None:
     run = (
@@ -137,6 +156,9 @@ def finalize_run(
         done_payload["error_code"] = error_code
     if assistant_message is not None and done_status == "complete":
         done_payload["final_chars"] = len(assistant_message.content)
+    done_payload["usage"] = usage
+    done_payload["last_provider_event_seq"] = last_provider_event_seq
+    done_payload["cancelled"] = cancelled
     run_kit.mark_terminal(
         db,
         stream=run_kit.chat_run_stream(run),

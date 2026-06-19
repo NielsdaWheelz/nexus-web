@@ -1,3 +1,4 @@
+import asyncio
 from uuid import uuid4
 
 import pytest
@@ -79,6 +80,10 @@ async def _chunks(req: ModelCall):
     ]
 
 
+def _streamed_text(chunks) -> str:
+    return "".join(chunk.text for chunk in chunks if chunk.type == "text_delta")
+
+
 async def test_real_media_fixture_llm_uses_app_search_before_answering() -> None:
     chunks = await _chunks(
         _request(
@@ -89,10 +94,46 @@ async def test_real_media_fixture_llm_uses_app_search_before_answering() -> None
         )
     )
 
-    assert chunks[0].tool_call is not None
-    assert chunks[0].tool_call.name == APP_SEARCH_TOOL_NAME
-    assert chunks[0].tool_call.arguments == {"query": "SOFIA"}
-    assert chunks[1].done is True
+    assert chunks[0].type == "tool_call_start"
+    assert chunks[0].sequence == 1
+    assert chunks[0].tool_name == APP_SEARCH_TOOL_NAME
+    assert chunks[1].type == "tool_call_delta"
+    assert chunks[1].sequence == 2
+    assert chunks[1].tool_arguments_partial == {"query": "SOFIA"}
+    assert chunks[2].type == "tool_call_done"
+    assert chunks[2].sequence == 3
+    assert chunks[2].tool_call is not None
+    assert chunks[2].tool_call.name == APP_SEARCH_TOOL_NAME
+    assert chunks[2].tool_call.arguments == {"query": "SOFIA"}
+    assert chunks[3].type == "completed"
+    assert chunks[3].sequence == 4
+
+
+async def test_real_media_fixture_llm_cancel_event_matches_provider_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("REAL_MEDIA_FIXTURE_STREAM_DELAY_MS", "1")
+    cancel = asyncio.Event()
+    cancel.set()
+    router = RealMediaFixtureModelRuntime()
+    chunks = [
+        chunk
+        async for chunk in router.stream(
+            _request(
+                ModelMessage(
+                    role="user",
+                    content="What does this source say about SOFIA? Use the attached evidence.",
+                )
+            ),
+            key=_FIXTURE_KEY,
+            timeout_s=45,
+            cancel=cancel,
+        )
+    ]
+
+    assert [chunk.type for chunk in chunks] == ["tool_call_start", "cancelled"]
+    assert chunks[-1].terminal is True
+    assert chunks[-1].status is None
 
 
 async def test_real_media_fixture_llm_cites_tool_result() -> None:
@@ -111,8 +152,9 @@ async def test_real_media_fixture_llm_cites_tool_result() -> None:
         )
     )
 
-    assert chunks[0].delta_text == REAL_MEDIA_FIXTURE_RESPONSE_WITH_CITATION
-    assert chunks[1].done is True
+    assert chunks[0].type == "text_delta"
+    assert _streamed_text(chunks) == REAL_MEDIA_FIXTURE_RESPONSE_WITH_CITATION
+    assert chunks[-1].type == "completed"
 
 
 async def test_real_media_fixture_llm_cites_numbered_prompt_resource() -> None:
@@ -135,8 +177,9 @@ async def test_real_media_fixture_llm_cites_numbered_prompt_resource() -> None:
         )
     )
 
-    assert chunks[0].delta_text == REAL_MEDIA_FIXTURE_RESPONSE_WITH_CITATION
-    assert chunks[1].done is True
+    assert chunks[0].type == "text_delta"
+    assert _streamed_text(chunks) == REAL_MEDIA_FIXTURE_RESPONSE_WITH_CITATION
+    assert chunks[-1].type == "completed"
 
 
 async def test_real_media_fixture_llm_does_not_cite_empty_tool_result() -> None:
@@ -155,8 +198,9 @@ async def test_real_media_fixture_llm_does_not_cite_empty_tool_result() -> None:
         )
     )
 
-    assert chunks[0].delta_text == REAL_MEDIA_FIXTURE_RESPONSE
-    assert chunks[1].done is True
+    assert chunks[0].type == "text_delta"
+    assert _streamed_text(chunks) == REAL_MEDIA_FIXTURE_RESPONSE
+    assert chunks[-1].type == "completed"
 
 
 async def _synthesize[T: BaseModel](system_prompt: str, schema: type[T]) -> T:
@@ -275,5 +319,6 @@ async def test_real_media_fixture_llm_does_not_cite_tool_error() -> None:
         )
     )
 
-    assert chunks[0].delta_text == REAL_MEDIA_FIXTURE_RESPONSE
-    assert chunks[1].done is True
+    assert chunks[0].type == "text_delta"
+    assert _streamed_text(chunks) == REAL_MEDIA_FIXTURE_RESPONSE
+    assert chunks[-1].type == "completed"

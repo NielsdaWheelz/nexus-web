@@ -99,6 +99,16 @@ function runData(parentMessageId: string): ChatRunResponse["data"] {
       "",
       user.id,
     ),
+    stream_state: {
+      status: "running",
+      last_event_seq: 0,
+      folded_event_seq: 0,
+      assistant_current_text: "",
+      tool_calls: [],
+      activity: null,
+      reconnectable: true,
+      terminal: false,
+    },
   };
 }
 

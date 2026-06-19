@@ -86,6 +86,9 @@ transaction boundaries, and database-specific conventions.
 - Do not encode domain invariants in database schema, even when they are
   row-local and easy to express in a relational expression.
 - Examples that still belong in application code plus defects: conditional nullability, tagged-union branch consistency, cross-column correlation, ownership rules, and lifecycle-state rules.
+- A storage-enum `CHECK` on an append-only event log's event-type column is allowed
+  when the event table is the durable replay substrate and the application owns
+  payload validation separately.
 - If you are tempted to add a database constraint for anything richer than storage shape, primary-key identity, foreign-key reachability, or true schema-owned uniqueness, put that invariant in application code instead.
 
 ## Foreign Keys

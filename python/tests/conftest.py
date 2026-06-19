@@ -128,15 +128,19 @@ def verify_schema_exists(engine: Engine) -> Generator[None, None, None]:
 def log_sink() -> Generator[list[dict], None, None]:
     """Capture structlog events into a list; structlog is restored afterwards.
 
-    ``llm_ledger`` binds its module-level logger at import (before this fixture
-    reconfigures), so the cached proxy would bypass the capture config. Rebind it
-    to a fresh, un-cached proxy for the test and restore the original on teardown.
+    Some modules bind module-level loggers at import (before this fixture
+    reconfigures), so cached proxies would bypass the capture config. Rebind them
+    to fresh, un-cached proxies for the test and restore originals on teardown.
     """
+    import nexus.api.routes.stream as stream_routes
+    import nexus.services.chat_runs as chat_runs
     import nexus.services.llm_ledger as llm_ledger
 
     events: list[dict] = []
     original_config = structlog.get_config()
+    original_chat_runs_logger = chat_runs.logger
     original_ledger_logger = llm_ledger.logger
+    original_stream_logger = stream_routes.logger
 
     def capture_processor(logger, method_name, event_dict):
         events.append(event_dict.copy())
@@ -147,11 +151,15 @@ def log_sink() -> Generator[list[dict], None, None]:
         wrapper_class=structlog.stdlib.BoundLogger,
         cache_logger_on_first_use=False,
     )
+    chat_runs.logger = structlog.get_logger("nexus.services.chat_runs")
     llm_ledger.logger = structlog.get_logger("nexus.services.llm_ledger")
+    stream_routes.logger = structlog.get_logger("nexus.api.routes.stream")
 
     yield events
 
+    chat_runs.logger = original_chat_runs_logger
     llm_ledger.logger = original_ledger_logger
+    stream_routes.logger = original_stream_logger
     structlog.configure(**original_config)
 
 

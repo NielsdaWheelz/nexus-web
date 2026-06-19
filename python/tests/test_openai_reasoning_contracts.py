@@ -1,10 +1,17 @@
 """Backend contract tests for OpenAI reasoning behavior."""
 
+from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
 from provider_runtime.errors import ModelCallError, ModelCallErrorCode
-from provider_runtime.types import ModelCall, ModelChunk, TokenUsage, ToolCall
+from provider_runtime.types import (
+    ModelCall,
+    ModelStreamEvent,
+    ProviderArtifact,
+    TokenUsage,
+    ToolCall,
+)
 from pydantic import ValidationError
 from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
@@ -20,8 +27,10 @@ from nexus.services.chat_runs import (
     _max_output_tokens_for_reasoning,
     execute_chat_run,
 )
+from nexus.services.real_media_fixture_llm import RealMediaFixtureModelRuntime
 from nexus.services.resource_graph.context import add_context_ref_without_commit
 from nexus.services.resource_graph.refs import assert_resource_ref
+from nexus.tasks.chat_run import chat_run
 from tests.factories import (
     create_searchable_media,
     create_test_highlight,
@@ -34,28 +43,51 @@ from tests.utils.db import DirectSessionManager
 
 
 class _CapturingRouter:
-    def __init__(self, terminal_chunk):
-        self.terminal_chunk = terminal_chunk
+    def __init__(self, *events: ModelStreamEvent):
+        self.events = events
         self.request: ModelCall | None = None
 
-    async def stream(self, req, *, key, timeout_s):
+    async def stream(self, req, *, key, timeout_s, cancel=None):
+        del cancel
         self.request = req
-        yield self.terminal_chunk
+        for event in self.events:
+            yield event
 
 
 class _OversizedDeltaRouter:
-    async def stream(self, req, *, key, timeout_s):
-        yield ModelChunk(delta_text="x" * (MAX_ASSISTANT_CONTENT_LENGTH + 100))
-        yield ModelChunk(
-            done=True,
+    async def stream(self, req, *, key, timeout_s, cancel=None):
+        del cancel
+        yield _text_event("x" * (MAX_ASSISTANT_CONTENT_LENGTH + 100))
+        yield _done_event(
             usage=TokenUsage(input_tokens=10, output_tokens=50000, total_tokens=50010),
             provider_request_id="resp_after_local_truncation",
         )
 
 
-def _incomplete_chunk() -> ModelChunk:
-    return ModelChunk(
-        done=True,
+def _text_event(text: str) -> ModelStreamEvent:
+    return ModelStreamEvent(type="text_delta", provider="openai", model="gpt-5.5", text=text)
+
+
+def _done_event(
+    *,
+    usage: TokenUsage | None = None,
+    provider_request_id: str | None = None,
+) -> ModelStreamEvent:
+    return ModelStreamEvent(
+        type="completed",
+        provider="openai",
+        model="gpt-5.5",
+        usage=usage,
+        provider_request_id=provider_request_id,
+        status="completed",
+    )
+
+
+def _incomplete_chunk() -> ModelStreamEvent:
+    return ModelStreamEvent(
+        type="incomplete",
+        provider="openai",
+        model="gpt-5.5",
         usage=TokenUsage(input_tokens=10, output_tokens=25000, total_tokens=25010),
         provider_request_id="resp_incomplete",
         status="incomplete",
@@ -94,21 +126,53 @@ class _ToolLoopRouter:
     def __init__(self) -> None:
         self.requests: list[ModelCall] = []
 
-    async def stream(self, req, *, key, timeout_s):
+    async def stream(self, req, *, key, timeout_s, cancel=None):
+        del cancel
         self.requests.append(req)
         if len(self.requests) == 1:
-            yield ModelChunk(provider_artifact={"type": "reasoning", "id": "rs_1"})
-            yield ModelChunk(tool_call=ToolCall(id="call-1", name="mystery_tool", arguments={}))
-            yield ModelChunk(provider_artifact={"type": "reasoning", "id": "rs_2"})
-            yield ModelChunk(
-                done=True,
+            yield ModelStreamEvent(
+                type="provider_artifact",
+                provider="openai",
+                model="gpt-5.5",
+                provider_artifact=ProviderArtifact(
+                    provider="openai",
+                    model="gpt-5.5",
+                    purpose="reasoning",
+                    payload={"type": "reasoning", "id": "rs_1"},
+                ),
+            )
+            yield ModelStreamEvent(
+                type="tool_call_start",
+                provider="openai",
+                model="gpt-5.5",
+                tool_call_id="call-1",
+                tool_name="mystery_tool",
+            )
+            yield ModelStreamEvent(
+                type="tool_call_done",
+                provider="openai",
+                model="gpt-5.5",
+                tool_call_id="call-1",
+                tool_call=ToolCall(id="call-1", name="mystery_tool", arguments={}),
+            )
+            yield ModelStreamEvent(
+                type="provider_artifact",
+                provider="openai",
+                model="gpt-5.5",
+                provider_artifact=ProviderArtifact(
+                    provider="openai",
+                    model="gpt-5.5",
+                    purpose="reasoning",
+                    payload={"type": "reasoning", "id": "rs_2"},
+                ),
+            )
+            yield _done_event(
                 usage=TokenUsage(input_tokens=10, output_tokens=5, total_tokens=15),
                 provider_request_id="resp_iter_1",
             )
             return
-        yield ModelChunk(delta_text="Final answer.")
-        yield ModelChunk(
-            done=True,
+        yield _text_event("Final answer.")
+        yield _done_event(
             usage=TokenUsage(input_tokens=20, output_tokens=3, total_tokens=23),
             provider_request_id="resp_iter_2",
         )
@@ -120,7 +184,8 @@ class _RaisingStreamRouter:
     def __init__(self, error: Exception) -> None:
         self.error = error
 
-    async def stream(self, req, *, key, timeout_s):
+    async def stream(self, req, *, key, timeout_s, cancel=None):
+        del cancel
         raise self.error
         yield  # pragma: no cover - makes this an async generator
 
@@ -132,7 +197,8 @@ class _CancellingStreamRouter:
         self.direct_db = direct_db
         self.run_id = run_id
 
-    async def stream(self, req, *, key, timeout_s):
+    async def stream(self, req, *, key, timeout_s, cancel=None):
+        del cancel
         with self.direct_db.session() as session:
             session.execute(
                 text(
@@ -142,9 +208,8 @@ class _CancellingStreamRouter:
                 {"run_id": self.run_id},
             )
             session.commit()
-        yield ModelChunk(delta_text="partial")
-        yield ModelChunk(
-            done=True,
+        yield _text_event("partial")
+        yield _done_event(
             usage=TokenUsage(input_tokens=10, output_tokens=3, total_tokens=13),
             provider_request_id="resp_after_cancel",
         )
@@ -155,31 +220,59 @@ class _DocumentStackRouter:
         self.media_id = media_id
         self.request_count = 0
 
-    async def stream(self, req, *, key, timeout_s):
+    async def stream(self, req, *, key, timeout_s, cancel=None):
+        del cancel
         self.request_count += 1
         if self.request_count == 1:
-            yield ModelChunk(
-                tool_call=ToolCall(
-                    id="inspect-call",
-                    name="inspect_resource",
-                    arguments={"uri": f"media:{self.media_id}"},
-                )
+            call = ToolCall(
+                id="inspect-call",
+                name="inspect_resource",
+                arguments={"uri": f"media:{self.media_id}"},
             )
-            yield ModelChunk(done=True)
+            yield ModelStreamEvent(
+                type="tool_call_start",
+                provider="openai",
+                model="gpt-5.5",
+                tool_call_id=call.id,
+                tool_name=call.name,
+            )
+            yield ModelStreamEvent(
+                type="tool_call_done",
+                provider="openai",
+                model="gpt-5.5",
+                tool_call_id=call.id,
+                tool_call=call,
+            )
+            yield _done_event()
             return
         if self.request_count == 2:
-            yield ModelChunk(
+            call = ToolCall(
+                id="read-call",
+                name="read_resource",
+                arguments={"uri": f"page_range:{self.media_id}:1-1"},
+            )
+            yield ModelStreamEvent(
+                type="tool_call_start",
+                provider="openai",
+                model="gpt-5.5",
+                tool_call_id=call.id,
+                tool_name=call.name,
+            )
+            yield ModelStreamEvent(
+                type="tool_call_done",
+                provider="openai",
+                model="gpt-5.5",
+                tool_call_id=call.id,
                 tool_call=ToolCall(
                     id="read-call",
                     name="read_resource",
                     arguments={"uri": f"page_range:{self.media_id}:1-1"},
-                )
+                ),
             )
-            yield ModelChunk(done=True)
+            yield _done_event()
             return
-        yield ModelChunk(delta_text="Summary [1].")
-        yield ModelChunk(
-            done=True,
+        yield _text_event("Summary [1].")
+        yield _done_event(
             usage=TokenUsage(input_tokens=10, output_tokens=3, total_tokens=13),
             provider_request_id="resp_doc_stack",
         )
@@ -412,9 +505,7 @@ async def test_default_reasoning_uses_reasoning_aware_output_budget(
     _register_run_cleanup(direct_db, conversation_id)
 
     router = _CapturingRouter(
-        ModelChunk(
-            delta_text="",
-            done=True,
+        _done_event(
             usage=TokenUsage(input_tokens=10, output_tokens=1, total_tokens=11),
             provider_request_id="resp_ok",
         )
@@ -514,12 +605,11 @@ async def test_attached_highlight_public_run_persists_citation_index_and_reader_
     assert job_payload == {"run_id": str(run_id)}
 
     router = _CapturingRouter(
-        ModelChunk(
-            delta_text="Attached quote [1].",
-            done=True,
+        _text_event("Attached quote [1]."),
+        _done_event(
             usage=TokenUsage(input_tokens=12, output_tokens=4, total_tokens=16),
             provider_request_id="resp_attached_quote",
-        )
+        ),
     )
     with direct_db.session() as session:
         result = await execute_chat_run(
@@ -817,7 +907,7 @@ def _fetch_llm_calls(direct_db: DirectSessionManager, run_id: UUID):
 
 @pytest.mark.integration
 async def test_tool_loop_replays_provider_artifacts_and_ledgers_each_iteration(
-    auth_client, direct_db: DirectSessionManager, chat_runs_schema, monkeypatch
+    auth_client, direct_db: DirectSessionManager, chat_runs_schema, monkeypatch, log_sink
 ):
     run_id = _create_run_for_executor(auth_client, direct_db)
     rate_limiter = _RecordingRateLimiter()
@@ -834,10 +924,10 @@ async def test_tool_loop_replays_provider_artifacts_and_ledgers_each_iteration(
     # ahead of the tool-results turn on the continuation request.
     assistant_turn, tool_turn = router.requests[1].messages[-2:]
     assert assistant_turn.role == "assistant"
-    assert assistant_turn.provider_artifacts == (
+    assert [artifact.payload for artifact in assistant_turn.provider_artifacts] == [
         {"type": "reasoning", "id": "rs_1"},
         {"type": "reasoning", "id": "rs_2"},
-    )
+    ]
     assert [tc.id for tc in assistant_turn.tool_calls] == ["call-1"]
     assert tool_turn.role == "tool"
 
@@ -859,6 +949,89 @@ async def test_tool_loop_replays_provider_artifacts_and_ledgers_each_iteration(
         "release_inflight_slot",
     ], f"unexpected envelope: {rate_limiter.events}"
     assert rate_limiter.events[2][3] == 38
+    stream_logs = [event for event in log_sink if event.get("event") == "chat_run.stream.finished"]
+    assert stream_logs == [
+        {
+            "event": "chat_run.stream.finished",
+            "chat_run_id": str(run_id),
+            "status": "complete",
+            "error_code": None,
+            "terminal_cause": "complete",
+            "first_provider_event_ms": stream_logs[0]["first_provider_event_ms"],
+            "first_visible_text_ms": stream_logs[0]["first_visible_text_ms"],
+            "provider_event_count": 7,
+            "durable_flush_count": 1,
+            "cancel_latency_ms": None,
+            "provider_request_id": "resp_iter_2",
+            "provider_request_ids": ["resp_iter_1", "resp_iter_2"],
+        }
+    ]
+    assert stream_logs[0]["first_provider_event_ms"] >= 0
+    assert stream_logs[0]["first_visible_text_ms"] >= 0
+
+
+@pytest.mark.integration
+async def test_real_media_fixture_stream_tool_loop_completes(
+    auth_client, direct_db: DirectSessionManager, chat_runs_schema
+):
+    run_id = _create_run_for_executor(auth_client, direct_db)
+
+    with direct_db.session() as session:
+        result = await execute_chat_run(
+            session,
+            run_id=run_id,
+            llm_router=RealMediaFixtureModelRuntime(),
+        )
+
+    assert result == {"status": "complete"}
+    with direct_db.session() as session:
+        row = session.execute(
+            text(
+                """
+                SELECT cr.status AS run_status, m.content AS message_content
+                FROM chat_runs cr
+                JOIN messages m ON m.id = cr.assistant_message_id
+                WHERE cr.id = :run_id
+                """
+            ),
+            {"run_id": run_id},
+        ).one()
+    assert row.run_status == "complete"
+    assert "The source says SOFIA" in row.message_content
+
+
+@pytest.mark.integration
+def test_worker_chat_run_uses_real_media_fixture_router(
+    auth_client, direct_db: DirectSessionManager, chat_runs_schema, monkeypatch
+):
+    run_id = _create_run_for_executor(auth_client, direct_db)
+    monkeypatch.setenv("REAL_MEDIA_PROVIDER_FIXTURES", "1")
+    monkeypatch.setenv(
+        "REAL_MEDIA_FIXTURE_DIR",
+        str(Path(__file__).parent / "fixtures" / "real_media"),
+    )
+    clear_settings_cache()
+
+    try:
+        result = chat_run(str(run_id))
+    finally:
+        clear_settings_cache()
+
+    assert result == {"status": "complete"}
+    with direct_db.session() as session:
+        row = session.execute(
+            text(
+                """
+                SELECT cr.status AS run_status, m.content AS message_content
+                FROM chat_runs cr
+                JOIN messages m ON m.id = cr.assistant_message_id
+                WHERE cr.id = :run_id
+                """
+            ),
+            {"run_id": run_id},
+        ).one()
+    assert row.run_status == "complete"
+    assert "The source says SOFIA" in row.message_content
 
 
 @pytest.mark.integration
