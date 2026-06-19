@@ -31,7 +31,7 @@ import {
 } from "@/lib/panes/paneRouteModel";
 
 // Per-pane chrome + icon metadata. Deliberately holds NO pane-body imports so
-// the always-loaded shell (nav, command palette, store) can resolve a route's
+// the always-loaded shell (nav, launcher, store) can resolve a route's
 // icon/title without dragging the pane code into first-load JS. Pane bodies are
 // reached only through `paneRenderRegistry` (lazy). See docs/cutovers/
 // authenticated-shell-first-paint-and-pane-splitting.md (R4).
@@ -216,7 +216,7 @@ const PANE_ROUTE_META: Record<PaneRouteId, PaneRouteMeta> = {
     icon: Keyboard,
     getChrome: () => ({
       title: "Keyboard Shortcuts",
-      subtitle: "Customize key bindings for palette actions.",
+      subtitle: "Customize key bindings for launcher actions.",
     }),
   },
 };

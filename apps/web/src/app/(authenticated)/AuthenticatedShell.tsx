@@ -2,8 +2,7 @@
 
 import { useEffect } from "react";
 import AppNav from "@/components/appnav/AppNav";
-import CommandPalette from "@/components/palette/CommandPalette";
-import AddContentTray from "@/components/AddContentTray";
+import Launcher from "@/components/launcher/Launcher";
 import WorkspaceHost from "@/components/workspace/WorkspaceHost";
 import GlobalPlayerFooter from "@/components/GlobalPlayerFooter";
 import { WebVitalsReporter } from "@/components/workspace/WebVitalsReporter";
@@ -88,8 +87,7 @@ function AuthenticatedWorkspace({ initialState }: { initialState: WorkspaceState
         initialState={initialState}
       >
         <MobileChromeProvider>
-          <CommandPalette />
-          <AddContentTray />
+          <Launcher />
           <div className={styles.layout}>
             <AppNav />
             <main className={styles.main}>

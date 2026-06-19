@@ -1,0 +1,201 @@
+/*
+ * AddPanel renders inside the Launcher surface (LauncherSurface / LauncherSheet),
+ * which owns the dialog/sheet shell, focus trap, positioning, and dismissal. These
+ * styles cover only the panel's own content (header + add UI), minus the
+ * modal-shell rules that the Launcher surface owns.
+ */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border-bottom: 1px solid var(--edge-subtle);
+  background: var(--surface-2);
+}
+
+.heading {
+  min-width: 0;
+}
+
+.heading h2 {
+  margin: 0;
+  font-size: var(--text-base);
+}
+
+.heading p {
+  margin: var(--space-1) 0 0;
+  color: var(--ink-faint);
+  font-size: var(--text-sm);
+}
+
+.iconButton {
+  flex-shrink: 0;
+}
+
+.modeTabs {
+  padding: var(--space-3) var(--space-4) 0;
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-4);
+  overflow-y: auto;
+}
+
+.libraryField {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.libraryHelp {
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
+}
+
+.dropzone {
+  width: 100%;
+  height: auto;
+  min-height: 150px;
+  padding: var(--space-5);
+  border-style: dashed;
+  border-width: 2px;
+  text-align: center;
+  white-space: normal;
+}
+
+.dropzone:hover,
+.dropzoneActive {
+  border-color: var(--accent);
+}
+
+.dropzoneInner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+}
+
+.dropzoneInner > span {
+  font-weight: var(--weight-semibold);
+}
+
+.dropzoneInner > small {
+  color: var(--ink-faint);
+  font-size: var(--text-sm);
+}
+
+.fileInput {
+  display: none;
+}
+
+.urlForm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.urlForm label {
+  color: var(--ink);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+}
+
+.urlTextarea {
+  min-height: 74px;
+}
+
+.urlActions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.urlActions span {
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
+}
+
+.queue {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.queueItem {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--edge-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
+}
+
+.itemIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--size-sm);
+  height: var(--size-sm);
+  border-radius: var(--radius-full);
+  background: var(--surface-2);
+  color: var(--ink-muted);
+}
+
+.itemText {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.itemText span {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: var(--text-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.itemText small {
+  overflow: hidden;
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.itemActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.successIcon {
+  color: var(--success);
+}
+
+.errorIcon {
+  color: var(--danger);
+}
+
+@media (max-width: 900px) {
+  .urlActions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}

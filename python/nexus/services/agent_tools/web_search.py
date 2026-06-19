@@ -35,7 +35,45 @@ WEB_SEARCH_TOOL_NAME = "web_search"
 WEB_SEARCH_LIMIT = 6
 WEB_SEARCH_SELECTED_LIMIT = 5
 WEB_SEARCH_CONTEXT_CHARS = 12000
+# Mirror the web_search_tool.WebSearchRequest contract at our own boundary so an
+# out-of-range query is rejected as a typed WebSearchQueryError (one owner: see
+# normalize_web_search_query) before WebSearchRequest.__post_init__ can raise a bare
+# ValueError. Keep these in lockstep with the provider package's limits.
+WEB_SEARCH_QUERY_MIN_CHARS = 2
 WEB_SEARCH_QUERY_MAX_CHARS = 400
+WEB_SEARCH_QUERY_MAX_WORDS = 50
+
+
+class WebSearchQueryError(ValueError):
+    """The submitted web-search query is not a usable query.
+
+    Raised by :func:`normalize_web_search_query` when an untrusted query (an HTTP
+    request param or LLM-generated tool argument) is empty, too short, too long, or
+    has too many words. This is an expected boundary failure for bad external input,
+    distinct from the provider-transport :class:`WebSearchError`; each caller maps it
+    to its own surface (HTTP 400 at the route, an ``invalid_request`` tool status in
+    chat).
+    """
+
+
+def normalize_web_search_query(query: str) -> str:
+    """Collapse whitespace and validate a web-search query into one canonical form.
+
+    The single owner of query validity for both callers of
+    :func:`search_web_readonly` (the read-only route and the chat tool). Returns the
+    whitespace-collapsed query when it satisfies the length/word bounds the provider
+    package enforces; raises :class:`WebSearchQueryError` otherwise so neither caller
+    lets ``WebSearchRequest.__post_init__`` raise a bare ``ValueError``.
+    """
+    normalized = " ".join(query.split())
+    if len(normalized) < WEB_SEARCH_QUERY_MIN_CHARS:
+        raise WebSearchQueryError("Web search query is too short")
+    if len(normalized) > WEB_SEARCH_QUERY_MAX_CHARS:
+        raise WebSearchQueryError("Web search query is too long")
+    if len(normalized.split()) > WEB_SEARCH_QUERY_MAX_WORDS:
+        raise WebSearchQueryError("Web search query has too many words")
+    return normalized
+
 
 WEB_SEARCH_TOOL_DEFINITION: dict[str, Any] = {
     "name": WEB_SEARCH_TOOL_NAME,
@@ -186,6 +224,52 @@ def _citation_from_result(result: WebSearchResultItem) -> WebSearchCitation:
         rank=result.rank,
         provider=result.provider,
         provider_request_id=result.provider_request_id,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class WebSearchReadResult:
+    """Read-only result of a public web search.
+
+    Carries the projected citations, the whitespace-collapsed canonical query the
+    provider actually saw (so callers hash/log the validated form, never re-derive
+    it), and the response-level provider request id — the telemetry handle the
+    provider stamps on the response envelope, which survives a zero-result response
+    and may differ from any item-level id.
+    """
+
+    citations: list[WebSearchCitation]
+    query: str
+    provider_request_id: str | None
+
+
+async def search_web_readonly(
+    provider: WebSearchProvider, query: str, *, freshness_days: int | None
+) -> WebSearchReadResult:
+    """Run a public web search and project results to citations, with no persistence.
+
+    Shared read-only core of the chat ``web_search`` tool. ``query`` is normalized
+    and validated by :func:`normalize_web_search_query` (the one query-validity
+    owner), so an out-of-range query raises :class:`WebSearchQueryError` rather than
+    a bare ``ValueError`` from the provider request. The returned
+    :class:`WebSearchReadResult` preserves the response-level provider request id so
+    callers never reconstruct it from an item. Callers that need the persisted
+    tool/retrieval ledger use :func:`execute_web_search`. ``WebSearchError`` (provider
+    transport) propagates to the caller's boundary.
+    """
+    normalized_query = normalize_web_search_query(query)
+    response = await provider.search(
+        WebSearchRequest(
+            query=normalized_query,
+            result_type=WebSearchResultType.MIXED,
+            limit=WEB_SEARCH_LIMIT,
+            freshness_days=freshness_days,
+        )
+    )
+    return WebSearchReadResult(
+        citations=[_citation_from_result(result) for result in response.results],
+        query=normalized_query,
+        provider_request_id=response.provider_request_id,
     )
 
 
@@ -532,48 +616,46 @@ async def execute_web_search(
 ) -> WebSearchRun:
     """Run a public web search and persist tool/retrieval metadata."""
     start = time.monotonic()
-    raw_query = " ".join(query.split()).strip()[:WEB_SEARCH_QUERY_MAX_CHARS]
     status = "complete"
     error_code: str | None = None
+    normalized_query: str | None = None
     citations: list[WebSearchCitation] = []
     selected: list[WebSearchCitation] = []
     context_text = ""
     context_chars = 0
     provider_request_ids: list[str] = []
 
-    if not raw_query:
+    try:
+        result = await search_web_readonly(provider, query, freshness_days=freshness_days)
+        normalized_query = result.query
+        citations = result.citations
+        if result.provider_request_id:
+            provider_request_ids = [result.provider_request_id]
+        context_text, context_chars, selected = render_web_context_blocks(citations)
+    except WebSearchQueryError as exc:
+        logger.warning("agent_web_search_invalid_query", reason=str(exc))
         status = "error"
         error_code = "invalid_request"
-    else:
-        try:
-            response = await provider.search(
-                WebSearchRequest(
-                    query=raw_query,
-                    result_type=WebSearchResultType.MIXED,
-                    limit=WEB_SEARCH_LIMIT,
-                    freshness_days=freshness_days,
-                )
-            )
-            citations = [_citation_from_result(r) for r in response.results]
-            if response.provider_request_id:
-                provider_request_ids = [response.provider_request_id]
-            context_text, context_chars, selected = render_web_context_blocks(citations)
-        except WebSearchError as exc:
-            logger.warning(
-                "agent_web_search_error",
-                provider=exc.provider,
-                code=exc.code.value,
-                status_code=exc.status_code,
-            )
-            status = "error"
-            error_code = exc.code.value
+    except WebSearchError as exc:
+        logger.warning(
+            "agent_web_search_error",
+            provider=exc.provider,
+            code=exc.code.value,
+            status_code=exc.status_code,
+        )
+        status = "error"
+        error_code = exc.code.value
 
     latency_ms = int((time.monotonic() - start) * 1000)
     run = WebSearchRun(
         conversation_id=conversation_id,
         user_message_id=user_message_id,
         assistant_message_id=assistant_message_id,
-        query_hash=hashlib.sha256(raw_query.encode("utf-8")).hexdigest() if raw_query else None,
+        query_hash=(
+            hashlib.sha256(normalized_query.encode("utf-8")).hexdigest()
+            if normalized_query
+            else None
+        ),
         result_type="mixed",
         requested_freshness_days=freshness_days,
         requested_domains={"allowed": [], "blocked": []},

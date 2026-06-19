@@ -25,7 +25,9 @@ import KindChips from "@/components/search/KindChips";
 import AppliedFilters, {
   type AppliedFilterChip,
 } from "@/components/search/AppliedFilters";
+import { useDebouncedFetch } from "@/lib/api/useDebouncedFetch";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { isAbortError } from "@/lib/errors";
 import { fetchSearchResultPage } from "@/lib/search/searchApi";
 import {
   MEDIA_FORMATS,
@@ -49,7 +51,10 @@ import {
   searchQueryFromParams,
   searchQueryToParams,
 } from "@/lib/search/searchParams";
-import type { SearchResultRowViewModel } from "@/lib/search/types";
+import type {
+  SearchResultPage,
+  SearchResultRowViewModel,
+} from "@/lib/search/types";
 import { usePaneRouter, usePaneSearchParams } from "@/lib/panes/paneRuntime";
 import styles from "./page.module.css";
 
@@ -71,13 +76,7 @@ export default function SearchPaneBody() {
   const queryString = queryKey(query);
 
   const [draft, setDraft] = useState(query.text);
-  const [results, setResults] = useState<SearchResultRowViewModel[]>([]);
-  const [searching, setSearching] = useState(false);
-  const [error, setError] = useState<FeedbackContent | null>(null);
-  const [nextCursor, setNextCursor] = useState<string | null>(null);
-  const [hasSearched, setHasSearched] = useState(false);
   const [mounted, setMounted] = useState(false);
-  const requestIdRef = useRef(0);
 
   useEffect(() => {
     setMounted(true);
@@ -110,49 +109,71 @@ export default function SearchPaneBody() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- justify-eslint-override: URL query changes sync draft through the separate query.text effect; this debounce reacts only to box edits.
   }, [draft]);
 
-  const runSearch = useCallback(
-    async (cursor?: string) => {
-      if (isBlankQuery(query)) {
-        return;
-      }
-      const requestId = requestIdRef.current + 1;
-      requestIdRef.current = requestId;
-      setSearching(true);
-      setError(null);
+  // First page: refetched (immediately, then aborted) whenever the effective
+  // query changes; blank queries make no request. Pagination is appended below.
+  const blank = isBlankQuery(query);
+  const firstPage = useDebouncedFetch<SearchResultPage>(
+    blank ? null : queryString,
+    (signal) =>
+      fetchSearchResultPage(query, { limit: PAGE_LIMIT, cursor: null, signal }),
+    { debounceMs: 0 },
+  );
+
+  // "Load more" appends the next page(s); reset whenever the first page changes.
+  const [more, setMore] = useState<{
+    rows: SearchResultRowViewModel[];
+    cursor: string | null;
+  }>({ rows: [], cursor: null });
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [moreError, setMoreError] = useState<FeedbackContent | null>(null);
+  const moreAbortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    moreAbortRef.current?.abort();
+    setMore({ rows: [], cursor: null });
+    setLoadingMore(false);
+    setMoreError(null);
+  }, [queryString]);
+
+  const results = useMemo(
+    () => (firstPage.data ? [...firstPage.data.rows, ...more.rows] : []),
+    [firstPage.data, more.rows],
+  );
+  const nextCursor =
+    more.rows.length > 0 ? more.cursor : (firstPage.data?.nextCursor ?? null);
+  const searching = firstPage.loading || loadingMore;
+  const hasSearched = firstPage.data !== null;
+  const error =
+    firstPage.error !== null
+      ? toFeedback(firstPage.error, { fallback: "Search failed" })
+      : moreError;
+
+  const loadMore = useCallback(
+    async (cursor: string) => {
+      moreAbortRef.current?.abort();
+      const controller = new AbortController();
+      moreAbortRef.current = controller;
+      setLoadingMore(true);
+      setMoreError(null);
       try {
         const page = await fetchSearchResultPage(query, {
           limit: PAGE_LIMIT,
-          cursor: cursor ?? null,
+          cursor,
+          signal: controller.signal,
         });
-        if (requestId !== requestIdRef.current) return;
-        setResults((prev) => (cursor ? [...prev, ...page.rows] : page.rows));
-        setNextCursor(page.nextCursor);
-        setHasSearched(true);
+        setMore((prev) => ({
+          rows: [...prev.rows, ...page.rows],
+          cursor: page.nextCursor,
+        }));
       } catch (err) {
-        if (requestId !== requestIdRef.current) return;
-        if (handleUnauthenticatedApiError(err)) return;
-        setError(toFeedback(err, { fallback: "Search failed" }));
+        if (isAbortError(err) || handleUnauthenticatedApiError(err)) return;
+        setMoreError(toFeedback(err, { fallback: "Search failed" }));
       } finally {
-        if (requestId === requestIdRef.current) {
-          setSearching(false);
-        }
+        if (moreAbortRef.current === controller) setLoadingMore(false);
       }
     },
     [query],
   );
-
-  // Re-run search whenever the effective query changes.
-  useEffect(() => {
-    requestIdRef.current += 1;
-    setResults([]);
-    setNextCursor(null);
-    setHasSearched(false);
-    setError(null);
-    if (!isBlankQuery(query)) {
-      void runSearch();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- justify-eslint-override: queryString is the canonical route-change key; runSearch captures the same parsed query for this render.
-  }, [queryString]);
 
   const formatDisabled = hasFormatFilter(query);
   const creditDisabled = hasCreditFilter(query);
@@ -302,7 +323,7 @@ export default function SearchPaneBody() {
           <Button
             variant="secondary"
             size="md"
-            onClick={() => runSearch(nextCursor)}
+            onClick={() => loadMore(nextCursor)}
             disabled={searching}
           >
             Load more

@@ -8,7 +8,7 @@ import {
   useState,
 } from "react";
 import { flushSync } from "react-dom";
-import { dispatchOpenAddContent } from "@/components/addContentEvents";
+import { dispatchOpenLauncher } from "@/lib/launcher/launcherEvents";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
@@ -767,7 +767,7 @@ export default function LibraryPaneBody() {
                 id: "add-content",
                 label: "Add content",
                 restoreFocusOnClose: false,
-                onSelect: () => dispatchOpenAddContent("content"),
+                onSelect: () => dispatchOpenLauncher({ lane: "add" }),
               },
             ]
           : []),

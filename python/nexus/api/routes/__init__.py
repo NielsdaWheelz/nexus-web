@@ -48,6 +48,7 @@ from nexus.api.routes.synapse import router as synapse_router
 from nexus.api.routes.telemetry import router as telemetry_router
 from nexus.api.routes.users import router as users_router
 from nexus.api.routes.vault import router as vault_router
+from nexus.api.routes.web_search import router as web_search_router
 from nexus.config import get_settings
 
 
@@ -96,6 +97,7 @@ def create_api_router() -> APIRouter:
     api_router.include_router(keys_router)
     api_router.include_router(browse_router)
     api_router.include_router(search_router)
+    api_router.include_router(web_search_router)
     api_router.include_router(vault_router)
     api_router.include_router(users_router)
     settings = get_settings()

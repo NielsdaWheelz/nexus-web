@@ -16,20 +16,20 @@ describe("loadStoredKeybindings", () => {
   it("merges valid stored string bindings over defaults", () => {
     stubStoredKeybindings(
       JSON.stringify({
-        "open-palette": "Ctrl+p",
+        "open-launcher": "Ctrl+p",
       }),
     );
 
     expect(loadStoredKeybindings()).toEqual({
       ...DEFAULT_KEYBINDINGS,
-      "open-palette": "Ctrl+p",
+      "open-launcher": "Ctrl+p",
     });
   });
 
   it("drops malformed and non-string stored bindings", () => {
     stubStoredKeybindings(
       JSON.stringify({
-        "open-palette": 12,
+        "open-launcher": 12,
         "pane-next": null,
         "pane-previous": "Alt+arrowleft",
       }),
