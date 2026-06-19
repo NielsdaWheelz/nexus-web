@@ -1,4 +1,5 @@
-import { Sparkles, type LucideIcon } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
+import { DESTINATIONS, type Destination } from "@/lib/navigation/destinations";
 
 export type NavSlot = "primary" | "tools" | "account";
 
@@ -31,64 +32,15 @@ export interface NavGroup {
   items: NavItem[];
 }
 
-export const NAV_MODEL: NavDestination[] = [
-  {
-    id: "libraries",
-    label: "Libraries",
-    href: "/libraries",
-    slot: "primary",
-    match: { exact: ["/libraries"], prefix: ["/libraries/"] },
-  },
-  {
-    id: "authors",
-    label: "Authors",
-    href: "/authors",
-    slot: "primary",
-    match: { exact: ["/authors"], prefix: ["/authors/"] },
-  },
-  { id: "browse", label: "Browse", href: "/browse", slot: "primary" },
-  {
-    id: "podcasts",
-    label: "Podcasts",
-    href: "/podcasts",
-    slot: "primary",
-    match: { exact: ["/podcasts"], prefix: ["/podcasts/"] },
-  },
-  {
-    id: "today",
-    label: "Today",
-    href: "/daily",
-    slot: "primary",
-    match: { exact: ["/daily"], prefix: ["/daily/"] },
-  },
-  {
-    id: "notes",
-    label: "Notes",
-    href: "/notes",
-    slot: "primary",
-    match: { exact: ["/notes"], prefix: ["/notes/", "/pages/"] },
-  },
-  {
-    id: "chats",
-    label: "Chats",
-    href: "/conversations",
-    slot: "tools",
-    match: { exact: ["/conversations"], prefix: ["/conversations/"] },
-  },
-  {
-    id: "oracle",
-    label: "Oracle",
-    href: "/oracle",
-    slot: "tools",
-    icon: Sparkles,
-    signature: "oracle",
-    match: { exact: ["/oracle"], prefix: ["/oracle/"] },
-  },
-  {
-    id: "settings",
-    label: "Settings",
-    href: "/settings",
-    slot: "account",
-    match: { exact: ["/settings"], prefix: ["/settings/"] },
-  },
-];
+// The slotted subset of the shared destination registry, in rail order (AC-8).
+export const NAV_MODEL: NavDestination[] = DESTINATIONS.filter(
+  (destination): destination is Destination & { slot: NavSlot } => destination.slot !== undefined,
+).map((destination) => ({
+  id: destination.id,
+  label: destination.label,
+  href: destination.href,
+  slot: destination.slot,
+  icon: destination.icon,
+  match: destination.match,
+  signature: destination.signature,
+}));

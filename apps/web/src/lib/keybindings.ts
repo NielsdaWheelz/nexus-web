@@ -4,7 +4,7 @@ import type { PlatformKind } from "@/lib/renderEnvironment/types";
 const STORAGE_KEY = "nexus.keybindings.v1";
 
 export const DEFAULT_KEYBINDINGS: Record<string, string> = {
-  "open-palette": "Meta+k",
+  "open-launcher": "Meta+k",
   "pane-next": "Meta+Shift+arrowright",
   "pane-previous": "Meta+Shift+arrowleft",
 };

@@ -4,6 +4,7 @@ from uuid import UUID
 
 from fastapi import Request
 from provider_runtime import ModelRuntime
+from web_search_tool.types import WebSearchProvider
 
 from nexus.auth.bearer import parse_bearer_token
 from nexus.errors import ApiError, ApiErrorCode
@@ -41,3 +42,18 @@ def get_llm_router(request: Request) -> ModelRuntime:
         The shared ModelRuntime instance.
     """
     return request.app.state.llm_router
+
+
+def get_web_search_provider(request: Request) -> WebSearchProvider:
+    """Get the shared web-search provider from app state.
+
+    Initialized at app startup over the shared httpx client, the same instance the
+    chat ``web_search`` tool uses. ``None`` means no provider key is configured.
+    """
+    provider = request.app.state.web_search_provider
+    if provider is None:
+        raise ApiError(
+            ApiErrorCode.E_BROWSE_PROVIDER_UNAVAILABLE,
+            "Web search provider is not configured",
+        )
+    return provider

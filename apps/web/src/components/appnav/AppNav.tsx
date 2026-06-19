@@ -7,11 +7,7 @@ import { getPaneRouteIcon, resolvePaneRoute } from "@/lib/panes/paneRouteTable";
 import { parseWorkspaceHref } from "@/lib/workspace/workspaceHref";
 import { useResource } from "@/lib/api/useResource";
 import { pinnedObjectsPath, type PinnedObject } from "@/lib/pinnedObjects";
-import { dispatchOpenAddContent } from "@/components/addContentEvents";
-import {
-  dispatchOpenCommandPalette,
-  OPEN_COMMAND_PALETTE_EVENT,
-} from "@/components/commandPaletteEvents";
+import { dispatchOpenLauncher, OPEN_LAUNCHER_EVENT } from "@/lib/launcher/launcherEvents";
 import { DEFAULT_KEYBINDINGS } from "@/lib/keybindings";
 import { useKeybinding, useKeybindingLabel } from "@/lib/keybindingsProvider";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
@@ -48,8 +44,8 @@ export default function AppNav() {
   const [collapsed, setCollapsed] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
   const commandCombo =
-    useKeybinding("open-palette") ?? DEFAULT_KEYBINDINGS["open-palette"];
-  const commandHint = useKeybindingLabel("open-palette") ?? commandCombo;
+    useKeybinding("open-launcher") ?? DEFAULT_KEYBINDINGS["open-launcher"];
+  const commandHint = useKeybindingLabel("open-launcher") ?? commandCombo;
 
   useEffect(() => {
     setCollapsed(localStorage.getItem(COLLAPSE_KEY) === "1");
@@ -102,15 +98,15 @@ export default function AppNav() {
   );
   const settingsActive = activeId === "settings";
 
-  // Close the sheet when the active route changes from outside the sheet (e.g. the command palette).
+  // Close the sheet when the active route changes from outside the sheet (e.g. the launcher).
   useEffect(() => setSheetOpen(false), [activePathname]);
 
-  // The palette renders above the sheet (--z-palette); also close the sheet whenever
-  // the palette opens (a hotkey can open it while the sheet is up) so they never stack.
+  // The launcher renders above the sheet; also close the sheet whenever the launcher opens
+  // (a hotkey can open it while the sheet is up) so they never stack.
   useEffect(() => {
     const handler = () => setSheetOpen(false);
-    window.addEventListener(OPEN_COMMAND_PALETTE_EVENT, handler);
-    return () => window.removeEventListener(OPEN_COMMAND_PALETTE_EVENT, handler);
+    window.addEventListener(OPEN_LAUNCHER_EVENT, handler);
+    return () => window.removeEventListener(OPEN_LAUNCHER_EVENT, handler);
   }, []);
 
   const onNavigate = useCallback(
@@ -123,8 +119,8 @@ export default function AppNav() {
     [activePane, navigatePane],
   );
 
-  const openCommand = useCallback(() => dispatchOpenCommandPalette(), []);
-  const openAdd = useCallback(() => dispatchOpenAddContent("content"), []);
+  const openCommand = useCallback(() => dispatchOpenLauncher(), []);
+  const openAdd = useCallback(() => dispatchOpenLauncher({ lane: "add" }), []);
 
   if (isMobile) {
     return (

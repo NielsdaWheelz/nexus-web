@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, type RenderResult } from "@testing-library/react";
 import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import AppNav from "./AppNav";
-import { OPEN_COMMAND_PALETTE_EVENT } from "@/components/commandPaletteEvents";
+import { OPEN_LAUNCHER_EVENT, type OpenLauncherDetail } from "@/lib/launcher/launcherEvents";
 import { KeybindingsProvider } from "@/lib/keybindingsProvider";
 import { MobileChromeProvider } from "@/lib/workspace/mobileChrome";
 import { createDefaultWorkspaceState } from "@/lib/workspace/schema";
@@ -125,15 +125,31 @@ describe("AppNav (desktop rail)", () => {
     expect(screen.getByRole("link", { name: "Oracle" })).toBeInTheDocument();
   });
 
-  it("opens the command palette from the command bar", () => {
+  it("opens the launcher from the command bar (no lane seed)", () => {
     const onOpen = vi.fn();
-    window.addEventListener(OPEN_COMMAND_PALETTE_EVENT, onOpen);
+    window.addEventListener(OPEN_LAUNCHER_EVENT, onOpen);
     renderNav();
 
     fireEvent.click(screen.getByRole("button", { name: "Search or ask anything" }));
 
     expect(onOpen).toHaveBeenCalledTimes(1);
-    window.removeEventListener(OPEN_COMMAND_PALETTE_EVENT, onOpen);
+    const detail = (onOpen.mock.calls[0]![0] as CustomEvent<OpenLauncherDetail>).detail;
+    // The plain command button opens the blended launcher — it must not seed a lane.
+    expect(detail?.lane).toBeUndefined();
+    window.removeEventListener(OPEN_LAUNCHER_EVENT, onOpen);
+  });
+
+  it("opens the launcher on the add lane from the + button", () => {
+    const onOpen = vi.fn();
+    window.addEventListener(OPEN_LAUNCHER_EVENT, onOpen);
+    renderNav();
+
+    fireEvent.click(screen.getByRole("button", { name: "Add content" }));
+
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    const detail = (onOpen.mock.calls[0]![0] as CustomEvent<OpenLauncherDetail>).detail;
+    expect(detail?.lane).toBe("add");
+    window.removeEventListener(OPEN_LAUNCHER_EVENT, onOpen);
   });
 
   it("opens an account menu with Settings and Sign Out", async () => {
@@ -161,16 +177,17 @@ describe("AppNav (mobile sheet)", () => {
     vi.unstubAllGlobals();
   });
 
-  it("closes an open NavSheet when OPEN_COMMAND_PALETTE_EVENT fires", () => {
+  it("closes an open NavSheet when OPEN_LAUNCHER_EVENT fires", () => {
     renderNav({ initialViewport: "mobile" });
 
     // Open the sheet via the mobile top-bar brand button.
     fireEvent.click(screen.getByRole("button", { name: "Open navigation" }));
     expect(screen.getByRole("dialog", { name: "Navigation" })).toBeInTheDocument();
 
-    // Dispatch the palette event — the sheet's useEffect listener calls setSheetOpen(false).
+    // Dispatch the launcher-open event — AppNav's useEffect listener calls setSheetOpen(false)
+    // so the launcher never stacks on top of the open nav sheet.
     act(() => {
-      window.dispatchEvent(new CustomEvent(OPEN_COMMAND_PALETTE_EVENT));
+      window.dispatchEvent(new CustomEvent(OPEN_LAUNCHER_EVENT));
     });
 
     expect(screen.queryByRole("dialog", { name: "Navigation" })).not.toBeInTheDocument();

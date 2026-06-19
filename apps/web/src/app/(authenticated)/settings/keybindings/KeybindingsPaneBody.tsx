@@ -20,18 +20,20 @@ interface BindableAction {
   label: string;
 }
 
+// Bindable ids match the launcher's resolvable actions: "open-launcher" + the shared
+// destination registry ids (lib/navigation/destinations.ts) + workspace pane navigation.
 const BINDABLE_ACTIONS: BindableAction[] = [
-  { id: "open-palette", label: "Open command palette" },
-  { id: "nav-libraries", label: "Go to Libraries" },
-  { id: "nav-browse", label: "Go to Browse" },
-  { id: "nav-podcasts", label: "Go to Podcasts" },
-  { id: "nav-chats", label: "Go to Chats" },
-  { id: "nav-search", label: "Go to Search" },
-  { id: "nav-settings", label: "Go to Settings" },
-  { id: "create-conversation", label: "New conversation" },
-  { id: "create-library", label: "New library" },
-  { id: "create-upload", label: "Upload file" },
-  { id: "create-url", label: "Add from URL" },
+  { id: "open-launcher", label: "Open launcher" },
+  { id: "libraries", label: "Go to Libraries" },
+  { id: "authors", label: "Go to Authors" },
+  { id: "browse", label: "Go to Browse" },
+  { id: "podcasts", label: "Go to Podcasts" },
+  { id: "chats", label: "Go to Chats" },
+  { id: "notes", label: "Go to Notes" },
+  { id: "today", label: "Go to Today" },
+  { id: "oracle", label: "Go to Oracle" },
+  { id: "search", label: "Go to Search" },
+  { id: "settings", label: "Go to Settings" },
   { id: "pane-next", label: "Next pane" },
   { id: "pane-previous", label: "Previous pane" },
 ];

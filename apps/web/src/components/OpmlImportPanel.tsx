@@ -9,7 +9,7 @@ import {
 import { apiFetch } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import Button from "@/components/ui/Button";
-import styles from "./AddContentTray.module.css";
+import styles from "./OpmlImportPanel.module.css";
 
 type PodcastOpmlImportResult = {
   total: number;

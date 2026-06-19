@@ -4,12 +4,12 @@ import { KeybindingsProvider } from "@/lib/keybindingsProvider";
 import KeybindingsPaneBody from "./KeybindingsPaneBody";
 
 describe("KeybindingsPaneBody", () => {
-  it("keeps the Open command palette binding label", () => {
+  it("renders the Open launcher binding label", () => {
     render(
       <KeybindingsProvider>
         <KeybindingsPaneBody />
       </KeybindingsProvider>,
     );
-    expect(screen.getByText("Open command palette")).toBeInTheDocument();
+    expect(screen.getByText("Open launcher")).toBeInTheDocument();
   });
 });

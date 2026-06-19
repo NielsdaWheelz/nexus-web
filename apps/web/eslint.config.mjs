@@ -108,9 +108,9 @@ const eslintConfig = [
     // Pane bodies are reached only through the lazy paneRenderRegistry.
     files: [
       "src/components/appnav/**",
-      "src/components/CommandPalette.tsx",
+      "src/components/launcher/Launcher.tsx",
+      "src/components/launcher/useLauncherController.ts",
       "src/components/workspace/WorkspacePaneStrip.tsx",
-      "src/components/command-palette/staticCommands.ts",
       "src/lib/panes/paneLinkNavigation.ts",
       "src/lib/panes/paneRouteTable.ts",
       "src/lib/workspace/store.tsx",

@@ -1,0 +1,73 @@
+.libraryLabel {
+  color: var(--ink);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+}
+
+.fileInput {
+  display: none;
+}
+
+.importActions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.opmlInputLabel {
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
+}
+
+.opmlFieldset {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.opmlFileRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.opmlHelper {
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
+}
+
+.importSummary {
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-lg);
+  padding: var(--space-2);
+  background: var(--surface-2);
+  color: var(--ink);
+  font-size: var(--text-sm);
+}
+
+.importSummaryTitle {
+  margin: 0 0 var(--space-2);
+  font-weight: var(--weight-semibold);
+}
+
+.importStats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  color: var(--ink-muted);
+}
+
+.importErrors {
+  margin: var(--space-2) 0 0;
+  padding-left: var(--space-5);
+  color: var(--ink-faint);
+}
+
+@media (max-width: 900px) {
+  .importActions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}

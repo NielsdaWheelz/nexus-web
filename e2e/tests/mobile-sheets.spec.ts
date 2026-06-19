@@ -63,18 +63,18 @@ test.describe("mobile sheets", () => {
     }
   });
 
-  test("browser back closes the command palette sheet and stays on the page", async ({
+  test("browser back closes the launcher sheet and stays on the page", async ({
     page,
   }) => {
-    await page.goto("/libraries?palette=1");
+    await page.goto("/libraries?launcher=1");
 
-    const dialog = page.getByRole("dialog", { name: "Command palette" });
+    const dialog = page.getByRole("dialog", { name: "Launcher" });
     await expect(dialog).toBeVisible();
 
     await page.goBack();
 
     await expect(dialog).toBeHidden();
-    // Still on the page: the close consumes the ?palette=1 opener param
+    // Still on the page: the close consumes the ?launcher=1 opener param
     // (URL canonicalization, not a navigation), so assert the pathname.
     await expect(page).toHaveURL(/\/libraries(\?|$)/);
   });

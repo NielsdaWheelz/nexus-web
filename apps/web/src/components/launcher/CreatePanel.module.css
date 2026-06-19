@@ -1,0 +1,58 @@
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.backHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-1);
+  border: none;
+  background: none;
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  cursor: pointer;
+}
+
+.backHeader:hover {
+  color: var(--ink);
+}
+
+.quickNoteForm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.quickNoteForm label {
+  color: var(--ink);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+}
+
+.quickNoteEditor {
+  min-height: 120px;
+  padding: var(--space-2) 0;
+}
+
+.quickNoteEditor :global(.ProseMirror) {
+  min-height: 120px;
+  outline: none;
+}
+
+.quickNoteActions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+@media (max-width: 900px) {
+  .quickNoteActions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}

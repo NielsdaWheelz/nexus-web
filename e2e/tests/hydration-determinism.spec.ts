@@ -34,18 +34,18 @@ test.describe("hydration determinism", () => {
     });
   }
 
-  test("desktop command palette cold-load", async ({ page }, testInfo) => {
+  test("desktop launcher cold-load", async ({ page }, testInfo) => {
     const sentry = await installHydrationSentry(page);
     try {
       await gotoSinglePaneWorkspace(
         page,
         workspaceE2eDeviceId(testInfo, "e2e-hydration"),
-        "/libraries?palette=1",
+        "/libraries?launcher=1",
       );
-      await expect(page.getByRole("dialog", { name: "Command palette" })).toBeVisible({
+      await expect(page.getByRole("dialog", { name: "Launcher" })).toBeVisible({
         timeout: 15_000,
       });
-      await sentry.expectClean("desktop command palette");
+      await sentry.expectClean("desktop launcher");
     } finally {
       sentry.dispose();
     }
@@ -83,18 +83,18 @@ test.describe("hydration determinism mobile", () => {
     await coldLoad(page, testInfo, "/libraries");
   });
 
-  test("mobile command palette cold-load", async ({ page }, testInfo) => {
+  test("mobile launcher cold-load", async ({ page }, testInfo) => {
     const sentry = await installHydrationSentry(page);
     try {
       await gotoSinglePaneWorkspace(
         page,
         workspaceE2eDeviceId(testInfo, "e2e-hydration"),
-        "/libraries?palette=1",
+        "/libraries?launcher=1",
       );
-      await expect(page.getByRole("dialog", { name: "Command palette" })).toBeVisible({
+      await expect(page.getByRole("dialog", { name: "Launcher" })).toBeVisible({
         timeout: 15_000,
       });
-      await sentry.expectClean("mobile command palette");
+      await sentry.expectClean("mobile launcher");
     } finally {
       sentry.dispose();
     }
@@ -110,7 +110,7 @@ test.describe("hydration determinism Mac", () => {
       await gotoSinglePaneWorkspace(
         page,
         workspaceE2eDeviceId(testInfo, "e2e-hydration"),
-        "/libraries?palette=1",
+        "/libraries?launcher=1",
       );
       await expect(page.getByText(/\u2318K/).first()).toBeVisible({
         timeout: 15_000,
