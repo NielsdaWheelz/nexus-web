@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { apiFetch } from "@/lib/api/client";
-import { queryConnections, type ConnectionOut } from "./connections";
+import {
+  queryConnectionSummaries,
+  queryConnections,
+  type ConnectionOut,
+  type ConnectionSummaryOut,
+} from "./connections";
 
 vi.mock("@/lib/api/client", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api/client")>(
@@ -74,6 +79,15 @@ const connection: ConnectionOut = {
   created_at: "2026-01-01T00:00:00Z",
 };
 
+const summary: ConnectionSummaryOut = {
+  ref: "media:22222222-2222-4222-8222-222222222222",
+  total: 1,
+  by_kind: { context: 1 },
+  last_connected_at: "2026-01-01T00:00:00Z",
+  dominant_kind: "context",
+  top_peers: [connection.source],
+};
+
 describe("resource graph connections client", () => {
   beforeEach(() => {
     apiFetchMock.mockReset();
@@ -130,6 +144,34 @@ describe("resource graph connections client", () => {
         body: JSON.stringify({
           refs: ["media:22222222-2222-4222-8222-222222222222"],
           direction: "incoming",
+        }),
+      },
+    );
+  });
+
+  it("returns an empty summary list without hitting the BFF", async () => {
+    await expect(queryConnectionSummaries([])).resolves.toEqual([]);
+    expect(apiFetchMock).not.toHaveBeenCalled();
+  });
+
+  it("queries batched connection summaries through the BFF route", async () => {
+    const controller = new AbortController();
+    apiFetchMock.mockResolvedValueOnce({ data: { summaries: [summary] } });
+
+    await expect(
+      queryConnectionSummaries(
+        ["media:22222222-2222-4222-8222-222222222222"],
+        { signal: controller.signal },
+      ),
+    ).resolves.toEqual([summary]);
+
+    expect(apiFetchMock).toHaveBeenCalledWith(
+      "/api/resource-graph/connections/summary",
+      {
+        method: "POST",
+        signal: controller.signal,
+        body: JSON.stringify({
+          refs: ["media:22222222-2222-4222-8222-222222222222"],
         }),
       },
     );

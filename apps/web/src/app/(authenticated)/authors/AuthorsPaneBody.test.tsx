@@ -10,7 +10,7 @@ describe("AuthorsPaneBody", () => {
     vi.unstubAllGlobals();
   });
 
-  it("renders directory rows with work-count pills", async () => {
+  it("renders directory rows with work-count signals", async () => {
     stubDirectoryFetch();
 
     render(<AuthorsHarness />);
@@ -19,8 +19,9 @@ describe("AuthorsPaneBody", () => {
       await screen.findByRole("link", { name: /Ursula K. Le Guin/ }),
     ).toBeVisible();
     expect(screen.getByRole("link", { name: /Italo Calvino/ })).toBeVisible();
-    expect(screen.getByText("12 works")).toBeVisible();
-    expect(screen.getByText("7 works")).toBeVisible();
+    // Work count leads the presenter's signal meta (joined with kind).
+    expect(screen.getByText(/12 works/)).toBeVisible();
+    expect(screen.getByText(/7 works/)).toBeVisible();
   });
 
   it("toggles a role facet into the URL and refetches", async () => {

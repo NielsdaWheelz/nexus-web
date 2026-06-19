@@ -236,6 +236,13 @@
     --duration-slow: 0ms;
     --duration-deliberate: 0ms;
   }
+
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation-duration: 0ms !important;
+    animation-delay: 0ms !important;
+  }
 }
 
 /* === Black Forest Oracle theme — scoped, route-local === */

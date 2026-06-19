@@ -52,6 +52,38 @@ export interface ConnectionPage {
   next_cursor: string | null;
 }
 
+export interface ConnectionSummaryOut {
+  ref: string;
+  total: number;
+  by_kind: Record<string, number>;
+  last_connected_at: string | null;
+  dominant_kind: EdgeKind | null;
+  top_peers: ConnectionEndpointOut[];
+}
+
+interface ConnectionSummaryResponse {
+  data: { summaries: ConnectionSummaryOut[] };
+}
+
+/** Batch per-ref connection summaries (≤200 refs), AI/synapse excluded by default. */
+export async function queryConnectionSummaries(
+  refs: string[],
+  options: { signal?: AbortSignal } = {},
+): Promise<ConnectionSummaryOut[]> {
+  if (refs.length === 0) {
+    return [];
+  }
+  const response = await apiFetch<ConnectionSummaryResponse>(
+    "/api/resource-graph/connections/summary" as ApiPath,
+    {
+      method: "POST",
+      signal: options.signal,
+      body: JSON.stringify({ refs }),
+    },
+  );
+  return response.data.summaries;
+}
+
 export interface QueryConnectionsInput {
   refs: string[];
   direction: "incoming" | "outgoing" | "both";

@@ -29,6 +29,7 @@ describe("NotesPaneBody (AC-4 hydration hit)", () => {
               id: "p1",
               title: "Hydrated Note Page",
               description: null,
+              updatedAt: "2026-06-02T12:00:00.000Z",
             },
           ],
       },
@@ -39,6 +40,7 @@ describe("NotesPaneBody (AC-4 hydration hit)", () => {
     expect(
       await screen.findByText("Hydrated Note Page"),
     ).toBeInTheDocument();
+    expect(await screen.findByText("yesterday")).toBeInTheDocument();
 
     // (b) No client fetch to the notes pages endpoint — the seed was the source.
     const fetchedPages = wasFetchPathCalled(fetchSpy, "/api/notes/pages");

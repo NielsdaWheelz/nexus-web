@@ -28,13 +28,35 @@
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: var(--space-3);
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
+/* Editorial index: rows butt together, separated by their own hairline rules. */
+.list[data-view="list"] > li {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 64px;
+}
+
+.list[data-view="list"][data-density="compact"] > li {
+  contain-intrinsic-size: auto 44px;
+}
+
+/* Gallery: cover-forward cards. */
+.list[data-view="gallery"] {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  gap: var(--space-4);
+}
+
+.list[data-view="gallery"] > li {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 240px;
+}
+
 .footer {
   display: flex;
   justify-content: center;
+  padding-top: var(--space-3);
 }

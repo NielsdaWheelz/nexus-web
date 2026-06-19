@@ -1,15 +1,23 @@
 "use client";
 
-import type { Dispatch, SetStateAction } from "react";
+import { useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
-import ResourceList from "@/components/ui/ResourceList";
 import Select from "@/components/ui/Select";
+import LibraryMembershipPanel from "@/components/LibraryMembershipPanel";
+import CollectionView from "@/components/collections/CollectionView";
+import CollectionDisplayControls from "@/components/collections/CollectionDisplayControls";
+import { presentEpisode } from "@/lib/collections/presenters/episode";
+import { useCollectionDisplayState } from "@/lib/collections/useCollectionDisplayState";
+import { useConnectionSummaries } from "@/lib/collections/useConnectionSummaries";
+import { requireDocumentProcessingStatus } from "@/lib/media/documentReadiness";
+import { useLibraryMembership } from "@/lib/media/useLibraryMembership";
 import { useStringIdSet } from "@/lib/useStringIdSet";
-import PodcastEpisodeRow from "./PodcastEpisodeRow";
+import EpisodeControls from "./EpisodeControls";
 import {
+  deriveEpisodeState,
   type EpisodeSort,
   type EpisodeStateFilter,
   type PodcastEpisodeMedia,
@@ -24,6 +32,7 @@ type EpisodeTranscriptController = ReturnType<
 type StringIdSet = ReturnType<typeof useStringIdSet>;
 
 interface PodcastEpisodeListProps {
+  basePath: string;
   episodes: PodcastEpisodeMedia[];
   loading: boolean;
   error: FeedbackContent | null;
@@ -56,6 +65,7 @@ interface PodcastEpisodeListProps {
 }
 
 export default function PodcastEpisodeList({
+  basePath,
   episodes,
   loading,
   error,
@@ -86,6 +96,94 @@ export default function PodcastEpisodeList({
   onDelete,
   onTogglePlayed,
 }: PodcastEpisodeListProps) {
+  const { displayState, setDisplayState } = useCollectionDisplayState(basePath);
+  const listDisplayState = { ...displayState, view: "list" as const };
+  // The per-episode library picker is lifted here (one panel for the list,
+  // keyed by the active episode) so the presenter ctx's `onManageLibraries`
+  // can anchor it without per-row hook state.
+  const [membershipEpisodeId, setMembershipEpisodeId] = useState<string | null>(
+    null,
+  );
+  const [membershipTriggerEl, setMembershipTriggerEl] =
+    useState<HTMLElement | null>(null);
+  const membership = useLibraryMembership(membershipEpisodeId);
+  const { loadLibraries } = membership;
+  const connectionSummaries = useConnectionSummaries(
+    episodes.map((episode) => `media:${episode.id}`),
+  );
+
+  const rows = episodes.map((episode) =>
+    presentEpisode(
+      {
+        id: episode.id,
+        title: episode.title,
+        kind: episode.kind,
+        processing_status: requireDocumentProcessingStatus(
+          episode.processing_status,
+        ),
+        episode_state: deriveEpisodeState(episode),
+        canonical_source_url: episode.canonical_source_url,
+        contributors: episode.contributors,
+        capabilities: episode.capabilities,
+        published_date: episode.published_date,
+        listening_state: episode.listening_state,
+      },
+      {
+        connectionSummary: connectionSummaries.get(`media:${episode.id}`),
+        busy: busyMediaIds.ids.has(episode.id),
+        retryBusy: busyMediaIds.ids.has(episode.id),
+        refreshBusy: busyMediaIds.ids.has(episode.id),
+        deleteBusy: busyMediaIds.ids.has(episode.id),
+        markingBusy: markingEpisodeIds.ids.has(episode.id),
+        onManageLibraries: ({ triggerEl }) => {
+          setMembershipEpisodeId(episode.id);
+          setMembershipTriggerEl(triggerEl);
+          void loadLibraries();
+        },
+        onOpenChat: () => {
+          onOpenChat(episode);
+        },
+        onRetry: episode.capabilities.can_retry
+          ? () => {
+              onRetry(episode.id);
+            }
+          : undefined,
+        onRefreshSource: episode.capabilities.can_refresh_source
+          ? () => {
+              onRefreshSource(episode.id);
+            }
+          : undefined,
+        onDelete: episode.capabilities.can_delete
+          ? () => {
+              onDelete(episode);
+            }
+          : undefined,
+        onTogglePlayed: () => {
+          onTogglePlayed(episode, deriveEpisodeState(episode) !== "played");
+        },
+      },
+    ),
+  );
+
+  const rowPanels = episodes.reduce<Record<string, ReactNode>>(
+    (panels, episode) => {
+      panels[episode.id] = (
+        <EpisodeControls
+          episode={episode}
+          inQueue={queueMediaIds.has(episode.id)}
+          transcriptionAllowed={transcriptionAllowed}
+          billingDisabled={billingDisabled}
+          showNotesExpanded={expandedShowNotesMediaIds.ids.has(episode.id)}
+          transcript={transcript}
+          onToggleShowNotes={onToggleShowNotes}
+          onAddToQueue={onAddToQueue}
+        />
+      );
+      return panels;
+    },
+    {},
+  );
+
   return (
     <div className={styles.episodePaneContent}>
       <div className={styles.episodePaneHeaderRow}>
@@ -114,14 +212,12 @@ export default function PodcastEpisodeList({
             },
           ]}
         />
-      </div>
-
-      {!loading && episodes.length === 0 && !error && (
-        <FeedbackNotice
-          severity="neutral"
-          title="No episodes found for this podcast."
+        <CollectionDisplayControls
+          value={listDisplayState}
+          onChange={setDisplayState}
+          gallery={false}
         />
-      )}
+      </div>
 
       <div className={styles.episodeFilterBar}>
         <div className={styles.episodeFilterPills}>
@@ -181,44 +277,56 @@ export default function PodcastEpisodeList({
         </p>
       )}
 
-      {episodes.length > 0 || (!loading && hasMoreEpisodes) ? (
-        <ResourceList
-          footer={
-            !loading && hasMoreEpisodes ? (
-              <Button
-                variant="secondary"
-                size="md"
-                onClick={() => onLoadMoreEpisodes()}
-                disabled={loadingMoreEpisodes}
-                aria-label="Load more episodes"
-              >
-                {loadingMoreEpisodes ? "Loading..." : "Load more episodes"}
-              </Button>
-            ) : undefined
-          }
-        >
-          {episodes.map((episode) => (
-            <PodcastEpisodeRow
-              key={episode.id}
-              episode={episode}
-              busy={busyMediaIds.ids.has(episode.id)}
-              markingBusy={markingEpisodeIds.ids.has(episode.id)}
-              inQueue={queueMediaIds.has(episode.id)}
-              transcriptionAllowed={transcriptionAllowed}
-              billingDisabled={billingDisabled}
-              showNotesExpanded={expandedShowNotesMediaIds.ids.has(episode.id)}
-              transcript={transcript}
-              onToggleShowNotes={onToggleShowNotes}
-              onAddToQueue={onAddToQueue}
-              onOpenChat={onOpenChat}
-              onRetry={onRetry}
-              onRefreshSource={onRefreshSource}
-              onDelete={onDelete}
-              onTogglePlayed={onTogglePlayed}
+      <CollectionView
+        rows={rows}
+        view="list"
+        density={displayState.density}
+        status="ready"
+        ariaLabel="Episodes"
+        rowPanels={rowPanels}
+        empty={
+          !loading && !error ? (
+            <FeedbackNotice
+              severity="neutral"
+              title="No episodes found for this podcast."
             />
-          ))}
-        </ResourceList>
-      ) : null}
+          ) : null
+        }
+        footer={
+          !loading && hasMoreEpisodes ? (
+            <Button
+              variant="secondary"
+              size="md"
+              onClick={() => onLoadMoreEpisodes()}
+              disabled={loadingMoreEpisodes}
+              aria-label="Load more episodes"
+            >
+              {loadingMoreEpisodes ? "Loading..." : "Load more episodes"}
+            </Button>
+          ) : undefined
+        }
+      />
+
+      <LibraryMembershipPanel
+        open={membershipEpisodeId !== null}
+        title="Libraries"
+        anchorEl={membershipTriggerEl}
+        libraries={membership.libraries}
+        loading={membership.loading}
+        busy={membership.busy}
+        error={membership.error}
+        emptyMessage="No non-default libraries available."
+        onClose={() => {
+          setMembershipEpisodeId(null);
+          setMembershipTriggerEl(null);
+        }}
+        onAddToLibrary={(libraryId) => {
+          void membership.addToLibrary(libraryId);
+        }}
+        onRemoveFromLibrary={(libraryId) => {
+          void membership.removeFromLibrary(libraryId);
+        }}
+      />
     </div>
   );
 }

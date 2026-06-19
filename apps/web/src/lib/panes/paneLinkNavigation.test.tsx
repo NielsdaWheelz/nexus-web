@@ -1,9 +1,16 @@
 import type { MouseEvent as ReactMouseEvent } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   handlePaneInternalAnchorClick,
   handlePaneInternalHrefClick,
 } from "@/lib/panes/paneLinkNavigation";
+import { clearMediaReaderViewTransition } from "@/lib/ui/viewTransitions";
+
+const MEDIA_ID = "11111111-1111-4111-8111-111111111111";
+const ORIGINAL_START_VIEW_TRANSITION = (
+  document as Document & { startViewTransition?: unknown }
+).startViewTransition;
+const ORIGINAL_MATCH_MEDIA = window.matchMedia;
 
 function click(overrides: Partial<ReactMouseEvent> = {}) {
   return {
@@ -41,6 +48,55 @@ function anchor(href: string, attributes: Record<string, string> = {}) {
   return element;
 }
 
+function installStartViewTransition() {
+  const startViewTransition = vi.fn((callback: () => void | Promise<void>) => {
+    const done = Promise.resolve().then(callback).then(() => undefined);
+    return {
+      ready: done,
+      updateCallbackDone: done,
+      finished: done,
+      skipTransition: vi.fn(),
+    };
+  });
+  Object.defineProperty(document, "startViewTransition", {
+    configurable: true,
+    value: startViewTransition,
+  });
+  return startViewTransition;
+}
+
+function installMatchMedia(matches: boolean) {
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    value: vi.fn((query: string) => ({
+      matches,
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })),
+  });
+}
+
+afterEach(() => {
+  clearMediaReaderViewTransition();
+  if (ORIGINAL_START_VIEW_TRANSITION === undefined) {
+    Reflect.deleteProperty(document, "startViewTransition");
+  } else {
+    Object.defineProperty(document, "startViewTransition", {
+      configurable: true,
+      value: ORIGINAL_START_VIEW_TRANSITION,
+    });
+  }
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    value: ORIGINAL_MATCH_MEDIA,
+  });
+});
+
 describe("paneLinkNavigation", () => {
   it("routes supported primary anchor clicks through the current pane", () => {
     const event = click();
@@ -71,6 +127,54 @@ describe("paneLinkNavigation", () => {
       "/settings/reader",
       { titleHint: "Reader settings" },
     );
+  });
+
+  it("adds media-reader transition intent only for eligible media anchors", () => {
+    installStartViewTransition();
+    installMatchMedia(false);
+    const event = click();
+    const paneRuntime = runtime();
+    const element = anchor(`/media/${MEDIA_ID}`, {
+      "data-view-transition": "media-reader",
+    });
+    element.innerHTML = `
+      <span data-view-transition-part="thumb"></span>
+      <span data-view-transition-part="title">Document</span>
+    `;
+
+    handlePaneInternalAnchorClick(event, paneRuntime, element);
+
+    expect(event.preventDefault).toHaveBeenCalledOnce();
+    expect(paneRuntime.router.push).toHaveBeenCalledWith(`/media/${MEDIA_ID}`, {
+      viewTransition: { kind: "media-reader", mediaId: MEDIA_ID },
+    });
+    expect(
+      (element.querySelector('[data-view-transition-part="thumb"]') as HTMLElement)
+        .style.viewTransitionName,
+    ).toContain("nexus-media-reader-thumb");
+  });
+
+  it("skips media-reader transition intent when reduced motion is requested", () => {
+    installStartViewTransition();
+    installMatchMedia(true);
+    const event = click();
+    const paneRuntime = runtime();
+    const element = anchor(`/media/${MEDIA_ID}`, {
+      "data-view-transition": "media-reader",
+    });
+    element.innerHTML = `
+      <span data-view-transition-part="thumb"></span>
+      <span data-view-transition-part="title">Document</span>
+    `;
+
+    handlePaneInternalAnchorClick(event, paneRuntime, element);
+
+    expect(event.preventDefault).toHaveBeenCalledOnce();
+    expect(paneRuntime.router.push).toHaveBeenCalledWith(`/media/${MEDIA_ID}`, undefined);
+    expect(
+      (element.querySelector('[data-view-transition-part="thumb"]') as HTMLElement)
+        .style.viewTransitionName,
+    ).toBe("");
   });
 
   it("opens supported Shift-clicks in a sibling pane", () => {

@@ -44,8 +44,23 @@ test.describe("authenticated shell AC-4", () => {
 
     const libraryLink = activePane.locator("a[href^='/libraries/']").first();
     await expect(libraryLink).toBeVisible();
+    await page.waitForLoadState("networkidle");
+    await page.evaluate(() => {
+      (window as typeof window & { __ac4SameDocumentSentinel?: boolean }).__ac4SameDocumentSentinel =
+        true;
+    });
     await libraryLink.click();
     await expect(page).toHaveURL(/\/libraries\/[^/]+$/);
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            (window as typeof window & { __ac4SameDocumentSentinel?: boolean })
+              .__ac4SameDocumentSentinel === true,
+        ),
+      )
+      .toBe(true);
+    await expect(page.locator("[data-pane-id]:visible")).toHaveCount(1);
     await expect.poll(() => browserLibraryDetailFetches.length).toBeGreaterThan(0);
   });
 });

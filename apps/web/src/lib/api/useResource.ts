@@ -77,7 +77,6 @@ export function useResource<T, P>(
   if (seededRef.current === null && cacheKey !== null) {
     if (cache !== null && cache.has(cacheKey)) {
       seededRef.current = { key: cacheKey, data: cache.get(cacheKey) as T };
-      cache.delete(cacheKey);
     }
   }
   const seeded = seededRef.current;
@@ -90,6 +89,12 @@ export function useResource<T, P>(
     }
     return cacheKey === null ? { status: "idle" } : { status: "loading" };
   });
+
+  useEffect(() => {
+    if (seeded !== null && cache !== null) {
+      cache.delete(seeded.key);
+    }
+  }, [cache, seeded]);
 
   useEffect(() => {
     if (cacheKey === null) {

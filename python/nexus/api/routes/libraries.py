@@ -324,10 +324,23 @@ def list_library_entries(
     db: Annotated[Session, Depends(get_db)],
     limit: int = Query(default=100, ge=1, description="Maximum results (clamped to 200)"),
     offset: int = Query(default=0, ge=0),
+    sort: Annotated[
+        library_entries.LibraryEntrySort,
+        Query(description="Entry ordering: 'position' (default) or 'resonance'"),
+    ] = "position",
+    viewer_tz: Annotated[
+        str,
+        Query(
+            max_length=128,
+            description="IANA timezone used for the surfaced-today boundary",
+        ),
+    ] = "UTC",
 ) -> dict:
     """List ordered entries in a library.
 
-    Returns one mixed list of podcasts and media ordered by entry position ASC.
+    Returns one mixed list of podcasts and media. ``sort='position'`` (default)
+    orders by entry position ASC; ``sort='resonance'`` applies the deterministic
+    recency + connection-count score (no request-time LLM).
     """
     result = library_entries.list_library_entries(
         db,
@@ -335,6 +348,8 @@ def list_library_entries(
         library_id,
         limit=limit,
         offset=offset,
+        sort=sort,
+        viewer_timezone=viewer_tz,
     )
     return ok(result)
 

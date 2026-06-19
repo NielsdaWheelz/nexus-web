@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import {
   PaneRuntimeProvider,
@@ -8,6 +8,7 @@ import {
   usePaneRouter,
   useSetPaneTitle,
 } from "@/lib/panes/paneRuntime";
+import type { PaneViewTransitionIntent } from "@/lib/ui/viewTransitions";
 
 const MEDIA_ID_1 = "11111111-1111-4111-8111-111111111111";
 const MEDIA_ID_2 = "22222222-2222-4222-8222-222222222222";
@@ -21,11 +22,22 @@ function Publisher({ title }: { title: string }) {
   return null;
 }
 
-function NavigateOnMount({ action }: { action: "push" | "replace" }) {
+const ORIGINAL_START_VIEW_TRANSITION = (
+  document as Document & { startViewTransition?: unknown }
+).startViewTransition;
+const ORIGINAL_MATCH_MEDIA = window.matchMedia;
+
+function NavigateOnMount({
+  action,
+  viewTransition,
+}: {
+  action: "push" | "replace";
+  viewTransition?: PaneViewTransitionIntent;
+}) {
   const router = usePaneRouter();
   useEffect(() => {
-    router[action](MEDIA_HREF_1, { titleHint: "Library Row Title" });
-  }, [action, router]);
+    router[action](MEDIA_HREF_1, { titleHint: "Library Row Title", viewTransition });
+  }, [action, router, viewTransition]);
   return null;
 }
 
@@ -121,6 +133,54 @@ const defaultNavigationProps = {
   onGoBackPane: vi.fn(),
   onGoForwardPane: vi.fn(),
 };
+
+function installStartViewTransition() {
+  const startViewTransition = vi.fn((callback: () => void | Promise<void>) => {
+    const done = Promise.resolve().then(callback).then(() => undefined);
+    return {
+      ready: done,
+      updateCallbackDone: done,
+      finished: done,
+      skipTransition: vi.fn(),
+    };
+  });
+  Object.defineProperty(document, "startViewTransition", {
+    configurable: true,
+    value: startViewTransition,
+  });
+  return startViewTransition;
+}
+
+function installMatchMedia(matches: boolean) {
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    value: vi.fn((query: string) => ({
+      matches,
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })),
+  });
+}
+
+afterEach(() => {
+  if (ORIGINAL_START_VIEW_TRANSITION === undefined) {
+    Reflect.deleteProperty(document, "startViewTransition");
+  } else {
+    Object.defineProperty(document, "startViewTransition", {
+      configurable: true,
+      value: ORIGINAL_START_VIEW_TRANSITION,
+    });
+  }
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    value: ORIGINAL_MATCH_MEDIA,
+  });
+});
 
 function runtime(
   href: string,
@@ -239,6 +299,66 @@ describe("PaneRuntimeProvider", () => {
         "Library Row Title",
         "reader-highlights",
       );
+    });
+  });
+
+  it("wraps explicit collection reflow navigation in a same-document View Transition", async () => {
+    const startViewTransition = installStartViewTransition();
+    installMatchMedia(false);
+    const onReplacePane = vi.fn();
+    const identity = resolvePaneRouteIdentity(LIBRARY_HREF);
+
+    render(
+      <PaneRuntimeProvider
+        paneId="pane-1"
+        href={LIBRARY_HREF}
+        routeId={identity.routeId}
+        resourceRef={identity.resourceRef}
+        resourceKey={identity.resourceKey}
+        {...defaultNavigationProps}
+        onNavigatePane={vi.fn()}
+        onReplacePane={onReplacePane}
+        onOpenInNewPane={vi.fn()}
+      >
+        <NavigateOnMount action="replace" viewTransition={{ kind: "collection-reflow" }} />
+      </PaneRuntimeProvider>,
+    );
+
+    await waitFor(() => {
+      expect(startViewTransition).toHaveBeenCalledOnce();
+      expect(onReplacePane).toHaveBeenCalledWith("pane-1", MEDIA_HREF_1, {
+        titleHint: "Library Row Title",
+      });
+    });
+  });
+
+  it("runs explicit transition navigation directly under reduced motion", async () => {
+    const startViewTransition = installStartViewTransition();
+    installMatchMedia(true);
+    const onReplacePane = vi.fn();
+    const identity = resolvePaneRouteIdentity(LIBRARY_HREF);
+
+    render(
+      <PaneRuntimeProvider
+        paneId="pane-1"
+        href={LIBRARY_HREF}
+        routeId={identity.routeId}
+        resourceRef={identity.resourceRef}
+        resourceKey={identity.resourceKey}
+        {...defaultNavigationProps}
+        onNavigatePane={vi.fn()}
+        onReplacePane={onReplacePane}
+        onOpenInNewPane={vi.fn()}
+      >
+        <NavigateOnMount action="replace" viewTransition={{ kind: "collection-reflow" }} />
+      </PaneRuntimeProvider>,
+    );
+
+    await waitFor(() => {
+      expect(startViewTransition).not.toHaveBeenCalled();
+      expect(onReplacePane).toHaveBeenCalledWith("pane-1", MEDIA_HREF_1, {
+        titleHint: "Library Row Title",
+      });
     });
   });
 

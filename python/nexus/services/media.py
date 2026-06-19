@@ -28,6 +28,7 @@ from nexus.schemas.media import (
     FragmentOut,
     ListeningStateOut,
     MediaOut,
+    MediaReadState,
     PodcastEpisodeChapterOut,
 )
 from nexus.services.capabilities import derive_capabilities, is_text_document_ready
@@ -306,6 +307,7 @@ def list_media_for_viewer_by_ids(
                 pdf_quote_ready=pdf_readiness.get(media_id, False),
             )
         )
+    enrich_media_read_state(db, viewer_id=viewer_id, media_outs=media_list)
     return media_list
 
 
@@ -437,6 +439,138 @@ def _media_out_from_row(
     )
 
 
+# Document is "finished" at/above this committed text progression. Mirrors the
+# 0.95 threshold the collection-surface cutover specifies for derived read-state.
+_DOC_FINISHED_PROGRESSION = 0.95
+
+
+def _audio_read_state(
+    listening_state: ListeningStateOut,
+) -> tuple[MediaReadState, float | None]:
+    """Derive (read_state, progress_fraction) for audio media from its listening
+    state. is_completed wins; otherwise a started position with a known duration is
+    in-progress with a clamped fraction; a bare started position is in-progress with
+    no fraction; nothing started is unread."""
+    if listening_state.is_completed:
+        return "finished", None
+    if listening_state.position_ms > 0:
+        duration_ms = listening_state.duration_ms
+        if duration_ms is not None and duration_ms > 0:
+            fraction = listening_state.position_ms / duration_ms
+            return "in_progress", min(1.0, max(0.0, fraction))
+        return "in_progress", None
+    return "unread", None
+
+
+def _doc_read_state(total_progression: float | None) -> tuple[MediaReadState, float | None]:
+    """Derive (read_state, progress_fraction) for a document with a committed
+    reader_media_state row. Absence of a row is "unread" and handled by the caller.
+    With a row present: total_progression at/above the finished threshold is
+    finished; any positive progression is in-progress with that fraction; a row
+    with no/zero progression (e.g. a PDF locator, which carries page_progression
+    not total_progression) is in-progress with no fraction, because a committed
+    locator means the reader was opened and scrolled."""
+    if total_progression is not None and total_progression >= _DOC_FINISHED_PROGRESSION:
+        return "finished", None
+    if total_progression is not None and total_progression > 0.0:
+        return "in_progress", min(1.0, max(0.0, total_progression))
+    return "in_progress", None
+
+
+def enrich_media_read_state(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    media_outs: list[MediaOut],
+) -> None:
+    """Derive per-viewer read-state onto already-built MediaOuts, in place.
+
+    Post-hoc batch enrichment (no rewrite of the shared media base SELECT): audio
+    (podcast_episode) reads the listening_state already on the MediaOut; documents
+    are resolved with one batched query over reader_media_state. The sole owner of
+    MediaOut read-state derivation; called wherever viewer-scoped MediaOuts are
+    built (list_visible_media, get_media_for_viewer/list_media_for_viewer_by_ids,
+    library-entry hydration).
+
+    Document caveat: documents have no explicit "opened" event, so "unread"
+    means no committed scroll position.
+    """
+    if not media_outs:
+        return
+
+    # Partition by medium. Audio = has a listening_state on the MediaOut (i.e.
+    # podcast_episode with a row); everything else is a document.
+    audio_media_ids: list[UUID] = []
+    doc_media_ids: list[UUID] = []
+    for media in media_outs:
+        if media.listening_state is not None:
+            media.read_state, media.progress_fraction = _audio_read_state(media.listening_state)
+            audio_media_ids.append(media.id)
+        else:
+            doc_media_ids.append(media.id)
+
+    # Audio recency: the ListeningStateOut wire shape omits updated_at, so fetch
+    # the recency in one batched query keyed by the audio media ids.
+    if audio_media_ids:
+        listening_updated_at_by_id = {
+            UUID(str(row[0])): row[1]
+            for row in db.execute(
+                text(
+                    """
+                    SELECT media_id, updated_at
+                    FROM podcast_listening_states
+                    WHERE user_id = :viewer_id AND media_id = ANY(:ids)
+                    """
+                ),
+                {"viewer_id": viewer_id, "ids": audio_media_ids},
+            ).fetchall()
+        }
+        for media in media_outs:
+            if media.listening_state is not None:
+                media.last_engaged_at = listening_updated_at_by_id.get(media.id)
+
+    if not doc_media_ids:
+        return
+
+    # Documents: one batched read over the authoritative resume table. The float
+    # total_progression lives at locator.locations.total_progression for web /
+    # transcript / epub states (PDF carries page_progression, not total_progression,
+    # so this extracts NULL and the row falls into in_progress-without-fraction).
+    doc_rows = db.execute(
+        text(
+            """
+            SELECT
+                media_id,
+                (locator -> 'locations' ->> 'total_progression')::double precision
+                    AS total_progression,
+                updated_at
+            FROM reader_media_state
+            WHERE user_id = :viewer_id AND media_id = ANY(:ids)
+            """
+        ),
+        {"viewer_id": viewer_id, "ids": doc_media_ids},
+    ).fetchall()
+    doc_state_by_id: dict[UUID, tuple[float | None, datetime]] = {
+        UUID(str(row[0])): (
+            float(row[1]) if row[1] is not None else None,
+            row[2],
+        )
+        for row in doc_rows
+    }
+
+    for media in media_outs:
+        if media.listening_state is not None:
+            continue
+        doc_state = doc_state_by_id.get(media.id)
+        if doc_state is None:
+            media.read_state = "unread"
+            media.progress_fraction = None
+            continue
+        total_progression, updated_at = doc_state
+        media.read_state, media.progress_fraction = _doc_read_state(total_progression)
+        media.last_engaged_at = updated_at
+
+
 def refresh_source_for_viewer(
     db: Session,
     viewer_id: UUID,
@@ -557,12 +691,13 @@ def list_visible_media(
             {visible_media_ids_cte_sql()}
         )
         SELECT
-            {_media_select_projection_sql(include_listening_state=False)}
+            {_media_select_projection_sql(include_listening_state=True)}
         FROM media m
         JOIN visible_media vm ON vm.media_id = m.id
         LEFT JOIN media_transcript_states mts ON mts.media_id = m.id
         LEFT JOIN content_index_states mcis ON mcis.owner_kind = 'media' AND mcis.owner_id = m.id
         LEFT JOIN podcast_episodes pe ON pe.media_id = m.id
+        {_media_listening_state_join_sql(include_listening_state=True)}
         WHERE {" AND ".join(where_clauses)}
         ORDER BY m.updated_at DESC, m.id DESC
         LIMIT :limit
@@ -592,6 +727,8 @@ def list_visible_media(
                 pdf_quote_ready=pdf_readiness.get(media_id, False),
             )
         )
+
+    enrich_media_read_state(db, viewer_id=viewer_id, media_outs=media_list)
 
     next_cursor = None
     if has_more and media_list:

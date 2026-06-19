@@ -1,15 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link2 } from "lucide-react";
 import {
   FeedbackNotice,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
+import CollectionView from "@/components/collections/CollectionView";
 import Button from "@/components/ui/Button";
 import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
-import ResourceList from "@/components/ui/ResourceList";
-import ResourceRow from "@/components/ui/ResourceRow";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { useResource } from "@/lib/api/useResource";
 import {
@@ -25,6 +25,7 @@ import {
 } from "./actions";
 import { PasswordRow } from "./PasswordRow";
 import { formatDisplayDate } from "@/lib/display/format";
+import { presentSettingsRow } from "@/lib/collections/presenters/settings";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
 import styles from "./page.module.css";
@@ -150,36 +151,45 @@ export default function SettingsIdentitiesPaneBody() {
         )}
 
         {!loading && identities.length > 0 && (
-          <ResourceList>
-            {identities.map((identity) => {
-              const canUnlink = mayUnlinkIdentity(identities, identity.id);
-              const pendingUnlink = unlinkingIdentityId === identity.id;
+          <CollectionView
+            rows={identities.map((identity) =>
+              presentSettingsRow({
+                id: identity.id,
+                title: formatIdentityProvider(identity.provider),
+                description: identity.email ?? "provider did not return an email",
+                meta: linkedDate(identity, display),
+                icon: Link2,
+              }),
+            )}
+            view="list"
+            density="comfortable"
+            status="ready"
+            ariaLabel="Linked identities"
+            surface={false}
+            rowControls={Object.fromEntries(
+              identities.map((identity) => {
+                const canUnlink = mayUnlinkIdentity(identities, identity.id);
+                const pendingUnlink = unlinkingIdentityId === identity.id;
 
-              return (
-                <ResourceRow
-                  key={identity.id}
-                  primary={{ kind: "static" }}
-                  title={formatIdentityProvider(identity.provider)}
-                  description={identity.email ?? "provider did not return an email"}
-                  meta={linkedDate(identity, display)}
-                  actions={
-                    canUnlink ? (
-                      <Button
-                        variant="danger"
-                        size="sm"
-                        disabled={pendingUnlink}
-                        onClick={() => void handleUnlinkIdentity(identity)}
-                      >
-                        {pendingUnlink ? "Unlinking..." : "Unlink"}
-                      </Button>
-                    ) : (
-                      <span className={styles.unlinkHint}>Keep at least two identities.</span>
-                    )
-                  }
-                />
-              );
-            })}
-          </ResourceList>
+                return [
+                  identity.id,
+                  canUnlink ? (
+                    <Button
+                      variant="danger"
+                      size="sm"
+                      disabled={pendingUnlink}
+                      onClick={() => void handleUnlinkIdentity(identity)}
+                    >
+                      {pendingUnlink ? "Unlinking..." : "Unlink"}
+                    </Button>
+                  ) : (
+                    <span className={styles.unlinkHint}>Keep at least two identities.</span>
+                  ),
+                ];
+              }),
+            )}
+            rowActionsVisibility="always"
+          />
         )}
 
         <PasswordRow identities={identities} onChanged={loadIdentities} />

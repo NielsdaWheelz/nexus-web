@@ -67,6 +67,6 @@ export function renderPane(id: PaneRouteId): ReactNode {
 // server-emit a <link rel="modulepreload">: under strict-dynamic nonce-CSP that
 // preload is script-src-governed and the chunk URL isn't known server-side — the
 // same constraint that bans next/dynamic (D-3). lazy() reuses this warmed module.
-export function preloadPane(id: PaneRouteId): void {
-  void PANE_LOADERS[id]();
+export function preloadPane(id: PaneRouteId): Promise<void> {
+  return PANE_LOADERS[id]().then(() => undefined);
 }

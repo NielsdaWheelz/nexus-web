@@ -4,40 +4,48 @@ import { useCallback, useEffect, useState } from "react";
 import { Plus } from "lucide-react";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
-import PaneSurface from "@/components/ui/PaneSurface";
-import ResourceList from "@/components/ui/ResourceList";
-import ResourceRow from "@/components/ui/ResourceRow";
 import { FeedbackNotice, toFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
-import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
+import CollectionView from "@/components/collections/CollectionView";
+import CollectionDisplayControls from "@/components/collections/CollectionDisplayControls";
 import { notePagesResource, type NoResourceParams } from "@/lib/api/resource";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { usePaneRouter, useSetPaneTitle } from "@/lib/panes/paneRuntime";
 import { createNotePage, fetchNotePages, type NotePageSummary } from "@/lib/notes/api";
 import { setPendingNoteFocus } from "@/lib/notes/pendingNoteFocus";
 import { useResource } from "@/lib/api/useResource";
+import { presentNote } from "@/lib/collections/presenters/note";
+import { useCollectionDisplayState } from "@/lib/collections/useCollectionDisplayState";
+import { useHydrationPreservedInput } from "@/lib/ui/useHydrationPreservedInput";
 import styles from "./notes.module.css";
 
 export default function NotesPaneBody() {
   const router = usePaneRouter();
-  const [pages, setPages] = useState<NotePageSummary[]>([]);
-  const [title, setTitle] = useState("");
+  const [localPages, setLocalPages] = useState<NotePageSummary[] | null>(null);
+  const {
+    value: title,
+    setValue: setTitle,
+    inputProps: titleInputProps,
+  } = useHydrationPreservedInput();
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
+  const { displayState, setDisplayState } = useCollectionDisplayState("/notes");
   const pagesResource = useResource<NotePageSummary[], NoResourceParams>({
     descriptor: notePagesResource,
     params: {},
     load: () => fetchNotePages(),
   });
+  const resourcePages =
+    pagesResource.status === "ready" ? pagesResource.data : null;
+  const pages = localPages ?? resourcePages ?? [];
   const loading = pagesResource.status === "loading" && pages.length === 0;
 
   useSetPaneTitle("Notes");
 
   useEffect(() => {
     if (pagesResource.status === "ready") {
-      setPages(pagesResource.data);
+      setLocalPages(pagesResource.data);
       setFeedback(null);
       return;
     }
-
     if (pagesResource.status === "error") {
       setFeedback(toFeedback(pagesResource.error, { fallback: "Notes could not be loaded." }));
     }
@@ -48,13 +56,9 @@ export default function NotesPaneBody() {
     const nextTitle = trimmedTitle || "Untitled";
     try {
       const page = await createNotePage({ title: nextTitle });
-      setPages((current) => [
-	        {
-	          id: page.id,
-	          title: page.title,
-	          updatedAt: page.updatedAt,
-	        },
-        ...current,
+      setLocalPages((current) => [
+        { id: page.id, title: page.title, updatedAt: page.updatedAt },
+        ...(current ?? resourcePages ?? []),
       ]);
       setTitle("");
       setPendingNoteFocus({ pageId: page.id, target: trimmedTitle ? "body" : "title" });
@@ -63,54 +67,42 @@ export default function NotesPaneBody() {
       if (handleUnauthenticatedApiError(error)) return;
       setFeedback(toFeedback(error, { fallback: "Page could not be created." }));
     }
-  }, [router, title]);
+  }, [resourcePages, router, setTitle, title]);
 
   return (
-    <PaneSurface
+    <CollectionView
+      rows={pages.map((page) => presentNote(page))}
+      view={displayState.view}
+      density={displayState.density}
+      status={loading ? "loading" : "ready"}
+      ariaLabel="Notes"
+      notice={feedback ? <FeedbackNotice feedback={feedback} /> : undefined}
+      empty={feedback ? undefined : <FeedbackNotice severity="neutral">No pages yet.</FeedbackNotice>}
       toolbar={
-      <form
-        className={styles.toolbar}
-        onSubmit={(event) => {
-          event.preventDefault();
-          void createPage();
-        }}
-      >
-        <Input
-          value={title}
-          onChange={(event) => setTitle(event.currentTarget.value)}
-          placeholder="New page"
-          aria-label="New page title"
-          style={{ flex: 1 }}
-        />
-        <Button iconOnly type="submit" aria-label="Create page">
-          <Plus size={16} aria-hidden="true" />
-        </Button>
-      </form>
-      }
-      state={
-        feedback || loading ? (
         <>
-          {feedback ? <FeedbackNotice {...feedback} /> : null}
-          {loading ? <PaneLoadingState /> : null}
+          <form
+            className={styles.toolbar}
+            onSubmit={(event) => {
+              event.preventDefault();
+              void createPage();
+            }}
+          >
+            <Input
+              {...titleInputProps}
+              placeholder="New page"
+              aria-label="New page title"
+              style={{ flex: 1 }}
+            />
+            <Button iconOnly type="submit" aria-label="Create page">
+              <Plus size={16} aria-hidden="true" />
+            </Button>
+          </form>
+          <CollectionDisplayControls
+            value={displayState}
+            onChange={setDisplayState}
+          />
         </>
-        ) : null
       }
-    >
-      {pages.length > 0 ? (
-        <ResourceList>
-        {pages.map((page) => (
-          <ResourceRow
-            key={page.id}
-            primary={{
-              kind: "link",
-              href: `/pages/${page.id}`,
-              paneTitleHint: page.title,
-	            }}
-	            title={page.title}
-	          />
-        ))}
-        </ResourceList>
-      ) : null}
-    </PaneSurface>
+    />
   );
 }

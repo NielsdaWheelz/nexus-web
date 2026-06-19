@@ -9,7 +9,7 @@ import {
 } from "react";
 import { flushSync } from "react-dom";
 import { dispatchOpenLauncher } from "@/lib/launcher/launcherEvents";
-import { apiFetch, isApiError } from "@/lib/api/client";
+import { apiFetch, isApiError, type ApiPath } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
   libraryEntriesResource,
@@ -27,20 +27,10 @@ import {
   useFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
-import {
-  libraryResourceOptions,
-  mediaResourceOptions,
-  podcastResourceOptions,
-} from "@/lib/actions/resourceActions";
+import { libraryResourceOptions } from "@/lib/actions/resourceActions";
+import { presentMedia } from "@/lib/collections/presenters/media";
+import { presentPodcast } from "@/lib/collections/presenters/podcast";
 import { startResourceChat } from "@/lib/resources/resourceChat";
-import {
-  BookOpen,
-  FileText,
-  Globe,
-  Mic,
-  Radio,
-  Video,
-} from "lucide-react";
 import LibraryMembershipPanel from "@/components/LibraryMembershipPanel";
 import {
   addMediaToLibrary,
@@ -52,12 +42,17 @@ import { useStringIdSet, type StringIdSet } from "@/lib/useStringIdSet";
 import { useResource } from "@/lib/api/useResource";
 import { fetchPodcastLibraries } from "@/app/(authenticated)/podcasts/podcastSubscriptions";
 import LibraryIntelligencePane from "./LibraryIntelligencePane";
-import ContributorCreditList from "@/components/contributors/ContributorCreditList";
-import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
 import PaneSurface from "@/components/ui/PaneSurface";
-import ResourceRow from "@/components/ui/ResourceRow";
-import SortableList from "@/components/sortable/SortableList";
+import CollectionView from "@/components/collections/CollectionView";
+import CollectionDisplayControls from "@/components/collections/CollectionDisplayControls";
+import PaneSection from "@/components/ui/PaneSection";
+import PaneToolbar from "@/components/ui/PaneToolbar";
+import SortSelect from "@/components/ui/SortSelect";
+import type { CollectionRowView } from "@/lib/collections/types";
+import { useConnectionSummaries } from "@/lib/collections/useConnectionSummaries";
+import { useCollectionDisplayState } from "@/lib/collections/useCollectionDisplayState";
+import { useDebouncedFetch } from "@/lib/api/useDebouncedFetch";
 import LibraryEditDialog from "@/components/LibraryEditDialog";
 import {
   fetchEditableLibrarySharing,
@@ -80,13 +75,6 @@ import {
 import type { ContributorCredit } from "@/lib/contributors/types";
 import styles from "./page.module.css";
 
-const MEDIA_KIND_ICONS: Record<string, typeof Globe> = {
-  podcast_episode: Mic,
-  video: Video,
-  epub: BookOpen,
-  pdf: FileText,
-};
-
 interface Library {
   id: string;
   name: string;
@@ -108,6 +96,9 @@ interface LibraryMediaEntry {
   publisher: string | null;
   canonical_source_url: string | null;
   processing_status: DocumentProcessingStatus;
+  read_state?: "unread" | "in_progress" | "finished" | null;
+  progress_fraction?: number | null;
+  last_engaged_at?: string | null;
   capabilities?: Partial<MediaActionCapabilities>;
 }
 
@@ -136,6 +127,10 @@ interface LibraryEntryBase {
   id: string;
   position: number;
   created_at: string;
+  read_state?: "unread" | "in_progress" | "finished" | null;
+  progress_fraction?: number | null;
+  last_engaged_at?: string | null;
+  surfaced_today?: boolean;
 }
 
 interface LibraryMediaListEntry extends LibraryEntryBase {
@@ -151,21 +146,15 @@ interface LibraryPodcastListEntry extends LibraryEntryBase {
 
 type LibraryEntry = LibraryMediaListEntry | LibraryPodcastListEntry;
 
-function hasContributorLinks(
-  contributors: ContributorCredit[] | null | undefined,
-): boolean {
-  return Array.isArray(contributors)
-    ? contributors.some((credit) => credit.contributor_handle?.trim())
-    : false;
-}
-
 export default function LibraryPaneBody() {
   const id = usePaneParam("id");
   if (!id) {
     throw new Error("library route requires an id");
   }
   const router = usePaneRouter();
-  const selectedTab = usePaneSearchParams().get("tab");
+  const paneSearchParams = usePaneSearchParams();
+  const selectedTab = paneSearchParams.get("tab");
+  const { displayState, setDisplayState } = useCollectionDisplayState(`/libraries/${id}`);
   const { openInNewPane, requestSecondarySurface } = usePaneRuntime() ?? {};
   const feedback = useFeedback();
   const [library, setLibrary] = useState<Library | null>(null);
@@ -203,6 +192,35 @@ export default function LibraryPaneBody() {
   const loading =
     libraryResource.status === "loading" && currentLibrary === null;
   useSetPaneTitle(currentLibrary?.name ?? (loading ? null : "Library"));
+  const connectionSummaries = useConnectionSummaries(
+    entries.map((entry) =>
+      entry.kind === "podcast" ? `podcast:${entry.podcast.id}` : `media:${entry.media.id}`,
+    ),
+  );
+  const sort = paneSearchParams.get("sort") === "resonance" ? "resonance" : "manual";
+  const setSort = useCallback(
+    (next: "manual" | "resonance") => {
+      const params = new URLSearchParams(paneSearchParams);
+      if (next === "resonance") {
+        params.set("sort", "resonance");
+      } else {
+        params.delete("sort");
+      }
+      const qs = params.toString();
+      router.replace(qs ? `/libraries/${id}?${qs}` : `/libraries/${id}`, {
+        viewTransition: { kind: "collection-reflow" },
+      });
+    },
+    [id, paneSearchParams, router],
+  );
+  const resonanceFetch = useDebouncedFetch(
+    sort === "resonance" ? `${libraryEntriesResource.clientPath({ id })}?sort=resonance` : null,
+    (signal) =>
+      apiFetch<{ data: LibraryEntry[] }>(
+        `${libraryEntriesResource.clientPath({ id })}?sort=resonance` as ApiPath,
+        { signal },
+      ).then((response) => response.data),
+  );
 
   const [editOpen, setEditOpen] = useState(false);
   const [editMembers, setEditMembers] = useState<LibraryMember[]>([]);
@@ -823,6 +841,68 @@ export default function LibraryPaneBody() {
   const visibleEntries = entries.filter(
     (entry) => !removedEntryIds.ids.has(entry.id),
   );
+  const surfacedEntries = visibleEntries.filter((entry) => entry.surfaced_today);
+  const resonanceEntries = resonanceFetch.data ?? [];
+
+  const entryRowView = (item: LibraryEntry): CollectionRowView => {
+    if (item.kind === "podcast") {
+      const row = presentPodcast(
+        {
+          id: item.podcast.id,
+          title: item.podcast.title,
+          image_url: item.podcast.image_url,
+          contributors: item.podcast.contributors,
+          unplayed_count: item.podcast.unplayed_count,
+          sync_status:
+            item.subscription?.status === "active"
+              ? item.subscription.sync_status
+              : "complete",
+        },
+        {
+          canUsePodcastActions: canEditEntries,
+          connectionSummary: connectionSummaries.get(`podcast:${item.podcast.id}`),
+          onManageLibraries: ({ triggerEl }) => {
+            void openLibraryPanel(item, triggerEl);
+          },
+        },
+      );
+      return { ...row, id: item.id };
+    }
+    const row = presentMedia(item.media, {
+      canManageLibraries: canEditEntries,
+      connectionSummary: connectionSummaries.get(`media:${item.media.id}`),
+      retryBusy: retryingMediaIds.ids.has(item.media.id),
+      refreshBusy: refreshingMediaIds.ids.has(item.media.id),
+      onRetry:
+        canEditEntries && item.media.capabilities?.can_retry
+          ? () => {
+              void handleRetryProcessing(item.media.id);
+            }
+          : undefined,
+      onRefreshSource:
+        canEditEntries && item.media.capabilities?.can_refresh_source
+          ? () => {
+              void handleRefreshSource(item.media.id);
+            }
+          : undefined,
+      onOpenChat: () => {
+        void handleOpenMediaChat(item.media);
+      },
+      onManageLibraries: canEditEntries
+        ? ({ triggerEl }) => {
+            void openLibraryPanel(item, triggerEl);
+          }
+        : undefined,
+      onDelete:
+        canEditEntries && item.media.capabilities?.can_delete
+          ? () => {
+              void handleDeleteMedia(item);
+            }
+        : undefined,
+    });
+    return { ...row, id: item.id, relatedMediaId: item.media.id };
+  };
+  const visibleEntryRows = visibleEntries.map(entryRowView);
 
   return (
     <>
@@ -844,6 +924,31 @@ export default function LibraryPaneBody() {
         }}
       />
       <PaneSurface
+        toolbar={
+          visibleEntries.length > 0 ? (
+            <PaneToolbar
+              controls={
+                <>
+                  <SortSelect
+                    label="Sort"
+                    value={sort}
+                    options={[
+                      { value: "manual", label: "Manual" },
+                      { value: "resonance", label: "Resonance" },
+                    ]}
+                    onChange={(value) =>
+                      setSort(value === "resonance" ? "resonance" : "manual")
+                    }
+                  />
+                  <CollectionDisplayControls
+                    value={displayState}
+                    onChange={setDisplayState}
+                  />
+                </>
+              }
+            />
+          ) : undefined
+        }
         state={error ? <FeedbackNotice {...error} /> : null}
         empty={
           visibleEntries.length === 0 ? (
@@ -854,222 +959,79 @@ export default function LibraryPaneBody() {
           ) : null
         }
       >
-          {visibleEntries.length > 0 ? (
-            <SortableList
-              key={visibleEntries.map((entry) => entry.id).join(":")}
-              className={styles.mediaList}
-              itemClassName={styles.mediaListItem}
-              items={visibleEntries}
-              getItemId={(entry) => entry.id}
-              onReorder={handleReorderEntries}
-              renderItem={({ item, handleProps, isDragging }) => {
-                const dragHandleBindings = canEditEntries
-                  ? {
-                      ...handleProps.attributes,
-                      ...handleProps.listeners,
-                    }
-                  : undefined;
-                if (item.kind === "podcast") {
-                  const subscription = item.subscription;
-                  const hasContributors = hasContributorLinks(
-                    item.podcast.contributors,
-                  );
-                  const podcastMetaParts = [
-                    subscription?.status === "active"
-                      ? subscription.sync_status
-                      : "unsubscribed",
-                    item.podcast.unplayed_count > 0
-                      ? `${item.podcast.unplayed_count} new`
-                      : null,
-                  ].filter(Boolean);
-                  const rowOptions = podcastResourceOptions({
-                    canUsePodcastActions: canEditEntries,
-                    onManageLibraries: ({ triggerEl }) => {
-                      void openLibraryPanel(item, triggerEl);
-                    },
-                  });
-                  const href = `/podcasts/${item.podcast.id}`;
-                  return (
-                    <ResourceRow
-                      as="div"
-                      selected={isDragging}
-                      primary={{
-                        kind: "link",
-                        href,
-                        paneTitleHint: item.podcast.title,
-                      }}
-                      leading={<Radio size={18} aria-hidden="true" />}
-                      title={item.podcast.title}
-                      meta={
-                        podcastMetaParts.length > 0 ? (
-                          <span className={styles.mediaMetaRow}>
-                            <span className={styles.mediaMeta}>
-                              {podcastMetaParts.join(" · ")}
-                            </span>
-                          </span>
-                        ) : undefined
-                      }
-                      contributors={
-                        hasContributors ? (
-                          <ContributorCreditList
-                            credits={item.podcast.contributors}
-                            maxVisible={1}
-                          />
-                        ) : undefined
-                      }
-                      actions={
-                        canEditEntries || rowOptions.length > 0 ? (
-                          <>
-                            {canEditEntries ? (
-                              <Button
-                                variant="secondary"
-                                size="sm"
-                                className={styles.dragHandle}
-                                aria-label={`Reorder ${item.podcast.title}`}
-                                disabled={reorderBusy}
-                                {...dragHandleBindings}
-                              >
-                                ⋮⋮
-                              </Button>
-                            ) : null}
-                            {rowOptions.length > 0 ? (
-                              <ActionMenu
-                                options={rowOptions}
-                                className={styles.rowActionMenu}
-                              />
-                            ) : null}
-                          </>
-                        ) : undefined
-                      }
-                    />
-                  );
-                }
-
-                const Icon = MEDIA_KIND_ICONS[item.media.kind] ?? Globe;
-                const retryProcessingBusy = retryingMediaIds.ids.has(item.media.id);
-                const refreshSourceBusy = refreshingMediaIds.ids.has(item.media.id);
-                const rowOptions = mediaResourceOptions({
-                  media: item.media,
-                  canManageLibraries: canEditEntries,
-                  retryBusy: retryProcessingBusy,
-                  refreshBusy: refreshSourceBusy,
-                  onRetry: canEditEntries && item.media.capabilities?.can_retry
-                    ? () => {
-                        void handleRetryProcessing(item.media.id);
-                      }
-                    : undefined,
-                  onRefreshSource: canEditEntries && item.media.capabilities?.can_refresh_source
-                    ? () => {
-                        void handleRefreshSource(item.media.id);
-                      }
-                    : undefined,
-                  onOpenChat: () => {
-                    void handleOpenMediaChat(item.media);
-                  },
-                  onManageLibraries: canEditEntries
-                    ? ({ triggerEl }) => {
-                        void openLibraryPanel(item, triggerEl);
-                      }
-                    : undefined,
-                  onDelete: canEditEntries && item.media.capabilities?.can_delete
-                    ? () => {
-                        void handleDeleteMedia(item);
-                      }
-                    : undefined,
-                });
-                const hasContributors = hasContributorLinks(
-                  item.media.contributors,
-                );
-                let publishedDate = item.media.published_date?.trim() || null;
-                if (
-                  publishedDate &&
-                  /^\d{4}-\d{2}-\d{2}T/.test(publishedDate)
-                ) {
-                  publishedDate = publishedDate.slice(0, 10);
-                }
-                const publisher = item.media.publisher?.trim() || null;
-                const metaParts: string[] = [];
-                if (publishedDate) {
-                  metaParts.push(publishedDate);
-                }
-                if (!hasContributors && metaParts.length === 0 && publisher) {
-                  metaParts.push(publisher);
-                }
-                let statusLabel: string | null = null;
-                if (item.media.processing_status === "pending") {
-                  statusLabel = "Queued";
-                } else if (item.media.processing_status === "extracting") {
-                  statusLabel = "Processing";
-                } else if (item.media.processing_status === "failed") {
-                  statusLabel = "Failed";
-                }
-                const href = `/media/${item.media.id}`;
-                return (
-                  <ResourceRow
-                    as="div"
-                    selected={isDragging}
-                    primary={{
-                      kind: "link",
-                      href,
-                      paneTitleHint: item.media.title,
-                    }}
-                    leading={<Icon size={18} aria-hidden="true" />}
-                    title={item.media.title}
-                    meta={
-                      metaParts.length > 0 || statusLabel ? (
-                        <span className={styles.mediaMetaRow}>
-                          {metaParts.length > 0 ? (
-                            <span className={styles.mediaMeta}>
-                              {metaParts.join(" · ")}
-                            </span>
-                          ) : null}
-                          {statusLabel ? (
-                            <span
-                              className={styles.mediaStatus}
-                              data-status={item.media.processing_status}
-                            >
-                              {statusLabel}
-                            </span>
-                          ) : null}
-                        </span>
-                      ) : undefined
-                    }
-                    contributors={
-                      hasContributors ? (
-                        <ContributorCreditList
-                          credits={item.media.contributors}
-                          maxVisible={1}
-                        />
-                      ) : undefined
-                    }
-                    actions={
-                      canEditEntries || rowOptions.length > 0 ? (
-                        <>
-                          {canEditEntries ? (
-                            <Button
-                              variant="secondary"
-                              size="sm"
-                              className={styles.dragHandle}
-                              aria-label={`Reorder ${item.media.title}`}
-                              disabled={reorderBusy}
-                              {...dragHandleBindings}
-                            >
-                              ⋮⋮
-                            </Button>
-                          ) : null}
-                          {rowOptions.length > 0 ? (
-                            <ActionMenu
-                              options={rowOptions}
-                              className={styles.rowActionMenu}
-                            />
-                          ) : null}
-                        </>
-                      ) : undefined
-                    }
-                  />
-                );
-              }}
+          {sort === "resonance" ? (
+            <CollectionView
+              rows={resonanceEntries.map(entryRowView)}
+              view={displayState.view}
+              density={displayState.density}
+              status={resonanceFetch.loading ? "loading" : "ready"}
+              ariaLabel="Library by resonance"
+              empty={<FeedbackNotice severity="neutral" title="No entries to rank yet." />}
+              surface={false}
             />
+          ) : visibleEntries.length > 0 ? (
+            <>
+          {surfacedEntries.length > 0 ? (
+            <PaneSection title="Surfaced today">
+              <CollectionView
+                rows={surfacedEntries.map(entryRowView)}
+                view={displayState.view}
+                density={displayState.density}
+                status="ready"
+                ariaLabel="Surfaced today"
+                surface={false}
+              />
+            </PaneSection>
+          ) : null}
+            {displayState.view === "gallery" ? (
+              <CollectionView
+                rows={visibleEntryRows}
+                view="gallery"
+                density={displayState.density}
+                status="ready"
+                ariaLabel="Library entries"
+                surface={false}
+              />
+            ) : (
+              <CollectionView
+                rows={visibleEntryRows}
+                view="list"
+                density={displayState.density}
+                status="ready"
+                ariaLabel="Library entries"
+                surface={false}
+                sortable={{
+                  className: styles.mediaList,
+                  itemClassName: styles.mediaListItem,
+                  onReorder: (nextRows) => {
+                    const byEntryId = new Map(
+                      visibleEntries.map((entry) => [entry.id, entry]),
+                    );
+                    const nextEntries = nextRows
+                      .map((row) => byEntryId.get(row.id))
+                      .filter((entry): entry is LibraryEntry => entry !== undefined);
+                    if (nextEntries.length === visibleEntries.length) {
+                      handleReorderEntries(nextEntries);
+                    }
+                  },
+                  renderControls: (row, { handleProps }) =>
+                    canEditEntries ? (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        className={styles.dragHandle}
+                        aria-label={`Reorder ${row.headline.text}`}
+                        disabled={reorderBusy}
+                        {...handleProps.attributes}
+                        {...handleProps.listeners}
+                      >
+                        ⋮⋮
+                      </Button>
+                    ) : undefined,
+                }}
+              />
+            )}
+            </>
           ) : null}
       </PaneSurface>
 

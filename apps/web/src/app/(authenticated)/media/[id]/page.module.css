@@ -685,6 +685,29 @@
   gap: 0;
 }
 
+.readerTransitionHeader {
+  position: absolute;
+  z-index: 3;
+  inset-block-start: var(--space-3);
+  inset-inline-start: var(--space-3);
+  display: flex;
+  max-width: min(560px, calc(100% - (var(--space-3) * 2)));
+  align-items: center;
+  gap: var(--space-3);
+  pointer-events: none;
+}
+
+.readerTransitionTitle {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-snug);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
 .readerColumn {
   flex: 1 1 0%;
   min-width: 0;

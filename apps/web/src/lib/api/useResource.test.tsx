@@ -1,5 +1,5 @@
 import { act, render, renderHook, waitFor } from "@testing-library/react";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api/client";
 import UnauthenticatedApiBoundary, {
@@ -78,7 +78,7 @@ describe("useResource", () => {
     );
   });
 
-  it("claims a hydration-cache entry once (consume-once), then fetches", async () => {
+  it("claims a hydration-cache entry through commit, then consumes it for later mounts", async () => {
     const load = vi.fn(async () => "fetched");
     const seen: string[] = [];
     function Reader({ id }: { id: string }) {
@@ -86,14 +86,36 @@ describe("useResource", () => {
       if (r.status === "ready") seen.push(`${id}:${r.data}`);
       return null;
     }
-    render(
-      <BootstrapHydrationProvider value={{ k1: "cached" }}>
-        <Reader id="a" />
-        <Reader id="b" />
-      </BootstrapHydrationProvider>,
-    );
-    await waitFor(() => expect(seen).toContain("b:fetched"));
+    let showLateReader = () => {};
+    function Harness() {
+      const [late, setLate] = useState(false);
+      showLateReader = () => setLate(true);
+      return (
+        <BootstrapHydrationProvider value={{ k1: "cached" }}>
+          {late ? (
+            <Reader key="c" id="c" />
+          ) : (
+            <>
+              <Reader key="a" id="a" />
+              <Reader key="b" id="b" />
+            </>
+          )}
+        </BootstrapHydrationProvider>
+      );
+    }
+
+    render(<Harness />);
+
+    await waitFor(() => expect(seen).toContain("b:cached"));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
     expect(seen).toContain("a:cached");
+    expect(load).not.toHaveBeenCalled();
+
+    await act(async () => showLateReader());
+
+    await waitFor(() => expect(seen).toContain("c:fetched"));
     expect(load).toHaveBeenCalledTimes(1);
   });
 

@@ -118,6 +118,7 @@ export default function PodcastDetailPaneBody() {
   const markingEpisodeIds = useStringIdSet();
   const [markAllAsPlayedBusy, setMarkAllAsPlayedBusy] = useState(false);
   const expandedShowNotesMediaIds = useStringIdSet();
+  const episodeUrlSyncedRef = useRef(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<FeedbackContent | null>(null);
   const [subscribeBusy, setSubscribeBusy] = useState(false);
@@ -312,7 +313,12 @@ export default function PodcastDetailPaneBody() {
     if (episodeSearchQuery) {
       params.set("q", episodeSearchQuery);
     }
-    paneRouter.replace(`/podcasts/${podcastId}?${params.toString()}`);
+    const nextHref = `/podcasts/${podcastId}?${params.toString()}`;
+    const transitionOptions = episodeUrlSyncedRef.current
+      ? { viewTransition: { kind: "collection-reflow" as const } }
+      : undefined;
+    episodeUrlSyncedRef.current = true;
+    paneRouter.replace(nextHref, transitionOptions);
   }, [
     episodeSearchQuery,
     episodeSort,
@@ -806,6 +812,7 @@ export default function PodcastDetailPaneBody() {
   ).length;
   const episodePaneContent = (
     <PodcastEpisodeList
+      basePath={`/podcasts/${podcastId ?? ""}`}
       episodes={episodes}
       loading={loading}
       error={error}

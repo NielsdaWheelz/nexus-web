@@ -76,9 +76,12 @@ describe("ResourceRow", () => {
     await user.click(primary);
     expect(onActivate).toHaveBeenCalledTimes(1);
 
+    await user.click(screen.getByText("Item title"));
+    expect(onActivate).toHaveBeenCalledTimes(2);
+
     primary.focus();
     await user.keyboard("{Enter}");
-    expect(onActivate).toHaveBeenCalledTimes(2);
+    expect(onActivate).toHaveBeenCalledTimes(3);
   });
 
   it("disables busy button rows", () => {

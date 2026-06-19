@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import SearchPaneBody from "./SearchPaneBody";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
+import { SEARCH_KINDS, SEARCH_KIND_LABELS } from "@/lib/search/kinds";
 
 function pathOf(input: RequestInfo | URL): string {
   if (input instanceof Request) {
@@ -141,5 +142,36 @@ describe("SearchPaneBody filter chips", () => {
     expect(
       screen.queryByRole("button", { name: "Clear filters" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("composes rapid deselect-all kind changes with the typed draft", async () => {
+    stubEmptySearch();
+    renderSearch("/search");
+    const user = userEvent.setup();
+
+    const input = screen.getByLabelText("Search content");
+    const kinds = screen.getByRole("group", { name: "Result kinds" });
+
+    for (const kind of SEARCH_KINDS) {
+      await user.click(
+        within(kinds).getByRole("button", {
+          name: SEARCH_KIND_LABELS[kind],
+        }),
+      );
+    }
+
+    await user.type(input, "e2e non-pdf");
+
+    await waitFor(() => {
+      expect(input).toHaveValue("e2e non-pdf");
+      for (const kind of SEARCH_KINDS) {
+        expect(
+          within(kinds).getByRole("button", {
+            name: SEARCH_KIND_LABELS[kind],
+          }),
+        ).toHaveAttribute("aria-pressed", "false");
+      }
+      expect(screen.getByText("No results found.")).toBeInTheDocument();
+    });
   });
 });

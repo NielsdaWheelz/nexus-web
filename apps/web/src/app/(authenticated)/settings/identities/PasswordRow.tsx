@@ -1,17 +1,18 @@
 "use client";
 
 import { useCallback, useState, useTransition } from "react";
+import { KeyRound } from "lucide-react";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
+import CollectionView from "@/components/collections/CollectionView";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import Input from "@/components/ui/Input";
-import ResourceList from "@/components/ui/ResourceList";
-import ResourceRow from "@/components/ui/ResourceRow";
 import {
   findEmailIdentity,
   mayRemovePassword,
   type LinkedIdentity,
 } from "@/lib/auth/identities";
+import { presentSettingsRow } from "@/lib/collections/presenters/settings";
 import {
   changePasswordAction,
   removePasswordAction,
@@ -73,71 +74,75 @@ export function PasswordRow({
     });
   }, [onChanged]);
 
+  const row = presentSettingsRow({
+    id: "password",
+    title: "Password",
+    description: emailIdentity
+      ? `Password is set on ${emailIdentity.email ?? "your account"}`
+      : "Sign in with email and password",
+    icon: KeyRound,
+  });
+
+  const actions = emailIdentity ? (
+    <div className={styles.rowActions}>
+      <Button
+        variant="secondary"
+        size="sm"
+        onClick={() => {
+          setPassword("");
+          setDialogError(null);
+          setMode("change");
+        }}
+        disabled={pending}
+      >
+        Change password
+      </Button>
+      {removable ? (
+        <Button
+          variant="danger"
+          size="sm"
+          onClick={remove}
+          disabled={pending}
+        >
+          {pending ? "Removing..." : "Remove password"}
+        </Button>
+      ) : (
+        <>
+          <Button variant="danger" size="sm" disabled>
+            Remove password
+          </Button>
+          <span className={styles.unlinkHint}>
+            Add a linked provider first
+          </span>
+        </>
+      )}
+    </div>
+  ) : (
+    <Button
+      variant="pill"
+      onClick={() => {
+        setPassword("");
+        setDialogError(null);
+        setMode("set");
+      }}
+      disabled={pending}
+    >
+      Set password
+    </Button>
+  );
+
   return (
     <>
-      <ResourceList>
-        {emailIdentity ? (
-          <ResourceRow
-            primary={{ kind: "static" }}
-            title="Password"
-            description={`Password is set on ${emailIdentity.email ?? "your account"}`}
-            actions={
-              <div className={styles.rowActions}>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => {
-                    setPassword("");
-                    setDialogError(null);
-                    setMode("change");
-                  }}
-                  disabled={pending}
-                >
-                  Change password
-                </Button>
-                {removable ? (
-                  <Button
-                    variant="danger"
-                    size="sm"
-                    onClick={remove}
-                    disabled={pending}
-                  >
-                    {pending ? "Removing..." : "Remove password"}
-                  </Button>
-                ) : (
-                  <>
-                    <Button variant="danger" size="sm" disabled>
-                      Remove password
-                    </Button>
-                    <span className={styles.unlinkHint}>
-                      Add a linked provider first
-                    </span>
-                  </>
-                )}
-              </div>
-            }
-          />
-        ) : (
-          <ResourceRow
-            primary={{ kind: "static" }}
-            title="Password"
-            description="Sign in with email and password"
-            actions={
-              <Button
-                variant="pill"
-                onClick={() => {
-                  setPassword("");
-                  setDialogError(null);
-                  setMode("set");
-                }}
-                disabled={pending}
-              >
-                Set password
-              </Button>
-            }
-          />
-        )}
-      </ResourceList>
+      <CollectionView
+        rows={[row]}
+        view="list"
+        density="comfortable"
+        status="ready"
+        ariaLabel="Password"
+        surface={false}
+        rowControls={{ password: actions }}
+        rowActionsVisibility="always"
+      />
 
       {rowError ? <FeedbackNotice severity="error" title={rowError} /> : null}
 

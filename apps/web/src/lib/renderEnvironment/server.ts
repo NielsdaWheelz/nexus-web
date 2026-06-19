@@ -18,12 +18,14 @@ export async function loadRenderEnvironment(): Promise<RenderEnvironment> {
   const userAgent = (await headers()).get("user-agent") ?? "";
   const displayLocale = "en-US";
   const displayTimeZone = "UTC";
+  const now = new Date();
   return {
     androidShell: isAndroidShellUserAgent(userAgent),
     platform: platformFromUserAgent(userAgent),
     displayLocale,
     displayTimeZone,
-    currentLocalDate: formatLocalDateInTimeZone(new Date(), displayTimeZone),
+    currentInstant: now.toISOString(),
+    currentLocalDate: formatLocalDateInTimeZone(now, displayTimeZone),
     initialViewport: "desktop",
   };
 }

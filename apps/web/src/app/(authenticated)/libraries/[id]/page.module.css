@@ -153,53 +153,6 @@
   cursor: grabbing;
 }
 
-.mediaMetaRow {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  min-width: 0;
-}
-
-.mediaMeta {
-  font-size: var(--text-xs);
-  line-height: var(--leading-snug);
-  color: var(--ink-faint);
-}
-
-.mediaStatus {
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  border: 1px solid var(--edge);
-  border-radius: var(--radius-full);
-  padding: 2px 8px;
-  font-size: var(--text-xs);
-  font-weight: var(--weight-semibold);
-  line-height: var(--leading-snug);
-  color: var(--ink-muted);
-  background: var(--surface-2);
-}
-
-.mediaStatus[data-status="pending"] {
-  color: var(--ink-faint);
-}
-
-.mediaStatus[data-status="extracting"] {
-  color: var(--accent);
-  border-color: color-mix(in srgb, var(--accent) 35%, var(--edge));
-}
-
-.mediaStatus[data-status="failed"] {
-  color: var(--danger);
-  border-color: color-mix(in srgb, var(--danger) 35%, var(--edge));
-}
-
-.rowActionMenu {
-  flex-shrink: 0;
-  align-self: flex-start;
-}
-
 @media (max-width: 640px) {
   .intelligenceHeader {
     flex-direction: column;

@@ -16,6 +16,8 @@ MediaProcessingStatus = Literal["pending", "extracting", "ready_for_reading", "f
 
 MediaUnitStatus = Literal["building", "ready", "failed"]
 
+MediaReadState = Literal["unread", "in_progress", "finished"]
+
 
 class MediaSummarizeOut(BaseModel):
     """Response contract for POST /media/{id}/summarize (on-demand unit build)."""
@@ -106,6 +108,13 @@ class MediaOut(BaseModel):
     description_html: str | None = None
     description_text: str | None = None
     metadata_enriched_at: datetime | None = None
+    # Derived per-viewer read-state (S3, collection-surface cutover). Populated
+    # post-hoc by `services.media.enrich_media_read_state` for viewer-scoped
+    # listings; absent (None) only on contexts that never enrich (e.g. SSE snapshots).
+    # For documents, "unread" means no committed scroll position.
+    read_state: MediaReadState | None = None
+    progress_fraction: float | None = Field(default=None, ge=0.0, le=1.0)
+    last_engaged_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 

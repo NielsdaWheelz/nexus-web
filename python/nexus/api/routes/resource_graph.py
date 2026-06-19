@@ -28,15 +28,20 @@ from nexus.schemas.resource_graph import (
     ConnectionPageOut,
     ConnectionQueryRequest,
     ConnectionReaderTargetOut,
+    ConnectionSummaryOut,
+    ConnectionSummaryPageOut,
+    ConnectionSummaryRequest,
     CreateEdgeRequest,
     EdgeOut,
     ResolvedResourceOut,
     ResolveRefsRequest,
 )
+from nexus.services.resource_graph import connection_summaries as connection_summaries_service
 from nexus.services.resource_graph import connections as connections_service
 from nexus.services.resource_graph import edges as edges_service
 from nexus.services.resource_graph import refs as refs_service
 from nexus.services.resource_graph import resolve as resolve_service
+from nexus.services.resource_graph.connection_summaries import ConnectionSummary
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_graph.schemas import (
     Connection,
@@ -113,6 +118,47 @@ def query_connections(
     return ok(
         ConnectionPageOut(
             items=[_connection_out(item) for item in page.items], next_cursor=page.next_cursor
+        )
+    )
+
+
+@router.post("/connections/summary")
+def summarize_connections(
+    body: ConnectionSummaryRequest,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    """Batch per-ref connection counts + top peers for the collection surface.
+
+    ``origins`` defaults to ``LIST_CONNECTION_ORIGINS`` (AI-free: ``synapse`` and
+    ``system`` excluded). Deleted/forbidden peers come back ``missing``.
+
+    Errors:
+        E_INVALID_REQUEST (400): a malformed ref, or more than 200 refs.
+    """
+    parsed = tuple(_parse_ref_or_400(raw) for raw in body.refs)
+    allowed_origins = set(connection_summaries_service.LIST_CONNECTION_ORIGINS)
+    if body.origins is None:
+        origins = connection_summaries_service.LIST_CONNECTION_ORIGINS
+    else:
+        requested_origins = tuple(body.origins)
+        disallowed = sorted(set(requested_origins) - allowed_origins)
+        if disallowed:
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST,
+                "Connection summaries only support list-surface origins: "
+                + ", ".join(connection_summaries_service.LIST_CONNECTION_ORIGINS),
+            )
+        origins = requested_origins
+    summaries = connection_summaries_service.summarize_connections(
+        db,
+        viewer_id=viewer.user_id,
+        refs=parsed,
+        origins=origins,
+    )
+    return ok(
+        ConnectionSummaryPageOut(
+            summaries=[_connection_summary_out(summary) for summary in summaries]
         )
     )
 
@@ -219,6 +265,17 @@ def _endpoint_out(endpoint: ConnectionEndpoint) -> ConnectionEndpointOut:
         activation=endpoint.activation,
         href=endpoint.href,
         missing=endpoint.missing,
+    )
+
+
+def _connection_summary_out(summary: ConnectionSummary) -> ConnectionSummaryOut:
+    return ConnectionSummaryOut(
+        ref=summary.ref.uri,
+        total=summary.total,
+        by_kind={str(kind): count for kind, count in summary.by_kind.items()},
+        last_connected_at=summary.last_connected_at,
+        dominant_kind=summary.dominant_kind,
+        top_peers=[_endpoint_out(peer) for peer in summary.top_peers],
     )
 
 

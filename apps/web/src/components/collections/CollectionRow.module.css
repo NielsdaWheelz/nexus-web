@@ -1,0 +1,67 @@
+.mark {
+  background: var(--accent-muted);
+  color: var(--ink);
+  border-radius: var(--radius-xs);
+  padding: 0 2px;
+}
+
+.recency {
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.trailing {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.signalList {
+  display: inline-flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.signalItem {
+  display: inline-flex;
+  min-width: 0;
+  gap: var(--space-1);
+}
+
+.signalSeparator {
+  color: var(--ink-faint);
+}
+
+.connections {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--ink-faint);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color var(--duration-fast) var(--ease-glide);
+}
+
+.connections:hover {
+  color: var(--ink-muted);
+}
+
+.progress {
+  display: inline-block;
+  width: 48px;
+  height: 4px;
+  border-radius: var(--radius-full);
+  background: var(--surface-3);
+  overflow: hidden;
+}
+
+.progressFill {
+  display: block;
+  height: 100%;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+}

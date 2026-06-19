@@ -4,6 +4,7 @@ import type { MouseEvent as ReactMouseEvent } from "react";
 import { resolvePaneRoute } from "@/lib/panes/paneRouteTable";
 import type { PaneScopedRouter } from "@/lib/panes/paneRuntime";
 import { normalizeWorkspaceHref } from "@/lib/workspace/workspaceHref";
+import { beginMediaReaderViewTransition } from "@/lib/ui/viewTransitions";
 
 type PaneLinkRuntime = {
   router: PaneScopedRouter;
@@ -41,7 +42,8 @@ export function handlePaneInternalAnchorClick(
     anchor.dataset.paneTitleHint ||
       (anchor.getAttribute("role") === "menuitem"
         ? anchor.textContent?.trim() || undefined
-        : undefined)
+        : undefined),
+    { sourceAnchor: anchor },
   );
 }
 
@@ -49,13 +51,15 @@ export function handlePaneInternalHrefClick(
   event: PaneLinkMouseEvent,
   paneRuntime: PaneLinkRuntime | null,
   href: string | null,
-  titleHint?: string
+  titleHint?: string,
+  options: { sourceAnchor?: HTMLAnchorElement } = {},
 ): void {
   const normalizedHref = href && !href.startsWith("#") ? normalizeWorkspaceHref(href) : null;
+  const resolvedRoute = normalizedHref ? resolvePaneRoute(normalizedHref) : null;
   if (
     !paneRuntime ||
     !normalizedHref ||
-    resolvePaneRoute(normalizedHref).id === "unsupported" ||
+    resolvedRoute?.id === "unsupported" ||
     event.defaultPrevented ||
     event.button !== 0 ||
     event.metaKey ||
@@ -69,6 +73,17 @@ export function handlePaneInternalHrefClick(
   if (event.shiftKey) {
     paneRuntime.openInNewPane(normalizedHref, titleHint);
   } else {
-    paneRuntime.router.push(normalizedHref, { titleHint });
+    const viewTransition =
+      resolvedRoute?.id === "media" && options.sourceAnchor
+        ? beginMediaReaderViewTransition(options.sourceAnchor, normalizedHref)
+        : undefined;
+    const routerOptions = viewTransition
+      ? titleHint
+        ? { titleHint, viewTransition }
+        : { viewTransition }
+      : titleHint
+        ? { titleHint }
+        : undefined;
+    paneRuntime.router.push(normalizedHref, routerOptions);
   }
 }

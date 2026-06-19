@@ -9,6 +9,7 @@ const ENVIRONMENT: RenderEnvironment = {
   platform: "other",
   displayLocale: "en-US",
   displayTimeZone: "UTC",
+  currentInstant: "2026-06-18T12:00:00.000Z",
   currentLocalDate: "2026-06-18",
   initialViewport: "desktop",
 };

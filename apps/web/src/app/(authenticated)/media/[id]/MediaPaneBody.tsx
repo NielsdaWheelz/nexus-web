@@ -95,6 +95,7 @@ import {
 import { useHighlightNoteChord } from "@/lib/highlights/useHighlightNoteChord";
 import { createRandomId } from "@/lib/createRandomId";
 import { isEditableTarget } from "@/lib/ui/isEditableTarget";
+import { useMediaReaderViewTransition } from "@/lib/ui/viewTransitions";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import Pill from "@/components/ui/Pill";
 import HoverPreview, {
@@ -201,6 +202,7 @@ import {
 } from "@/lib/highlights/api";
 import ContributorCreditList from "@/components/contributors/ContributorCreditList";
 import type { ContributorCredit } from "@/lib/contributors/types";
+import ResourceThumb from "@/components/ui/ResourceThumb";
 import { buildCompactMediaPaneTitle } from "./mediaFormatting";
 import {
   buildEpubLocationHref,
@@ -216,6 +218,7 @@ import {
 import { useReaderTarget } from "@/lib/reader/useReaderTarget";
 import Button from "@/components/ui/Button";
 import Select from "@/components/ui/Select";
+import { mediaKindIcon } from "@/lib/resources/resourceKind";
 import { buildReaderSurfaceStyle } from "@/lib/reader/readerSurfaceStyle";
 import styles from "./page.module.css";
 
@@ -512,6 +515,7 @@ export default function MediaPaneBody() {
   const paneSearchParams = usePaneSearchParams();
   const paneRuntime = usePaneRuntime();
   const paneRouterPush = paneRuntime?.router.push;
+  const mediaReaderViewTransition = useMediaReaderViewTransition(id);
   const openInNewPane = paneRuntime?.openInNewPane;
   const setPaneLayout = paneRuntime?.setPaneLayout;
   const requestSecondarySurface = paneRuntime?.requestSecondarySurface;
@@ -5515,7 +5519,28 @@ export default function MediaPaneBody() {
         className={styles.readerLayout}
         data-focus-mode={focusModeForRoot}
         data-chrome-revealed={chromeRevealed ? "true" : undefined}
+        data-view-transition-part="reader"
       >
+        {mediaReaderViewTransition ? (
+          <div className={styles.readerTransitionHeader} aria-hidden="true">
+            <ResourceThumb
+              spec={{
+                icon: mediaKindIcon(media.kind),
+                remoteUrl: media.podcast_image_url ?? undefined,
+              }}
+              alt=""
+              size="md"
+              viewTransitionName={mediaReaderViewTransition.thumbName}
+            />
+            <span
+              className={styles.readerTransitionTitle}
+              data-view-transition-part="title"
+              style={{ viewTransitionName: mediaReaderViewTransition.titleName }}
+            >
+              {media.title}
+            </span>
+          </div>
+        ) : null}
         <div className={styles.readerColumn}>
           {!isPdf && isMismatchDisabled && (
             <div className={styles.mismatchBanner}>

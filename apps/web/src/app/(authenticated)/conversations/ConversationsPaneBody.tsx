@@ -1,166 +1,88 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { apiFetch } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import {
-  conversationsInitialResource,
-  type NoResourceParams,
-} from "@/lib/api/resource";
+import { conversationsInitialResource, type NoResourceParams } from "@/lib/api/resource";
 import { useResource } from "@/lib/api/useResource";
-import { conversationResourceOptions } from "@/lib/actions/resourceActions";
-import {
-  FeedbackNotice,
-  toFeedback,
-  type FeedbackContent,
-} from "@/components/feedback/Feedback";
-import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
-import ActionMenu from "@/components/ui/ActionMenu";
-import Button from "@/components/ui/Button";
-import PaneSurface from "@/components/ui/PaneSurface";
-import ResourceList from "@/components/ui/ResourceList";
-import ResourceRow from "@/components/ui/ResourceRow";
+import { useCursorPagination, type CursorPage } from "@/lib/api/useCursorPagination";
+import { useStringIdSet } from "@/lib/useStringIdSet";
+import { FeedbackNotice, toFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
+import CollectionView from "@/components/collections/CollectionView";
+import CollectionDisplayControls from "@/components/collections/CollectionDisplayControls";
+import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
+import PaneToolbar from "@/components/ui/PaneToolbar";
+import { presentConversation } from "@/lib/collections/presenters/conversation";
+import { useCollectionDisplayState } from "@/lib/collections/useCollectionDisplayState";
 import type { ConversationSummary } from "@/lib/conversations/types";
-import { formatDisplayDate } from "@/lib/display/format";
-import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
-import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
-
-interface ConversationsResponse {
-  data: ConversationSummary[];
-  page: { next_cursor: string | null };
-}
 
 export default function ConversationsPaneBody() {
-  const initialConversations = useResource<
-    ConversationsResponse,
-    NoResourceParams
-  >({
+  const { displayState, setDisplayState } = useCollectionDisplayState("/conversations");
+  const firstPage = useResource<CursorPage<ConversationSummary>, NoResourceParams>({
     descriptor: conversationsInitialResource,
     params: {},
   });
-  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
-  const [error, setError] = useState<FeedbackContent | null>(null);
-  const [nextCursor, setNextCursor] = useState<string | null>(null);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const display = useRenderEnvironment();
-
-  useEffect(() => {
-    if (initialConversations.status === "ready") {
-      setConversations(initialConversations.data.data);
-      setNextCursor(initialConversations.data.page.next_cursor);
-      setError(null);
-    } else if (initialConversations.status === "error") {
-      setError(
-        toFeedback(initialConversations.error, {
-          fallback: "Failed to load conversations",
-        }),
-      );
-    }
-  }, [initialConversations]);
-
-  const loadMore = useCallback(async () => {
-    if (!nextCursor) return;
-    setLoadingMore(true);
-    try {
-      const params = new URLSearchParams({ limit: "50", cursor: nextCursor });
-      const response = await apiFetch<ConversationsResponse>(
-        `/api/conversations?${params}`,
-      );
-      setConversations((prev) => [...prev, ...response.data]);
-      setNextCursor(response.page.next_cursor);
-      setError(null);
-    } catch (err) {
-      if (handleUnauthenticatedApiError(err)) return;
-      setError(toFeedback(err, { fallback: "Failed to load conversations" }));
-    } finally {
-      setLoadingMore(false);
-    }
-  }, [nextCursor]);
+  const { items, status, error, hasMore, loadingMore, loadMore } =
+    useCursorPagination<ConversationSummary>({
+      firstPage,
+      buildMoreHref: (cursor) =>
+        `/api/conversations?${new URLSearchParams({ limit: "50", cursor })}`,
+    });
+  const removed = useStringIdSet();
+  const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
 
   const handleDelete = useCallback(
-    async (convId: string) => {
+    async (id: string) => {
       if (!confirm("Delete this conversation? This cannot be undone.")) return;
       try {
-        await apiFetch(`/api/conversations/${convId}`, { method: "DELETE" });
-        setConversations((prev) => prev.filter((c) => c.id !== convId));
+        await apiFetch(`/api/conversations/${id}`, { method: "DELETE" });
+        removed.add(id);
       } catch (err) {
         if (handleUnauthenticatedApiError(err)) return;
-        setError(toFeedback(err, { fallback: "Failed to delete conversation" }));
+        setFeedback(toFeedback(err, { fallback: "Failed to delete conversation" }));
       }
     },
-    []
+    [removed],
   );
 
-  const loading = initialConversations.status === "loading";
+  const rows = items
+    .filter((conversation) => !removed.has(conversation.id))
+    .map((conversation) =>
+      presentConversation(conversation, { onDelete: () => void handleDelete(conversation.id) }),
+    );
+
+  const loadError = error ? toFeedback(error, { fallback: "Failed to load conversations" }) : null;
 
   return (
-    <PaneSurface
-      state={
-        loading || error ? (
-          <>
-            {loading ? <PaneLoadingState /> : null}
-            {error ? <FeedbackNotice feedback={error} /> : null}
-          </>
-        ) : null
-      }
-      empty={
-        !loading && !error && conversations.length === 0 ? (
-          <FeedbackNotice severity="neutral">No conversations yet.</FeedbackNotice>
-        ) : null
-      }
-      footer={
-        nextCursor ? (
-          <Button
-            variant="secondary"
-            aria-label="Load more conversations"
-            loading={loadingMore}
-            onClick={() => void loadMore()}
-          >
-            Load more
-          </Button>
-        ) : null
-      }
-    >
-      {conversations.length > 0 ? (
-        <ResourceList>
-          {conversations.map((conv) => (
-            <ConversationListItem
-              key={conv.id}
-              conversation={conv}
-              display={display}
-              onDelete={handleDelete}
+    <CollectionView
+      rows={rows}
+      view={displayState.view}
+      density={displayState.density}
+      status={status}
+      ariaLabel="Conversations"
+      toolbar={
+        <PaneToolbar
+          controls={
+            <CollectionDisplayControls
+              value={displayState}
+              onChange={setDisplayState}
             />
-          ))}
-        </ResourceList>
-      ) : null}
-    </PaneSurface>
-  );
-}
-
-function ConversationListItem({
-  conversation,
-  display,
-  onDelete,
-}: {
-  conversation: ConversationSummary;
-  display: RenderEnvironment;
-  onDelete: (conversationId: string) => Promise<void>;
-}) {
-  return (
-    <ResourceRow
-      primary={{
-        kind: "link",
-        href: `/conversations/${conversation.id}`,
-        paneTitleHint: conversation.title,
-      }}
-      title={conversation.title}
-      meta={formatDisplayDate(conversation.updated_at, display) ?? ""}
-      actions={
-        <ActionMenu
-          options={conversationResourceOptions({
-            onDelete: () => void onDelete(conversation.id),
-          })}
+          }
         />
+      }
+      notice={feedback ? <FeedbackNotice feedback={feedback} /> : undefined}
+      error={loadError ? <FeedbackNotice feedback={loadError} /> : undefined}
+      empty={<FeedbackNotice severity="neutral">No conversations yet.</FeedbackNotice>}
+      footer={
+        <>
+          {status === "ready" && loadError ? <FeedbackNotice feedback={loadError} /> : null}
+          <LoadMoreFooter
+            hasMore={hasMore}
+            loading={loadingMore}
+            onLoadMore={loadMore}
+            label="Load more conversations"
+          />
+        </>
       }
     />
   );

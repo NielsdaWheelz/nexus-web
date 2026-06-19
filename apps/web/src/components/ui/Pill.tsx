@@ -1,7 +1,7 @@
 import { forwardRef, type HTMLAttributes } from "react";
 import styles from "./Pill.module.css";
 
-type PillTone =
+export type PillTone =
   | "neutral"
   | "info"
   | "success"

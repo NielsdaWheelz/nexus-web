@@ -1,3 +1,5 @@
+/* Editorial index row: borderless, type-forward, calm. A hairline rule gives
+   rhythm; hover/focus is a quiet surface wash, never a bordered card. */
 .row {
   container-type: inline-size;
   display: flex;
@@ -5,22 +7,24 @@
   flex-wrap: wrap;
   gap: var(--space-3);
   align-items: stretch;
-  padding: var(--space-3);
-  border: 1px solid var(--edge);
-  border-radius: var(--radius-lg);
-  background: var(--surface-2);
-  transition: background-color var(--duration-fast) var(--ease-glide),
-    border-color var(--duration-fast) var(--ease-glide);
+  padding: var(--space-3) var(--space-2);
+  border-bottom: var(--stroke-hairline) solid var(--edge-subtle);
+  transition: background-color var(--duration-fast) var(--ease-glide);
+}
+
+.row[data-density="compact"] {
+  gap: var(--space-2);
+  padding: var(--space-2);
 }
 
 .row:has(a.primary:hover),
-.row:has(button.primary:hover:not(:disabled)) {
-  border-color: var(--edge-strong);
-  background: var(--surface-hover);
+.row:has(button.primary:hover:not(:disabled)),
+.row:focus-within {
+  background: var(--surface-1);
 }
 
 .selected {
-  border-color: var(--accent);
+  background: var(--accent-muted);
 }
 
 .main {
@@ -82,6 +86,7 @@ button.primary:disabled {
   color: var(--ink);
   font-size: var(--text-base);
   font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-tight);
   line-height: var(--leading-snug);
   overflow-wrap: anywhere;
 }
@@ -96,6 +101,7 @@ button.primary:disabled {
 .meta {
   color: var(--ink-faint);
   font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
 }
 
@@ -115,6 +121,13 @@ button.primary:disabled {
   gap: var(--space-2);
 }
 
+.secondary {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-2);
+}
+
 .contributors {
   display: flex;
   min-width: 0;
@@ -127,7 +140,23 @@ button.primary:disabled {
   flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
-  gap: var(--space-2);
+  gap: var(--space-1);
+  transition: opacity var(--duration-fast) var(--ease-glide);
+}
+
+/* Reveal-on-hover only where hover exists; always shown on touch. Keyboard
+   focus into the row reveals via :focus-within. The overflow menu is always in
+   the DOM, so every action stays reachable. */
+@media (hover: hover) {
+  .actions {
+    opacity: 0;
+  }
+
+  .row:hover .actions,
+  .row:focus-within .actions,
+  .row.actionsAlwaysVisible .actions {
+    opacity: 1;
+  }
 }
 
 .expanded {
@@ -147,6 +176,7 @@ button.primary:disabled {
   }
 
   .actions,
+  .secondary,
   .contributors {
     width: 100%;
     justify-content: flex-start;

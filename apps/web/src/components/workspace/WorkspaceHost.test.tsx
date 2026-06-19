@@ -164,6 +164,7 @@ function TestPaneBody() {
 
 vi.mock("@/lib/panes/paneRenderRegistry", () => ({
   renderPane: () => <TestPaneBody />,
+  preloadPane: vi.fn(() => Promise.resolve()),
 }));
 
 vi.mock("@/lib/workspace/store", async () => {
@@ -320,6 +321,7 @@ vi.mock("@/lib/renderEnvironment/provider", () => ({
     platform: "other",
     displayLocale: "en-US",
     displayTimeZone: "UTC",
+    currentInstant: "2026-06-03T12:00:00.000Z",
     currentLocalDate: "2026-06-03",
     initialViewport: "desktop",
   }),

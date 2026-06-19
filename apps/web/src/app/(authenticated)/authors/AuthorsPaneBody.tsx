@@ -6,13 +6,15 @@ import {
   toFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
-import PaneSurface from "@/components/ui/PaneSurface";
-import ResourceList from "@/components/ui/ResourceList";
-import ResourceRow from "@/components/ui/ResourceRow";
-import Pill from "@/components/ui/Pill";
+import CollectionView from "@/components/collections/CollectionView";
+import CollectionDisplayControls from "@/components/collections/CollectionDisplayControls";
+import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
+import PaneToolbar from "@/components/ui/PaneToolbar";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
-import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
+import { presentContributor } from "@/lib/collections/presenters/contributor";
+import { withCollectionDisplayHref } from "@/lib/collections/collectionViewState";
+import { useCollectionDisplayState } from "@/lib/collections/useCollectionDisplayState";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { fetchContributorDirectory } from "@/lib/contributors/api";
 import {
@@ -36,6 +38,7 @@ import {
   usePaneSearchParams,
   useSetPaneTitle,
 } from "@/lib/panes/paneRuntime";
+import { useDebouncedValue } from "@/lib/ui/useDebouncedValue";
 
 const PAGE_LIMIT = 30;
 const QUERY_DEBOUNCE_MS = 200;
@@ -102,16 +105,11 @@ function pageParams(
   };
 }
 
-function entryMeta(entry: ContributorDirectoryEntry): string {
-  return [contributorKindLabel(entry.kind), entry.disambiguation]
-    .filter(Boolean)
-    .join(" · ");
-}
-
 export default function AuthorsPaneBody() {
   useSetPaneTitle("Authors");
   const paneRouter = usePaneRouter();
   const searchParams = usePaneSearchParams();
+  const { displayState, setDisplayState } = useCollectionDisplayState("/authors");
 
   const urlState = useMemo<AuthorsUrlState>(
     () => ({
@@ -164,7 +162,10 @@ export default function AuthorsPaneBody() {
     appended.length > 0 ? tailCursor : firstPageData?.page.next_cursor ?? null;
 
   const replaceState = (next: Partial<AuthorsUrlState>) => {
-    paneRouter.replace(buildAuthorsHref({ ...urlState, ...next }));
+    paneRouter.replace(
+      withCollectionDisplayHref(buildAuthorsHref({ ...urlState, ...next }), displayState),
+      { viewTransition: { kind: "collection-reflow" } },
+    );
   };
 
   const loadMore = async () => {
@@ -186,141 +187,171 @@ export default function AuthorsPaneBody() {
     }
   };
 
-  const loadingFirstPage = firstPage.status === "loading";
+  const status: "loading" | "error" | "ready" =
+    firstPage.status === "loading"
+      ? "loading"
+      : firstPage.status === "error"
+        ? "error"
+        : "ready";
+
+  const firstPageError =
+    firstPage.status === "error"
+      ? {
+          feedback: toFeedback(firstPage.error, { fallback: "Failed to load authors" }),
+          retry: firstPage.retry,
+        }
+      : null;
 
   return (
-    <PaneSurface
+    <CollectionView
+      rows={entries.map(presentContributor)}
+      view={displayState.view}
+      density={displayState.density}
+      status={status}
+      ariaLabel="Authors"
       toolbar={
-        <AuthorsToolbar
-          urlState={urlState}
-          facets={facets}
-          onQueryChange={(q) => replaceState({ q })}
-          onToggle={(group, value) =>
-            replaceState({ [group]: toggleValue(urlState[group], value) })
+        <PaneToolbar
+          search={
+            <AuthorsSearch
+              value={urlState.q}
+              onQueryChange={(q) => replaceState({ q })}
+            />
           }
-          onSortChange={(sort) => replaceState({ sort })}
+          filters={
+            <AuthorsFacets
+              urlState={urlState}
+              facets={facets}
+              onToggle={(group, value) =>
+                replaceState({ [group]: toggleValue(urlState[group], value) })
+              }
+            />
+          }
+          controls={
+            <>
+              <AuthorsSort
+                sort={urlState.sort}
+                onSortChange={(sort) => replaceState({ sort })}
+              />
+              <CollectionDisplayControls
+                value={displayState}
+                onChange={setDisplayState}
+              />
+            </>
+          }
         />
       }
-      state={
-        firstPage.status === "error" || loadMoreError || loadingFirstPage ? (
-        <>
-          {firstPage.status === "error" ? (
-            <>
-              <FeedbackNotice
-                feedback={toFeedback(firstPage.error, { fallback: "Failed to load authors" })}
-              />
-              <Button variant="secondary" size="md" onClick={firstPage.retry}>
-                Retry
-              </Button>
-            </>
-          ) : null}
-          {loadMoreError ? <FeedbackNotice feedback={loadMoreError} /> : null}
-          {loadingFirstPage ? <PaneLoadingState /> : null}
-        </>
-        ) : null
+      notice={loadMoreError ? <FeedbackNotice feedback={loadMoreError} /> : undefined}
+      error={
+        firstPageError ? (
+          <>
+            <FeedbackNotice feedback={firstPageError.feedback} />
+            <Button variant="secondary" size="md" onClick={firstPageError.retry}>
+              Retry
+            </Button>
+          </>
+        ) : undefined
       }
       empty={
-        !loadingFirstPage && firstPage.status !== "error" && entries.length === 0 ? (
         <FeedbackNotice
           severity="neutral"
           title="No authors yet."
           message="No contributors match the current filters."
         />
-        ) : null
       }
       footer={
-        nextCursor ? (
-          <Button
-            variant="secondary"
-            size="md"
-            onClick={() => void loadMore()}
-            disabled={loadingMore}
-          >
-            {loadingMore ? "Loading…" : "Load more"}
-          </Button>
-        ) : null
+        <LoadMoreFooter
+          hasMore={nextCursor !== null}
+          loading={loadingMore}
+          onLoadMore={() => void loadMore()}
+          label="Load more"
+        />
       }
-    >
-      {!loadingFirstPage && firstPage.status !== "error" && entries.length > 0 ? (
-          <ResourceList>
-            {entries.map((entry) => (
-              <ResourceRow
-                key={entry.handle}
-                primary={{
-                  kind: "link",
-                  href: entry.href,
-                  paneTitleHint: entry.display_name,
-                }}
-                title={entry.display_name}
-                meta={entryMeta(entry)}
-                trailing={<Pill tone="info">{entry.work_count} works</Pill>}
-              />
-            ))}
-          </ResourceList>
-        ) : null}
-    </PaneSurface>
+    />
   );
 }
 
 type FacetGroup = "roles" | "kinds" | "contentKinds" | "statuses";
 
-function AuthorsToolbar({
-  urlState,
-  facets,
+function AuthorsSearch({
+  value,
   onQueryChange,
-  onToggle,
-  onSortChange,
 }: {
-  urlState: AuthorsUrlState;
-  facets: ContributorDirectoryFacets | null;
+  value: string;
   onQueryChange: (q: string) => void;
-  onToggle: (group: FacetGroup, value: string) => void;
-  onSortChange: (sort: DirectorySort) => void;
 }) {
-  const [draftQuery, setDraftQuery] = useState(urlState.q);
+  const [draftQuery, setDraftQuery] = useState(value);
+  const debouncedDraftQuery = useDebouncedValue(draftQuery, QUERY_DEBOUNCE_MS);
+  const syncedFromUrlRef = useRef(false);
 
   // Seed the controlled input from the URL whenever it changes externally.
   useEffect(() => {
-    setDraftQuery(urlState.q);
-  }, [urlState.q]);
+    syncedFromUrlRef.current = true;
+    setDraftQuery(value);
+  }, [value]);
 
   // Debounce text edits into the URL.
   useEffect(() => {
-    if (draftQuery.trim() === urlState.q) return;
-    const timer = setTimeout(() => onQueryChange(draftQuery), QUERY_DEBOUNCE_MS);
-    return () => clearTimeout(timer);
-  }, [draftQuery, onQueryChange, urlState.q]);
+    if (syncedFromUrlRef.current) {
+      syncedFromUrlRef.current = false;
+      return;
+    }
+    if (debouncedDraftQuery !== draftQuery) return;
+    if (debouncedDraftQuery.trim() === value) return;
+    onQueryChange(debouncedDraftQuery);
+  }, [debouncedDraftQuery, draftQuery, onQueryChange, value]);
 
   return (
-    <div>
-      <Input
-        type="search"
-        aria-label="Filter authors"
-        value={draftQuery}
-        onChange={(event) => setDraftQuery(event.target.value)}
-        placeholder="Filter authors by name…"
-      />
+    <Input
+      type="search"
+      aria-label="Filter authors"
+      value={draftQuery}
+      onChange={(event) => setDraftQuery(event.target.value)}
+      placeholder="Filter authors by name…"
+    />
+  );
+}
 
-      <fieldset>
-        <legend className="sr-only">Sort</legend>
-        <Button
-          variant="pill"
-          size="sm"
-          aria-pressed={urlState.sort === "works"}
-          onClick={() => onSortChange("works")}
-        >
-          Works
-        </Button>
-        <Button
-          variant="pill"
-          size="sm"
-          aria-pressed={urlState.sort === "name"}
-          onClick={() => onSortChange("name")}
-        >
-          A–Z
-        </Button>
-      </fieldset>
+function AuthorsSort({
+  sort,
+  onSortChange,
+}: {
+  sort: DirectorySort;
+  onSortChange: (sort: DirectorySort) => void;
+}) {
+  return (
+    <fieldset>
+      <legend className="sr-only">Sort</legend>
+      <Button
+        variant="pill"
+        size="sm"
+        aria-pressed={sort === "works"}
+        onClick={() => onSortChange("works")}
+      >
+        Works
+      </Button>
+      <Button
+        variant="pill"
+        size="sm"
+        aria-pressed={sort === "name"}
+        onClick={() => onSortChange("name")}
+      >
+        A–Z
+      </Button>
+    </fieldset>
+  );
+}
 
+function AuthorsFacets({
+  urlState,
+  facets,
+  onToggle,
+}: {
+  urlState: AuthorsUrlState;
+  facets: ContributorDirectoryFacets | null;
+  onToggle: (group: FacetGroup, value: string) => void;
+}) {
+  return (
+    <>
       <FacetChips
         legend="Roles"
         counts={facets?.roles}
@@ -349,7 +380,7 @@ function AuthorsToolbar({
         label={contributorStatusLabel}
         onToggle={(value) => onToggle("statuses", value)}
       />
-    </div>
+    </>
   );
 }
 

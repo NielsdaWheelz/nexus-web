@@ -9,6 +9,7 @@ import {
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
+  type ButtonHTMLAttributes,
   type Ref,
   type ReactNode,
 } from "react";
@@ -37,7 +38,13 @@ export interface ActionMenuOption {
 }
 
 /** Wiring a custom trigger must spread onto its focusable element. */
-export interface ActionMenuTriggerProps {
+type ActionMenuTriggerAttributes = Pick<
+  ButtonHTMLAttributes<HTMLButtonElement>,
+  "tabIndex"
+> &
+  Partial<Record<`data-${string}`, string | undefined>>;
+
+export interface ActionMenuTriggerProps extends ActionMenuTriggerAttributes {
   ref: Ref<HTMLButtonElement>;
   id: string;
   "aria-haspopup": "menu";
@@ -60,6 +67,8 @@ interface ActionMenuProps {
   align?: "start" | "center" | "end";
   /** Render a custom trigger (e.g. an avatar); defaults to the "…" overflow button. */
   renderTrigger?: (props: ActionMenuTriggerProps) => ReactNode;
+  /** Extra attributes for composite widgets that keep their trigger programmatic. */
+  triggerAttributes?: ActionMenuTriggerAttributes;
 }
 
 const MENU_ITEM_SELECTOR =
@@ -81,6 +90,7 @@ export default function ActionMenu({
   placement = "below",
   align = "end",
   renderTrigger,
+  triggerAttributes,
 }: ActionMenuProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [initialFocus, setInitialFocus] = useState<"first" | "last">("first");
@@ -328,6 +338,7 @@ export default function ActionMenu({
     ) : null;
 
   const triggerProps: ActionMenuTriggerProps = {
+    ...triggerAttributes,
     ref: toggleRef,
     id: triggerId,
     "aria-haspopup": "menu",

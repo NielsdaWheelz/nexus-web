@@ -68,6 +68,18 @@ class ConnectionQueryRequest(ResourceGraphModel):
     cursor: str | None = None
 
 
+class ConnectionSummaryRequest(ResourceGraphModel):
+    """Body for POST /resource-graph/connections/summary.
+
+    ``origins`` defaults (when omitted) to ``LIST_CONNECTION_ORIGINS`` in the
+    service: the AI-free collection-surface allowlist. The Literal element type
+    rejects unknown origin values at the boundary with 400.
+    """
+
+    refs: list[str] = Field(min_length=1, max_length=200)
+    origins: list[EdgeOrigin] | None = None
+
+
 class EdgeOut(ResourceGraphModel):
     """One ``resource_edges`` row plus live endpoint display.
 
@@ -138,6 +150,38 @@ class ConnectionOut(ResourceGraphModel):
 class ConnectionPageOut(ResourceGraphModel):
     items: list[ConnectionOut]
     next_cursor: str | None
+
+
+class ConnectionSummaryOut(ResourceGraphModel):
+    """Per-ref connection aggregate for the collection surface (spec S4).
+
+    ``by_kind`` is keyed by edge kind; ``dominant_kind`` is the highest-count kind
+    (ties broken deterministically). ``top_peers`` carry live label + href, and a
+    deleted/forbidden peer comes back ``missing`` (never leaked).
+    """
+
+    ref: str
+    total: int
+    by_kind: dict[str, int]
+    last_connected_at: datetime | None
+    dominant_kind: str | None
+    top_peers: list[ConnectionEndpointOut]
+
+
+class ConnectionSummaryPageOut(ResourceGraphModel):
+    summaries: list[ConnectionSummaryOut]
+
+
+class RelatedMediaOut(ResourceGraphModel):
+    """Deterministic related peers for one media (spec S5).
+
+    ``peers`` reuses ``ConnectionEndpointOut`` so each carries live label + href
+    and a deleted/forbidden peer comes back ``missing`` (never leaked). The peers
+    are computed from precomputed embeddings + shared-author credits — no
+    request-time LLM.
+    """
+
+    peers: list[ConnectionEndpointOut]
 
 
 class ContextRefOut(ResourceGraphModel):

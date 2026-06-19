@@ -2,12 +2,16 @@
 
 import type { ReactNode } from "react";
 import { cx } from "@/lib/ui/cx";
+import { useCollectionKeyboard } from "@/lib/ui/useCollectionKeyboard";
 import styles from "./ResourceList.module.css";
 
 interface ResourceListProps {
   label?: ReactNode;
   description?: ReactNode;
   footer?: ReactNode;
+  view?: "list" | "gallery";
+  density?: "comfortable" | "compact";
+  ariaLabel?: string;
   children: ReactNode;
   className?: string;
 }
@@ -16,11 +20,24 @@ export default function ResourceList({
   label,
   description,
   footer,
+  view = "list",
+  density = "comfortable",
+  ariaLabel,
   children,
   className,
 }: ResourceListProps) {
+  const { containerRef, onFocus, onKeyDown } = useCollectionKeyboard();
   const list = (
-    <ul className={cx(styles.list, className)} role="list">
+    <ul
+      ref={containerRef}
+      onFocus={onFocus}
+      onKeyDown={onKeyDown}
+      className={cx(styles.list, className)}
+      role="list"
+      aria-label={ariaLabel}
+      data-view={view}
+      data-density={density}
+    >
       {children}
     </ul>
   );

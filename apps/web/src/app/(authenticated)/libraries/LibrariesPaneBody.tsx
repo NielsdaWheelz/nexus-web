@@ -1,11 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Library as LibraryIcon } from "lucide-react";
 import { apiFetch } from "@/lib/api/client";
 import { librariesResource as librariesResourceDescriptor } from "@/lib/api/resource";
 import { useResource } from "@/lib/api/useResource";
-import { libraryResourceOptions } from "@/lib/actions/resourceActions";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import {
@@ -13,14 +11,14 @@ import {
   toFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
-import Pill from "@/components/ui/Pill";
-import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
-import PaneSurface from "@/components/ui/PaneSurface";
-import ResourceList from "@/components/ui/ResourceList";
-import ResourceRow from "@/components/ui/ResourceRow";
-import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
+import CollectionView from "@/components/collections/CollectionView";
+import CollectionDisplayControls from "@/components/collections/CollectionDisplayControls";
+import PaneToolbar from "@/components/ui/PaneToolbar";
+import { presentLibrary } from "@/lib/collections/presenters/library";
+import { useCollectionDisplayState } from "@/lib/collections/useCollectionDisplayState";
+import { useHydrationPreservedInput } from "@/lib/ui/useHydrationPreservedInput";
 import LibraryEditDialog from "@/components/LibraryEditDialog";
 import {
   fetchEditableLibrarySharing,
@@ -48,10 +46,15 @@ interface Library {
 
 export default function LibrariesPaneBody() {
   const { openInNewPane } = usePaneRuntime() ?? {};
-  const [libraries, setLibraries] = useState<Library[]>([]);
+  const { displayState, setDisplayState } = useCollectionDisplayState("/libraries");
+  const [localLibraries, setLocalLibraries] = useState<Library[] | null>(null);
   const [librariesRefreshVersion, setLibrariesRefreshVersion] = useState(0);
-  const [error, setError] = useState<FeedbackContent | null>(null);
-  const [newLibraryName, setNewLibraryName] = useState("");
+  const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
+  const {
+    value: newLibraryName,
+    setValue: setNewLibraryName,
+    inputProps: newLibraryNameInputProps,
+  } = useHydrationPreservedInput();
   const [creating, setCreating] = useState(false);
   const librariesResource = useResource<
     { data: Library[] },
@@ -60,8 +63,15 @@ export default function LibrariesPaneBody() {
     descriptor: librariesResourceDescriptor,
     params: { refreshVersion: librariesRefreshVersion },
   });
-  const loading =
-    librariesResource.status === "loading" && libraries.length === 0;
+  const resourceLibraries =
+    librariesResource.status === "ready" ? librariesResource.data.data : null;
+  const libraries = localLibraries ?? resourceLibraries ?? [];
+  const status =
+    libraries.length > 0 || librariesResource.status === "ready"
+      ? "ready"
+      : librariesResource.status === "error"
+        ? "error"
+        : "loading";
 
   const refreshLibraries = useCallback(() => {
     setLibrariesRefreshVersion((version) => version + 1);
@@ -74,19 +84,16 @@ export default function LibrariesPaneBody() {
 
   useEffect(() => {
     if (librariesResource.status === "ready") {
-      setLibraries(librariesResource.data.data);
-      setError(null);
-      return;
-    }
-
-    if (librariesResource.status === "error") {
-      setError(
-        toFeedback(librariesResource.error, {
-          fallback: "Failed to load libraries",
-        }),
-      );
+      setLocalLibraries(librariesResource.data.data);
     }
   }, [librariesResource]);
+
+  const loadError =
+    librariesResource.status === "error"
+      ? toFeedback(librariesResource.error, {
+          fallback: "Failed to load libraries",
+        })
+      : null;
 
   const handleCreateLibrary = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -96,10 +103,11 @@ export default function LibrariesPaneBody() {
     try {
       await createLibrary({ name: newLibraryName.trim() });
       setNewLibraryName("");
+      setFeedback(null);
       refreshLibraries();
     } catch (err) {
       if (handleUnauthenticatedApiError(err)) return;
-      setError(
+      setFeedback(
         toFeedback(err, {
           fallback: "Failed to create library",
         })
@@ -116,13 +124,13 @@ export default function LibrariesPaneBody() {
       await apiFetch(`/api/libraries/${library.id}`, {
         method: "DELETE",
       });
-      setLibraries((current) =>
-        current.filter((item) => item.id !== library.id),
+      setLocalLibraries((current) =>
+        (current ?? resourceLibraries ?? []).filter((item) => item.id !== library.id),
       );
       refreshLibraries();
     } catch (err) {
       if (handleUnauthenticatedApiError(err)) return;
-      setError(
+      setFeedback(
         toFeedback(err, {
           fallback: "Failed to delete library",
         })
@@ -140,7 +148,7 @@ export default function LibrariesPaneBody() {
       setEditInvites(sharing.invites);
     } catch (err) {
       if (handleUnauthenticatedApiError(err)) return;
-      setError(
+      setFeedback(
         toFeedback(err, {
           fallback: "Failed to load library sharing",
         })
@@ -162,14 +170,14 @@ export default function LibrariesPaneBody() {
         body: JSON.stringify({ name }),
       });
       setEditLibrary((prev) => (prev ? { ...prev, name } : null));
-      setLibraries((current) =>
-        current.map((library) =>
+      setLocalLibraries((current) =>
+        (current ?? resourceLibraries ?? []).map((library) =>
           library.id === editLibrary.id ? { ...library, name } : library,
         ),
       );
       refreshLibraries();
     },
-    [editLibrary, refreshLibraries],
+    [editLibrary, refreshLibraries, resourceLibraries],
   );
 
   const handleUpdateMemberRole = useCallback(
@@ -251,11 +259,11 @@ export default function LibrariesPaneBody() {
       method: "DELETE",
     });
     closeEditDialog();
-    setLibraries((current) =>
-      current.filter((library) => library.id !== editLibrary.id),
+    setLocalLibraries((current) =>
+      (current ?? resourceLibraries ?? []).filter((library) => library.id !== editLibrary.id),
     );
     refreshLibraries();
-  }, [editLibrary, closeEditDialog, refreshLibraries]);
+  }, [editLibrary, closeEditDialog, refreshLibraries, resourceLibraries]);
 
   /* ---- Edit dialog library data ---- */
 
@@ -271,87 +279,67 @@ export default function LibrariesPaneBody() {
 
   return (
     <>
-      <PaneSurface
-        toolbar={
-          <form className={styles.createForm} onSubmit={handleCreateLibrary}>
-            <Input
-              value={newLibraryName}
-              onChange={(e) => setNewLibraryName(e.target.value)}
-              placeholder="New library name..."
-              className={styles.inputField}
-              disabled={creating}
-            />
-            <Button
-              type="submit"
-              variant="primary"
-              size="md"
-              disabled={creating || !newLibraryName.trim()}
-            >
-              {creating ? "Creating..." : "Create"}
-            </Button>
-          </form>
-        }
-        state={
-          error || loading ? (
-            <>
-              {error ? <FeedbackNotice {...error} /> : null}
-              {loading ? <PaneLoadingState /> : null}
-            </>
-          ) : null
-        }
+      <CollectionView
+        rows={libraries.map((library) =>
+          presentLibrary(library, {
+            onViewIntelligence: () => {
+              openInNewPane?.(
+                `/libraries/${library.id}`,
+                library.name,
+                "library-intelligence",
+              );
+            },
+            onEdit: () => void openEditDialog(library),
+            onDelete: () => void handleDeleteLibrary(library),
+          }),
+        )}
+        view={displayState.view}
+        density={displayState.density}
+        status={status}
+        ariaLabel="Libraries"
+        notice={feedback ? <FeedbackNotice feedback={feedback} /> : undefined}
+        error={loadError ? <FeedbackNotice feedback={loadError} /> : undefined}
         empty={
-          !loading && libraries.length === 0 ? (
-            <FeedbackNotice
-              severity="neutral"
-              title="No libraries yet."
-              message="Create your first library above."
-            />
+          <FeedbackNotice
+            severity="neutral"
+            title="No libraries yet."
+            message="Create your first library above."
+          />
+        }
+        footer={
+          status === "ready" && loadError ? (
+            <FeedbackNotice feedback={loadError} />
           ) : null
         }
-      >
-        {libraries.length > 0 ? (
-            <ResourceList>
-              {libraries.map((library) => (
-                <ResourceRow
-                  key={library.id}
-                  primary={{
-                    kind: "link",
-                    href: `/libraries/${library.id}`,
-                    paneTitleHint: library.name,
-                  }}
-                  leading={<LibraryIcon size={18} />}
-                  title={library.name}
-                  meta={
-                    library.is_default
-                      ? `default media library · role ${library.role}`
-                      : `mixed library · role ${library.role}`
-                  }
-                  trailing={
-                    library.is_default ? (
-                      <Pill tone="info">default</Pill>
-                    ) : null
-                  }
-                  actions={
-                    <ActionMenu
-                      options={libraryResourceOptions({
-                        library,
-                        onViewIntelligence: () => {
-                          openInNewPane?.(
-                            `/libraries/${library.id}`,
-                            library.name,
-                            "library-intelligence",
-                          );
-                        },
-                        onEdit: () => void openEditDialog(library),
-                        onDelete: () => void handleDeleteLibrary(library),
-                      })}
-                    />
-                  }
+        toolbar={
+          <PaneToolbar
+            search={
+              <form className={styles.createForm} onSubmit={handleCreateLibrary}>
+                <Input
+                  {...newLibraryNameInputProps}
+                  placeholder="New library name..."
+                  className={styles.inputField}
+                  disabled={creating}
                 />
-              ))}
-            </ResourceList>
-          ) : null}
-      </PaneSurface>
+                <Button
+                  type="submit"
+                  variant="primary"
+                  size="md"
+                  disabled={creating || !newLibraryName.trim()}
+                >
+                  {creating ? "Creating..." : "Create"}
+                </Button>
+              </form>
+            }
+            controls={
+              <CollectionDisplayControls
+                value={displayState}
+                onChange={setDisplayState}
+              />
+            }
+          />
+        }
+      />
 
       {editLibraryForDialog && (
         <LibraryEditDialog

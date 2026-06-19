@@ -1,25 +1,16 @@
 "use client";
 
-import type { ReactNode } from "react";
+import type { HTMLAttributes, ReactNode } from "react";
 import { cx } from "@/lib/ui/cx";
+import ResourceActivation, {
+  type ResourceRowPrimary,
+} from "./ResourceActivation";
 import styles from "./ResourceRow.module.css";
 
-type ResourceRowPrimary =
-  | {
-      kind: "link";
-      href: string;
-      paneTitleHint?: string;
-      target?: "_self" | "_blank";
-      rel?: string;
-    }
-  | {
-      kind: "button";
-      onActivate: () => void | Promise<void>;
-      disabled?: boolean;
-      busy?: boolean;
-      label: string;
-    }
-  | { kind: "static" };
+type ResourceRowRootProps = HTMLAttributes<HTMLElement> &
+  Partial<Record<`data-${string}`, string>>;
+
+export type { ResourceRowPrimary };
 
 interface ResourceRowProps {
   primary: ResourceRowPrimary;
@@ -31,11 +22,16 @@ interface ResourceRowProps {
   contributors?: ReactNode;
   leading?: ReactNode;
   trailing?: ReactNode;
+  secondary?: ReactNode;
   actions?: ReactNode;
   expanded?: ReactNode;
   selected?: boolean;
+  density?: "comfortable" | "compact";
   className?: string;
   as?: "li" | "div";
+  actionsVisibility?: "hover" | "always";
+  /** Forwarded to the row root — used for swipe (transform + pointer handlers). */
+  rootProps?: ResourceRowRootProps;
 }
 
 export default function ResourceRow({
@@ -48,11 +44,15 @@ export default function ResourceRow({
   contributors,
   leading,
   trailing,
+  secondary,
   actions,
   expanded,
   selected,
+  density = "comfortable",
   className,
   as = "li",
+  actionsVisibility = "hover",
+  rootProps,
 }: ResourceRowProps) {
   const content = (
     <>
@@ -64,8 +64,10 @@ export default function ResourceRow({
             {badges}
           </span>
         ) : null}
-        <span className={styles.title}>{title}</span>
-        {description ? (
+        <span className={styles.title} data-row-text data-view-transition-part="title">
+          {title}
+        </span>
+        {description && density !== "compact" ? (
           <span className={styles.description}>{description}</span>
         ) : null}
         {meta ? <span className={styles.meta}>{meta}</span> : null}
@@ -79,39 +81,18 @@ export default function ResourceRow({
     primary.kind === "static" && styles.staticPrimary,
   );
 
-  const primaryNode =
-    primary.kind === "link" ? (
-      <a
-        className={primaryClassName}
-        href={primary.href}
-        data-pane-title-hint={primary.paneTitleHint}
-        target={primary.target}
-        rel={primary.rel}
-      >
-        {content}
-      </a>
-    ) : primary.kind === "button" ? (
-      <button
-        className={primaryClassName}
-        type="button"
-        disabled={primary.disabled || primary.busy}
-        aria-busy={primary.busy || undefined}
-        aria-label={primary.label}
-        onClick={() => {
-          void primary.onActivate();
-        }}
-      >
-        {content}
-      </button>
-    ) : (
-      <div className={primaryClassName}>{content}</div>
-    );
+  const primaryNode = (
+    <ResourceActivation primary={primary} className={primaryClassName}>
+      {content}
+    </ResourceActivation>
+  );
 
   const row = (
     <>
       <div className={styles.main}>{primaryNode}</div>
-      {contributors || actions ? (
+      {secondary || contributors || actions ? (
         <div className={styles.side}>
+          {secondary ? <div className={styles.secondary}>{secondary}</div> : null}
           {contributors ? (
             <div className={styles.contributors}>{contributors}</div>
           ) : null}
@@ -122,10 +103,19 @@ export default function ResourceRow({
     </>
   );
 
-  const rowClassName = cx(styles.row, selected && styles.selected, className);
+  const rowClassName = cx(
+    styles.row,
+    actionsVisibility === "always" && styles.actionsAlwaysVisible,
+    selected && styles.selected,
+    className,
+  );
   return as === "div" ? (
-    <div className={rowClassName}>{row}</div>
+    <div className={rowClassName} data-density={density} {...rootProps}>
+      {row}
+    </div>
   ) : (
-    <li className={rowClassName}>{row}</li>
+    <li className={rowClassName} data-density={density} {...rootProps}>
+      {row}
+    </li>
   );
 }

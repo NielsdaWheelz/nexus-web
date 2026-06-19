@@ -1,11 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { Keyboard } from "lucide-react";
+import CollectionView from "@/components/collections/CollectionView";
 import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
-import ResourceList from "@/components/ui/ResourceList";
-import ResourceRow from "@/components/ui/ResourceRow";
 import Button from "@/components/ui/Button";
+import { presentSettingsRow } from "@/lib/collections/presenters/settings";
 import {
   formatKeyCombo,
   captureKeyCombo,
@@ -95,6 +96,9 @@ export default function KeybindingsPaneBody() {
         ([id, combo]) => combo === capturedCombo && id !== capturing,
       )
     : null;
+  const conflictLabel = conflict
+    ? (BINDABLE_ACTIONS.find((a) => a.id === conflict[0])?.label ?? conflict[0])
+    : null;
 
   return (
     <PaneSurface>
@@ -105,74 +109,76 @@ export default function KeybindingsPaneBody() {
           </Button>
         }
       >
-        <ResourceList>
-          {BINDABLE_ACTIONS.map(({ id, label }) => {
+        <CollectionView
+          rows={BINDABLE_ACTIONS.map(({ id, label }) => {
             const isCapturing = capturing === id;
             const currentCombo = bindings[id];
+            const meta = isCapturing
+              ? capturedCombo
+                ? formatKeyCombo(capturedCombo, platform)
+                : "Press a key combination..."
+              : currentCombo
+                ? formatKeyCombo(currentCombo, platform)
+                : "-";
 
-            return (
-              <ResourceRow
-                key={id}
-                primary={{ kind: "static" }}
-                title={label}
-                meta={
-                  isCapturing ? (
-                    <span className={styles.captureHint}>
-                      {capturedCombo
-                        ? formatKeyCombo(capturedCombo, platform)
-                        : "Press a key combination..."}
-                    </span>
-                  ) : (
-                    <span className={styles.combo}>
-                      {currentCombo ? formatKeyCombo(currentCombo, platform) : "—"}
-                    </span>
-                  )
-                }
-                description={
-                  isCapturing && conflict ? (
-                    <span className={styles.conflict}>
-                      Already bound to{" "}
-                      {BINDABLE_ACTIONS.find((a) => a.id === conflict[0])?.label ??
-                        conflict[0]}
-                    </span>
-                  ) : undefined
-                }
-                actions={
-                  isCapturing ? (
-                    <span className={styles.rowActions}>
-                      <Button
-                        variant="primary"
-                        size="sm"
-                        disabled={!capturedCombo}
-                        onClick={saveCapture}
-                      >
-                        {conflict ? "Reassign" : "Save"}
-                      </Button>
-                      <Button variant="ghost" size="sm" onClick={cancelCapture}>
-                        Cancel
-                      </Button>
-                    </span>
-                  ) : (
-                    <span className={styles.rowActions}>
-                      <Button variant="ghost" size="sm" onClick={() => startCapture(id)}>
-                        Edit
-                      </Button>
-                      {currentCombo && currentCombo !== DEFAULT_KEYBINDINGS[id] ? (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => clearBinding(id)}
-                        >
-                          Clear
-                        </Button>
-                      ) : null}
-                    </span>
-                  )
-                }
-              />
-            );
+            return presentSettingsRow({
+              id,
+              title: label,
+              description:
+                isCapturing && conflictLabel
+                  ? `Already bound to ${conflictLabel}`
+                  : undefined,
+              meta,
+              icon: Keyboard,
+            });
           })}
-        </ResourceList>
+          view="list"
+          density="comfortable"
+          status="ready"
+          ariaLabel="Keyboard shortcuts"
+          surface={false}
+          rowControls={Object.fromEntries(
+            BINDABLE_ACTIONS.map(({ id }) => {
+              const isCapturing = capturing === id;
+              const currentCombo = bindings[id];
+
+              return [
+                id,
+                isCapturing ? (
+                  <span className={styles.rowActions}>
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      disabled={!capturedCombo}
+                      onClick={saveCapture}
+                    >
+                      {conflict ? "Reassign" : "Save"}
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={cancelCapture}>
+                      Cancel
+                    </Button>
+                  </span>
+                ) : (
+                  <span className={styles.rowActions}>
+                    <Button variant="ghost" size="sm" onClick={() => startCapture(id)}>
+                      Edit
+                    </Button>
+                    {currentCombo && currentCombo !== DEFAULT_KEYBINDINGS[id] ? (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => clearBinding(id)}
+                      >
+                        Clear
+                      </Button>
+                    ) : null}
+                  </span>
+                ),
+              ];
+            }),
+          )}
+          rowActionsVisibility="always"
+        />
       </PaneSection>
     </PaneSurface>
   );

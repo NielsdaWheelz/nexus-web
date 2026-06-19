@@ -65,6 +65,14 @@ EDGE_KEYS = {
     "created_at",
 }
 RESOLVED_KEYS = {"ref", "label", "summary", "missing"}
+SUMMARY_KEYS = {
+    "ref",
+    "total",
+    "by_kind",
+    "last_connected_at",
+    "dominant_kind",
+    "top_peers",
+}
 
 
 def _bootstrap_user(auth_client, direct_db: DirectSessionManager) -> UUID:
@@ -94,6 +102,81 @@ def _create_media(direct_db: DirectSessionManager, user_id: UUID, title: str) ->
 def _query_connections(auth_client, headers: dict[str, str], ref: str, **body):
     payload = {"refs": [ref], "direction": "both", "limit": 100, **body}
     return auth_client.post("/resource-graph/connections/query", headers=headers, json=payload)
+
+
+def _summarize_connections(auth_client, headers: dict[str, str], refs: list[str], **body):
+    payload = {"refs": refs, **body}
+    return auth_client.post("/resource-graph/connections/summary", headers=headers, json=payload)
+
+
+def _seed_citation_edge(
+    direct_db: DirectSessionManager,
+    *,
+    user_id: UUID,
+    source_scheme: str,
+    source_id: UUID,
+    target_media_id: UUID,
+    ordinal: int = 1,
+) -> UUID:
+    """Seed an origin='citation' edge directly (no API writes citation origins)."""
+    with direct_db.session() as session:
+        edge_id = session.execute(
+            text(
+                """
+                INSERT INTO resource_edges (
+                    user_id, kind, origin, source_scheme, source_id, target_scheme,
+                    target_id, ordinal, snapshot
+                )
+                VALUES (
+                    :user_id, 'supports', 'citation', :source_scheme, :source_id,
+                    'media', :target_media_id, :ordinal, '{"title": "cited"}'::jsonb
+                )
+                RETURNING id
+                """
+            ),
+            {
+                "user_id": user_id,
+                "source_scheme": source_scheme,
+                "source_id": source_id,
+                "target_media_id": target_media_id,
+                "ordinal": ordinal,
+            },
+        ).scalar_one()
+        session.commit()
+    return edge_id
+
+
+def _seed_synapse_edge(
+    direct_db: DirectSessionManager,
+    *,
+    user_id: UUID,
+    source_media_id: UUID,
+    target_media_id: UUID,
+) -> UUID:
+    """Seed an origin='synapse' (AI) edge — must be excluded from the list surface."""
+    with direct_db.session() as session:
+        edge_id = session.execute(
+            text(
+                """
+                INSERT INTO resource_edges (
+                    user_id, kind, origin, source_scheme, source_id, target_scheme,
+                    target_id, ordinal, snapshot
+                )
+                VALUES (
+                    :user_id, 'supports', 'synapse', 'media', :source_media_id,
+                    'media', :target_media_id, NULL, '{"excerpt": "ai edge"}'::jsonb
+                )
+                RETURNING id
+                """
+            ),
+            {
+                "user_id": user_id,
+                "source_media_id": source_media_id,
+                "target_media_id": target_media_id,
+            },
+        ).scalar_one()
+        session.commit()
+    return edge_id
 
 
 def _create_content_chunk(direct_db: DirectSessionManager, media_id: UUID) -> UUID:
@@ -780,6 +863,241 @@ def test_query_connections_rejects_unknown_kind_and_origin_values(
     bad_ref = _query_connections(auth_client, headers, "not-a-ref")
     assert bad_ref.status_code == 400, bad_ref.text
     assert bad_ref.json()["error"]["code"] == "E_INVALID_REQUEST"
+
+
+# =============================================================================
+# Connection summaries (collection surface, spec S4)
+# =============================================================================
+
+
+def test_connection_summary_counts_by_kind_and_excludes_synapse(
+    auth_client, direct_db: DirectSessionManager
+):
+    user_id = _bootstrap_user(auth_client, direct_db)
+    headers = auth_headers(user_id)
+    subject_media_id = _create_media(direct_db, user_id, title="Subject Doc")
+    user_peer_id = _create_media(direct_db, user_id, title="User Peer")
+    citing_message_media_id = _create_media(direct_db, user_id, title="Cited Doc")
+    synapse_peer_id = _create_media(direct_db, user_id, title="AI Peer")
+    subject_ref = f"media:{subject_media_id}"
+
+    # One user 'context' edge to user_peer.
+    user_edge = auth_client.post(
+        "/resource-graph/edges",
+        headers=headers,
+        json={"source_ref": subject_ref, "target_ref": f"media:{user_peer_id}"},
+    )
+    assert user_edge.status_code == 201, user_edge.text
+    # One 'citation' edge FROM a message TO the subject media (subject is the target).
+    with direct_db.session() as session:
+        _conversation_id, message_id = create_test_conversation_with_message(
+            session, user_id, role="assistant"
+        )
+    _seed_citation_edge(
+        direct_db,
+        user_id=user_id,
+        source_scheme="message",
+        source_id=message_id,
+        target_media_id=subject_media_id,
+    )
+    # One 'synapse' (AI) edge — MUST be excluded from the list surface.
+    _seed_synapse_edge(
+        direct_db,
+        user_id=user_id,
+        source_media_id=synapse_peer_id,
+        target_media_id=subject_media_id,
+    )
+    # A citation edge to an unrelated media (proves we scope to the subject's edges).
+    # Distinct ordinal: uq_resource_edges_citation_ordinal is (user, source, ordinal).
+    _seed_citation_edge(
+        direct_db,
+        user_id=user_id,
+        source_scheme="message",
+        source_id=message_id,
+        target_media_id=citing_message_media_id,
+        ordinal=2,
+    )
+
+    response = _summarize_connections(auth_client, headers, [subject_ref])
+    assert response.status_code == 200, response.text
+    summaries = response.json()["data"]["summaries"]
+    assert len(summaries) == 1, summaries
+    summary = summaries[0]
+    assert set(summary) == SUMMARY_KEYS, (
+        f"Summary payload must carry exactly {sorted(SUMMARY_KEYS)}; got {sorted(summary)}"
+    )
+    assert summary["ref"] == subject_ref
+    # user 'context' edge (1) + citation 'supports' edge (1) = 2; synapse excluded.
+    assert summary["total"] == 2, f"synapse edge must be excluded; got {summary}"
+    assert summary["by_kind"] == {"context": 1, "supports": 1}
+    assert summary["last_connected_at"] is not None
+    # Peers carry the two non-synapse counterparts; the AI peer is absent.
+    peer_refs = {peer["ref"] for peer in summary["top_peers"]}
+    assert peer_refs == {f"media:{user_peer_id}", f"message:{message_id}"}, peer_refs
+    assert f"media:{synapse_peer_id}" not in peer_refs
+
+
+def test_connection_summary_rejects_explicit_non_list_origins(
+    auth_client, direct_db: DirectSessionManager
+):
+    user_id = _bootstrap_user(auth_client, direct_db)
+    headers = auth_headers(user_id)
+    subject_media_id = _create_media(direct_db, user_id, title="Subject Doc")
+
+    response = _summarize_connections(
+        auth_client,
+        headers,
+        [f"media:{subject_media_id}"],
+        origins=["synapse"],
+    )
+
+    assert response.status_code == 400, response.text
+    assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
+
+
+def test_connection_summary_dominant_kind_is_highest_count(
+    auth_client, direct_db: DirectSessionManager
+):
+    user_id = _bootstrap_user(auth_client, direct_db)
+    headers = auth_headers(user_id)
+    subject_media_id = _create_media(direct_db, user_id, title="Dominant Subject")
+    context_peer_id = _create_media(direct_db, user_id, title="Context Peer")
+    subject_ref = f"media:{subject_media_id}"
+
+    # One user 'context' edge + two 'supports' citation edges -> dominant=supports.
+    user_edge = auth_client.post(
+        "/resource-graph/edges",
+        headers=headers,
+        json={"source_ref": subject_ref, "target_ref": f"media:{context_peer_id}"},
+    )
+    assert user_edge.status_code == 201, user_edge.text
+    with direct_db.session() as session:
+        _conversation_id, message_id = create_test_conversation_with_message(
+            session, user_id, role="assistant"
+        )
+    other_media_id = _create_media(direct_db, user_id, title="Support One")
+    _seed_citation_edge(
+        direct_db,
+        user_id=user_id,
+        source_scheme="message",
+        source_id=message_id,
+        target_media_id=subject_media_id,
+        ordinal=1,
+    )
+    # Second supports edge from a different message source to the same subject.
+    with direct_db.session() as session:
+        _conversation_id2, message_id2 = create_test_conversation_with_message(
+            session, user_id, role="assistant"
+        )
+    _seed_citation_edge(
+        direct_db,
+        user_id=user_id,
+        source_scheme="message",
+        source_id=message_id2,
+        target_media_id=subject_media_id,
+        ordinal=1,
+    )
+    assert other_media_id is not None
+
+    response = _summarize_connections(auth_client, headers, [subject_ref])
+    assert response.status_code == 200, response.text
+    summary = response.json()["data"]["summaries"][0]
+    assert summary["by_kind"] == {"context": 1, "supports": 2}
+    assert summary["total"] == 3
+    assert summary["dominant_kind"] == "supports"
+
+
+def test_connection_summary_deleted_peer_comes_back_missing(
+    auth_client, direct_db: DirectSessionManager
+):
+    user_id = _bootstrap_user(auth_client, direct_db)
+    headers = auth_headers(user_id)
+    subject_media_id = _create_media(direct_db, user_id, title="Subject With Dead Peer")
+    doomed_peer_id = _create_media(direct_db, user_id, title="Doomed Peer")
+    subject_ref = f"media:{subject_media_id}"
+
+    user_edge = auth_client.post(
+        "/resource-graph/edges",
+        headers=headers,
+        json={"source_ref": subject_ref, "target_ref": f"media:{doomed_peer_id}"},
+    )
+    assert user_edge.status_code == 201, user_edge.text
+
+    # Delete the peer media out from under the edge (edges have no FKs by design),
+    # leaving a dangling edge — the peer must hydrate missing, never leaked.
+    with direct_db.session() as session:
+        session.execute(
+            text("DELETE FROM default_library_intrinsics WHERE media_id = :id"),
+            {"id": doomed_peer_id},
+        )
+        session.execute(
+            text("DELETE FROM default_library_closure_edges WHERE media_id = :id"),
+            {"id": doomed_peer_id},
+        )
+        session.execute(
+            text("DELETE FROM library_entries WHERE media_id = :id"), {"id": doomed_peer_id}
+        )
+        session.execute(text("DELETE FROM media WHERE id = :id"), {"id": doomed_peer_id})
+        session.commit()
+
+    response = _summarize_connections(auth_client, headers, [subject_ref])
+    assert response.status_code == 200, response.text
+    summary = response.json()["data"]["summaries"][0]
+    # The edge still counts (provenance outlives the endpoint).
+    assert summary["total"] == 1
+    assert len(summary["top_peers"]) == 1
+    peer = summary["top_peers"][0]
+    assert peer["ref"] == f"media:{doomed_peer_id}"
+    assert peer["missing"] is True, f"Deleted peer must hydrate missing: {peer}"
+    assert peer["href"] is None, "A missing peer must not leak a route href"
+
+
+def test_connection_summary_returns_one_entry_per_ref_in_order(
+    auth_client, direct_db: DirectSessionManager
+):
+    user_id = _bootstrap_user(auth_client, direct_db)
+    headers = auth_headers(user_id)
+    connected_id = _create_media(direct_db, user_id, title="Has Edges")
+    peer_id = _create_media(direct_db, user_id, title="Its Peer")
+    isolated_id = _create_media(direct_db, user_id, title="No Edges")
+    connected_ref = f"media:{connected_id}"
+    isolated_ref = f"media:{isolated_id}"
+
+    edge = auth_client.post(
+        "/resource-graph/edges",
+        headers=headers,
+        json={"source_ref": connected_ref, "target_ref": f"media:{peer_id}"},
+    )
+    assert edge.status_code == 201, edge.text
+
+    response = _summarize_connections(auth_client, headers, [isolated_ref, connected_ref])
+    assert response.status_code == 200, response.text
+    summaries = response.json()["data"]["summaries"]
+    assert [s["ref"] for s in summaries] == [isolated_ref, connected_ref], (
+        "Summaries must come back one-per-ref in request order"
+    )
+    assert summaries[0]["total"] == 0, "A ref with no edges summarizes to total 0"
+    assert summaries[0]["by_kind"] == {}
+    assert summaries[0]["dominant_kind"] is None
+    assert summaries[0]["top_peers"] == []
+    assert summaries[1]["total"] == 1
+
+
+def test_connection_summary_rejects_malformed_ref_and_over_limit(
+    auth_client, direct_db: DirectSessionManager
+):
+    user_id = _bootstrap_user(auth_client, direct_db)
+    headers = auth_headers(user_id)
+
+    malformed = _summarize_connections(auth_client, headers, ["not-a-ref"])
+    assert malformed.status_code == 400, malformed.text
+    assert malformed.json()["error"]["code"] == "E_INVALID_REQUEST"
+
+    over_limit = _summarize_connections(
+        auth_client, headers, [f"media:{uuid4()}" for _ in range(201)]
+    )
+    assert over_limit.status_code == 400, over_limit.text
+    assert over_limit.json()["error"]["code"] == "E_INVALID_REQUEST"
 
 
 def test_delete_edge_removes_user_edge(auth_client, direct_db: DirectSessionManager):

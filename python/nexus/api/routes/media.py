@@ -17,11 +17,30 @@ from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
 from nexus.responses import ok, success_response
 from nexus.schemas.media import MediaLibrariesRequest
-from nexus.services import library_entries, media_intelligence, media_source_ingest
+from nexus.schemas.resource_graph import ConnectionEndpointOut, RelatedMediaOut
+from nexus.services import library_entries, media_intelligence, media_related, media_source_ingest
 from nexus.services import media as media_service
 from nexus.services import media_deletion as media_deletion_service
+from nexus.services.resource_graph.schemas import ConnectionEndpoint
 
 router = APIRouter(tags=["media"])
+
+# Clamp for GET /media/{id}/related ``limit`` (spec S5).
+_RELATED_LIMIT_MIN = 1
+_RELATED_LIMIT_MAX = 20
+
+
+def _endpoint_out(endpoint: ConnectionEndpoint) -> ConnectionEndpointOut:
+    return ConnectionEndpointOut(
+        ref=endpoint.ref.uri,
+        scheme=endpoint.ref.scheme,
+        id=endpoint.ref.id,
+        label=endpoint.label,
+        description=endpoint.description,
+        activation=endpoint.activation,
+        href=endpoint.href,
+        missing=endpoint.missing,
+    )
 
 
 @router.get("/media")
@@ -96,6 +115,27 @@ def get_media_fragments(
     """Get fragments ordered by idx ASC. Returns 404 if not readable (masks existence)."""
     result = media_service.list_fragments_for_viewer(db, viewer.user_id, media_id)
     return ok(result)
+
+
+@router.get("/media/{media_id}/related")
+def get_related_media(
+    media_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+    limit: int = Query(default=8, ge=_RELATED_LIMIT_MIN, le=_RELATED_LIMIT_MAX),
+) -> dict:
+    """Deterministic related peers for a media: embedding NN + shared-author.
+
+    Peers are computed from precomputed ``content_embeddings`` and
+    ``contributor_credits`` only — no request-time LLM. Each peer carries a live
+    label + href; deleted/forbidden peers come back ``missing``. Returns 404 if
+    the media does not exist or the viewer cannot read it (masks existence).
+    """
+    media_service.get_media_for_viewer(db, viewer.user_id, media_id)
+    peers = media_related.related_media(
+        db, viewer_id=viewer.user_id, media_id=media_id, limit=limit
+    )
+    return ok(RelatedMediaOut(peers=[_endpoint_out(peer) for peer in peers]))
 
 
 @router.post("/media/{media_id}/libraries")

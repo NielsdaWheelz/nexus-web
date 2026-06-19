@@ -7,7 +7,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from nexus.schemas.contributors import ContributorCreditOut
-from nexus.schemas.media import MediaOut
+from nexus.schemas.media import MediaOut, MediaReadState
 
 LibraryRole = Literal["admin", "member"]
 LibraryInvitationStatusValue = Literal["pending", "accepted", "declined", "revoked"]
@@ -131,6 +131,17 @@ class LibraryEntryOut(BaseModel):
     media: MediaOut | None = None
     podcast: LibraryPodcastOut | None = None
     subscription: LibraryPodcastSubscriptionOut | None = None
+    # Per-entry engagement recency + "surfaced today" lane signal (S3,
+    # collection-surface cutover). `last_engaged_at` is the entry target's most
+    # recent read/listen recency (None when never engaged); `surfaced_today`
+    # evaluates GREATEST(created_at, last_engaged_at, last_connected_at,
+    # published_at) against the viewer-timezone day boundary. `read_state`/
+    # `progress_fraction` are projected at entry level for media targets so
+    # collection presenters do not need to know the nested target shape.
+    surfaced_today: bool = False
+    read_state: MediaReadState | None = None
+    progress_fraction: float | None = Field(default=None, ge=0.0, le=1.0)
+    last_engaged_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
 

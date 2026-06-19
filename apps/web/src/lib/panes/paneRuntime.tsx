@@ -16,14 +16,27 @@ import {
   normalizeWorkspaceHref,
   parseWorkspaceHref,
 } from "@/lib/workspace/workspaceHref";
+import { preloadPane } from "@/lib/panes/paneRenderRegistry";
+import { resolvePaneRoute } from "@/lib/panes/paneRouteTable";
 import type { PaneRuntimeLayout } from "@/lib/workspace/paneSizing";
 import type { WorkspaceSecondarySurfaceId } from "@/lib/panes/paneSecondaryModel";
+import type { PaneRouteId } from "@/lib/panes/paneRouteModel";
+import {
+  clearMediaReaderViewTransition,
+  startSameDocumentViewTransition,
+  type PaneViewTransitionIntent,
+} from "@/lib/ui/viewTransitions";
+
+export interface PaneRouterOptions {
+  titleHint?: string;
+  viewTransition?: PaneViewTransitionIntent;
+}
 
 export interface PaneScopedRouter {
   canGoBack: boolean;
   canGoForward: boolean;
-  push: (href: string, options?: { titleHint?: string }) => void;
-  replace: (href: string, options?: { titleHint?: string }) => void;
+  push: (href: string, options?: PaneRouterOptions) => void;
+  replace: (href: string, options?: PaneRouterOptions) => void;
   back: () => void;
   forward: () => void;
 }
@@ -122,6 +135,35 @@ function parsePaneHref(href: string): { pathname: string; searchParams: URLSearc
   };
 }
 
+function panePreloadForHref(href: string): (() => Promise<unknown>) | undefined {
+  const route = resolvePaneRoute(href);
+  if (route.id === "unsupported") return undefined;
+  const routeId: PaneRouteId = route.id;
+  return () => preloadPane(routeId);
+}
+
+function runPaneNavigation(
+  href: string,
+  viewTransition: PaneViewTransitionIntent | undefined,
+  navigate: () => void,
+): void {
+  if (!viewTransition) {
+    navigate();
+    return;
+  }
+
+  startSameDocumentViewTransition(navigate, {
+    preload:
+      viewTransition.kind === "media-reader"
+        ? panePreloadForHref(href)
+        : undefined,
+    onFinish:
+      viewTransition.kind === "media-reader"
+        ? () => clearMediaReaderViewTransition(viewTransition.mediaId)
+        : undefined,
+  });
+}
+
 export function PaneRuntimeProvider({
   paneId,
   href,
@@ -190,21 +232,31 @@ export function PaneRuntimeProvider({
       get canGoForward() {
         return navigationStateRef.current.canGoForward;
       },
-      push: (nextHref: string, options?: { titleHint?: string }) => {
+      push: (nextHref: string, options?: PaneRouterOptions) => {
         const normalized = normalizeWorkspaceHref(nextHref);
         if (!normalized) {
           return;
         }
         const current = commandsRef.current;
-        current.onNavigatePane(current.paneId, normalized, options);
+        const navigationOptions = options?.titleHint
+          ? { titleHint: options.titleHint }
+          : undefined;
+        runPaneNavigation(normalized, options?.viewTransition, () => {
+          current.onNavigatePane(current.paneId, normalized, navigationOptions);
+        });
       },
-      replace: (nextHref: string, options?: { titleHint?: string }) => {
+      replace: (nextHref: string, options?: PaneRouterOptions) => {
         const normalized = normalizeWorkspaceHref(nextHref);
         if (!normalized) {
           return;
         }
         const current = commandsRef.current;
-        current.onReplacePane(current.paneId, normalized, options);
+        const navigationOptions = options?.titleHint
+          ? { titleHint: options.titleHint }
+          : undefined;
+        runPaneNavigation(normalized, options?.viewTransition, () => {
+          current.onReplacePane(current.paneId, normalized, navigationOptions);
+        });
       },
       back: () => {
         const current = commandsRef.current;

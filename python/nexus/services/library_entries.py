@@ -9,8 +9,10 @@ the table under an explicit allowlist (see the cutover spec).
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import assert_never
+from datetime import UTC, datetime, time
+from typing import Literal, assert_never
 from uuid import UUID
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -36,6 +38,218 @@ from nexus.services.contributor_credits import load_contributor_credits_for_podc
 _ENTRY_ORDER = "position ASC, created_at DESC, id DESC"
 _ENTRY_COLUMNS = "id, library_id, media_id, podcast_id, created_at, position"
 _TARGET_COLUMN: dict[LibraryEntryKind, str] = {"media": "media_id", "podcast": "podcast_id"}
+
+# The orderings GET /libraries/{id}/entries supports (spec S5). "position" is the
+# default and keeps EXACTLY `_ENTRY_ORDER`; "resonance" applies the deterministic
+# score below.
+LibraryEntrySort = Literal["position", "resonance"]
+
+# Resonance score weights (spec S5). The score is a pure SQL/arithmetic
+# combination of precomputed signals: recency-decay over the entry's most recent
+# activity, log1p(connection_count), and shared-author hits, with NO request-time
+# LLM. The similarity term is OMITTED for v1 (it folds in later behind config;
+# adding it now would require a per-entry vector scan, which v1 deliberately avoids
+# until the existing vector-index plan is proven).
+_RESONANCE_RECENCY_WEIGHT = 1.0
+_RESONANCE_CONNECTION_WEIGHT = 0.1
+_RESONANCE_SHARED_AUTHOR_WEIGHT = 0.05
+_RESONANCE_SIMILARITY_WEIGHT = 0.05
+# Recency half-life in days: the decay term is 0.5 ** (age_days / half_life), so an
+# entry last touched `half_life` days ago contributes half a fresh entry's recency.
+_RESONANCE_RECENCY_HALF_LIFE_DAYS = 14.0
+
+# Per-entry most-recent engagement instant, in SQL, for ordering. Mirrors the two
+# authoritative sources `_hydrate_entries`/`services.media` read post-hoc: a direct
+# media entry's reader/listening state (podcast episodes are still `media_id`
+# library entries), and a podcast entry's MAX listening-state recency across its
+# visible episodes. NULL when the target was never engaged.
+_LAST_ENGAGED_AT_SQL = """
+    CASE
+        WHEN le.media_id IS NOT NULL THEN (
+            SELECT NULLIF(
+                GREATEST(
+                    COALESCE(rms.updated_at, '-infinity'::timestamptz),
+                    COALESCE(pls.updated_at, '-infinity'::timestamptz)
+                ),
+                '-infinity'::timestamptz
+            )
+            FROM media m
+            LEFT JOIN reader_media_state rms
+              ON rms.user_id = :viewer_id AND rms.media_id = m.id
+            LEFT JOIN podcast_listening_states pls
+              ON pls.user_id = :viewer_id AND pls.media_id = m.id
+            WHERE m.id = le.media_id
+        )
+        WHEN le.podcast_id IS NOT NULL THEN (
+            SELECT MAX(pls.updated_at)
+            FROM podcast_episodes pe
+            JOIN podcast_listening_states pls
+              ON pls.user_id = :viewer_id AND pls.media_id = pe.media_id
+            WHERE pe.podcast_id = le.podcast_id
+        )
+        ELSE NULL
+    END
+"""
+
+# Connection count for the entry's media:<id>/podcast:<id> ref over the AI-free
+# `LIST_CONNECTION_ORIGINS` allowlist (edges where the ref is source OR target).
+_CONNECTION_COUNT_SQL = """
+    (
+        SELECT COUNT(*)
+        FROM resource_edges e
+        WHERE e.user_id = :viewer_id
+          AND e.origin = ANY(:resonance_origins)
+          AND (
+            (e.source_scheme = CASE WHEN le.media_id IS NOT NULL THEN 'media' ELSE 'podcast' END
+             AND e.source_id = COALESCE(le.media_id, le.podcast_id))
+            OR
+            (e.target_scheme = CASE WHEN le.media_id IS NOT NULL THEN 'media' ELSE 'podcast' END
+             AND e.target_id = COALESCE(le.media_id, le.podcast_id))
+          )
+    )
+"""
+
+_LAST_CONNECTED_AT_SQL = """
+    (
+        SELECT MAX(e.created_at)
+        FROM resource_edges e
+        WHERE e.user_id = :viewer_id
+          AND e.origin = ANY(:resonance_origins)
+          AND (
+            (e.source_scheme = CASE WHEN le.media_id IS NOT NULL THEN 'media' ELSE 'podcast' END
+             AND e.source_id = COALESCE(le.media_id, le.podcast_id))
+            OR
+            (e.target_scheme = CASE WHEN le.media_id IS NOT NULL THEN 'media' ELSE 'podcast' END
+             AND e.target_id = COALESCE(le.media_id, le.podcast_id))
+          )
+    )
+"""
+
+_PUBLISHED_AT_SQL = """
+    CASE
+        WHEN le.media_id IS NOT NULL THEN (
+            SELECT CASE
+                WHEN m.published_date ~ '^\\d{4}-\\d{2}-\\d{2}$'
+                    THEN m.published_date::date::timestamptz
+                WHEN m.published_date ~ '^\\d{4}-\\d{2}$'
+                    THEN (m.published_date || '-01')::date::timestamptz
+                WHEN m.published_date ~ '^\\d{4}$'
+                    THEN (m.published_date || '-01-01')::date::timestamptz
+                ELSE NULL
+            END
+            FROM media m
+            WHERE m.id = le.media_id
+        )
+        WHEN le.podcast_id IS NOT NULL THEN (
+            SELECT MAX(pe.published_at)
+            FROM podcast_episodes pe
+            WHERE pe.podcast_id = le.podcast_id
+        )
+        ELSE NULL
+    END
+"""
+
+_SHARED_AUTHOR_HITS_SQL = """
+    (
+        SELECT COUNT(DISTINCT mine.contributor_id)
+        FROM contributor_credits mine
+        JOIN contributor_credits other
+          ON other.contributor_id = mine.contributor_id
+         AND other.role = 'author'
+        JOIN library_entries peer
+          ON peer.library_id = le.library_id
+         AND peer.id <> le.id
+         AND (
+            (other.media_id IS NOT NULL AND peer.media_id = other.media_id)
+            OR (other.podcast_id IS NOT NULL AND peer.podcast_id = other.podcast_id)
+         )
+        WHERE mine.role = 'author'
+          AND (
+            (le.media_id IS NOT NULL AND mine.media_id = le.media_id)
+            OR (le.podcast_id IS NOT NULL AND mine.podcast_id = le.podcast_id)
+          )
+    )
+"""
+
+_SIMILARITY_SQL = """
+    CASE
+        WHEN le.media_id IS NOT NULL THEN COALESCE((
+            SELECT 1.0 - (ce.embedding_vector <=> seed.vec)
+            FROM (
+                SELECT ce_seed.embedding_vector AS vec,
+                       cis.active_embedding_provider AS provider,
+                       cis.active_embedding_model AS model
+                FROM content_index_states cis
+                JOIN content_chunks cc_seed
+                  ON cc_seed.owner_kind = 'media'
+                 AND cc_seed.owner_id = cis.owner_id
+                JOIN content_embeddings ce_seed
+                  ON ce_seed.chunk_id = cc_seed.id
+                 AND ce_seed.embedding_provider = cis.active_embedding_provider
+                 AND ce_seed.embedding_model = cis.active_embedding_model
+                 AND ce_seed.embedding_dimensions = :embedding_dims
+                 AND ce_seed.embedding_vector IS NOT NULL
+                WHERE cis.owner_kind = 'media'
+                  AND cis.owner_id = le.media_id
+                  AND cis.status = 'ready'
+                  AND cis.active_embedding_provider IS NOT NULL
+                  AND cis.active_embedding_model IS NOT NULL
+                ORDER BY cc_seed.chunk_idx ASC, cc_seed.id ASC
+                LIMIT 1
+            ) seed
+            JOIN content_embeddings ce
+              ON ce.embedding_dimensions = :embedding_dims
+             AND ce.embedding_provider = seed.provider
+             AND ce.embedding_model = seed.model
+             AND ce.embedding_vector IS NOT NULL
+            JOIN content_chunks cc
+              ON cc.id = ce.chunk_id
+             AND cc.owner_kind = 'media'
+            JOIN content_index_states peer_cis
+              ON peer_cis.owner_kind = 'media'
+             AND peer_cis.owner_id = cc.owner_id
+             AND peer_cis.status = 'ready'
+             AND peer_cis.active_embedding_provider = seed.provider
+             AND peer_cis.active_embedding_model = seed.model
+            JOIN library_entries peer
+              ON peer.library_id = le.library_id
+             AND peer.id <> le.id
+             AND peer.media_id = cc.owner_id
+            ORDER BY ce.embedding_vector <=> seed.vec ASC, cc.owner_id ASC, cc.id ASC
+            LIMIT 1
+        ), 0.0)
+        ELSE 0.0
+    END
+"""
+
+_MOST_RECENT_ACTIVITY_SQL = f"""
+    GREATEST(
+        le.created_at,
+        COALESCE({_LAST_ENGAGED_AT_SQL}, le.created_at),
+        COALESCE({_LAST_CONNECTED_AT_SQL}, le.created_at),
+        COALESCE({_PUBLISHED_AT_SQL}, le.created_at)
+    )
+"""
+
+# Deterministic resonance ORDER BY: weighted recency-decay + log1p(connection_count),
+# highest first, with `id DESC` as the stable tiebreak so identical input yields one
+# fixed order. `now()` is the DB's authoritative clock (database.md). An entry with no
+# engagement/connection/published signal decays from its created_at.
+_RESONANCE_ORDER = f"""
+    (
+        {_RESONANCE_RECENCY_WEIGHT} * power(
+            0.5,
+            GREATEST(
+                EXTRACT(EPOCH FROM (now() - {_MOST_RECENT_ACTIVITY_SQL})) / 86400.0,
+                0.0
+            ) / {_RESONANCE_RECENCY_HALF_LIFE_DAYS}
+        )
+        + {_RESONANCE_CONNECTION_WEIGHT} * ln(1.0 + {_CONNECTION_COUNT_SQL})
+        + {_RESONANCE_SHARED_AUTHOR_WEIGHT} * {_SHARED_AUTHOR_HITS_SQL}
+        + {_RESONANCE_SIMILARITY_WEIGHT} * {_SIMILARITY_SQL}
+    ) DESC,
+    le.id DESC
+"""
 
 
 @dataclass(frozen=True)
@@ -243,11 +457,86 @@ def admin_non_default_library_ids_for_media(
 # ---------------------------------------------------------------------------
 
 
-def _hydrate_entries(db: Session, viewer_id: UUID, rows) -> list[LibraryEntryOut]:
+def _start_of_today(viewer_timezone: str) -> datetime:
+    """Start-of-day boundary used for the "surfaced today" lane."""
+    try:
+        tz = ZoneInfo(viewer_timezone)
+    except ZoneInfoNotFoundError as exc:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "viewer_tz must be a valid IANA timezone",
+        ) from exc
+    now = datetime.now(tz)
+    return datetime.combine(now.date(), time.min, tzinfo=tz).astimezone(UTC)
+
+
+def _surfaced_today(
+    *,
+    created_at: datetime,
+    last_engaged_at: datetime | None,
+    last_connected_at: datetime | None,
+    published_at: datetime | None,
+    start_of_today: datetime,
+) -> bool:
+    """True when the entry's most recent list-surface signal falls today."""
+    most_recent = max(
+        instant
+        for instant in (created_at, last_engaged_at, last_connected_at, published_at)
+        if instant is not None
+    )
+    return most_recent >= start_of_today
+
+
+def _entry_recency_signals(
+    db: Session, *, viewer_id: UUID, entry_ids: list[UUID]
+) -> dict[UUID, tuple[datetime | None, datetime | None]]:
+    if not entry_ids:
+        return {}
+    from nexus.services.resource_graph.connection_summaries import LIST_CONNECTION_ORIGINS
+
+    rows = (
+        db.execute(
+            text(f"""
+                SELECT
+                    le.id AS entry_id,
+                    {_LAST_CONNECTED_AT_SQL} AS last_connected_at,
+                    {_PUBLISHED_AT_SQL} AS published_at
+                FROM library_entries le
+                WHERE le.id = ANY(:entry_ids)
+            """),
+            {
+                "viewer_id": viewer_id,
+                "entry_ids": entry_ids,
+                "resonance_origins": list(LIST_CONNECTION_ORIGINS),
+            },
+        )
+        .mappings()
+        .all()
+    )
+    return {
+        UUID(str(row["entry_id"])): (row["last_connected_at"], row["published_at"]) for row in rows
+    }
+
+
+def _hydrate_entries(
+    db: Session, viewer_id: UUID, rows, *, viewer_timezone: str = "UTC"
+) -> list[LibraryEntryOut]:
     """Hydrate name-keyed entry rows (_ENTRY_COLUMNS) into LibraryEntryOut, batching
-    the media and podcast lookups. Entries whose target is not viewer-visible drop out."""
+    the media and podcast lookups. Entries whose target is not viewer-visible drop out.
+
+    Each entry also carries the derived "surfaced today" lane signal (S3): the
+    entry's media/podcast engagement recency (`last_engaged_at`), graph recency,
+    published recency, and whether their greatest value lands on the current
+    viewer-timezone day."""
     if not rows:
         return []
+
+    start_of_today = _start_of_today(viewer_timezone)
+    recency_signals_by_entry_id = _entry_recency_signals(
+        db,
+        viewer_id=viewer_id,
+        entry_ids=[UUID(str(row["id"])) for row in rows],
+    )
 
     media_ids = [UUID(str(row["media_id"])) for row in rows if row["media_id"] is not None]
     podcast_ids = [UUID(str(row["podcast_id"])) for row in rows if row["podcast_id"] is not None]
@@ -275,7 +564,8 @@ def _hydrate_entries(db: Session, viewer_id: UUID, rows) -> list[LibraryEntryOut
                         COUNT(*) FILTER (
                             WHERE pls.is_completed IS NOT TRUE
                               AND COALESCE(pls.position_ms, 0) = 0
-                        ) AS unplayed_count
+                        ) AS unplayed_count,
+                        MAX(pls.updated_at) AS last_listened_at
                     FROM podcast_episodes pe
                     JOIN visible_media vm ON vm.media_id = pe.media_id
                     LEFT JOIN podcast_listening_states pls
@@ -295,6 +585,7 @@ def _hydrate_entries(db: Session, viewer_id: UUID, rows) -> list[LibraryEntryOut
                     p.created_at AS podcast_created_at,
                     p.updated_at AS podcast_updated_at,
                     COALESCE(pu.unplayed_count, 0) AS unplayed_count,
+                    pu.last_listened_at AS last_listened_at,
                     ps.status AS sub_status,
                     ps.default_playback_speed AS sub_default_playback_speed,
                     ps.auto_queue AS sub_auto_queue,
@@ -328,6 +619,9 @@ def _hydrate_entries(db: Session, viewer_id: UUID, rows) -> list[LibraryEntryOut
             media = media_by_id.get(media_id)
             if media is None:
                 continue
+            last_connected_at, published_at = recency_signals_by_entry_id.get(
+                UUID(str(row["id"])), (None, None)
+            )
             hydrated.append(
                 LibraryEntryOut(
                     id=UUID(str(row["id"])),
@@ -338,6 +632,16 @@ def _hydrate_entries(db: Session, viewer_id: UUID, rows) -> list[LibraryEntryOut
                     media=media,
                     podcast=None,
                     subscription=None,
+                    read_state=media.read_state,
+                    progress_fraction=media.progress_fraction,
+                    last_engaged_at=media.last_engaged_at,
+                    surfaced_today=_surfaced_today(
+                        created_at=row["created_at"],
+                        last_engaged_at=media.last_engaged_at,
+                        last_connected_at=last_connected_at,
+                        published_at=published_at,
+                        start_of_today=start_of_today,
+                    ),
                 )
             )
             continue
@@ -366,6 +670,10 @@ def _hydrate_entries(db: Session, viewer_id: UUID, rows) -> list[LibraryEntryOut
                 updated_at=podcast_row["sub_updated_at"],
             )
 
+        podcast_last_engaged_at = podcast_row["last_listened_at"]
+        last_connected_at, published_at = recency_signals_by_entry_id.get(
+            UUID(str(row["id"])), (None, None)
+        )
         hydrated.append(
             LibraryEntryOut(
                 id=UUID(str(row["id"])),
@@ -373,6 +681,14 @@ def _hydrate_entries(db: Session, viewer_id: UUID, rows) -> list[LibraryEntryOut
                 kind="podcast",
                 position=int(row["position"]),
                 created_at=row["created_at"],
+                last_engaged_at=podcast_last_engaged_at,
+                surfaced_today=_surfaced_today(
+                    created_at=row["created_at"],
+                    last_engaged_at=podcast_last_engaged_at,
+                    last_connected_at=last_connected_at,
+                    published_at=published_at,
+                    start_of_today=start_of_today,
+                ),
                 media=None,
                 podcast=LibraryPodcastOut(
                     id=podcast_id,
@@ -605,13 +921,25 @@ def remove_user_podcast_subscription_libraries(
 
 
 def list_library_entries(
-    db: Session, viewer_id: UUID, library_id: UUID, limit: int = 100, offset: int = 0
+    db: Session,
+    viewer_id: UUID,
+    library_id: UUID,
+    limit: int = 100,
+    offset: int = 0,
+    sort: LibraryEntrySort = "position",
+    viewer_timezone: str = "UTC",
 ) -> list[LibraryEntryOut]:
-    """List a library's ordered, hydrated entries. Member-only."""
+    """List a library's ordered, hydrated entries. Member-only.
+
+    ``sort="position"`` (default) keeps EXACTLY the canonical `_ENTRY_ORDER`;
+    ``sort="resonance"`` orders by the deterministic recency+connection score
+    (`_RESONANCE_ORDER`, no request-time LLM, stable id tiebreak).
+    """
     if limit <= 0:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Limit must be positive")
     if offset < 0:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Offset must be non-negative")
+    _start_of_today(viewer_timezone)
     limit = min(limit, 200)
 
     member = db.execute(
@@ -621,20 +949,36 @@ def list_library_entries(
     if member is None:
         raise NotFoundError(ApiErrorCode.E_LIBRARY_NOT_FOUND, "Library not found")
 
+    params: dict[str, object] = {"library_id": library_id, "limit": limit, "offset": offset}
+    if sort == "resonance":
+        # Lazy import: connection_summaries -> resolve -> library_entries is an
+        # import cycle, so the S4 origin owner is read at call time, not import.
+        from nexus.services.resource_graph.connection_summaries import LIST_CONNECTION_ORIGINS
+        from nexus.services.semantic_chunks import transcript_embedding_dimensions
+
+        order_by = _RESONANCE_ORDER
+        params["viewer_id"] = viewer_id
+        params["resonance_origins"] = list(LIST_CONNECTION_ORIGINS)
+        params["embedding_dims"] = transcript_embedding_dimensions()
+    elif sort == "position":
+        order_by = _ENTRY_ORDER
+    else:
+        assert_never(sort)
+
     rows = (
         db.execute(
             text(f"""
-            SELECT {_ENTRY_COLUMNS} FROM library_entries
-            WHERE library_id = :library_id
-            ORDER BY {_ENTRY_ORDER}
+            SELECT {_ENTRY_COLUMNS} FROM library_entries le
+            WHERE le.library_id = :library_id
+            ORDER BY {order_by}
             LIMIT :limit OFFSET :offset
         """),
-            {"library_id": library_id, "limit": limit, "offset": offset},
+            params,
         )
         .mappings()
         .all()
     )
-    return _hydrate_entries(db, viewer_id, rows)
+    return _hydrate_entries(db, viewer_id, rows, viewer_timezone=viewer_timezone)
 
 
 def reorder_entries(

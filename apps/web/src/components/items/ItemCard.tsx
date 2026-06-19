@@ -1,6 +1,6 @@
 "use client";
 
-import { useLayoutEffect, useRef, useState } from "react";
+import { useRef } from "react";
 import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactNode, Ref } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import Button from "@/components/ui/Button";
@@ -8,6 +8,8 @@ import HighlightSnippet from "@/components/ui/HighlightSnippet";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
 import { pluralize } from "@/lib/text/pluralize";
 import { cx } from "@/lib/ui/cx";
+import { isNestedInteractiveTarget } from "@/lib/ui/isNestedInteractiveTarget";
+import { useClampWithToggle } from "@/lib/ui/useClampWithToggle";
 import styles from "./ItemCard.module.css";
 
 type ItemCardContent =
@@ -64,20 +66,12 @@ export default function ItemCard({
   // (Intent — which cards are expanded — is owned by the host.) Measure only while
   // collapsed; when expanded the box is un-clamped and would read as not overflowing.
   const bodyRef = useRef<HTMLButtonElement>(null);
-  const [overflowing, setOverflowing] = useState(false);
   const snippetText = content.kind === "highlight" ? content.snippet.exact : null;
-
-  useLayoutEffect(() => {
-    const body = bodyRef.current;
-    if (!body || snippetText === null || showFullText) {
-      return;
-    }
-    const measure = () => setOverflowing(body.scrollHeight - body.clientHeight > 1);
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(body);
-    return () => observer.disconnect();
-  }, [snippetText, showFullText]);
+  const { overflowing } = useClampWithToggle({
+    ref: bodyRef,
+    text: snippetText,
+    expanded: Boolean(showFullText),
+  });
 
   const bodyContent =
     content.kind === "highlight" ? (
@@ -106,11 +100,7 @@ export default function ItemCard({
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
       onClick={(event: ReactMouseEvent<HTMLDivElement>) => {
-        if (
-          (event.target as HTMLElement).closest(
-            'a, button, input, textarea, select, summary, [contenteditable="true"], .ProseMirror',
-          )
-        ) {
+        if (isNestedInteractiveTarget(event.target)) {
           return;
         }
         onActivate?.();

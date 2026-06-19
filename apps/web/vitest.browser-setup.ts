@@ -39,6 +39,7 @@ vi.mock("@testing-library/react", async (importOriginal) => {
     platform: "other",
     displayLocale: "en-US",
     displayTimeZone: "UTC",
+    currentInstant: "2026-06-03T12:00:00.000Z",
     currentLocalDate: "2026-06-03",
     initialViewport: "desktop",
   } as const;

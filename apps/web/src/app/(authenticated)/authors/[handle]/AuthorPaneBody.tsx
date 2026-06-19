@@ -8,8 +8,8 @@ import {
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import PaneSurface from "@/components/ui/PaneSurface";
-import ResourceList from "@/components/ui/ResourceList";
-import ResourceRow from "@/components/ui/ResourceRow";
+import CollectionView from "@/components/collections/CollectionView";
+import CollectionDisplayControls from "@/components/collections/CollectionDisplayControls";
 import Pill from "@/components/ui/Pill";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
@@ -35,6 +35,9 @@ import type {
   ContributorWork,
 } from "@/lib/contributors/types";
 import { formatContributorRole } from "@/lib/contributors/formatting";
+import { presentContributorWork } from "@/lib/collections/presenters/contributor";
+import { useCollectionDisplayState } from "@/lib/collections/useCollectionDisplayState";
+import { useConnectionSummaries } from "@/lib/collections/useConnectionSummaries";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import {
   usePaneParam,
@@ -59,10 +62,6 @@ function workRequestKey(handle: string, role: string, kind: string, query: strin
   return `${handle}\n${role}\n${kind}\n${query}`;
 }
 
-function formatWorkKind(work: ContributorWork): string {
-  return formatContentKind(workContentKind(work));
-}
-
 function formatContentKind(kind: string): string {
   return (kind || "work").replace(/_/g, " ");
 }
@@ -85,20 +84,11 @@ function uniqueSorted(values: Array<string | null | undefined>): string[] {
   ).sort(compareStableString);
 }
 
-function buildWorkMeta(work: ContributorWork): string {
-  return [
-    formatContributorRole(work.role),
-    work.credited_name?.trim() ? `credited as ${work.credited_name.trim()}` : null,
-    work.published_date,
-    work.publisher,
-    work.source,
-  ]
-    .filter(Boolean)
-    .join(" · ");
-}
-
 export default function AuthorPaneBody() {
   const handle = usePaneParam("handle");
+  const { displayState, setDisplayState } = useCollectionDisplayState(
+    `/authors/${encodeURIComponent(handle ?? "")}`,
+  );
   const initialAuthor = useResource<ContributorPaneData, { handle: string }>({
     descriptor: contributorResource,
     params: handle ? { handle } : null,
@@ -335,6 +325,9 @@ export default function AuthorPaneBody() {
     [data?.workFilterOptions]
   );
   const visibleWorks = data?.works ?? [];
+  const workConnectionSummaries = useConnectionSummaries(
+    visibleWorks.map((work) => `${work.object_type}:${work.object_id}`),
+  );
   // The backend follows merges, so a requested handle that no longer matches the
   // resolved survivor means the URL handle was merged away.
   const formerlyHandle =
@@ -343,10 +336,10 @@ export default function AuthorPaneBody() {
   return (
     <PaneSurface
       state={
-        loading || error ? (
+        loading || (error && !data) ? (
           <>
             {loading ? <PaneLoadingState /> : null}
-            {error ? <FeedbackNotice feedback={error} /> : null}
+            {error && !data ? <FeedbackNotice feedback={error} /> : null}
           </>
         ) : null
       }
@@ -588,25 +581,31 @@ export default function AuthorPaneBody() {
                   ))}
                 </Select>
               </label>
+              <CollectionDisplayControls
+                value={displayState}
+                onChange={setDisplayState}
+              />
             </div>
 
-            {visibleWorks.length === 0 ? (
-              <FeedbackNotice severity="neutral">
-                No visible credited works match the current filters.
-              </FeedbackNotice>
-            ) : (
-              <ResourceList>
-                {visibleWorks.map((work) => (
-                  <ResourceRow
-                    key={`${work.route}-${work.object_id}`}
-                    primary={{ kind: "link", href: work.route }}
-                    title={work.title}
-                    description={formatWorkKind(work)}
-                    meta={buildWorkMeta(work)}
-                  />
-                ))}
-              </ResourceList>
-            )}
+            <CollectionView
+              rows={visibleWorks.map((work) =>
+                presentContributorWork(work, {
+                  connectionSummary: workConnectionSummaries.get(
+                    `${work.object_type}:${work.object_id}`,
+                  ),
+                }),
+              )}
+              view={displayState.view}
+              density={displayState.density}
+              status={error ? "error" : "ready"}
+              ariaLabel="Works"
+              error={error ? <FeedbackNotice feedback={error} /> : undefined}
+              empty={
+                <FeedbackNotice severity="neutral">
+                  No visible credited works match the current filters.
+                </FeedbackNotice>
+              }
+            />
           </section>
 
           {mergeOpen ? (

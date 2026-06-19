@@ -14,17 +14,18 @@ import {
   toFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
-import PaneSurface from "@/components/ui/PaneSurface";
-import ResourceList from "@/components/ui/ResourceList";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
+import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
 import ActionMenu from "@/components/ui/ActionMenu";
+import CollectionView from "@/components/collections/CollectionView";
+import CollectionDisplayControls from "@/components/collections/CollectionDisplayControls";
 import ContributorFilter from "@/components/contributors/ContributorFilter";
-import SearchResultRow from "@/components/search/SearchResultRow";
 import KindChips from "@/components/search/KindChips";
 import AppliedFilters, {
   type AppliedFilterChip,
 } from "@/components/search/AppliedFilters";
+import { presentSearchResult } from "@/lib/collections/presenters/search";
 import { useDebouncedFetch } from "@/lib/api/useDebouncedFetch";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { isAbortError } from "@/lib/errors";
@@ -56,6 +57,8 @@ import type {
   SearchResultRowViewModel,
 } from "@/lib/search/types";
 import { usePaneRouter, usePaneSearchParams } from "@/lib/panes/paneRuntime";
+import { withCollectionDisplayHref } from "@/lib/collections/collectionViewState";
+import { useCollectionDisplayState } from "@/lib/collections/useCollectionDisplayState";
 import styles from "./page.module.css";
 
 const SEARCH_DEBOUNCE_MS = 200;
@@ -65,9 +68,36 @@ function queryKey(query: SearchQuery): string {
   return searchQueryToParams(query).toString();
 }
 
+function cloneRequestedKinds(
+  kinds: ReadonlySet<SearchKind> | null,
+): ReadonlySet<SearchKind> | null {
+  return kinds === null ? null : new Set(kinds);
+}
+
+function toggleRequestedKind(
+  requestedKinds: ReadonlySet<SearchKind> | null,
+  kind: SearchKind,
+): ReadonlySet<SearchKind> | null {
+  const active =
+    requestedKinds === null
+      ? new Set<SearchKind>(SEARCH_KINDS)
+      : new Set(requestedKinds);
+  if (active.has(kind)) {
+    active.delete(kind);
+  } else {
+    active.add(kind);
+  }
+  return active.size === SEARCH_KINDS.length ? null : active;
+}
+
+function hasExplicitEmptyKinds(query: SearchQuery): boolean {
+  return query.requestedKinds !== null && query.requestedKinds.size === 0;
+}
+
 export default function SearchPaneBody() {
   const paneRouter = usePaneRouter();
   const paneSearchParams = usePaneSearchParams();
+  const { displayState, setDisplayState } = useCollectionDisplayState("/search");
 
   const query = useMemo(
     () => searchQueryFromParams(paneSearchParams),
@@ -77,6 +107,13 @@ export default function SearchPaneBody() {
 
   const [draft, setDraft] = useState(query.text);
   const [mounted, setMounted] = useState(false);
+  const [optimisticRequestedKinds, setOptimisticRequestedKinds] = useState<
+    ReadonlySet<SearchKind> | null
+  >(() => cloneRequestedKinds(query.requestedKinds));
+  const pendingQueryRef = useRef(query);
+  const expectedQueryStringRef = useRef<string | null>(queryString);
+  const draftRef = useRef(query.text);
+  const draftPinnedRef = useRef(false);
 
   useEffect(() => {
     setMounted(true);
@@ -84,22 +121,56 @@ export default function SearchPaneBody() {
 
   const replaceQuery = useCallback(
     (next: SearchQuery) => {
-      paneRouter.replace(searchHref(next));
+      const nextQueryString = queryKey(next);
+      pendingQueryRef.current = next;
+      expectedQueryStringRef.current = nextQueryString;
+      setOptimisticRequestedKinds(cloneRequestedKinds(next.requestedKinds));
+      paneRouter.replace(withCollectionDisplayHref(searchHref(next), displayState), {
+        viewTransition: { kind: "collection-reflow" },
+      });
     },
-    [paneRouter],
+    [displayState, paneRouter],
   );
 
-  // Sync the box when the URL query text changes (chip removal, navigation).
+  const updateQuery = useCallback(
+    (mutate: (current: SearchQuery) => SearchQuery) => {
+      replaceQuery(mutate(pendingQueryRef.current));
+    },
+    [replaceQuery],
+  );
+
+  // Sync URL-backed state while preserving a locally edited draft until the URL
+  // catches up to the draft's own replace. This prevents rapid chip updates from
+  // replaying stale empty `q` values over text the user just typed.
   useEffect(() => {
-    setDraft(query.text);
-  }, [query.text]);
+    const expectedQueryString = expectedQueryStringRef.current;
+    const isExpectedUrl =
+      expectedQueryString !== null && queryString === expectedQueryString;
+    const isSupersededUrl =
+      expectedQueryString !== null && queryString !== expectedQueryString;
+    if (isSupersededUrl) {
+      return;
+    }
+    const preserveDraft = draftPinnedRef.current && !isExpectedUrl;
+    if (preserveDraft) {
+      pendingQueryRef.current = { ...query, text: draftRef.current };
+    } else {
+      pendingQueryRef.current = query;
+      draftRef.current = query.text;
+      setDraft(query.text);
+      if (isExpectedUrl) {
+        draftPinnedRef.current = false;
+      }
+    }
+    setOptimisticRequestedKinds(cloneRequestedKinds(query.requestedKinds));
+  }, [query, queryString]);
 
   // Debounced: parse the box, absorb completed operators into the query.
   useEffect(() => {
     const handle = setTimeout(() => {
       const parsed = parseSearchInput(draft);
-      const merged = applyParsedInput(query, parsed);
-      if (queryKey(merged) !== queryString) {
+      const merged = applyParsedInput(pendingQueryRef.current, parsed);
+      if (queryKey(merged) !== expectedQueryStringRef.current) {
         replaceQuery(merged);
       }
     }, SEARCH_DEBOUNCE_MS);
@@ -111,7 +182,8 @@ export default function SearchPaneBody() {
 
   // First page: refetched (immediately, then aborted) whenever the effective
   // query changes; blank queries make no request. Pagination is appended below.
-  const blank = isBlankQuery(query);
+  const explicitEmptyKinds = hasExplicitEmptyKinds(query);
+  const blank = isBlankQuery(query) || explicitEmptyKinds;
   const firstPage = useDebouncedFetch<SearchResultPage>(
     blank ? null : queryString,
     (signal) =>
@@ -142,7 +214,7 @@ export default function SearchPaneBody() {
   const nextCursor =
     more.rows.length > 0 ? more.cursor : (firstPage.data?.nextCursor ?? null);
   const searching = firstPage.loading || loadingMore;
-  const hasSearched = firstPage.data !== null;
+  const hasSearched = explicitEmptyKinds || firstPage.data !== null;
   const error =
     firstPage.error !== null
       ? toFeedback(firstPage.error, { fallback: "Search failed" })
@@ -183,28 +255,23 @@ export default function SearchPaneBody() {
   });
 
   const toggleKind = (kind: SearchKind) => {
-    const active =
-      query.requestedKinds === null
-        ? new Set<SearchKind>(SEARCH_KINDS)
-        : new Set(query.requestedKinds);
-    if (active.has(kind)) {
-      active.delete(kind);
-    } else {
-      active.add(kind);
-    }
-    const next = active.size === SEARCH_KINDS.length ? null : active;
-    replaceQuery({ ...query, requestedKinds: next });
+    updateQuery((current) => {
+      const requestedKinds = toggleRequestedKind(current.requestedKinds, kind);
+      return { ...current, requestedKinds };
+    });
   };
 
   const toggleFormat = (format: MediaFormat) => {
-    const next = query.formats.includes(format)
-      ? query.formats.filter((value) => value !== format)
-      : [...query.formats, format];
-    replaceQuery({ ...query, formats: next });
+    updateQuery((current) => {
+      const next = current.formats.includes(format)
+        ? current.formats.filter((value) => value !== format)
+        : [...current.formats, format];
+      return { ...current, formats: next };
+    });
   };
 
   const setAuthors = (authors: string[]) => {
-    replaceQuery({ ...query, authors });
+    updateQuery((current) => ({ ...current, authors }));
   };
 
   // Authors are owned by ContributorFilter (which resolves handles to display names);
@@ -225,55 +292,67 @@ export default function SearchPaneBody() {
     const dim = id.slice(0, separator);
     const value = id.slice(separator + 1);
     if (dim === "format") {
-      replaceQuery({
-        ...query,
-        formats: query.formats.filter((format) => format !== value),
-      });
+      updateQuery((current) => ({
+        ...current,
+        formats: current.formats.filter((format) => format !== value),
+      }));
     } else if (dim === "role") {
-      replaceQuery({ ...query, roles: query.roles.filter((role) => role !== value) });
+      updateQuery((current) => ({
+        ...current,
+        roles: current.roles.filter((role) => role !== value),
+      }));
     } else if (dim === "scope") {
-      replaceQuery({ ...query, scope: "all" });
+      updateQuery((current) => ({ ...current, scope: "all" }));
     }
   };
 
   const clearAllFilters = () => {
-    replaceQuery({
-      text: query.text,
+    updateQuery((current) => ({
+      text: current.text,
       requestedKinds: null,
       formats: [],
       authors: [],
       roles: [],
       scope: "all",
-    });
+    }));
   };
 
   const filtersActive = hasActiveFilters(query);
-  const state =
-    error || (!hasSearched && !searching) || searching ? (
+
+  const rows = useMemo(() => results.map(presentSearchResult), [results]);
+
+  const notice =
+    error || searching ? (
       <>
         {error ? <FeedbackNotice feedback={error} /> : null}
-        {!hasSearched && !searching ? (
-          <FeedbackNotice severity="info">
-            Search everything in your Nexus. Narrow with the kind chips or filters.
-          </FeedbackNotice>
-        ) : null}
         {searching ? <FeedbackNotice severity="info">Searching…</FeedbackNotice> : null}
       </>
-    ) : null;
-  const empty =
-    hasSearched && results.length === 0 && !searching ? (
-      <div className={styles.emptyResults}>
-        <FeedbackNotice severity="neutral">No results found.</FeedbackNotice>
-        {filtersActive ? (
-          <Button variant="secondary" size="md" onClick={clearAllFilters}>
-            Clear filters
-          </Button>
-        ) : null}
-      </div>
-    ) : null;
+    ) : undefined;
+
+  // CollectionView shows `empty` whenever there are no rows: the initial prompt
+  // before any search, then "no results" once a search has returned nothing.
+  const empty = hasSearched ? (
+    <div className={styles.emptyResults}>
+      <FeedbackNotice severity="neutral">No results found.</FeedbackNotice>
+      {filtersActive ? (
+        <Button variant="secondary" size="md" onClick={clearAllFilters}>
+          Clear filters
+        </Button>
+      ) : null}
+    </div>
+  ) : (
+    <FeedbackNotice severity="info">
+      Search everything in your Nexus. Narrow with the kind chips or filters.
+    </FeedbackNotice>
+  );
 
   return (
-    <PaneSurface
+    <CollectionView
+      rows={rows}
+      view={displayState.view}
+      density={displayState.density}
+      status="ready"
+      ariaLabel="Search results"
       toolbar={
         <div className={styles.searchForm}>
           <Input
@@ -281,14 +360,24 @@ export default function SearchPaneBody() {
             className={styles.searchInputField}
             size="lg"
             value={draft}
-            onChange={(event) => setDraft(event.target.value)}
+            onChange={(event) => {
+              const nextDraft = event.target.value;
+              draftRef.current = nextDraft;
+              draftPinnedRef.current = true;
+              expectedQueryStringRef.current = null;
+              pendingQueryRef.current = {
+                ...pendingQueryRef.current,
+                text: nextDraft,
+              };
+              setDraft(nextDraft);
+            }}
             placeholder="Search your Nexus… (try format:pdf or author:le-guin)"
             disabled={!mounted}
             autoFocus
           />
 
           <KindChips
-            selected={query.requestedKinds}
+            selected={optimisticRequestedKinds}
             disabled={disabledKindSet}
             disabledReason={disabledReason}
             onToggle={toggleKind}
@@ -314,30 +403,27 @@ export default function SearchPaneBody() {
             onRemove={removeFilter}
             onClearAll={clearAllFilters}
           />
+
+          <div className={styles.displayControls}>
+            <CollectionDisplayControls
+              value={displayState}
+              onChange={setDisplayState}
+            />
+          </div>
         </div>
       }
-      state={state}
+      notice={notice}
       empty={empty}
       footer={
-        nextCursor ? (
-          <Button
-            variant="secondary"
-            size="md"
-            onClick={() => loadMore(nextCursor)}
-            disabled={searching}
-          >
-            Load more
-          </Button>
-        ) : null
+        <LoadMoreFooter
+          hasMore={nextCursor !== null}
+          loading={searching}
+          onLoadMore={() => {
+            if (nextCursor) void loadMore(nextCursor);
+          }}
+          label="Load more"
+        />
       }
-    >
-      {results.length > 0 ? (
-        <ResourceList>
-          {results.map((result) => (
-            <SearchResultRow key={result.key} row={result} />
-          ))}
-        </ResourceList>
-      ) : null}
-    </PaneSurface>
+    />
   );
 }

@@ -1,0 +1,23 @@
+.cover {
+  display: block;
+  flex: none;
+  border-radius: var(--radius-md);
+  object-fit: cover;
+  background: var(--surface-2);
+}
+
+.iconTile {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  color: var(--ink-faint);
+}
+
+.fill {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1;
+}

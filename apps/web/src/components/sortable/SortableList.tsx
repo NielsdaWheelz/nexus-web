@@ -20,17 +20,18 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import ResourceList from "@/components/ui/ResourceList";
 import { cx } from "@/lib/ui/cx";
 import styles from "./SortableList.module.css";
 
 type SortableHookResult = ReturnType<typeof useSortable>;
 
-interface SortableHandleProps {
+export interface SortableHandleProps {
   attributes: SortableHookResult["attributes"];
   listeners: SortableHookResult["listeners"];
 }
 
-interface SortableListRenderItemProps<T> {
+export interface SortableListRenderItemProps<T> {
   item: T;
   isDragging: boolean;
   isOver: boolean;
@@ -45,6 +46,11 @@ interface SortableListProps<T> {
   onReorder: (nextItems: T[]) => void;
   className?: string;
   itemClassName?: string;
+  resourceList?: {
+    ariaLabel: string;
+    view?: "list" | "gallery";
+    density?: "comfortable" | "compact";
+  };
 }
 
 interface SortableListItemProps<T> {
@@ -97,6 +103,7 @@ export default function SortableList<T>({
   onReorder,
   className,
   itemClassName,
+  resourceList,
 }: SortableListProps<T>) {
   const [activeItemId, setActiveItemId] = useState<string | null>(null);
   const itemIds = useMemo(() => items.map(getItemId), [getItemId, items]);
@@ -137,6 +144,32 @@ export default function SortableList<T>({
     setActiveItemId(null);
   };
 
+  const sortableItems = items.map((item) => {
+    const id = getItemId(item);
+    return (
+      <SortableListItem
+        key={id}
+        id={id}
+        item={item}
+        renderItem={renderItem}
+        className={itemClassName}
+      />
+    );
+  });
+
+  const list = resourceList ? (
+    <ResourceList
+      className={className}
+      ariaLabel={resourceList.ariaLabel}
+      view={resourceList.view ?? "list"}
+      density={resourceList.density ?? "comfortable"}
+    >
+      {sortableItems}
+    </ResourceList>
+  ) : (
+    <ul className={cx(styles.list, className)}>{sortableItems}</ul>
+  );
+
   return (
     <DndContext
       sensors={sensors}
@@ -146,20 +179,7 @@ export default function SortableList<T>({
       onDragEnd={handleDragEnd}
     >
       <SortableContext items={itemIds} strategy={verticalListSortingStrategy}>
-        <ul className={cx(styles.list, className)}>
-          {items.map((item) => {
-            const id = getItemId(item);
-            return (
-              <SortableListItem
-                key={id}
-                id={id}
-                item={item}
-                renderItem={renderItem}
-                className={itemClassName}
-              />
-            );
-          })}
-        </ul>
+        {list}
       </SortableContext>
       {renderDragOverlay && activeItem ? <DragOverlay>{renderDragOverlay(activeItem)}</DragOverlay> : null}
     </DndContext>

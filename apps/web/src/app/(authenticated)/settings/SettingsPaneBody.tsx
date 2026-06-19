@@ -1,13 +1,10 @@
 "use client";
 
-import { ArrowRight } from "lucide-react";
-import PaneSurface from "@/components/ui/PaneSurface";
-import ResourceList from "@/components/ui/ResourceList";
-import ResourceRow from "@/components/ui/ResourceRow";
+import CollectionView from "@/components/collections/CollectionView";
+import { presentSettingsRow } from "@/lib/collections/presenters/settings";
 import { isAndroidShellRestrictedHref } from "@/lib/androidShell";
 import { getPaneRouteIcon } from "@/lib/panes/paneRouteTable";
 import { useAndroidShell } from "@/lib/renderEnvironment/provider";
-import styles from "./page.module.css";
 
 const SETTINGS_ITEMS: {
   href: string;
@@ -56,22 +53,19 @@ export default function SettingsPaneBody() {
   });
 
   return (
-    <PaneSurface>
-      <ResourceList>
-        {settingsItems.map(({ href, title, description }) => {
-          const Icon = getPaneRouteIcon(href);
-          return (
-            <ResourceRow
-              key={href}
-              primary={{ kind: "link", href, paneTitleHint: title }}
-              leading={<Icon size={18} />}
-              title={title}
-              description={description}
-              trailing={<ArrowRight size={16} className={styles.arrow} aria-hidden="true" />}
-            />
-          );
-        })}
-      </ResourceList>
-    </PaneSurface>
+    <CollectionView
+      rows={settingsItems.map((item) =>
+        presentSettingsRow({
+          title: item.title,
+          description: item.description,
+          href: item.href,
+          icon: getPaneRouteIcon(item.href),
+        }),
+      )}
+      view="list"
+      density="comfortable"
+      status="ready"
+      ariaLabel="Settings"
+    />
   );
 }
