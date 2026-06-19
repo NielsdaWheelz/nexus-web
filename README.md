@@ -59,6 +59,7 @@ make check
 make audit
 make test-unit
 make test
+make test-e2e-env
 make test-e2e
 make test-real-media
 make test-live-providers
@@ -77,6 +78,7 @@ make test-front-unit
 make test-front-browser
 make test-migrations
 make test-supabase
+make test-e2e-env
 make verify-android
 # Requires Android release signing inputs.
 # make verify-android-release
@@ -89,6 +91,9 @@ make seed-real-media-e2e
 - `.env.example` is the source of truth for environment variables and defaults.
 - `make setup` generates local `.env` and `apps/web/.env.local`.
 - `make dev` writes the live Supabase Auth public URL and anon key to `.dev-ports`.
+- `make test-e2e-env` is the fast, no-service-start Supabase E2E env resolver
+  preflight. E2E-family Make targets run it before starting Docker, Supabase,
+  browsers, migrations, or Playwright.
 - `make test-e2e` owns local Supabase startup, admin bootstrap, and E2E user
   seeding. Direct Playwright commands from `e2e/` require an already-running
   local Supabase stack; pass `SUPABASE_AUTH_ADMIN_KEY` only as command-scoped

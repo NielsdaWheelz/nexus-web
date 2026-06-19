@@ -4,7 +4,7 @@
 .PHONY: help setup dev down logs clean api api-e2e web web-e2e worker migrate migrate-test migrate-down seed seed-real-media-e2e \
 	check check-back type-back check-front check-android check-workflows format format-back fix-front build build-android build-android-release build-icons check-bundle audit \
 	test-unit test test-back-unit test-back-integration test-front-unit test-front-browser \
-	test-android test-migrations test-supabase test-real-media test-provider-runtime test-live-providers test-e2e test-e2e-ui test-csp \
+	test-android test-migrations test-supabase test-e2e-env test-real-media test-provider-runtime test-live-providers test-e2e test-e2e-ui test-csp \
 	smoke smoke-auth-redirects verify verify-android verify-android-release verify-full \
 	_ensure-node-ingest _ensure-e2e-deps _test-back-db-ready \
 	_test-back-integration-raw _test-migrations-raw _test-provider-runtime-raw \
@@ -72,6 +72,7 @@ help:
 	@echo "  make verify-android-release - Build and verify signed Android release APK"
 	@echo "  make test-unit          - Fast backend and frontend unit tests"
 	@echo "  make test               - All non-E2E automated tests"
+	@echo "  make test-e2e-env       - Fast Supabase E2E env resolver preflight"
 	@echo "  make test-e2e           - Default Playwright E2E tests"
 	@echo "  make test-csp           - Strict-CSP Playwright profile (enforced policy)"
 	@echo "  make test-real-media    - Strict deterministic real-media backend + Playwright gates"
@@ -92,6 +93,7 @@ help:
 	@echo "  make test-android          - Android instrumentation tests on a connected device"
 	@echo "  make test-migrations       - Alembic migration tests"
 	@echo "  make test-supabase         - Supabase Auth integration tests"
+	@echo "  make test-e2e-env          - Supabase E2E env resolver contract tests"
 	@echo "  make test-e2e-ui           - Playwright E2E in UI mode"
 	@echo ""
 	@echo "Formatting:"
@@ -386,7 +388,12 @@ _test-supabase-raw:
 	cd python && NEXUS_ENV=test uv run pytest -v --tb=short \
 		-m "supabase and not real_media and not live_provider"
 
-test-real-media: _ensure-e2e-deps
+test-e2e-env:
+	cd e2e && bun run test:env
+
+test-real-media:
+	make test-e2e-env
+	make _ensure-e2e-deps
 	./scripts/with_test_services.sh ./scripts/with_supabase_services.sh --require-admin sh -c 'trap "rm -f e2e/.seed/real-media.json" EXIT; rm -f e2e/.seed/real-media.json; make _test-real-media-raw'
 
 _test-real-media-raw:
@@ -446,7 +453,9 @@ _test-shared-llm-provider-matrix-raw:
 		-m live_provider \
 		tests/live/test_provider_matrix.py
 
-test-e2e: _ensure-e2e-deps
+test-e2e:
+	make test-e2e-env
+	make _ensure-e2e-deps
 	./scripts/with_test_services.sh ./scripts/with_supabase_services.sh --require-admin make _test-e2e-raw
 
 _test-e2e-raw:
@@ -455,7 +464,9 @@ _test-e2e-raw:
 	API_PORT=$(API_PORT) WEB_PORT=$(WEB_PORT) NEXUS_ENV=test E2E_REAL_MEDIA=0 bunx playwright install --with-deps chromium && \
 	API_PORT=$(API_PORT) WEB_PORT=$(WEB_PORT) NEXUS_ENV=test E2E_REAL_MEDIA=0 bun run test:e2e -- $(PLAYWRIGHT_ARGS)
 
-test-csp: _ensure-e2e-deps
+test-csp:
+	make test-e2e-env
+	make _ensure-e2e-deps
 	./scripts/with_test_services.sh ./scripts/with_supabase_services.sh --require-admin make _test-csp-raw
 
 _test-csp-raw:
@@ -473,7 +484,9 @@ _test-real-media-e2e-raw:
 	REAL_MEDIA_FIXTURE_DIR=$$PWD/../python/tests/fixtures/real_media \
 	bun run test:e2e -- --project=real-media $(PLAYWRIGHT_ARGS)
 
-test-e2e-ui: _ensure-e2e-deps
+test-e2e-ui:
+	make test-e2e-env
+	make _ensure-e2e-deps
 	./scripts/with_test_services.sh ./scripts/with_supabase_services.sh --require-admin make _test-e2e-ui-raw
 
 _test-e2e-ui-raw:

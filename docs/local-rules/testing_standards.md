@@ -484,6 +484,7 @@ Target local commands after migration:
 make check          # static analysis + format checks
 make test-unit      # backend unit tests + frontend unit tests
 make test           # full non-E2E verification
+make test-e2e-env        # Supabase E2E env resolver preflight
 make test-e2e            # Playwright E2E
 make test-real-media     # deterministic real-media backend + Playwright acceptance
 make test-live-providers # live external-provider backend acceptance
@@ -509,6 +510,9 @@ Command semantics:
 - `make check`: static checks and format checks only
 - `make test-unit`: fast unit tests only (no DB, no browser-mode component tests, no E2E)
 - `make test`: non-E2E automated tests, including backend integration and frontend browser-mode component tests
+- `make test-e2e-env`: fast no-service-start Supabase E2E env resolver
+  contract tests; this is a preflight for E2E bootstrap wiring, not proof that
+  Supabase containers, migrations, seeding, or Playwright succeed
 - `make test-e2e`: explicit default real-stack Playwright run (used before merge and in CI)
 - `make test-real-media`: deterministic real-media backend and Playwright acceptance gate with fixture-backed external providers
 - `make test-live-providers`: live external-provider backend gate, including the shared OpenAI/Anthropic/Gemini/OpenRouter/Cloudflare generation matrix, OpenAI embeddings/transcription, and real Podcast Index/Deepgram/YouTube/X edges

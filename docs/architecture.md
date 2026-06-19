@@ -1105,11 +1105,13 @@ Supabase workdir and dynamically allocated ports, the resolver reads
 public/admin values from that workdir, and `SUPABASE_AUTH_ADMIN_KEY` remains
 trusted bootstrap-only for Playwright user/session seeding. Next.js, FastAPI,
 worker, and migration runtimes scrub Supabase admin, database, service-role, and
-test-harness selector env before startup.
+test-harness selector env before startup. `make test-e2e-env` is the fast
+no-service-start resolver contract preflight that E2E-family Make targets run
+before service startup.
 
 **CI** (`.github/workflows/ci.yml`): static checks, audit, backend unit, backend
-DB integration + migrations, frontend unit + browser, build, Android, sharded E2E,
-real-media, and (secrets-gated) live-providers.
+DB integration + migrations, frontend unit + browser, build, Android, E2E env
+preflight, sharded E2E, real-media, and (secrets-gated) live-providers.
 
 ---
 
@@ -1132,6 +1134,7 @@ Tiers:
 | Component | React in real Chromium | only `next/image` shim | `make test-front-browser` |
 | Backend integration | FastAPI + real Postgres | external boundaries mockable | `make test-back-integration` |
 | Migrations | Alembic up/down | dedicated DB | `make test-migrations` |
+| E2E env preflight | Supabase env resolver contract | no services | `make test-e2e-env` |
 | E2E (default) | user journeys, prod-built web, no-reload API | full real stack, fixture providers | `make test-e2e` |
 | Real-media | ingest/search/chat acceptance | real code, deterministic fixture LLM + `fixture_hash` embeddings | `make test-real-media` |
 | Live-providers | real OpenAI/Anthropic/Gemini/OpenRouter/Cloudflare, OpenAI embeddings/transcription, Podcast Index/Deepgram/YouTube/X | live external | `make test-live-providers` |

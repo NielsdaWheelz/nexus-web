@@ -293,6 +293,25 @@ jobs:
       - name: Verify Android shell
         run: make verify-android
 
+  test-e2e-env:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: static-checks
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+
+      - name: Test Supabase E2E env resolver
+        run: make test-e2e-env
+
   test-e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -303,6 +322,7 @@ jobs:
     needs:
       - test-back-unit
       - test-back-db
+      - test-e2e-env
       - test-front
 
     steps:
@@ -372,6 +392,7 @@ jobs:
     needs:
       - test-back-unit
       - test-back-db
+      - test-e2e-env
       - test-front
 
     steps:
@@ -441,6 +462,7 @@ jobs:
     needs:
       - test-back-unit
       - test-back-db
+      - test-e2e-env
       - test-front
       - build-front
 
