@@ -1,6 +1,7 @@
 import { test, expect, type APIResponse, type Locator, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { openAddContentPanel } from "./add-content";
 import { stateChangingApiHeaders } from "./api";
 import { deleteE2eResource, throwE2eCleanupFailures } from "./cleanup";
 import {
@@ -325,10 +326,8 @@ test.describe("pdf reader", () => {
     let productError: unknown = null;
     try {
       await gotoSinglePaneWorkspace(page, deviceId, "/libraries");
-      await page.getByRole("button", { name: "Add content" }).click();
-      const addContentDialog = page.getByRole("dialog", { name: "Add content" });
-      await expect(addContentDialog).toBeVisible();
-      const fileInput = addContentDialog.locator("input[type='file']");
+      const addContentPanel = await openAddContentPanel(page, "file");
+      const fileInput = addContentPanel.locator("input[type='file']");
       await expect(fileInput).toBeAttached();
       await fileInput.setInputFiles(uploadFixturePath);
 

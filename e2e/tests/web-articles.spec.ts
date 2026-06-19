@@ -1,6 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { openAddContentPanel } from "./add-content";
 import { selectFreshVisibleTextSnippet } from "./selection";
 import {
   activePaneSelector,
@@ -23,11 +24,6 @@ function readSeededNonPdfMedia(): SeededNonPdfMedia {
   return JSON.parse(readFileSync(seedPath, "utf-8"));
 }
 
-async function openAddContentDialog(page: Page) {
-  await page.locator("nav").getByRole("button", { name: "Add content" }).click();
-  return page.getByRole("dialog", { name: "Add content" });
-}
-
 function workspacePaneButton(page: Page, name: RegExp | string) {
   return page
     .getByRole("toolbar", { name: "Workspace panes" })
@@ -41,11 +37,11 @@ test.describe("web articles", () => {
       workspaceE2eDeviceId(testInfo, "e2e-web-articles"),
       "/libraries",
     );
-    const addContentDialog = await openAddContentDialog(page);
-    const urlInput = addContentDialog.getByRole("textbox", { name: "URLs" });
+    const addContentPanel = await openAddContentPanel(page, "url");
+    const urlInput = addContentPanel.getByRole("textbox", { name: "URLs" });
     await expect(urlInput).toBeVisible();
     await urlInput.fill("https://example.com");
-    await addContentDialog.getByRole("button", { name: "Add" }).click();
+    await addContentPanel.getByRole("button", { name: "Add" }).click();
     await expect(workspacePaneButton(page, /^https:\/\/example\.com\b/)).toBeVisible({
       timeout: 15_000,
     });

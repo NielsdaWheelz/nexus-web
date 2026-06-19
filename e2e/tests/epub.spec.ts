@@ -7,6 +7,7 @@ import {
 } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { openAddContentPanel } from "./add-content";
 import { stateChangingApiHeaders } from "./api";
 import { openHighlightsPane } from "./reader";
 import { selectFreshVisibleTextSnippet } from "./selection";
@@ -635,12 +636,10 @@ test.describe("epub", () => {
 
   test("upload EPUB", async ({ page }, testInfo) => {
     await gotoEpubReader(page, testInfo, "/libraries");
-    await page.locator("nav").getByRole("button", { name: "Add content" }).click();
-    const addContentDialog = page.getByRole("dialog", { name: "Add content" });
-    await expect(addContentDialog).toBeVisible();
+    const addContentPanel = await openAddContentPanel(page, "file");
     // Verify the file upload mechanism is available
-    const fileInput = addContentDialog.locator("input[type='file']");
-    const uploadButton = addContentDialog.getByRole("button", { name: /upload file/i });
+    const fileInput = addContentPanel.locator("input[type='file']");
+    const uploadButton = addContentPanel.getByRole("button", { name: /upload file/i });
     await expect(fileInput.or(uploadButton).first()).toBeAttached();
   });
 

@@ -6,6 +6,7 @@ import {
   type Page,
   type TestInfo,
 } from "@playwright/test";
+import { openAddContentPanel } from "../add-content";
 import { stateChangingApiHeaders } from "../api";
 import { openHighlightsPane as openReaderHighlightsPane } from "../reader";
 import { selectFreshVisibleTextSnippet } from "../selection";
@@ -158,9 +159,7 @@ export async function uploadFreshRealMediaFileThroughUi({
     : fixtureBytes;
 
   await gotoRealMediaSinglePane(page, "/libraries");
-  await page.getByRole("button", { name: "Add content" }).click();
-  const addContentDialog = page.getByRole("dialog", { name: "Add content" });
-  await expect(addContentDialog).toBeVisible();
+  const addContentPanel = await openAddContentPanel(page, "file");
 
   const [ingestResponse] = await Promise.all([
     page.waitForResponse(
@@ -169,7 +168,7 @@ export async function uploadFreshRealMediaFileThroughUi({
         /\/api\/media\/[^/]+\/ingest$/.test(new URL(response.url()).pathname),
       { timeout: 30_000 },
     ),
-    addContentDialog.getByLabel("Upload file").setInputFiles({
+    addContentPanel.getByLabel("Upload file").setInputFiles({
       name: filename,
       mimeType,
       buffer: uploadBytes,
