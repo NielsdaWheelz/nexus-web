@@ -33,7 +33,7 @@ APP_SEARCH = NEXUS / "services" / "agent_tools" / "app_search.py"
 CONVERSATION = NEXUS / "schemas" / "conversation.py"
 MODELS = NEXUS / "db" / "models.py"
 SEARCH_PANE = WEB / "app" / "(authenticated)" / "search" / "SearchPaneBody.tsx"
-PALETTE_CONTROLLER = WEB / "components" / "palette" / "usePaletteController.ts"
+LAUNCHER_CONTROLLER = WEB / "components" / "launcher" / "useLauncherController.ts"
 E2E = ROOT / "e2e" / "tests"
 DOCS = ROOT / "docs"
 
@@ -200,10 +200,10 @@ def test_no_legacy_types_param_in_search_frontend() -> None:
         assert not _LEGACY_URL_PARAM.search(src), f"legacy URL param in {name}"
 
 
-def test_palette_controller_has_no_legacy_search_params() -> None:
-    # §14: the palette @ lane shares the one query model; it must not reintroduce the
-    # deleted params (it builds SearchQuery via searchQueryFromInput, never raw filters).
-    src = PALETTE_CONTROLLER.read_text()
+def test_launcher_controller_has_no_legacy_search_params() -> None:
+    # §14: the Launcher search lane shares the one query model; it must not reintroduce
+    # deleted params (it builds SearchQuery via parseLauncherInput, never raw filters).
+    src = LAUNCHER_CONTROLLER.read_text()
     assert "content_kinds" not in src
     assert "contributor_handles" not in src
     assert not _LEGACY_URL_PARAM.search(src)
