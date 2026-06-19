@@ -2,6 +2,7 @@
 
 import pytest
 
+from nexus.schemas.workspace_session import WORKSPACE_SESSION_DEVICE_ID_MAX_LENGTH
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
 
@@ -28,6 +29,13 @@ def _sample_state(active_pane_id: str = "pane-1", href: str = "/libraries") -> d
 def _register_session_cleanup(direct_db: DirectSessionManager, user_id) -> None:
     """Register cleanup for a user's workspace session rows."""
     direct_db.register_cleanup("workspace_sessions", "user_id", user_id)
+
+
+def _assert_invalid_request(resp) -> None:
+    """Assert the repo-standard request validation error envelope."""
+
+    assert resp.status_code == 400
+    assert resp.json()["error"]["code"] == "E_INVALID_REQUEST"
 
 
 class TestWorkspaceSession:
@@ -198,6 +206,37 @@ class TestWorkspaceSession:
         assert elsewhere_resp.status_code == 200
         assert elsewhere_resp.json()["data"]["most_recent_elsewhere"] is None
 
+    def test_get_rejects_missing_device_id(self, auth_client, direct_db: DirectSessionManager):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        _register_session_cleanup(direct_db, user_id)
+
+        resp = auth_client.get(
+            "/me/workspace-session",
+            headers=auth_headers(user_id),
+        )
+
+        _assert_invalid_request(resp)
+
+    @pytest.mark.parametrize(
+        "device_id",
+        ["", "x" * (WORKSPACE_SESSION_DEVICE_ID_MAX_LENGTH + 1)],
+    )
+    def test_get_rejects_device_id_outside_length_bounds(
+        self, auth_client, direct_db: DirectSessionManager, device_id: str
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        _register_session_cleanup(direct_db, user_id)
+
+        resp = auth_client.get(
+            "/me/workspace-session",
+            params={"device_id": device_id},
+            headers=auth_headers(user_id),
+        )
+
+        _assert_invalid_request(resp)
+
     def test_put_rejects_unknown_extra_field(self, auth_client, direct_db: DirectSessionManager):
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
@@ -209,7 +248,7 @@ class TestWorkspaceSession:
             headers=auth_headers(user_id),
         )
 
-        assert resp.status_code == 400
+        _assert_invalid_request(resp)
 
     def test_put_rejects_oversized_state(self, auth_client, direct_db: DirectSessionManager):
         user_id = create_test_user_id()
@@ -223,7 +262,7 @@ class TestWorkspaceSession:
             headers=auth_headers(user_id),
         )
 
-        assert resp.status_code == 400
+        _assert_invalid_request(resp)
 
     def test_put_rejects_missing_device_id(self, auth_client, direct_db: DirectSessionManager):
         user_id = create_test_user_id()
@@ -236,4 +275,23 @@ class TestWorkspaceSession:
             headers=auth_headers(user_id),
         )
 
-        assert resp.status_code == 400
+        _assert_invalid_request(resp)
+
+    @pytest.mark.parametrize(
+        "device_id",
+        ["", "x" * (WORKSPACE_SESSION_DEVICE_ID_MAX_LENGTH + 1)],
+    )
+    def test_put_rejects_device_id_outside_length_bounds(
+        self, auth_client, direct_db: DirectSessionManager, device_id: str
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        _register_session_cleanup(direct_db, user_id)
+
+        resp = auth_client.put(
+            "/me/workspace-session",
+            json={"device_id": device_id, "state": _sample_state()},
+            headers=auth_headers(user_id),
+        )
+
+        _assert_invalid_request(resp)

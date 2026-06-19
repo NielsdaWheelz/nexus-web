@@ -5,6 +5,8 @@ import json
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 MAX_WORKSPACE_STATE_BYTES = 65_536
+WORKSPACE_SESSION_DEVICE_ID_MIN_LENGTH = 1
+WORKSPACE_SESSION_DEVICE_ID_MAX_LENGTH = 200
 
 
 class WorkspaceSessionOut(BaseModel):
@@ -17,7 +19,10 @@ class WorkspaceSessionOut(BaseModel):
 class WorkspaceSessionPutRequest(BaseModel):
     """PUT body for a per-device workspace session."""
 
-    device_id: str = Field(min_length=1, max_length=200)
+    device_id: str = Field(
+        min_length=WORKSPACE_SESSION_DEVICE_ID_MIN_LENGTH,
+        max_length=WORKSPACE_SESSION_DEVICE_ID_MAX_LENGTH,
+    )
     state: dict[str, object]
 
     model_config = ConfigDict(extra="forbid")

@@ -14,7 +14,12 @@ from nexus.responses import ok, success_response
 from nexus.schemas.command_palette import CommandPaletteSelectionRecordRequest
 from nexus.schemas.reader import ReaderProfilePatch
 from nexus.schemas.user import UpdateProfileRequest
-from nexus.schemas.workspace_session import WorkspaceSessionOut, WorkspaceSessionPutRequest
+from nexus.schemas.workspace_session import (
+    WORKSPACE_SESSION_DEVICE_ID_MAX_LENGTH,
+    WORKSPACE_SESSION_DEVICE_ID_MIN_LENGTH,
+    WorkspaceSessionOut,
+    WorkspaceSessionPutRequest,
+)
 from nexus.services import command_palette as command_palette_service
 from nexus.services import reader as reader_service
 from nexus.services import users as users_service
@@ -112,7 +117,13 @@ def post_palette_selection(
 
 @router.get("/me/workspace-session")
 def get_workspace_session(
-    device_id: str,
+    device_id: Annotated[
+        str,
+        Query(
+            min_length=WORKSPACE_SESSION_DEVICE_ID_MIN_LENGTH,
+            max_length=WORKSPACE_SESSION_DEVICE_ID_MAX_LENGTH,
+        ),
+    ],
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
