@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import re
 import unicodedata
+from collections import Counter
 from dataclasses import dataclass
 from typing import Literal
 from uuid import UUID
@@ -343,7 +344,7 @@ def resolve_oracle_passage_anchors(
     now = db.scalar(select(func.now()))
     resolved = 0
     failed = 0
-    chunk_cache: dict[UUID, list[tuple[UUID, UUID | None, str, tuple[str, ...]]]] = {}
+    chunk_cache: dict[UUID, list[tuple[UUID, UUID | None, str, tuple[str, ...], Counter[str]]]] = {}
     for anchor, media_id in rows:
         needle = _anchor_needle(anchor.selector)
         match = None
@@ -495,7 +496,7 @@ def _find_anchor_chunk_match(
     *,
     media_id: UUID,
     needle: AnchorNeedle,
-    cache: dict[UUID, list[tuple[UUID, UUID | None, str, tuple[str, ...]]]],
+    cache: dict[UUID, list[tuple[UUID, UUID | None, str, tuple[str, ...], Counter[str]]]],
 ) -> tuple[UUID, UUID | None] | None:
     if media_id not in cache:
         rows = db.execute(
@@ -521,18 +522,28 @@ def _find_anchor_chunk_match(
                 "model": current_transcript_embedding_model(),
             },
         ).mappings()
-        cache[media_id] = [
-            (
-                row["chunk_id"],
-                row["span_id"],
-                _normalize_anchor_match_text(row["chunk_text"] or ""),
-                tuple(_anchor_match_tokens(row["chunk_text"] or "")),
+        media_chunks: list[tuple[UUID, UUID | None, str, tuple[str, ...], Counter[str]]] = []
+        for row in rows:
+            chunk_tokens = tuple(_anchor_match_tokens(row["chunk_text"] or ""))
+            media_chunks.append(
+                (
+                    row["chunk_id"],
+                    row["span_id"],
+                    _normalize_anchor_match_text(row["chunk_text"] or ""),
+                    chunk_tokens,
+                    Counter(chunk_tokens),
+                )
             )
-            for row in rows
-        ]
-    for chunk_id, span_id, normalized_text, chunk_tokens in cache[media_id]:
+        cache[media_id] = media_chunks
+    for chunk_id, span_id, normalized_text, _chunk_tokens, _chunk_token_counts in cache[media_id]:
         if needle.normalized_prefix and needle.normalized_prefix in normalized_text:
             return (chunk_id, span_id)
+    selector_window_size = min(len(needle.token_prefix), _ANCHOR_TOKEN_PREFIX_TOKENS)
+    selector_window = needle.token_prefix[:selector_window_size]
+    min_match_count = _anchor_min_token_matches(selector_window_size)
+    for chunk_id, span_id, _normalized_text, chunk_tokens, chunk_token_counts in cache[media_id]:
+        if _anchor_token_multiset_overlap(selector_window, chunk_token_counts) < min_match_count:
+            continue
         if _anchor_token_window_matches(needle.token_prefix, chunk_tokens):
             return (chunk_id, span_id)
     return None
@@ -598,10 +609,7 @@ def _anchor_token_window_matches(
     selector_window = selector_tokens[:selector_window_size]
     if len(chunk_tokens) < _ANCHOR_MIN_TOKEN_WINDOW_TOKENS:
         return False
-    min_match_count = max(
-        _ANCHOR_MIN_TOKEN_WINDOW_TOKENS,
-        int(selector_window_size * _ANCHOR_TOKEN_WINDOW_MATCH_RATIO + 0.999),
-    )
+    min_match_count = _anchor_min_token_matches(selector_window_size)
     min_window_size = max(
         _ANCHOR_MIN_TOKEN_WINDOW_TOKENS,
         selector_window_size - _ANCHOR_TOKEN_WINDOW_MISSING_TOKENS,
@@ -620,6 +628,23 @@ def _anchor_token_window_matches(
             if matches >= min_match_count and match_ratio >= _ANCHOR_TOKEN_WINDOW_MATCH_RATIO:
                 return True
     return False
+
+
+def _anchor_min_token_matches(window_size: int) -> int:
+    return max(
+        _ANCHOR_MIN_TOKEN_WINDOW_TOKENS,
+        int(window_size * _ANCHOR_TOKEN_WINDOW_MATCH_RATIO + 0.999),
+    )
+
+
+def _anchor_token_multiset_overlap(
+    selector_window: tuple[str, ...], chunk_token_counts: Counter[str]
+) -> int:
+    selector_counts = Counter(selector_window)
+    return sum(
+        min(selector_count, chunk_token_counts.get(token, 0))
+        for token, selector_count in selector_counts.items()
+    )
 
 
 def _anchor_token_lcs_length(
