@@ -3,14 +3,14 @@
 // step. Wired in as the package `postinstall` hook -- installing dependencies
 // now also provisions the browser.
 //
-// Skipped on CI: there the `test-front` job installs Chromium *with* system
-// deps via `make test-front-browser`, and downloading it in every job that
-// runs `bun ci` (static-checks, build-front, e2e, ...) would be wasteful.
-// Also skipped when PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD is set (manual escape
-// hatch). Never fails the install -- an offline machine just gets a warning.
+// Skipped in CI and Vercel production installs: CI installs Chromium *with*
+// system deps via `make test-front-browser`, and production builds never need
+// the Vitest browser. Also skipped when PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD is set
+// (manual escape hatch). Never fails the install -- an offline machine just
+// gets a warning.
 import { execSync } from "node:child_process";
 
-if (process.env.CI === "true" || process.env.PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD) {
+if (process.env.CI || process.env.VERCEL || process.env.PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD) {
   process.exit(0);
 }
 
