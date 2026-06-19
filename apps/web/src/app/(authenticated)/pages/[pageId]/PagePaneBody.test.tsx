@@ -441,8 +441,7 @@ function renderPagePane(pageId: string, initialPage: NotePage) {
         paneId="pane-1"
         href={href}
         routeId={identity.routeId}
-        resourceRef={identity.resourceRef}
-        resourceKey={identity.resourceKey}
+        routeKey={identity.routeKey}
         pathParams={{ pageId }}
         canGoBack={false}
         canGoForward={false}

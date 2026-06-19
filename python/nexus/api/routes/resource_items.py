@@ -11,11 +11,14 @@ from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import ok, success_response
 from nexus.schemas.resource_items import (
     ResourceBodyMutationRequest,
+    ResourceLocatorResolveRequest,
+    ResourceLocatorResolveResponse,
     ResourceSurfaceMutationRequest,
     ResourceTitleMutationRequest,
 )
 from nexus.services.resource_graph import refs as refs_service
 from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.resource_items import locators as locator_service
 from nexus.services.resource_items import mutations, surfaces
 
 router = APIRouter(prefix="/resource-items", tags=["resource-items"])
@@ -44,6 +47,24 @@ def resolve_resource_items(
                 for ref in refs
             ]
         }
+    )
+
+
+@router.post("/locators/resolve")
+def resolve_resource_locators(
+    request: ResourceLocatorResolveRequest,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    return ok(
+        ResourceLocatorResolveResponse(
+            resolutions=locator_service.resolve_resource_locators(
+                db,
+                viewer_id=viewer.user_id,
+                locators=request.locators,
+            )
+        ),
+        by_alias=True,
     )
 
 

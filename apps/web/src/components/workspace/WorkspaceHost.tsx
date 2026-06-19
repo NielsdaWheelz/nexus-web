@@ -3,11 +3,12 @@
 import { Component, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ResolvedPaneRoute } from "@/lib/panes/paneRouteTable";
 import { renderPane } from "@/lib/panes/paneRenderRegistry";
-import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import {
   PaneRuntimeProvider,
+  type PaneResourceStatus,
   type PaneRuntimeLayoutPublication,
 } from "@/lib/panes/paneRuntime";
+import { resolvePaneResourceLocator } from "@/lib/panes/paneResourceLocator";
 import {
   PaneSecondaryContext,
   type PaneSecondaryPublication,
@@ -55,10 +56,13 @@ import {
 } from "@/lib/panes/paneSecondaryModel";
 import { emitWorkspaceTelemetry } from "@/lib/workspace/telemetry";
 import {
+  resolvePaneRouteKey,
   resolveWorkspacePaneTitle,
   useWorkspaceHostStore,
   type WorkspacePaneTitleDescriptor,
 } from "@/lib/workspace/store";
+import type { ResourceItem } from "@/lib/notes/api";
+import { resolveResourceLocators } from "@/lib/resources/resourceLocators";
 import { usePaneCanvas } from "./usePaneCanvas";
 import PaneRouteBoundary from "./PaneRouteBoundary";
 import styles from "./WorkspaceHost.module.css";
@@ -71,7 +75,9 @@ interface WorkspaceHostPane {
   paneId: string;
   href: string;
   route: ResolvedPaneRoute;
-  resourceKey: string;
+  routeKey: string;
+  resourceItem: ResourceItem | null;
+  resourceStatus: PaneResourceStatus;
   title: string;
   titleState: "resolved" | "pending";
   subtitle?: React.ReactNode;
@@ -91,17 +97,17 @@ interface WorkspaceHostPane {
 }
 
 interface RuntimePaneLayoutRecord {
-  resourceKey: string;
+  routeKey: string;
   layout: PaneRuntimeLayout;
 }
 
 interface PaneSecondaryPublicationRecord {
-  resourceKey: string;
+  routeKey: string;
   publication: PaneSecondaryPublication;
 }
 
 interface PaneFixedChromePublicationRecord {
-  resourceKey: string;
+  routeKey: string;
   publication: PaneFixedChromePublication;
 }
 
@@ -174,7 +180,9 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
   paneId,
   href,
   route,
-  resourceKey,
+  routeKey,
+  resourceItem,
+  resourceStatus,
   secondaryPane,
   navigatePane,
   openPane,
@@ -194,7 +202,9 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
   paneId: string;
   href: string;
   route: ResolvedPaneRoute;
-  resourceKey: string;
+  routeKey: string;
+  resourceItem: ResourceItem | null;
+  resourceStatus: PaneResourceStatus;
   secondaryPane: WorkspaceAttachedSecondaryPaneState | null;
   navigatePane: (
     paneId: string,
@@ -214,18 +224,18 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
   goForwardPane: (paneId: string) => void;
   publishPaneTitle: (input: {
     paneId: string;
-    resourceKey: string;
+    routeKey: string;
     title: string | null;
   }) => void;
   publishPaneLayout: (input: PaneRuntimeLayoutPublication) => void;
   publishPaneSecondary: (input: {
     paneId: string;
-    resourceKey: string;
+    routeKey: string;
     publication: PaneSecondaryPublication | null;
   }) => void;
   publishPaneFixedChrome: (input: {
     paneId: string;
-    resourceKey: string;
+    routeKey: string;
     publication: PaneFixedChromePublication | null;
   }) => void;
   requestSecondarySurface: (
@@ -261,15 +271,15 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
   );
   const handlePaneSecondaryPublication = useCallback(
     (publication: PaneSecondaryPublication | null) => {
-      publishPaneSecondary({ paneId, resourceKey, publication });
+      publishPaneSecondary({ paneId, routeKey, publication });
     },
-    [paneId, publishPaneSecondary, resourceKey],
+    [paneId, publishPaneSecondary, routeKey],
   );
   const handlePaneFixedChromePublication = useCallback(
     (publication: PaneFixedChromePublication | null) => {
-      publishPaneFixedChrome({ paneId, resourceKey, publication });
+      publishPaneFixedChrome({ paneId, routeKey, publication });
     },
-    [paneId, publishPaneFixedChrome, resourceKey],
+    [paneId, publishPaneFixedChrome, routeKey],
   );
 
   return (
@@ -277,8 +287,9 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
       paneId={paneId}
       href={href}
       routeId={route.id}
-      resourceRef={route.resourceRef}
-      resourceKey={resourceKey}
+      routeKey={routeKey}
+      resourceItem={resourceItem}
+      resourceStatus={resourceStatus}
       secondaryPane={secondaryPane}
       pathParams={route.params}
       canGoBack={canGoBack}
@@ -309,15 +320,15 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
 
 const PaneContent = memo(function PaneContent({
   route,
-  resourceKey,
+  routeKey,
 }: {
   route: ResolvedPaneRoute;
-  resourceKey: string;
+  routeKey: string;
 }) {
   return (
     <div className={styles.routeShell}>
-      <PaneRouteErrorBoundary resetKey={resourceKey}>
-        <ResolvedPaneRouteView key={resourceKey} route={route} />
+      <PaneRouteErrorBoundary resetKey={routeKey}>
+        <ResolvedPaneRouteView key={routeKey} route={route} />
       </PaneRouteErrorBoundary>
     </div>
   );
@@ -334,13 +345,13 @@ function upsertOrDeletePaneLayoutRecord(
   const layout = normalizePaneRuntimeLayout(input.layout);
   const existing = current.get(input.paneId);
   if (isEmptyPaneRuntimeLayout(layout)) {
-    if (!existing || existing.resourceKey !== input.resourceKey) return current;
+    if (!existing || existing.routeKey !== input.routeKey) return current;
     const next = new Map(current);
     next.delete(input.paneId);
     return next;
   }
   if (
-    existing?.resourceKey === input.resourceKey &&
+    existing?.routeKey === input.routeKey &&
     existing.layout.primaryWidth.kind === layout.primaryWidth.kind &&
     (layout.primaryWidth.kind === "workspace" ||
       existing.layout.primaryWidth.kind === "intrinsic" &&
@@ -349,7 +360,7 @@ function upsertOrDeletePaneLayoutRecord(
     return current;
   }
   const next = new Map(current);
-  next.set(input.paneId, { resourceKey: input.resourceKey, layout });
+  next.set(input.paneId, { routeKey: input.routeKey, layout });
   return next;
 }
 
@@ -412,26 +423,26 @@ function upsertOrDeletePaneSecondaryPublicationRecord(
   current: Map<string, PaneSecondaryPublicationRecord>,
   input: {
     paneId: string;
-    resourceKey: string;
+    routeKey: string;
     publication: PaneSecondaryPublication | null;
   },
 ): Map<string, PaneSecondaryPublicationRecord> {
   const existing = current.get(input.paneId);
   if (!input.publication) {
-    if (!existing || existing.resourceKey !== input.resourceKey) return current;
+    if (!existing || existing.routeKey !== input.routeKey) return current;
     const next = new Map(current);
     next.delete(input.paneId);
     return next;
   }
   const publication = normalizePaneSecondaryPublication(input.publication);
   if (
-    existing?.resourceKey === input.resourceKey &&
+    existing?.routeKey === input.routeKey &&
     arePaneSecondaryPublicationsEqual(existing.publication, publication)
   ) {
     return current;
   }
   const next = new Map(current);
-  next.set(input.paneId, { resourceKey: input.resourceKey, publication });
+  next.set(input.paneId, { routeKey: input.routeKey, publication });
   return next;
 }
 
@@ -439,20 +450,20 @@ function upsertOrDeletePaneFixedChromePublicationRecord(
   current: Map<string, PaneFixedChromePublicationRecord>,
   input: {
     paneId: string;
-    resourceKey: string;
+    routeKey: string;
     publication: PaneFixedChromePublication | null;
   },
 ): Map<string, PaneFixedChromePublicationRecord> {
   const existing = current.get(input.paneId);
   if (!input.publication) {
-    if (!existing || existing.resourceKey !== input.resourceKey) return current;
+    if (!existing || existing.routeKey !== input.routeKey) return current;
     const next = new Map(current);
     next.delete(input.paneId);
     return next;
   }
   const publication = normalizePaneFixedChromePublication(input.publication);
   if (
-    existing?.resourceKey === input.resourceKey &&
+    existing?.routeKey === input.routeKey &&
     existing.publication.id === publication.id &&
     existing.publication.widthPx === publication.widthPx &&
     existing.publication.body === publication.body
@@ -460,17 +471,17 @@ function upsertOrDeletePaneFixedChromePublicationRecord(
     return current;
   }
   const next = new Map(current);
-  next.set(input.paneId, { resourceKey: input.resourceKey, publication });
+  next.set(input.paneId, { routeKey: input.routeKey, publication });
   return next;
 }
 
 function getRuntimePaneLayout(
   records: Map<string, RuntimePaneLayoutRecord>,
   paneId: string,
-  resourceKey: string,
+  routeKey: string,
 ): PaneRuntimeLayout {
   const record = records.get(paneId);
-  return record?.resourceKey === resourceKey
+  return record?.routeKey === routeKey
     ? record.layout
     : DEFAULT_PANE_RUNTIME_LAYOUT;
 }
@@ -478,28 +489,28 @@ function getRuntimePaneLayout(
 function getPaneSecondaryPublication(
   records: Map<string, PaneSecondaryPublicationRecord>,
   paneId: string,
-  resourceKey: string,
+  routeKey: string,
 ): PaneSecondaryPublication | null {
   const record = records.get(paneId);
-  return record?.resourceKey === resourceKey ? record.publication : null;
+  return record?.routeKey === routeKey ? record.publication : null;
 }
 
 function getPaneFixedChromePublication(
   records: Map<string, PaneFixedChromePublicationRecord>,
   paneId: string,
-  resourceKey: string,
+  routeKey: string,
 ): PaneFixedChromePublication | null {
   const record = records.get(paneId);
-  return record?.resourceKey === resourceKey ? record.publication : null;
+  return record?.routeKey === routeKey ? record.publication : null;
 }
 
 function pruneRuntimePaneLayoutRecords(
   current: Map<string, RuntimePaneLayoutRecord>,
-  currentResourceKeyByPaneId: Map<string, string>,
+  currentRouteKeyByPaneId: Map<string, string>,
 ): Map<string, RuntimePaneLayoutRecord> {
   let next: Map<string, RuntimePaneLayoutRecord> | null = null;
   for (const [paneId, record] of current) {
-    if (currentResourceKeyByPaneId.get(paneId) === record.resourceKey) {
+    if (currentRouteKeyByPaneId.get(paneId) === record.routeKey) {
       continue;
     }
     next ??= new Map(current);
@@ -510,11 +521,11 @@ function pruneRuntimePaneLayoutRecords(
 
 function prunePaneSecondaryPublicationRecords(
   current: Map<string, PaneSecondaryPublicationRecord>,
-  currentResourceKeyByPaneId: Map<string, string>,
+  currentRouteKeyByPaneId: Map<string, string>,
 ): Map<string, PaneSecondaryPublicationRecord> {
   let next: Map<string, PaneSecondaryPublicationRecord> | null = null;
   for (const [paneId, record] of current) {
-    if (currentResourceKeyByPaneId.get(paneId) === record.resourceKey) {
+    if (currentRouteKeyByPaneId.get(paneId) === record.routeKey) {
       continue;
     }
     next ??= new Map(current);
@@ -525,11 +536,11 @@ function prunePaneSecondaryPublicationRecords(
 
 function prunePaneFixedChromePublicationRecords(
   current: Map<string, PaneFixedChromePublicationRecord>,
-  currentResourceKeyByPaneId: Map<string, string>,
+  currentRouteKeyByPaneId: Map<string, string>,
 ): Map<string, PaneFixedChromePublicationRecord> {
   let next: Map<string, PaneFixedChromePublicationRecord> | null = null;
   for (const [paneId, record] of current) {
-    if (currentResourceKeyByPaneId.get(paneId) === record.resourceKey) {
+    if (currentRouteKeyByPaneId.get(paneId) === record.routeKey) {
       continue;
     }
     next ??= new Map(current);
@@ -549,6 +560,8 @@ function buildHostPane(input: {
   pane: WorkspacePrimaryPaneState;
   secondaryPane: WorkspaceAttachedSecondaryPaneState | null;
   descriptor: WorkspacePaneTitleDescriptor;
+  resourceItem: ResourceItem | null;
+  resourceStatus: PaneResourceStatus;
   goBackPane: (paneId: string) => void;
   goForwardPane: (paneId: string) => void;
   isActive: boolean;
@@ -558,7 +571,7 @@ function buildHostPane(input: {
   isMobile: boolean;
   workspacePrimaryMetrics: WorkspacePrimaryMetrics;
 }): WorkspaceHostPane {
-  const { chrome, resourceKey, route, title, titleState } = input.descriptor;
+  const { chrome, routeKey, route, title, titleState } = input.descriptor;
 
   const routeWidth = route.definition ?? resolvePaneRouteWidthContract(input.pane.href);
   const visibleSecondaryPane =
@@ -576,7 +589,13 @@ function buildHostPane(input: {
     paneId: input.pane.id,
     href: input.pane.href,
     route,
-    resourceKey,
+    routeKey,
+    resourceItem: input.resourceItem,
+    resourceStatus: input.resourceItem?.missing
+      ? "missing"
+      : input.resourceItem
+        ? "ready"
+        : input.resourceStatus,
     title,
     titleState,
     subtitle: chrome?.subtitle,
@@ -609,7 +628,7 @@ function buildHostPane(input: {
     fixedChromePublication: input.isMobile ? null : input.fixedChromePublication,
     isActive: input.isActive,
     visibility: input.pane.visibility,
-    content: <PaneContent route={route} resourceKey={resourceKey} />,
+    content: <PaneContent route={route} routeKey={routeKey} />,
   };
 }
 
@@ -648,15 +667,25 @@ function WorkspaceHost() {
   >(() => new Map());
   const [fixedChromePublicationByPaneId, setFixedChromePublicationByPaneId] =
     useState<Map<string, PaneFixedChromePublicationRecord>>(() => new Map());
+  const [resourceItemByRouteKey, setResourceItemByRouteKey] = useState<Map<string, ResourceItem>>(
+    () => new Map(),
+  );
+  const [resourceStatusByRouteKey, setResourceStatusByRouteKey] = useState<
+    Map<string, PaneResourceStatus>
+  >(() => new Map());
   const keybindings = useKeybindings();
   const androidShell = useAndroidShell();
+  const timeZone = useMemo(
+    () => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+    [],
+  );
 
   // --- Mobile viewport and pane chrome focus state ---
   const isMobile = useIsMobileViewport();
   const layoutMode = isMobile ? "mobile" : "desktop";
   const paneWrapRefById = useRef<Map<string, HTMLDivElement>>(new Map());
   const pendingPaneChromeFocusPaneIdRef = useRef<string | null>(null);
-  const pendingSecondarySurfaceByResourceKeyRef = useRef<
+  const pendingSecondarySurfaceByRouteKeyRef = useRef<
     Map<string, PendingSecondarySurfaceRequest>
   >(new Map());
   const primaryPanes = useMemo(() => getWorkspacePrimaryPanes(state), [state]);
@@ -668,23 +697,87 @@ function WorkspaceHost() {
       })),
     [androidShell, primaryPanes, runtimeTitleByPaneId]
   );
-  const currentResourceKeyByPaneId = useMemo(
+  const currentRouteKeyByPaneId = useMemo(
     () =>
       new Map(
         paneDescriptors.map(({ pane, descriptor }) => [
           pane.id,
-          descriptor.resourceKey,
+          descriptor.routeKey,
         ]),
       ),
     [paneDescriptors],
   );
-  const currentResourceKeyByPaneIdRef = useRef(currentResourceKeyByPaneId);
-  currentResourceKeyByPaneIdRef.current = currentResourceKeyByPaneId;
+  const currentRouteKeyByPaneIdRef = useRef(currentRouteKeyByPaneId);
+  currentRouteKeyByPaneIdRef.current = currentRouteKeyByPaneId;
   const secondaryPublicationByPaneIdRef = useRef(secondaryPublicationByPaneId);
   secondaryPublicationByPaneIdRef.current = secondaryPublicationByPaneId;
+  const resourceStatusByRouteKeyRef = useRef(resourceStatusByRouteKey);
+  resourceStatusByRouteKeyRef.current = resourceStatusByRouteKey;
+  const resourceLocatorEntries = useMemo(
+    () =>
+      paneDescriptors.flatMap(({ descriptor }) => {
+        const locator = resolvePaneResourceLocator(descriptor.route, { timeZone });
+        return locator
+          ? [{ routeKey: descriptor.routeKey, locator }]
+          : [];
+      }),
+    [paneDescriptors, timeZone],
+  );
+  const resourceLocatorRouteKeys = useMemo(
+    () => new Set(resourceLocatorEntries.map((entry) => entry.routeKey)),
+    [resourceLocatorEntries],
+  );
+
+  useEffect(() => {
+    const unresolved = resourceLocatorEntries.filter(
+      ({ routeKey }) =>
+        !resourceItemByRouteKey.has(routeKey) &&
+        !resourceStatusByRouteKeyRef.current.has(routeKey),
+    );
+    if (unresolved.length === 0) {
+      return;
+    }
+
+    setResourceStatusByRouteKey((current) => {
+      const next = new Map(current);
+      for (const entry of unresolved) next.set(entry.routeKey, "pending");
+      return next;
+    });
+
+    let cancelled = false;
+    resolveResourceLocators(unresolved.map((entry) => entry.locator))
+      .then((resolutions) => {
+        if (cancelled) return;
+        setResourceItemByRouteKey((current) => {
+          const next = new Map(current);
+          resolutions.forEach((resolution, index) => {
+            const routeKey = unresolved[index]?.routeKey;
+            if (routeKey) next.set(routeKey, resolution.resourceItem);
+          });
+          return next;
+        });
+        setResourceStatusByRouteKey((current) => {
+          const next = new Map(current);
+          for (const entry of unresolved) next.set(entry.routeKey, "ready");
+          return next;
+        });
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setResourceStatusByRouteKey((current) => {
+          const next = new Map(current);
+          for (const entry of unresolved) next.set(entry.routeKey, "error");
+          return next;
+        });
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [resourceItemByRouteKey, resourceLocatorEntries]);
 
   const publishPaneLayout = useCallback((input: PaneRuntimeLayoutPublication) => {
-    if (currentResourceKeyByPaneIdRef.current.get(input.paneId) !== input.resourceKey) {
+    if (currentRouteKeyByPaneIdRef.current.get(input.paneId) !== input.routeKey) {
       return;
     }
     setRuntimeLayoutByPaneId((current) =>
@@ -695,10 +788,10 @@ function WorkspaceHost() {
   const publishPaneSecondary = useCallback(
     (input: {
       paneId: string;
-      resourceKey: string;
+      routeKey: string;
       publication: PaneSecondaryPublication | null;
     }) => {
-      if (currentResourceKeyByPaneIdRef.current.get(input.paneId) !== input.resourceKey) {
+      if (currentRouteKeyByPaneIdRef.current.get(input.paneId) !== input.routeKey) {
         return;
       }
       setSecondaryPublicationByPaneId((current) =>
@@ -711,10 +804,10 @@ function WorkspaceHost() {
   const publishPaneFixedChrome = useCallback(
     (input: {
       paneId: string;
-      resourceKey: string;
+      routeKey: string;
       publication: PaneFixedChromePublication | null;
     }) => {
-      if (currentResourceKeyByPaneIdRef.current.get(input.paneId) !== input.resourceKey) {
+      if (currentRouteKeyByPaneIdRef.current.get(input.paneId) !== input.routeKey) {
         return;
       }
       setFixedChromePublicationByPaneId((current) =>
@@ -738,14 +831,14 @@ function WorkspaceHost() {
         input.secondarySurfaceId &&
         paneRouteAllowsSecondarySurface(href, input.secondarySurfaceId)
       ) {
-        const resourceKey = resolvePaneRouteIdentity(href).resourceKey;
-        pendingSecondarySurfaceByResourceKeyRef.current.set(
-          resourceKey,
+        const routeKey = resolvePaneRouteKey(href);
+        pendingSecondarySurfaceByRouteKeyRef.current.set(
+          routeKey,
           {
             surfaceId: input.secondarySurfaceId,
             targetPaneId:
-              [...currentResourceKeyByPaneIdRef.current].find(
-                ([, currentResourceKey]) => currentResourceKey === resourceKey,
+              [...currentRouteKeyByPaneIdRef.current].find(
+                ([, currentRouteKey]) => currentRouteKey === routeKey,
               )?.[0] ?? null,
           },
         );
@@ -762,15 +855,34 @@ function WorkspaceHost() {
 
   useEffect(() => {
     setRuntimeLayoutByPaneId((current) =>
-      pruneRuntimePaneLayoutRecords(current, currentResourceKeyByPaneId),
+      pruneRuntimePaneLayoutRecords(current, currentRouteKeyByPaneId),
     );
     setSecondaryPublicationByPaneId((current) =>
-      prunePaneSecondaryPublicationRecords(current, currentResourceKeyByPaneId),
+      prunePaneSecondaryPublicationRecords(current, currentRouteKeyByPaneId),
     );
     setFixedChromePublicationByPaneId((current) =>
-      prunePaneFixedChromePublicationRecords(current, currentResourceKeyByPaneId),
+      prunePaneFixedChromePublicationRecords(current, currentRouteKeyByPaneId),
     );
-  }, [currentResourceKeyByPaneId]);
+    const liveRouteKeys = new Set(currentRouteKeyByPaneId.values());
+    setResourceItemByRouteKey((current) => {
+      let next: Map<string, ResourceItem> | null = null;
+      for (const routeKey of current.keys()) {
+        if (liveRouteKeys.has(routeKey)) continue;
+        next ??= new Map(current);
+        next.delete(routeKey);
+      }
+      return next ?? current;
+    });
+    setResourceStatusByRouteKey((current) => {
+      let next: Map<string, PaneResourceStatus> | null = null;
+      for (const routeKey of current.keys()) {
+        if (liveRouteKeys.has(routeKey)) continue;
+        next ??= new Map(current);
+        next.delete(routeKey);
+      }
+      return next ?? current;
+    });
+  }, [currentRouteKeyByPaneId]);
 
   useEffect(() => {
     const nextTelemetryByPaneId = new Map<string, string>();
@@ -806,23 +918,27 @@ function WorkspaceHost() {
             ? state.secondaryPanesById[pane.attachedSecondaryPaneId] ?? null
             : null,
           descriptor,
+          resourceItem: resourceItemByRouteKey.get(descriptor.routeKey) ?? null,
+          resourceStatus:
+            resourceStatusByRouteKey.get(descriptor.routeKey) ??
+            (resourceLocatorRouteKeys.has(descriptor.routeKey) ? "pending" : "none"),
           goBackPane,
           goForwardPane,
           isActive: pane.id === state.activePrimaryPaneId,
           runtimeLayout: getRuntimePaneLayout(
             runtimeLayoutByPaneId,
             pane.id,
-            descriptor.resourceKey,
+            descriptor.routeKey,
           ),
           secondaryPublication: getPaneSecondaryPublication(
             secondaryPublicationByPaneId,
             pane.id,
-            descriptor.resourceKey,
+            descriptor.routeKey,
           ),
           fixedChromePublication: getPaneFixedChromePublication(
             fixedChromePublicationByPaneId,
             pane.id,
-            descriptor.resourceKey,
+            descriptor.routeKey,
           ),
           isMobile,
           workspacePrimaryMetrics,
@@ -834,6 +950,9 @@ function WorkspaceHost() {
       state.secondaryPanesById,
       goBackPane,
       goForwardPane,
+      resourceItemByRouteKey,
+      resourceLocatorRouteKeys,
+      resourceStatusByRouteKey,
       runtimeLayoutByPaneId,
       secondaryPublicationByPaneId,
       fixedChromePublicationByPaneId,
@@ -851,34 +970,34 @@ function WorkspaceHost() {
     });
 
   useEffect(() => {
-    const pending = pendingSecondarySurfaceByResourceKeyRef.current;
+    const pending = pendingSecondarySurfaceByRouteKeyRef.current;
     if (pending.size === 0) {
       return;
     }
-    for (const [resourceKey, request] of pending) {
+    for (const [routeKey, request] of pending) {
       const pane = request.targetPaneId
         ? panes.find(
             (item) =>
-              item.paneId === request.targetPaneId && item.resourceKey === resourceKey,
+              item.paneId === request.targetPaneId && item.routeKey === routeKey,
           )
-        : panes.find((item) => item.resourceKey === resourceKey);
+        : panes.find((item) => item.routeKey === routeKey);
       if (!pane) {
         if (request.targetPaneId) {
-          pending.delete(resourceKey);
+          pending.delete(routeKey);
         }
         continue;
       }
       if (!paneRouteAllowsSecondarySurface(pane.href, request.surfaceId)) {
-        pending.delete(resourceKey);
+        pending.delete(routeKey);
         continue;
       }
       if (!request.targetPaneId) {
-        pending.set(resourceKey, { ...request, targetPaneId: pane.paneId });
+        pending.set(routeKey, { ...request, targetPaneId: pane.paneId });
       }
       if (!pane.secondaryPublication) {
         continue;
       }
-      pending.delete(resourceKey);
+      pending.delete(routeKey);
       if (
         secondaryPublicationIncludesSurface(
           pane.secondaryPublication,
@@ -922,12 +1041,12 @@ function WorkspaceHost() {
       if (!secondaryPane) {
         continue;
       }
-      const resourceKey = currentResourceKeyByPaneId.get(primaryPane.id);
-      const publication = resourceKey
+      const routeKey = currentRouteKeyByPaneId.get(primaryPane.id);
+      const publication = routeKey
         ? getPaneSecondaryPublication(
             secondaryPublicationByPaneId,
             primaryPane.id,
-            resourceKey,
+            routeKey,
           )
         : null;
       if (!publication) {
@@ -942,7 +1061,7 @@ function WorkspaceHost() {
       }
     }
   }, [
-    currentResourceKeyByPaneId,
+    currentRouteKeyByPaneId,
     dropSecondaryPane,
     primaryPanes,
     secondaryPublicationByPaneId,
@@ -952,14 +1071,14 @@ function WorkspaceHost() {
 
   const canUsePublishedSecondarySurface = useCallback(
     (paneId: string, surfaceId: WorkspaceSecondarySurfaceId): boolean => {
-      const resourceKey = currentResourceKeyByPaneIdRef.current.get(paneId);
-      if (!resourceKey) {
+      const routeKey = currentRouteKeyByPaneIdRef.current.get(paneId);
+      if (!routeKey) {
         return false;
       }
       const publication = getPaneSecondaryPublication(
         secondaryPublicationByPaneIdRef.current,
         paneId,
-        resourceKey,
+        routeKey,
       );
       return secondaryPublicationIncludesSurface(publication, surfaceId);
     },
@@ -1131,7 +1250,9 @@ function WorkspaceHost() {
                 paneId={pane.paneId}
                 href={pane.href}
                 route={pane.route}
-                resourceKey={pane.resourceKey}
+                routeKey={pane.routeKey}
+                resourceItem={pane.resourceItem}
+                resourceStatus={pane.resourceStatus}
                 secondaryPane={pane.secondaryPane}
                 navigatePane={navigatePane}
                 openPane={openPaneWithPendingSecondary}

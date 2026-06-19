@@ -265,8 +265,7 @@ function authorPane(
       paneId="pane-1"
       href={href}
       routeId="author"
-      resourceRef={handle}
-      resourceKey={resolvePaneRouteIdentity(href).resourceKey}
+      routeKey={resolvePaneRouteIdentity(href).routeKey}
       canGoBack={false}
       canGoForward={false}
       onGoBackPane={vi.fn()}

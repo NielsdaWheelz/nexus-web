@@ -29,8 +29,7 @@ function Runtime({
       paneId="pane-1"
       href={href}
       routeId={identity.routeId}
-      resourceRef={identity.resourceRef}
-      resourceKey={identity.resourceKey}
+      routeKey={identity.routeKey}
       {...defaultNavigationProps}
       onReplacePane={onReplacePane}
     >

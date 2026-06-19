@@ -18,7 +18,6 @@ describe("pane route model", () => {
     expect(resolvePaneRouteModel("/libraries")).toMatchObject({
       id: "libraries",
       params: {},
-      resourceRef: null,
       definition: {
         bodyMode: "standard",
         maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
@@ -28,13 +27,11 @@ describe("pane route model", () => {
     expect(resolvePaneRouteModel(`/libraries/${LIBRARY_ID}`)).toMatchObject({
       id: "library",
       params: { id: LIBRARY_ID },
-      resourceRef: `library:${LIBRARY_ID}`,
       definition: { allowsIntrinsicPrimaryWidth: false },
     });
     expect(resolvePaneRouteModel(`/media/${MEDIA_ID}`)).toMatchObject({
       id: "media",
       params: { id: MEDIA_ID },
-      resourceRef: `media:${MEDIA_ID}`,
       definition: {
         bodyMode: "document",
         maxWidthPx: MAX_MEDIA_PANE_WIDTH_PX,
@@ -44,7 +41,6 @@ describe("pane route model", () => {
     expect(resolvePaneRouteModel(`/podcasts/${PODCAST_ID}`)).toMatchObject({
       id: "podcastDetail",
       params: { podcastId: PODCAST_ID },
-      resourceRef: `podcast:${PODCAST_ID}`,
       definition: {
         bodyMode: "document",
         maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
@@ -53,7 +49,7 @@ describe("pane route model", () => {
     });
     expect(resolvePaneRouteModel(`/pages/${PAGE_ID}`)).toMatchObject({
       id: "page",
-      resourceRef: `page:${PAGE_ID}`,
+      params: { pageId: PAGE_ID },
       definition: {
         bodyMode: "document",
         maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
@@ -64,11 +60,10 @@ describe("pane route model", () => {
   it("resolves specific routes before parameter routes", () => {
     expect(resolvePaneRouteModel("/conversations/new")).toMatchObject({
       id: "conversationNew",
-      resourceRef: null,
     });
     expect(resolvePaneRouteModel(`/conversations/${CONVERSATION_ID}`)).toMatchObject({
       id: "conversation",
-      resourceRef: `conversation:${CONVERSATION_ID}`,
+      params: { id: CONVERSATION_ID },
     });
   });
 

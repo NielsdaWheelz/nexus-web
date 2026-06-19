@@ -686,8 +686,7 @@ function renderMediaPane(
         paneId="pane-1"
         href={href}
         routeId={identity.routeId}
-        resourceRef={identity.resourceRef}
-        resourceKey={identity.resourceKey}
+        routeKey={identity.routeKey}
         secondaryPane={options.secondaryPane ?? null}
         canGoBack={false}
         canGoForward={false}
@@ -720,7 +719,7 @@ function renderMediaPane(
     onCloseSecondaryPane,
     onSetPaneSecondary,
     onSetFixedChrome,
-    resourceKey: identity.resourceKey,
+    routeKey: identity.routeKey,
   };
 }
 
@@ -818,13 +817,13 @@ describe("MediaPaneBody pane sizing", () => {
     "publishes workspace primary layout and fixed chrome for %s",
     async (kind) => {
       testState.mediaKind = kind;
-      const { onSetPaneLayout, onSetFixedChrome, resourceKey } =
+      const { onSetPaneLayout, onSetFixedChrome, routeKey } =
         renderMediaPane();
 
       await waitFor(() => {
         expect(onSetPaneLayout).toHaveBeenCalledWith({
           paneId: "pane-1",
-          resourceKey,
+          routeKey,
           layout: {
             primaryWidth: { kind: "workspace" },
           },
@@ -843,13 +842,13 @@ describe("MediaPaneBody pane sizing", () => {
 
   it("publishes intrinsic PDF primary layout and fixed chrome", async () => {
     testState.mediaKind = "pdf";
-    const { onSetPaneLayout, onSetFixedChrome, resourceKey } =
+    const { onSetPaneLayout, onSetFixedChrome, routeKey } =
       renderMediaPane();
 
     await waitFor(() => {
       expect(onSetPaneLayout).toHaveBeenCalledWith({
         paneId: "pane-1",
-        resourceKey,
+        routeKey,
         layout: {
           primaryWidth: { kind: "intrinsic", widthPx: PDF_INTRINSIC_WIDTH_PX },
         },

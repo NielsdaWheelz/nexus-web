@@ -2,6 +2,8 @@ import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef } from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { ResourceItem } from "@/lib/notes/api";
+import type { ResourceLocatorResolution } from "@/lib/resources/resourceLocators";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import type { PaneRuntimeLayout } from "@/lib/workspace/paneSizing";
 import {
@@ -43,6 +45,9 @@ const hostMocks = vi.hoisted(() => ({
     titleHint?: string;
     surfaceId: WorkspaceSecondarySurfaceId;
   } | null,
+  resolveResourceLocators: vi.fn<
+    (locators: readonly unknown[]) => Promise<ResourceLocatorResolution[]>
+  >(async () => []),
   store: {
     state: {
       primaryPaneOrder: ["pane-1"],
@@ -92,6 +97,42 @@ const hostMocks = vi.hoisted(() => ({
   },
 }));
 
+function mediaResourceItem(id: string): ResourceItem {
+  const ref = `media:${id}`;
+  return {
+    ref,
+    scheme: "media",
+    id,
+    label: "Media",
+    summary: "",
+    route: `/media/${id}`,
+    activation: {
+      resourceRef: ref,
+      kind: "route",
+      href: `/media/${id}`,
+      unresolvedReason: null,
+    },
+    missing: false,
+    capabilities: {
+      linkable: true,
+      attachable: true,
+      chatSubject: "readable",
+      readable: "media",
+      inspectable: "media_document_map",
+      citableResultType: "media",
+      citationOutputSource: false,
+      appSearchScope: true,
+      conversationSearchScope: true,
+      promptRender: "label",
+      expansionPolicy: "none",
+      expandable: false,
+      adjacencySource: true,
+      adjacencyTarget: true,
+    },
+    versionByLane: {},
+  };
+}
+
 function mediaRoute(href: string) {
   const url = new URL(href, "http://localhost");
   const id = url.pathname.split("/")[2] ?? "";
@@ -101,7 +142,6 @@ function mediaRoute(href: string) {
     params: { id },
     staticTitle: "Media",
     titleMode: "dynamic",
-    resourceRef: id ? `media:${id}` : null,
     definition: {
       bodyMode: "document",
       maxWidthPx: 2400,
@@ -153,6 +193,8 @@ function TestPaneBody() {
       data-testid="route-body"
       data-instance-id={instanceId.current}
       data-runtime-secondary-id={paneRuntime?.secondaryPane?.id ?? "none"}
+      data-runtime-resource-ref={paneRuntime?.resourceRef ?? "none"}
+      data-runtime-resource-status={paneRuntime?.resourceStatus ?? "none"}
     >
       {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- justify-eslint-override: test fixture uses a plain anchor so WorkspaceHost link interception is the behavior under test */}
       <a href="/authors/body-author" data-pane-title-hint="Body Author">
@@ -168,18 +210,19 @@ vi.mock("@/lib/panes/paneRenderRegistry", () => ({
 }));
 
 vi.mock("@/lib/workspace/store", async () => {
-  // Use the real route-identity resolver so the descriptor resourceKey matches
+  // Use the real route-identity resolver so the descriptor routeKey matches
   // the key the host computes via resolvePaneRouteIdentity for pending
   // cross-pane secondary requests. Mocking it to a different shape would let the
   // pending-request tests pass for the wrong reason (key mismatch, not policy).
   const { resolvePaneRouteIdentity } = await import("@/lib/panes/paneIdentity");
   return {
     useWorkspaceHostStore: () => hostMocks.store,
+    resolvePaneRouteKey: (href: string) => resolvePaneRouteIdentity(href).routeKey,
     resolveWorkspacePaneTitle: (pane: { href: string }) => {
       const route = mediaRoute(pane.href);
       return {
         chrome: null,
-        resourceKey: resolvePaneRouteIdentity(pane.href).resourceKey,
+        routeKey: resolvePaneRouteIdentity(pane.href).routeKey,
         route,
         title: "Media",
         titleState: "pending",
@@ -337,6 +380,11 @@ vi.mock("@/lib/workspace/telemetry", () => ({
   emitWorkspaceTelemetry: vi.fn(),
 }));
 
+vi.mock("@/lib/resources/resourceLocators", () => ({
+  resolveResourceLocators: (locators: readonly unknown[]) =>
+    hostMocks.resolveResourceLocators(locators),
+}));
+
 import WorkspaceHost from "@/components/workspace/WorkspaceHost";
 
 function setPaneHref(
@@ -373,6 +421,8 @@ describe("WorkspaceHost pane route lifecycle", () => {
     hostMocks.fixedChromeWidthPx = null;
     hostMocks.secondaryPublication = null;
     hostMocks.openInNewPaneRequest = null;
+    hostMocks.resolveResourceLocators.mockReset();
+    hostMocks.resolveResourceLocators.mockResolvedValue([]);
     hostMocks.store.activatePane.mockReset();
     hostMocks.store.openPane.mockReset();
     hostMocks.store.navigatePane.mockReset();
@@ -388,19 +438,19 @@ describe("WorkspaceHost pane route lifecycle", () => {
     setPaneHref(MEDIA_HREF_1);
   });
 
-  it("does not remount the route body for same-resource location changes", () => {
+  it("remounts the route body for route-instance location changes", () => {
     const { rerender } = render(<WorkspaceHost />);
     const firstInstance = screen.getByTestId("route-body").dataset.instanceId;
 
     setPaneHref(`${MEDIA_HREF_1}?loc=chapter-2`);
     rerender(<WorkspaceHost />);
 
-    expect(screen.getByTestId("route-body")).toHaveAttribute(
+    expect(screen.getByTestId("route-body")).not.toHaveAttribute(
       "data-instance-id",
       firstInstance,
     );
-    expect(hostMocks.mountedBodyIds).toHaveLength(1);
-    expect(hostMocks.unmountedBodyIds).toHaveLength(0);
+    expect(hostMocks.mountedBodyIds).toHaveLength(2);
+    expect(hostMocks.unmountedBodyIds).toEqual([Number(firstInstance)]);
   });
 
   it("uses desktop canvas mode and renders desktop edge fades", () => {
@@ -432,6 +482,34 @@ describe("WorkspaceHost pane route lifecycle", () => {
     expect(hostMocks.unmountedBodyIds).toEqual([Number(firstInstance)]);
   });
 
+  it("publishes resolved route resources through the pane runtime", async () => {
+    hostMocks.resolveResourceLocators.mockResolvedValueOnce([
+      {
+        locator: { kind: "resource_ref", ref: `media:${MEDIA_ID_1}` },
+        resourceItem: mediaResourceItem(MEDIA_ID_1),
+        canonicalHref: MEDIA_HREF_1,
+      },
+    ]);
+
+    render(<WorkspaceHost />);
+
+    await waitFor(() => {
+      expect(hostMocks.resolveResourceLocators).toHaveBeenCalledWith([
+        { kind: "resource_ref", ref: `media:${MEDIA_ID_1}` },
+      ]);
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("route-body")).toHaveAttribute(
+        "data-runtime-resource-ref",
+        `media:${MEDIA_ID_1}`,
+      );
+    });
+    expect(screen.getByTestId("route-body")).toHaveAttribute(
+      "data-runtime-resource-status",
+      "ready",
+    );
+  });
+
   it("auto-resizes a visible pane when runtime content raises the minimum width", async () => {
     hostMocks.runtimeLayout = {
       primaryWidth: { kind: "intrinsic", widthPx: 900 },
@@ -444,7 +522,7 @@ describe("WorkspaceHost pane route lifecycle", () => {
     });
   });
 
-  it("ignores stale runtime layout records after the pane resource changes", async () => {
+  it("ignores stale runtime layout records after the pane route changes", async () => {
     hostMocks.runtimeLayout = {
       primaryWidth: { kind: "intrinsic", widthPx: 900 },
     };

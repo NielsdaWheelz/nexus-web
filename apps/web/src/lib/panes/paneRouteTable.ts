@@ -55,7 +55,6 @@ export interface ResolvedPaneRoute {
   params: RouteParams;
   staticTitle: string;
   titleMode: "static" | "dynamic";
-  resourceRef: string | null;
   definition: ResolvedPaneRouteDefinition | null;
 }
 

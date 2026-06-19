@@ -16,6 +16,7 @@ import {
   normalizeWorkspaceHref,
   parseWorkspaceHref,
 } from "@/lib/workspace/workspaceHref";
+import type { ResourceItem } from "@/lib/notes/api";
 import { preloadPane } from "@/lib/panes/paneRenderRegistry";
 import { resolvePaneRoute } from "@/lib/panes/paneRouteTable";
 import type { PaneRuntimeLayout } from "@/lib/workspace/paneSizing";
@@ -43,17 +44,29 @@ export interface PaneScopedRouter {
 
 export interface PaneRuntimeLayoutPublication {
   paneId: string;
-  resourceKey: string;
+  routeKey: string;
   layout: PaneRuntimeLayout;
 }
+
+export type PaneResourceStatus =
+  | "none"
+  | "pending"
+  | "ready"
+  | "missing"
+  | "unauthorized"
+  | "invalid"
+  | "error";
 
 interface PaneRuntimeContextValue {
   paneId: string;
   href: string;
   pathname: string;
   routeId: string;
+  routeKey: string;
+  resourceItem: ResourceItem | null;
   resourceRef: string | null;
-  resourceKey: string;
+  resourceKey: string | null;
+  resourceStatus: PaneResourceStatus;
   secondaryPane?: WorkspaceAttachedSecondaryPaneState | null;
   pathParams: Record<string, string>;
   searchParams: URLSearchParams;
@@ -80,8 +93,9 @@ interface PaneRuntimeProviderProps {
   paneId: string;
   href: string;
   routeId: string;
-  resourceRef: string | null;
-  resourceKey: string;
+  routeKey?: string;
+  resourceItem?: ResourceItem | null;
+  resourceStatus?: PaneResourceStatus;
   secondaryPane?: WorkspaceAttachedSecondaryPaneState | null;
   pathParams?: Record<string, string>;
   canGoBack: boolean;
@@ -105,7 +119,7 @@ interface PaneRuntimeProviderProps {
   onGoForwardPane: (paneId: string) => void;
   onSetPaneTitle?: (input: {
     paneId: string;
-    resourceKey: string;
+    routeKey: string;
     title: string | null;
   }) => void;
   onSetPaneLayout?: (input: PaneRuntimeLayoutPublication) => void;
@@ -133,6 +147,14 @@ function parsePaneHref(href: string): { pathname: string; searchParams: URLSearc
     pathname: parsed.pathname,
     searchParams: new URLSearchParams(parsed.search),
   };
+}
+
+function buildPaneRouteKey(routeId: string, href: string): string {
+  return `${routeId}:${normalizeWorkspaceHref(href) ?? "/"}`;
+}
+
+function resourceKeyForItem(resourceItem: ResourceItem | null): string | null {
+  return resourceItem ? `resource:${resourceItem.ref}` : null;
 }
 
 function panePreloadForHref(href: string): (() => Promise<unknown>) | undefined {
@@ -168,8 +190,9 @@ export function PaneRuntimeProvider({
   paneId,
   href,
   routeId,
-  resourceRef,
-  resourceKey,
+  routeKey: routeKeyProp,
+  resourceItem = null,
+  resourceStatus = "none",
   secondaryPane = null,
   pathParams = {},
   canGoBack,
@@ -187,10 +210,18 @@ export function PaneRuntimeProvider({
   children,
 }: PaneRuntimeProviderProps) {
   const parsed = useMemo(() => parsePaneHref(href), [href]);
+  const routeKey = routeKeyProp ?? buildPaneRouteKey(routeId, href);
+  const resourceRef = resourceItem?.ref ?? null;
+  const resourceKey = resourceKeyForItem(resourceItem);
+  const effectiveResourceStatus: PaneResourceStatus = resourceItem
+    ? "ready"
+    : resourceStatus === "ready"
+      ? "pending"
+      : resourceStatus;
   const secondaryPaneId = secondaryPane?.id ?? null;
   const commandsRef = useRef({
     paneId,
-    resourceKey,
+    routeKey,
     secondaryPaneId,
     onNavigatePane,
     onReplacePane,
@@ -205,7 +236,7 @@ export function PaneRuntimeProvider({
   });
   commandsRef.current = {
     paneId,
-    resourceKey,
+    routeKey,
     secondaryPaneId,
     onNavigatePane,
     onReplacePane,
@@ -288,7 +319,7 @@ export function PaneRuntimeProvider({
       const current = commandsRef.current;
       current.onSetPaneTitle?.({
         paneId: current.paneId,
-        resourceKey: current.resourceKey,
+        routeKey: current.routeKey,
         title,
       });
     },
@@ -299,7 +330,7 @@ export function PaneRuntimeProvider({
       const current = commandsRef.current;
       current.onSetPaneLayout?.({
         paneId: current.paneId,
-        resourceKey: current.resourceKey,
+        routeKey: current.routeKey,
         layout,
       });
     },
@@ -333,8 +364,11 @@ export function PaneRuntimeProvider({
       href,
       pathname: parsed.pathname,
       routeId,
+      routeKey,
+      resourceItem,
       resourceRef,
       resourceKey,
+      resourceStatus: effectiveResourceStatus,
       secondaryPane,
       pathParams,
       searchParams: parsed.searchParams,
@@ -359,9 +393,12 @@ export function PaneRuntimeProvider({
       parsed.pathname,
       parsed.searchParams,
       pathParams,
+      resourceItem,
       resourceRef,
       resourceKey,
+      effectiveResourceStatus,
       secondaryPane,
+      routeKey,
       routeId,
     ]
   );
@@ -412,27 +449,27 @@ export function useSetPaneTitle(title: string | null | undefined): void {
   const normalizedTitle = normalizePaneTitle(title);
   const lastPublishedTitleRef = useRef<{
     paneId: string;
-    resourceKey: string;
+    routeKey: string;
     title: string | null;
   } | null>(null);
   const paneId = paneRuntime?.paneId ?? null;
-  const resourceKey = paneRuntime?.resourceKey ?? null;
+  const routeKey = paneRuntime?.routeKey ?? null;
   const setPaneTitle = paneRuntime?.setPaneTitle;
 
   useEffect(() => {
-    if (!paneId || !resourceKey || !setPaneTitle) {
+    if (!paneId || !routeKey || !setPaneTitle) {
       return;
     }
     const lastPublished = lastPublishedTitleRef.current;
     if (
       lastPublished &&
       lastPublished.paneId === paneId &&
-      lastPublished.resourceKey === resourceKey &&
+      lastPublished.routeKey === routeKey &&
       lastPublished.title === normalizedTitle
     ) {
       return;
     }
     setPaneTitle(normalizedTitle);
-    lastPublishedTitleRef.current = { paneId, resourceKey, title: normalizedTitle };
-  }, [normalizedTitle, paneId, resourceKey, setPaneTitle]);
+    lastPublishedTitleRef.current = { paneId, routeKey, title: normalizedTitle };
+  }, [normalizedTitle, paneId, routeKey, setPaneTitle]);
 }

@@ -4,7 +4,7 @@ import {
   MAX_STANDARD_PANE_WIDTH_PX,
   resolvePaneRouteWidthContract,
 } from "@/lib/panes/paneRouteModel";
-import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
+import { resolvePaneResourceLocator } from "@/lib/panes/paneResourceLocator";
 import { resolvePaneRoute } from "./paneRouteTable";
 
 const PAGE_ID = "11111111-1111-4111-8111-111111111111";
@@ -21,12 +21,15 @@ describe("pane route table", () => {
     );
   });
 
-  it("resolves author routes with contributor resource refs", () => {
+  it("resolves author routes with contributor handle locators", () => {
     const route = resolvePaneRoute("/authors/ursula-k-le-guin");
 
     expect(route.id).toBe("author");
     expect(route.params).toEqual({ handle: "ursula-k-le-guin" });
-    expect(route.resourceRef).toBeNull();
+    expect(resolvePaneResourceLocator(route)).toEqual({
+      kind: "contributor_handle",
+      handle: "ursula-k-le-guin",
+    });
     expect(route.definition?.bodyMode).toBe("standard");
   });
 
@@ -35,8 +38,10 @@ describe("pane route table", () => {
 
     expect(route.id).toBe("page");
     expect(route.params).toEqual({ pageId: PAGE_ID });
-    expect(route.resourceRef).toBe(`page:${PAGE_ID}`);
-    expect(parseResourceRef(route.resourceRef!)).toEqual({ scheme: "page", id: PAGE_ID });
+    expect(resolvePaneResourceLocator(route)).toEqual({
+      kind: "resource_ref",
+      ref: `page:${PAGE_ID}`,
+    });
     expect(route.definition?.bodyMode).toBe("document");
     expect(route.definition?.secondaryGroups).toContain("notes-tools");
   });
@@ -46,15 +51,14 @@ describe("pane route table", () => {
     const noteRoute = resolvePaneRoute(`/notes/${BLOCK_ID}`);
 
     expect(notesRoute.id).toBe("notes");
-    expect(notesRoute.resourceRef).toBeNull();
+    expect(resolvePaneResourceLocator(notesRoute)).toBeNull();
     expect(notesRoute.definition?.bodyMode).toBe("standard");
 
     expect(noteRoute.id).toBe("note");
     expect(noteRoute.params).toEqual({ blockId: BLOCK_ID });
-    expect(noteRoute.resourceRef).toBe(`note_block:${BLOCK_ID}`);
-    expect(parseResourceRef(noteRoute.resourceRef!)).toEqual({
-      scheme: "note_block",
-      id: BLOCK_ID,
+    expect(resolvePaneResourceLocator(noteRoute)).toEqual({
+      kind: "resource_ref",
+      ref: `note_block:${BLOCK_ID}`,
     });
     expect(noteRoute.definition?.bodyMode).toBe("document");
     expect(noteRoute.definition?.secondaryGroups).toContain("notes-tools");
@@ -65,13 +69,20 @@ describe("pane route table", () => {
     const datedRoute = resolvePaneRoute("/daily/2026-05-06");
 
     expect(todayRoute.id).toBe("daily");
-    expect(todayRoute.resourceRef).toBeNull();
+    expect(resolvePaneResourceLocator(todayRoute, { timeZone: "UTC" })).toEqual({
+      kind: "daily_note_today",
+      timeZone: "UTC",
+    });
     expect(todayRoute.definition?.bodyMode).toBe("document");
     expect(todayRoute.definition?.secondaryGroups).toContain("notes-tools");
 
     expect(datedRoute.id).toBe("dailyDate");
     expect(datedRoute.params).toEqual({ localDate: "2026-05-06" });
-    expect(datedRoute.resourceRef).toBeNull();
+    expect(resolvePaneResourceLocator(datedRoute, { timeZone: "UTC" })).toEqual({
+      kind: "daily_note_date",
+      localDate: "2026-05-06",
+      timeZone: "UTC",
+    });
     expect(datedRoute.definition?.bodyMode).toBe("document");
     expect(datedRoute.definition?.secondaryGroups).toContain("notes-tools");
   });

@@ -7,7 +7,6 @@ import {
   type WorkspaceSecondaryGroupId,
   type WorkspaceSecondarySurfaceId,
 } from "@/lib/panes/paneSecondaryModel";
-import { parseResourceRef, type ResourceScheme } from "@/lib/resourceGraph/resourceRef";
 
 export const MAX_STANDARD_PANE_WIDTH_PX = 1400;
 export const MAX_MEDIA_PANE_WIDTH_PX = 2400;
@@ -60,7 +59,6 @@ export interface PaneRouteModelDefinition extends PaneWidthContract {
   pattern: RoutePattern;
   staticTitle: string;
   titleMode: "static" | "dynamic";
-  resourceRef?: (params: RouteParams) => string | null;
   bodyMode: PaneBodyMode;
   secondaryGroups?: readonly WorkspaceSecondaryGroupId[];
 }
@@ -71,7 +69,6 @@ export interface ResolvedPaneRouteModel {
   params: RouteParams;
   staticTitle: string;
   titleMode: "static" | "dynamic";
-  resourceRef: string | null;
   definition: PaneRouteModelDefinition | null;
 }
 
@@ -84,12 +81,6 @@ const MEDIA_READER_WIDTH_CONTRACT: PaneWidthContract = {
   maxWidthPx: MAX_MEDIA_PANE_WIDTH_PX,
   allowsIntrinsicPrimaryWidth: true,
 };
-
-function canonicalResourceRef(scheme: ResourceScheme, id: string | undefined): string | null {
-  if (!id) return null;
-  const ref = `${scheme}:${id}`;
-  return parseResourceRef(ref) ? ref : null;
-}
 
 function route(
   definition: Omit<PaneRouteModelDefinition, keyof PaneWidthContract> &
@@ -112,7 +103,6 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
     pattern: ["libraries", ":id"],
     staticTitle: "Library",
     titleMode: "dynamic",
-    resourceRef: (params) => canonicalResourceRef("library", params.id),
     bodyMode: "standard",
     secondaryGroups: ["library-tools"],
     ...STANDARD_WIDTH_CONTRACT,
@@ -122,7 +112,6 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
     pattern: ["media", ":id"],
     staticTitle: "Media",
     titleMode: "dynamic",
-    resourceRef: (params) => canonicalResourceRef("media", params.id),
     bodyMode: "document",
     secondaryGroups: ["reader-tools"],
     ...MEDIA_READER_WIDTH_CONTRACT,
@@ -149,7 +138,6 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
     pattern: ["conversations", ":id"],
     staticTitle: "Chat",
     titleMode: "dynamic",
-    resourceRef: (params) => canonicalResourceRef("conversation", params.id),
     bodyMode: "contained",
     secondaryGroups: ["conversation-context"],
     ...STANDARD_WIDTH_CONTRACT,
@@ -175,7 +163,6 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
     pattern: ["podcasts", ":podcastId"],
     staticTitle: "Podcast",
     titleMode: "dynamic",
-    resourceRef: (params) => canonicalResourceRef("podcast", params.podcastId),
     bodyMode: "document",
     ...STANDARD_WIDTH_CONTRACT,
   }),
@@ -200,7 +187,6 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
     pattern: ["authors", ":handle"],
     staticTitle: "Author",
     titleMode: "dynamic",
-    resourceRef: () => null,
     bodyMode: "standard",
     ...STANDARD_WIDTH_CONTRACT,
   }),
@@ -217,7 +203,6 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
     pattern: ["pages", ":pageId"],
     staticTitle: "Page",
     titleMode: "dynamic",
-    resourceRef: (params) => canonicalResourceRef("page", params.pageId),
     bodyMode: "document",
     secondaryGroups: ["notes-tools"],
     ...STANDARD_WIDTH_CONTRACT,
@@ -227,7 +212,6 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
     pattern: ["notes", ":blockId"],
     staticTitle: "Note",
     titleMode: "dynamic",
-    resourceRef: (params) => canonicalResourceRef("note_block", params.blockId),
     bodyMode: "document",
     secondaryGroups: ["notes-tools"],
     ...STANDARD_WIDTH_CONTRACT,
@@ -246,7 +230,6 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
     pattern: ["daily", ":localDate"],
     staticTitle: "Daily note",
     titleMode: "dynamic",
-    resourceRef: () => null,
     bodyMode: "document",
     secondaryGroups: ["notes-tools"],
     ...STANDARD_WIDTH_CONTRACT,
@@ -377,7 +360,6 @@ export function resolvePaneRouteModel(href: string): ResolvedPaneRouteModel {
       params,
       staticTitle: definition.staticTitle,
       titleMode: definition.titleMode,
-      resourceRef: definition.resourceRef?.(params) ?? null,
       definition,
     };
   }
@@ -387,7 +369,6 @@ export function resolvePaneRouteModel(href: string): ResolvedPaneRouteModel {
     params: {},
     staticTitle: "Tab",
     titleMode: "static",
-    resourceRef: null,
     definition: null,
   };
 }

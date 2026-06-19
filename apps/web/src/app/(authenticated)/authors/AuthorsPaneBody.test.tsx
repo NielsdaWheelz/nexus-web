@@ -197,8 +197,7 @@ function AuthorsHarness() {
       paneId="pane-1"
       href={href}
       routeId="authors"
-      resourceRef={null}
-      resourceKey={resolvePaneRouteIdentity(href).resourceKey}
+      routeKey={resolvePaneRouteIdentity(href).routeKey}
       canGoBack={false}
       canGoForward={false}
       onGoBackPane={vi.fn()}

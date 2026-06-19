@@ -28,8 +28,7 @@ function renderBoundary(input: {
       paneId="pane-1"
       href="/settings"
       routeId="settings"
-      resourceRef="settings"
-      resourceKey="settings"
+      routeKey="settings:/settings"
       canGoBack={false}
       canGoForward={false}
       onGoBackPane={vi.fn()}

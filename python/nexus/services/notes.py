@@ -154,6 +154,37 @@ def get_daily_note(
     )
 
 
+def resolve_daily_note_page_ref(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    local_date: date,
+    time_zone: str,
+) -> ResourceRef:
+    _zone_info(time_zone)
+    page, _stored_time_zone = _resolve_daily_page_with_retry(
+        db,
+        viewer_id,
+        local_date,
+        time_zone=time_zone,
+    )
+    return _page_ref(page.id)
+
+
+def resolve_today_daily_note_page_ref(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    time_zone: str,
+) -> ResourceRef:
+    return resolve_daily_note_page_ref(
+        db,
+        viewer_id=viewer_id,
+        local_date=_today_in_time_zone(time_zone),
+        time_zone=time_zone,
+    )
+
+
 def quick_capture(
     db: Session,
     viewer_id: UUID,
@@ -445,9 +476,13 @@ def _surface_note_out(db: Session, node: graph_adjacency.SurfaceNote) -> NoteBlo
 
 
 def _today_in_time_zone(time_zone: str) -> date:
+    return datetime.now(_zone_info(time_zone)).date()
+
+
+def _zone_info(time_zone: str) -> ZoneInfo:
     try:
-        return datetime.now(ZoneInfo(time_zone)).date()
-    except ZoneInfoNotFoundError as exc:
+        return ZoneInfo(time_zone)
+    except (ValueError, ZoneInfoNotFoundError) as exc:
         raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "time_zone is invalid") from exc
 
 

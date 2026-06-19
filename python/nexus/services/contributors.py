@@ -77,6 +77,16 @@ def get_contributor_by_handle(
     return _contributor_out(db, contributor)
 
 
+def resolve_contributor_ref_by_handle(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    contributor_handle: str,
+) -> ResourceRef:
+    contributor = _load_visible_contributor_by_handle(db, contributor_handle, viewer_id)
+    return ResourceRef(scheme="contributor", id=contributor.id)
+
+
 def resolve_canonical_contributor_ids(db: Session, handles: Sequence[str]) -> list[UUID]:
     """Map handles to their canonical survivor ids (following merges), deduped and order-preserving.
 

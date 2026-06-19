@@ -1,12 +1,17 @@
 from __future__ import annotations
 
-from datetime import datetime
-from typing import Any, Literal, TypeGuard
+from datetime import date, datetime
+from typing import Annotated, Any, Literal, TypeGuard
 from uuid import UUID
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
-from nexus.services.resource_graph.refs import RESOURCE_SCHEMES, ResourceScheme
+from nexus.services.resource_graph.refs import (
+    RESOURCE_SCHEMES,
+    ResourceRefParseFailure,
+    ResourceScheme,
+    parse_resource_ref,
+)
 
 OBJECT_TYPES = ResourceScheme
 OBJECT_TYPE_VALUES = frozenset(RESOURCE_SCHEMES)
@@ -305,6 +310,92 @@ class ResourceItemOut(BaseModel):
         validation_alias=AliasChoices("version_by_lane", "versionByLane"),
         serialization_alias="versionByLane",
     )
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class ResourceRefLocatorIn(BaseModel):
+    kind: Literal["resource_ref"]
+    ref: str = Field(min_length=1)
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    @field_validator("ref")
+    @classmethod
+    def validate_ref(cls, value: str) -> str:
+        parsed = parse_resource_ref(value)
+        if isinstance(parsed, ResourceRefParseFailure):
+            raise ValueError("ref must be a canonical ResourceRef")
+        return value
+
+
+class ContributorHandleLocatorIn(BaseModel):
+    kind: Literal["contributor_handle"]
+    handle: str = Field(min_length=1, max_length=200)
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+
+class DailyNoteTodayLocatorIn(BaseModel):
+    kind: Literal["daily_note_today"]
+    time_zone: str = Field(
+        min_length=1,
+        max_length=100,
+        validation_alias=AliasChoices("time_zone", "timeZone"),
+        serialization_alias="timeZone",
+    )
+
+    model_config = ConfigDict(str_strip_whitespace=True, populate_by_name=True, extra="forbid")
+
+
+class DailyNoteDateLocatorIn(BaseModel):
+    kind: Literal["daily_note_date"]
+    local_date: date = Field(
+        validation_alias=AliasChoices("local_date", "localDate"),
+        serialization_alias="localDate",
+    )
+    time_zone: str = Field(
+        min_length=1,
+        max_length=100,
+        validation_alias=AliasChoices("time_zone", "timeZone"),
+        serialization_alias="timeZone",
+    )
+
+    model_config = ConfigDict(str_strip_whitespace=True, populate_by_name=True, extra="forbid")
+
+
+ResourceLocatorIn = Annotated[
+    ResourceRefLocatorIn
+    | ContributorHandleLocatorIn
+    | DailyNoteTodayLocatorIn
+    | DailyNoteDateLocatorIn,
+    Field(discriminator="kind"),
+]
+
+
+class ResourceLocatorResolveRequest(BaseModel):
+    locators: list[ResourceLocatorIn] = Field(min_length=1, max_length=50)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ResourceLocatorResolutionOut(BaseModel):
+    locator: ResourceLocatorIn
+    resource_item: ResourceItemOut = Field(
+        validation_alias=AliasChoices("resource_item", "resourceItem"),
+        serialization_alias="resourceItem",
+    )
+    canonical_href: str | None = Field(
+        None,
+        validation_alias=AliasChoices("canonical_href", "canonicalHref"),
+        serialization_alias="canonicalHref",
+    )
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class ResourceLocatorResolveResponse(BaseModel):
+    resolutions: list[ResourceLocatorResolutionOut]
 
     model_config = ConfigDict(populate_by_name=True)
 

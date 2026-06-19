@@ -114,18 +114,18 @@ export async function loadWorkspaceBootstrap(androidShell: boolean): Promise<{
   if (urlSeed) {
     resources[urlSeed.cacheKey] = urlSeed.data;
   }
-  const seededResourceKeys = new Set(
-    urlSeed ? [resolvePaneRouteIdentity(initialHref).resourceKey] : [],
+  const seededRouteKeys = new Set(
+    urlSeed ? [resolvePaneRouteIdentity(initialHref).routeKey] : [],
   );
   const extraHrefs = getWorkspacePrimaryPanes(initialState)
     .filter((pane) => pane.visibility === "visible")
     .map((pane) => pane.href)
     .filter((href) => {
-      const resourceKey = resolvePaneRouteIdentity(href).resourceKey;
-      if (seededResourceKeys.has(resourceKey)) {
+      const routeKey = resolvePaneRouteIdentity(href).routeKey;
+      if (seededRouteKeys.has(routeKey)) {
         return false;
       }
-      seededResourceKeys.add(resourceKey);
+      seededRouteKeys.add(routeKey);
       return true;
     });
   for (const seed of await Promise.all(extraHrefs.map(seedPane))) {

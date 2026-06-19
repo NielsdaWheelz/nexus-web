@@ -8,13 +8,13 @@ import {
   type WorkspaceState,
 } from "@/lib/workspace/schema";
 import {
+  resolvePaneRouteKey,
   resolveWorkspacePaneTitle,
   useWorkspaceStore,
   WorkspaceStoreProvider,
   type WorkspacePaneTitleRecord,
   type WorkspacePaneTitleSource,
 } from "@/lib/workspace/store";
-import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import type { WorkspacePrimaryMetrics } from "@/lib/workspace/paneSizing";
 
 const workspacePrimaryMetrics: WorkspacePrimaryMetrics = {
@@ -163,7 +163,7 @@ function titleRecord(
   return {
     title,
     source,
-    resourceKey: resolvePaneRouteIdentity(href).resourceKey,
+    routeKey: resolvePaneRouteKey(href),
   };
 }
 
@@ -221,7 +221,7 @@ describe("WorkspaceStoreProvider", () => {
     flushWorkspaceSession();
   });
 
-  it("reuses an existing resource pane instead of duplicating it", async () => {
+  it("opens distinct route instances instead of deduping by unresolved resource", async () => {
     const workspace = await mountWorkspaceStore("/media/11111111-1111-4111-8111-111111111111");
 
     act(() => {
@@ -237,8 +237,8 @@ describe("WorkspaceStoreProvider", () => {
     });
 
     await waitFor(() => {
-      expect(primaryPanes(workspace().state)).toHaveLength(2);
-      expect(workspace().state.activePrimaryPaneId).toBe(conversationPaneId);
+      expect(primaryPanes(workspace().state)).toHaveLength(3);
+      expect(workspace().state.activePrimaryPaneId).not.toBe(conversationPaneId);
       expect(activeHref(workspace())).toBe("/conversations/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa?run=run-new");
     });
     flushWorkspaceSession();
@@ -307,7 +307,7 @@ describe("WorkspaceStoreProvider", () => {
     flushWorkspaceSession();
   });
 
-  it("records pane-local history when duplicate opens retarget an existing pane", async () => {
+  it("opens same-resource location routes as separate route instances", async () => {
     const workspace = await mountWorkspaceStore("/media/11111111-1111-4111-8111-111111111111");
 
     act(() => {
@@ -315,10 +315,13 @@ describe("WorkspaceStoreProvider", () => {
     });
 
     await waitFor(() => {
-      expect(primaryPanes(workspace().state)).toHaveLength(1);
-      expect(primaryPanes(workspace().state)[0]?.href).toBe("/media/11111111-1111-4111-8111-111111111111?loc=chapter-2");
-      expect(primaryPanes(workspace().state)[0]?.history).toEqual({
-        back: ["/media/11111111-1111-4111-8111-111111111111"],
+      expect(primaryPanes(workspace().state)).toHaveLength(2);
+      expect(activeHref(workspace())).toBe("/media/11111111-1111-4111-8111-111111111111?loc=chapter-2");
+      expect(
+        primaryPanes(workspace().state).find((pane) => pane.href.endsWith("?loc=chapter-2"))
+          ?.history,
+      ).toEqual({
+        back: [],
         forward: [],
       });
     });
@@ -342,7 +345,7 @@ describe("WorkspaceStoreProvider", () => {
     flushWorkspaceSession();
   });
 
-  it("preserves resized width when duplicate opens reuse a resource pane", async () => {
+  it("uses default width when opening a same-resource location route instance", async () => {
     const workspace = await mountWorkspaceStore("/media/11111111-1111-4111-8111-111111111111");
     const paneId = workspace().state.activePrimaryPaneId;
 
@@ -358,10 +361,14 @@ describe("WorkspaceStoreProvider", () => {
     });
 
     await waitFor(() => {
-      expect(primaryPanes(workspace().state)).toHaveLength(1);
+      expect(primaryPanes(workspace().state)).toHaveLength(2);
       expect(primaryPanes(workspace().state)[0]).toMatchObject({
-        href: "/media/11111111-1111-4111-8111-111111111111?loc=chapter-2",
+        href: "/media/11111111-1111-4111-8111-111111111111",
         primaryWidthPx: 900,
+      });
+      expect(primaryPanes(workspace().state)[1]).toMatchObject({
+        href: "/media/11111111-1111-4111-8111-111111111111?loc=chapter-2",
+        primaryWidthPx: workspacePrimaryMetrics.primaryDefaultWidthPx,
       });
     });
     flushWorkspaceSession();
@@ -753,13 +760,13 @@ describe("WorkspaceStoreProvider", () => {
     flushWorkspaceSession();
   });
 
-  it("publishes runtime titles and keeps them across same-resource location changes", async () => {
+  it("clears runtime titles across route-instance location changes", async () => {
     const workspace = await mountWorkspaceStore("/media/11111111-1111-4111-8111-111111111111");
     const paneId = workspace().state.activePrimaryPaneId;
-    const resourceKey = resolvePaneRouteIdentity("/media/11111111-1111-4111-8111-111111111111").resourceKey;
+    const routeKey = resolvePaneRouteKey("/media/11111111-1111-4111-8111-111111111111");
 
     act(() => {
-      workspace().publishPaneTitle({ paneId, resourceKey, title: "My Book" });
+      workspace().publishPaneTitle({ paneId, routeKey, title: "My Book" });
     });
     await waitFor(() => {
       expect(workspace().runtimeTitleByPaneId.get(paneId)?.title).toBe("My Book");
@@ -770,7 +777,7 @@ describe("WorkspaceStoreProvider", () => {
     });
     await waitFor(() => {
       expect(primaryPanes(workspace().state)[0]?.href).toBe("/media/11111111-1111-4111-8111-111111111111?loc=chapter-2");
-      expect(workspace().runtimeTitleByPaneId.get(paneId)?.title).toBe("My Book");
+      expect(workspace().runtimeTitleByPaneId.has(paneId)).toBe(false);
     });
     flushWorkspaceSession();
   });
@@ -778,10 +785,10 @@ describe("WorkspaceStoreProvider", () => {
   it("clears runtime titles when the pane navigates to a different resource", async () => {
     const workspace = await mountWorkspaceStore("/media/11111111-1111-4111-8111-111111111111");
     const paneId = workspace().state.activePrimaryPaneId;
-    const resourceKey = resolvePaneRouteIdentity("/media/11111111-1111-4111-8111-111111111111").resourceKey;
+    const routeKey = resolvePaneRouteKey("/media/11111111-1111-4111-8111-111111111111");
 
     act(() => {
-      workspace().publishPaneTitle({ paneId, resourceKey, title: "My Book" });
+      workspace().publishPaneTitle({ paneId, routeKey, title: "My Book" });
     });
     await waitFor(() => {
       expect(workspace().runtimeTitleByPaneId.get(paneId)?.title).toBe("My Book");
@@ -799,13 +806,13 @@ describe("WorkspaceStoreProvider", () => {
   it("ignores stale runtime title publishes from a previous resource", async () => {
     const workspace = await mountWorkspaceStore("/media/11111111-1111-4111-8111-111111111111");
     const paneId = workspace().state.activePrimaryPaneId;
-    const oldResourceKey = resolvePaneRouteIdentity("/media/11111111-1111-4111-8111-111111111111").resourceKey;
+    const oldRouteKey = resolvePaneRouteKey("/media/11111111-1111-4111-8111-111111111111");
 
     act(() => {
       workspace().navigatePane(paneId, "/media/22222222-2222-4222-8222-222222222222");
       workspace().publishPaneTitle({
         paneId,
-        resourceKey: oldResourceKey,
+        routeKey: oldRouteKey,
         title: "Old Book",
       });
     });
@@ -843,9 +850,9 @@ describe("WorkspaceStoreProvider", () => {
     });
 
     const paneId = workspace().state.activePrimaryPaneId;
-    const resourceKey = resolvePaneRouteIdentity("/media/11111111-1111-4111-8111-111111111111").resourceKey;
+    const routeKey = resolvePaneRouteKey("/media/11111111-1111-4111-8111-111111111111");
     act(() => {
-      workspace().publishPaneTitle({ paneId, resourceKey, title: "Runtime Title" });
+      workspace().publishPaneTitle({ paneId, routeKey, title: "Runtime Title" });
     });
 
     await waitFor(() => {
@@ -882,7 +889,7 @@ describe("WorkspaceStoreProvider", () => {
     flushWorkspaceSession();
   });
 
-  it("applies the latest title hint when duplicate opens reuse one resource pane", async () => {
+  it("applies the latest title hint to the opened route instance", async () => {
     const workspace = await mountWorkspaceStore("/libraries");
 
     act(() => {
@@ -894,7 +901,7 @@ describe("WorkspaceStoreProvider", () => {
     });
 
     await waitFor(() => {
-      expect(primaryPanes(workspace().state)).toHaveLength(2);
+      expect(primaryPanes(workspace().state)).toHaveLength(3);
       const activePane = primaryPanes(workspace().state).find(
         (pane) => pane.id === workspace().state.activePrimaryPaneId,
       );

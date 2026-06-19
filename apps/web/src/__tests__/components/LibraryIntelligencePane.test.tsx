@@ -340,8 +340,7 @@ function renderPaneAt(href: string) {
       paneId="pane-library"
       href={href}
       routeId={identity.routeId}
-      resourceRef={identity.resourceRef}
-      resourceKey={identity.resourceKey}
+      routeKey={identity.routeKey}
       pathParams={{ id: LIBRARY_ID }}
       canGoBack={false}
       canGoForward={false}

@@ -63,9 +63,15 @@ describe("notes api", () => {
         throw new Error(`Unexpected fetch call: ${url.pathname}`);
       });
 
-    await expect(fetchDailyNotePage("2026-05-06")).resolves.toMatchObject({
+    await expect(
+      fetchDailyNotePage("2026-05-06", { timeZone: "America/Los_Angeles" }),
+    ).resolves.toMatchObject({
       id: "page-today",
     });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/notes/daily/2026-05-06?time_zone=America%2FLos_Angeles",
+      expect.objectContaining({ cache: "no-store" }),
+    );
     await expect(
       quickCaptureDailyNote({
         localDate: "2026-05-06",

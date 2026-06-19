@@ -211,7 +211,7 @@ export function normalizePageSummary(
   };
 }
 
-function normalizeResourceItem(raw: Record<string, unknown>): ResourceItem {
+export function normalizeResourceItem(raw: Record<string, unknown>): ResourceItem {
   const capabilities = requiredRecord(
     raw.capabilities,
     "resource capabilities",
@@ -353,8 +353,11 @@ export async function createNotePage(input: {
 
 export async function fetchDailyNotePage(
   localDate = todayLocalDate(),
+  options: { timeZone?: string } = {},
 ): Promise<NotePage> {
-  const params = new URLSearchParams({ time_zone: browserTimeZone() });
+  const params = new URLSearchParams({
+    time_zone: options.timeZone ?? browserTimeZone(),
+  });
   const response = await apiFetch<ApiResponse>(
     `/api/notes/daily/${localDate}?${params}`,
     {

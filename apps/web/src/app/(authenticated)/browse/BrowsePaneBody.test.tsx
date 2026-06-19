@@ -250,8 +250,7 @@ function renderBrowse(
         paneId="pane-1"
         href={href}
         routeId="browse"
-        resourceRef={identity.resourceRef}
-        resourceKey={identity.resourceKey}
+        routeKey={identity.routeKey}
         canGoBack={false}
         canGoForward={false}
         onNavigatePane={vi.fn()}

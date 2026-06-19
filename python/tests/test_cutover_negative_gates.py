@@ -104,6 +104,7 @@ def _filtered(pattern: str, *roots: Path, exclude: re.Pattern[str] | None = None
 # ``*.test.{ts,tsx}`` files (which DO live under apps/web/src) need excluding.
 _FRONTEND_TEST = re.compile(r"\.test\.")
 _FRONTEND_TEST_OR_READER_FIXTURE = re.compile(r"\.test\.|/apps/web/src/lib/reader/__fixtures__/")
+_PANE_ROUTE_PSEUDO_RESOURCE_SCHEMES = ("author", "author_handle", "daily", "daily_note")
 
 
 def _fmt(hits: list[_Hit]) -> str:
@@ -544,6 +545,92 @@ def test_library_intelligence_line_count_within_budget():
 def _excluding(hits: list[_Hit], *suffixes: str) -> list[_Hit]:
     """Drop hits whose path ends with one of ``suffixes`` (the gate's allowed owners)."""
     return [hit for hit in hits if not hit.path.endswith(suffixes)]
+
+
+# =============================================================================
+# Pane route resource identity cutover — route locators, not pseudo refs
+# =============================================================================
+
+
+def test_pane_route_pseudo_resource_schemes_absent_from_resource_ref_registries():
+    literal_pattern = "|".join(
+        rf"['\"]{re.escape(scheme)}['\"]" for scheme in _PANE_ROUTE_PSEUDO_RESOURCE_SCHEMES
+    )
+    registry_files = [
+        _PY_ROOT / "services" / "resource_graph" / "refs.py",
+        _PY_ROOT / "services" / "resource_items" / "capabilities.py",
+        _WEB_ROOT / "lib" / "resourceGraph" / "resourceRef.ts",
+        _WEB_ROOT / "lib" / "resources" / "resourceKind.ts",
+    ]
+    hits = _grep(literal_pattern, *registry_files)
+    assert not hits, f"author/daily pseudo schemes entered ResourceRef registries:\n{_fmt(hits)}"
+
+
+def test_pane_route_pseudo_resource_schemes_absent_from_scheme_constraints():
+    models = (_PY_ROOT / "db" / "models.py").read_text(encoding="utf-8")
+    hits: list[_Hit] = []
+    literal_pattern = "|".join(
+        rf"['\"]{re.escape(scheme)}['\"]" for scheme in _PANE_ROUTE_PSEUDO_RESOURCE_SCHEMES
+    )
+    for match in re.finditer(r"CheckConstraint\((?P<body>[\s\S]*?)name=", models):
+        body = match.group("body")
+        if re.search(
+            r"\b(resource_scheme|surface_scheme|source_scheme|target_scheme|subject_scheme)\b",
+            body,
+        ) and re.search(literal_pattern, body):
+            hits.append(
+                _Hit(
+                    (_PY_ROOT / "db" / "models.py").as_posix(),
+                    models[: match.start()].count("\n") + 1,
+                    body.strip(),
+                )
+            )
+    assert not hits, f"author/daily pseudo schemes entered ResourceRef CHECKs:\n{_fmt(hits)}"
+
+
+def test_pane_route_pseudo_resource_refs_not_constructed_as_resource_identity():
+    pseudo_ref_pattern = (
+        r"ResourceRef\(\s*scheme\s*=\s*['\"](?:author|author_handle|daily|daily_note)['\"]|"
+        r"\b(?:parse_resource_ref|assert_resource_ref)\(\s*['\"](?:author|daily|daily_note):|"
+        r"\bparseResourceRef\(\s*[`'\"](?:author|daily|daily_note):|"
+        r"\bformatResourceRef\(\s*\{[^}\n]*scheme\s*:\s*['\"](?:author|author_handle|daily|daily_note)['\"]|"
+        r"\bresourceRef\s*[:=]\s*[`'\"](?:author|daily|daily_note):"
+    )
+    hits = _filtered(
+        pseudo_ref_pattern,
+        _PY_ROOT,
+        _WEB_ROOT,
+        _SCRIPTS_ROOT,
+        exclude=_FRONTEND_TEST,
+    )
+    assert not hits, f"author/daily pseudo refs used as ResourceRef identity:\n{_fmt(hits)}"
+
+
+def test_pane_route_model_does_not_own_semantic_resource_refs():
+    path = _WEB_ROOT / "lib" / "panes" / "paneRouteModel.ts"
+    hits = _grep(r"\b(resourceRef|canonicalResourceRef|parseResourceRef|ResourceScheme)\b", path)
+    assert not hits, (
+        "paneRouteModel must stay URL-only; route-to-resource semantics belong "
+        f"to pane resource locators and ResourceItemOut:\n{_fmt(hits)}"
+    )
+
+
+def test_pane_route_identity_does_not_expose_legacy_resource_fields():
+    path = _WEB_ROOT / "lib" / "panes" / "paneIdentity.ts"
+    hits = _grep(r"\b(resourceRef|resourceKey)\b", path)
+    assert not hits, (
+        "paneIdentity must expose routeKey plus resourceLocator only; resolved "
+        f"ResourceItemOut owns resourceRef/resourceKey:\n{_fmt(hits)}"
+    )
+
+
+def test_pane_runtime_provider_does_not_accept_legacy_resource_props():
+    path = _WEB_ROOT / "lib" / "panes" / "paneRuntime.tsx"
+    hits = _grep(r"\b(?:resourceRef|resourceKey)\?:|@deprecated.*resource", path)
+    assert not hits, (
+        "PaneRuntimeProvider must not accept legacy resource identity props; "
+        f"resource identity is derived from resourceItem only:\n{_fmt(hits)}"
+    )
 
 
 # =============================================================================

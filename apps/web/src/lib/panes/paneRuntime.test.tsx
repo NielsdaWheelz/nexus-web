@@ -11,10 +11,8 @@ import {
 import type { PaneViewTransitionIntent } from "@/lib/ui/viewTransitions";
 
 const MEDIA_ID_1 = "11111111-1111-4111-8111-111111111111";
-const MEDIA_ID_2 = "22222222-2222-4222-8222-222222222222";
 const LIBRARY_ID = "33333333-3333-4333-8333-333333333333";
 const MEDIA_HREF_1 = `/media/${MEDIA_ID_1}`;
-const MEDIA_HREF_2 = `/media/${MEDIA_ID_2}`;
 const LIBRARY_HREF = `/libraries/${LIBRARY_ID}`;
 
 function Publisher({ title }: { title: string }) {
@@ -186,7 +184,7 @@ function runtime(
   href: string,
   onSetPaneTitle: (input: {
     paneId: string;
-    resourceKey: string;
+    routeKey: string;
     title: string | null;
   }) => void,
 ) {
@@ -196,8 +194,7 @@ function runtime(
       paneId="pane-1"
       href={href}
       routeId={identity.routeId}
-      resourceRef={identity.resourceRef}
-      resourceKey={identity.resourceKey}
+      routeKey={identity.routeKey}
       {...defaultNavigationProps}
       onNavigatePane={vi.fn()}
       onReplacePane={vi.fn()}
@@ -210,30 +207,31 @@ function runtime(
 }
 
 describe("useSetPaneTitle", () => {
-  it("does not republish the same title for the same resource", async () => {
+  it("does not republish the same title for the same route key", async () => {
     const onSetPaneTitle = vi.fn();
     const { rerender } = render(runtime(MEDIA_HREF_1, onSetPaneTitle));
 
     await waitFor(() => expect(onSetPaneTitle).toHaveBeenCalledTimes(1));
 
-    rerender(runtime(`${MEDIA_HREF_1}?loc=chapter-2`, onSetPaneTitle));
+    rerender(runtime(MEDIA_HREF_1, onSetPaneTitle));
 
     await new Promise((resolve) => window.setTimeout(resolve, 0));
     expect(onSetPaneTitle).toHaveBeenCalledTimes(1);
   });
 
-  it("publishes again when the resource changes even if the title string matches", async () => {
+  it("publishes again when the route key changes even if the title string matches", async () => {
     const onSetPaneTitle = vi.fn();
     const { rerender } = render(runtime(MEDIA_HREF_1, onSetPaneTitle));
 
     await waitFor(() => expect(onSetPaneTitle).toHaveBeenCalledTimes(1));
 
-    rerender(runtime(MEDIA_HREF_2, onSetPaneTitle));
+    const nextHref = `${MEDIA_HREF_1}?loc=chapter-2`;
+    rerender(runtime(nextHref, onSetPaneTitle));
 
     await waitFor(() => expect(onSetPaneTitle).toHaveBeenCalledTimes(2));
     expect(onSetPaneTitle).toHaveBeenLastCalledWith({
       paneId: "pane-1",
-      resourceKey: resolvePaneRouteIdentity(MEDIA_HREF_2).resourceKey,
+      routeKey: resolvePaneRouteIdentity(nextHref).routeKey,
       title: "Same title",
     });
   });
@@ -253,8 +251,7 @@ describe("PaneRuntimeProvider", () => {
         paneId="pane-1"
         href={LIBRARY_HREF}
         routeId={identity.routeId}
-        resourceRef={identity.resourceRef}
-        resourceKey={identity.resourceKey}
+        routeKey={identity.routeKey}
         {...defaultNavigationProps}
         onNavigatePane={onNavigatePane}
         onReplacePane={onReplacePane}
@@ -282,8 +279,7 @@ describe("PaneRuntimeProvider", () => {
         paneId="pane-1"
         href={LIBRARY_HREF}
         routeId={identity.routeId}
-        resourceRef={identity.resourceRef}
-        resourceKey={identity.resourceKey}
+        routeKey={identity.routeKey}
         {...defaultNavigationProps}
         onNavigatePane={vi.fn()}
         onReplacePane={vi.fn()}
@@ -313,8 +309,7 @@ describe("PaneRuntimeProvider", () => {
         paneId="pane-1"
         href={LIBRARY_HREF}
         routeId={identity.routeId}
-        resourceRef={identity.resourceRef}
-        resourceKey={identity.resourceKey}
+        routeKey={identity.routeKey}
         {...defaultNavigationProps}
         onNavigatePane={vi.fn()}
         onReplacePane={onReplacePane}
@@ -343,8 +338,7 @@ describe("PaneRuntimeProvider", () => {
         paneId="pane-1"
         href={LIBRARY_HREF}
         routeId={identity.routeId}
-        resourceRef={identity.resourceRef}
-        resourceKey={identity.resourceKey}
+        routeKey={identity.routeKey}
         {...defaultNavigationProps}
         onNavigatePane={vi.fn()}
         onReplacePane={onReplacePane}
@@ -372,8 +366,7 @@ describe("PaneRuntimeProvider", () => {
         paneId="pane-1"
         href={LIBRARY_HREF}
         routeId={identity.routeId}
-        resourceRef={identity.resourceRef}
-        resourceKey={identity.resourceKey}
+        routeKey={identity.routeKey}
         canGoBack
         canGoForward
         onGoBackPane={onGoBackPane}
@@ -402,8 +395,7 @@ describe("PaneRuntimeProvider", () => {
       paneId: "pane-1",
       href: LIBRARY_HREF,
       routeId: identity.routeId,
-      resourceRef: identity.resourceRef,
-      resourceKey: identity.resourceKey,
+      routeKey: identity.routeKey,
       ...defaultNavigationProps,
       onNavigatePane: vi.fn(),
       onReplacePane: vi.fn(),
@@ -435,8 +427,7 @@ describe("PaneRuntimeProvider", () => {
       paneId: "pane-1",
       href: LIBRARY_HREF,
       routeId: identity.routeId,
-      resourceRef: identity.resourceRef,
-      resourceKey: identity.resourceKey,
+      routeKey: identity.routeKey,
       onNavigatePane: vi.fn(),
       onReplacePane: vi.fn(),
       onOpenInNewPane: vi.fn(),
@@ -481,7 +472,7 @@ describe("PaneRuntimeProvider", () => {
     expect(onRouter).toHaveBeenCalledTimes(1);
   });
 
-  it("publishes pane layout with pane and resource identity", async () => {
+  it("publishes pane layout with pane and route identity", async () => {
     const onSetPaneLayout = vi.fn();
     const identity = resolvePaneRouteIdentity(LIBRARY_HREF);
 
@@ -490,8 +481,7 @@ describe("PaneRuntimeProvider", () => {
         paneId="pane-1"
         href={LIBRARY_HREF}
         routeId={identity.routeId}
-        resourceRef={identity.resourceRef}
-        resourceKey={identity.resourceKey}
+        routeKey={identity.routeKey}
         {...defaultNavigationProps}
         onNavigatePane={vi.fn()}
         onReplacePane={vi.fn()}
@@ -505,7 +495,7 @@ describe("PaneRuntimeProvider", () => {
     await waitFor(() => {
       expect(onSetPaneLayout).toHaveBeenCalledWith({
         paneId: "pane-1",
-        resourceKey: identity.resourceKey,
+        routeKey: identity.routeKey,
         layout: {
           primaryWidth: { kind: "intrinsic", widthPx: 640 },
         },
@@ -524,8 +514,7 @@ describe("PaneRuntimeProvider", () => {
         paneId="pane-1"
         href={MEDIA_HREF_1}
         routeId={identity.routeId}
-        resourceRef={identity.resourceRef}
-        resourceKey={identity.resourceKey}
+        routeKey={identity.routeKey}
         {...defaultNavigationProps}
         onNavigatePane={vi.fn()}
         onReplacePane={vi.fn()}
@@ -568,8 +557,7 @@ describe("PaneRuntimeProvider", () => {
         paneId="pane-1"
         href={LIBRARY_HREF}
         routeId={identity.routeId}
-        resourceRef={identity.resourceRef}
-        resourceKey={identity.resourceKey}
+        routeKey={identity.routeKey}
         {...defaultNavigationProps}
         onNavigatePane={vi.fn()}
         onReplacePane={vi.fn()}
@@ -581,6 +569,11 @@ describe("PaneRuntimeProvider", () => {
 
     await waitFor(() => expect(onValue).toHaveBeenCalled());
     const runtimeValue = onValue.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    expect(runtimeValue.routeKey).toBe(identity.routeKey);
+    expect(runtimeValue.resourceItem).toBeNull();
+    expect(runtimeValue.resourceRef).toBeNull();
+    expect(runtimeValue.resourceKey).toBeNull();
+    expect(runtimeValue.resourceStatus).toBe("none");
     expect(runtimeValue[`setPane${"Sizing"}`]).toBeUndefined();
     expect(runtimeValue.setPaneLayout).toEqual(expect.any(Function));
     expect(runtimeValue.requestSecondarySurface).toEqual(expect.any(Function));

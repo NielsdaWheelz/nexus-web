@@ -400,17 +400,14 @@ function renderPane(
   } = {},
 ) {
   const href = options.href ?? "/conversations/conversation-1";
-  const resourceKey = resolvePaneRouteIdentity(href).resourceKey;
+  const routeKey = resolvePaneRouteIdentity(href).routeKey;
   const onReplacePane = options.onReplacePane ?? vi.fn();
   render(
     <PaneRuntimeProvider
       paneId="pane-1"
       href={href}
       routeId={href === "/conversations/new" ? "conversation-new" : "conversation"}
-      resourceRef={
-        href === "/conversations/new" ? null : "conversation-1"
-      }
-      resourceKey={resourceKey}
+      routeKey={routeKey}
       canGoBack={false}
       canGoForward={false}
       onGoBackPane={vi.fn()}
@@ -1057,9 +1054,8 @@ describe("Conversation", () => {
         paneId="pane-1"
         href="/conversations/conversation-1"
         routeId="conversation"
-        resourceRef="conversation-1"
-        resourceKey={
-          resolvePaneRouteIdentity("/conversations/conversation-1").resourceKey
+        routeKey={
+          resolvePaneRouteIdentity("/conversations/conversation-1").routeKey
         }
         canGoBack={false}
         canGoForward={false}

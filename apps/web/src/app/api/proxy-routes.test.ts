@@ -2,12 +2,15 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const API_ROUTE_COUNT = 141;
+const API_ROUTE_COUNT = 142;
 const EXTENSION_PROXY_ROUTES = new Set([
   "src/app/api/extension/session/route.ts",
   "src/app/api/media/capture/article/route.ts",
   "src/app/api/media/capture/file/route.ts",
   "src/app/api/media/capture/url/route.ts",
+]);
+const REQUIRED_PROXY_ROUTES = new Set([
+  "src/app/api/resource-items/locators/resolve/route.ts",
 ]);
 // Routes that intentionally are NOT FastAPI proxies. The CSP violation sink must accept
 // unauthenticated browser report POSTs (CSP reports are sent without credentials, including
@@ -26,8 +29,14 @@ function routeFiles(dir: string): string[] {
 describe("BFF API route shape", () => {
   it("keeps API routes as proxy-only entrypoints", () => {
     const routes = routeFiles(join(process.cwd(), "src/app/api")).sort();
+    const relativeRoutes = routes.map((route) =>
+      relative(process.cwd(), route).split(sep).join("/"),
+    );
 
     expect(routes).toHaveLength(API_ROUTE_COUNT);
+    for (const route of REQUIRED_PROXY_ROUTES) {
+      expect(relativeRoutes).toContain(route);
+    }
 
     for (const route of routes) {
       const source = readFileSync(route, "utf8");

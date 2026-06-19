@@ -60,8 +60,7 @@ export function renderHydratedPane({
           paneId={paneId}
           href={href}
           routeId={identity.routeId}
-          resourceRef={identity.resourceRef}
-          resourceKey={identity.resourceKey}
+          routeKey={identity.routeKey}
           secondaryPane={null}
           canGoBack={false}
           canGoForward={false}

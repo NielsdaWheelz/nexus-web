@@ -34,8 +34,7 @@ function StatefulSearchPane({ initialHref }: { initialHref: string }) {
       paneId="pane-1"
       href={href}
       routeId="search"
-      resourceRef={null}
-      resourceKey={resolvePaneRouteIdentity(href).resourceKey}
+      routeKey={resolvePaneRouteIdentity(href).routeKey}
       canGoBack={false}
       canGoForward={false}
       onGoBackPane={vi.fn()}
