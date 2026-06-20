@@ -45,23 +45,34 @@ from nexus.services.resource_graph import highlight_notes as graph_highlight_not
 from nexus.services.resource_graph.cleanup import delete_edges_for_deleted_resource
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_items import versions
+from nexus.services.vault_contracts import (
+    EditableVaultFile,
+    ExistingHighlightFile,
+    ExistingPageFile,
+    NewHighlightFile,
+    NewPageFile,
+    VaultFileParseFailure,
+    format_vault_handle,
+    parse_editable_vault_path,
+    parse_vault_markdown_file,
+)
 from nexus.storage.client import StorageClientBase, get_storage_client
 from nexus.storage.paths import get_file_extension
 
 
-class VaultFile(TypedDict):
+class ProjectedVaultFile(TypedDict):
     path: str
     content: str
 
 
-class VaultConflict(VaultFile):
+class ProjectedVaultConflict(ProjectedVaultFile):
     message: str
 
 
 class VaultSyncResult(TypedDict):
-    files: list[VaultFile]
+    files: list[ProjectedVaultFile]
     delete_paths: list[str]
-    conflicts: list[VaultConflict]
+    conflicts: list[ProjectedVaultConflict]
 
 
 class _ParsedPageBlock(TypedDict):
@@ -114,16 +125,16 @@ def sync_vault(
 ) -> None:
     (vault_dir / "Highlights").mkdir(parents=True, exist_ok=True)
     (vault_dir / "Pages").mkdir(parents=True, exist_ok=True)
-    files: list[VaultFile] = []
+    files: list[EditableVaultFile] = []
     for directory_name in ("Highlights", "Pages"):
         for path in sorted((vault_dir / directory_name).glob("*.md")):
             if path.name.endswith(".conflict.md"):
                 continue
             files.append(
-                {
-                    "path": path.relative_to(vault_dir).as_posix(),
-                    "content": path.read_text(encoding="utf-8"),
-                }
+                EditableVaultFile(
+                    path=parse_editable_vault_path(path.relative_to(vault_dir).as_posix()),
+                    content=path.read_text(encoding="utf-8"),
+                )
             )
 
     result = sync_vault_files(db, viewer_id, files)
@@ -147,7 +158,7 @@ def sync_vault(
         _write_source_files(db, viewer_id, vault_dir, storage_client)
 
 
-def export_vault_files(db: Session, viewer_id: UUID) -> list[VaultFile]:
+def export_vault_files(db: Session, viewer_id: UUID) -> list[ProjectedVaultFile]:
     files = _vault_file_map(db, viewer_id)
     return [{"path": path, "content": files[path]} for path in sorted(files)]
 
@@ -165,29 +176,29 @@ def export_vault_zip(db: Session, viewer_id: UUID) -> bytes:
 def sync_vault_files(
     db: Session,
     viewer_id: UUID,
-    local_files: Sequence[VaultFile],
+    local_files: Sequence[EditableVaultFile],
 ) -> VaultSyncResult:
     delete_paths: list[str] = []
-    conflicts: list[VaultConflict] = []
+    conflicts: list[ProjectedVaultConflict] = []
 
-    for local_file in sorted(local_files, key=lambda item: str(item.get("path", ""))):
-        path = _editable_vault_path(str(local_file.get("path", "")))
-        content = str(local_file.get("content", ""))
-        if len(content.encode("utf-8")) > 1_000_000:
-            raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Vault file is too large")
-
-        metadata, body = _read_frontmatter(content)
-        if path.startswith("Highlights/") and metadata.get("nexus_type") == "highlight":
-            changed, conflict_reason = _sync_highlight_content(db, viewer_id, metadata, body)
-        elif path.startswith("Pages/") and metadata.get("nexus_type") == "page":
-            changed, conflict_reason = _sync_page_content(
-                db, viewer_id, metadata, body, fallback_title=Path(path).stem
+    for local_file in sorted(local_files, key=lambda item: item.path):
+        parsed = parse_vault_markdown_file(local_file)
+        if isinstance(parsed, VaultFileParseFailure):
+            conflicts.append(
+                {
+                    "path": _conflict_path(parsed.path),
+                    "message": parsed.message,
+                    "content": _conflict_markdown(parsed.content, parsed.message),
+                }
             )
+            continue
+
+        path = parsed.path
+        content = parsed.content
+        if isinstance(parsed, (NewHighlightFile, ExistingHighlightFile)):
+            changed, conflict_reason = _sync_highlight_content(db, viewer_id, parsed)
         else:
-            raise ApiError(
-                ApiErrorCode.E_INVALID_REQUEST,
-                "Vault uploads must be highlight or page Markdown files",
-            )
+            changed, conflict_reason = _sync_page_content(db, viewer_id, parsed)
 
         if conflict_reason is not None:
             conflicts.append(
@@ -305,33 +316,27 @@ def _vault_file_map(db: Session, viewer_id: UUID) -> dict[str, str]:
 def _sync_highlight_content(
     db: Session,
     viewer_id: UUID,
-    metadata: dict[str, object],
-    body: str,
+    file: NewHighlightFile | ExistingHighlightFile,
 ) -> tuple[bool, str | None]:
-    highlight_handle = str(metadata.get("highlight_handle") or "")
-    if not highlight_handle:
+    if isinstance(file, NewHighlightFile):
         try:
-            _create_highlight_from_file(db, viewer_id, metadata, body)
+            _create_highlight_from_file(db, viewer_id, file)
             return True, None
         except ApiError as exc:
             db.rollback()
             return False, exc.message
 
-    try:
-        highlight_id = _parse_handle(highlight_handle, "hl")
-    except ApiError as exc:
-        return False, exc.message
-    highlight = db.get(Highlight, highlight_id)
+    highlight = db.get(Highlight, file.highlight_id)
     if highlight is None or highlight.user_id != viewer_id:
         return False, "Highlight does not exist or is not owned by this user"
     if highlight.anchor_kind not in {"fragment_offsets", "pdf_page_geometry"}:
         return False, "Unsupported highlight anchor kind"
 
     server_updated_at = _highlight_server_updated_at(highlight)
-    if str(metadata.get("server_updated_at") or "") != server_updated_at:
+    if file.server_updated_at != server_updated_at:
         return False, "Server highlight changed since this file was exported"
 
-    if _as_bool(metadata.get("deleted")):
+    if file.deleted:
         try:
             _delete_highlight(db, highlight)
             db.commit()
@@ -341,7 +346,7 @@ def _sync_highlight_content(
             return False, exc.message
 
     try:
-        _apply_highlight_changes(db, viewer_id, highlight, metadata, body)
+        _apply_highlight_changes(db, viewer_id, highlight, file)
         db.commit()
         return True, None
     except ApiError as exc:
@@ -383,13 +388,9 @@ def _fragment_highlight_span_conflict_exists(
     return query.first() is not None
 
 
-def _create_highlight_from_file(
-    db: Session, viewer_id: UUID, metadata: dict[str, object], body: str
-) -> None:
-    media_handle = str(metadata.get("media_handle") or "")
-    media_id = _parse_handle(media_handle, "med")
-    media = db.get(Media, media_id)
-    if media is None or not can_read_media(db, viewer_id, media_id):
+def _create_highlight_from_file(db: Session, viewer_id: UUID, file: NewHighlightFile) -> None:
+    media = db.get(Media, file.media_id)
+    if media is None or not can_read_media(db, viewer_id, file.media_id):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
     if _processing_status_value(media.processing_status) not in {
         "ready_for_reading",
@@ -398,15 +399,22 @@ def _create_highlight_from_file(
     }:
         raise ApiError(ApiErrorCode.E_MEDIA_NOT_READY, "Media not ready")
 
-    color = str(metadata.get("color") or "yellow")
     if media.kind == "pdf":
         raise ApiError(
             ApiErrorCode.E_INVALID_REQUEST,
             "Vault highlight creation only supports fragment_offsets selectors",
         )
-    highlight = _create_fragment_highlight(db, viewer_id, media, metadata, color)
+    highlight = _create_fragment_highlight(
+        db,
+        viewer_id,
+        media,
+        fragment_id=file.fragment_id,
+        start_offset=file.start_offset,
+        end_offset=file.end_offset,
+        color=file.color,
+    )
 
-    note = body.strip()
+    note = file.body.strip()
     if note:
         _save_highlight_note_body_from_vault(
             db,
@@ -423,16 +431,14 @@ def _apply_highlight_changes(
     db: Session,
     viewer_id: UUID,
     highlight: Highlight,
-    metadata: dict[str, object],
-    body: str,
+    file: ExistingHighlightFile,
 ) -> None:
-    if str(metadata.get("color") or highlight.color) != highlight.color:
-        highlight.color = str(metadata.get("color"))
+    if file.color != highlight.color:
+        highlight.color = file.color
         highlight.updated_at = func.now()
 
-    selector_kind = str(metadata.get("selector_kind") or "")
     if highlight.anchor_kind == "fragment_offsets":
-        if selector_kind != "fragment_offsets":
+        if file.selector_kind != "fragment_offsets":
             raise ApiError(
                 ApiErrorCode.E_INVALID_REQUEST,
                 "Fragment highlights require fragment_offsets selectors",
@@ -440,8 +446,17 @@ def _apply_highlight_changes(
         anchor = highlight.fragment_anchor
         if anchor is None:
             raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Fragment anchor is missing")
+        if file.fragment_id is None or file.start_offset is None or file.end_offset is None:
+            raise ApiError(
+                ApiErrorCode.E_INVALID_REQUEST,
+                "Fragment highlights require fragment_offsets selectors",
+            )
         fragment_id, start_offset, end_offset = _resolve_fragment_selector(
-            db, _highlight_media_id_required(highlight), metadata
+            db,
+            _highlight_media_id_required(highlight),
+            file.fragment_id,
+            file.start_offset,
+            file.end_offset,
         )
         if (
             anchor.fragment_id != fragment_id
@@ -477,30 +492,34 @@ def _apply_highlight_changes(
             anchor.start_offset = start_offset
             anchor.end_offset = end_offset
     elif highlight.anchor_kind == "pdf_page_geometry":
-        if selector_kind != "pdf_page_geometry":
+        if file.selector_kind != "pdf_page_geometry" or file.page is None:
             raise ApiError(
                 ApiErrorCode.E_INVALID_REQUEST,
                 "PDF geometry highlights require pdf_page_geometry selectors",
             )
         server_metadata = _metadata_for_highlight(highlight)
-        if str(metadata.get("exact") or "") != highlight.exact or metadata.get(
-            "page"
-        ) != server_metadata.get("page"):
+        if file.exact != highlight.exact or file.page != server_metadata.get("page"):
             raise ApiError(
                 ApiErrorCode.E_INVALID_REQUEST,
                 "PDF geometry highlight selectors must be edited in the reader",
             )
     else:
         raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Unsupported highlight anchor kind")
-    note = body.strip()
+    note = file.body.strip()
     _sync_highlight_note_body_from_vault(db, viewer_id, highlight.id, note)
     db.flush()
 
 
 def _create_fragment_highlight(
-    db: Session, viewer_id: UUID, media: Media, metadata: dict[str, object], color: str
+    db: Session,
+    viewer_id: UUID,
+    media: Media,
+    *,
+    fragment_id: UUID,
+    start_offset: int,
+    end_offset: int,
+    color: str,
 ) -> Highlight:
-    fragment_id, start_offset, end_offset = _resolve_fragment_selector(db, media.id, metadata)
     fragment = db.get(Fragment, fragment_id)
     if fragment is None:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Fragment not found")
@@ -546,23 +565,15 @@ def _create_fragment_highlight(
 def _sync_page_content(
     db: Session,
     viewer_id: UUID,
-    metadata: dict[str, object],
-    body: str,
-    *,
-    fallback_title: str,
+    file: NewPageFile | ExistingPageFile,
 ) -> tuple[bool, str | None]:
-    page_handle = str(metadata.get("page_handle") or "")
-    title = str(metadata.get("title") or fallback_title).strip()
-    if not title:
-        return False, "Page title is required"
-
-    if not page_handle:
-        page = Page(user_id=viewer_id, title=title[:200])
+    if isinstance(file, NewPageFile):
+        page = Page(user_id=viewer_id, title=file.title[:200])
         db.add(page)
         db.flush()
         _ensure_page_versions(db, viewer_id, page.id)
         body_changed, conflict_reason, changed_block_ids = _apply_page_body_from_vault(
-            db, viewer_id, page, body
+            db, viewer_id, page, file.body
         )
         if conflict_reason is not None:
             db.rollback()
@@ -572,26 +583,22 @@ def _sync_page_content(
         db.commit()
         return True, None
 
-    try:
-        page_id = _parse_handle(page_handle, "page")
-    except ApiError as exc:
-        return False, exc.message
-    page = db.get(Page, page_id)
+    page = db.get(Page, file.page_id)
     if page is None or page.user_id != viewer_id:
         return False, "Page does not exist or is not owned by this user"
 
-    if str(metadata.get("server_updated_at") or "") != page.updated_at.isoformat():
+    if file.server_updated_at != page.updated_at.isoformat():
         return False, "Server page changed since this file was exported"
-    if _as_bool(metadata.get("deleted")):
+    if file.deleted:
         delete_page(db, viewer_id, page.id)
         return True, None
 
     body_changed, conflict_reason, changed_block_ids = _apply_page_body_from_vault(
-        db, viewer_id, page, body
+        db, viewer_id, page, file.body
     )
     if conflict_reason is not None:
         return False, conflict_reason
-    next_title = title[:200]
+    next_title = file.title[:200]
     title_changed = page.title != next_title
     if title_changed:
         page.title = next_title
@@ -993,18 +1000,19 @@ def _flatten_page_nodes(
 def _parse_marked_page_blocks(body: str) -> list[_ParsedPageBlock]:
     lines = body.replace("\r\n", "\n").replace("\r", "\n").split("\n")
     parsed_blocks: list[_ParsedPageBlock] = []
-    current: dict[str, object] | None = None
+    current_id: UUID | None = None
+    current_parent_id: UUID | None = None
     current_body_lines: list[str] = []
     saw_marker = False
     prefix_lines: list[str] = []
 
     def flush_current() -> None:
-        if current is None:
+        if current_id is None:
             return
         parsed_blocks.append(
             {
-                "id": current["id"],
-                "parent_id": current["parent_id"],
+                "id": current_id,
+                "parent_id": current_parent_id,
                 "body": "\n".join(current_body_lines).strip(),
             }
         )
@@ -1013,24 +1021,22 @@ def _parse_marked_page_blocks(body: str) -> list[_ParsedPageBlock]:
     for line in lines:
         match = _BLOCK_MARKER_RE.match(line.strip())
         if match is None:
-            if current is None:
+            if current_id is None:
                 prefix_lines.append(line)
             else:
                 current_body_lines.append(line)
             continue
 
         saw_marker = True
-        if current is None and "\n".join(prefix_lines).strip():
+        if current_id is None and "\n".join(prefix_lines).strip():
             raise ApiError(
                 ApiErrorCode.E_INVALID_REQUEST,
                 "Vault page block text must appear after a block marker",
             )
         flush_current()
         parent_raw = match.group(2)
-        current = {
-            "id": UUID(match.group(1)),
-            "parent_id": UUID(parent_raw) if parent_raw else None,
-        }
+        current_id = UUID(match.group(1))
+        current_parent_id = UUID(parent_raw) if parent_raw else None
 
     flush_current()
     return parsed_blocks if saw_marker else []
@@ -1220,27 +1226,15 @@ def _metadata_for_highlight(highlight: Highlight) -> dict[str, object]:
 
 
 def _resolve_fragment_selector(
-    db: Session, media_id: UUID, metadata: dict[str, object]
+    db: Session,
+    media_id: UUID,
+    fragment_id: UUID,
+    start_offset: int,
+    end_offset: int,
 ) -> tuple[UUID, int, int]:
-    selector_kind = str(metadata.get("selector_kind") or "")
-    if selector_kind != "fragment_offsets":
-        raise ApiError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            "Fragment highlights require fragment_offsets selectors",
-        )
-
-    fragment_handle = str(metadata.get("fragment_handle") or "")
-    fragment_id = _parse_handle(fragment_handle, "frag")
     fragment = db.get(Fragment, fragment_id)
     if fragment is None or fragment.media_id != media_id:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Fragment not found")
-    start_offset = metadata.get("start_offset")
-    end_offset = metadata.get("end_offset")
-    if not isinstance(start_offset, int) or not isinstance(end_offset, int):
-        raise ApiError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            "Fragment highlights require integer start_offset and end_offset values",
-        )
     return fragment_id, start_offset, end_offset
 
 
@@ -1352,39 +1346,6 @@ def _joined_fragment_html(fragments: list[Fragment]) -> str:
     return "\n".join(fragment.html_sanitized for fragment in fragments)
 
 
-def _read_frontmatter(text_content: str) -> tuple[dict[str, object], str]:
-    if not text_content.startswith("---\n"):
-        return {}, text_content
-    end = text_content.find("\n---\n", 4)
-    if end == -1:
-        return {}, text_content
-    metadata: dict[str, object] = {}
-    lines = text_content[4:end].splitlines()
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-        i += 1
-        if not line.strip():
-            continue
-        key, raw_value = line.split(":", 1)
-        value = raw_value.strip()
-        if value == "|":
-            block_lines = []
-            while i < len(lines) and (lines[i].startswith("  ") or not lines[i].strip()):
-                block_lines.append(lines[i][2:] if lines[i].startswith("  ") else "")
-                i += 1
-            metadata[key] = "\n".join(block_lines).rstrip("\n")
-        elif value in {"true", "false"}:
-            metadata[key] = value == "true"
-        elif value.startswith('"'):
-            metadata[key] = json.loads(value)
-        elif re.fullmatch(r"-?\d+", value):
-            metadata[key] = int(value)
-        else:
-            metadata[key] = value
-    return metadata, text_content[end + 5 :]
-
-
 def _write_frontmatter(metadata: dict[str, object], body: str) -> str:
     lines = ["---"]
     for key, value in metadata.items():
@@ -1403,21 +1364,6 @@ def _write_frontmatter(metadata: dict[str, object], body: str) -> str:
             lines.append(f"{key}: {json.dumps(str(value))}")
     lines.extend(["---", body.rstrip(), ""])
     return "\n".join(lines)
-
-
-def _editable_vault_path(raw_path: str) -> str:
-    path = raw_path.replace("\\", "/").strip()
-    if (
-        path.startswith("/")
-        or path.endswith(".conflict.md")
-        or not re.fullmatch(r"(Highlights|Pages)/[^/]+\.md", path)
-        or ".." in path.split("/")
-    ):
-        raise ApiError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            "Editable vault uploads must be Markdown files under Highlights/ or Pages/",
-        )
-    return path
 
 
 def _conflict_path(path: str) -> str:
@@ -1494,33 +1440,20 @@ def _slug(value: str) -> str:
 
 
 def _media_handle(media_id: UUID) -> str:
-    return f"med_{media_id.hex}"
+    return format_vault_handle("med", media_id)
 
 
 def _highlight_handle(highlight_id: UUID) -> str:
-    return f"hl_{highlight_id.hex}"
+    return format_vault_handle("hl", highlight_id)
 
 
-def _fragment_handle(fragment_id: UUID | None) -> str:
-    if fragment_id is None:
-        return ""
-    return f"frag_{fragment_id.hex}"
+def _fragment_handle(fragment_id: UUID) -> str:
+    return format_vault_handle("frag", fragment_id)
 
 
 def _page_handle(page_id: UUID) -> str:
-    return f"page_{page_id.hex}"
-
-
-def _parse_handle(handle: str, prefix: str) -> UUID:
-    expected = f"{prefix}_"
-    if not handle.startswith(expected):
-        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, f"Invalid {prefix} handle")
-    return UUID(hex=handle[len(expected) :])
+    return format_vault_handle("page", page_id)
 
 
 def _processing_status_value(value: object) -> str:
     return str(getattr(value, "value", value))
-
-
-def _as_bool(value: object) -> bool:
-    return value is True or value == "true"

@@ -150,6 +150,8 @@ include = [
     "nexus/services/transcript_segments.py",
     "nexus/services/url_normalize.py",
     "nexus/services/user_keys.py",
+    "nexus/services/vault.py",
+    "nexus/services/vault_contracts.py",
     "nexus/services/web_article_structure.py",
     "nexus/services/users.py",
     "nexus/services/x_identity.py",

@@ -291,10 +291,7 @@ PDF note.
     assert created == []
     conflict_path = tmp_path / "Highlights" / "new-pdf.conflict.md"
     assert conflict_path.exists()
-    assert (
-        "Vault highlight creation only supports fragment_offsets selectors"
-        in conflict_path.read_text(encoding="utf-8")
-    )
+    assert "invalid selector_kind" in conflict_path.read_text(encoding="utf-8")
 
 
 def test_vault_creates_updates_and_deletes_pages(
@@ -348,6 +345,32 @@ First body.
 class TestVaultApiRoutes:
     """Integration tests for GET /vault and POST /vault."""
 
+    def test_post_vault_requires_files(
+        self, auth_client, direct_db: DirectSessionManager, test_user_id: UUID
+    ) -> None:
+        _bootstrap_vault_api_user(auth_client, direct_db, test_user_id)
+
+        response = auth_client.post("/vault", headers=auth_headers(test_user_id), json={})
+
+        assert response.status_code == 400, response.text
+        assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
+
+    def test_post_vault_accepts_explicit_empty_files(
+        self, auth_client, direct_db: DirectSessionManager, test_user_id: UUID
+    ) -> None:
+        _bootstrap_vault_api_user(auth_client, direct_db, test_user_id)
+
+        response = auth_client.post(
+            "/vault",
+            headers=auth_headers(test_user_id),
+            json={"files": []},
+        )
+
+        data = _vault_sync_data(response)
+        assert data["conflicts"] == []
+        assert data["delete_paths"] == []
+        assert {file["path"] for file in data["files"]} == {"Library.md"}
+
     def test_get_and_post_vault_snapshot(self, auth_client, direct_db, test_user_id: UUID) -> None:
         bootstrap = auth_client.get("/me", headers=auth_headers(test_user_id))
         assert bootstrap.status_code == 200
@@ -395,6 +418,250 @@ Editable vault body.
         refreshed_paths = {file["path"] for file in refreshed_data["files"]}
         assert "Library.md" in refreshed_paths
         assert any(path.startswith("Pages/") for path in refreshed_paths)
+
+    def test_post_vault_missing_new_page_title_returns_conflict(
+        self, auth_client, direct_db: DirectSessionManager, test_user_id: UUID
+    ) -> None:
+        _bootstrap_vault_api_user(auth_client, direct_db, test_user_id)
+        _register_vault_page_cleanup(direct_db, test_user_id)
+
+        response = auth_client.post(
+            "/vault",
+            headers=auth_headers(test_user_id),
+            json={
+                "files": [
+                    {
+                        "path": "Pages/missing-title.md",
+                        "content": """---
+nexus_type: "page"
+deleted: false
+---
+Body that should not create a page.
+""",
+                    }
+                ]
+            },
+        )
+
+        data = _vault_sync_data(response)
+        conflict = _single_vault_conflict(data, "Pages/missing-title.conflict.md")
+        _assert_conflict_message(conflict, "missing", "title")
+        assert data["delete_paths"] == []
+        assert {file["path"] for file in data["files"]} == {"Library.md"}
+
+    def test_post_vault_missing_new_highlight_color_returns_conflict(
+        self, auth_client, direct_db: DirectSessionManager, test_user_id: UUID
+    ) -> None:
+        media_id, fragment_id, highlight_id = _seed_article_highlight_for_vault_api(
+            auth_client, direct_db, test_user_id
+        )
+
+        response = auth_client.post(
+            "/vault",
+            headers=auth_headers(test_user_id),
+            json={
+                "files": [
+                    {
+                        "path": "Highlights/new-without-color.md",
+                        "content": f"""---
+nexus_type: "highlight"
+media_handle: "med_{media_id.hex}"
+selector_kind: "fragment_offsets"
+fragment_handle: "frag_{fragment_id.hex}"
+start_offset: 0
+end_offset: 4
+deleted: false
+---
+Missing color should not default to yellow.
+""",
+                    }
+                ]
+            },
+        )
+
+        data = _vault_sync_data(response)
+        conflict = _single_vault_conflict(data, "Highlights/new-without-color.conflict.md")
+        _assert_conflict_message(conflict, "missing", "color")
+        assert data["delete_paths"] == []
+        assert f"Highlights/hl_{highlight_id.hex}.md" in {file["path"] for file in data["files"]}
+
+    def test_post_vault_existing_page_without_server_updated_at_is_malformed_conflict(
+        self, auth_client, direct_db: DirectSessionManager, test_user_id: UUID
+    ) -> None:
+        _bootstrap_vault_api_user(auth_client, direct_db, test_user_id)
+        _register_vault_page_cleanup(direct_db, test_user_id)
+        page_file = _create_page_through_vault_api(auth_client, test_user_id)
+
+        response = auth_client.post(
+            "/vault",
+            headers=auth_headers(test_user_id),
+            json={
+                "files": [
+                    {
+                        "path": page_file["path"],
+                        "content": _drop_frontmatter_key(page_file["content"], "server_updated_at"),
+                    }
+                ]
+            },
+        )
+
+        data = _vault_sync_data(response)
+        conflict = _single_vault_conflict(data, _conflict_path(page_file["path"]))
+        _assert_conflict_message(
+            conflict,
+            "metadata",
+            "server_updated_at",
+            excluded=("changed since",),
+        )
+
+    def test_post_vault_existing_highlight_without_server_updated_at_is_malformed_conflict(
+        self, auth_client, direct_db: DirectSessionManager, test_user_id: UUID
+    ) -> None:
+        _media_id, _fragment_id, highlight_id = _seed_article_highlight_for_vault_api(
+            auth_client, direct_db, test_user_id
+        )
+        highlight_path = f"Highlights/hl_{highlight_id.hex}.md"
+        highlight_file = _exported_vault_file(auth_client, test_user_id, highlight_path)
+
+        response = auth_client.post(
+            "/vault",
+            headers=auth_headers(test_user_id),
+            json={
+                "files": [
+                    {
+                        "path": highlight_path,
+                        "content": _drop_frontmatter_key(
+                            highlight_file["content"], "server_updated_at"
+                        ),
+                    }
+                ]
+            },
+        )
+
+        data = _vault_sync_data(response)
+        conflict = _single_vault_conflict(data, _conflict_path(highlight_path))
+        _assert_conflict_message(
+            conflict,
+            "metadata",
+            "server_updated_at",
+            excluded=("changed since",),
+        )
+
+    def test_post_vault_stale_existing_page_timestamp_still_conflicts(
+        self, auth_client, direct_db: DirectSessionManager, test_user_id: UUID
+    ) -> None:
+        _bootstrap_vault_api_user(auth_client, direct_db, test_user_id)
+        _register_vault_page_cleanup(direct_db, test_user_id)
+        page_file = _create_page_through_vault_api(auth_client, test_user_id)
+
+        response = auth_client.post(
+            "/vault",
+            headers=auth_headers(test_user_id),
+            json={
+                "files": [
+                    {
+                        "path": page_file["path"],
+                        "content": _replace_frontmatter_value(
+                            page_file["content"],
+                            "server_updated_at",
+                            "1970-01-01T00:00:00+00:00",
+                        ),
+                    }
+                ]
+            },
+        )
+
+        data = _vault_sync_data(response)
+        conflict = _single_vault_conflict(data, _conflict_path(page_file["path"]))
+        assert conflict["message"] == "Server page changed since this file was exported"
+
+    def test_post_vault_stale_existing_highlight_timestamp_still_conflicts(
+        self, auth_client, direct_db: DirectSessionManager, test_user_id: UUID
+    ) -> None:
+        _media_id, _fragment_id, highlight_id = _seed_article_highlight_for_vault_api(
+            auth_client, direct_db, test_user_id
+        )
+        highlight_path = f"Highlights/hl_{highlight_id.hex}.md"
+        highlight_file = _exported_vault_file(auth_client, test_user_id, highlight_path)
+
+        response = auth_client.post(
+            "/vault",
+            headers=auth_headers(test_user_id),
+            json={
+                "files": [
+                    {
+                        "path": highlight_path,
+                        "content": _replace_frontmatter_value(
+                            highlight_file["content"],
+                            "server_updated_at",
+                            "1970-01-01T00:00:00+00:00",
+                        ),
+                    }
+                ]
+            },
+        )
+
+        data = _vault_sync_data(response)
+        conflict = _single_vault_conflict(data, _conflict_path(highlight_path))
+        assert conflict["message"] == "Server highlight changed since this file was exported"
+
+    def test_post_vault_existing_page_path_handle_mismatch_returns_conflict(
+        self, auth_client, direct_db: DirectSessionManager, test_user_id: UUID
+    ) -> None:
+        _bootstrap_vault_api_user(auth_client, direct_db, test_user_id)
+        _register_vault_page_cleanup(direct_db, test_user_id)
+        page_file = _create_page_through_vault_api(auth_client, test_user_id)
+
+        response = auth_client.post(
+            "/vault",
+            headers=auth_headers(test_user_id),
+            json={
+                "files": [
+                    {
+                        "path": page_file["path"],
+                        "content": _replace_frontmatter_value(
+                            page_file["content"],
+                            "page_handle",
+                            f"page_{uuid4().hex}",
+                        ),
+                    }
+                ]
+            },
+        )
+
+        data = _vault_sync_data(response)
+        conflict = _single_vault_conflict(data, _conflict_path(page_file["path"]))
+        _assert_conflict_message(conflict, "handle", "path")
+
+    def test_post_vault_existing_highlight_path_handle_mismatch_returns_conflict(
+        self, auth_client, direct_db: DirectSessionManager, test_user_id: UUID
+    ) -> None:
+        _media_id, _fragment_id, highlight_id = _seed_article_highlight_for_vault_api(
+            auth_client, direct_db, test_user_id
+        )
+        highlight_path = f"Highlights/hl_{highlight_id.hex}.md"
+        highlight_file = _exported_vault_file(auth_client, test_user_id, highlight_path)
+
+        response = auth_client.post(
+            "/vault",
+            headers=auth_headers(test_user_id),
+            json={
+                "files": [
+                    {
+                        "path": highlight_path,
+                        "content": _replace_frontmatter_value(
+                            highlight_file["content"],
+                            "highlight_handle",
+                            f"hl_{uuid4().hex}",
+                        ),
+                    }
+                ]
+            },
+        )
+
+        data = _vault_sync_data(response)
+        conflict = _single_vault_conflict(data, _conflict_path(highlight_path))
+        _assert_conflict_message(conflict, "handle", "path")
 
 
 def _seed_article_highlight(
@@ -474,6 +741,110 @@ def _register_seed_cleanup(
     direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
     direct_db.register_cleanup("library_entries", "media_id", media_id)
     direct_db.register_cleanup("media", "id", media_id)
+
+
+def _bootstrap_vault_api_user(
+    auth_client: TestClient, direct_db: DirectSessionManager, user_id: UUID
+) -> UUID:
+    bootstrap = auth_client.get("/me", headers=auth_headers(user_id))
+    assert bootstrap.status_code == 200, bootstrap.text
+    library_id = UUID(bootstrap.json()["data"]["default_library_id"])
+    direct_db.register_cleanup("users", "id", user_id)
+    direct_db.register_cleanup("libraries", "id", library_id)
+    direct_db.register_cleanup("memberships", "library_id", library_id)
+    return library_id
+
+
+def _register_vault_page_cleanup(direct_db: DirectSessionManager, user_id: UUID) -> None:
+    direct_db.register_cleanup("pages", "user_id", user_id)
+    direct_db.register_cleanup("note_blocks", "user_id", user_id)
+    direct_db.register_cleanup("resource_edges", "user_id", user_id)
+
+
+def _seed_article_highlight_for_vault_api(
+    auth_client: TestClient,
+    direct_db: DirectSessionManager,
+    user_id: UUID,
+) -> tuple[UUID, UUID, UUID]:
+    _bootstrap_vault_api_user(auth_client, direct_db, user_id)
+    with direct_db.session() as session:
+        media_id, fragment_id, highlight_id = _seed_article_highlight(session, user_id)
+    _register_seed_cleanup(direct_db, media_id, highlight_id, user_id)
+    return media_id, fragment_id, highlight_id
+
+
+def _create_page_through_vault_api(auth_client: TestClient, user_id: UUID) -> dict[str, str]:
+    response = auth_client.post(
+        "/vault",
+        headers=auth_headers(user_id),
+        json={
+            "files": [
+                {
+                    "path": "Pages/vault-note.md",
+                    "content": """---
+nexus_type: "page"
+title: "Vault Note"
+deleted: false
+---
+Editable vault body.
+""",
+                }
+            ]
+        },
+    )
+    data = _vault_sync_data(response)
+    assert data["conflicts"] == []
+    page_files = [file for file in data["files"] if file["path"].startswith("Pages/")]
+    assert len(page_files) == 1
+    assert 'title: "Vault Note"' in page_files[0]["content"]
+    return page_files[0]
+
+
+def _exported_vault_file(
+    auth_client: TestClient, user_id: UUID, expected_path: str
+) -> dict[str, str]:
+    response = auth_client.get("/vault", headers=auth_headers(user_id))
+    data = _vault_sync_data(response)
+    return next(file for file in data["files"] if file["path"] == expected_path)
+
+
+def _vault_sync_data(response) -> dict:
+    assert response.status_code == 200, response.text
+    return response.json()["data"]
+
+
+def _single_vault_conflict(data: dict, expected_path: str) -> dict:
+    assert len(data["conflicts"]) == 1
+    conflict = data["conflicts"][0]
+    assert conflict["path"] == expected_path
+    assert conflict["message"] in conflict["content"]
+    return conflict
+
+
+def _assert_conflict_message(
+    conflict: dict, *required: str, excluded: tuple[str, ...] = ()
+) -> None:
+    message = conflict["message"].lower()
+    for term in required:
+        assert term.lower() in message
+    for term in excluded:
+        assert term.lower() not in message
+
+
+def _drop_frontmatter_key(content: str, key: str) -> str:
+    lines = content.splitlines()
+    filtered = [line for line in lines if not line.startswith(f"{key}: ")]
+    assert len(filtered) == len(lines) - 1
+    return "\n".join(filtered) + ("\n" if content.endswith("\n") else "")
+
+
+def _replace_frontmatter_value(content: str, key: str, value: str) -> str:
+    old_line = next(line for line in content.splitlines() if line.startswith(f"{key}: "))
+    return content.replace(old_line, f'{key}: "{value}"', 1)
+
+
+def _conflict_path(path: str) -> str:
+    return path.removesuffix(".md") + ".conflict.md"
 
 
 def _highlight_note_body(session: Session, highlight_id: UUID) -> str | None:

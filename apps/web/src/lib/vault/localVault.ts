@@ -1,4 +1,9 @@
-interface VaultFile {
+interface EditableVaultFile {
+  path: string;
+  content: string;
+}
+
+interface ProjectedVaultFile {
   path: string;
   content: string;
 }
@@ -10,7 +15,7 @@ interface VaultConflict {
 }
 
 export interface VaultSyncPayload {
-  files: VaultFile[];
+  files: ProjectedVaultFile[];
   delete_paths: string[];
   conflicts: VaultConflict[];
 }
@@ -80,8 +85,8 @@ export function setVaultAutoSync(enabled: boolean): void {
 
 export async function readEditableVaultFiles(
   handle: FileSystemDirectoryHandle
-): Promise<VaultFile[]> {
-  const files: VaultFile[] = [];
+): Promise<EditableVaultFile[]> {
+  const files: EditableVaultFile[] = [];
   for (const directoryName of ["Highlights", "Pages"]) {
     let directory: FileSystemDirectoryHandle;
     try {
