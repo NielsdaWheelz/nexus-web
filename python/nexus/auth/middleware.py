@@ -7,9 +7,10 @@ Provides:
 
 import hmac
 import logging
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, NoReturn
 from uuid import UUID
 
 from fastapi import Request
@@ -45,6 +46,11 @@ EXTENSION_AUTH_PATHS = {
 INTERNAL_ONLY_PATHS = {
     "/auth/handoff-codes/consume",
 }
+EMAIL_CLAIM_MAX_LENGTH = 254
+EMAIL_CLAIM_LOCAL_PART_MAX_LENGTH = 64
+EMAIL_CLAIM_DOMAIN_MAX_LENGTH = 253
+_EMAIL_CLAIM_LOCAL_PART_RE = re.compile(r"^[a-z0-9!#$%&'*+/=?^_`{|}~.-]+$")
+_EMAIL_CLAIM_DOMAIN_LABEL_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 
 
 @dataclass
@@ -93,6 +99,50 @@ def _extract_viewer_roles(payload: dict[str, Any]) -> frozenset[str]:
         roles.update(_normalize_role_values(app_metadata.get("role")))
 
     return frozenset(roles)
+
+
+def _reject_email_claim(reason: str) -> NoReturn:
+    logger.warning("auth_failure", extra={"reason": reason})
+    raise ApiError(ApiErrorCode.E_UNAUTHENTICATED, "Invalid token: malformed email claim")
+
+
+def _parse_email_claim(raw_email: Any) -> str | None:
+    """Normalize the optional JWT email claim before it enters owned state."""
+    if raw_email is None:
+        return None
+
+    if not isinstance(raw_email, str):
+        _reject_email_claim("email_claim_not_string")
+
+    email = raw_email.strip().lower()
+    if not email:
+        _reject_email_claim("email_claim_blank")
+    if len(email) > EMAIL_CLAIM_MAX_LENGTH:
+        _reject_email_claim("email_claim_too_long")
+    if any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in email):
+        _reject_email_claim("email_claim_invalid_character")
+    if email.count("@") != 1:
+        _reject_email_claim("email_claim_invalid_shape")
+
+    local_part, domain = email.split("@", 1)
+    if not local_part or not domain:
+        _reject_email_claim("email_claim_invalid_shape")
+    if len(local_part) > EMAIL_CLAIM_LOCAL_PART_MAX_LENGTH:
+        _reject_email_claim("email_claim_local_part_too_long")
+    if len(domain) > EMAIL_CLAIM_DOMAIN_MAX_LENGTH:
+        _reject_email_claim("email_claim_domain_too_long")
+    if local_part.startswith(".") or local_part.endswith(".") or ".." in local_part:
+        _reject_email_claim("email_claim_invalid_local_part")
+    if _EMAIL_CLAIM_LOCAL_PART_RE.fullmatch(local_part) is None:
+        _reject_email_claim("email_claim_invalid_local_part")
+
+    labels = domain.split(".")
+    if len(labels) < 2:
+        _reject_email_claim("email_claim_invalid_domain")
+    if any(_EMAIL_CLAIM_DOMAIN_LABEL_RE.fullmatch(label) is None for label in labels):
+        _reject_email_claim("email_claim_invalid_domain")
+
+    return email
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
@@ -179,7 +229,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         # Step 4: Parse user_id and email from claims
         user_id = UUID(payload["sub"])
-        email = payload.get("email")
+        try:
+            email = _parse_email_claim(payload.get("email"))
+        except ApiError as e:
+            return self._error_json_response(e.code, e.message, e.status_code)
         roles = _extract_viewer_roles(payload)
 
         # Step 5: Bootstrap user/library if callback provided.

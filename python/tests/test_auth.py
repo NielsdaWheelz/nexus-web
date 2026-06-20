@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from uuid import UUID, uuid4
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -145,6 +145,109 @@ class TestAuthBoundary:
         assert response.status_code == 503
         data = response.json()
         assert data["error"]["code"] == "E_AUTH_UNAVAILABLE"
+
+    def test_email_claim_is_normalized_before_bootstrap(self):
+        """A present email claim is canonicalized before bootstrap and Viewer creation."""
+        user_id = uuid4()
+        bootstrap_emails: list[str | None] = []
+
+        class EmailVerifier:
+            def verify(self, token: str) -> dict[str, object]:
+                return {"sub": str(user_id), "email": " Viewer+Tag@Example.COM "}
+
+        def bootstrap_callback(user_id: UUID, email: str | None = None) -> UUID:
+            bootstrap_emails.append(email)
+            return user_id
+
+        app = FastAPI()
+
+        @app.get("/private")
+        def private_route(request: Request) -> dict[str, str | None]:
+            return {"email": request.state.viewer.email}
+
+        app.add_middleware(
+            AuthMiddleware,
+            verifier=EmailVerifier(),
+            requires_internal_header=False,
+            internal_secret=None,
+            bootstrap_callback=bootstrap_callback,
+        )
+        client = TestClient(app)
+
+        response = client.get("/private", headers={"Authorization": "Bearer token"})
+
+        assert response.status_code == 200
+        assert response.json()["email"] == "viewer+tag@example.com"
+        assert bootstrap_emails == ["viewer+tag@example.com"]
+
+    @pytest.mark.parametrize(
+        "email_claim",
+        [
+            123,
+            "",
+            "   ",
+            "not-an-email",
+            "viewer@example",
+            "viewer@@example.com",
+            ".viewer@example.com",
+            "viewer@-example.com",
+            "viewer@example..com",
+            "viewer@exa_mple.com",
+        ],
+    )
+    def test_malformed_email_claim_fails_closed_before_bootstrap(self, email_claim):
+        """Malformed present email claims are invalid auth and do not bootstrap."""
+        user_id = uuid4()
+        bootstrap_called = False
+
+        class MalformedEmailVerifier:
+            def verify(self, token: str) -> dict[str, object]:
+                return {"sub": str(user_id), "email": email_claim}
+
+        def bootstrap_callback(user_id: UUID, email: str | None = None) -> UUID:
+            nonlocal bootstrap_called
+            bootstrap_called = True
+            raise AssertionError("bootstrap must not run for malformed email claims")
+
+        app = FastAPI()
+
+        @app.get("/private")
+        def private_route() -> dict[str, bool]:
+            return {"ok": True}
+
+        app.add_middleware(
+            AuthMiddleware,
+            verifier=MalformedEmailVerifier(),
+            requires_internal_header=False,
+            internal_secret=None,
+            bootstrap_callback=bootstrap_callback,
+        )
+        client = TestClient(app)
+
+        response = client.get("/private", headers={"Authorization": "Bearer token"})
+
+        assert response.status_code == 401
+        data = response.json()
+        assert data["error"]["code"] == "E_UNAUTHENTICATED"
+        assert bootstrap_called is False
+
+    def test_malformed_email_claim_does_not_create_user(self, auth_client, db_session: Session):
+        """Rejected email claims do not persist a user row through bootstrap."""
+        user_id = create_test_user_id()
+
+        response = auth_client.get(
+            "/me",
+            headers=auth_headers(user_id, email="not-an-email"),
+        )
+
+        assert response.status_code == 401
+        assert response.json()["error"]["code"] == "E_UNAUTHENTICATED"
+        db_session.expire_all()
+        row = db_session.execute(
+            text("SELECT 1 FROM users WHERE id = :user_id"),
+            {"user_id": user_id},
+        ).fetchone()
+        assert row is None
 
 
 class TestInternalHeaderEnforcement:
