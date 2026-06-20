@@ -52,9 +52,9 @@ Implemented selector features:
 - locator-derived section/page/time bucket where present
 - duplicate source/section penalties
 
-The current runtime still records `query_class = "unclassified"`. These
-query-class policies are the target for the later retrieval-controller/planner
-cutover, not a heuristic hidden in this slice:
+At this slice boundary, runtime still recorded `query_class = "unclassified"`.
+These query-class policies were left to the later retrieval-controller/planner
+cutover, not hidden inside the selector:
 
 - exact lookup: prioritize exact lexical/title/person matches; low diversity
   pressure

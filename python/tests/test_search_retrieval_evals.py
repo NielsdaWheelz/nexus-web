@@ -29,7 +29,7 @@ from nexus.services.search.kinds import SEARCH_KINDS
 from nexus.services.search.policy import (
     APP_SEARCH_DEEP_CANDIDATE_LIMIT,
     APP_SEARCH_SCOPED_CANDIDATE_LIMIT,
-    app_search_candidate_policy,
+    plan_app_search,
 )
 from nexus.services.search.query import build_search_query
 from nexus.services.search.scope import scope_from_uri
@@ -554,12 +554,11 @@ def test_search_retrieval_eval_baseline_report(
         )
         candidates = [_citation_item(citation, run.scope) for citation in run.citations]
         selected = [_citation_item(citation, run.scope) for citation in run.selected_citations]
-        expected_candidate_limit, expected_mode, expected_reason = app_search_candidate_policy(
-            fixture["scope_refs"]
-        )
-        assert run.candidate_limit == expected_candidate_limit
-        assert run.retrieval_mode == expected_mode
-        assert run.policy_reason == expected_reason
+        plan = plan_app_search(fixture["query"], fixture["scope_refs"], fixture["kinds"])
+        assert run.query_class == plan.query_class
+        assert run.candidate_limit == plan.candidate_limit
+        assert run.retrieval_mode == plan.retrieval_mode
+        assert run.policy_reason == plan.policy_reason
         pack = _pack_metrics(
             candidates,
             selected,

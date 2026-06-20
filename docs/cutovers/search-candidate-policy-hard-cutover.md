@@ -109,7 +109,8 @@ The first production slice keeps policy deliberately narrow and scope-driven:
 - library, conversation, multi-scope, and global searches -> deep candidate pool
   (`50`)
 - selected evidence remains capped at `6`
-- query-class metadata is persisted as `unclassified`
+- this slice persisted query-class metadata as `unclassified`; the later
+  agentic-contextual retrieval slice owns the real planner/classifier
 - multi-scope persistence uses a bounded `multi_scope:<count>` label plus the
   full resolved scope list in rerank metadata
 - result-type mix metadata is actual candidate output, not the requested kinds

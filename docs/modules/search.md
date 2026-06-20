@@ -51,7 +51,8 @@ The current chat bottleneck is not the shared search substrate. It is
 - `APP_SEARCH_SELECTED_LIMIT = 6`
 - `APP_SEARCH_CONTEXT_CHARS = 16000`
 - `execute_app_search` resolves conversation scopes, asks `search/policy.py` for
-  the candidate limit, then builds the shared `SearchQuery`.
+  the query class, candidate limit, retrieval mode, and policy reason, then
+  builds the shared `SearchQuery`.
 - The first runtime policy uses a moderate candidate pool for a single `media:`
   scope and the public max candidate pool for library, conversation, multi-scope,
   and global searches.
@@ -62,8 +63,10 @@ The current chat bottleneck is not the shared search substrate. It is
   bounded scope label, full resolved scope list, inclusion surface, selection
   reason counts, and a per-candidate rerank trace with selected/skipped pack
   outcomes.
-- Query-class metadata is currently `unclassified`; query-class fixtures live in
-  the eval harness until a real planner/classifier cutover exists.
+- Query-class metadata comes from the search-owned deterministic
+  `plan_app_search` policy. It classifies obvious exact, scoped, synthesis,
+  global, multi-hop, absence, and recency/conversation questions before the
+  later retrieval-controller layer exists.
 - `search/selection.py` reranks app-search candidates deterministically before
   packing. It uses hybrid score, lexical exactness, phrase match, result type,
   citation quality, source identity, and locator-derived section identity. Exact

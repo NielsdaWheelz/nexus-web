@@ -329,7 +329,7 @@ def test_execute_app_search_persists_retrieval_metadata(
             "context_budget_chars": APP_SEARCH_CONTEXT_CHARS,
             "scope_count": 0,
             "result_type_mix": dict(Counter(citation.result_type for citation in run.citations)),
-            "query_class": "unclassified",
+            "query_class": "exact_lookup",
             "retrieval_mode": "deep",
             "policy_reason": "global_scope",
             "scope": "all",
@@ -409,7 +409,7 @@ def test_persist_app_search_run_records_packer_decisions(
         requested_types=["media", "page"],
         candidate_limit=APP_SEARCH_DEEP_CANDIDATE_LIMIT,
         scope_count=0,
-        query_class="unclassified",
+        query_class="exact_lookup",
         retrieval_mode="deep",
         policy_reason="global_scope",
         citations=[skipped_over_budget, skipped_empty, fitting],
@@ -510,7 +510,7 @@ def test_persist_app_search_run_records_packer_decisions(
         "context_budget_chars": APP_SEARCH_CONTEXT_CHARS,
         "scope_count": 0,
         "result_type_mix": {"media": 1, "page": 2},
-        "query_class": "unclassified",
+        "query_class": "exact_lookup",
         "retrieval_mode": "deep",
         "policy_reason": "global_scope",
         "scope": "all",
@@ -828,7 +828,7 @@ def test_execute_app_search_uses_moderate_candidate_depth_for_single_media_scope
         assert run.candidate_limit == APP_SEARCH_SCOPED_CANDIDATE_LIMIT
         assert len(run.selected_citations) <= APP_SEARCH_SELECTED_LIMIT
         assert run.scope_count == 1
-        assert run.query_class == "unclassified"
+        assert run.query_class == "scoped_passage_lookup"
         assert run.retrieval_mode == "fast"
         assert run.policy_reason == "single_narrow_scope"
 
@@ -844,6 +844,7 @@ def test_execute_app_search_uses_moderate_candidate_depth_for_single_media_scope
         ).scalar_one()
         assert metadata["candidate_limit"] == APP_SEARCH_SCOPED_CANDIDATE_LIMIT
         assert metadata["selected_limit"] == APP_SEARCH_SELECTED_LIMIT
+        assert metadata["query_class"] == "scoped_passage_lookup"
         assert metadata["policy_reason"] == "single_narrow_scope"
         assert metadata["resolved_scopes"] == [f"media:{media_id}"]
 

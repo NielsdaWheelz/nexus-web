@@ -163,7 +163,10 @@ from nexus.services.resource_graph.schemas import (
     ConnectionFilters,
     ConnectionQuery,
 )
-from nexus.services.resource_items.capabilities import resource_citation_result_type
+from nexus.services.resource_items.capabilities import (
+    resource_citation_result_type,
+    resource_read_policy,
+)
 from nexus.services.resource_items.chat_subjects import resolve_chat_subject
 from nexus.services.retrieval_citation import (
     RetrievalCitation,
@@ -428,12 +431,15 @@ def _app_search_tool_output(run_result: Any, start_ordinal: int) -> str:
     next_ordinal = start_ordinal
     results = []
     for citation in run_result.selected_citations:
+        read_uri = _read_uri_for_search_citation(citation)
         item: dict[str, object] = {
             "title": citation.title,
             "snippet": citation.snippet,
             "kind": citation.result_type,
             "source_label": citation.source_label,
         }
+        if read_uri is not None:
+            item["read_uri"] = read_uri
         if citation.citation_target is not None:
             item["n"] = next_ordinal
             next_ordinal += 1
@@ -442,11 +448,24 @@ def _app_search_tool_output(run_result: Any, start_ordinal: int) -> str:
         {
             "results": results,
             "total_candidates": len(run_result.citations),
+            "selected_count": len(run_result.selected_citations),
+            "more_candidates_available": len(run_result.citations)
+            > len(run_result.selected_citations),
             "status": run_result.status,
             "error_code": run_result.error_code,
         },
         default=str,
     )
+
+
+def _read_uri_for_search_citation(citation: Any) -> str | None:
+    target = getattr(citation, "citation_target", None)
+    if not isinstance(target, str):
+        return None
+    parsed = parse_resource_ref(target)
+    if isinstance(parsed, ResourceRefParseFailure):
+        return None
+    return target if resource_read_policy(parsed) in {"body", "media"} else None
 
 
 def _web_search_tool_output(run_result: Any, start_ordinal: int) -> str:
@@ -2398,6 +2417,7 @@ async def _execute_chat_run(
                             db,
                             viewer_id=run.owner_user_id,
                             conversation_id=run.conversation_id,
+                            assistant_message_id=run.assistant_message_id,
                             uri=uri,
                         )
                         read_tool_call_id = _persist_tool_call_trace(

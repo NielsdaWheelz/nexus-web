@@ -2491,6 +2491,45 @@ class TestCitationEdgeWriteThrough:
                 "source_label": None,
             }
         ]
+        assert payload["selected_count"] == 1
+        assert payload["more_candidates_available"] is False
+
+    def test_app_search_tool_output_includes_read_uri_for_readable_selected_results(self):
+        citation_id = uuid4()
+
+        payload = json.loads(
+            _app_search_tool_output(
+                SimpleNamespace(
+                    selected_citations=[
+                        SimpleNamespace(
+                            citation_target=f"note_block:{citation_id}",
+                            title="Readable note",
+                            snippet="Exact selected note text",
+                            result_type="note_block",
+                            source_label="Notes",
+                        )
+                    ],
+                    citations=[object(), object()],
+                    status="complete",
+                    error_code=None,
+                ),
+                7,
+            )
+        )
+
+        assert payload["results"] == [
+            {
+                "title": "Readable note",
+                "snippet": "Exact selected note text",
+                "kind": "note_block",
+                "source_label": "Notes",
+                "read_uri": f"note_block:{citation_id}",
+                "n": 7,
+            }
+        ]
+        assert payload["total_candidates"] == 2
+        assert payload["selected_count"] == 1
+        assert payload["more_candidates_available"] is True
 
     def test_emit_citation_index_streams_note_block_locator(
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema

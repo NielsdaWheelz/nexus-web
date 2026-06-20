@@ -59,7 +59,7 @@ from nexus.services.retrieval_citation import (
 from nexus.services.search import search
 from nexus.services.search.batch import search_scopes
 from nexus.services.search.kinds import SEARCH_FORMATS, SEARCH_KINDS
-from nexus.services.search.policy import app_search_candidate_policy
+from nexus.services.search.policy import plan_app_search
 from nexus.services.search.query import build_search_query
 from nexus.services.search.scope import (
     ScopeUnsupported,
@@ -231,8 +231,10 @@ def execute_app_search(
     }
     requested_types: list[str] = []
     scope_count = 0
-    query_class = "unclassified"
-    candidate_limit, retrieval_mode, _ = app_search_candidate_policy(())
+    plan = plan_app_search(query, (), kinds)
+    query_class = plan.query_class
+    candidate_limit = plan.candidate_limit
+    retrieval_mode = plan.retrieval_mode
     policy_reason = "validation_failed"
     resolved_scopes: list[str] = []
     start = time.monotonic()
@@ -253,9 +255,11 @@ def execute_app_search(
             scopes=scopes,
         )
         scope_count = len(resolved_scopes)
-        candidate_limit, retrieval_mode, policy_reason = app_search_candidate_policy(
-            resolved_scopes
-        )
+        plan = plan_app_search(query, resolved_scopes, kinds)
+        query_class = plan.query_class
+        candidate_limit = plan.candidate_limit
+        retrieval_mode = plan.retrieval_mode
+        policy_reason = plan.policy_reason
         base_query = build_search_query(
             text=query,
             raw_kinds=None if kinds is None else list(kinds),

@@ -1,6 +1,6 @@
 # Search Agentic Contextual Retrieval Hard Cutover
 
-**Status:** Proposed - 2026-06-20
+**Status:** First deterministic planner/read-handoff slice implemented - 2026-06-20
 
 **Type:** Hard cutover. Add the future-facing retrieval layer only after evals,
 packer correctness, candidate policy, and deterministic selection are in place.
@@ -10,6 +10,22 @@ packer correctness, candidate policy, and deterministic selection are in place.
 Add deep-retrieval behavior for hard questions: query planning, iterative
 search/inspect/read loops, contextual chunks, hierarchy-aware retrieval,
 graph-assisted expansion, and long-context routing.
+
+## Implemented First Slice
+
+- `search/policy.py` owns a deterministic `plan_app_search` decision with
+  query class, candidate limit, retrieval mode, and policy reason.
+- `app_search` persists that plan in the existing rerank ledger metadata instead
+  of recording successful searches as `unclassified`.
+- The compact `app_search` tool output exposes `selected_count`,
+  `more_candidates_available`, and `read_uri` for selected results that
+  `read_resource` can actually read.
+- `read_resource` admits a URI selected by `app_search` in the same assistant
+  message, using existing chat telemetry as the handoff ledger.
+
+Deferred by design: graph expansion, contextual/hierarchical artifacts,
+long-context routing, aggregate tool-output budgeting, and typed max-iteration
+terminal state.
 
 ## Why This Is Last
 
