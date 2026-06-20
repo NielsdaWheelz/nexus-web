@@ -13,10 +13,12 @@ import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 import type { ActionMenuOption } from "@/components/ui/ActionMenu";
 import { PaneFixedChromeContext } from "@/components/workspace/PaneFixedChrome";
+import { PaneSecondaryContext } from "@/components/workspace/PaneSecondary";
 import {
-  PaneSecondaryContext,
+  getPublishedSecondarySurface,
   type PaneSecondaryPublication,
-} from "@/components/workspace/PaneSecondary";
+} from "@/lib/panes/panePublications";
+import type { WorkspaceSecondarySurfaceId } from "@/lib/panes/paneSecondaryModel";
 import {
   readerApparatusOmittedSurfacePayloadFixtures,
   readerApparatusRowPayloadFixtures,
@@ -499,8 +501,7 @@ async function getContentsSurfaceBody(
   await waitFor(() => {
     const publication = latestSecondaryPublication(onSetPaneSecondary);
     body =
-      publication?.surfaces.find((surface) => surface.id === "reader-contents")
-        ?.body ?? null;
+      getPublishedSecondarySurface(publication, "reader-contents")?.body ?? null;
     expect(body).not.toBeNull();
   });
   return body;
@@ -522,8 +523,7 @@ async function getApparatusSurfaceBody(
   await waitFor(() => {
     const publication = latestSecondaryPublication(onSetPaneSecondary);
     body =
-      publication?.surfaces.find((surface) => surface.id === "reader-apparatus")
-        ?.body ?? null;
+      getPublishedSecondarySurface(publication, "reader-apparatus")?.body ?? null;
     expect(body).not.toBeNull();
   });
   return body;
@@ -641,7 +641,7 @@ function PaneSecondaryTestHost({
   children,
 }: {
   onSetPaneSecondary: (next: PaneSecondaryPublication | null) => void;
-  renderSurfaceId?: string;
+  renderSurfaceId?: WorkspaceSecondarySurfaceId;
   children: ReactNode;
 }) {
   const [publication, setPublication] =
@@ -654,8 +654,7 @@ function PaneSecondaryTestHost({
     [onSetPaneSecondary],
   );
   const secondaryBody = renderSurfaceId
-    ? (publication?.surfaces.find((surface) => surface.id === renderSurfaceId)
-        ?.body ?? null)
+    ? (getPublishedSecondarySurface(publication, renderSurfaceId)?.body ?? null)
     : null;
   return (
     <PaneSecondaryContext.Provider value={publish}>
@@ -668,7 +667,7 @@ function PaneSecondaryTestHost({
 function renderMediaPane(
   options: {
     secondaryPane?: WorkspaceAttachedSecondaryPaneState | null;
-    renderSecondarySurfaceId?: string;
+    renderSecondarySurfaceId?: WorkspaceSecondarySurfaceId;
   } = {},
 ) {
   const href = "/media/media-1";

@@ -8,7 +8,10 @@ import SecondarySurfaceTabs, {
   secondarySurfacePanelId,
   secondarySurfaceTabId,
 } from "@/components/workspace/SecondarySurfaceTabs";
-import type { PaneSecondaryPublication } from "@/components/workspace/PaneSecondary";
+import {
+  getPublishedSecondarySurface,
+  type PaneSecondaryPublication,
+} from "@/lib/panes/panePublications";
 import {
   getSecondarySurfaceDefinition,
   type WorkspaceSecondaryState,
@@ -42,9 +45,10 @@ export default function MobileSecondaryPaneHost({
   onActiveSurfaceChange,
 }: MobileSecondaryPaneHostProps) {
   const baseId = useId();
-  const activeSurface =
-    publication?.surfaces.find((surface) => surface.id === secondary?.activeSurfaceId) ??
-    null;
+  const activeSurface = getPublishedSecondarySurface(
+    publication,
+    secondary?.activeSurfaceId,
+  );
   const activeSurfaceDefinition = activeSurface
     ? getSecondarySurfaceDefinition(activeSurface.id)
     : null;

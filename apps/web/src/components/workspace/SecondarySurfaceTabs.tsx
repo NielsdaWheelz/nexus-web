@@ -11,7 +11,7 @@ import {
   ListTree,
   Quote,
 } from "lucide-react";
-import type { PaneSecondarySurfacePublication } from "@/components/workspace/PaneSecondary";
+import type { PaneSecondarySurfacePublication } from "@/lib/panes/panePublications";
 import { getSecondarySurfaceDefinition } from "@/lib/panes/paneSecondaryModel";
 import type {
   PaneSecondaryIconId,

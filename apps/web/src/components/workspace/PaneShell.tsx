@@ -16,8 +16,11 @@ import type { ActionMenuOption } from "@/components/ui/ActionMenu";
 import SurfaceHeader, {
   type SurfaceHeaderNavigation,
 } from "@/components/ui/SurfaceHeader";
-import type { PaneSecondaryPublication } from "@/components/workspace/PaneSecondary";
-import type { PaneFixedChromePublication } from "@/components/workspace/PaneFixedChrome";
+import {
+  secondaryPublicationIncludesSurface,
+  type PaneFixedChromePublication,
+  type PaneSecondaryPublication,
+} from "@/lib/panes/panePublications";
 import SecondaryPaneShell from "@/components/workspace/SecondaryPaneShell";
 import { useResizeHandle } from "@/components/workspace/useResizeHandle";
 import { useMobileChrome } from "@/lib/workspace/mobileChrome";
@@ -279,8 +282,9 @@ export default function PaneShell({
     secondaryPane?.visibility === "visible" &&
     secondarySizing &&
     secondaryPublication?.groupId === secondaryPane.groupId &&
-    secondaryPublication.surfaces.some(
-      (surface) => surface.id === secondaryPane.activeSurfaceId
+    secondaryPublicationIncludesSurface(
+      secondaryPublication,
+      secondaryPane.activeSurfaceId,
     )
       ? { state: secondaryPane, sizing: secondarySizing, publication: secondaryPublication }
       : null;

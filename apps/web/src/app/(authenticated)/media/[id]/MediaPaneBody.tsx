@@ -117,12 +117,12 @@ import {
 } from "@/lib/panes/paneRuntime";
 import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
 import { usePaneMobileChromeController } from "@/lib/workspace/mobileChrome";
-import {
-  usePaneSecondary,
-  type PaneSecondaryPublication,
-  type PaneSecondarySurfacePublication,
-} from "@/components/workspace/PaneSecondary";
+import { usePaneSecondary } from "@/components/workspace/PaneSecondary";
 import { usePaneFixedChrome } from "@/components/workspace/PaneFixedChrome";
+import type {
+  PaneSecondaryPublication,
+  PaneSecondarySurfacePublication,
+} from "@/lib/panes/panePublications";
 import { useReaderContext } from "@/lib/reader/ReaderContext";
 import { canonicalCpLength } from "@/lib/reader/textOffsets";
 import {

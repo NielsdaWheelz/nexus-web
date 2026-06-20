@@ -9,14 +9,8 @@ import {
   type PaneRuntimeLayoutPublication,
 } from "@/lib/panes/paneRuntime";
 import { resolvePaneResourceLocator } from "@/lib/panes/paneResourceLocator";
-import {
-  PaneSecondaryContext,
-  type PaneSecondaryPublication,
-} from "@/components/workspace/PaneSecondary";
-import {
-  PaneFixedChromeContext,
-  type PaneFixedChromePublication,
-} from "@/components/workspace/PaneFixedChrome";
+import { PaneSecondaryContext } from "@/components/workspace/PaneSecondary";
+import { PaneFixedChromeContext } from "@/components/workspace/PaneFixedChrome";
 import PaneShell from "@/components/workspace/PaneShell";
 import MobileSecondaryPaneHost from "@/components/workspace/MobileSecondaryPaneHost";
 import WorkspacePaneStrip from "@/components/workspace/WorkspacePaneStrip";
@@ -50,10 +44,18 @@ import {
 import {
   getSecondaryWidthPolicy,
   resolveEffectiveSecondarySizing,
-  secondarySurfaceBelongsToGroup,
   type WorkspaceSecondarySizing,
   type WorkspaceSecondarySurfaceId,
 } from "@/lib/panes/paneSecondaryModel";
+import {
+  arePaneFixedChromePublicationsEqual,
+  arePaneSecondaryPublicationsEqual,
+  normalizePaneFixedChromePublication,
+  normalizePaneSecondaryPublication,
+  secondaryPublicationIncludesSurface,
+  type PaneFixedChromePublication,
+  type PaneSecondaryPublication,
+} from "@/lib/panes/panePublications";
 import { emitWorkspaceTelemetry } from "@/lib/workspace/telemetry";
 import {
   resolvePaneRouteKey,
@@ -364,61 +366,6 @@ function upsertOrDeletePaneLayoutRecord(
   return next;
 }
 
-function normalizePaneSecondaryPublication(
-  publication: PaneSecondaryPublication,
-): PaneSecondaryPublication {
-  if (publication.surfaces.length === 0) {
-    throw new Error("Pane secondary publication requires at least one surface.");
-  }
-  const surfaceIds = new Set<WorkspaceSecondarySurfaceId>();
-  for (const surface of publication.surfaces) {
-    if (!secondarySurfaceBelongsToGroup(surface.id, publication.groupId)) {
-      throw new Error(
-        `Secondary surface ${surface.id} does not belong to group ${publication.groupId}.`,
-      );
-    }
-    if (surfaceIds.has(surface.id)) {
-      throw new Error(`Duplicate secondary surface publication: ${surface.id}.`);
-    }
-    surfaceIds.add(surface.id);
-  }
-  if (!surfaceIds.has(publication.defaultSurfaceId)) {
-    throw new Error(
-      `Default secondary surface ${publication.defaultSurfaceId} is not published.`,
-    );
-  }
-  return {
-    ...publication,
-    surfaces: publication.surfaces.map((surface) => ({ ...surface })),
-  };
-}
-
-function arePaneSecondaryPublicationsEqual(
-  left: PaneSecondaryPublication,
-  right: PaneSecondaryPublication,
-): boolean {
-  if (
-    left.groupId !== right.groupId ||
-    left.defaultSurfaceId !== right.defaultSurfaceId ||
-    left.surfaces.length !== right.surfaces.length
-  ) {
-    return false;
-  }
-  return left.surfaces.every((surface, index) => {
-    const other = right.surfaces[index];
-    return other?.id === surface.id && other.body === surface.body;
-  });
-}
-
-function normalizePaneFixedChromePublication(
-  publication: PaneFixedChromePublication,
-): PaneFixedChromePublication {
-  if (!Number.isFinite(publication.widthPx) || publication.widthPx < 0) {
-    throw new Error("Pane fixed chrome width must be non-negative.");
-  }
-  return { ...publication, widthPx: Math.ceil(publication.widthPx) };
-}
-
 function upsertOrDeletePaneSecondaryPublicationRecord(
   current: Map<string, PaneSecondaryPublicationRecord>,
   input: {
@@ -464,9 +411,7 @@ function upsertOrDeletePaneFixedChromePublicationRecord(
   const publication = normalizePaneFixedChromePublication(input.publication);
   if (
     existing?.routeKey === input.routeKey &&
-    existing.publication.id === publication.id &&
-    existing.publication.widthPx === publication.widthPx &&
-    existing.publication.body === publication.body
+    arePaneFixedChromePublicationsEqual(existing.publication, publication)
   ) {
     return current;
   }
@@ -547,13 +492,6 @@ function prunePaneFixedChromePublicationRecords(
     next.delete(paneId);
   }
   return next ?? current;
-}
-
-function secondaryPublicationIncludesSurface(
-  publication: PaneSecondaryPublication | null,
-  surfaceId: WorkspaceSecondarySurfaceId,
-): boolean {
-  return Boolean(publication?.surfaces.some((surface) => surface.id === surfaceId));
 }
 
 function buildHostPane(input: {

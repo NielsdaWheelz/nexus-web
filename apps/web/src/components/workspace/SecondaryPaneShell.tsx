@@ -8,7 +8,10 @@ import SecondarySurfaceTabs, {
   secondarySurfacePanelId,
   secondarySurfaceTabId,
 } from "@/components/workspace/SecondarySurfaceTabs";
-import type { PaneSecondaryPublication } from "@/components/workspace/PaneSecondary";
+import {
+  getPublishedSecondarySurface,
+  type PaneSecondaryPublication,
+} from "@/lib/panes/panePublications";
 import { getSecondarySurfaceDefinition } from "@/lib/panes/paneSecondaryModel";
 import type {
   WorkspaceSecondarySizing,
@@ -40,8 +43,10 @@ export default function SecondaryPaneShell({
   onResize,
 }: SecondaryPaneShellProps) {
   const baseId = useId();
-  const activeSurface =
-    publication.surfaces.find((surface) => surface.id === state.activeSurfaceId) ?? null;
+  const activeSurface = getPublishedSecondarySurface(
+    publication,
+    state.activeSurfaceId,
+  );
   const { handleResizeMouseDown, handleResizeKeyDown } = useResizeHandle({
     id: secondaryPaneId,
     widthPx: sizing.widthPx,

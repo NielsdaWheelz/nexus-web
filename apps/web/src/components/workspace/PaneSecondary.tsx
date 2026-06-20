@@ -5,46 +5,15 @@ import {
   useContext,
   useEffect,
   useRef,
-  type ReactNode,
 } from "react";
-import type {
-  WorkspaceSecondaryGroupId,
-  WorkspaceSecondarySurfaceId,
-} from "@/lib/panes/paneSecondaryModel";
-
-export interface PaneSecondarySurfacePublication {
-  readonly id: WorkspaceSecondarySurfaceId;
-  readonly body: ReactNode;
-}
-
-export interface PaneSecondaryPublication {
-  readonly groupId: WorkspaceSecondaryGroupId;
-  readonly surfaces: readonly PaneSecondarySurfacePublication[];
-  readonly defaultSurfaceId: WorkspaceSecondarySurfaceId;
-}
+import {
+  arePaneSecondaryPublicationsEqual,
+  type PaneSecondaryPublication,
+} from "@/lib/panes/panePublications";
 
 export const PaneSecondaryContext = createContext<
   ((publication: PaneSecondaryPublication | null) => void) | null
 >(null);
-
-function arePaneSecondaryPublicationsEqual(
-  left: PaneSecondaryPublication | null,
-  right: PaneSecondaryPublication | null,
-): boolean {
-  if (left === right) return true;
-  if (!left || !right) return false;
-  if (
-    left.groupId !== right.groupId ||
-    left.defaultSurfaceId !== right.defaultSurfaceId ||
-    left.surfaces.length !== right.surfaces.length
-  ) {
-    return false;
-  }
-  return left.surfaces.every((surface, index) => {
-    const other = right.surfaces[index];
-    return other?.id === surface.id && other.body === surface.body;
-  });
-}
 
 export function usePaneSecondary(publication: PaneSecondaryPublication | null): void {
   const setPublication = useContext(PaneSecondaryContext);

@@ -6,14 +6,12 @@ import type { ResourceItem } from "@/lib/notes/api";
 import type { ResourceLocatorResolution } from "@/lib/resources/resourceLocators";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import type { PaneRuntimeLayout } from "@/lib/workspace/paneSizing";
-import {
-  usePaneFixedChrome,
-  type PaneFixedChromePublication,
-} from "@/components/workspace/PaneFixedChrome";
-import {
-  usePaneSecondary,
-  type PaneSecondaryPublication,
-} from "@/components/workspace/PaneSecondary";
+import { usePaneFixedChrome } from "@/components/workspace/PaneFixedChrome";
+import { usePaneSecondary } from "@/components/workspace/PaneSecondary";
+import type {
+  PaneFixedChromePublication,
+  PaneSecondaryPublication,
+} from "@/lib/panes/panePublications";
 import type {
   WorkspaceSecondaryGroupId,
   WorkspaceSecondarySurfaceId,
@@ -304,32 +302,34 @@ vi.mock("@/components/workspace/WorkspacePaneStrip", () => ({
   default: () => <div data-testid="workspace-pane-strip" />,
 }));
 
-vi.mock("@/components/workspace/MobileSecondaryPaneHost", () => ({
-  default: ({
-    secondary,
-    publication,
-  }: {
-    secondary: {
-      groupId: WorkspaceSecondaryGroupId;
-      activeSurfaceId: WorkspaceSecondarySurfaceId;
-      visibility: "visible" | "collapsed";
-    } | null;
-    publication: {
-      groupId: WorkspaceSecondaryGroupId;
-      surfaces: readonly { id: WorkspaceSecondarySurfaceId }[];
-    } | null;
-  }) => {
-    if (
-      secondary?.visibility !== "visible" ||
-      !publication ||
-      secondary.groupId !== publication.groupId ||
-      !publication.surfaces.some((surface) => surface.id === secondary.activeSurfaceId)
-    ) {
-      return null;
-    }
-    return <div data-testid="mobile-secondary-host" />;
-  },
-}));
+vi.mock("@/components/workspace/MobileSecondaryPaneHost", async () => {
+  const { secondaryPublicationIncludesSurface } = await vi.importActual<
+    typeof import("@/lib/panes/panePublications")
+  >("@/lib/panes/panePublications");
+  return {
+    default: ({
+      secondary,
+      publication,
+    }: {
+      secondary: {
+        groupId: WorkspaceSecondaryGroupId;
+        activeSurfaceId: WorkspaceSecondarySurfaceId;
+        visibility: "visible" | "collapsed";
+      } | null;
+      publication: PaneSecondaryPublication | null;
+    }) => {
+      if (
+        secondary?.visibility !== "visible" ||
+        !publication ||
+        secondary.groupId !== publication.groupId ||
+        !secondaryPublicationIncludesSurface(publication, secondary.activeSurfaceId)
+      ) {
+        return null;
+      }
+      return <div data-testid="mobile-secondary-host" />;
+    },
+  };
+});
 
 vi.mock("@/components/workspace/usePaneCanvas", () => ({
   usePaneCanvas: (input: { mode: string; paneIds: string[] }) => {
