@@ -2549,6 +2549,7 @@ async def _execute_chat_run(
                             db,
                             viewer_id=run.owner_user_id,
                             conversation_id=run.conversation_id,
+                            assistant_message_id=run.assistant_message_id,
                             uri=uri,
                         )
                         inspect_tool_call_id = _persist_tool_call_trace(

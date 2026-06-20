@@ -29,9 +29,9 @@ from typing import Any, Literal
 from uuid import UUID
 from xml.sax.saxutils import escape as xml_escape
 
-from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from nexus.services.agent_tools.handoff import selected_by_app_search
 from nexus.services.chat_quote import render_quote_block
 from nexus.services.media_read_map import (
     READ_DOCUMENT_MAX_CHARS,
@@ -165,7 +165,7 @@ def execute_read_resource(
 
     if not _readable_in_conversation(db, conversation_id, uri) and not (
         assistant_message_id is not None
-        and _selected_by_app_search(db, assistant_message_id=assistant_message_id, uri=uri)
+        and selected_by_app_search(db, assistant_message_id=assistant_message_id, uri=uri)
     ):
         return ReadResourceResult(
             uri=uri,
@@ -417,26 +417,6 @@ def _readable_in_conversation(db: Session, conversation_id: UUID, uri: str) -> b
     parent = _parent_media_ref(db, uri)
     return parent is not None and admits_resource_for_conversation_read(
         db, conversation_id=conversation_id, target=parent
-    )
-
-
-def _selected_by_app_search(db: Session, *, assistant_message_id: UUID, uri: str) -> bool:
-    return bool(
-        db.execute(
-            text(
-                """
-                SELECT 1
-                FROM message_retrievals mr
-                JOIN message_tool_calls mtc ON mtc.id = mr.tool_call_id
-                WHERE mtc.assistant_message_id = :assistant_message_id
-                  AND mtc.tool_name = 'app_search'
-                  AND mr.selected = true
-                  AND mr.result_ref->>'citation_target' = :uri
-                LIMIT 1
-                """
-            ),
-            {"assistant_message_id": assistant_message_id, "uri": uri},
-        ).first()
     )
 
 

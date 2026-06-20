@@ -8,6 +8,7 @@ the round-trip that a section pointer the map returns is readable.
 
 from __future__ import annotations
 
+import json
 from uuid import UUID, uuid4
 
 import pytest
@@ -23,6 +24,7 @@ from nexus.services.media_read_map import MediaReadMap, MediaReadMapSection
 from tests.factories import (
     create_test_conversation,
     create_test_media_in_library,
+    create_test_message,
     get_user_default_library,
 )
 from tests.test_read_resource_tool import _admit_reference
@@ -268,3 +270,96 @@ def test_inspect_resource_media_not_in_context_refs_errors(
 
     assert result.is_error
     assert result.error_code == "not_in_context_refs"
+
+
+def test_inspect_resource_accepts_app_search_selected_media_in_same_assistant_message(
+    db_session: Session, bootstrapped_user: UUID
+):
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    user_message_id = create_test_message(db_session, conversation_id, seq=1)
+    assistant_message_id = create_test_message(
+        db_session,
+        conversation_id,
+        seq=2,
+        role="assistant",
+        content="",
+        status="pending",
+    )
+    library_id = get_user_default_library(db_session, bootstrapped_user)
+    assert library_id is not None
+    media_id = _make_pdf(db_session, library_id, pages=["A" * 3000, "B" * 3000])
+    uri = f"media:{media_id}"
+    tool_call_id = uuid4()
+    db_session.execute(
+        text(
+            """
+            INSERT INTO message_tool_calls (
+                id, conversation_id, user_message_id, assistant_message_id,
+                tool_name, tool_call_index, query_hash, scope, requested_types, status
+            )
+            VALUES (
+                :tool_call_id, :conversation_id, :user_message_id, :assistant_message_id,
+                'app_search', 0, 'search-selected-inspect', 'all', '["media"]'::jsonb,
+                'complete'
+            )
+            """
+        ),
+        {
+            "tool_call_id": tool_call_id,
+            "conversation_id": conversation_id,
+            "user_message_id": user_message_id,
+            "assistant_message_id": assistant_message_id,
+        },
+    )
+    db_session.execute(
+        text(
+            """
+            INSERT INTO message_retrievals (
+                tool_call_id, ordinal, result_type, source_id, scope, context_ref,
+                result_ref, selected, source_title, exact_snippet, retrieval_status,
+                included_in_prompt
+            )
+            VALUES (
+                :tool_call_id, 0, 'media', :source_id, 'all',
+                CAST(:context_ref AS jsonb), CAST(:result_ref AS jsonb), true,
+                'Selected PDF', 'Selected by app_search.', 'selected', true
+            )
+            """
+        ),
+        {
+            "tool_call_id": tool_call_id,
+            "source_id": str(media_id),
+            "context_ref": json.dumps({"type": "media", "id": str(media_id)}),
+            "result_ref": json.dumps(
+                {
+                    "type": "media",
+                    "id": str(media_id),
+                    "result_type": "media",
+                    "source_id": str(media_id),
+                    "citation_target": uri,
+                    "context_ref": {"type": "media", "id": str(media_id)},
+                }
+            ),
+        },
+    )
+
+    rejected = execute_inspect_resource(
+        db_session,
+        viewer_id=bootstrapped_user,
+        conversation_id=conversation_id,
+        uri=uri,
+    )
+    accepted = execute_inspect_resource(
+        db_session,
+        viewer_id=bootstrapped_user,
+        conversation_id=conversation_id,
+        assistant_message_id=assistant_message_id,
+        uri=uri,
+    )
+
+    assert rejected.error_code == "not_in_context_refs"
+    assert not accepted.is_error
+    assert accepted.document_map is not None
+    assert [section.read_uri for section in accepted.document_map.sections] == [
+        f"page_range:{media_id}:1-2"
+    ]

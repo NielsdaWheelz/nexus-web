@@ -36,6 +36,8 @@ graph-assisted expansion, and long-context routing.
 - Selected `content_chunk` results carry compact source-map guidance in
   `app_search` output and aggregate source-map visibility in rerank metadata.
   Source maps do not become citation targets.
+- `inspect_resource` admits a `media:` URI selected by `app_search` in the same
+  assistant message, using the same handoff ledger as `read_resource`.
 
 Deferred by design: graph expansion, generated contextual summaries,
 hierarchical artifacts, and long-context execution.
