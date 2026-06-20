@@ -1200,6 +1200,7 @@ async def test_app_search_policy_survives_chat_run_dispatch_and_trust_trail(
     assert metadata["selected_limit"] == APP_SEARCH_SELECTED_LIMIT
     assert metadata["retrieval_mode"] == "deep"
     assert metadata["policy_reason"] == "global_scope"
+    assert metadata["context_route"] == "search_fetch_read"
     assert metadata["scope"] == "all"
     assert metadata["resolved_scopes"] == []
 

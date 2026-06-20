@@ -169,6 +169,8 @@ class AppSearchRun:
     tool_call_id: UUID | None = None
     tool_call_index: int = 0
     rerank_trace: list[dict[str, Any]] = field(default_factory=list)
+    context_route: str = "search_fetch_read"
+    context_route_reason: str = "default_search_fetch_read"
 
     def tool_call_event(self) -> dict[str, Any]:
         return {
@@ -235,6 +237,8 @@ def execute_app_search(
     query_class = plan.query_class
     candidate_limit = plan.candidate_limit
     retrieval_mode = plan.retrieval_mode
+    context_route = plan.context_route
+    context_route_reason = plan.context_route_reason
     policy_reason = "validation_failed"
     resolved_scopes: list[str] = []
     start = time.monotonic()
@@ -259,6 +263,8 @@ def execute_app_search(
         query_class = plan.query_class
         candidate_limit = plan.candidate_limit
         retrieval_mode = plan.retrieval_mode
+        context_route = plan.context_route
+        context_route_reason = plan.context_route_reason
         policy_reason = plan.policy_reason
         base_query = build_search_query(
             text=query,
@@ -294,6 +300,8 @@ def execute_app_search(
             query_class=query_class,
             retrieval_mode=retrieval_mode,
             policy_reason=policy_reason,
+            context_route=context_route,
+            context_route_reason=context_route_reason,
             citations=[],
             selected_citations=[],
             selection_reasons=[],
@@ -378,6 +386,8 @@ def execute_app_search(
         query_class=query_class,
         retrieval_mode=retrieval_mode,
         policy_reason=policy_reason,
+        context_route=context_route,
+        context_route_reason=context_route_reason,
         citations=citations,
         selected_citations=selected,
         selection_reasons=selection_reasons,
@@ -836,6 +846,8 @@ def persist_app_search_run(db: Session, run: AppSearchRun) -> None:
                 "query_class": run.query_class,
                 "retrieval_mode": run.retrieval_mode,
                 "policy_reason": run.policy_reason,
+                "context_route": run.context_route,
+                "context_route_reason": run.context_route_reason,
                 "scope": run.scope,
                 "resolved_scopes": run.resolved_scopes,
                 "inclusion_surface": "tool_output",

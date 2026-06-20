@@ -1,6 +1,7 @@
 # Search Agentic Contextual Retrieval Hard Cutover
 
-**Status:** Planner/read-handoff and chat tool-loop hardening implemented - 2026-06-20
+**Status:** Planner/read-handoff, chat tool-loop hardening, and long-context
+eligibility ledger implemented - 2026-06-20
 
 **Type:** Hard cutover. Add the future-facing retrieval layer only after evals,
 packer correctness, candidate policy, and deterministic selection are in place.
@@ -26,9 +27,12 @@ graph-assisted expansion, and long-context routing.
   results to provider continuation turns.
 - Chat finalizes max-tool-iteration exhaustion as a typed terminal error instead
   of silently falling through to a complete run.
+- `app_search` ledgers a private `context_route` policy: default
+  `search_fetch_read`, with `long_context_candidate` only for an explicit
+  single-media whole-source query. This is eligibility metadata, not execution.
 
 Deferred by design: graph expansion, contextual/hierarchical artifacts,
-and long-context routing.
+and long-context execution.
 
 ## Why This Is Last
 

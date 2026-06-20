@@ -1141,6 +1141,35 @@ class TestChatRunRequestSchema:
         )
         assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
 
+    def test_chat_run_request_rejects_long_context_route_field(
+        self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        _seed_ai_plus_billing(direct_db, user_id)
+        with direct_db.session() as session:
+            model_id = create_test_model(session)
+        create_resp = auth_client.post("/conversations", headers=auth_headers(user_id))
+        conversation_id = UUID(create_resp.json()["data"]["id"])
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+
+        payload = _create_run_payload(model_id, conversation_id=str(conversation_id))
+        payload["long_context_route"] = {"mode": "auto"}
+
+        response = auth_client.post(
+            "/chat-runs",
+            headers={
+                **auth_headers(user_id),
+                "Idempotency-Key": "chat-run-rejects-long-context-route",
+            },
+            json=payload,
+        )
+        assert response.status_code == 400, (
+            f"Expected long_context_route extra-field to be rejected, got "
+            f"{response.status_code}: {response.text}"
+        )
+        assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
+
 
 class TestChatRunTooling:
     """Tooling and prompt-input contracts for POST /chat-runs."""
@@ -1158,6 +1187,12 @@ class TestChatRunTooling:
             "roles",
             "scopes",
         } <= set(APP_SEARCH_TOOL_DEFINITION["parameters"]["properties"])
+        assert not {
+            "context_route",
+            "long_context",
+            "route",
+            "routing_policy",
+        } & set(APP_SEARCH_TOOL_DEFINITION["parameters"]["properties"])
         assert READ_RESOURCE_TOOL_DEFINITION["parameters"]["additionalProperties"] is False
 
     def test_chat_run_tools_always_registered(

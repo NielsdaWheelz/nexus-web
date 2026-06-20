@@ -2,6 +2,7 @@
   "media_titles": {
     "exact": "retrieval eval exact {suffix}",
     "scoped": "retrieval eval scoped {suffix}",
+    "source_summary": "retrieval eval source summary {suffix}",
     "cross_alpha": "retrieval eval cross alpha {suffix}",
     "cross_beta": "retrieval eval cross beta {suffix}",
     "cross_gamma": "retrieval eval cross gamma {suffix}",
@@ -38,6 +39,16 @@
       "scope_refs": ["media:scoped"],
       "relevance": [
         { "media_key": "scoped", "grade": 3 }
+      ]
+    },
+    {
+      "id": "single_source_summary",
+      "query": "summarize this whole document retrieval eval source summary {suffix}",
+      "class": "single_source_summary",
+      "kinds": ["documents"],
+      "scope_refs": ["media:source_summary"],
+      "relevance": [
+        { "media_key": "source_summary", "grade": 3 }
       ]
     },
     {

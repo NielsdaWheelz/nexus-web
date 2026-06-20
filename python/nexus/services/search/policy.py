@@ -18,6 +18,8 @@ class AppSearchRetrievalPlan:
     candidate_limit: int
     retrieval_mode: str
     policy_reason: str
+    context_route: str = "search_fetch_read"
+    context_route_reason: str = "default_search_fetch_read"
 
 
 def plan_app_search(
@@ -26,6 +28,16 @@ def plan_app_search(
     requested_kinds: Sequence[str] | None,
 ) -> AppSearchRetrievalPlan:
     if len(scope_uris) == 1 and scope_uris[0].startswith("media:"):
+        terms = set(re.findall(r"[a-z0-9]+", query.lower()))
+        if terms & {"analyze", "analysis", "entire", "overview", "summarize", "summary", "whole"}:
+            return AppSearchRetrievalPlan(
+                query_class="single_source_summary",
+                candidate_limit=APP_SEARCH_SCOPED_CANDIDATE_LIMIT,
+                retrieval_mode="fast",
+                policy_reason="single_narrow_scope",
+                context_route="long_context_candidate",
+                context_route_reason="single_media_whole_source_query",
+            )
         return AppSearchRetrievalPlan(
             query_class="scoped_passage_lookup",
             candidate_limit=APP_SEARCH_SCOPED_CANDIDATE_LIMIT,

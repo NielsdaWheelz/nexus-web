@@ -51,6 +51,7 @@ from tests.factories import (
 QUERY_CLASSES = (
     "exact_lookup",
     "scoped_passage_lookup",
+    "single_source_summary",
     "cross_document_synthesis",
     "global_library_question",
     "multi_hop_search_read_inspect_question",
@@ -559,6 +560,7 @@ def test_search_retrieval_eval_baseline_report(
         assert run.candidate_limit == plan.candidate_limit
         assert run.retrieval_mode == plan.retrieval_mode
         assert run.policy_reason == plan.policy_reason
+        assert run.context_route == plan.context_route
         pack = _pack_metrics(
             candidates,
             selected,
@@ -599,6 +601,8 @@ def test_search_retrieval_eval_baseline_report(
             "query_class": run.query_class,
             "retrieval_mode": run.retrieval_mode,
             "policy_reason": run.policy_reason,
+            "context_route": run.context_route,
+            "context_route_reason": run.context_route_reason,
             "scope": run.scope,
             "resolved_scopes": run.resolved_scopes,
             "inclusion_surface": "tool_output",
@@ -609,6 +613,8 @@ def test_search_retrieval_eval_baseline_report(
             "query_class": run.query_class,
             "retrieval_mode": run.retrieval_mode,
             "policy_reason": run.policy_reason,
+            "context_route": run.context_route,
+            "context_route_reason": run.context_route_reason,
             "candidate_count": pack["candidate_count"],
             "selected_count": pack["selected_count"],
             "context_chars": run.context_chars,
@@ -708,6 +714,13 @@ def test_search_retrieval_eval_baseline_report(
         <= set(item["baseline"]["pack"])
         for item in report["fixtures"]
     ), report
+    assert all("context_route" in item["baseline"] for item in report["fixtures"]), report
+    source_summary = next(
+        item for item in report["fixtures"] if item["class"] == "single_source_summary"
+    )
+    assert source_summary["baseline"]["candidate_limit"] == APP_SEARCH_SCOPED_CANDIDATE_LIMIT
+    assert source_summary["baseline"]["context_route"] == "long_context_candidate"
+    assert source_summary["baseline"]["context_route_reason"] == "single_media_whole_source_query"
 
     negative = next(
         item for item in report["fixtures"] if item["class"] == "negative_absence_question"
@@ -754,6 +767,8 @@ def test_search_retrieval_eval_fixture_shape_is_exhaustive() -> None:
     by_class = {case["class"]: case for case in raw["cases"]}
     assert len(by_class["cross_document_synthesis"]["relevance"]) >= 2
     assert by_class["scoped_passage_lookup"]["scope_refs"][0].startswith("media:")
+    assert by_class["single_source_summary"]["scope_refs"][0].startswith("media:")
+    assert "whole document" in by_class["single_source_summary"]["query"]
     assert by_class["negative_absence_question"]["relevance"] == []
     assert "{missing_suffix}" in by_class["negative_absence_question"]["query"]
     assert any(

@@ -332,6 +332,8 @@ def test_execute_app_search_persists_retrieval_metadata(
             "query_class": "exact_lookup",
             "retrieval_mode": "deep",
             "policy_reason": "global_scope",
+            "context_route": "search_fetch_read",
+            "context_route_reason": "default_search_fetch_read",
             "scope": "all",
             "resolved_scopes": [],
             "inclusion_surface": "tool_output",
@@ -513,6 +515,8 @@ def test_persist_app_search_run_records_packer_decisions(
         "query_class": "exact_lookup",
         "retrieval_mode": "deep",
         "policy_reason": "global_scope",
+        "context_route": "search_fetch_read",
+        "context_route_reason": "default_search_fetch_read",
         "scope": "all",
         "resolved_scopes": [],
         "inclusion_surface": "tool_output",
@@ -831,6 +835,7 @@ def test_execute_app_search_uses_moderate_candidate_depth_for_single_media_scope
         assert run.query_class == "scoped_passage_lookup"
         assert run.retrieval_mode == "fast"
         assert run.policy_reason == "single_narrow_scope"
+        assert run.context_route == "search_fetch_read"
 
         metadata = session.execute(
             text(
@@ -846,7 +851,42 @@ def test_execute_app_search_uses_moderate_candidate_depth_for_single_media_scope
         assert metadata["selected_limit"] == APP_SEARCH_SELECTED_LIMIT
         assert metadata["query_class"] == "scoped_passage_lookup"
         assert metadata["policy_reason"] == "single_narrow_scope"
+        assert metadata["context_route"] == "search_fetch_read"
         assert metadata["resolved_scopes"] == [f"media:{media_id}"]
+
+        summary_run = execute_app_search(
+            session,
+            viewer_id=user_id,
+            conversation_id=conversation_id,
+            user_message_id=user_message_id,
+            assistant_message_id=assistant_message_id,
+            scopes=[f"media:{media_id}"],
+            query=f"summarize this whole document {needle}",
+        )
+
+        assert summary_run.status == "complete"
+        assert summary_run.candidate_limit == APP_SEARCH_SCOPED_CANDIDATE_LIMIT
+        assert summary_run.query_class == "single_source_summary"
+        assert summary_run.retrieval_mode == "fast"
+        assert summary_run.policy_reason == "single_narrow_scope"
+        assert summary_run.context_route == "long_context_candidate"
+        assert summary_run.context_route_reason == "single_media_whole_source_query"
+
+        metadata = session.execute(
+            text(
+                """
+                SELECT metadata
+                FROM message_rerank_ledgers
+                WHERE tool_call_id = :tool_call_id
+                """
+            ),
+            {"tool_call_id": summary_run.tool_call_id},
+        ).scalar_one()
+        assert metadata["candidate_limit"] == APP_SEARCH_SCOPED_CANDIDATE_LIMIT
+        assert metadata["query_class"] == "single_source_summary"
+        assert metadata["retrieval_mode"] == "fast"
+        assert metadata["context_route"] == "long_context_candidate"
+        assert metadata["context_route_reason"] == "single_media_whole_source_query"
 
     direct_db.register_cleanup("resource_edges", "source_id", conversation_id)
     direct_db.register_cleanup("resource_edges", "target_id", media_id)
