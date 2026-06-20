@@ -25,7 +25,7 @@ export default function ConversationContextRefsSurface({
         return (
           <ItemCard
             key={contextRef.id}
-            className={contextRef.missing ? styles.missing : undefined}
+            unavailable={contextRef.missing}
             content={{
               kind: "resource",
               title: contextRef.label,
@@ -33,7 +33,7 @@ export default function ConversationContextRefsSurface({
             }}
             meta={contextRef.summary || undefined}
             onActivate={
-              onOpenResource && !contextRef.missing
+              onOpenResource
                 ? () => onOpenResource(contextRef)
                 : undefined
             }

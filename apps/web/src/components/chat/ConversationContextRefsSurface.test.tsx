@@ -36,15 +36,21 @@ describe("ConversationContextRefsSurface", () => {
 
   it("marks a missing context ref unavailable and disables Open", async () => {
     const user = userEvent.setup();
+    const onOpenResource = vi.fn();
     render(
       <ConversationContextRefsSurface
         contextRefs={[contextRef({ missing: true })]}
         removeContextRef={async () => {}}
-        onOpenResource={() => {}}
+        onOpenResource={onOpenResource}
       />,
     );
 
     expect(screen.getByText("Annual report")).toBeVisible();
+    const primary = screen.getByRole("button", { name: "Annual report" });
+    expect(primary).toBeDisabled();
+
+    await user.click(primary);
+    expect(onOpenResource).not.toHaveBeenCalled();
 
     await user.click(screen.getByRole("button", { name: "Actions" }));
     expect(screen.getByRole("menuitem", { name: "Open" })).toBeDisabled();

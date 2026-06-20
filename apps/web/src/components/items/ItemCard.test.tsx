@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
@@ -73,6 +73,37 @@ describe("ItemCard", () => {
     await user.click(screen.getByRole("button", { name: "First chat" }));
     expect(onLinkedActivate).toHaveBeenCalledTimes(1);
     expect(onActivate).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps unavailable card activation inert without disabling secondary controls", async () => {
+    const user = userEvent.setup();
+    const onActivate = vi.fn();
+    const onAction = vi.fn();
+    const onLinkedActivate = vi.fn();
+
+    render(
+      <ItemCard
+        content={{ kind: "resource", title: "Unavailable document" }}
+        unavailable
+        testId="unavailable-card"
+        actions={<button type="button" onClick={onAction}>Remove</button>}
+        linkedItems={[{ id: "c1", label: "Related chat", onActivate: onLinkedActivate }]}
+        onActivate={onActivate}
+      />,
+    );
+
+    const primary = screen.getByRole("button", { name: "Unavailable document" });
+    expect(primary).toBeDisabled();
+
+    await user.click(primary);
+    fireEvent.click(screen.getByTestId("unavailable-card"));
+    expect(onActivate).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Remove" }));
+    await user.click(screen.getByRole("button", { name: "Related chat" }));
+    expect(onAction).toHaveBeenCalledTimes(1);
+    expect(onLinkedActivate).toHaveBeenCalledTimes(1);
+    expect(onActivate).not.toHaveBeenCalled();
   });
 
   it("always renders linked chats as a clickable list, with no scent line", () => {

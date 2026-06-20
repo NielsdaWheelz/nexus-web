@@ -1,9 +1,9 @@
 "use client";
 
+import CollectionView from "@/components/collections/CollectionView";
 import Button from "@/components/ui/Button";
-import ContextRefChatRow from "@/components/chat/ContextRefChatRow";
+import { presentContextRefChat } from "@/lib/collections/presenters/conversation";
 import type { ConversationListItem } from "@/lib/conversations/types";
-import { cx } from "@/lib/ui/cx";
 import styles from "./ContextRefChatList.module.css";
 
 type ContextRefChatListDensity = "compact" | "comfortable";
@@ -46,6 +46,10 @@ export default function ContextRefChatList({
     );
   }
 
+  const rows = conversations.map((item) =>
+    presentContextRefChat(item, { onOpen: () => onOpenChat(item.id) }),
+  );
+
   return (
     <div className={className}>
       <div className={styles.inlineNewRow}>
@@ -53,18 +57,14 @@ export default function ContextRefChatList({
           + New chat
         </Button>
       </div>
-      <ul
-        className={cx(
-          styles.list,
-          density === "compact" ? styles.listCompact : styles.listComfortable,
-        )}
-      >
-        {conversations.map((item) => (
-          <li key={item.id}>
-            <ContextRefChatRow item={item} onTap={() => onOpenChat(item.id)} />
-          </li>
-        ))}
-      </ul>
+      <CollectionView
+        rows={rows}
+        view="list"
+        density={density}
+        status="ready"
+        ariaLabel="Referencing chats"
+        surface={false}
+      />
     </div>
   );
 }

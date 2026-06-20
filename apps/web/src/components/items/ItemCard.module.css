@@ -23,6 +23,16 @@
   background: var(--surface-2);
 }
 
+.unavailable .body,
+.unavailable .meta,
+.unavailable .note {
+  opacity: 0.55;
+}
+
+.unavailable:hover {
+  background: var(--surface-1);
+}
+
 .header {
   display: flex;
   align-items: flex-start;
@@ -78,6 +88,10 @@
   outline: var(--focus-ring-width) solid var(--accent);
   outline-offset: var(--focus-ring-offset);
   border-radius: var(--radius-sm);
+}
+
+.body:disabled {
+  cursor: default;
 }
 
 .staticBody {

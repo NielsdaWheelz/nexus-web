@@ -7,8 +7,9 @@
 import { Trash2 } from "lucide-react";
 import { conversationResourceOptions } from "@/lib/actions/resourceActions";
 import type { CollectionRowView } from "@/lib/collections/types";
-import type { ConversationSummary } from "@/lib/conversations/types";
+import type { ConversationListItem, ConversationSummary } from "@/lib/conversations/types";
 import { resourceIconForScheme } from "@/lib/resources/resourceKind";
+import { pluralize } from "@/lib/text/pluralize";
 
 export function presentConversation(
   item: ConversationSummary,
@@ -39,5 +40,24 @@ export function presentConversation(
           },
         ]
       : undefined,
+  };
+}
+
+export function presentContextRefChat(
+  item: ConversationListItem,
+  ctx: { onOpen: () => void },
+): CollectionRowView {
+  return {
+    id: item.id,
+    kind: "conversation",
+    primary: {
+      kind: "button",
+      label: item.title,
+      onActivate: ctx.onOpen,
+    },
+    lead: { icon: resourceIconForScheme("conversation") },
+    headline: { text: item.title },
+    signals: [{ value: pluralize(item.message_count, "message") }],
+    recency: { at: item.updated_at, reason: "read" },
   };
 }

@@ -31,6 +31,7 @@ interface ItemCardProps {
   linkedItems?: ItemCardLinkedItem[];
   selected?: boolean;
   hovered?: boolean;
+  unavailable?: boolean;
   showFullText?: boolean;
   onToggleFullText?: () => void;
   onActivate?: () => void;
@@ -51,6 +52,7 @@ export default function ItemCard({
   linkedItems,
   selected,
   hovered,
+  unavailable,
   showFullText,
   onToggleFullText,
   onActivate,
@@ -91,15 +93,20 @@ export default function ItemCard({
         styles.card,
         selected && styles.selected,
         hovered && styles.hovered,
+        unavailable && styles.unavailable,
         showFullText && styles.showFull,
         className,
       )}
       data-content-kind={content.kind}
+      data-unavailable={unavailable ? "true" : undefined}
       data-highlight-id={highlightId}
       data-testid={testId}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
       onClick={(event: ReactMouseEvent<HTMLDivElement>) => {
+        if (unavailable) {
+          return;
+        }
         if (isNestedInteractiveTarget(event.target)) {
           return;
         }
@@ -113,6 +120,7 @@ export default function ItemCard({
             type="button"
             className={styles.body}
             aria-pressed={selected}
+            disabled={unavailable}
             onClick={onActivate}
           >
             {bodyContent}
