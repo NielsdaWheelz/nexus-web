@@ -67,7 +67,7 @@ const ChatSurface = forwardRef<ChatScrollHandle, ChatSurfaceProps>(
       scrollToLatest,
       onComposerWheel,
       onScroll,
-      releasePin,
+      beginUserScroll,
       captureAnchor,
       scrollToMessage,
     } = useChatScroll(scrollportRef, transcriptRef, messages, historyLoading);
@@ -101,9 +101,9 @@ const ChatSurface = forwardRef<ChatScrollHandle, ChatSurfaceProps>(
           tabIndex={0}
           aria-label="Chat conversation"
           onScroll={onScroll}
-          onWheel={releasePin}
-          onTouchMove={releasePin}
-          onKeyDown={releasePin}
+          onWheel={beginUserScroll}
+          onTouchMove={beginUserScroll}
+          onKeyDown={beginUserScroll}
         >
           <div
             ref={transcriptRef}

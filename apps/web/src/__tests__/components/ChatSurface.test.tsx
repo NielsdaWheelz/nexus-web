@@ -313,12 +313,7 @@ describe("ChatSurface", () => {
           historyLoading={false}
           messages={[
             userMessage("first-user", 1, "First question"),
-            assistantMessage(
-              "first-assistant",
-              2,
-              `Streaming first answer ${"streamed token ".repeat(120)}`,
-              "first-user",
-            ),
+            assistantMessage("first-assistant", 2, "First answer", "first-user"),
           ]}
           composer={<textarea aria-label="Message" />}
         />
@@ -333,10 +328,10 @@ describe("ChatSurface", () => {
     });
   });
 
-  it("keeps a pinned question fixed while the assistant answer grows", async () => {
-    const sent: ConversationMessage[] = [
-      userMessage("user-1", 1, "Pinned streaming question"),
-      assistantMessage("assistant-1", 2, "Short answer", "user-1"),
+  it("follows the newest streamed text once the answer overflows the viewport", async () => {
+    const turn = (answer: string): ConversationMessage[] => [
+      userMessage("user-1", 1, "Streaming question"),
+      assistantMessage("assistant-1", 2, answer, "user-1"),
     ];
 
     const { rerender } = render(
@@ -344,56 +339,46 @@ describe("ChatSurface", () => {
         <ChatSurface messages={[]} composer={<textarea aria-label="Message" />} />
       </div>,
     );
-
     const scrollport = screen.getByRole("region", { name: "Chat conversation" });
-    rerender(
-      <div style={FIXED_HEIGHT}>
-        <ChatSurface messages={sent} composer={<textarea aria-label="Message" />} />
-      </div>,
-    );
 
-    const anchor = screen.getByText("Pinned streaming question");
-    await waitFor(() => {
-      expect(isPinnedNearTop(topOffsetWithin(anchor, scrollport), scrollport)).toBe(
-        true,
-      );
-    });
-    const topBefore = topOffsetWithin(anchor, scrollport);
-    const scrollTopBefore = scrollport.scrollTop;
-
+    // A short answer keeps the question pinned at the top inset.
     rerender(
       <div style={FIXED_HEIGHT}>
         <ChatSurface
-          messages={[
-            sent[0],
-            assistantMessage(
-              "assistant-1",
-              2,
-              `Grown answer ${"streamed token ".repeat(90)}`,
-              "user-1",
-            ),
-          ]}
+          messages={turn("Short answer")}
           composer={<textarea aria-label="Message" />}
         />
       </div>,
     );
-
+    const question = screen.getByText("Streaming question");
     await waitFor(() => {
-      expect(screen.getByText(/Grown answer/)).toBeInTheDocument();
+      expect(
+        isPinnedNearTop(topOffsetWithin(question, scrollport), scrollport),
+      ).toBe(true);
     });
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(
-      Math.abs(topOffsetWithin(anchor, scrollport) - topBefore),
-    ).toBeLessThanOrEqual(3);
-    expect(Math.abs(scrollport.scrollTop - scrollTopBefore)).toBeLessThanOrEqual(
-      3,
+    expect(screen.queryByTestId("chat-scroll-latest")).toBeNull();
+
+    // The answer streams past the viewport: the transcript follows the newest
+    // text at the bottom edge with no manual action, and ↓ Latest is not shown.
+    rerender(
+      <div style={FIXED_HEIGHT}>
+        <ChatSurface
+          messages={turn(`Long answer ${"streamed token ".repeat(160)}`)}
+          composer={<textarea aria-label="Message" />}
+        />
+      </div>,
     );
+    await waitFor(() => {
+      const bottom = scrollport.scrollHeight - scrollport.clientHeight;
+      expect(scrollport.scrollTop).toBeGreaterThanOrEqual(bottom - 4);
+    });
+    expect(screen.queryByTestId("chat-scroll-latest")).toBeNull();
   });
 
-  it("releases the pin on a manual scroll so later growth does not re-pin", async () => {
-    const sent: ConversationMessage[] = [
-      userMessage("user-1", 1, "Pinned question"),
-      assistantMessage("assistant-1", 2, "Tiny", "user-1"),
+  it("stops following on a user scroll-up and does not snap back as the answer grows", async () => {
+    const turn = (answer: string): ConversationMessage[] => [
+      userMessage("user-1", 1, "Tall streaming question"),
+      assistantMessage("assistant-1", 2, answer, "user-1"),
     ];
 
     const { rerender } = render(
@@ -401,50 +386,253 @@ describe("ChatSurface", () => {
         <ChatSurface messages={[]} composer={<textarea aria-label="Message" />} />
       </div>,
     );
-
     const scrollport = screen.getByRole("region", { name: "Chat conversation" });
+
+    // A tall answer overflows the viewport, so the transcript follows the bottom.
     rerender(
       <div style={FIXED_HEIGHT}>
-        <ChatSurface messages={sent} composer={<textarea aria-label="Message" />} />
+        <ChatSurface
+          messages={turn(`Answer ${"streamed token ".repeat(140)}`)}
+          composer={<textarea aria-label="Message" />}
+        />
       </div>,
     );
-    const anchor = screen.getByText("Pinned question");
-
-    // The very first turn pins to the top region of the scrollport.
     await waitFor(() => {
-      expect(isPinnedNearTop(topOffsetWithin(anchor, scrollport), scrollport)).toBe(
-        true,
-      );
+      const bottom = scrollport.scrollHeight - scrollport.clientHeight;
+      expect(scrollport.scrollTop).toBeGreaterThanOrEqual(bottom - 4);
     });
 
-    // The user scrolls away (a real gesture: wheel over the scrollport) and that
-    // releases the pin. The scrollTop mutation is a direct DOM write; fireEvent
-    // already wraps its dispatch in act.
-    scrollport.scrollTop = 0;
+    // The user scrolls up well past the near-bottom band: following stops and the
+    // ↓ Latest affordance appears.
+    act(() => {
+      scrollport.scrollTop = 0;
+    });
     fireEvent.wheel(scrollport, { deltaY: -50 });
     fireEvent.scroll(scrollport);
     const afterManual = scrollport.scrollTop;
+    expect(await screen.findByTestId("chat-scroll-latest")).toBeInTheDocument();
 
-    // The assistant answer grows. With the pin released, scrollTop must not jump
-    // back to the anchor.
-    const grown: ConversationMessage[] = [
-      sent[0],
-      assistantMessage(
-        "assistant-1",
-        2,
-        `Grown answer ${"streamed token ".repeat(60)}`,
-        "user-1",
-      ),
-    ];
+    // The answer grows further; the released viewport stays exactly where the
+    // user left it.
     rerender(
       <div style={FIXED_HEIGHT}>
-        <ChatSurface messages={grown} composer={<textarea aria-label="Message" />} />
+        <ChatSurface
+          messages={turn(`Answer ${"streamed token ".repeat(220)}`)}
+          composer={<textarea aria-label="Message" />}
+        />
       </div>,
     );
-
     await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(scrollport.scrollTop).toBe(afterManual);
+    expect(Math.abs(scrollport.scrollTop - afterManual)).toBeLessThanOrEqual(1);
   });
+
+  it("re-engages following when the user returns to the near-bottom band", async () => {
+    const turn = (answer: string): ConversationMessage[] => [
+      userMessage("user-1", 1, "Question"),
+      assistantMessage("assistant-1", 2, answer, "user-1"),
+    ];
+
+    const { rerender } = render(
+      <div style={FIXED_HEIGHT}>
+        <ChatSurface messages={[]} composer={<textarea aria-label="Message" />} />
+      </div>,
+    );
+    const scrollport = screen.getByRole("region", { name: "Chat conversation" });
+    rerender(
+      <div style={FIXED_HEIGHT}>
+        <ChatSurface
+          messages={turn(`Answer ${"streamed token ".repeat(140)}`)}
+          composer={<textarea aria-label="Message" />}
+        />
+      </div>,
+    );
+    await waitFor(() => {
+      const bottom = scrollport.scrollHeight - scrollport.clientHeight;
+      expect(scrollport.scrollTop).toBeGreaterThanOrEqual(bottom - 4);
+    });
+
+    // Scroll up to read: following releases and ↓ Latest appears.
+    act(() => {
+      scrollport.scrollTop = 0;
+    });
+    fireEvent.scroll(scrollport);
+    expect(await screen.findByTestId("chat-scroll-latest")).toBeInTheDocument();
+
+    // Return to within the near-bottom band, then the answer grows: following
+    // re-engages, snaps to the new bottom, and ↓ Latest hides.
+    act(() => {
+      scrollport.scrollTop =
+        scrollport.scrollHeight - scrollport.clientHeight - 40;
+    });
+    fireEvent.scroll(scrollport);
+    rerender(
+      <div style={FIXED_HEIGHT}>
+        <ChatSurface
+          messages={turn(`Answer ${"streamed token ".repeat(220)}`)}
+          composer={<textarea aria-label="Message" />}
+        />
+      </div>,
+    );
+    await waitFor(() => {
+      const bottom = scrollport.scrollHeight - scrollport.clientHeight;
+      expect(scrollport.scrollTop).toBeGreaterThanOrEqual(bottom - 4);
+    });
+    expect(screen.queryByTestId("chat-scroll-latest")).toBeNull();
+  });
+
+  it("keeps following when a gesture at the bottom does not move the viewport", async () => {
+    const turn = (answer: string): ConversationMessage[] => [
+      userMessage("user-1", 1, "Question"),
+      assistantMessage("assistant-1", 2, answer, "user-1"),
+    ];
+    const { rerender } = render(
+      <div style={FIXED_HEIGHT}>
+        <ChatSurface messages={[]} composer={<textarea aria-label="Message" />} />
+      </div>,
+    );
+    const scrollport = screen.getByRole("region", { name: "Chat conversation" });
+    rerender(
+      <div style={FIXED_HEIGHT}>
+        <ChatSurface
+          messages={turn(`Answer ${"streamed token ".repeat(140)}`)}
+          composer={<textarea aria-label="Message" />}
+        />
+      </div>,
+    );
+    await waitFor(() => {
+      const bottom = scrollport.scrollHeight - scrollport.clientHeight;
+      expect(scrollport.scrollTop).toBeGreaterThanOrEqual(bottom - 4);
+    });
+
+    // A wheel/keydown at the bottom that the browser cannot act on fires no scroll
+    // event, so onScroll never runs — the gesture must NOT drop the active follow.
+    fireEvent.wheel(scrollport, { deltaY: 60 });
+    fireEvent.keyDown(scrollport, { key: "ArrowDown" });
+    expect(screen.queryByTestId("chat-scroll-latest")).toBeNull();
+
+    // Following is intact: the next streamed growth still snaps to the new bottom.
+    rerender(
+      <div style={FIXED_HEIGHT}>
+        <ChatSurface
+          messages={turn(`Answer ${"streamed token ".repeat(240)}`)}
+          composer={<textarea aria-label="Message" />}
+        />
+      </div>,
+    );
+    await waitFor(() => {
+      const bottom = scrollport.scrollHeight - scrollport.clientHeight;
+      expect(scrollport.scrollTop).toBeGreaterThanOrEqual(bottom - 4);
+    });
+    expect(screen.queryByTestId("chat-scroll-latest")).toBeNull();
+  });
+
+  it("does not snap the question back to the top when a following answer transiently shrinks", async () => {
+    const turn = (answer: string): ConversationMessage[] => [
+      userMessage("user-1", 1, "Question"),
+      assistantMessage("assistant-1", 2, answer, "user-1"),
+    ];
+    const { rerender } = render(
+      <div style={FIXED_HEIGHT}>
+        <ChatSurface messages={[]} composer={<textarea aria-label="Message" />} />
+      </div>,
+    );
+    const scrollport = screen.getByRole("region", { name: "Chat conversation" });
+
+    // The answer overflows → the transcript follows the bottom.
+    rerender(
+      <div style={FIXED_HEIGHT}>
+        <ChatSurface
+          messages={turn(`Answer ${"streamed token ".repeat(160)}`)}
+          composer={<textarea aria-label="Message" />}
+        />
+      </div>,
+    );
+    await waitFor(() => {
+      const bottom = scrollport.scrollHeight - scrollport.clientHeight;
+      expect(scrollport.scrollTop).toBeGreaterThanOrEqual(bottom - 4);
+    });
+
+    // A transient shrink that still overflows keeps following the bottom: the
+    // top→bottom handoff is one-way for the turn; the question never re-pins to top.
+    rerender(
+      <div style={FIXED_HEIGHT}>
+        <ChatSurface
+          messages={turn(`Answer ${"streamed token ".repeat(90)}`)}
+          composer={<textarea aria-label="Message" />}
+        />
+      </div>,
+    );
+    await waitFor(() => {
+      const bottom = scrollport.scrollHeight - scrollport.clientHeight;
+      expect(scrollport.scrollTop).toBeGreaterThanOrEqual(bottom - 4);
+    });
+    const question = screen.getByText("Question");
+    expect(
+      isPinnedNearTop(topOffsetWithin(question, scrollport), scrollport),
+    ).toBe(false);
+  });
+
+  it("re-engages following when ↓ Latest is clicked mid-stream", async () => {
+    const turn = (answer: string): ConversationMessage[] => [
+      userMessage("user-1", 1, "Question"),
+      assistantMessage("assistant-1", 2, answer, "user-1"),
+    ];
+    const { rerender } = render(
+      <div style={FIXED_HEIGHT}>
+        <ChatSurface messages={[]} composer={<textarea aria-label="Message" />} />
+      </div>,
+    );
+    const scrollport = screen.getByRole("region", { name: "Chat conversation" });
+    rerender(
+      <div style={FIXED_HEIGHT}>
+        <ChatSurface
+          messages={turn(`Answer ${"streamed token ".repeat(160)}`)}
+          composer={<textarea aria-label="Message" />}
+        />
+      </div>,
+    );
+    await waitFor(() => {
+      const bottom = scrollport.scrollHeight - scrollport.clientHeight;
+      expect(scrollport.scrollTop).toBeGreaterThanOrEqual(bottom - 4);
+    });
+
+    // Scroll up to read: following releases and ↓ Latest appears.
+    act(() => {
+      scrollport.scrollTop = 0;
+    });
+    fireEvent.scroll(scrollport);
+    const latest = await screen.findByTestId("chat-scroll-latest");
+
+    // Clicking ↓ Latest on an overflowing turn lands in bottom-follow...
+    fireEvent.click(latest);
+    await waitFor(() => {
+      const bottom = scrollport.scrollHeight - scrollport.clientHeight;
+      expect(scrollport.scrollTop).toBeGreaterThanOrEqual(bottom - 4);
+    });
+
+    // ...and following is live again: the next streamed growth snaps to the bottom.
+    rerender(
+      <div style={FIXED_HEIGHT}>
+        <ChatSurface
+          messages={turn(`Answer ${"streamed token ".repeat(240)}`)}
+          composer={<textarea aria-label="Message" />}
+        />
+      </div>,
+    );
+    await waitFor(() => {
+      const bottom = scrollport.scrollHeight - scrollport.clientHeight;
+      expect(scrollport.scrollTop).toBeGreaterThanOrEqual(bottom - 4);
+    });
+    expect(screen.queryByTestId("chat-scroll-latest")).toBeNull();
+  });
+
+  // AC-8 is verified by the S3 device pass / e2e: a component test cannot resize
+  // the visual viewport, so the keyboard-shrink → bottom-follow path is not unit-
+  // testable here. The hook re-pins from its ResizeObserver when the scrollport
+  // shrinks (Android/`interactive-widget`; the iOS mobile sheet via useKeyboardInset).
+  it.todo(
+    "AC-8: bottom-follow keeps the newest text above the on-screen keyboard when the visual viewport shrinks",
+  );
 
   it("restores the eye-line across a messages swap via captureAnchor", async () => {
     const ref = createRef<ChatScrollHandle>();

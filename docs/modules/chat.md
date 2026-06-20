@@ -14,6 +14,24 @@ Backend owners live under `python/nexus/api/routes/chat_runs.py`,
 Frontend owners live under `apps/web/src/components/chat/*` and
 `apps/web/src/lib/conversations/*`.
 
+## Cutover Specs
+
+Hard-cutover specs that govern chat work. Each owns one axis; they compose.
+
+- `docs/cutovers/chat-scroll-anchoring-hard-cutover.md` — transcript scroll
+  anchoring (hybrid pin-to-top then stick-to-bottom). IMPLEMENTED (row
+  memoization deferred to the streaming cutover).
+- `docs/cutovers/chat-subsystem-consolidation-hard-cutover.md` — structural
+  ownership + duplication collapse (message-update reducer, per-run stream
+  context, visibility factory, `chat_run_citations` / `chat_run_tools` /
+  run-event emitter, `run_kit.get_run_events` / `is_run_terminal`). SPEC.
+- `docs/cutovers/sota-chat-streaming-hard-cutover.md` — streaming transport,
+  event grammar, coalescing, cursor replay, cancellation. SPEC.
+- `docs/cutovers/resource-chat-subject-hard-cutover.md` — surface/subject
+  consolidation (one `ResourceRef` chat subject). SPEC.
+- `docs/cutovers/assistant-message-trust-trail-hard-cutover.md` — assistant
+  trust-trail read model. IMPLEMENTED.
+
 ## Engine, View, Adapter Split
 
 `useConversation` is the live chat engine. It owns history loading, create-on-send,
@@ -37,6 +55,18 @@ scrollbar gutter behavior and must not reserve a stable inline-end gutter.
 
 Workspace layout must not compensate for chat transcript gutter policy; chat
 keeps that policy local to its scrollport.
+
+### Transcript anchoring
+
+`useChatScroll` is the single scroll owner. Transcript anchoring is a hybrid
+model: on a new user turn the question is pinned to the top inset; once the
+streaming answer overflows the viewport the transcript follows the newest text
+at the bottom edge; a genuine user scroll-up releases following and shows the
+`↓ Latest` affordance; returning to the near-bottom band re-engages it. Pin
+state is a single `top | bottom | released` mode, not a boolean. Native
+`overflow-anchor` stays disabled; the hook owns anchoring. Streaming follow
+writes are instant and RAF-batched; `behavior: "smooth"` is only for discrete
+jumps. See `docs/cutovers/chat-scroll-anchoring-hard-cutover.md`.
 
 ## Send Path
 

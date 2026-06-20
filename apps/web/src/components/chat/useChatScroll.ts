@@ -9,6 +9,7 @@ import {
   type WheelEvent,
 } from "react";
 import type { ConversationMessage } from "@/lib/conversations/types";
+import { preferredScrollBehavior } from "@/lib/preferredScrollBehavior";
 
 /**
  * The small imperative surface the conversation adapter drives on the scroll
@@ -36,6 +37,16 @@ interface ChatScrollAnchor {
   scrollTop: number;
 }
 
+// Hybrid transcript anchoring (docs/cutovers/chat-scroll-anchoring-hard-cutover.md):
+// `top` holds the new question at the top inset; `bottom` follows the newest
+// streamed text at the bottom edge; `released` leaves the viewport where a user
+// gesture put it. `top` hands off to `bottom` once the answer overflows the fold.
+type PinMode = "top" | "bottom" | "released";
+
+// Re-engage following when a genuine scroll lands within this many px of the
+// bottom (reference: use-stick-to-bottom STICK_TO_BOTTOM_OFFSET_PX).
+const NEAR_BOTTOM_PX = 72;
+
 interface UseChatScroll {
   /** Reserved spacer height (px) rendered as the last child of the transcript. */
   spacerHeight: number;
@@ -45,10 +56,10 @@ interface UseChatScroll {
   scrollToLatest: () => void;
   /** Forwards a wheel gesture over the fixed composer dock to the transcript. */
   onComposerWheel: (event: WheelEvent<HTMLElement>) => void;
-  /** Scroll handler the view wires onto the scrollport; owns pin release + ↓ Latest. */
+  /** Scroll handler the view wires onto the scrollport; owns pin-mode + ↓ Latest. */
   onScroll: () => void;
-  /** Explicit user gesture over the scrollport; releases pin/programmatic state. */
-  releasePin: () => void;
+  /** A user scroll gesture (wheel/touch/key); yields the next scroll to onScroll. */
+  beginUserScroll: () => void;
   /** Methods exposed to the engine via ChatSurface's ref. */
   captureAnchor: ChatScrollHandle["captureAnchor"];
   scrollToMessage: ChatScrollHandle["scrollToMessage"];
@@ -67,20 +78,6 @@ function lastUserMessageId(messages: ConversationMessage[]): string | null {
   return null;
 }
 
-function assistantMessageIdAfter(
-  messages: ConversationMessage[],
-  anchorMessageId: string,
-): string | null {
-  const anchorIndex = messages.findIndex((message) => message.id === anchorMessageId);
-  if (anchorIndex < 0) return null;
-  for (let index = anchorIndex + 1; index < messages.length; index += 1) {
-    const message = messages[index];
-    if (message.role === "assistant") return message.id;
-    if (message.role === "user") return null;
-  }
-  return null;
-}
-
 function clampScrollTop(scrollport: HTMLElement, top: number): number {
   const maxScrollTop = Math.max(0, scrollport.scrollHeight - scrollport.clientHeight);
   return Math.min(Math.max(0, top), maxScrollTop);
@@ -95,20 +92,19 @@ export function useChatScroll(
   const [spacerHeight, setSpacerHeight] = useState(0);
   const [isLatestBelowFold, setIsLatestBelowFold] = useState(false);
 
-  // Current pin anchor (latest user message), whether we are holding it at the
-  // top, the live spacer height, the pending eye-line snapshot, and first-layout
-  // tracking.
+  // Current pin anchor (latest user message), the active pin mode, the live
+  // spacer height, the pending eye-line snapshot, and first-layout tracking.
   const anchorMessageIdRef = useRef<string | null>(null);
-  const pinnedRef = useRef(false);
+  const pinModeRef = useRef<PinMode>("released");
   const spacerHeightRef = useRef(0);
   const pendingAnchorRef = useRef<ChatScrollAnchor | null>(null);
   const didFirstLayoutRef = useRef(false);
   const sawEmptyReadyStateRef = useRef(false);
   const prevUserIdRef = useRef<string | null>(null);
   // The scrollTop a programmatic scroll is settling toward. `onScroll` skips the
-  // pin release while a scroll lands on this target, then clears it; a scroll with
+  // mode change while a scroll lands on this target, then clears it; a scroll with
   // no target pending is a genuine user gesture (wheel, touch, key, or scrollbar
-  // drag) and releases the pin until the next send.
+  // drag) and re-engages or releases following (see onScroll).
   const programmaticTargetRef = useRef<number | null>(null);
 
   const topInset = useCallback(() => {
@@ -138,41 +134,75 @@ export function useChatScroll(
     }
   }, [scrollportRef, transcriptRef, topInset]);
 
+  // True when the newest content would fall below the fold with the transcript
+  // pinned so its top sits at `target` scrollTop. The single overflow predicate
+  // behind the top→bottom handoff (holdPin), the ↓ Latest mode pick
+  // (scrollToLatest), and the below-fold flag — measured identically so the three
+  // can never disagree (a `1px` tolerance absorbs sub-pixel rounding).
+  const overflowsBelow = useCallback(
+    (target: number) => {
+      const scrollport = scrollportRef.current;
+      const transcript = transcriptRef.current;
+      if (!scrollport || !transcript) return false;
+      const newestBottom = transcript.scrollHeight - spacerHeightRef.current;
+      return newestBottom > target + scrollport.clientHeight + 1;
+    },
+    [scrollportRef, transcriptRef],
+  );
+
   const measureLatestBelowFold = useCallback(() => {
     const scrollport = scrollportRef.current;
-    const transcript = transcriptRef.current;
-    if (!scrollport || !transcript) return;
-    const newestBottom = transcript.scrollHeight - spacerHeightRef.current;
-    setIsLatestBelowFold(
-      newestBottom > scrollport.scrollTop + scrollport.clientHeight + 1,
-    );
-  }, [scrollportRef, transcriptRef]);
+    if (!scrollport) return;
+    setIsLatestBelowFold(overflowsBelow(scrollport.scrollTop));
+  }, [scrollportRef, overflowsBelow]);
 
+  // A discrete one-shot jump (new-turn / first-load top pins, ↓ Latest, scroll-to-
+  // message). Honors reduced-motion. The per-frame streaming follow never routes
+  // here — it writes scrollTop directly (see holdPin) because smooth can never
+  // catch content that grows every frame.
   const scrollTo = useCallback(
-    (top: number, behavior: ScrollBehavior) => {
+    (top: number) => {
       const scrollport = scrollportRef.current;
       if (!scrollport) return;
       const target = clampScrollTop(scrollport, top);
       programmaticTargetRef.current = target;
-      scrollport.scrollTo({ top: target, behavior });
+      scrollport.scrollTo({ top: target, behavior: preferredScrollBehavior() });
     },
     [scrollportRef],
   );
 
-  // While pinned, hold the anchor's top at the top inset as content reflows above
-  // or below it (e.g. a markdown image loads). Released by any user gesture.
-  const holdPinned = useCallback(() => {
+  // Re-assert the active pin as content reflows during streaming. `top` holds the
+  // question at the top inset until the answer would fall below the fold, then
+  // hands off — one-way for the turn — to `bottom`, which follows the newest text.
+  // Both write scrollTop directly: smooth can never catch content that grows every
+  // frame. `released` is left untouched (a user gesture owns the viewport).
+  const holdPin = useCallback(() => {
     const scrollport = scrollportRef.current;
-    const anchorId = anchorMessageIdRef.current;
-    if (!scrollport || !pinnedRef.current || !anchorId) return;
-    const anchor = findMessage(scrollport, anchorId);
-    if (!anchor) return;
-    const target = clampScrollTop(scrollport, anchor.offsetTop - topInset());
-    if (Math.abs(scrollport.scrollTop - target) > 1) {
-      programmaticTargetRef.current = target;
-      scrollport.scrollTop = target;
+    if (!scrollport) return;
+
+    if (pinModeRef.current === "top") {
+      const anchorId = anchorMessageIdRef.current;
+      const anchor = anchorId ? findMessage(scrollport, anchorId) : null;
+      if (!anchor) return;
+      const target = clampScrollTop(scrollport, anchor.offsetTop - topInset());
+      if (!overflowsBelow(target)) {
+        if (Math.abs(scrollport.scrollTop - target) > 1) {
+          programmaticTargetRef.current = target;
+          scrollport.scrollTop = target;
+        }
+        return;
+      }
+      pinModeRef.current = "bottom";
     }
-  }, [scrollportRef, topInset]);
+
+    if (pinModeRef.current === "bottom") {
+      const target = clampScrollTop(scrollport, scrollport.scrollHeight);
+      if (Math.abs(scrollport.scrollTop - target) > 1) {
+        programmaticTargetRef.current = target;
+        scrollport.scrollTop = target;
+      }
+    }
+  }, [scrollportRef, topInset, overflowsBelow]);
 
   const scrollToLatest = useCallback(() => {
     const scrollport = scrollportRef.current;
@@ -180,20 +210,14 @@ export function useChatScroll(
     const anchorId = anchorMessageIdRef.current;
     const anchor = anchorId ? findMessage(scrollport, anchorId) : null;
     const inset = topInset();
-    const assistantId = anchorId
-      ? assistantMessageIdAfter(messages, anchorId)
-      : null;
-    const assistant = assistantId ? findMessage(scrollport, assistantId) : null;
-    const assistantExceedsViewport =
-      assistant !== null &&
-      assistant.offsetHeight > scrollport.clientHeight - inset;
-    pinnedRef.current = Boolean(anchor && !assistantExceedsViewport);
-    if (anchor && !assistantExceedsViewport) {
-      scrollTo(anchor.offsetTop - inset, "smooth");
+    if (anchor && !overflowsBelow(anchor.offsetTop - inset)) {
+      pinModeRef.current = "top";
+      scrollTo(anchor.offsetTop - inset);
     } else {
-      scrollTo(scrollport.scrollHeight, "smooth");
+      pinModeRef.current = "bottom";
+      scrollTo(scrollport.scrollHeight);
     }
-  }, [messages, scrollportRef, scrollTo, topInset]);
+  }, [scrollportRef, scrollTo, topInset, overflowsBelow]);
 
   const scrollToMessage = useCallback<ChatScrollHandle["scrollToMessage"]>(
     (messageId) => {
@@ -201,8 +225,8 @@ export function useChatScroll(
       if (!scrollport) return;
       const target = findMessage(scrollport, messageId);
       if (!target) return;
-      pinnedRef.current = false;
-      scrollTo(target.offsetTop - topInset(), "smooth");
+      pinModeRef.current = "released";
+      scrollTo(target.offsetTop - topInset());
     },
     [scrollportRef, scrollTo, topInset],
   );
@@ -296,7 +320,7 @@ export function useChatScroll(
     if (pendingAnchorRef.current) {
       const snapshot = pendingAnchorRef.current;
       pendingAnchorRef.current = null;
-      pinnedRef.current = false;
+      pinModeRef.current = "released";
       measureSpacer();
       restorePendingAnchor(snapshot);
       measureLatestBelowFold();
@@ -318,13 +342,16 @@ export function useChatScroll(
       didFirstLayoutRef.current = true;
       prevUserIdRef.current = nextUserId;
       if (sawEmptyReadyStateRef.current && nextUserId) {
-        pinnedRef.current = true;
+        pinModeRef.current = "top";
         const anchor = findMessage(scrollport, nextUserId);
-        if (anchor) scrollTo(anchor.offsetTop - topInset(), "smooth");
+        if (anchor) scrollTo(anchor.offsetTop - topInset());
         measureLatestBelowFold();
         return;
       }
-      pinnedRef.current = false;
+      // Open an existing conversation at its newest message in bottom-follow, so
+      // a resumed in-flight run keeps streaming into view; a user scroll-up
+      // releases it. (Identical position to "released" for a finished transcript.)
+      pinModeRef.current = "bottom";
       const bottom = clampScrollTop(scrollport, scrollport.scrollHeight);
       scrollport.scrollTop = bottom;
       programmaticTargetRef.current = bottom;
@@ -336,11 +363,11 @@ export function useChatScroll(
     const isNewTurn = nextUserId !== null && nextUserId !== prevUserIdRef.current;
     prevUserIdRef.current = nextUserId;
     if (isNewTurn) {
-      pinnedRef.current = true;
+      pinModeRef.current = "top";
       const anchor = nextUserId ? findMessage(scrollport, nextUserId) : null;
-      if (anchor) scrollTo(anchor.offsetTop - topInset(), "smooth");
-    } else if (pinnedRef.current) {
-      holdPinned();
+      if (anchor) scrollTo(anchor.offsetTop - topInset());
+    } else if (pinModeRef.current !== "released") {
+      holdPin();
     }
     measureLatestBelowFold();
   }, [
@@ -350,20 +377,20 @@ export function useChatScroll(
     measureSpacer,
     restorePendingAnchor,
     measureLatestBelowFold,
-    holdPinned,
+    holdPin,
     scrollTo,
     topInset,
   ]);
 
   // One observer recomputes the spacer + below-fold and (while pinned) re-asserts
-  // the anchor at the top as content grows during streaming.
+  // the anchor or follows the bottom as content grows during streaming.
   useLayoutEffect(() => {
     const scrollport = scrollportRef.current;
     const transcript = transcriptRef.current;
     if (!scrollport || !transcript) return;
     const observer = new ResizeObserver(() => {
       measureSpacer();
-      holdPinned();
+      holdPin();
       measureLatestBelowFold();
     });
     observer.observe(scrollport);
@@ -374,14 +401,15 @@ export function useChatScroll(
     transcriptRef,
     measureSpacer,
     measureLatestBelowFold,
-    holdPinned,
+    holdPin,
   ]);
 
-  // The single pin-release path (§4.1/§11). A programmatic scroll records the
+  // The single pin-mode authority (§6.2/§10). A programmatic scroll records the
   // scrollTop it is settling toward (`programmaticTargetRef`); while a scroll lands
-  // on that target we skip the release and clear the marker once it arrives. Any
+  // on that target we skip mode changes and clear the marker once it arrives. Any
   // scroll with no marker pending — wheel, touch, keyboard, OR a scrollbar drag —
-  // is a genuine user gesture and releases the pin until the next send.
+  // is a genuine user gesture: it re-engages following inside the near-bottom band
+  // and otherwise releases until the next send.
   const onScroll = useCallback(() => {
     const scrollport = scrollportRef.current;
     if (scrollport && programmaticTargetRef.current !== null) {
@@ -390,17 +418,28 @@ export function useChatScroll(
       ) {
         programmaticTargetRef.current = null;
       }
-    } else {
-      pinnedRef.current = false;
+    } else if (scrollport) {
+      const maxScrollTop = Math.max(
+        0,
+        scrollport.scrollHeight - scrollport.clientHeight,
+      );
+      pinModeRef.current =
+        maxScrollTop - scrollport.scrollTop <= NEAR_BOTTOM_PX
+          ? "bottom"
+          : "released";
     }
     measureLatestBelowFold();
   }, [scrollportRef, measureLatestBelowFold]);
 
-  const releasePin = useCallback(() => {
-    pinnedRef.current = false;
+  // A user input gesture (wheel / touch / key) is taking over the viewport. Drop
+  // the programmatic-settle marker so the resulting scroll is read by `onScroll`
+  // as a genuine gesture — re-engaging or releasing follow from the final
+  // position — not as the hook's own write landing on its target. The mode is
+  // decided only by `onScroll`, never eagerly here: a gesture that moves nothing
+  // (e.g. a wheel at the bottom) must not drop an active follow.
+  const beginUserScroll = useCallback(() => {
     programmaticTargetRef.current = null;
-    measureLatestBelowFold();
-  }, [measureLatestBelowFold]);
+  }, []);
 
   const onComposerWheel = useCallback(
     (event: WheelEvent<HTMLElement>) => {
@@ -428,7 +467,6 @@ export function useChatScroll(
       ) {
         return;
       }
-      pinnedRef.current = false;
       programmaticTargetRef.current = null;
       scrollport.scrollTop += event.deltaY;
       event.preventDefault();
@@ -442,7 +480,7 @@ export function useChatScroll(
     scrollToLatest,
     onComposerWheel,
     onScroll,
-    releasePin,
+    beginUserScroll,
     captureAnchor,
     scrollToMessage,
   };

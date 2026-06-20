@@ -600,7 +600,10 @@ type ChatRunLiveState =
 - completed message blocks are memoized;
 - only the streaming tail reparses while text is arriving;
 - long conversations do not remount earlier message rows every frame;
-- scroll anchoring continues to be owned by `ChatSurface` / `useChatScroll`.
+- scroll anchoring continues to be owned by `ChatSurface` / `useChatScroll`; the
+  transcript anchoring *behavior* (hybrid pin-to-top then stick-to-bottom) is
+  specified by `docs/cutovers/chat-scroll-anchoring-hard-cutover.md`. This
+  cutover only guarantees the coalesced streaming cadence does not regress it.
 
 ---
 
@@ -833,7 +836,9 @@ Frontend model UI uses this only to render honest affordances:
   - safe activity/partial tool/reconnect/cancel display.
 - `apps/web/src/components/chat/ChatSurface.tsx`
 - `apps/web/src/components/chat/useChatScroll.ts`
-  - verify no scroll jitter under high-frequency updates.
+  - verify no scroll jitter under high-frequency updates (the anchoring model is
+    owned by `chat-scroll-anchoring-hard-cutover.md`; here only verify the
+    coalesced cadence keeps it stable).
 - `apps/web/src/components/ui/MarkdownMessage.tsx`
   - streaming-tail render optimization pinned by long-answer tests.
 - Tests:
@@ -1031,7 +1036,8 @@ detail, emits terminal failed/interrupted state, and offers the existing retry
 affordance.
 
 AC-10 Frontend smoothness. Text deltas are RAF-batched, older message rows do
-not remount every frame, scroll anchoring remains stable, and long markdown
+not remount every frame, scroll anchoring (per
+`chat-scroll-anchoring-hard-cutover.md`) remains stable, and long markdown
 answers remain responsive.
 
 AC-11 State display. The assistant row can display queued, thinking, writing,

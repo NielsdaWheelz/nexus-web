@@ -738,13 +738,15 @@ describe("ResourceChatDetail", () => {
     // On send the composer POSTs /api/chat-runs; the engine then seeds the
     // optimistic user+assistant pair, which the view pins to the top.
     const sentUser = message("user-2", 3, "user", "Second question");
-    // A tall answer so the new turn overflows the viewport and the question must
-    // scroll up to the top inset (rather than the whole short turn fitting).
+    // A short pending answer that fits below the pinned question; the tall history
+    // above is what makes the top-pin observable (vs the prior no-autoscroll bug
+    // that left the new turn chased below the fold). A tall answer would instead
+    // overflow and hand off to bottom-follow (see chat-scroll-anchoring cutover).
     const sentAssistant = message(
       "assistant-2",
       4,
       "assistant",
-      `Streaming answer ${"reading material ".repeat(80)}`,
+      "Streaming answer",
       "user-2",
       "pending",
     );
