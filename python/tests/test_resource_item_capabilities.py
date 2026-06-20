@@ -145,8 +145,29 @@ def test_every_resource_scheme_has_full_capability_decisions() -> None:
             assert capability.readable == "body", scheme
             assert capability.prompt_render == "inline_body", scheme
             assert capability.citable_result_type is None, scheme
+            assert capability.app_search_scope is False, scheme
         if capability.inspectable != "none":
             assert capability.readable == "media", scheme
+
+
+def test_generated_retrieval_artifacts_have_no_search_or_citation_identity() -> None:
+    from nexus.schemas.search import ALL_RESULT_TYPES
+
+    generated_artifacts = {
+        "source_map",
+        "source_map.v1",
+        "context_summary",
+        "section_summary",
+        "document_summary",
+        "hierarchy_node",
+        "summary_node",
+    }
+    assert generated_artifacts.isdisjoint(ALL_RESULT_TYPES)
+    assert all(
+        capability.citable_result_type not in generated_artifacts
+        for capability in RESOURCE_ITEM_CAPABILITIES.values()
+    )
+    assert all(scheme not in RESOURCE_ITEM_CAPABILITIES for scheme in generated_artifacts)
 
 
 def test_derived_capability_aliases_are_absent() -> None:

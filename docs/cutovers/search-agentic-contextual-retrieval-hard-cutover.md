@@ -44,6 +44,9 @@ graph-assisted expansion, and long-context routing.
 - `app_search` uses that graph read model only for omitted-scope broad, global,
   absence, and multi-hop query classes, ledgers `graph_expanded_scopes`, and
   leaves explicit scopes plus exact lookups unexpanded.
+- Generated/contextual hierarchy artifacts remain behind negative gates:
+  generated retrieval artifacts have no search-result or citation identity, and
+  source-map eval payloads stay guidance-only.
 
 Deferred by design: generated contextual summaries, hierarchical artifacts, and
 long-context execution.

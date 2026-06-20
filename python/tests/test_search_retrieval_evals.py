@@ -403,6 +403,7 @@ def _pack_metrics(
         "selected_refs": selected_refs,
         "candidates_by_type": dict(Counter(item["type"] for item in candidates)),
         "candidates_by_scope": dict(Counter(item["scope"] for item in candidates)),
+        "selected": selected,
     }
 
 
@@ -722,6 +723,15 @@ def test_search_retrieval_eval_baseline_report(
         for item in report["fixtures"]
     ), report
     assert all("context_route" in item["baseline"] for item in report["fixtures"]), report
+    for item in report["fixtures"]:
+        for selected in item["baseline"]["pack"]["selected"]:
+            source_map = selected["source_map"]
+            if source_map is None:
+                continue
+            assert "citation_target" not in source_map
+            assert "generated_text" not in source_map
+            assert "summary" not in source_map
+
     source_summary = next(
         item for item in report["fixtures"] if item["class"] == "single_source_summary"
     )
