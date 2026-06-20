@@ -19,7 +19,7 @@ import base64
 import json
 from dataclasses import dataclass
 from datetime import datetime
-from typing import cast
+from typing import Literal, cast
 from uuid import UUID
 
 from sqlalchemy import select, text
@@ -30,6 +30,7 @@ from nexus.db.models import Conversation, ResourceEdge
 from nexus.errors import ApiErrorCode, ForbiddenError, InvalidRequestError, NotFoundError
 from nexus.schemas.conversation import ConversationOut, PageInfo
 from nexus.schemas.resource_items import ResourceActivationOut
+from nexus.services.resource_graph.connections import query_connections
 from nexus.services.resource_graph.edges import create_edge
 from nexus.services.resource_graph.policy import (
     SEARCH_SCOPE_EDGE_KIND,
@@ -39,12 +40,19 @@ from nexus.services.resource_graph.refs import (
     ResourceScheme,
 )
 from nexus.services.resource_graph.resolve import ResolvedResource, resolve_ref, resolve_refs
-from nexus.services.resource_graph.schemas import EdgeCreate, EdgeOrigin
+from nexus.services.resource_graph.schemas import (
+    ConnectionFilters,
+    ConnectionQuery,
+    EdgeCreate,
+    EdgeKind,
+    EdgeOrigin,
+)
 from nexus.services.resource_items.capabilities import (
     CONVERSATION_CONTEXT_EDGE_ORIGINS,
     app_search_scope_schemes,
     conversation_search_scope_schemes,
     resource_can_attach,
+    resource_can_be_app_search_scope,
 )
 from nexus.services.resource_items.routing import resource_activation_for_ref
 
@@ -70,6 +78,17 @@ class ContextRefOut:
 class ConversationPage:
     conversations: list[ConversationOut]
     page: PageInfo
+
+
+@dataclass(frozen=True, slots=True)
+class SearchScopeExpansion:
+    ref: ResourceRef
+    edge_id: UUID
+    direction: Literal["incoming", "outgoing"]
+    kind: EdgeKind
+    origin: EdgeOrigin
+    source: ResourceRef
+    target: ResourceRef
 
 
 def list_context_refs(
@@ -374,6 +393,78 @@ def conversation_has_note_search_scope_refs(
         ).scalar_one_or_none()
         is not None
     )
+
+
+def search_scope_expansions_for_conversation(
+    db: Session, *, viewer_id: UUID, conversation_id: UUID, limit: int = _DEFAULT_LIMIT
+) -> list[SearchScopeExpansion]:
+    """Graph-derived app-search scope candidates for a conversation.
+
+    Guidance only: callers still decide whether to widen retrieval.
+    """
+    _require_owner(db, viewer_id, conversation_id)
+    limit = min(max(limit, _MIN_LIMIT), _MAX_LIMIT)
+    rows = db.execute(
+        select(ResourceEdge.target_scheme, ResourceEdge.target_id)
+        .where(
+            ResourceEdge.source_scheme == "conversation",
+            ResourceEdge.source_id == conversation_id,
+            ResourceEdge.kind == SEARCH_SCOPE_EDGE_KIND,
+            ResourceEdge.origin.in_(CONVERSATION_CONTEXT_EDGE_ORIGINS),
+            ResourceEdge.user_id == viewer_id,
+            ResourceEdge.ordinal.is_(None),
+        )
+        .order_by(
+            ResourceEdge.source_order_key.asc().nulls_last(),
+            ResourceEdge.created_at.asc(),
+            ResourceEdge.id.asc(),
+        )
+    ).all()
+    seeds: list[ResourceRef] = []
+    direct_scope_uris: set[str] = set()
+    for scheme, resource_id in rows:
+        ref = ResourceRef(scheme=cast("ResourceScheme", scheme), id=resource_id)
+        seeds.append(ref)
+        if resource_can_be_app_search_scope(ref):
+            direct_scope_uris.add(ref.uri)
+    if not seeds:
+        return []
+
+    page = query_connections(
+        db,
+        viewer_id=viewer_id,
+        query=ConnectionQuery(
+            refs=tuple(seeds),
+            direction="both",
+            rollup="owner",
+            filters=ConnectionFilters(),
+            limit=limit,
+        ),
+    )
+    out: list[SearchScopeExpansion] = []
+    seen: set[str] = set()
+    for connection in page.items:
+        candidate = connection.other.ref
+        if (
+            candidate.uri in direct_scope_uris
+            or candidate.uri in seen
+            or connection.other.missing
+            or not resource_can_be_app_search_scope(candidate)
+        ):
+            continue
+        seen.add(candidate.uri)
+        out.append(
+            SearchScopeExpansion(
+                ref=candidate,
+                edge_id=connection.edge_id,
+                direction=connection.direction,
+                kind=connection.kind,
+                origin=connection.origin,
+                source=connection.source_ref,
+                target=connection.target_ref,
+            )
+        )
+    return out
 
 
 # ---------- internals ---------------------------------------------------------

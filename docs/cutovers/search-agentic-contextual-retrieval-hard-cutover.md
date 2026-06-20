@@ -38,8 +38,12 @@ graph-assisted expansion, and long-context routing.
   Source maps do not become citation targets.
 - `inspect_resource` admits a `media:` URI selected by `app_search` in the same
   assistant message, using the same handoff ledger as `read_resource`.
+- `resource_graph.context` exposes graph-derived app-search scope expansion
+  candidates from conversation context refs, with edge metadata and capability /
+  visibility filtering. This is retrieval guidance only; `app_search` does not
+  widen runtime scopes from it yet.
 
-Deferred by design: graph expansion, generated contextual summaries,
+Deferred by design: runtime graph expansion, generated contextual summaries,
 hierarchical artifacts, and long-context execution.
 
 ## Why This Is Last
