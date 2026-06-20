@@ -56,30 +56,44 @@ The current chat bottleneck is not the shared search substrate. It is
   scope and the public max candidate pool for library, conversation, multi-scope,
   and global searches.
 - Runtime policy metadata is stored in `message_rerank_ledgers.metadata`:
-  candidate limit, selected limit, context budget, scope count, actual candidate
-  result-type mix, query class, retrieval mode, policy reason, bounded scope
-  label, full resolved scope list, and inclusion surface.
+  deterministic selection strategy/version, ordering policy, diversity policy,
+  budget policy, candidate limit, selected limit, context budget, scope count,
+  actual candidate result-type mix, query class, retrieval mode, policy reason,
+  bounded scope label, full resolved scope list, inclusion surface, selection
+  reason counts, and a per-candidate rerank trace with selected/skipped pack
+  outcomes.
 - Query-class metadata is currently `unclassified`; query-class fixtures live in
   the eval harness until a real planner/classifier cutover exists.
+- `search/selection.py` reranks app-search candidates deterministically before
+  packing. It uses hybrid score, lexical exactness, phrase match, result type,
+  citation quality, source identity, and locator-derived section identity. Exact
+  phrase matches retain low diversity pressure; broad non-phrase matches apply
+  source/section penalties even when they contain every query term.
 - `render_retrieved_context_blocks` packs rendered blocks under the char budget,
   skips empty/oversized candidates, and keeps an ordinal-aligned decision reason
   for every candidate.
 - Current `app_search` packer reasons are `selected_within_budget`,
   `skipped_over_budget`, `skipped_empty_render`, and `skipped_selected_limit`.
-  This cutover skips oversized evidence rather than trimming it; dedupe,
-  uncitable, and diversity policies belong to the later retrieval-controller
-  layer.
-- `message_rerank_ledgers.strategy` records `app_search_context_budget`; this is
-  a deterministic budget-ordering policy, not a learned or semantic reranker.
+  Oversized evidence is skipped rather than trimmed; deeper exact-read,
+  uncitable, and summarization policies belong to the later
+  retrieval-controller layer.
+- `message_rerank_ledgers.strategy` records
+  `app_search_deterministic_selection`; this is a deterministic local selector,
+  not a learned/provider reranker.
 - The model-facing tool continuation is compact selected-result JSON from
   `_app_search_tool_output`, not the full rendered `context_text`.
+- Persisted `web_result` rows are renderable app-search evidence; live public web
+  search still belongs to the separate `web_search` tool.
+- Public `web_search` writes the same rerank ledger table with
+  `provider_rank_then_context_budget` metadata, provider-rank ordering, selected
+  limit, context budget, reason counts, and per-candidate pack outcomes.
 - Trust-trail read models infer `included_in_prompt_source = "tool_output"` from
   selected retrieval rows plus rerank metadata `inclusion_surface = "tool_output"`
   so model-visible tool evidence is not confused with initial prompt assembly.
 
-This means the system can retrieve from a decent hybrid substrate and still fail
-at the evidence-controller layer by under-fetching, under-reranking, or packing a
-low-diversity prompt.
+This means the system can retrieve from a decent hybrid substrate and select a
+more balanced deterministic evidence pack, while still needing later
+query-planning, exact-read, contextual-retrieval, and learned-reranker gates.
 
 ## Ownership Boundaries
 
@@ -203,9 +217,10 @@ Each cutover should be independently reviewable, testable, and revertible.
      and deep candidate policies through shared `SearchQuery`.
 
 4. [`search-rerank-selection-hard-cutover.md`](../cutovers/search-rerank-selection-hard-cutover.md)
-   - Add deterministic reranking and diversity before learned/provider rerankers.
-   - Select evidence by relevance, exactness, source/section diversity, citation
-     quality, and prompt budget.
+   - First deterministic selector slice implemented before learned/provider
+     rerankers.
+   - Selects evidence by relevance, exactness, source/section diversity,
+     citation quality, and prompt budget.
 
 5. [`search-agentic-contextual-retrieval-hard-cutover.md`](../cutovers/search-agentic-contextual-retrieval-hard-cutover.md)
    - Add deep retrieval after the foundation is measured and stable.
@@ -339,8 +354,10 @@ The durable observability model should show:
 - "More available" counts by scope/source/type.
 
 `message_retrieval_candidate_ledgers` and `message_rerank_ledgers` are the right
-substrate; they need richer decision reasons and inclusion semantics before
-higher-risk retrieval changes.
+substrate. The current app-search selector records strategy metadata, selection
+reason counts, and a per-candidate rerank trace; future retrieval-controller
+work should add exact-read and "more available" semantics before higher-risk
+retrieval changes.
 
 ## What Not To Do
 

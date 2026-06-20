@@ -1,6 +1,6 @@
 # Search Rerank And Selection Hard Cutover
 
-**Status:** Proposed - 2026-06-20
+**Status:** First deterministic selector slice implemented - 2026-06-20
 
 **Type:** Hard cutover. Add deterministic second-stage selection before any
 learned or provider-backed reranker.
@@ -42,20 +42,19 @@ This cutover makes second-stage selection a real owner-layer concept.
 
 Implement a deterministic selector over a widened candidate pool.
 
-Initial features:
+Implemented selector features:
 
 - hybrid normalized score
 - lexical exactness and phrase match
 - result type
 - citation target quality
 - source/document id
-- section/page/locator proximity
-- scope match
-- recency where relevant
-- renderable evidence length
+- locator-derived section/page/time bucket where present
 - duplicate source/section penalties
 
-Initial selection policies:
+The current runtime still records `query_class = "unclassified"`. These
+query-class policies are the target for the later retrieval-controller/planner
+cutover, not a heuristic hidden in this slice:
 
 - exact lookup: prioritize exact lexical/title/person matches; low diversity
   pressure
@@ -111,16 +110,26 @@ Potential future providers/approaches:
 - LLM pairwise/listwise rerank over top candidates
 - per-user learned ranking from accepted citations and read behavior
 
-## Likely Files
+## Implementation
 
-- new `python/nexus/services/search/selection.py` or similar
-- `python/nexus/services/agent_tools/app_search.py`
-- `python/nexus/services/search/ranking.py`
-- `python/nexus/db/models.py` only if ledger schema needs extension
-- `python/tests/test_agent_app_search.py`
-- `python/tests/test_search_retrieval_evals.py`
+First slice implemented:
 
-## Tests To Add
+- Added `python/nexus/services/search/selection.py` with deterministic
+  app-search candidate reranking.
+- `app_search` now reranks candidates before the existing context-budget packer.
+- `app_search` can render selected persisted `web_result` rows instead of
+  skipping them as empty evidence.
+- `message_rerank_ledgers.strategy` now records
+  `app_search_deterministic_selection`.
+- Rerank metadata records strategy/version, ordering policy, diversity policy,
+  budget policy, candidate limits, result-type mix, selection reason counts, and
+  a per-candidate rerank trace with final selected/skipped pack outcomes.
+- Existing `message_retrievals`, candidate ledgers, and rerank ledgers were
+  sufficient; no schema extension or parallel telemetry store was needed.
+- The selector remains deterministic and local. No learned, provider-backed, or
+  LLM reranker was added.
+
+## Tests Added Or Updated
 
 - Deterministic selector output for fixed candidates.
 - Exact lookup preserves top exact evidence.
@@ -128,13 +137,20 @@ Potential future providers/approaches:
 - Duplicate section/source penalty works.
 - Container row loses to concrete passage when both represent same source.
 - Rerank ledger metadata has strategy/version/reasons.
+- Retrieval eval reports now include selected false-positive noise.
+- Public `web_search` writes the shared rerank ledger with provider-rank policy
+  metadata and per-candidate pack outcomes.
+- Trust-trail rendering shows the deterministic selector policy line.
 
 ## Verification
 
 Run focused tests:
 
 - retrieval eval harness
+- `python/tests/test_search_selection.py`
 - `python/tests/test_agent_app_search.py`
-- `python/tests/test_search.py`
-- `python/tests/test_chat_runs.py`
-- relevant trust-trail tests
+- `python/tests/test_search_retrieval_evals.py`
+- `python/tests/test_message_retrievals.py`
+- `python/tests/test_web_search_route.py`
+- `python/tests/test_openai_reasoning_contracts.py::test_app_search_policy_survives_chat_run_dispatch_and_trust_trail`
+- `apps/web/src/components/chat/AssistantMessage.test.tsx`

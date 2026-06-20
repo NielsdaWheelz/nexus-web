@@ -200,7 +200,14 @@ async def test_chat_execute_web_search_still_persists_snapshots(
 ):
     """The chat wrapper (execute_web_search) still mints persisted snapshots after
     the read-only core was extracted."""
-    from nexus.services.agent_tools.web_search import execute_web_search
+    from nexus.services.agent_tools.web_search import (
+        WEB_SEARCH_CONTEXT_CHARS,
+        WEB_SEARCH_LIMIT,
+        WEB_SEARCH_RERANK_STRATEGY,
+        WEB_SEARCH_RERANK_VERSION,
+        WEB_SEARCH_SELECTED_LIMIT,
+        execute_web_search,
+    )
 
     user_id = create_test_user_id()
     assert auth_client.get("/me", headers=auth_headers(user_id)).status_code == 200
@@ -251,6 +258,26 @@ async def test_chat_execute_web_search_still_persists_snapshots(
         "execute_web_search must persist the RESPONSE-level provider_request_id, not "
         f"the item-level id; got {run.provider_request_ids!r}"
     )
+    with direct_db.session() as session:
+        strategy, metadata = session.execute(
+            text(
+                """
+                SELECT strategy, metadata
+                FROM message_rerank_ledgers
+                WHERE tool_call_id = :tool_call_id
+                """
+            ),
+            {"tool_call_id": run.tool_call_id},
+        ).one()
+    assert strategy == WEB_SEARCH_RERANK_STRATEGY
+    assert metadata["selection_strategy"] == WEB_SEARCH_RERANK_STRATEGY
+    assert metadata["selection_policy_version"] == WEB_SEARCH_RERANK_VERSION
+    assert metadata["candidate_limit"] == WEB_SEARCH_LIMIT
+    assert metadata["selected_limit"] == WEB_SEARCH_SELECTED_LIMIT
+    assert metadata["context_budget_chars"] == WEB_SEARCH_CONTEXT_CHARS
+    assert metadata["selection_reason_counts"] == {"within_context_budget": 1}
+    assert metadata["candidate_rerank_trace"][0]["selection_reason"] == "within_context_budget"
+    assert metadata["candidate_rerank_trace"][0]["selected"] is True
 
 
 def test_web_search_route_plumbs_freshness_days_to_provider(auth_client):

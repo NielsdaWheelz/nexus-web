@@ -67,6 +67,11 @@ from nexus.services.search.scope import (
     scope_filter_sql,
     scope_from_uri,
 )
+from nexus.services.search.selection import (
+    APP_SEARCH_SELECTION_STRATEGY,
+    APP_SEARCH_SELECTION_VERSION,
+    rerank_app_search_candidates,
+)
 from nexus.services.search.telemetry import hash_query
 from nexus.timestamps import format_timestamp_ms
 
@@ -163,6 +168,7 @@ class AppSearchRun:
     empty_status: str | None = None
     tool_call_id: UUID | None = None
     tool_call_index: int = 0
+    rerank_trace: list[dict[str, Any]] = field(default_factory=list)
 
     def tool_call_event(self) -> dict[str, Any]:
         return {
@@ -287,6 +293,7 @@ def execute_app_search(
             citations=[],
             selected_citations=[],
             selection_reasons=[],
+            rerank_trace=[],
             context_text=context_text,
             context_chars=len(context_text),
             latency_ms=latency_ms,
@@ -314,23 +321,7 @@ def execute_app_search(
         citations = [
             citation_from_search_result(result, filters=filters) for result in response.results
         ]
-        prompt_order = {
-            "content_chunk": 0,
-            "evidence_span": 0,
-            "fragment": 0,
-            "highlight": 0,
-            "note_block": 0,
-            "reader_apparatus_item": 0,
-            "message": 0,
-            "media": 1,
-            "episode": 1,
-            "video": 1,
-            "podcast": 1,
-            "page": 1,
-            "conversation": 1,
-            "contributor": 1,
-        }
-        citations.sort(key=lambda citation: prompt_order.get(citation.result_type, 2))
+        citations, rerank_trace = rerank_app_search_candidates(query, citations)
         context_text, context_chars, selected, selection_reasons = render_retrieved_context_blocks(
             db,
             viewer_id=viewer_id,
@@ -365,6 +356,7 @@ def execute_app_search(
         citations = []
         selected = []
         selection_reasons = []
+        rerank_trace = []
         context_text = ""
         context_chars = 0
 
@@ -385,6 +377,7 @@ def execute_app_search(
         citations=citations,
         selected_citations=selected,
         selection_reasons=selection_reasons,
+        rerank_trace=rerank_trace,
         context_text=context_text,
         context_chars=context_chars,
         latency_ms=latency_ms,
@@ -538,21 +531,51 @@ def persist_app_search_run(db: Session, run: AppSearchRun) -> None:
     """Persist the app-search tool call and retrieval rows."""
     if len(run.selection_reasons) != len(run.citations):
         raise AssertionError("app_search selection reasons must match citations")
+    if run.rerank_trace and len(run.rerank_trace) != len(run.citations):
+        raise AssertionError("app_search rerank trace must match citations")
     selected_ordinals: set[int] = set()
+    selection_statuses: list[str] = []
     for ordinal, reason in enumerate(run.selection_reasons):
-        if reason == "selected_within_budget":
+        selected = reason == "selected_within_budget"
+        if selected:
             selected_ordinals.add(ordinal)
-            continue
-        if reason not in {
-            "skipped_empty_render",
-            "skipped_over_budget",
-            "skipped_selected_limit",
-        }:
+            selection_statuses.append("selected")
+        elif reason in {"skipped_over_budget", "skipped_selected_limit"}:
+            selection_statuses.append("excluded_by_budget")
+        elif reason == "skipped_empty_render":
+            selection_statuses.append("retrieved")
+        else:
             raise AssertionError(f"unsupported app_search selection reason: {reason}")
     if [run.citations[ordinal] for ordinal in sorted(selected_ordinals)] != run.selected_citations:
         raise AssertionError("app_search selected citations must match selection reasons")
     for ordinal, citation in enumerate(run.citations):
         citation.selected = ordinal in selected_ordinals
+
+    candidate_rerank_trace: list[dict[str, Any]] = []
+    for ordinal, citation in enumerate(run.citations):
+        selected = ordinal in selected_ordinals
+        trace = (
+            dict(run.rerank_trace[ordinal])
+            if run.rerank_trace
+            else {
+                "from": ordinal,
+                "to": ordinal,
+                "result_type": citation.result_type,
+                "source_id": citation.source_id,
+                "score": citation.score,
+                "selection_score": citation.score,
+                "reason": "not_reranked",
+            }
+        )
+        trace.update(
+            {
+                "selected": selected,
+                "included_in_prompt": selected,
+                "selection_status": selection_statuses[ordinal],
+                "selection_reason": run.selection_reasons[ordinal],
+            }
+        )
+        candidate_rerank_trace.append(trace)
 
     result_refs = [
         retrieval_result_ref_json(citation.result_ref_json()) for citation in run.citations
@@ -723,13 +746,7 @@ def persist_app_search_run(db: Session, run: AppSearchRun) -> None:
     for ordinal, citation in enumerate(run.citations):
         selection_reason = run.selection_reasons[ordinal]
         selected = ordinal in selected_ordinals
-        selection_status = (
-            "selected"
-            if selected
-            else "excluded_by_budget"
-            if selection_reason in {"skipped_over_budget", "skipped_selected_limit"}
-            else "retrieved"
-        )
+        selection_status = selection_statuses[ordinal]
         locator = strict_citation_locator(citation)
         result_ref = retrieval_result_ref_json(citation.result_ref_json())
         retrieval_id = insert_retrieval_row(
@@ -781,7 +798,7 @@ def persist_app_search_run(db: Session, run: AppSearchRun) -> None:
             )
             VALUES (
                 :tool_call_id,
-                'app_search_context_budget',
+                :strategy,
                 :input_count,
                 :selected_count,
                 :budget_chars,
@@ -793,12 +810,18 @@ def persist_app_search_run(db: Session, run: AppSearchRun) -> None:
         ).bindparams(bindparam("metadata", type_=JSONB)),
         {
             "tool_call_id": tool_call_id,
+            "strategy": APP_SEARCH_SELECTION_STRATEGY,
             "input_count": len(run.citations),
             "selected_count": len(run.selected_citations),
             "budget_chars": APP_SEARCH_CONTEXT_CHARS,
             "selected_chars": run.context_chars if run.selected_citations else 0,
             "status": run.status,
             "metadata": {
+                "selection_strategy": APP_SEARCH_SELECTION_STRATEGY,
+                "selection_policy_version": APP_SEARCH_SELECTION_VERSION,
+                "ordering_policy": "hybrid_score_exactness_citation_quality_diversity",
+                "diversity_policy": "source_section_penalty",
+                "budget_policy": "greedy_context_budget",
                 "candidate_limit": run.candidate_limit,
                 "selected_limit": APP_SEARCH_SELECTED_LIMIT,
                 "context_budget_chars": APP_SEARCH_CONTEXT_CHARS,
@@ -812,6 +835,8 @@ def persist_app_search_run(db: Session, run: AppSearchRun) -> None:
                 "scope": run.scope,
                 "resolved_scopes": run.resolved_scopes,
                 "inclusion_surface": "tool_output",
+                "selection_reason_counts": dict(Counter(run.selection_reasons)),
+                "candidate_rerank_trace": candidate_rerank_trace,
             },
         },
     )
@@ -867,6 +892,8 @@ def _render_single_retrieved_context(
             viewer_id,
             citation.result_ref.get("contributor_handle") or citation.context_ref.get("id"),
         )
+    if context_type == "web_result":
+        return _render_web_result_context(citation)
 
     context_id = parse_uuid(citation.context_ref.get("id"))
     if context_id is None:
@@ -1061,6 +1088,35 @@ def _render_reader_apparatus_item_block(
         lines.append(f"<label>{xml_escape(row[1])}</label>")
     lines.append(f"<content>{xml_escape(row[2] or '')}</content>")
     _append_citation_source_xml(lines, citation)
+    lines.append("</app_search_result>")
+    return "\n".join(lines)
+
+
+def _render_web_result_context(citation: RetrievalCitation) -> str | None:
+    result_ref = citation.result_ref
+    if result_ref.get("type") != "web_result":
+        return None
+    url = str(result_ref.get("url") or citation.deep_link or "")
+    if not url:
+        return None
+    lines = [
+        '<app_search_result type="web_result">',
+        f"<title>{xml_escape(str(result_ref.get('title') or citation.title or ''))}</title>",
+        f"<url>{xml_escape(url)}</url>",
+    ]
+    if result_ref.get("source_name"):
+        lines.append(f"<source>{xml_escape(str(result_ref['source_name']))}</source>")
+    if result_ref.get("published_at"):
+        lines.append(f"<published_at>{xml_escape(str(result_ref['published_at']))}</published_at>")
+    if result_ref.get("snippet") or citation.snippet:
+        lines.append(
+            f"<excerpt>{xml_escape(str(result_ref.get('snippet') or citation.snippet))}</excerpt>"
+        )
+    extra_snippets = result_ref.get("extra_snippets")
+    if isinstance(extra_snippets, list):
+        for snippet in extra_snippets:
+            if isinstance(snippet, str) and snippet:
+                lines.append(f"<excerpt>{xml_escape(snippet)}</excerpt>")
     lines.append("</app_search_result>")
     return "\n".join(lines)
 

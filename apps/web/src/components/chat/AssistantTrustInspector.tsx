@@ -287,12 +287,36 @@ function ToolRow({ tool }: { tool: MessageToolCall }) {
               typeof ledger.metadata.policy_reason === "string"
                 ? ledger.metadata.policy_reason
                 : null;
+            const selectionVersion =
+              typeof ledger.metadata.selection_policy_version === "string"
+                ? ledger.metadata.selection_policy_version
+                : null;
+            const orderingPolicy =
+              typeof ledger.metadata.ordering_policy === "string"
+                ? ledger.metadata.ordering_policy
+                : null;
+            const diversityPolicy =
+              typeof ledger.metadata.diversity_policy === "string"
+                ? ledger.metadata.diversity_policy
+                : null;
+            const budgetPolicy =
+              typeof ledger.metadata.budget_policy === "string"
+                ? ledger.metadata.budget_policy
+                : null;
             const policy = [
               retrievalMode,
               policyReason,
               candidateLimit === null ? null : `candidates ${candidateLimit}`,
               selectedLimit === null ? null : `selected cap ${selectedLimit}`,
               queryClass,
+            ]
+              .filter(Boolean)
+              .join(" - ");
+            const selectionPolicy = [
+              selectionVersion,
+              orderingPolicy,
+              diversityPolicy,
+              budgetPolicy,
             ]
               .filter(Boolean)
               .join(" - ");
@@ -309,6 +333,9 @@ function ToolRow({ tool }: { tool: MessageToolCall }) {
                   {ledger.budget_chars ? `/${ledger.budget_chars}` : ""} chars
                 </div>
                 {policy ? <div className={styles.trustCode}>{policy}</div> : null}
+                {selectionPolicy ? (
+                  <div className={styles.trustCode}>{selectionPolicy}</div>
+                ) : null}
               </li>
             );
           })}

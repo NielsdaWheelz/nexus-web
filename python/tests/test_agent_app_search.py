@@ -27,6 +27,10 @@ from nexus.services.search.policy import (
     APP_SEARCH_SCOPED_CANDIDATE_LIMIT,
 )
 from nexus.services.search.query import SearchQuery
+from nexus.services.search.selection import (
+    APP_SEARCH_SELECTION_STRATEGY,
+    APP_SEARCH_SELECTION_VERSION,
+)
 from tests.factories import (
     add_context_edge,
     create_searchable_media_in_library,
@@ -295,13 +299,31 @@ def test_execute_app_search_persists_retrieval_metadata(
             ),
             {"tool_call_id": run.tool_call_id},
         ).one()
-        assert rerank_row[0] == "app_search_context_budget"
+        assert rerank_row[0] == APP_SEARCH_SELECTION_STRATEGY
         assert rerank_row[1] == len(run.citations)
         assert rerank_row[2] == len(run.selected_citations)
         assert rerank_row[3] > 0
         assert rerank_row[4] == run.context_chars
         assert rerank_row[5] == run.status
-        assert rerank_row[6] == {
+        metadata = dict(rerank_row[6])
+        assert metadata["selection_strategy"] == APP_SEARCH_SELECTION_STRATEGY
+        assert metadata["selection_policy_version"] == APP_SEARCH_SELECTION_VERSION
+        assert metadata["candidate_rerank_trace"]
+        assert len(metadata["candidate_rerank_trace"]) == len(run.citations)
+        assert [item["selection_reason"] for item in metadata["candidate_rerank_trace"]] == (
+            run.selection_reasons
+        )
+        assert [item["selected"] for item in metadata["candidate_rerank_trace"]] == [
+            citation in run.selected_citations for citation in run.citations
+        ]
+        assert {
+            key: value for key, value in metadata.items() if key != "candidate_rerank_trace"
+        } == {
+            "selection_strategy": APP_SEARCH_SELECTION_STRATEGY,
+            "selection_policy_version": APP_SEARCH_SELECTION_VERSION,
+            "ordering_policy": "hybrid_score_exactness_citation_quality_diversity",
+            "diversity_policy": "source_section_penalty",
+            "budget_policy": "greedy_context_budget",
             "candidate_limit": APP_SEARCH_DEEP_CANDIDATE_LIMIT,
             "selected_limit": APP_SEARCH_SELECTED_LIMIT,
             "context_budget_chars": APP_SEARCH_CONTEXT_CHARS,
@@ -313,6 +335,7 @@ def test_execute_app_search_persists_retrieval_metadata(
             "scope": "all",
             "resolved_scopes": [],
             "inclusion_surface": "tool_output",
+            "selection_reason_counts": dict(Counter(run.selection_reasons)),
         }
 
     direct_db.register_cleanup("fragments", "media_id", media_id)
@@ -459,8 +482,29 @@ def test_persist_app_search_run_records_packer_decisions(
         ),
         {"tool_call_id": run.tool_call_id},
     ).one()
-    assert rerank[0] == "app_search_context_budget"
-    assert rerank[1] == {
+    assert rerank[0] == APP_SEARCH_SELECTION_STRATEGY
+    metadata = dict(rerank[1])
+    assert [item["selection_reason"] for item in metadata["candidate_rerank_trace"]] == [
+        "skipped_over_budget",
+        "skipped_empty_render",
+        "selected_within_budget",
+    ]
+    assert [item["selection_status"] for item in metadata["candidate_rerank_trace"]] == [
+        "excluded_by_budget",
+        "retrieved",
+        "selected",
+    ]
+    assert [item["selected"] for item in metadata["candidate_rerank_trace"]] == [
+        False,
+        False,
+        True,
+    ]
+    assert {key: value for key, value in metadata.items() if key != "candidate_rerank_trace"} == {
+        "selection_strategy": APP_SEARCH_SELECTION_STRATEGY,
+        "selection_policy_version": APP_SEARCH_SELECTION_VERSION,
+        "ordering_policy": "hybrid_score_exactness_citation_quality_diversity",
+        "diversity_policy": "source_section_penalty",
+        "budget_policy": "greedy_context_budget",
         "candidate_limit": APP_SEARCH_DEEP_CANDIDATE_LIMIT,
         "selected_limit": APP_SEARCH_SELECTED_LIMIT,
         "context_budget_chars": APP_SEARCH_CONTEXT_CHARS,
@@ -472,6 +516,11 @@ def test_persist_app_search_run_records_packer_decisions(
         "scope": "all",
         "resolved_scopes": [],
         "inclusion_surface": "tool_output",
+        "selection_reason_counts": {
+            "selected_within_budget": 1,
+            "skipped_empty_render": 1,
+            "skipped_over_budget": 1,
+        },
     }
     counts = db_session.execute(
         text(
@@ -659,6 +708,77 @@ def test_execute_app_search_builds_public_filter_query(
     assert captured["query"].limit == APP_SEARCH_DEEP_CANDIDATE_LIMIT
     assert run.candidate_limit == APP_SEARCH_DEEP_CANDIDATE_LIMIT
     assert run.retrieval_mode == "deep"
+
+
+def test_render_retrieved_context_blocks_renders_web_result(
+    db_session: Session,
+    bootstrapped_user,
+) -> None:
+    citation = RetrievalCitation(
+        result_type="web_result",
+        source_id="external-1",
+        title="Search result",
+        source_label="Example",
+        snippet="Open web evidence",
+        deep_link="https://example.com/research",
+        citation_target="external_snapshot:external-1",
+        citation_label=None,
+        locator={
+            "type": "external_url",
+            "url": "https://example.com/research",
+            "title": "Search result",
+            "display_url": "example.com/research",
+        },
+        context_ref={"type": "web_result", "id": "external-1"},
+        evidence_span_id=None,
+        media_id=None,
+        media_kind=None,
+        score=1.0,
+        result_ref={
+            "type": "web_result",
+            "id": "external-1",
+            "result_type": "web_result",
+            "result_ref": "provider:1",
+            "source_id": "external-1",
+            "title": "Search result",
+            "url": "https://example.com/research",
+            "display_url": "example.com/research",
+            "deep_link": "https://example.com/research",
+            "citation_target": "external_snapshot:external-1",
+            "locator": {
+                "type": "external_url",
+                "url": "https://example.com/research",
+                "title": "Search result",
+                "display_url": "example.com/research",
+            },
+            "snippet": "Open web evidence",
+            "extra_snippets": ["More web evidence"],
+            "published_at": "2026-06-19T00:00:00Z",
+            "source_name": "Example",
+            "rank": 1,
+            "provider": "test",
+            "provider_request_id": "request-1",
+            "context_ref": {"type": "web_result", "id": "external-1"},
+            "media_id": None,
+            "media_kind": None,
+            "score": 1.0,
+            "selected": False,
+        },
+    )
+
+    context_text, context_chars, selected, selection_reasons = render_retrieved_context_blocks(
+        db_session,
+        viewer_id=bootstrapped_user,
+        citations=[citation],
+    )
+
+    assert '<app_search_result type="web_result">' in context_text
+    assert "<url>https://example.com/research</url>" in context_text
+    assert "<excerpt>Open web evidence</excerpt>" in context_text
+    assert "<excerpt>More web evidence</excerpt>" in context_text
+    assert context_chars == len(context_text)
+    assert selected == [citation]
+    assert selection_reasons == ["selected_within_budget"]
 
 
 def test_execute_app_search_uses_moderate_candidate_depth_for_single_media_scope(

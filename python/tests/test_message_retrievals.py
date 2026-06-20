@@ -19,6 +19,10 @@ from nexus.db.models import (
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.message_trust_trails import build_assistant_trust_trail
+from nexus.services.search.selection import (
+    APP_SEARCH_SELECTION_STRATEGY,
+    APP_SEARCH_SELECTION_VERSION,
+)
 from tests.factories import (
     add_library_member,
     create_test_conversation,
@@ -179,16 +183,39 @@ def _seed_cited_run(
     db_session.add(
         MessageRerankLedger(
             tool_call_id=tool.id,
-            strategy="app_search_context_budget",
+            strategy=APP_SEARCH_SELECTION_STRATEGY,
             input_count=1,
             selected_count=1,
             budget_chars=16000,
             selected_chars=200,
             status="complete",
             metadata_={
+                "selection_strategy": APP_SEARCH_SELECTION_STRATEGY,
+                "selection_policy_version": APP_SEARCH_SELECTION_VERSION,
+                "ordering_policy": "hybrid_score_exactness_citation_quality_diversity",
+                "diversity_policy": "source_section_penalty",
+                "budget_policy": "greedy_context_budget",
+                "candidate_limit": 20,
                 "selected_limit": 6,
+                "context_budget_chars": 16000,
+                "query_class": "unclassified",
                 "scope": "all",
                 "inclusion_surface": "tool_output",
+                "selection_reason_counts": {"selected_within_budget": 1},
+                "candidate_rerank_trace": [
+                    {
+                        "from": 0,
+                        "to": 0,
+                        "result_type": "media",
+                        "source_id": "media-1",
+                        "score": 0.9,
+                        "reason": "kept_order",
+                        "selected": True,
+                        "included_in_prompt": True,
+                        "selection_status": "selected",
+                        "selection_reason": "selected_within_budget",
+                    }
+                ],
             },
         )
     )
@@ -305,13 +332,40 @@ def test_candidate_and_rerank_ledgers_are_nested_under_tool_call(
     db_session.add(
         MessageRerankLedger(
             tool_call_id=tool.id,
-            strategy="score",
+            strategy=APP_SEARCH_SELECTION_STRATEGY,
             input_count=1,
             selected_count=1,
             budget_chars=4000,
             selected_chars=15,
             status="complete",
-            metadata_={"reason": "top_result"},
+            metadata_={
+                "selection_strategy": APP_SEARCH_SELECTION_STRATEGY,
+                "selection_policy_version": APP_SEARCH_SELECTION_VERSION,
+                "ordering_policy": "hybrid_score_exactness_citation_quality_diversity",
+                "diversity_policy": "source_section_penalty",
+                "budget_policy": "greedy_context_budget",
+                "candidate_limit": 20,
+                "selected_limit": 6,
+                "context_budget_chars": 16000,
+                "query_class": "unclassified",
+                "scope": "all",
+                "inclusion_surface": "tool_output",
+                "selection_reason_counts": {"selected": 1},
+                "candidate_rerank_trace": [
+                    {
+                        "from": 0,
+                        "to": 0,
+                        "result_type": "media",
+                        "source_id": "media-1",
+                        "score": 0.9,
+                        "reason": "kept_order",
+                        "selected": True,
+                        "included_in_prompt": True,
+                        "selection_status": "included_in_prompt",
+                        "selection_reason": "selected",
+                    }
+                ],
+            },
         )
     )
     db_session.commit()
@@ -327,7 +381,13 @@ def test_candidate_and_rerank_ledgers_are_nested_under_tool_call(
     assert len(trail.tool_calls[0].candidate_ledgers) == 1
     assert trail.tool_calls[0].candidate_ledgers[0].included_in_prompt is True
     assert len(trail.tool_calls[0].rerank_ledgers) == 1
-    assert trail.tool_calls[0].rerank_ledgers[0].metadata == {"reason": "top_result"}
+    assert trail.tool_calls[0].rerank_ledgers[0].strategy == APP_SEARCH_SELECTION_STRATEGY
+    assert (
+        trail.tool_calls[0]
+        .rerank_ledgers[0]
+        .metadata["candidate_rerank_trace"][0]["selection_reason"]
+        == "selected"
+    )
 
 
 def test_trust_trail_links_run_prompt_retrieval_citation_and_reference(

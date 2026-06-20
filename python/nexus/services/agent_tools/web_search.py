@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import time
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID
@@ -35,6 +36,8 @@ WEB_SEARCH_TOOL_NAME = "web_search"
 WEB_SEARCH_LIMIT = 6
 WEB_SEARCH_SELECTED_LIMIT = 5
 WEB_SEARCH_CONTEXT_CHARS = 12000
+WEB_SEARCH_RERANK_STRATEGY = "provider_rank_then_context_budget"
+WEB_SEARCH_RERANK_VERSION = "v1"
 # Mirror the web_search_tool.WebSearchRequest contract at our own boundary so an
 # out-of-range query is rejected as a typed WebSearchQueryError (one owner: see
 # normalize_web_search_query) before WebSearchRequest.__post_init__ can raise a bare
@@ -510,13 +513,35 @@ def persist_web_search_run(db: Session, run: WebSearchRun) -> None:
         bindparam("locator", type_=JSONB),
     )
     selected_refs = {citation.result_ref for citation in run.selected_citations}
+    selection_reasons: list[str] = []
+    candidate_rerank_trace: list[dict[str, Any]] = []
     persisted_count = 0
     for ordinal, citation in enumerate(run.citations):
         selected = citation.result_ref in selected_refs
+        selection_status = "web_result" if selected else "retrieved"
+        selection_reason = "within_context_budget" if selected else "below_selected_limit"
         score = 1.0 / max(citation.rank, 1)
         source_id = snapshot_ids[citation.result_ref]
         result_ref = retrieval_result_ref_json(citation.to_json(source_id=source_id))
         locator = citation.locator_json()
+        selection_reasons.append(selection_reason)
+        candidate_rerank_trace.append(
+            {
+                "from": ordinal,
+                "to": ordinal,
+                "result_type": "web_result",
+                "source_id": source_id,
+                "source": citation.source_name or citation.display_url or citation.url,
+                "rank": citation.rank,
+                "score": score,
+                "selection_score": score,
+                "reason": "provider_rank",
+                "selected": selected,
+                "included_in_prompt": False,
+                "selection_status": selection_status,
+                "selection_reason": selection_reason,
+            }
+        )
         retrieval_id = insert_retrieval_row(
             db,
             tool_call_id=tool_call_id,
@@ -553,8 +578,8 @@ def persist_web_search_run(db: Session, run: WebSearchRun) -> None:
                 "source_id": source_id,
                 "score": score,
                 "selected": selected,
-                "selection_status": "web_result" if selected else "retrieved",
-                "selection_reason": "within_context_budget" if selected else "below_selected_limit",
+                "selection_status": selection_status,
+                "selection_reason": selection_reason,
                 "result_ref": result_ref,
                 "locator": locator,
             },
@@ -576,7 +601,7 @@ def persist_web_search_run(db: Session, run: WebSearchRun) -> None:
             )
             VALUES (
                 :tool_call_id,
-                'provider_rank_then_context_budget',
+                :strategy,
                 :input_count,
                 :selected_count,
                 :budget_chars,
@@ -588,15 +613,29 @@ def persist_web_search_run(db: Session, run: WebSearchRun) -> None:
         ).bindparams(bindparam("metadata", type_=JSONB)),
         {
             "tool_call_id": tool_call_id,
+            "strategy": WEB_SEARCH_RERANK_STRATEGY,
             "input_count": len(run.citations),
             "selected_count": len(run.selected_citations),
             "budget_chars": WEB_SEARCH_CONTEXT_CHARS,
             "selected_chars": run.context_chars,
             "status": run.status,
             "metadata": {
+                "selection_strategy": WEB_SEARCH_RERANK_STRATEGY,
+                "selection_policy_version": WEB_SEARCH_RERANK_VERSION,
+                "ordering_policy": "provider_rank",
+                "diversity_policy": "provider_rank",
+                "budget_policy": "greedy_context_budget",
+                "candidate_limit": WEB_SEARCH_LIMIT,
                 "selected_limit": WEB_SEARCH_SELECTED_LIMIT,
+                "context_budget_chars": WEB_SEARCH_CONTEXT_CHARS,
+                "query_class": "public_web_search",
+                "retrieval_mode": "provider",
+                "policy_reason": "web_search_tool",
+                "scope": "public_web",
                 "result_type": run.result_type,
                 "provider_request_ids": run.provider_request_ids,
+                "selection_reason_counts": dict(Counter(selection_reasons)),
+                "candidate_rerank_trace": candidate_rerank_trace,
             },
         },
     )

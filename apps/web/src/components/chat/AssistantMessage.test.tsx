@@ -281,13 +281,18 @@ describe("AssistantMessage", () => {
             {
               id: "rerank-1",
               tool_call_id: "tool-1",
-              strategy: "search_score_then_context_budget",
+              strategy: "app_search_deterministic_selection",
               input_count: 1,
               selected_count: 1,
               budget_chars: 4000,
               selected_chars: 15,
               status: "complete",
               metadata: {
+                selection_strategy: "app_search_deterministic_selection",
+                selection_policy_version: "v1",
+                ordering_policy: "hybrid_score_exactness_citation_quality_diversity",
+                diversity_policy: "source_section_penalty",
+                budget_policy: "greedy_context_budget",
                 candidate_limit: 50,
                 selected_limit: 6,
                 query_class: "unclassified",
@@ -356,9 +361,14 @@ describe("AssistantMessage", () => {
     expect(screen.getByText(/#1 app_search - complete/)).toBeInTheDocument();
     expect(screen.getByText(/retrieval 0: Source title/)).toBeInTheDocument();
     expect(screen.getByText(/candidate 0: source-1/)).toBeInTheDocument();
-    expect(screen.getByText("search_score_then_context_budget")).toBeInTheDocument();
+    expect(screen.getByText("app_search_deterministic_selection")).toBeInTheDocument();
     expect(
       screen.getByText("deep - global_scope - candidates 50 - selected cap 6 - unclassified"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "v1 - hybrid_score_exactness_citation_quality_diversity - source_section_penalty - greedy_context_budget",
+      ),
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /\[1\] Source title/ }));
     expect(onCitationActivate).toHaveBeenCalledWith(

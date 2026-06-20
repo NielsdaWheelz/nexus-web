@@ -605,11 +605,14 @@ result-type grid. The package owns one concern per module (`kinds`, `query`, `sc
   similarity + recency), filtered by a similarity floor, then resolved through the
   locator resolver. There is no `semantic` flag; the query embedding is built once
   for any semantic-capable kind regardless of structured filters. For chat, search
-  policy chooses a candidate limit, selected evidence is packed under a context-char
-  budget, and every candidate/rerank/selection decision is written to ledger
-  tables. Each candidate has a `message_retrievals` telemetry row via the single
-  validated writer `retrieval_citation.insert_retrieval_row`; selected/cited rows
-  link back to their citation edge through `cited_edge_id`, §7.7.
+  policy chooses a candidate limit, `search/selection.py` applies deterministic
+  exactness/citation-quality/source/section-diversity reranking, selected
+  evidence is packed under a context-char budget, and every
+  candidate/rerank/selection decision is written to ledger tables. Each
+  app-search candidate has a `message_retrievals`
+  telemetry row via the single validated writer
+  `retrieval_citation.insert_retrieval_row`; selected/cited rows link back to
+  their citation edge through `cited_edge_id`, §7.7.
 - **The `ResourceRef` grammar** (`services/resource_graph/refs.py`): a
   `<scheme>:<uuid>` ref over a closed scheme set (`media`, `library`,
   `evidence_span`, `content_chunk`, `highlight`, `page`, `note_block`, `fragment`,

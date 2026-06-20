@@ -29,9 +29,15 @@ from nexus.services.search.kinds import SEARCH_KINDS
 from nexus.services.search.policy import (
     APP_SEARCH_DEEP_CANDIDATE_LIMIT,
     APP_SEARCH_SCOPED_CANDIDATE_LIMIT,
+    app_search_candidate_policy,
 )
 from nexus.services.search.query import build_search_query
 from nexus.services.search.scope import scope_from_uri
+from nexus.services.search.selection import (
+    APP_SEARCH_SELECTION_STRATEGY,
+    APP_SEARCH_SELECTION_VERSION,
+    rerank_app_search_candidates,
+)
 from tests.factories import (
     add_context_edge,
     create_searchable_media_in_library,
@@ -218,18 +224,6 @@ def _section_key(item: dict) -> str:
     return str(item.get("locator") or item.get("source_label") or item["ref"])
 
 
-def _expected_app_search_policy(scope_refs: list[str]) -> tuple[int, str, str]:
-    if len(scope_refs) == 1 and scope_refs[0].startswith("media:"):
-        return APP_SEARCH_SCOPED_CANDIDATE_LIMIT, "fast", "single_narrow_scope"
-    if len(scope_refs) == 1 and scope_refs[0].startswith("library:"):
-        return APP_SEARCH_DEEP_CANDIDATE_LIMIT, "deep", "library_scope"
-    if len(scope_refs) == 1 and scope_refs[0].startswith("conversation:"):
-        return APP_SEARCH_DEEP_CANDIDATE_LIMIT, "deep", "conversation_scope"
-    if len(scope_refs) > 1:
-        return APP_SEARCH_DEEP_CANDIDATE_LIMIT, "deep", "multiple_scopes"
-    return APP_SEARCH_DEEP_CANDIDATE_LIMIT, "deep", "global_scope"
-
-
 def _run_candidates(
     db: Session,
     viewer_id: UUID,
@@ -263,24 +257,7 @@ def _run_candidates(
     citations = [
         citation_from_search_result(result, filters=filters) for result in response.results
     ]
-    prompt_order = {
-        "content_chunk": 0,
-        "evidence_span": 0,
-        "fragment": 0,
-        "highlight": 0,
-        "note_block": 0,
-        "reader_apparatus_item": 0,
-        "message": 0,
-        "media": 1,
-        "episode": 1,
-        "video": 1,
-        "podcast": 1,
-        "page": 1,
-        "conversation": 1,
-        "contributor": 1,
-    }
-    prompt_citations = list(citations)
-    prompt_citations.sort(key=lambda citation: prompt_order.get(citation.result_type, 2))
+    prompt_citations, _ = rerank_app_search_candidates(fixture["query"], citations)
     _, context_chars, selected, selection_reasons = render_retrieved_context_blocks(
         db,
         viewer_id=viewer_id,
@@ -406,6 +383,9 @@ def _pack_metrics(
         "first_relevant_selected_rank": first_selected_rank,
         "relevant_retrieved_not_selected_count": len(
             (set(candidate_refs) & set(relevant_refs)) - set(selected_refs)
+        ),
+        "selected_false_positive_count": len(
+            [ref for ref in selected_refs if ref not in set(relevant_refs)]
         ),
         "skipped_count": sum(
             1 for reason in selection_reasons if not reason.startswith("selected_")
@@ -574,7 +554,7 @@ def test_search_retrieval_eval_baseline_report(
         )
         candidates = [_citation_item(citation, run.scope) for citation in run.citations]
         selected = [_citation_item(citation, run.scope) for citation in run.selected_citations]
-        expected_candidate_limit, expected_mode, expected_reason = _expected_app_search_policy(
+        expected_candidate_limit, expected_mode, expected_reason = app_search_candidate_policy(
             fixture["scope_refs"]
         )
         assert run.candidate_limit == expected_candidate_limit
@@ -595,8 +575,23 @@ def test_search_retrieval_eval_baseline_report(
         assert ledger["rerank_selected_count"] == pack["selected_count"], ledger
         assert ledger["selection_reasons"] == pack["selection_reasons"], ledger
         assert ledger["selected_not_included_count"] == 0, ledger
-        assert ledger["rerank_strategy"] == "app_search_context_budget", ledger
-        assert ledger["rerank_metadata"] == {
+        assert ledger["rerank_strategy"] == APP_SEARCH_SELECTION_STRATEGY, ledger
+        metadata = dict(ledger["rerank_metadata"])
+        assert len(metadata["candidate_rerank_trace"]) == len(run.citations)
+        assert [item["selection_reason"] for item in metadata["candidate_rerank_trace"]] == (
+            run.selection_reasons
+        )
+        assert [item["selected"] for item in metadata["candidate_rerank_trace"]] == [
+            citation in run.selected_citations for citation in run.citations
+        ]
+        assert {
+            key: value for key, value in metadata.items() if key != "candidate_rerank_trace"
+        } == {
+            "selection_strategy": APP_SEARCH_SELECTION_STRATEGY,
+            "selection_policy_version": APP_SEARCH_SELECTION_VERSION,
+            "ordering_policy": "hybrid_score_exactness_citation_quality_diversity",
+            "diversity_policy": "source_section_penalty",
+            "budget_policy": "greedy_context_budget",
             "candidate_limit": run.candidate_limit,
             "selected_limit": APP_SEARCH_SELECTED_LIMIT,
             "context_budget_chars": APP_SEARCH_CONTEXT_CHARS,
@@ -608,6 +603,7 @@ def test_search_retrieval_eval_baseline_report(
             "scope": run.scope,
             "resolved_scopes": run.resolved_scopes,
             "inclusion_surface": "tool_output",
+            "selection_reason_counts": dict(Counter(run.selection_reasons)),
         }
         baseline = {
             "candidate_limit": run.candidate_limit,
@@ -708,6 +704,7 @@ def test_search_retrieval_eval_baseline_report(
             "section_diversity",
             "first_relevant_selected_rank",
             "relevant_retrieved_not_selected_count",
+            "selected_false_positive_count",
         }
         <= set(item["baseline"]["pack"])
         for item in report["fixtures"]
@@ -719,6 +716,15 @@ def test_search_retrieval_eval_baseline_report(
     assert negative["baseline"]["candidate_limit"] == APP_SEARCH_DEEP_CANDIDATE_LIMIT, negative
     assert negative["baseline"]["policy_reason"] == "library_scope", negative
     assert set(negative["candidate_depths"]) == {"8", "20", "50"}
+    assert (
+        negative["baseline"]["pack"]["selected_false_positive_count"]
+        == negative["baseline"]["selected_count"]
+    ), negative
+    assert all(
+        depth["false_positive_count"] == depth["candidate_count"]
+        for depth in negative["candidate_depths"].values()
+    ), negative
+    assert negative["baseline"]["pack"]["selected_evidence_recall"] is None, negative
     assert openai_embedding_calls == []
 
 
