@@ -114,27 +114,20 @@ def list_pdf_highlights(
     media_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-    page_number: Annotated[str | None, Query()] = None,
+    page_number: Annotated[int, Query(ge=1, description="1-based PDF page number")],
     mine_only: Annotated[str, Query()] = "true",
 ) -> dict:
     """List PDF highlights for a single page."""
-    if page_number is None:
-        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "page_number is required")
-    try:
-        page = int(page_number)
-    except (TypeError, ValueError):
-        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "page_number must be an integer") from None
-
     result = pdf_highlights_service.list_pdf_highlights(
         db=db,
         viewer_id=viewer.user_id,
         media_id=media_id,
-        page_number=page,
+        page_number=page_number,
         mine_only=_parse_mine_only(mine_only),
     )
     return success_response(
         {
-            "page_number": page,
+            "page_number": page_number,
             "highlights": [h.model_dump(mode="json") for h in result],
         }
     )

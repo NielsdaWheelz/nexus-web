@@ -410,6 +410,31 @@ class TestListPdfHighlights:
         assert resp.status_code == 400
         assert resp.json()["error"]["code"] == "E_INVALID_REQUEST"
 
+    @pytest.mark.parametrize("page_number", ["0", "-1", "abc", "1.2", ""])
+    def test_list_rejects_invalid_page_number_before_media_lookup(self, auth_client, page_number):
+        user_id = create_test_user_id()
+        missing_media_id = uuid4()
+
+        resp = auth_client.get(
+            f"/media/{missing_media_id}/pdf-highlights?page_number={page_number}",
+            headers=auth_headers(user_id),
+        )
+
+        assert resp.status_code == 400
+        assert resp.json()["error"]["code"] == "E_INVALID_REQUEST"
+
+    def test_list_rejects_page_above_page_count(self, auth_client, direct_db: DirectSessionManager):
+        user_id = create_test_user_id()
+        media_id = _setup_pdf_media(auth_client, direct_db, user_id)
+
+        resp = auth_client.get(
+            f"/media/{media_id}/pdf-highlights?page_number=99",
+            headers=auth_headers(user_id),
+        )
+
+        assert resp.status_code == 400
+        assert resp.json()["error"]["code"] == "E_INVALID_REQUEST"
+
     def test_list_existing_highlights_when_media_not_ready(
         self, auth_client, direct_db: DirectSessionManager
     ):
