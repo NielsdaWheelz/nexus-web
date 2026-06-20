@@ -73,9 +73,9 @@ skins.
 - Esc, click-outside, scroll, and sheet dismissal flush pending edits and
   save — there is no discard path. an empty composer creates no note; the
   highlight survives in every branch.
-- all note writes flow through the canonical `saveHighlightNote` path (the
-  same `handleNoteSave`/`handleNoteDelete` slot patching the sidecar uses),
-  so composer-written notes appear in the sidecar with no extra wiring.
+- all note writes flow through the canonical `saveHighlightNote` path used by
+  Document Map Highlights, so composer-written notes appear there with no extra
+  wiring.
 
 the `n` chord is reader-local: `useHighlightNoteChord` fires on bare `n`
 (no modifiers), guarded by `isEditableTarget`, dispatched where the selection
@@ -111,14 +111,15 @@ PDF panes are the only primary-width exception. `PdfReader` measures rendered
 PDF page geometry and publishes the widest rendered page as intrinsic primary
 width; the workspace raises the PDF pane floor to that width.
 
-The Document Map overview rail is fixed primary-adjacent chrome: it changes rendered pane
-width without changing stored primary pane width. Reader highlights and
-resource chat are Document Map secondary surfaces under
-`docs/workspace-pane-system.md`; their width is independent from the
-primary reader width. Mobile panes ignore desktop runtime pane sizing and render
-at viewport width. Mobile workspace mode also suppresses fixed primary chrome,
-desktop-attached secondary columns, and pane resize handles; the Document Map
-reaches mobile through the workspace secondary sheet.
+The Document Map overview rail is fixed primary-adjacent chrome: it changes
+rendered pane width without changing stored primary pane width. Reader
+highlights and resource chat are Document Map secondary surfaces under the
+workspace secondary pane contract ([workspace.md](workspace.md)); their width
+is independent from the primary reader width. Mobile panes ignore desktop
+runtime pane sizing and render at viewport width. Mobile workspace mode also
+suppresses fixed primary chrome, desktop-attached secondary columns, and pane
+resize handles; the Document Map reaches mobile through the workspace
+secondary sheet.
 
 ### overview rail positioning
 
@@ -197,8 +198,8 @@ is not generated chat citation evidence and must not write or read
 - Backend extraction is owned by `reader_apparatus.py` and the relevant ingest
   path before semantic source attributes are sanitized away.
 - Source-authored standalone margin notes are valid target-only apparatus rows:
-  they appear in the sidecar and can jump to the note target, but they do not
-  get invented marker edges or hover previews.
+  they appear in the Document Map Citations lens and can jump to the note
+  target, but they do not get invented marker edges or hover previews.
 - The reader exposes apparatus in the Document Map `Citations` tab.
 - Web/EPUB rows may support hover previews and marker/target activation when
   exact locators exist.

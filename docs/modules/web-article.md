@@ -45,8 +45,9 @@ source-authored evidence such as DPUB-ARIA roles, JATS `xref @rid`, Distill
 custom citation tags, MediaWiki reference links, and Tufte sidenote structure.
 Tufte-style numbered sidenotes and unnumbered margin notes keep explicit
 `sidenote` / `margin_note` semantics, and standalone `span.marginnote` elements
-may surface as target-only sidecar rows with no synthetic marker edge. It does
-not infer apparatus from bare superscripts or client-rendered DOM heuristics.
+may surface as target-only Document Map Citations rows with no synthetic marker
+edge. It does not infer apparatus from bare superscripts or client-rendered DOM
+heuristics.
 The fixture manifest owns exact source support levels and expected counts.
 
 HTML bibliography support is intentionally link-layer conservative. MediaWiki

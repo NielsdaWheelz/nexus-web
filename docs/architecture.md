@@ -754,12 +754,13 @@ EPUB resource assets use a private media asset lane:
 through byte-size-checked storage helpers. EPUB assets are not in Next Image
 `images.localPatterns`.
 
-**Highlights** (`services/highlights.py`): a selection becomes a stored highlight
-with a precomputed `exact`/`prefix`/`suffix` triple (a 64-codepoint context
-window) that doubles as the canonical quote shown to chat. PDF highlights may have
-empty `exact` (no text-layer match) — a first-class state the sidecar renders as a
-placeholder. The reader's highlights sidecar renders `exact` only (the recent
-exact-only cutover, [`modules/reader-highlight-sidecar-exact-only`](cutovers/reader-highlight-sidecar-exact-only.md)).
+**Highlights** (`services/highlights.py`, `services/pdf_highlights.py`): a
+selection becomes a stored highlight with a precomputed
+`exact`/`prefix`/`suffix` triple (a 64-codepoint context window) that doubles as
+the canonical quote shown to chat. PDF highlights may have empty `exact` (no
+text-layer match) — a first-class geometry-only state the Document Map
+Highlights lens renders with an explicit placeholder. The current highlight
+contract lives in [`modules/highlight.md`](modules/highlight.md).
 
 **Source-authored apparatus** (`services/reader_apparatus.py`): web article,
 EPUB, and PDF ingest paths persist document-authored notes, endnotes,
