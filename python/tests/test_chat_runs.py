@@ -1234,6 +1234,11 @@ class TestChatRunTooling:
         assert scopes == []
         assert forced_error == "app_search scopes must be non-empty URI strings"
 
+        scopes, forced_error = _app_search_scopes_from_tool_args({"query": "needle", "scopes": []})
+
+        assert scopes == []
+        assert forced_error == "app_search scopes must be a non-empty array of URI strings"
+
     def test_app_search_scopes_accepts_array_of_strings(self):
         scopes, forced_error = _app_search_scopes_from_tool_args(
             {"query": "needle", "scopes": ["media:one", "library:two"]}

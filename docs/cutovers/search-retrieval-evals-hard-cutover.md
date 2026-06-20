@@ -1,6 +1,6 @@
 # Search Retrieval Evals Hard Cutover
 
-**Status:** Proposed - 2026-06-20
+**Status:** Implemented - 2026-06-20
 
 **Type:** Hard cutover. No retrieval-quality work ships without a measured
 baseline, stage-specific metrics, and a reproducible replay path.
@@ -14,9 +14,9 @@ metrics, citation/grounding checks, and regression reporting for chat
 
 ## Why This Is First
 
-The current `app_search` bottleneck is visible: it retrieves eight candidates,
-selects at most six, and caps rendered context at 16k chars. The unsafe move is to
-raise those values before proving where evidence is lost.
+The original `app_search` bottleneck was visible: it retrieved eight candidates,
+selected at most six, and capped rendered context at 16k chars. The unsafe move
+was to raise those values before proving where evidence was lost.
 
 The professional move is to answer these questions first:
 
@@ -130,9 +130,9 @@ be reused across candidate, packer, and answer-level checks.
 
 - Start with synthetic DB fixtures in existing backend tests, then add a small
   manually curated real-library regression set when available.
-- Evaluate the current `8/6/16k` behavior as baseline.
-- Also evaluate candidate depths such as 8, 20, and 50 without changing runtime
-  behavior.
+- Preserve the legacy depth-8 comparison as the eval baseline.
+- Evaluate candidate depths 8, 20, and 50. Runtime now uses the search-owned
+  20/50 candidate policy, while selected evidence remains capped separately.
 - Keep eval helpers under test ownership until there is a reason to expose them
   as operator tooling.
 - Provider-backed answer evaluation should be opt-in and skipped by default.

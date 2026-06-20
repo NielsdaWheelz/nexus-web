@@ -17,9 +17,10 @@ from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
 
 from nexus.config import clear_settings_cache
-from nexus.db.models import Model
+from nexus.db.models import ChatRun, Model
 from nexus.llm_catalog import model_catalog_entry
 from nexus.schemas.conversation import ChatRunCreateRequest
+from nexus.services.agent_tools.app_search import APP_SEARCH_SELECTED_LIMIT
 from nexus.services.billing_entitlements import grant_entitlement_override
 from nexus.services.chat_run_finalize import MAX_ASSISTANT_CONTENT_LENGTH, TRUNCATION_NOTICE
 from nexus.services.chat_runs import (
@@ -27,9 +28,11 @@ from nexus.services.chat_runs import (
     _max_output_tokens_for_reasoning,
     execute_chat_run,
 )
+from nexus.services.message_trust_trails import build_assistant_trust_trail
 from nexus.services.real_media_fixture_llm import RealMediaFixtureModelRuntime
 from nexus.services.resource_graph.context import add_context_ref_without_commit
 from nexus.services.resource_graph.refs import assert_resource_ref
+from nexus.services.search.policy import APP_SEARCH_DEEP_CANDIDATE_LIMIT
 from nexus.tasks.chat_run import chat_run
 from tests.factories import (
     create_searchable_media,
@@ -175,6 +178,46 @@ class _ToolLoopRouter:
         yield _done_event(
             usage=TokenUsage(input_tokens=20, output_tokens=3, total_tokens=23),
             provider_request_id="resp_iter_2",
+        )
+
+
+class _AppSearchRouter:
+    def __init__(self, query: str) -> None:
+        self.query = query
+        self.requests: list[ModelCall] = []
+
+    async def stream(self, req, *, key, timeout_s, cancel=None):
+        del cancel
+        self.requests.append(req)
+        if len(self.requests) == 1:
+            call = ToolCall(
+                id="app-search-call",
+                name="app_search",
+                arguments={"query": self.query, "kinds": ["people"]},
+            )
+            yield ModelStreamEvent(
+                type="tool_call_start",
+                provider="openai",
+                model="gpt-5.5",
+                tool_call_id=call.id,
+                tool_name=call.name,
+            )
+            yield ModelStreamEvent(
+                type="tool_call_done",
+                provider="openai",
+                model="gpt-5.5",
+                tool_call_id=call.id,
+                tool_call=call,
+            )
+            yield _done_event(
+                usage=TokenUsage(input_tokens=10, output_tokens=3, total_tokens=13),
+                provider_request_id="resp_app_search",
+            )
+            return
+        yield _text_event("Final answer.")
+        yield _done_event(
+            usage=TokenUsage(input_tokens=10, output_tokens=3, total_tokens=13),
+            provider_request_id="resp_final",
         )
 
 
@@ -968,6 +1011,42 @@ async def test_tool_loop_replays_provider_artifacts_and_ledgers_each_iteration(
     ]
     assert stream_logs[0]["first_provider_event_ms"] >= 0
     assert stream_logs[0]["first_visible_text_ms"] >= 0
+
+
+@pytest.mark.integration
+async def test_app_search_policy_survives_chat_run_dispatch_and_trust_trail(
+    auth_client, direct_db: DirectSessionManager, chat_runs_schema
+):
+    run_id = _create_run_for_executor(auth_client, direct_db)
+    query = f"chat run app search policy {uuid4().hex}"
+    router = _AppSearchRouter(query)
+
+    with direct_db.session() as session:
+        result = await execute_chat_run(session, run_id=run_id, llm_router=router)
+
+    assert result == {"status": "complete"}
+    assert len(router.requests) == 2
+
+    with direct_db.session() as session:
+        run = session.get(ChatRun, run_id)
+        assert run is not None
+        trail = build_assistant_trust_trail(
+            session,
+            viewer_id=run.owner_user_id,
+            assistant_message_id=run.assistant_message_id,
+        )
+
+    tool = next(item for item in trail.tool_calls if item.tool_name == "app_search")
+    assert tool.status == "complete"
+    assert tool.selected_count <= APP_SEARCH_SELECTED_LIMIT
+    assert len(tool.rerank_ledgers) == 1
+    metadata = tool.rerank_ledgers[0].metadata
+    assert metadata["candidate_limit"] == APP_SEARCH_DEEP_CANDIDATE_LIMIT
+    assert metadata["selected_limit"] == APP_SEARCH_SELECTED_LIMIT
+    assert metadata["retrieval_mode"] == "deep"
+    assert metadata["policy_reason"] == "global_scope"
+    assert metadata["scope"] == "all"
+    assert metadata["resolved_scopes"] == []
 
 
 @pytest.mark.integration

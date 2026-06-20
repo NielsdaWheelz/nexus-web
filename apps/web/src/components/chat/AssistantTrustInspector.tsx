@@ -266,19 +266,52 @@ function ToolRow({ tool }: { tool: MessageToolCall }) {
       ) : null}
       {tool.rerank_ledgers.length > 0 ? (
         <ol className={styles.trustNestedList}>
-          {tool.rerank_ledgers.map((ledger) => (
-            <li key={ledger.id}>
-              <div className={styles.trustLine}>
-                <span>{ledger.strategy}</span>
-                <span className={styles.trustFlags}>{ledger.status}</span>
-              </div>
-              <div className={styles.trustCode}>
-                {ledger.selected_count}/{ledger.input_count} selected -{" "}
-                {ledger.selected_chars}
-                {ledger.budget_chars ? `/${ledger.budget_chars}` : ""} chars
-              </div>
-            </li>
-          ))}
+          {tool.rerank_ledgers.map((ledger) => {
+            const candidateLimit =
+              typeof ledger.metadata.candidate_limit === "number"
+                ? ledger.metadata.candidate_limit
+                : null;
+            const selectedLimit =
+              typeof ledger.metadata.selected_limit === "number"
+                ? ledger.metadata.selected_limit
+                : null;
+            const queryClass =
+              typeof ledger.metadata.query_class === "string"
+                ? ledger.metadata.query_class
+                : null;
+            const retrievalMode =
+              typeof ledger.metadata.retrieval_mode === "string"
+                ? ledger.metadata.retrieval_mode
+                : null;
+            const policyReason =
+              typeof ledger.metadata.policy_reason === "string"
+                ? ledger.metadata.policy_reason
+                : null;
+            const policy = [
+              retrievalMode,
+              policyReason,
+              candidateLimit === null ? null : `candidates ${candidateLimit}`,
+              selectedLimit === null ? null : `selected cap ${selectedLimit}`,
+              queryClass,
+            ]
+              .filter(Boolean)
+              .join(" - ");
+
+            return (
+              <li key={ledger.id}>
+                <div className={styles.trustLine}>
+                  <span>{ledger.strategy}</span>
+                  <span className={styles.trustFlags}>{ledger.status}</span>
+                </div>
+                <div className={styles.trustCode}>
+                  {ledger.selected_count}/{ledger.input_count} selected -{" "}
+                  {ledger.selected_chars}
+                  {ledger.budget_chars ? `/${ledger.budget_chars}` : ""} chars
+                </div>
+                {policy ? <div className={styles.trustCode}>{policy}</div> : null}
+              </li>
+            );
+          })}
         </ol>
       ) : null}
     </li>

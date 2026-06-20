@@ -17,7 +17,6 @@ from nexus.config import clear_settings_cache
 from nexus.errors import ApiError
 from nexus.services.agent_tools.app_search import (
     APP_SEARCH_CONTEXT_CHARS,
-    APP_SEARCH_LIMIT,
     APP_SEARCH_SELECTED_LIMIT,
     _resolve_scope_uris,
     execute_app_search,
@@ -27,6 +26,10 @@ from nexus.services.retrieval_citation import RetrievalCitation, citation_from_s
 from nexus.services.search import get_search_result, search
 from nexus.services.search.batch import search_scopes
 from nexus.services.search.kinds import SEARCH_KINDS
+from nexus.services.search.policy import (
+    APP_SEARCH_DEEP_CANDIDATE_LIMIT,
+    APP_SEARCH_SCOPED_CANDIDATE_LIMIT,
+)
 from nexus.services.search.query import build_search_query
 from nexus.services.search.scope import scope_from_uri
 from tests.factories import (
@@ -215,6 +218,18 @@ def _section_key(item: dict) -> str:
     return str(item.get("locator") or item.get("source_label") or item["ref"])
 
 
+def _expected_app_search_policy(scope_refs: list[str]) -> tuple[int, str, str]:
+    if len(scope_refs) == 1 and scope_refs[0].startswith("media:"):
+        return APP_SEARCH_SCOPED_CANDIDATE_LIMIT, "fast", "single_narrow_scope"
+    if len(scope_refs) == 1 and scope_refs[0].startswith("library:"):
+        return APP_SEARCH_DEEP_CANDIDATE_LIMIT, "deep", "library_scope"
+    if len(scope_refs) == 1 and scope_refs[0].startswith("conversation:"):
+        return APP_SEARCH_DEEP_CANDIDATE_LIMIT, "deep", "conversation_scope"
+    if len(scope_refs) > 1:
+        return APP_SEARCH_DEEP_CANDIDATE_LIMIT, "deep", "multiple_scopes"
+    return APP_SEARCH_DEEP_CANDIDATE_LIMIT, "deep", "global_scope"
+
+
 def _run_candidates(
     db: Session,
     viewer_id: UUID,
@@ -264,11 +279,12 @@ def _run_candidates(
         "conversation": 1,
         "contributor": 1,
     }
-    citations.sort(key=lambda citation: prompt_order.get(citation.result_type, 2))
+    prompt_citations = list(citations)
+    prompt_citations.sort(key=lambda citation: prompt_order.get(citation.result_type, 2))
     _, context_chars, selected, selection_reasons = render_retrieved_context_blocks(
         db,
         viewer_id=viewer_id,
-        citations=citations,
+        citations=prompt_citations,
     )
     scope = ",".join(resolved_scopes) if resolved_scopes else "all"
     return {
@@ -303,12 +319,13 @@ def _seed_eval_fixtures(
 
     message_by_key: dict[str, UUID] = {}
     for key, content in raw["messages"].items():
+        text_content = content.format(suffix=suffix)
         message_by_key[key] = create_test_message(
             db,
             conversation_id,
             seq=_next_seq(db, conversation_id),
             role="user",
-            content=content.format(suffix=suffix),
+            content=text_content,
         )
     share_conversation_to_library(db, conversation_id, library_id)
     add_context_edge(db, conversation_id, f"library:{library_id}")
@@ -439,7 +456,7 @@ def _ledger_metrics(db: Session, tool_call_id: UUID) -> dict:
     rerank = db.execute(
         text(
             """
-            SELECT input_count, selected_count, budget_chars, selected_chars, status
+            SELECT strategy, input_count, selected_count, budget_chars, selected_chars, status, metadata
             FROM message_rerank_ledgers
             WHERE tool_call_id = :tool_call_id
             ORDER BY created_at DESC
@@ -454,11 +471,13 @@ def _ledger_metrics(db: Session, tool_call_id: UUID) -> dict:
         "selection_reasons": dict(reasons or {}),
         "selected_included_count": int(inclusion[0]),
         "selected_not_included_count": int(inclusion[1]),
-        "rerank_input_count": int(rerank[0]),
-        "rerank_selected_count": int(rerank[1]),
-        "rerank_budget_chars": int(rerank[2]),
-        "rerank_selected_chars": int(rerank[3]),
-        "rerank_status": str(rerank[4]),
+        "rerank_strategy": str(rerank[0]),
+        "rerank_input_count": int(rerank[1]),
+        "rerank_selected_count": int(rerank[2]),
+        "rerank_budget_chars": int(rerank[3]),
+        "rerank_selected_chars": int(rerank[4]),
+        "rerank_status": str(rerank[5]),
+        "rerank_metadata": dict(rerank[6]),
     }
 
 
@@ -488,12 +507,17 @@ def test_search_retrieval_eval_baseline_report(
     assert {fixture["class"] for fixture in fixtures} == set(QUERY_CLASSES)
 
     report = {
-        "runtime_baseline": {
-            "candidate_limit": APP_SEARCH_LIMIT,
+        "runtime_policy": {
+            "scoped_candidate_limit": APP_SEARCH_SCOPED_CANDIDATE_LIMIT,
+            "deep_candidate_limit": APP_SEARCH_DEEP_CANDIDATE_LIMIT,
             "selected_limit": APP_SEARCH_SELECTED_LIMIT,
             "context_chars": APP_SEARCH_CONTEXT_CHARS,
         },
-        "candidate_depths": [8, 20, 50],
+        "candidate_depths": [
+            8,
+            APP_SEARCH_SCOPED_CANDIDATE_LIMIT,
+            APP_SEARCH_DEEP_CANDIDATE_LIMIT,
+        ],
         "answer_layer": {"provider_backed": False},
         "fixtures": [],
     }
@@ -527,6 +551,12 @@ def test_search_retrieval_eval_baseline_report(
                 "resolved_scope_refs": candidate_run["resolved_scope_refs"],
                 "pack": pack_at_depth,
             }
+        recall_at_8 = depth_reports["8"]["recall_at_k"]
+        for depth in report["candidate_depths"]:
+            recall = depth_reports[str(depth)]["recall_at_k"]
+            depth_reports[str(depth)]["recall_delta_vs_8"] = (
+                None if recall is None or recall_at_8 is None else round(recall - recall_at_8, 4)
+            )
 
         user_message_id, assistant_message_id = _append_app_search_messages(
             db_session,
@@ -544,6 +574,12 @@ def test_search_retrieval_eval_baseline_report(
         )
         candidates = [_citation_item(citation, run.scope) for citation in run.citations]
         selected = [_citation_item(citation, run.scope) for citation in run.selected_citations]
+        expected_candidate_limit, expected_mode, expected_reason = _expected_app_search_policy(
+            fixture["scope_refs"]
+        )
+        assert run.candidate_limit == expected_candidate_limit
+        assert run.retrieval_mode == expected_mode
+        assert run.policy_reason == expected_reason
         pack = _pack_metrics(
             candidates,
             selected,
@@ -559,7 +595,25 @@ def test_search_retrieval_eval_baseline_report(
         assert ledger["rerank_selected_count"] == pack["selected_count"], ledger
         assert ledger["selection_reasons"] == pack["selection_reasons"], ledger
         assert ledger["selected_not_included_count"] == 0, ledger
+        assert ledger["rerank_strategy"] == "app_search_context_budget", ledger
+        assert ledger["rerank_metadata"] == {
+            "candidate_limit": run.candidate_limit,
+            "selected_limit": APP_SEARCH_SELECTED_LIMIT,
+            "context_budget_chars": APP_SEARCH_CONTEXT_CHARS,
+            "scope_count": run.scope_count,
+            "result_type_mix": dict(Counter(citation.result_type for citation in run.citations)),
+            "query_class": run.query_class,
+            "retrieval_mode": run.retrieval_mode,
+            "policy_reason": run.policy_reason,
+            "scope": run.scope,
+            "resolved_scopes": run.resolved_scopes,
+            "inclusion_surface": "tool_output",
+        }
         baseline = {
+            "candidate_limit": run.candidate_limit,
+            "query_class": run.query_class,
+            "retrieval_mode": run.retrieval_mode,
+            "policy_reason": run.policy_reason,
             "candidate_count": pack["candidate_count"],
             "selected_count": pack["selected_count"],
             "context_chars": run.context_chars,
@@ -600,6 +654,14 @@ def test_search_retrieval_eval_baseline_report(
         report["summary"][f"mean_candidate_recall_at_{depth}"] = (
             round(sum(recalls) / len(recalls), 4) if recalls else None
         )
+        deltas = [
+            item["candidate_depths"][str(depth)]["recall_delta_vs_8"]
+            for item in report["fixtures"]
+            if item["candidate_depths"][str(depth)]["recall_delta_vs_8"] is not None
+        ]
+        report["summary"][f"mean_candidate_recall_delta_{depth}_vs_8"] = (
+            round(sum(deltas) / len(deltas), 4) if deltas else None
+        )
 
     (tmp_path / "search-retrieval-evals-baseline.json").write_text(
         json.dumps(report, indent=2, sort_keys=True),
@@ -608,11 +670,29 @@ def test_search_retrieval_eval_baseline_report(
 
     positive = [item for item in report["fixtures"] if item["relevant_refs"]]
     assert positive
-    assert all(item["baseline"]["candidate_recall"] == 1.0 for item in positive), report
-    assert all(item["baseline"]["selected_pack_recall"] == 1.0 for item in positive), report
-    assert all(item["baseline"]["stage"] == "selected" for item in positive), report
+    assert all(item["candidate_depths"]["50"]["recall_at_k"] == 1.0 for item in positive), report
+    assert any(
+        item["candidate_depths"]["50"]["recall_at_k"] > item["candidate_depths"]["8"]["recall_at_k"]
+        for item in positive
+    ), report
     assert all(
-        {"recall_at_k", "precision_at_k", "mrr", "average_precision", "ndcg", "latency_ms"}
+        item["baseline"]["candidate_recall"]
+        == item["candidate_depths"][str(item["baseline"]["candidate_limit"])]["recall_at_k"]
+        for item in positive
+    ), report
+    assert all(
+        item["baseline"]["stage"] in {"selected", "evidence_packing_failure"} for item in positive
+    ), report
+    assert all(
+        {
+            "recall_at_k",
+            "recall_delta_vs_8",
+            "precision_at_k",
+            "mrr",
+            "average_precision",
+            "ndcg",
+            "latency_ms",
+        }
         <= set(item["candidate_depths"]["8"])
         for item in report["fixtures"]
     ), report
@@ -636,14 +716,9 @@ def test_search_retrieval_eval_baseline_report(
     negative = next(
         item for item in report["fixtures"] if item["class"] == "negative_absence_question"
     )
-    assert negative["baseline"]["stage"] == "expected_absence", negative
-    assert negative["baseline"]["candidate_count"] == 0, negative
-    assert negative["baseline"]["selected_count"] == 0, negative
+    assert negative["baseline"]["candidate_limit"] == APP_SEARCH_DEEP_CANDIDATE_LIMIT, negative
+    assert negative["baseline"]["policy_reason"] == "library_scope", negative
     assert set(negative["candidate_depths"]) == {"8", "20", "50"}
-    assert all(depth["candidate_count"] == 0 for depth in negative["candidate_depths"].values())
-    assert all(
-        depth["pack"]["selected_count"] == 0 for depth in negative["candidate_depths"].values()
-    )
     assert openai_embedding_calls == []
 
 

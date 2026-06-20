@@ -5,8 +5,8 @@
 ## Scope
 
 The search module owns local-library retrieval for the search page, palette search,
-chat `app_search`, note object-ref resolution, and any future retrieval controller
-that selects evidence from Nexus-owned resources.
+chat `app_search`, and any future retrieval controller that selects evidence from
+Nexus-owned resources.
 
 Backend owners live under `python/nexus/services/search/`,
 `python/nexus/services/content_indexing.py`,
@@ -22,10 +22,10 @@ Search does not own citation identity. Citations are graph-owned
 
 ## Current Architecture
 
-One shared `search(db, viewer, SearchQuery)` serves three user-facing surfaces:
-the search page, chat `app_search`, and object-ref resolution for notes. The edge
-parses transport into a strict `SearchQuery`; internal callers do not pass raw
-HTTP params or tool args inward.
+One shared `search(db, viewer, SearchQuery)` serves the search page and chat
+`app_search`. The edge parses transport into a strict `SearchQuery`; internal
+callers do not pass raw HTTP params or tool args inward. Note object-ref lookup is
+an adjacent object-ref service, not part of the shared `SearchQuery` path.
 
 Retrieval is already hybrid. For semantic-capable result types, search builds one
 query embedding, retrieves candidates from vector ANN and lexical FTS, applies
@@ -44,12 +44,23 @@ the shared `SearchQuery`, results are deduped by `(type, id)`, the best score is
 kept, and the merged list is capped by the base query limit.
 
 The current chat bottleneck is not the shared search substrate. It is
-`app_search` evidence selection:
+`app_search` candidate policy plus evidence selection:
 
-- `APP_SEARCH_LIMIT = 8`
+- `APP_SEARCH_SCOPED_CANDIDATE_LIMIT = DEFAULT_LIMIT` (`20`)
+- `APP_SEARCH_DEEP_CANDIDATE_LIMIT = MAX_LIMIT` (`50`)
 - `APP_SEARCH_SELECTED_LIMIT = 6`
 - `APP_SEARCH_CONTEXT_CHARS = 16000`
-- `execute_app_search` builds `SearchQuery(limit=APP_SEARCH_LIMIT)`.
+- `execute_app_search` resolves conversation scopes, asks `search/policy.py` for
+  the candidate limit, then builds the shared `SearchQuery`.
+- The first runtime policy uses a moderate candidate pool for a single `media:`
+  scope and the public max candidate pool for library, conversation, multi-scope,
+  and global searches.
+- Runtime policy metadata is stored in `message_rerank_ledgers.metadata`:
+  candidate limit, selected limit, context budget, scope count, actual candidate
+  result-type mix, query class, retrieval mode, policy reason, bounded scope
+  label, full resolved scope list, and inclusion surface.
+- Query-class metadata is currently `unclassified`; query-class fixtures live in
+  the eval harness until a real planner/classifier cutover exists.
 - `render_retrieved_context_blocks` packs rendered blocks under the char budget,
   skips empty/oversized candidates, and keeps an ordinal-aligned decision reason
   for every candidate.
@@ -62,9 +73,9 @@ The current chat bottleneck is not the shared search substrate. It is
   a deterministic budget-ordering policy, not a learned or semantic reranker.
 - The model-facing tool continuation is compact selected-result JSON from
   `_app_search_tool_output`, not the full rendered `context_text`.
-- Trust-trail retrieval and candidate-ledger rows mark selected `app_search`
-  evidence as `included_in_prompt_source = "tool_output"` so model-visible tool
-  evidence is not confused with initial prompt assembly.
+- Trust-trail read models infer `included_in_prompt_source = "tool_output"` from
+  selected retrieval rows plus rerank metadata `inclusion_surface = "tool_output"`
+  so model-visible tool evidence is not confused with initial prompt assembly.
 
 This means the system can retrieve from a decent hybrid substrate and still fail
 at the evidence-controller layer by under-fetching, under-reranking, or packing a
@@ -188,8 +199,8 @@ Each cutover should be independently reviewable, testable, and revertible.
 
 3. [`search-candidate-policy-hard-cutover.md`](../cutovers/search-candidate-policy-hard-cutover.md)
    - Separate candidate depth from selected evidence depth.
-   - Replace `APP_SEARCH_LIMIT = 8` as the only candidate policy with a
-     search-owned retrieval policy.
+   - Replace the old single `APP_SEARCH_LIMIT = 8` cap with explicit moderate
+     and deep candidate policies through shared `SearchQuery`.
 
 4. [`search-rerank-selection-hard-cutover.md`](../cutovers/search-rerank-selection-hard-cutover.md)
    - Add deterministic reranking and diversity before learned/provider rerankers.
@@ -333,7 +344,7 @@ higher-risk retrieval changes.
 
 ## What Not To Do
 
-- Do not fix retrieval by only increasing `APP_SEARCH_LIMIT`.
+- Do not fix retrieval by only increasing candidate caps.
 - Do not move search semantics into `app_search`.
 - Do not query `resource_edges` directly from `app_search`; use graph context
   admission and shared search scope owners.

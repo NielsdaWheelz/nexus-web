@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -58,6 +59,7 @@ from nexus.services.retrieval_citation import (
 from nexus.services.search import search
 from nexus.services.search.batch import search_scopes
 from nexus.services.search.kinds import SEARCH_FORMATS, SEARCH_KINDS
+from nexus.services.search.policy import app_search_candidate_policy
 from nexus.services.search.query import build_search_query
 from nexus.services.search.scope import (
     ScopeUnsupported,
@@ -76,7 +78,6 @@ def _xml_attr(value: object) -> str:
 
 
 APP_SEARCH_TOOL_NAME = "app_search"
-APP_SEARCH_LIMIT = 8
 APP_SEARCH_SELECTED_LIMIT = 6
 APP_SEARCH_CONTEXT_CHARS = 16000
 APP_SEARCH_SCOPE_HINT = app_search_scope_hint()
@@ -143,7 +144,13 @@ class AppSearchRun:
     assistant_message_id: UUID
     query_hash: str
     scope: str
+    resolved_scopes: list[str]
     requested_types: list[str]
+    candidate_limit: int
+    scope_count: int
+    query_class: str
+    retrieval_mode: str
+    policy_reason: str
     citations: list[RetrievalCitation]
     selected_citations: list[RetrievalCitation]
     selection_reasons: list[str]
@@ -217,6 +224,11 @@ def execute_app_search(
         if values is not None
     }
     requested_types: list[str] = []
+    scope_count = 0
+    query_class = "unclassified"
+    candidate_limit, retrieval_mode, _ = app_search_candidate_policy(())
+    policy_reason = "validation_failed"
+    resolved_scopes: list[str] = []
     start = time.monotonic()
     status = "complete"
     error_code = None
@@ -228,6 +240,16 @@ def execute_app_search(
     try:
         if forced_error is not None:
             raise InvalidScopeError(forced_error)
+        resolved_scopes = _resolve_scope_uris(
+            db,
+            viewer_id=viewer_id,
+            conversation_id=conversation_id,
+            scopes=scopes,
+        )
+        scope_count = len(resolved_scopes)
+        candidate_limit, retrieval_mode, policy_reason = app_search_candidate_policy(
+            resolved_scopes
+        )
         base_query = build_search_query(
             text=query,
             raw_kinds=None if kinds is None else list(kinds),
@@ -236,15 +258,9 @@ def execute_app_search(
             raw_roles=None if roles is None else list(roles),
             scope=scope_from_uri("all"),
             cursor=None,
-            limit=APP_SEARCH_LIMIT,
+            limit=candidate_limit,
         )
         requested_types = list(base_query.effective_result_types)
-        resolved_scopes = _resolve_scope_uris(
-            db,
-            viewer_id=viewer_id,
-            conversation_id=conversation_id,
-            scopes=scopes,
-        )
     except (ApiError, InvalidScopeError) as exc:
         error_code = (
             exc.code.value if isinstance(exc, ApiError) else ApiErrorCode.E_INVALID_REQUEST.value
@@ -260,8 +276,14 @@ def execute_app_search(
             user_message_id=user_message_id,
             assistant_message_id=assistant_message_id,
             query_hash=hash_query(query),
-            scope="all",
+            scope=_scope_label(resolved_scopes),
+            resolved_scopes=resolved_scopes,
             requested_types=requested_types,
+            candidate_limit=candidate_limit,
+            scope_count=scope_count,
+            query_class=query_class,
+            retrieval_mode=retrieval_mode,
+            policy_reason=policy_reason,
             citations=[],
             selected_citations=[],
             selection_reasons=[],
@@ -277,10 +299,7 @@ def execute_app_search(
         persist_app_search_run(db, run)
         return run
 
-    # Persisted on MessageRetrieval rows as a comma-joined URI list for
-    # multiple scopes (e.g. "media:UUID-1,media:UUID-2"), the lone URI for
-    # one scope, or "all" when no scopes apply.
-    scope = ",".join(resolved_scopes) if resolved_scopes else "all"
+    scope = _scope_label(resolved_scopes)
 
     try:
         if resolved_scopes:
@@ -356,7 +375,13 @@ def execute_app_search(
         assistant_message_id=assistant_message_id,
         query_hash=hash_query(query),
         scope=scope,
+        resolved_scopes=resolved_scopes,
         requested_types=requested_types,
+        candidate_limit=candidate_limit,
+        scope_count=scope_count,
+        query_class=query_class,
+        retrieval_mode=retrieval_mode,
+        policy_reason=policy_reason,
         citations=citations,
         selected_citations=selected,
         selection_reasons=selection_reasons,
@@ -371,6 +396,14 @@ def execute_app_search(
     )
     persist_app_search_run(db, run)
     return run
+
+
+def _scope_label(scope_uris: Sequence[str]) -> str:
+    if not scope_uris:
+        return "all"
+    if len(scope_uris) == 1:
+        return scope_uris[0]
+    return f"multi_scope:{len(scope_uris)}"
 
 
 def _resolve_scope_uris(
@@ -763,11 +796,21 @@ def persist_app_search_run(db: Session, run: AppSearchRun) -> None:
             "input_count": len(run.citations),
             "selected_count": len(run.selected_citations),
             "budget_chars": APP_SEARCH_CONTEXT_CHARS,
-            "selected_chars": run.context_chars,
+            "selected_chars": run.context_chars if run.selected_citations else 0,
             "status": run.status,
             "metadata": {
+                "candidate_limit": run.candidate_limit,
                 "selected_limit": APP_SEARCH_SELECTED_LIMIT,
+                "context_budget_chars": APP_SEARCH_CONTEXT_CHARS,
+                "scope_count": run.scope_count,
+                "result_type_mix": dict(
+                    Counter(citation.result_type for citation in run.citations)
+                ),
+                "query_class": run.query_class,
+                "retrieval_mode": run.retrieval_mode,
+                "policy_reason": run.policy_reason,
                 "scope": run.scope,
+                "resolved_scopes": run.resolved_scopes,
                 "inclusion_surface": "tool_output",
             },
         },

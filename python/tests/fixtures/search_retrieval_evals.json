@@ -4,6 +4,14 @@
     "scoped": "retrieval eval scoped {suffix}",
     "cross_alpha": "retrieval eval cross alpha {suffix}",
     "cross_beta": "retrieval eval cross beta {suffix}",
+    "cross_gamma": "retrieval eval cross gamma {suffix}",
+    "cross_delta": "retrieval eval cross delta {suffix}",
+    "cross_epsilon": "retrieval eval cross epsilon {suffix}",
+    "cross_zeta": "retrieval eval cross zeta {suffix}",
+    "cross_eta": "retrieval eval cross eta {suffix}",
+    "cross_theta": "retrieval eval cross theta {suffix}",
+    "cross_iota": "retrieval eval cross iota {suffix}",
+    "cross_kappa": "retrieval eval cross kappa {suffix}",
     "global": "retrieval eval global {suffix}",
     "multi_hop": "retrieval eval multi hop {suffix}"
   },
@@ -40,7 +48,15 @@
       "scope_refs": ["library"],
       "relevance": [
         { "media_key": "cross_alpha", "grade": 3 },
-        { "media_key": "cross_beta", "grade": 2 }
+        { "media_key": "cross_beta", "grade": 2 },
+        { "media_key": "cross_gamma", "grade": 2 },
+        { "media_key": "cross_delta", "grade": 2 },
+        { "media_key": "cross_epsilon", "grade": 2 },
+        { "media_key": "cross_zeta", "grade": 2 },
+        { "media_key": "cross_eta", "grade": 2 },
+        { "media_key": "cross_theta", "grade": 2 },
+        { "media_key": "cross_iota", "grade": 2 },
+        { "media_key": "cross_kappa", "grade": 2 }
       ]
     },
     {

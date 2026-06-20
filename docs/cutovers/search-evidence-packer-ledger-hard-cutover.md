@@ -1,6 +1,6 @@
 # Search Evidence Packer And Ledger Hard Cutover
 
-**Status:** Proposed - 2026-06-20
+**Status:** Implemented - 2026-06-20
 
 **Type:** Hard cutover. Replace greedy/ambiguous `app_search` packing with
 deterministic, explainable evidence-selection behavior.
@@ -13,12 +13,12 @@ decision, and make tool-output prompt inclusion explicit.
 
 ## Problem
 
-`render_retrieved_context_blocks` currently loops through sorted citations,
-renders each block, and stops when the next block would exceed
-`APP_SEARCH_CONTEXT_CHARS`. That means an early oversized block can prevent later
-useful candidates from being selected.
+Before this cutover, `render_retrieved_context_blocks` looped through sorted
+citations, rendered each block, and stopped when the next block would exceed
+`APP_SEARCH_CONTEXT_CHARS`. That meant an early oversized block could prevent
+later useful candidates from being selected.
 
-The current ledger state is also too coarse:
+The prior ledger state was also too coarse:
 
 - selected candidates are reasoned as `within_context_budget`
 - unselected candidates are often reasoned as `below_selected_limit`
@@ -91,7 +91,9 @@ Safe options:
   metadata showing it was included through a tool message, not initial assembly.
 
 Do not silently leave selected model-visible evidence indistinguishable from
-retrieved-but-not-shown evidence.
+retrieved-but-not-shown evidence. The implemented path records selected tool
+evidence with `included_in_prompt = true` and rerank metadata
+`inclusion_surface = "tool_output"`.
 
 ## Acceptance Criteria
 

@@ -221,6 +221,8 @@ def _app_search_scopes_from_tool_args(args: Mapping[str, Any]) -> tuple[list[str
         return [], None
     if not isinstance(raw_scopes, list):
         return [], "app_search scopes must be an array of URI strings"
+    if not raw_scopes:
+        return [], "app_search scopes must be a non-empty array of URI strings"
 
     scopes: list[str] = []
     for scope in raw_scopes:

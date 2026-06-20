@@ -1,6 +1,6 @@
 # Search Candidate Policy Hard Cutover
 
-**Status:** Proposed - 2026-06-20
+**Status:** Implemented - 2026-06-20
 
 **Type:** Hard cutover. Separate candidate-generation depth from selected
 evidence depth without adding private `app_search` search semantics.
@@ -51,7 +51,7 @@ packing.
 
 Introduce a retrieval policy layer for chat `app_search` candidate generation.
 
-The policy should choose candidate depth based on query class and mode:
+The target policy should choose candidate depth based on query class and mode:
 
 - exact lookup: smaller candidate pool, high exact-match priority
 - scoped passage lookup: moderate candidate pool within scope
@@ -100,6 +100,25 @@ Persist policy data in rerank/tool metadata:
 
 The trust trail should make it obvious whether a shallow answer came from a fast
 policy, a narrow user scope, no indexed evidence, or a true absence result.
+
+## Implementation Notes
+
+The first production slice keeps policy deliberately narrow and scope-driven:
+
+- single `media:` scope -> moderate candidate pool (`20`)
+- library, conversation, multi-scope, and global searches -> deep candidate pool
+  (`50`)
+- selected evidence remains capped at `6`
+- query-class metadata is persisted as `unclassified`
+- multi-scope persistence uses a bounded `multi_scope:<count>` label plus the
+  full resolved scope list in rerank metadata
+- result-type mix metadata is actual candidate output, not the requested kinds
+
+This cutover does not add a query planner, private `app_search` filters, learned
+reranking, or an internal search API. The eval harness carries query-class
+fixtures and candidate-depth deltas, and writes its JSON report under pytest's
+`tmp_path`; the next rerank-selection cutover owns better ordering and diversity
+inside the selected evidence pack.
 
 ## Acceptance Criteria
 

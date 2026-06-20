@@ -1,5 +1,6 @@
 """Agent app-search tool tests."""
 
+from collections import Counter
 from uuid import uuid4
 
 import pytest
@@ -13,7 +14,6 @@ from nexus.schemas.search import SearchResponse
 from nexus.services import media_intelligence
 from nexus.services.agent_tools.app_search import (
     APP_SEARCH_CONTEXT_CHARS,
-    APP_SEARCH_LIMIT,
     APP_SEARCH_SELECTED_LIMIT,
     AppSearchRun,
     execute_app_search,
@@ -22,6 +22,10 @@ from nexus.services.agent_tools.app_search import (
 )
 from nexus.services.note_indexing import rebuild_note_content_index
 from nexus.services.retrieval_citation import RetrievalCitation
+from nexus.services.search.policy import (
+    APP_SEARCH_DEEP_CANDIDATE_LIMIT,
+    APP_SEARCH_SCOPED_CANDIDATE_LIMIT,
+)
 from nexus.services.search.query import SearchQuery
 from tests.factories import (
     add_context_edge,
@@ -297,7 +301,19 @@ def test_execute_app_search_persists_retrieval_metadata(
         assert rerank_row[3] > 0
         assert rerank_row[4] == run.context_chars
         assert rerank_row[5] == run.status
-        assert rerank_row[6]["inclusion_surface"] == "tool_output"
+        assert rerank_row[6] == {
+            "candidate_limit": APP_SEARCH_DEEP_CANDIDATE_LIMIT,
+            "selected_limit": APP_SEARCH_SELECTED_LIMIT,
+            "context_budget_chars": APP_SEARCH_CONTEXT_CHARS,
+            "scope_count": 0,
+            "result_type_mix": dict(Counter(citation.result_type for citation in run.citations)),
+            "query_class": "unclassified",
+            "retrieval_mode": "deep",
+            "policy_reason": "global_scope",
+            "scope": "all",
+            "resolved_scopes": [],
+            "inclusion_surface": "tool_output",
+        }
 
     direct_db.register_cleanup("fragments", "media_id", media_id)
     direct_db.register_cleanup("library_entries", "media_id", media_id)
@@ -366,7 +382,13 @@ def test_persist_app_search_run_records_packer_decisions(
         assistant_message_id=assistant_message_id,
         query_hash="synthetic",
         scope="all",
+        resolved_scopes=[],
         requested_types=["media", "page"],
+        candidate_limit=APP_SEARCH_DEEP_CANDIDATE_LIMIT,
+        scope_count=0,
+        query_class="unclassified",
+        retrieval_mode="deep",
+        policy_reason="global_scope",
         citations=[skipped_over_budget, skipped_empty, fitting],
         selected_citations=selected,
         selection_reasons=selection_reasons,
@@ -439,8 +461,16 @@ def test_persist_app_search_run_records_packer_decisions(
     ).one()
     assert rerank[0] == "app_search_context_budget"
     assert rerank[1] == {
+        "candidate_limit": APP_SEARCH_DEEP_CANDIDATE_LIMIT,
         "selected_limit": APP_SEARCH_SELECTED_LIMIT,
+        "context_budget_chars": APP_SEARCH_CONTEXT_CHARS,
+        "scope_count": 0,
+        "result_type_mix": {"media": 1, "page": 2},
+        "query_class": "unclassified",
+        "retrieval_mode": "deep",
+        "policy_reason": "global_scope",
         "scope": "all",
+        "resolved_scopes": [],
         "inclusion_surface": "tool_output",
     }
     counts = db_session.execute(
@@ -626,7 +656,332 @@ def test_execute_app_search_builds_public_filter_query(
     assert captured["query"].formats == ("pdf",)
     assert captured["query"].authors == ("le-guin",)
     assert captured["query"].roles == ("author",)
-    assert captured["query"].limit == APP_SEARCH_LIMIT
+    assert captured["query"].limit == APP_SEARCH_DEEP_CANDIDATE_LIMIT
+    assert run.candidate_limit == APP_SEARCH_DEEP_CANDIDATE_LIMIT
+    assert run.retrieval_mode == "deep"
+
+
+def test_execute_app_search_uses_moderate_candidate_depth_for_single_media_scope(
+    direct_db: DirectSessionManager,
+) -> None:
+    user_id = create_test_user_id()
+    needle = f"Scoped Candidate Policy {uuid4().hex}"
+
+    with direct_db.session() as session:
+        session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+        library_id = create_test_library(session, user_id, "Scoped Candidate Policy Library")
+        conversation_id = create_test_conversation(session, user_id)
+        user_message_id = create_test_message(
+            session,
+            conversation_id,
+            seq=1,
+            role="user",
+            content=needle,
+        )
+        assistant_message_id = create_test_message(
+            session,
+            conversation_id,
+            seq=2,
+            role="assistant",
+            content="",
+            status="pending",
+        )
+        media_id = create_searchable_media_in_library(
+            session,
+            user_id,
+            library_id,
+            title=needle,
+        )
+        add_context_edge(session, conversation_id, f"media:{media_id}")
+
+        run = execute_app_search(
+            session,
+            viewer_id=user_id,
+            conversation_id=conversation_id,
+            user_message_id=user_message_id,
+            assistant_message_id=assistant_message_id,
+            scopes=[f"media:{media_id}"],
+            query=needle,
+        )
+
+        assert run.status == "complete"
+        assert run.candidate_limit == APP_SEARCH_SCOPED_CANDIDATE_LIMIT
+        assert len(run.selected_citations) <= APP_SEARCH_SELECTED_LIMIT
+        assert run.scope_count == 1
+        assert run.query_class == "unclassified"
+        assert run.retrieval_mode == "fast"
+        assert run.policy_reason == "single_narrow_scope"
+
+        metadata = session.execute(
+            text(
+                """
+                SELECT metadata
+                FROM message_rerank_ledgers
+                WHERE tool_call_id = :tool_call_id
+                """
+            ),
+            {"tool_call_id": run.tool_call_id},
+        ).scalar_one()
+        assert metadata["candidate_limit"] == APP_SEARCH_SCOPED_CANDIDATE_LIMIT
+        assert metadata["selected_limit"] == APP_SEARCH_SELECTED_LIMIT
+        assert metadata["policy_reason"] == "single_narrow_scope"
+        assert metadata["resolved_scopes"] == [f"media:{media_id}"]
+
+    direct_db.register_cleanup("resource_edges", "source_id", conversation_id)
+    direct_db.register_cleanup("resource_edges", "target_id", media_id)
+    direct_db.register_cleanup("fragments", "media_id", media_id)
+    direct_db.register_cleanup("library_entries", "media_id", media_id)
+    direct_db.register_cleanup("media", "id", media_id)
+    direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+    direct_db.register_cleanup("conversations", "id", conversation_id)
+    direct_db.register_cleanup("memberships", "library_id", library_id)
+    direct_db.register_cleanup("libraries", "id", library_id)
+    direct_db.register_cleanup("users", "id", user_id)
+
+
+def test_execute_app_search_persists_bounded_label_for_long_multi_scope(
+    direct_db: DirectSessionManager,
+) -> None:
+    user_id = create_test_user_id()
+    needle = f"Multi Scope Candidate Policy {uuid4().hex}"
+
+    with direct_db.session() as session:
+        session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+        library_id = create_test_library(session, user_id, "Multi Scope Candidate Policy Library")
+        conversation_id = create_test_conversation(session, user_id)
+        user_message_id = create_test_message(
+            session,
+            conversation_id,
+            seq=1,
+            role="user",
+            content=needle,
+        )
+        assistant_message_id = create_test_message(
+            session,
+            conversation_id,
+            seq=2,
+            role="assistant",
+            content="",
+            status="pending",
+        )
+        media_ids = [
+            create_searchable_media_in_library(
+                session,
+                user_id,
+                library_id,
+                title=needle if index == 0 else f"Multi Scope Filler {index} {uuid4().hex}",
+            )
+            for index in range(6)
+        ]
+        for media_id in media_ids:
+            add_context_edge(session, conversation_id, f"media:{media_id}")
+        resolved_scopes = [f"media:{media_id}" for media_id in media_ids]
+
+        run = execute_app_search(
+            session,
+            viewer_id=user_id,
+            conversation_id=conversation_id,
+            user_message_id=user_message_id,
+            assistant_message_id=assistant_message_id,
+            scopes=resolved_scopes,
+            query=needle,
+        )
+
+        assert run.status == "complete"
+        assert run.scope == "multi_scope:6"
+        assert run.resolved_scopes == resolved_scopes
+        assert run.candidate_limit == APP_SEARCH_DEEP_CANDIDATE_LIMIT
+        assert run.retrieval_mode == "deep"
+        assert run.policy_reason == "multiple_scopes"
+
+        tool_scope, metadata = session.execute(
+            text(
+                """
+                SELECT mtc.scope, mrl.metadata
+                FROM message_tool_calls mtc
+                JOIN message_rerank_ledgers mrl ON mrl.tool_call_id = mtc.id
+                WHERE mtc.id = :tool_call_id
+                """
+            ),
+            {"tool_call_id": run.tool_call_id},
+        ).one()
+        assert tool_scope == "multi_scope:6"
+        assert metadata["scope"] == "multi_scope:6"
+        assert metadata["resolved_scopes"] == resolved_scopes
+        assert metadata["candidate_limit"] == APP_SEARCH_DEEP_CANDIDATE_LIMIT
+
+    direct_db.register_cleanup("resource_edges", "source_id", conversation_id)
+    for media_id in media_ids:
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+    direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+    direct_db.register_cleanup("conversations", "id", conversation_id)
+    direct_db.register_cleanup("memberships", "library_id", library_id)
+    direct_db.register_cleanup("libraries", "id", library_id)
+    direct_db.register_cleanup("users", "id", user_id)
+
+
+def test_execute_app_search_error_preserves_resolved_candidate_policy(
+    direct_db: DirectSessionManager,
+) -> None:
+    user_id = create_test_user_id()
+
+    with direct_db.session() as session:
+        session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+        library_id = create_test_library(session, user_id, "Scoped Error Policy Library")
+        conversation_id = create_test_conversation(session, user_id)
+        user_message_id = create_test_message(
+            session,
+            conversation_id,
+            seq=1,
+            role="user",
+            content="Find scoped evidence",
+        )
+        assistant_message_id = create_test_message(
+            session,
+            conversation_id,
+            seq=2,
+            role="assistant",
+            content="",
+            status="pending",
+        )
+        media_id = create_searchable_media_in_library(
+            session,
+            user_id,
+            library_id,
+            title="Scoped Error Policy Needle",
+        )
+        add_context_edge(session, conversation_id, f"media:{media_id}")
+
+        run = execute_app_search(
+            session,
+            viewer_id=user_id,
+            conversation_id=conversation_id,
+            user_message_id=user_message_id,
+            assistant_message_id=assistant_message_id,
+            scopes=[f"media:{media_id}"],
+            query="Scoped Error Policy Needle",
+            kinds=["not-a-kind"],
+        )
+
+        assert run.status == "error"
+        assert run.scope == f"media:{media_id}"
+        assert run.candidate_limit == APP_SEARCH_SCOPED_CANDIDATE_LIMIT
+        assert run.scope_count == 1
+        assert run.retrieval_mode == "fast"
+        assert run.policy_reason == "single_narrow_scope"
+
+        metadata = session.execute(
+            text(
+                """
+                SELECT metadata
+                FROM message_rerank_ledgers
+                WHERE tool_call_id = :tool_call_id
+                """
+            ),
+            {"tool_call_id": run.tool_call_id},
+        ).scalar_one()
+        assert metadata["scope"] == f"media:{media_id}"
+        assert metadata["candidate_limit"] == APP_SEARCH_SCOPED_CANDIDATE_LIMIT
+        assert metadata["policy_reason"] == "single_narrow_scope"
+        assert metadata["result_type_mix"] == {}
+        assert metadata["resolved_scopes"] == [f"media:{media_id}"]
+        selected_chars = session.execute(
+            text(
+                """
+                SELECT selected_chars
+                FROM message_rerank_ledgers
+                WHERE tool_call_id = :tool_call_id
+                """
+            ),
+            {"tool_call_id": run.tool_call_id},
+        ).scalar_one()
+        assert selected_chars == 0
+
+    direct_db.register_cleanup("resource_edges", "source_id", conversation_id)
+    direct_db.register_cleanup("resource_edges", "target_id", media_id)
+    direct_db.register_cleanup("fragments", "media_id", media_id)
+    direct_db.register_cleanup("library_entries", "media_id", media_id)
+    direct_db.register_cleanup("media", "id", media_id)
+    direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+    direct_db.register_cleanup("conversations", "id", conversation_id)
+    direct_db.register_cleanup("memberships", "library_id", library_id)
+    direct_db.register_cleanup("libraries", "id", library_id)
+    direct_db.register_cleanup("users", "id", user_id)
+
+
+def test_execute_app_search_uses_deep_policy_for_default_conversation_scope(
+    direct_db: DirectSessionManager,
+) -> None:
+    user_id = create_test_user_id()
+    needle = f"Conversation Scope Policy {uuid4().hex}"
+
+    with direct_db.session() as session:
+        session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+        library_id = create_test_library(session, user_id, "Conversation Scope Policy Library")
+        conversation_id = create_test_conversation(session, user_id)
+        user_message_id = create_test_message(
+            session,
+            conversation_id,
+            seq=1,
+            role="user",
+            content=needle,
+        )
+        assistant_message_id = create_test_message(
+            session,
+            conversation_id,
+            seq=2,
+            role="assistant",
+            content="",
+            status="pending",
+        )
+        media_id = create_searchable_media_in_library(
+            session,
+            user_id,
+            library_id,
+            title="Conversation Scope Policy Anchor",
+        )
+        highlight_id, note_block_id = create_test_highlight_note(
+            session,
+            user_id,
+            media_id,
+            body=needle,
+        )
+        add_context_edge(session, conversation_id, f"highlight:{highlight_id}")
+
+        run = execute_app_search(
+            session,
+            viewer_id=user_id,
+            conversation_id=conversation_id,
+            user_message_id=user_message_id,
+            assistant_message_id=assistant_message_id,
+            scopes=[],
+            query=needle,
+            kinds=["notes"],
+        )
+
+        assert run.status == "complete"
+        assert run.scope == f"conversation:{conversation_id}"
+        assert run.resolved_scopes == [f"conversation:{conversation_id}"]
+        assert run.candidate_limit == APP_SEARCH_DEEP_CANDIDATE_LIMIT
+        assert run.retrieval_mode == "deep"
+        assert run.policy_reason == "conversation_scope"
+
+    direct_db.register_cleanup("resource_edges", "source_id", conversation_id)
+    direct_db.register_cleanup("resource_edges", "source_id", highlight_id)
+    direct_db.register_cleanup("resource_edges", "target_id", note_block_id)
+    direct_db.register_cleanup("note_blocks", "id", note_block_id)
+    direct_db.register_cleanup("highlights", "id", highlight_id)
+    direct_db.register_cleanup("fragments", "media_id", media_id)
+    direct_db.register_cleanup("library_entries", "media_id", media_id)
+    direct_db.register_cleanup("media", "id", media_id)
+    direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+    direct_db.register_cleanup("conversations", "id", conversation_id)
+    direct_db.register_cleanup("memberships", "library_id", library_id)
+    direct_db.register_cleanup("libraries", "id", library_id)
+    direct_db.register_cleanup("users", "id", user_id)
+    direct_db.register_cleanup("pages", "user_id", user_id)
 
 
 def test_li_revision_reference_dropped_from_default_scope_resolution(

@@ -287,7 +287,13 @@ describe("AssistantMessage", () => {
               budget_chars: 4000,
               selected_chars: 15,
               status: "complete",
-              metadata: {},
+              metadata: {
+                candidate_limit: 50,
+                selected_limit: 6,
+                query_class: "unclassified",
+                retrieval_mode: "deep",
+                policy_reason: "global_scope",
+              },
               created_at: "2026-06-03T00:00:00Z",
             },
           ],
@@ -351,6 +357,9 @@ describe("AssistantMessage", () => {
     expect(screen.getByText(/retrieval 0: Source title/)).toBeInTheDocument();
     expect(screen.getByText(/candidate 0: source-1/)).toBeInTheDocument();
     expect(screen.getByText("search_score_then_context_budget")).toBeInTheDocument();
+    expect(
+      screen.getByText("deep - global_scope - candidates 50 - selected cap 6 - unclassified"),
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /\[1\] Source title/ }));
     expect(onCitationActivate).toHaveBeenCalledWith(
       expect.objectContaining({
