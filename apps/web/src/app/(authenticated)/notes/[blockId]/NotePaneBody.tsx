@@ -15,7 +15,8 @@ import { usePaneSecondary } from "@/components/workspace/PaneSecondary";
 import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createRandomId } from "@/lib/createRandomId";
-import { fetchNoteBlock, saveNoteBody, type NoteBlock } from "@/lib/notes/api";
+import { saveNoteBody } from "@/lib/notes/api";
+import type { NoteBlock } from "@/lib/notes/normalize";
 import {
   createEmptyOutlineDoc,
   firstOutlineBlockFromDoc,
@@ -28,7 +29,10 @@ import {
   usePaneRuntime,
   useSetPaneTitle,
 } from "@/lib/panes/paneRuntime";
+import { noteBlockResource } from "@/lib/api/resource";
+import { clientResourceFetcher } from "@/lib/api/resourceTransport.client";
 import { useResource } from "@/lib/api/useResource";
+import { paneResourceLoaders } from "@/lib/panes/paneResourceLoaders";
 import { consumePendingNoteActivation } from "@/lib/reader/pendingNoteActivation";
 import { useNotePulseHighlight, type NotePulseTarget } from "@/lib/reader/pulseEvent";
 import styles from "../../notes/notes.module.css";
@@ -91,9 +95,14 @@ export default function NotePaneBody() {
     reset,
   } = session;
 
-  const noteResource = useResource<NoteBlock>({
-    cacheKey: `note-block:${blockId}`,
-    load: () => fetchNoteBlock(blockId),
+  const noteResource = useResource<NoteBlock, { blockId: string }>({
+    descriptor: noteBlockResource,
+    params: { blockId },
+    load: (params, signal) =>
+      paneResourceLoaders.note!.load(
+        clientResourceFetcher(signal),
+        params,
+      ) as Promise<NoteBlock>,
   });
 
   useEffect(() => {

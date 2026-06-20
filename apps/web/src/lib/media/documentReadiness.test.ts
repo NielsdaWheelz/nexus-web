@@ -78,6 +78,30 @@ describe("shouldLoadInitialMediaFragments", () => {
   });
 });
 
+// AC-2 / C9: shouldLoadInitialMediaFragments is the SINGLE initial-fragments gate, shared by
+// the server seed, the client mount, and prefetch (paneResourceLoaders.media), so a server
+// seed can never under-load vs the client for a kind. The five kinds below are the whole
+// backend MediaKind enum. C9: a future fragment-rendering kind must be added here AND given an
+// empty-seed recovery loader (the web_article / shouldLoadWebArticleFragments pattern).
+describe("shouldLoadInitialMediaFragments — one gate across every media kind (AC-2/C9)", () => {
+  it("allows only readable transcript kinds; every reader-document kind is false", () => {
+    const cases: Array<[string, boolean, boolean]> = [
+      ["podcast_episode", true, true],
+      ["podcast_episode", false, false],
+      ["video", true, true],
+      ["video", false, false],
+      ["web_article", true, false],
+      ["epub", true, false],
+      ["pdf", true, false],
+    ];
+    for (const [kind, canRead, expected] of cases) {
+      expect(
+        shouldLoadInitialMediaFragments({ kind, capabilities: { can_read: canRead } }),
+      ).toBe(expected);
+    }
+  });
+});
+
 describe("shouldLoadWebArticleFragments", () => {
   it("loads deferred web article fragments only when readable and empty", () => {
     expect(

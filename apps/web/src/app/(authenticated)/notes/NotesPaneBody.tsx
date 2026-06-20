@@ -10,9 +10,12 @@ import CollectionDisplayControls from "@/components/collections/CollectionDispla
 import { notePagesResource, type NoResourceParams } from "@/lib/api/resource";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { usePaneRouter, useSetPaneTitle } from "@/lib/panes/paneRuntime";
-import { createNotePage, fetchNotePages, type NotePageSummary } from "@/lib/notes/api";
+import { createNotePage } from "@/lib/notes/api";
+import type { NotePageSummary } from "@/lib/notes/normalize";
 import { setPendingNoteFocus } from "@/lib/notes/pendingNoteFocus";
+import { clientResourceFetcher } from "@/lib/api/resourceTransport.client";
 import { useResource } from "@/lib/api/useResource";
+import { paneResourceLoaders } from "@/lib/panes/paneResourceLoaders";
 import { presentNote } from "@/lib/collections/presenters/note";
 import { useCollectionDisplayState } from "@/lib/collections/useCollectionDisplayState";
 import { useHydrationPreservedInput } from "@/lib/ui/useHydrationPreservedInput";
@@ -31,7 +34,11 @@ export default function NotesPaneBody() {
   const pagesResource = useResource<NotePageSummary[], NoResourceParams>({
     descriptor: notePagesResource,
     params: {},
-    load: () => fetchNotePages(),
+    load: (params, signal) =>
+      paneResourceLoaders.notes!.load(
+        clientResourceFetcher(signal),
+        params,
+      ) as Promise<NotePageSummary[]>,
   });
   const resourcePages =
     pagesResource.status === "ready" ? pagesResource.data : null;

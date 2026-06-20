@@ -2,12 +2,14 @@ import "server-only";
 
 import { cookies, headers } from "next/headers";
 import { callFastAPI } from "@/lib/api/server";
-import type { DehydratedResources } from "@/lib/api/hydrationCache";
+import { PREFETCH_OPTS } from "@/lib/api/resourceTransport";
+import { serverResourceFetcher } from "@/lib/api/resourceTransport.server";
+import type { DehydratedResources } from "@/lib/api/resourceCache";
 import { REQUEST_PATH_HEADER } from "@/lib/auth/requestPath";
 import { readDeviceId } from "@/lib/auth/deviceCookie";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
-import { paneServerLoaders, PREFETCH_OPTS } from "@/lib/panes/paneServerLoaders";
+import { paneResourceLoaders } from "@/lib/panes/paneResourceLoaders";
 import { DEFAULT_READER_PROFILE, type ReaderProfile } from "@/lib/reader/types";
 import { estimatePrimaryWidthPx } from "@/lib/workspace/paneSizing";
 import {
@@ -21,17 +23,21 @@ import {
 } from "@/lib/workspace/workspaceRestore";
 import { WORKSPACE_DEFAULT_FALLBACK_HREF } from "@/lib/workspace/workspaceHref";
 
-// Seed one pane's resource into the hydration cache, keyed exactly as the pane's useResource
+// Seed one pane's resource into the resource cache, keyed exactly as the pane's useResource
 // reads it (AC-4) — or null if there's no loader, or it throws/times out, in which case the
-// client hook fetches normally (D-8). One code path; prefetch is the optimization.
+// client hook fetches normally. The loader is the SAME isomorphic body the client mount and
+// prefetch-on-intent run; only the transport differs (serverResourceFetcher here).
 async function seedPane(href: string): Promise<{ cacheKey: string; data: unknown } | null> {
   const route = resolvePaneRouteModel(href);
-  const loader = route.id === "unsupported" ? undefined : paneServerLoaders[route.id];
+  const loader = route.id === "unsupported" ? undefined : paneResourceLoaders[route.id];
   if (!loader) {
     return null;
   }
   try {
-    return await loader(route.params);
+    return {
+      cacheKey: loader.cacheKey(route.params),
+      data: await loader.load(serverResourceFetcher, route.params),
+    };
   } catch {
     // justify-ignore-error: best-effort prefetch; the client useResource refetches.
     return null;

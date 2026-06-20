@@ -1,6 +1,13 @@
 import { apiFetch } from "@/lib/api/client";
-import { noteBlockResource, notePagesResource } from "@/lib/api/resource";
-import { assertNoTopLevelLegacyArtifactIdentityKey } from "@/lib/currentArtifactIdentity";
+import { noteBlockResource } from "@/lib/api/resource";
+import {
+  normalizeBlock,
+  normalizePageSummary,
+  requiredRecord,
+  requiredString,
+  type NoteBlock,
+  type NotePageSummary,
+} from "@/lib/notes/normalize";
 import { todayLocalDate } from "@/lib/localDate";
 import type {
   ResourceChatSubjectMode,
@@ -14,25 +21,6 @@ import {
   type ResourceActivation,
 } from "@/lib/resources/activation";
 import { isRecord } from "@/lib/validation";
-
-export interface NoteBlock {
-  id: string;
-  parentBlockId: string | null;
-  orderKey: string | null;
-  bodyPmJson: Record<string, unknown>;
-  bodyText: string;
-  collapsed: boolean;
-  children: NoteBlock[];
-  createdAt?: string;
-  updatedAt?: string;
-  versionByLane?: Record<string, number>;
-}
-
-export interface NotePageSummary {
-  id: string;
-  title: string;
-  updatedAt?: string;
-}
 
 export interface ResourceItemCapabilities {
   linkable: boolean;
@@ -123,92 +111,6 @@ interface ApiResponse {
 
 function browserTimeZone(): string {
   return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-}
-
-function requiredRecord(
-  value: unknown,
-  label: string,
-): Record<string, unknown> {
-  if (!isRecord(value)) {
-    throw new Error(`Notes API response is missing ${label}`);
-  }
-  return value;
-}
-
-function requiredString(value: unknown, label: string): string {
-  if (typeof value !== "string" || value.length === 0) {
-    throw new Error(`Notes API response is missing ${label}`);
-  }
-  return value;
-}
-
-export function normalizeBlock(raw: Record<string, unknown>): NoteBlock {
-  assertNoTopLevelLegacyArtifactIdentityKey(raw, "note block");
-  const children = Array.isArray(raw.children) ? raw.children : [];
-  const versionByLane = isRecord(raw.versionByLane)
-    ? raw.versionByLane
-    : isRecord(raw.version_by_lane)
-      ? raw.version_by_lane
-      : {};
-  return {
-    id: requiredString(raw.id, "note block id"),
-    parentBlockId:
-      typeof raw.parentBlockId === "string"
-        ? raw.parentBlockId
-        : typeof raw.parent_block_id === "string"
-          ? raw.parent_block_id
-          : null,
-    orderKey:
-      typeof raw.orderKey === "string"
-        ? raw.orderKey
-        : typeof raw.order_key === "string"
-          ? raw.order_key
-          : null,
-    bodyPmJson: isRecord(raw.bodyPmJson)
-      ? raw.bodyPmJson
-      : isRecord(raw.body_pm_json)
-        ? raw.body_pm_json
-        : { type: "paragraph" },
-    bodyText: String(raw.bodyText ?? raw.body_text ?? ""),
-    collapsed: Boolean(raw.collapsed),
-    children: children.map((child) =>
-      normalizeBlock(requiredRecord(child, "note block child")),
-    ),
-    createdAt:
-      typeof raw.createdAt === "string"
-        ? raw.createdAt
-        : typeof raw.created_at === "string"
-          ? raw.created_at
-          : undefined,
-    updatedAt:
-      typeof raw.updatedAt === "string"
-        ? raw.updatedAt
-        : typeof raw.updated_at === "string"
-          ? raw.updated_at
-          : undefined,
-    versionByLane: Object.fromEntries(
-      Object.entries(versionByLane).map(([lane, version]) => [
-        lane,
-        Number(version),
-      ]),
-    ),
-  };
-}
-
-export function normalizePageSummary(
-  raw: Record<string, unknown>,
-): NotePageSummary {
-  assertNoTopLevelLegacyArtifactIdentityKey(raw, "note page");
-  return {
-    id: requiredString(raw.id, "note page id"),
-    title: String(raw.title ?? "Untitled"),
-    updatedAt:
-      typeof raw.updatedAt === "string"
-        ? raw.updatedAt
-        : typeof raw.updated_at === "string"
-          ? raw.updated_at
-          : undefined,
-  };
 }
 
 export function normalizeResourceItem(raw: Record<string, unknown>): ResourceItem {
@@ -323,22 +225,6 @@ function normalizePage(raw: Record<string, unknown>): NotePage {
       normalizeBlock(requiredRecord(block, "note page block")),
     ),
   };
-}
-
-export async function fetchNotePages(): Promise<NotePageSummary[]> {
-  const response = await apiFetch<ApiResponse>(
-    notePagesResource.clientPath({}),
-    {
-      cache: "no-store",
-    },
-  );
-  const data = requiredRecord(response.data, "note pages response");
-  if (!Array.isArray(data.pages)) {
-    throw new Error("Notes API response is missing note pages");
-  }
-  return data.pages.map((page) =>
-    normalizePageSummary(requiredRecord(page, "note page summary")),
-  );
 }
 
 export async function createNotePage(input: {

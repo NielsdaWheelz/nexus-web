@@ -118,6 +118,11 @@ export const contributorWorksResource: ResourceDescriptor<ContributorWorksResour
     `/api/contributors/${encoded(params.handle)}/works${contributorWorksSuffix(params)}`,
 };
 
+// Works page size for an author pane's first paint — shared by the server seed, the
+// client mount, and the in-place reload so all three agree. The works cacheKey
+// ignores limit, so a mismatch would silently seed a different row count.
+export const AUTHOR_WORKS_LIMIT = 100;
+
 export const contributorDirectoryResource: ResourceDescriptor<ContributorDirectoryResourceParams> = {
   cacheKey: (params) => `contributors:directory${contributorDirectorySuffix(params)}`,
   serverPath: (params) => `/contributors/directory${contributorDirectorySuffix(params)}`,

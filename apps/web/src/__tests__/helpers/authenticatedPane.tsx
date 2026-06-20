@@ -5,9 +5,9 @@ import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { PaneFixedChromeContext } from "@/components/workspace/PaneFixedChrome";
 import { PaneSecondaryContext } from "@/components/workspace/PaneSecondary";
 import {
-  BootstrapHydrationProvider,
+  ResourceCacheProvider,
   type DehydratedResources,
-} from "@/lib/api/hydrationCache";
+} from "@/lib/api/resourceCache";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
@@ -55,7 +55,7 @@ export function renderHydratedPane({
 
   const view = render(
     <FeedbackProvider>
-      <BootstrapHydrationProvider value={resources}>
+      <ResourceCacheProvider value={resources}>
         <PaneRuntimeProvider
           paneId={paneId}
           href={href}
@@ -79,7 +79,7 @@ export function renderHydratedPane({
             </PaneFixedChromeContext.Provider>
           </PaneSecondaryContext.Provider>
         </PaneRuntimeProvider>
-      </BootstrapHydrationProvider>
+      </ResourceCacheProvider>
     </FeedbackProvider>,
   );
 

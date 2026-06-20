@@ -7,7 +7,7 @@ import { stubFetch, wasFetchPathCalled } from "@/__tests__/helpers/fetch";
 // AC-4 hydration-hit guard: when the bootstrap seeds the raw /libraries envelope
 // under the cacheKey the pane reads ("libraries:0"), LibrariesPaneBody must paint
 // from that seed without making a client fetch. This pins the seeded shape in
-// paneServerLoaders ({ data: Library[] }) against what the pane consumes
+// paneResourceLoaders ({ data: Library[] }) against what the pane consumes
 // (librariesResource.data.data) — if either drifts, this test fails.
 
 afterEach(() => {

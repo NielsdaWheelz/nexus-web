@@ -4,11 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Node as ProseMirrorNode } from "prosemirror-model";
 import { ArrowLeft } from "lucide-react";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import {
-  quickCaptureDailyNote,
-  saveNoteBody,
-  type NoteBlock,
-} from "@/lib/notes/api";
+import { quickCaptureDailyNote, saveNoteBody } from "@/lib/notes/api";
+import type { NoteBlock } from "@/lib/notes/normalize";
 import { createRandomId } from "@/lib/createRandomId";
 import ProseMirrorOutlineEditor from "@/components/notes/ProseMirrorOutlineEditor";
 import {

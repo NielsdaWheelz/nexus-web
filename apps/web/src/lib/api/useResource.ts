@@ -2,7 +2,7 @@
 
 import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import { ApiError, apiFetch, isApiError, type ApiPath } from "@/lib/api/client";
-import { HydrationCacheContext } from "@/lib/api/hydrationCache";
+import { ResourceCacheContext, type ResourceCacheEntry } from "@/lib/api/resourceCache";
 import type { ResourceDescriptor } from "@/lib/api/resource";
 import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { isAbortError } from "@/lib/errors";
@@ -34,8 +34,8 @@ const BASE_DELAY_MS = 250;
 const MAX_DELAY_MS = 2000;
 
 // The one async-resource hook: a keyed GET-or-custom-load with 3× retry/backoff
-// and abort. When the server prefetched the initial cacheKey into the hydration
-// cache, it claims that value (consume-once) and skips the first fetch.
+// and abort. When the server seed or a client prefetch put the initial cacheKey
+// into the resource cache, it consumes that value once and skips the first fetch.
 export function useResource<T, P>(
   args: DescriptorResourceArgs<T, P>,
 ): AsyncResource<T>;
@@ -69,14 +69,17 @@ export function useResource<T, P>(
   const [retryTick, setRetryTick] = useState(0);
   const retry = useCallback(() => setRetryTick((n) => n + 1), []);
 
-  // Seed "ready" and skip the first fetch for the initial cacheKey when the
-  // server prefetched it into the hydration cache (consume-once).
-  const cache = useContext(HydrationCacheContext);
+  const cache = useContext(ResourceCacheContext);
   const handleUnauthenticatedApiError = useUnauthenticatedApiHandler();
-  const seededRef = useRef<{ key: string; data: T } | null>(null);
-  if (seededRef.current === null && cacheKey !== null) {
-    if (cache !== null && cache.has(cacheKey)) {
-      seededRef.current = { key: cacheKey, data: cache.get(cacheKey) as T };
+  // Peek the seeded/prefetched entry for the initial cacheKey (read-only — safe in
+  // render). A ready entry (server seed or settled prefetch) paints synchronously and
+  // skips the first fetch; a pending entry (prefetch still in flight) is awaited in the
+  // load effect instead of starting a second fetch. consume() runs post-commit.
+  const seededRef = useRef<{ key: string; entry: ResourceCacheEntry } | null>(null);
+  if (seededRef.current === null && cacheKey !== null && cache !== null) {
+    const entry = cache.peek(cacheKey);
+    if (entry !== null) {
+      seededRef.current = { key: cacheKey, entry };
     }
   }
   const seeded = seededRef.current;
@@ -84,15 +87,15 @@ export function useResource<T, P>(
   const skipKeyRef = useRef(seeded !== null ? seeded.key : null);
 
   const [resource, setResource] = useState<AsyncResource<T>>(() => {
-    if (seeded !== null) {
-      return { status: "ready", data: seeded.data };
+    if (seeded !== null && seeded.entry.status === "ready") {
+      return { status: "ready", data: seeded.entry.data as T };
     }
     return cacheKey === null ? { status: "idle" } : { status: "loading" };
   });
 
   useEffect(() => {
     if (seeded !== null && cache !== null) {
-      cache.delete(seeded.key);
+      cache.consume(seeded.key);
     }
   }, [cache, seeded]);
 
@@ -103,6 +106,28 @@ export function useResource<T, P>(
     }
     if (skipKeyRef.current === cacheKey) {
       skipKeyRef.current = null;
+      // A pending prefetch is in flight for this key: adopt its promise (no second
+      // fetch). On success → ready; on failure → re-run this effect to fetch fresh.
+      const seededEntry = seededRef.current;
+      if (seededEntry !== null && seededEntry.entry.status === "pending") {
+        // Adopt the in-flight prefetch's promise; do NOT abort its (cache-owned, possibly
+        // shared) controller on unmount — just ignore a late result. The cache's LRU owns
+        // cancellation; a background completion is harmless (the entry is already consumed).
+        const { promise } = seededEntry.entry;
+        let cancelled = false;
+        promise.then(
+          (data) => {
+            if (!cancelled) setResource({ status: "ready", data: data as T });
+          },
+          () => {
+            if (!cancelled) retry();
+          },
+        );
+        return () => {
+          cancelled = true;
+        };
+      }
+      // A ready seed was already applied synchronously in the useState initializer.
       return;
     }
 

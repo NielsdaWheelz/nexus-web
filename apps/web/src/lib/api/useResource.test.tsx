@@ -1,5 +1,5 @@
 import { act, render, renderHook, waitFor } from "@testing-library/react";
-import { useState, type ReactNode } from "react";
+import { createElement, useState, type ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api/client";
 import UnauthenticatedApiBoundary, {
@@ -7,7 +7,23 @@ import UnauthenticatedApiBoundary, {
 } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { libraryResource } from "@/lib/api/resource";
 import { useResource } from "./useResource";
-import { BootstrapHydrationProvider } from "./hydrationCache";
+import {
+  ResourceCache,
+  ResourceCacheContext,
+  ResourceCacheProvider,
+} from "./resourceCache";
+
+// Provide a concrete ResourceCache in context (vs ResourceCacheProvider, which
+// builds one from seeds), so a test can pre-deposit a pending prefetch entry.
+const cacheWrapper = (cache: ResourceCache) => {
+  function CacheProvider({ children }: { children: ReactNode }) {
+    return createElement(ResourceCacheContext.Provider, { value: cache }, children);
+  }
+  return CacheProvider;
+};
+
+// Flush microtasks + one macrotask so settled prefetch promises apply.
+const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 const redirectToLoginForCurrentLocation = vi.hoisted(() => vi.fn());
 
@@ -91,7 +107,7 @@ describe("useResource", () => {
       const [late, setLate] = useState(false);
       showLateReader = () => setLate(true);
       return (
-        <BootstrapHydrationProvider value={{ k1: "cached" }}>
+        <ResourceCacheProvider value={{ k1: "cached" }}>
           {late ? (
             <Reader key="c" id="c" />
           ) : (
@@ -100,7 +116,7 @@ describe("useResource", () => {
               <Reader key="b" id="b" />
             </>
           )}
-        </BootstrapHydrationProvider>
+        </ResourceCacheProvider>
       );
     }
 
@@ -223,5 +239,79 @@ describe("useResource", () => {
       expect(result.current).toEqual({ status: "ready", data: "recovered" }),
     );
     expect(load).toHaveBeenCalledTimes(3);
+  });
+
+  it("adopts a pending prefetch without issuing a second fetch (dedup)", async () => {
+    const cache = new ResourceCache({});
+    let resolvePrefetch!: (value: unknown) => void;
+    cache.prefetch(
+      "k1",
+      () =>
+        new Promise<unknown>((resolve) => {
+          resolvePrefetch = resolve;
+        }),
+    );
+    expect(cache.peek("k1")?.status).toBe("pending");
+
+    const load = vi.fn(async () => "from-load");
+    const { result } = renderHook(() => useResource({ cacheKey: "k1", load }), {
+      wrapper: cacheWrapper(cache),
+    });
+
+    // The in-flight prefetch is adopted: paint stays "loading" while it resolves.
+    expect(result.current.status).toBe("loading");
+
+    await act(async () => {
+      resolvePrefetch("warmed");
+    });
+
+    await waitFor(() =>
+      expect(result.current).toEqual({ status: "ready", data: "warmed" }),
+    );
+    // The prefetch was the sole network op — the mount never fetched.
+    expect(load).not.toHaveBeenCalled();
+  });
+
+  it("paints synchronously from a settled (ready) prefetch with no fetch", () => {
+    const cache = new ResourceCache({ k1: "warmed" });
+    const load = vi.fn(async () => "from-load");
+    const { result } = renderHook(() => useResource({ cacheKey: "k1", load }), {
+      wrapper: cacheWrapper(cache),
+    });
+
+    // A ready entry paints on the first render, before any effect runs.
+    expect(result.current).toEqual({ status: "ready", data: "warmed" });
+    expect(load).not.toHaveBeenCalled();
+  });
+
+  it("falls back to its own load when the pending prefetch rejects", async () => {
+    const cache = new ResourceCache({});
+    let rejectPrefetch!: (reason: unknown) => void;
+    cache.prefetch(
+      "k1",
+      () =>
+        new Promise<unknown>((_, reject) => {
+          rejectPrefetch = reject;
+        }),
+    );
+    expect(cache.peek("k1")?.status).toBe("pending");
+
+    const load = vi.fn(async () => "fresh");
+    const { result } = renderHook(() => useResource({ cacheKey: "k1", load }), {
+      wrapper: cacheWrapper(cache),
+    });
+
+    expect(result.current.status).toBe("loading");
+
+    await act(async () => {
+      rejectPrefetch(new Error("prefetch failed"));
+      await flush();
+    });
+
+    await waitFor(() =>
+      expect(result.current).toEqual({ status: "ready", data: "fresh" }),
+    );
+    // The hook recovered by issuing its own fetch after the prefetch rejected.
+    expect(load).toHaveBeenCalledTimes(1);
   });
 });

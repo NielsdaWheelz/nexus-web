@@ -39,7 +39,9 @@ import {
   removeMediaFromLibrary,
 } from "@/lib/media/mediaLibraries";
 import { useStringIdSet, type StringIdSet } from "@/lib/useStringIdSet";
+import { clientResourceFetcher } from "@/lib/api/resourceTransport.client";
 import { useResource } from "@/lib/api/useResource";
+import { paneResourceLoaders } from "@/lib/panes/paneResourceLoaders";
 import { fetchPodcastLibraries } from "@/app/(authenticated)/podcasts/podcastSubscriptions";
 import LibraryIntelligencePane from "./LibraryIntelligencePane";
 import Button from "@/components/ui/Button";
@@ -170,19 +172,11 @@ export default function LibraryPaneBody() {
   }, { id: string }>({
     descriptor: libraryResourceDescriptor,
     params: { id },
-    load: async (params, signal) => {
-      const [libraryResp, entriesResp] = await Promise.all([
-        apiFetch<{ data: Library }>(
-          libraryResourceDescriptor.clientPath(params),
-          { signal },
-        ),
-        apiFetch<{ data: LibraryEntry[] }>(
-          libraryEntriesResource.clientPath(params),
-          { signal },
-        ),
-      ]);
-      return { library: libraryResp.data, entries: entriesResp.data };
-    },
+    load: (params, signal) =>
+      paneResourceLoaders.library!.load(
+        clientResourceFetcher(signal),
+        params,
+      ) as Promise<{ library: Library; entries: LibraryEntry[] }>,
   });
   const currentLibrary = library?.id === id ? library : null;
   // Entry mutation (add content, reorder, remove) is hidden for system-protected

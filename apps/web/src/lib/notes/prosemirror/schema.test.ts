@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { firstOutlineBlockFromDoc, noteBlocksToOutlineDoc, outlineSchema } from "./schema";
-import type { NoteBlock } from "@/lib/notes/api";
+import type { NoteBlock } from "@/lib/notes/normalize";
 
 describe("notes ProseMirror schema", () => {
   it("renders object embeds as clickable object refs inside outline blocks", () => {

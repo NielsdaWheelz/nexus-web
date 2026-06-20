@@ -11,7 +11,7 @@ import LibraryPaneBody from "./LibraryPaneBody";
 
 // AC-4 hydration-hit: when the server prefetched the library pane's primary
 // resource into the bootstrap hydration cache under the bare library id (the
-// same cacheKey `libraryResource` reads — see paneServerLoaders.library seeding
+// same cacheKey `libraryResource` reads — see paneResourceLoaders.library seeding
 // `{ library, entries }`), LibraryPaneBody must paint from the seed and never
 // fetch `/api/libraries/<id>`. We exercise the real useResource → apiFetch →
 // global fetch path (apiFetch is NOT mocked) and assert the library GET never

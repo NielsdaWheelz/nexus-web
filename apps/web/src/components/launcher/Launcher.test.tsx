@@ -11,6 +11,13 @@ import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
+
+// preloadPane dynamically imports the real pane body; stub that chunk-warm side effect
+// (the documented heavy-chunk exception, same as paneWarm.test.tsx) so the launcher's
+// prefetch-on-intent surface (hover/arrow → setActiveId → warmPane) can be asserted via
+// the pane id it warms. usePaneWarm + the fetch boundary stay real.
+const preloadPane = vi.hoisted(() => vi.fn(() => Promise.resolve()));
+vi.mock("@/lib/panes/paneRenderRegistry", () => ({ preloadPane }));
 import Launcher from "./Launcher";
 import { dispatchOpenLauncher } from "@/lib/launcher/launcherEvents";
 import type { OpenLauncherDetail } from "@/lib/launcher/launcherEvents";
@@ -263,5 +270,49 @@ describe("Launcher — embedded panels", () => {
     await userEvent.keyboard("{Escape}");
     expect(screen.getByRole("dialog", { name: "Launcher" })).toBeInTheDocument();
     expect(await screen.findByRole("combobox", { name: "Search, add, or ask" })).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Prefetch-on-intent: hovering / arrow-keying a row (both call setActiveId) warms the
+// destination pane when the row has a pre-known pane (href / route-resource); create/ask/
+// external rows have no pane and must not warm. preloadPane is the asserted warm signal.
+// ---------------------------------------------------------------------------
+
+describe("Launcher — prefetch-on-intent", () => {
+  afterEach(() => {
+    preloadPane.mockClear();
+  });
+
+  it("warms the destination pane when hovering an in-app go-to row", async () => {
+    await openDialog({ lane: "go" });
+
+    // The "Libraries" destination is an href row (/libraries, not externalShell).
+    const libraries = await screen.findByRole("option", { name: /Libraries/i });
+    fireEvent.mouseMove(libraries);
+
+    // Hover is intent for the imminent Enter — the libraries pane's chunk warms immediately.
+    expect(preloadPane).toHaveBeenCalledWith("libraries");
+  });
+
+  it("does not warm a pane for a Create row (no destination pane)", async () => {
+    await openDialog({ lane: "create" });
+
+    // "Create note" dispatches kind:"create-page" — no href, no pre-known pane.
+    const createNote = await screen.findByRole("option", { name: /Create note/i });
+    fireEvent.mouseMove(createNote);
+
+    expect(preloadPane).not.toHaveBeenCalled();
+  });
+
+  it("does not warm a pane for the externalShell Oracle row", async () => {
+    await openDialog({ lane: "go" });
+
+    // Oracle is a full-shell destination (externalShell:true) — the launcher must not
+    // warm a pane for it even though it is an href row.
+    const oracle = await screen.findByRole("option", { name: /Oracle/i });
+    fireEvent.mouseMove(oracle);
+
+    expect(preloadPane).not.toHaveBeenCalled();
   });
 });

@@ -4,7 +4,7 @@
  */
 
 import type { CollectionRowView } from "@/lib/collections/types";
-import type { NotePageSummary } from "@/lib/notes/api";
+import type { NotePageSummary } from "@/lib/notes/normalize";
 import { resourceIconForScheme } from "@/lib/resources/resourceKind";
 
 export function presentNote(item: NotePageSummary): CollectionRowView {

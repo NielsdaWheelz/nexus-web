@@ -1,10 +1,7 @@
 import type { Node as ProseMirrorNode } from "prosemirror-model";
 import { hasTopLevelLegacyArtifactIdentityKey } from "@/lib/currentArtifactIdentity";
-import type {
-  NoteBlock,
-  NotePage,
-  SaveResourceSurfaceInput,
-} from "@/lib/notes/api";
+import type { NotePage, SaveResourceSurfaceInput } from "@/lib/notes/api";
+import type { NoteBlock } from "@/lib/notes/normalize";
 import { outlineSchema } from "@/lib/notes/prosemirror/schema";
 import { isRecord } from "@/lib/validation";
 

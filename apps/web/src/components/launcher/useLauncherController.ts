@@ -5,6 +5,7 @@ import { toFeedback, useFeedback } from "@/components/feedback/Feedback";
 import { apiFetch, type ApiPath } from "@/lib/api/client";
 import { useDebouncedFetch } from "@/lib/api/useDebouncedFetch";
 import { useResource } from "@/lib/api/useResource";
+import { usePaneWarm } from "@/lib/panes/paneWarm";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { matchesKeyEvent } from "@/lib/keybindings";
 import { useKeybindings } from "@/lib/keybindingsProvider";
@@ -103,6 +104,7 @@ export function useLauncherController(): LauncherController {
   const { androidShell, platform } = useRenderEnvironment();
   const keybindings = useKeybindings();
   const feedback = useFeedback();
+  const warmPane = usePaneWarm();
   const [open, setOpen] = useState(false);
   const [query, setQueryState] = useState("");
   const [laneOverride, setLaneOverride] = useState<LauncherLane | null>(null);
@@ -261,10 +263,38 @@ export function useLauncherController(): LauncherController {
     );
   }, [view]);
 
-  const setActiveId = useCallback((id: string) => {
-    userMovedRef.current = true;
-    setActiveIdState(id);
-  }, []);
+  // Keep the latest view reachable from the stable setActiveId without recreating it
+  // each keystroke (rows pass it as onHover).
+  const viewRef = useRef(view);
+  viewRef.current = view;
+
+  // Prefetch-on-intent: hovering or arrow-keying onto a row (both call setActiveId) is
+  // intent for the imminent Enter — warm that row's destination pane (chunk + data). Only
+  // href / route-resource rows have a pre-known pane; others (create/ask/external) no-op.
+  const setActiveId = useCallback(
+    (id: string) => {
+      userMovedRef.current = true;
+      setActiveIdState(id);
+      const current = viewRef.current;
+      const rows: (LauncherItem | LauncherAction)[] =
+        current.state === "resting"
+          ? current.groups.flatMap((group) => group.items)
+          : current.state === "querying"
+            ? current.results
+            : current.actions;
+      const target = rows.find((row) => row.id === id)?.target;
+      if (target?.kind === "href" && !target.externalShell) {
+        warmPane(target.href);
+      } else if (
+        target?.kind === "resource" &&
+        target.activation.kind === "route" &&
+        target.activation.href
+      ) {
+        warmPane(target.activation.href);
+      }
+    },
+    [warmPane],
+  );
 
   const dispatchCtx = useMemo<LauncherDispatchCtx>(
     () => ({

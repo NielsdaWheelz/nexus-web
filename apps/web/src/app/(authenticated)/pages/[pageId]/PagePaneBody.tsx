@@ -48,10 +48,10 @@ import {
   fetchNoteBlock,
   fetchNotePage,
   saveResourceSurface,
-  type NoteBlock,
   type NotePage,
   type SaveResourceSurfaceInput,
 } from "@/lib/notes/api";
+import type { NoteBlock } from "@/lib/notes/normalize";
 import {
   draftBlocksById,
   deletedRootBlockIdsForPersistence,

@@ -1,5 +1,5 @@
 import { Schema, type Node as ProseMirrorNode } from "prosemirror-model";
-import type { NoteBlock } from "@/lib/notes/api";
+import type { NoteBlock } from "@/lib/notes/normalize";
 import { isRecord } from "@/lib/validation";
 
 function requiredDomAttribute(dom: HTMLElement, name: string): string | false {

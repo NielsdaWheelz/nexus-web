@@ -15,7 +15,7 @@ import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import Select from "@/components/ui/Select";
 import ContributorPicker from "@/components/contributors/ContributorPicker";
-import { contributorResource } from "@/lib/api/resource";
+import { AUTHOR_WORKS_LIMIT, contributorResource } from "@/lib/api/resource";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
   addContributorAlias,
@@ -27,7 +27,9 @@ import {
   mergeContributor,
   tombstoneContributor,
 } from "@/lib/contributors/api";
+import { clientResourceFetcher } from "@/lib/api/resourceTransport.client";
 import { useResource } from "@/lib/api/useResource";
+import { paneResourceLoaders } from "@/lib/panes/paneResourceLoaders";
 import type {
   ContributorAlias,
   ContributorExternalId,
@@ -55,8 +57,6 @@ interface ContributorPaneData {
   works: ContributorWork[];
   workFilterOptions: ContributorWork[];
 }
-
-const AUTHOR_WORKS_LIMIT = 100;
 
 function workRequestKey(handle: string, role: string, kind: string, query: string): string {
   return `${handle}\n${role}\n${kind}\n${query}`;
@@ -92,19 +92,11 @@ export default function AuthorPaneBody() {
   const initialAuthor = useResource<ContributorPaneData, { handle: string }>({
     descriptor: contributorResource,
     params: handle ? { handle } : null,
-    load: async (params) => {
-      const [contributorResponse, works] = await Promise.all([
-        fetchContributor(params.handle),
-        fetchContributorWorks(params.handle, { limit: AUTHOR_WORKS_LIMIT }),
-      ]);
-      return {
-        contributor: contributorResponse,
-        aliases: contributorResponse.aliases ?? [],
-        externalIds: contributorResponse.external_ids ?? [],
-        works,
-        workFilterOptions: works,
-      };
-    },
+    load: (params, signal) =>
+      paneResourceLoaders.author!.load(
+        clientResourceFetcher(signal),
+        params,
+      ) as Promise<ContributorPaneData>,
   });
   const paneRouter = usePaneRouter();
   const [data, setData] = useState<ContributorPaneData | null>(null);

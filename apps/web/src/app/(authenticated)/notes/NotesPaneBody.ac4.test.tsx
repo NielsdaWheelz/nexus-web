@@ -7,7 +7,7 @@ import NotesPaneBody from "./NotesPaneBody";
 // AC-4 hydration-hit guard: when the bootstrap seeds the normalized note-page
 // summaries as a BARE array under the cacheKey the pane reads ("notes:pages"),
 // NotesPaneBody must paint the page title straight from that seed without making
-// a client fetch. This pins the seeded shape in paneServerLoaders.notes
+// a client fetch. This pins the seeded shape in paneResourceLoaders.notes
 // (NotePageSummary[]) against what the pane's useResource consumes — if either
 // side drifts, this test fails.
 

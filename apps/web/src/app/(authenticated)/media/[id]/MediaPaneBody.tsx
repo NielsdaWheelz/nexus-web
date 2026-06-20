@@ -54,8 +54,10 @@ import HighlightQuickNoteComposer, {
 } from "@/components/highlights/HighlightQuickNoteComposer";
 import { ApiError, apiFetch, isApiError } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { mediaFragmentsResource, mediaResource } from "@/lib/api/resource";
+import { mediaResource } from "@/lib/api/resource";
+import { clientResourceFetcher } from "@/lib/api/resourceTransport.client";
 import { useResource } from "@/lib/api/useResource";
+import { paneResourceLoaders } from "@/lib/panes/paneResourceLoaders";
 import {
   FeedbackNotice,
   PDF_PASSWORD_PROTECTED_MESSAGE,
@@ -299,17 +301,6 @@ function metadataRetryTerminalState(
     return "failed";
   }
   return null;
-}
-
-function shouldLoadInitialFragments(media: Media): boolean {
-  return (
-    media.kind !== "epub" &&
-    media.kind !== "pdf" &&
-    media.kind !== "web_article" &&
-    (media.kind !== "podcast_episode" && media.kind !== "video"
-      ? true
-      : Boolean(media.capabilities?.can_read))
-  );
 }
 
 interface SelectionState {
@@ -1340,22 +1331,11 @@ export default function MediaPaneBody() {
   >({
     descriptor: mediaResource,
     params: { id },
-    load: async (params, signal) => {
-      const mediaResp = await apiFetch<{ data: Media }>(
-        mediaResource.clientPath(params),
-        { signal },
-      );
-      const nextMedia = mediaResp.data;
-      if (!shouldLoadInitialFragments(nextMedia)) {
-        return { media: nextMedia, fragments: [] };
-      }
-
-      const fragmentsResp = await apiFetch<{ data: Fragment[] }>(
-        mediaFragmentsResource.clientPath(params),
-        { signal },
-      );
-      return { media: nextMedia, fragments: fragmentsResp.data };
-    },
+    load: (params, signal) =>
+      paneResourceLoaders.media!.load(
+        clientResourceFetcher(signal),
+        params,
+      ) as Promise<{ media: Media; fragments: Fragment[] }>,
   });
 
   useEffect(() => {

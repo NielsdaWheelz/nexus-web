@@ -7,7 +7,7 @@ import AuthorPaneBody from "./AuthorPaneBody";
 // AC-4 hydration-hit guard: when the bootstrap seeds the composed ContributorPaneData
 // under the cacheKey the pane reads (`author:<handle>`), AuthorPaneBody must paint
 // the author + works straight from that seed without making a client fetch. This
-// pins the seeded shape in paneServerLoaders.author ({ contributor, aliases,
+// pins the seeded shape in paneResourceLoaders.author ({ contributor, aliases,
 // externalIds, works, workFilterOptions }) against what the pane's useResource +
 // effects consume — if either side drifts, this test fails.
 

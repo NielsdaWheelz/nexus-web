@@ -10,7 +10,7 @@ import MediaPaneBody from "./MediaPaneBody";
 
 // AC-4 hydration-hit: when the server prefetched the media pane's primary
 // resource into the bootstrap hydration cache under the bare media id (the same
-// cacheKey `initialMediaResource` reads — see paneServerLoaders.media seeding
+// cacheKey `initialMediaResource` reads — see paneResourceLoaders.media seeding
 // `{ media, fragments }`), MediaPaneBody must paint from the seed and never
 // fetch `/api/media/<id>`. We exercise the real useResource → apiFetch → global
 // fetch path (apiFetch is NOT mocked) and assert the media GET never fires.

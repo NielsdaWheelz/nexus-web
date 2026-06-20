@@ -3,9 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ActionMenuOption } from "@/components/ui/ActionMenu";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 import {
-  BootstrapHydrationProvider,
+  ResourceCacheProvider,
   type DehydratedResources,
-} from "@/lib/api/hydrationCache";
+} from "@/lib/api/resourceCache";
 import type { ResourceItem } from "@/lib/notes/api";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
@@ -198,7 +198,7 @@ function renderDailyPane(
   const onOpenInNewPane = options.onOpenInNewPane ?? vi.fn<OpenInNewPane>();
   const view = render(
     <FeedbackProvider>
-      <BootstrapHydrationProvider value={options.resources ?? {}}>
+      <ResourceCacheProvider value={options.resources ?? {}}>
         <PaneRuntimeProvider
           paneId="pane-daily"
           href={href}
@@ -217,7 +217,7 @@ function renderDailyPane(
         >
           <DailyNotePaneBody />
         </PaneRuntimeProvider>
-      </BootstrapHydrationProvider>
+      </ResourceCacheProvider>
     </FeedbackProvider>,
   );
   return { ...view, onOpenInNewPane };

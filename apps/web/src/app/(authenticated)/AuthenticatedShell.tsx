@@ -20,9 +20,9 @@ import { getWorkspacePrimaryPanes, type WorkspaceState } from "@/lib/workspace/s
 import { resolvePaneRouteModel, type PaneRouteId } from "@/lib/panes/paneRouteModel";
 import { preloadPane } from "@/lib/panes/paneRenderRegistry";
 import {
-  BootstrapHydrationProvider,
+  ResourceCacheProvider,
   type DehydratedResources,
-} from "@/lib/api/hydrationCache";
+} from "@/lib/api/resourceCache";
 import type { ReaderProfile } from "@/lib/reader/types";
 import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
 import styles from "./layout.module.css";
@@ -44,13 +44,13 @@ export default function AuthenticatedShell({
         <SessionRefresher />
         <LocalVaultAutoSync />
         <WebVitalsReporter />
-        <BootstrapHydrationProvider value={resources}>
+        <ResourceCacheProvider value={resources}>
           <KeybindingsProvider>
             <ReaderProvider initialProfile={readerProfile}>
               <AuthenticatedWorkspace initialState={initialState} />
             </ReaderProvider>
           </KeybindingsProvider>
-        </BootstrapHydrationProvider>
+        </ResourceCacheProvider>
       </UnauthenticatedApiBoundary>
     </RenderEnvironmentProvider>
   );
