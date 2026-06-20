@@ -61,6 +61,7 @@ export function toReaderCitationData(c: CitationOut): ReaderCitationData {
     color: readerCitationColorForIndex(c.ordinal),
     preview: {
       title: c.snapshot?.title ?? "",
+      ...(c.snapshot?.summary_md != null ? { summary: c.snapshot.summary_md } : {}),
       excerpt: c.snapshot?.excerpt ?? "",
       meta: [c.snapshot?.section_label, c.snapshot?.result_type].filter(
         (v): v is string => Boolean(v),

@@ -70,6 +70,23 @@ describe("toReaderCitationData", () => {
     });
   });
 
+  it("maps backend media summary snapshots into citation previews", () => {
+    const data = toReaderCitationData(
+      mediaCitation({
+        target_ref: { type: "media", id: "media-1" },
+        snapshot: {
+          title: "Source title",
+          summary_md: "A concise per-media abstract.",
+          excerpt: "matched source text",
+          section_label: "Section",
+          result_type: "media",
+        },
+      }),
+    );
+
+    expect(data.preview.summary).toBe("A concise per-media abstract.");
+  });
+
   it("renders a link-only citation when no media reader target exists (e.g. an external snapshot or corpus passage)", () => {
     const data = toReaderCitationData(
       mediaCitation({
