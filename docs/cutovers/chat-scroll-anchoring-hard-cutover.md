@@ -28,7 +28,10 @@ and the bottom write is honestly mode-gated. (4) **LOW** — discrete jumps hono
 gesture-at-bottom-keeps-follow, one-way `top→bottom`-on-shrink, `↓ Latest`
 re-engage mid-stream; AC-8 is an explicit `it.todo` (device / e2e). Green:
 typecheck / lint / 17 ChatSurface (+1 todo) / 91 sibling chat + adapter browser
-tests.
+tests / chat e2e regression `make test-e2e PLAYWRIGHT_ARGS="chat-streaming
+chat-composer"` 5/5 (the reconnect / reload / citation-reconcile case drives the
+new first-load `bottom`-follow). No scroll-dedicated e2e spec was added; AC-8's
+device-keyboard pass stays deferred.
 
 The row-memoization tail (§6.4 / §7 / S2 / AC-7's third clause) is **deferred to
 `sota-chat-streaming-hard-cutover.md` (its AC-10)** — it is a no-op until the
