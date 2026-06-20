@@ -1750,6 +1750,11 @@ async def _execute_chat_run(
         locally_truncated = False
         citation_n_next = len(assembly.attached_citations) + 1
         tool_call_index_next = 0
+        tool_output_budget_tokens = max(
+            0, assembly.ledger.input_budget_tokens - assembly.ledger.estimated_input_tokens
+        )
+        tool_output_tokens_used = 0
+        tool_output_budget_error: str | None = None
         stream_error_code: str | None = None
         stream_error_detail: str | None = None
         call_owner = LlmCallOwner(kind="chat_run", id=run.id)
@@ -1814,6 +1819,20 @@ async def _execute_chat_run(
             )
             durable_flush_count += 1
             return "", None, time.monotonic()
+
+        def claim_tool_output(tool_name: str, output: str) -> bool:
+            nonlocal tool_output_budget_error, tool_output_tokens_used
+            output_tokens = estimate_tokens(output)
+            if tool_output_tokens_used + output_tokens > tool_output_budget_tokens:
+                tool_output_budget_error = (
+                    f"aggregate tool output budget exceeded for {tool_name}: "
+                    f"budget_tokens={tool_output_budget_tokens}, "
+                    f"used_tokens={tool_output_tokens_used}, "
+                    f"output_tokens={output_tokens}"
+                )
+                return False
+            tool_output_tokens_used += output_tokens
+            return True
 
         try:
             for _iteration in range(MAX_TOOL_ITERATIONS):
@@ -2247,12 +2266,7 @@ async def _execute_chat_run(
                         )
                         assert run_result.tool_call_id is not None
                         start_n = citation_n_next
-                        citation_n_next = _record_tool_citations(
-                            db,
-                            run=run,
-                            tool_call_id=run_result.tool_call_id,
-                            start_ordinal=citation_n_next,
-                        )
+                        output = _app_search_tool_output(run_result, start_n)
                         append_run_event(
                             db,
                             run,
@@ -2264,11 +2278,19 @@ async def _execute_chat_run(
                                 "error_code": run_result.error_code,
                             },
                         )
+                        if not claim_tool_output(tc.name, output):
+                            break
+                        citation_n_next = _record_tool_citations(
+                            db,
+                            run=run,
+                            tool_call_id=run_result.tool_call_id,
+                            start_ordinal=citation_n_next,
+                        )
                         db.commit()
                         tool_results.append(
                             ToolResult(
                                 call_id=tc.id,
-                                output=_app_search_tool_output(run_result, start_n),
+                                output=output,
                                 is_error=run_result.status == "error",
                             )
                         )
@@ -2336,10 +2358,13 @@ async def _execute_chat_run(
                                 },
                             )
                             db.commit()
+                            output = '{"error":"web_search is not configured"}'
+                            if not claim_tool_output(tc.name, output):
+                                break
                             tool_results.append(
                                 ToolResult(
                                     call_id=tc.id,
-                                    output='{"error":"web_search is not configured"}',
+                                    output=output,
                                     is_error=True,
                                 )
                             )
@@ -2356,12 +2381,7 @@ async def _execute_chat_run(
                         )
                         assert run_result.tool_call_id is not None
                         start_n = citation_n_next
-                        citation_n_next = _record_tool_citations(
-                            db,
-                            run=run,
-                            tool_call_id=run_result.tool_call_id,
-                            start_ordinal=citation_n_next,
-                        )
+                        output = _web_search_tool_output(run_result, start_n)
                         append_run_event(
                             db,
                             run,
@@ -2373,11 +2393,19 @@ async def _execute_chat_run(
                                 "error_code": run_result.error_code,
                             },
                         )
+                        if not claim_tool_output(tc.name, output):
+                            break
+                        citation_n_next = _record_tool_citations(
+                            db,
+                            run=run,
+                            tool_call_id=run_result.tool_call_id,
+                            start_ordinal=citation_n_next,
+                        )
                         db.commit()
                         tool_results.append(
                             ToolResult(
                                 call_id=tc.id,
-                                output=_web_search_tool_output(run_result, start_n),
+                                output=output,
                                 is_error=run_result.status == "error",
                             )
                         )
@@ -2427,15 +2455,14 @@ async def _execute_chat_run(
                             tool_name=READ_RESOURCE_TOOL_NAME,
                             result=read_result,
                         )
-                        read_n = _persist_read_evidence_citation(
-                            db,
-                            run=run,
-                            tool_call_id=read_tool_call_id,
-                            result=read_result,
-                            start_ordinal=citation_n_next,
+                        read_n = (
+                            citation_n_next
+                            if not read_result.is_error
+                            and read_result.citation_result_type is not None
+                            and read_result.citation_source_id is not None
+                            else None
                         )
-                        if read_n is not None:
-                            citation_n_next += 1
+                        output = read_result.tool_output(n=read_n)
                         append_run_event(
                             db,
                             run,
@@ -2448,11 +2475,25 @@ async def _execute_chat_run(
                                 result=read_result,
                             ),
                         )
+                        if not claim_tool_output(tc.name, output):
+                            break
+                        read_n = _persist_read_evidence_citation(
+                            db,
+                            run=run,
+                            tool_call_id=read_tool_call_id,
+                            result=read_result,
+                            start_ordinal=citation_n_next,
+                        )
+                        if read_n is not None:
+                            citation_n_next += 1
+                            output = read_result.tool_output(n=read_n)
+                        else:
+                            output = read_result.tool_output()
                         db.commit()
                         tool_results.append(
                             ToolResult(
                                 call_id=tc.id,
-                                output=read_result.tool_output(n=read_n),
+                                output=output,
                                 is_error=read_result.is_error,
                             )
                         )
@@ -2501,6 +2542,7 @@ async def _execute_chat_run(
                             tool_name=INSPECT_RESOURCE_TOOL_NAME,
                             result=inspect_result,
                         )
+                        output = inspect_result.tool_output()
                         append_run_event(
                             db,
                             run,
@@ -2513,11 +2555,13 @@ async def _execute_chat_run(
                                 result=inspect_result,
                             ),
                         )
+                        if not claim_tool_output(tc.name, output):
+                            break
                         db.commit()
                         tool_results.append(
                             ToolResult(
                                 call_id=tc.id,
-                                output=inspect_result.tool_output(),
+                                output=output,
                                 is_error=inspect_result.is_error,
                             )
                         )
@@ -2575,21 +2619,61 @@ async def _execute_chat_run(
                             },
                         )
                         db.commit()
+                        output = f'{{"error":"unknown tool: {tc.name}"}}'
+                        if not claim_tool_output(tc.name, output):
+                            break
                         tool_results.append(
                             ToolResult(
                                 call_id=tc.id,
-                                output=f'{{"error":"unknown tool: {tc.name}"}}',
+                                output=output,
                                 is_error=True,
                             )
                         )
+                if tool_output_budget_error is not None:
+                    error_code = ApiErrorCode.E_LLM_TOOL_OUTPUT_TOO_LARGE.value
+                    finalize_error(
+                        db,
+                        run_id=run.id,
+                        error_code=error_code,
+                        error_detail=tool_output_budget_error,
+                        assistant_content=full_content or None,
+                        resolved_key=resolved_key,
+                        usage=usage_provider_json(usage),
+                        last_provider_event_seq=last_provider_event_seq,
+                    )
+                    log_stream_observed(
+                        status="error",
+                        error_code=error_code,
+                        terminal_cause="tool_output_budget",
+                    )
+                    return {"status": "error", "error_code": error_code}
                 db.commit()
                 turns.append(ModelMessage(role="tool", tool_results=tuple(tool_results)))
             else:
+                error_code = ApiErrorCode.E_LLM_TOOL_ITERATIONS_EXCEEDED.value
+                error_detail = f"exceeded max tool iterations: {MAX_TOOL_ITERATIONS}"
                 logger.warning(
                     "chat_run.max_tool_iterations_exceeded",
                     run_id=str(run.id),
                     iterations=MAX_TOOL_ITERATIONS,
+                    error_code=error_code,
                 )
+                finalize_error(
+                    db,
+                    run_id=run.id,
+                    error_code=error_code,
+                    error_detail=error_detail,
+                    assistant_content=full_content or None,
+                    resolved_key=resolved_key,
+                    usage=usage_provider_json(usage),
+                    last_provider_event_seq=last_provider_event_seq,
+                )
+                log_stream_observed(
+                    status="error",
+                    error_code=error_code,
+                    terminal_cause="max_tool_iterations",
+                )
+                return {"status": "error", "error_code": error_code}
         except ModelCallError as llm_error:
             error_code = api_error_code_for_model_call(llm_error.error_code).value
             finalize_error(

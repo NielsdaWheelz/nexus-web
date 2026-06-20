@@ -34,6 +34,12 @@ ERROR_CODE_TO_MESSAGE = {
         "The model ran out of output tokens before it could finish. "
         "Try again with less context or a lower reasoning setting."
     ),
+    "E_LLM_TOOL_ITERATIONS_EXCEEDED": (
+        "The response needed too many tool steps. Try a narrower question or fewer sources."
+    ),
+    "E_LLM_TOOL_OUTPUT_TOO_LARGE": (
+        "The tools returned too much context. Try a narrower question or source."
+    ),
     "E_CONTEXT_TOO_LARGE": "One selected context is too large or unavailable. Remove it and try again.",
     "E_APP_SEARCH_FAILED": "The scoped content search failed. Please try again.",
     "E_CANCELLED": "Request cancelled.",

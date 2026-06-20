@@ -25,6 +25,7 @@ from nexus.services.billing_entitlements import grant_entitlement_override
 from nexus.services.chat_run_finalize import MAX_ASSISTANT_CONTENT_LENGTH, TRUNCATION_NOTICE
 from nexus.services.chat_runs import (
     ERROR_CODE_TO_MESSAGE,
+    MAX_TOOL_ITERATIONS,
     _max_output_tokens_for_reasoning,
     execute_chat_run,
 )
@@ -178,6 +179,69 @@ class _ToolLoopRouter:
         yield _done_event(
             usage=TokenUsage(input_tokens=20, output_tokens=3, total_tokens=23),
             provider_request_id="resp_iter_2",
+        )
+
+
+class _EndlessToolRouter:
+    def __init__(self) -> None:
+        self.requests: list[ModelCall] = []
+
+    async def stream(self, req, *, key, timeout_s, cancel=None):
+        del cancel
+        self.requests.append(req)
+        call = ToolCall(id=f"loop-call-{len(self.requests)}", name="mystery_tool", arguments={})
+        yield ModelStreamEvent(
+            type="tool_call_start",
+            provider="openai",
+            model="gpt-5.5",
+            tool_call_id=call.id,
+            tool_name=call.name,
+        )
+        yield ModelStreamEvent(
+            type="tool_call_done",
+            provider="openai",
+            model="gpt-5.5",
+            tool_call_id=call.id,
+            tool_call=call,
+        )
+        yield _done_event(
+            usage=TokenUsage(input_tokens=10, output_tokens=3, total_tokens=13),
+            provider_request_id=f"resp_loop_{len(self.requests)}",
+        )
+
+
+class _OneUnknownToolRouter:
+    def __init__(self) -> None:
+        self.requests: list[ModelCall] = []
+
+    async def stream(self, req, *, key, timeout_s, cancel=None):
+        del cancel
+        self.requests.append(req)
+        if len(self.requests) == 1:
+            call = ToolCall(id="oversized-tool", name="mystery_tool", arguments={})
+            yield ModelStreamEvent(
+                type="tool_call_start",
+                provider="openai",
+                model="gpt-5.5",
+                tool_call_id=call.id,
+                tool_name=call.name,
+            )
+            yield ModelStreamEvent(
+                type="tool_call_done",
+                provider="openai",
+                model="gpt-5.5",
+                tool_call_id=call.id,
+                tool_call=call,
+            )
+            yield _done_event(
+                usage=TokenUsage(input_tokens=10, output_tokens=3, total_tokens=13),
+                provider_request_id="resp_tool_budget",
+            )
+            return
+        yield _text_event("Final answer.")
+        yield _done_event(
+            usage=TokenUsage(input_tokens=10, output_tokens=3, total_tokens=13),
+            provider_request_id="resp_after_budget",
         )
 
 
@@ -376,6 +440,11 @@ def test_incomplete_error_message_is_actionable():
 
     assert "less context" in message
     assert "lower reasoning" in message
+
+
+def test_tool_loop_error_messages_are_actionable():
+    assert "too many tool steps" in ERROR_CODE_TO_MESSAGE["E_LLM_TOOL_ITERATIONS_EXCEEDED"]
+    assert "too much context" in ERROR_CODE_TO_MESSAGE["E_LLM_TOOL_OUTPUT_TOO_LARGE"]
 
 
 @pytest.fixture
@@ -927,7 +996,16 @@ def _create_run_for_executor(
 def _fetch_run_error(direct_db: DirectSessionManager, run_id: UUID):
     with direct_db.session() as session:
         return session.execute(
-            text("SELECT status, error_code, error_detail FROM chat_runs WHERE id = :run_id"),
+            text(
+                """
+                SELECT cr.status AS status, cr.error_code AS error_code,
+                       cr.error_detail AS error_detail,
+                       m.status AS message_status, m.error_code AS message_error_code
+                FROM chat_runs cr
+                JOIN messages m ON m.id = cr.assistant_message_id
+                WHERE cr.id = :run_id
+                """
+            ),
             {"run_id": run_id},
         ).one()
 
@@ -946,6 +1024,22 @@ def _fetch_llm_calls(direct_db: DirectSessionManager, run_id: UUID):
             ),
             {"run_id": run_id},
         ).fetchall()
+
+
+def _fetch_done_event(direct_db: DirectSessionManager, run_id: UUID):
+    with direct_db.session() as session:
+        return session.execute(
+            text(
+                """
+                SELECT payload
+                FROM chat_run_events
+                WHERE run_id = :run_id AND event_type = 'done'
+                ORDER BY seq DESC
+                LIMIT 1
+                """
+            ),
+            {"run_id": run_id},
+        ).scalar_one()
 
 
 @pytest.mark.integration
@@ -1011,6 +1105,67 @@ async def test_tool_loop_replays_provider_artifacts_and_ledgers_each_iteration(
     ]
     assert stream_logs[0]["first_provider_event_ms"] >= 0
     assert stream_logs[0]["first_visible_text_ms"] >= 0
+
+
+@pytest.mark.integration
+async def test_tool_loop_max_iterations_finalizes_typed_error(
+    auth_client, direct_db: DirectSessionManager, chat_runs_schema, log_sink
+):
+    run_id = _create_run_for_executor(auth_client, direct_db)
+    router = _EndlessToolRouter()
+
+    with direct_db.session() as session:
+        result = await execute_chat_run(session, run_id=run_id, llm_router=router)
+
+    assert result == {"status": "error", "error_code": "E_LLM_TOOL_ITERATIONS_EXCEEDED"}
+    assert len(router.requests) == MAX_TOOL_ITERATIONS
+
+    run_row = _fetch_run_error(direct_db, run_id)
+    assert run_row.status == "error"
+    assert run_row.error_code == "E_LLM_TOOL_ITERATIONS_EXCEEDED"
+    assert run_row.message_status == "error"
+    assert run_row.message_error_code == "E_LLM_TOOL_ITERATIONS_EXCEEDED"
+    assert str(MAX_TOOL_ITERATIONS) in run_row.error_detail
+    assert _fetch_done_event(direct_db, run_id)["error_code"] == "E_LLM_TOOL_ITERATIONS_EXCEEDED"
+
+    rows = _fetch_llm_calls(direct_db, run_id)
+    assert [(row.call_seq, row.provider_request_id) for row in rows] == [
+        (index, f"resp_loop_{index}") for index in range(1, MAX_TOOL_ITERATIONS + 1)
+    ]
+    assert all(row.error_class is None for row in rows)
+    stream_logs = [event for event in log_sink if event.get("event") == "chat_run.stream.finished"]
+    assert stream_logs[-1]["status"] == "error"
+    assert stream_logs[-1]["error_code"] == "E_LLM_TOOL_ITERATIONS_EXCEEDED"
+    assert stream_logs[-1]["terminal_cause"] == "max_tool_iterations"
+
+
+@pytest.mark.integration
+async def test_tool_loop_enforces_aggregate_tool_output_budget_before_continuation(
+    auth_client, direct_db: DirectSessionManager, chat_runs_schema, monkeypatch
+):
+    run_id = _create_run_for_executor(auth_client, direct_db)
+    router = _OneUnknownToolRouter()
+
+    def fake_estimate_tokens(text: str) -> int:
+        return 10**9 if "unknown tool" in text else 1
+
+    monkeypatch.setattr("nexus.services.chat_runs.estimate_tokens", fake_estimate_tokens)
+    with direct_db.session() as session:
+        result = await execute_chat_run(session, run_id=run_id, llm_router=router)
+
+    assert result == {"status": "error", "error_code": "E_LLM_TOOL_OUTPUT_TOO_LARGE"}
+    assert len(router.requests) == 1
+    run_row = _fetch_run_error(direct_db, run_id)
+    assert run_row.status == "error"
+    assert run_row.error_code == "E_LLM_TOOL_OUTPUT_TOO_LARGE"
+    assert run_row.message_status == "error"
+    assert run_row.message_error_code == "E_LLM_TOOL_OUTPUT_TOO_LARGE"
+    assert "aggregate tool output budget exceeded" in run_row.error_detail
+    assert _fetch_done_event(direct_db, run_id)["error_code"] == "E_LLM_TOOL_OUTPUT_TOO_LARGE"
+
+    (call_row,) = _fetch_llm_calls(direct_db, run_id)
+    assert call_row.provider_request_id == "resp_tool_budget"
+    assert call_row.error_class is None
 
 
 @pytest.mark.integration
