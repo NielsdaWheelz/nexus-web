@@ -1,6 +1,5 @@
 """Agent app-search tool tests."""
 
-from typing import cast
 from uuid import uuid4
 
 import pytest
@@ -11,9 +10,14 @@ from sqlalchemy.orm import Session
 from nexus.config import clear_settings_cache
 from nexus.errors import ApiErrorCode
 from nexus.schemas.search import SearchResponse
+from nexus.services import media_intelligence
 from nexus.services.agent_tools.app_search import (
+    APP_SEARCH_CONTEXT_CHARS,
     APP_SEARCH_LIMIT,
+    APP_SEARCH_SELECTED_LIMIT,
+    AppSearchRun,
     execute_app_search,
+    persist_app_search_run,
     render_retrieved_context_blocks,
 )
 from nexus.services.note_indexing import rebuild_note_content_index
@@ -40,6 +44,112 @@ def _use_openai_embedding_provider(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test-openai")
     monkeypatch.setenv("ENABLE_OPENAI", "true")
     clear_settings_cache()
+
+
+def _media_citation(source_id: str | None = None) -> RetrievalCitation:
+    source_id = source_id or str(uuid4())
+    return RetrievalCitation(
+        result_type="media",
+        source_id=source_id,
+        title=f"Media {source_id}",
+        source_label=None,
+        snippet=f"Snippet {source_id}",
+        deep_link=f"/reader/{source_id}",
+        citation_target=f"media:{source_id}",
+        citation_label=None,
+        locator=None,
+        context_ref={"type": "media", "id": source_id},
+        evidence_span_id=None,
+        media_id=source_id,
+        media_kind=None,
+        score=1.0,
+    )
+
+
+def _page_citation(page_id) -> RetrievalCitation:
+    source_id = str(page_id)
+    return RetrievalCitation(
+        result_type="page",
+        source_id=source_id,
+        title=f"Page {source_id}",
+        source_label=None,
+        snippet=f"Snippet {source_id}",
+        deep_link=f"/pages/{source_id}",
+        citation_target=f"page:{source_id}",
+        citation_label=None,
+        locator=None,
+        context_ref={"type": "page", "id": source_id},
+        evidence_span_id=None,
+        media_id=None,
+        media_kind=None,
+        score=1.0,
+    )
+
+
+def _note_block_citation(note_block_id) -> RetrievalCitation:
+    source_id = str(note_block_id)
+    return RetrievalCitation(
+        result_type="note_block",
+        source_id=source_id,
+        title=f"Note {source_id}",
+        source_label=None,
+        snippet=f"Snippet {source_id}",
+        deep_link=f"/notes/{source_id}",
+        citation_target=f"note_block:{source_id}",
+        citation_label=None,
+        locator=None,
+        context_ref={"type": "note_block", "id": source_id},
+        evidence_span_id=None,
+        media_id=None,
+        media_kind=None,
+        score=1.0,
+    )
+
+
+def _create_page(session: Session, user_id, title: str = "Packer page"):
+    page_id = uuid4()
+    session.execute(
+        text("INSERT INTO pages (id, user_id, title) VALUES (:id, :user_id, :title)"),
+        {"id": page_id, "user_id": user_id, "title": title},
+    )
+    return page_id
+
+
+def _create_note_block(session: Session, user_id, body_text: str):
+    note_block_id = uuid4()
+    session.execute(
+        text(
+            """
+            INSERT INTO note_blocks (id, user_id, body_pm_json, body_text)
+            VALUES (:id, :user_id, '{}'::jsonb, :body_text)
+            """
+        ),
+        {"id": note_block_id, "user_id": user_id, "body_text": body_text},
+    )
+    return note_block_id
+
+
+def _create_media_with_ready_summary(
+    session: Session,
+    user_id,
+    library_id,
+    *,
+    title: str,
+    summary_md: str,
+):
+    media_id = create_searchable_media_in_library(session, user_id, library_id, title=title)
+    ref = media_intelligence.ensure_media_unit(session, media_id=media_id)
+    session.execute(
+        text(
+            """
+            UPDATE media_summaries
+            SET status = 'ready', summary_md = :summary_md, model_name = 'test'
+            WHERE id = :summary_id
+            """
+        ),
+        {"summary_id": ref.summary_id, "summary_md": summary_md},
+    )
+    return media_id
 
 
 def test_execute_app_search_persists_retrieval_metadata(
@@ -107,11 +217,13 @@ def test_execute_app_search_persists_retrieval_metadata(
         retrieval_rows = session.execute(
             text(
                 """
-                SELECT exact_snippet,
+                SELECT id,
+                       exact_snippet,
                        retrieval_status,
                        included_in_prompt,
                        locator,
-                       result_ref
+                       result_ref,
+                       selected
                 FROM message_retrievals
                 WHERE tool_call_id = :tool_call_id
                   AND scope = 'all'
@@ -121,11 +233,12 @@ def test_execute_app_search_persists_retrieval_metadata(
             {"tool_call_id": run.tool_call_id},
         ).fetchall()
         assert retrieval_rows
-        assert any(row[0] for row in retrieval_rows)
-        assert any(row[1] == "selected" for row in retrieval_rows)
-        assert all(row[2] is False for row in retrieval_rows)
-        assert any(row[3] for row in retrieval_rows)
-        assert all("resolver" not in row[4] for row in retrieval_rows)
+        assert any(row[1] for row in retrieval_rows)
+        assert any(row[2] == "selected" for row in retrieval_rows)
+        assert any(row[3] is True for row in retrieval_rows)
+        assert all(row[3] == row[6] for row in retrieval_rows)
+        assert any(row[4] for row in retrieval_rows)
+        assert all("resolver" not in row[5] for row in retrieval_rows)
 
         content_chunk_row = session.execute(
             text(
@@ -147,7 +260,9 @@ def test_execute_app_search_persists_retrieval_metadata(
                 """
                 SELECT COUNT(*),
                        COUNT(*) FILTER (WHERE selected),
-                       bool_and(result_ref ? 'type')
+                       bool_and(result_ref ? 'type'),
+                       bool_and(included_in_prompt = selected),
+                       array_agg(DISTINCT selection_reason ORDER BY selection_reason)
                 FROM message_retrieval_candidate_ledgers
                 WHERE tool_call_id = :tool_call_id
                 """
@@ -157,23 +272,32 @@ def test_execute_app_search_persists_retrieval_metadata(
         assert ledger_row[0] == len(retrieval_rows)
         assert ledger_row[1] == len(run.selected_citations)
         assert ledger_row[2] is True
+        assert ledger_row[3] is True
+        assert "selected_within_budget" in ledger_row[4]
 
         rerank_row = session.execute(
             text(
                 """
-                SELECT strategy, input_count, selected_count, budget_chars, selected_chars, status
+                SELECT strategy,
+                       input_count,
+                       selected_count,
+                       budget_chars,
+                       selected_chars,
+                       status,
+                       metadata
                 FROM message_rerank_ledgers
                 WHERE tool_call_id = :tool_call_id
                 """
             ),
             {"tool_call_id": run.tool_call_id},
         ).one()
-        assert rerank_row[0] == "prompt_evidence_then_context_budget"
+        assert rerank_row[0] == "app_search_context_budget"
         assert rerank_row[1] == len(run.citations)
         assert rerank_row[2] == len(run.selected_citations)
         assert rerank_row[3] > 0
         assert rerank_row[4] == run.context_chars
         assert rerank_row[5] == run.status
+        assert rerank_row[6]["inclusion_surface"] == "tool_output"
 
     direct_db.register_cleanup("fragments", "media_id", media_id)
     direct_db.register_cleanup("library_entries", "media_id", media_id)
@@ -183,6 +307,153 @@ def test_execute_app_search_persists_retrieval_metadata(
     direct_db.register_cleanup("memberships", "library_id", library_id)
     direct_db.register_cleanup("libraries", "id", library_id)
     direct_db.register_cleanup("users", "id", user_id)
+
+
+def test_persist_app_search_run_records_packer_decisions(
+    db_session: Session,
+    bootstrapped_user,
+) -> None:
+    library_id = create_test_library(db_session, bootstrapped_user, "Packer Ledger Library")
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    user_message_id = create_test_message(
+        db_session,
+        conversation_id,
+        seq=1,
+        role="user",
+        content="Find evidence",
+    )
+    assistant_message_id = create_test_message(
+        db_session,
+        conversation_id,
+        seq=2,
+        role="assistant",
+        content="",
+        status="pending",
+    )
+    skipped_over_budget = _media_citation(
+        str(
+            _create_media_with_ready_summary(
+                db_session,
+                bootstrapped_user,
+                library_id,
+                title="Oversized packer media",
+                summary_md="x" * APP_SEARCH_CONTEXT_CHARS,
+            )
+        )
+    )
+    skipped_empty = _page_citation(uuid4())
+    fitting = _page_citation(_create_page(db_session, bootstrapped_user, "Fitting packer page"))
+    skipped_over_budget.selected = True
+    skipped_empty.selected = True
+
+    context_text, context_chars, selected, selection_reasons = render_retrieved_context_blocks(
+        db_session,
+        viewer_id=bootstrapped_user,
+        citations=[skipped_over_budget, skipped_empty, fitting],
+    )
+    assert context_text
+    assert context_chars == len(context_text)
+    assert selected == [fitting]
+    assert selection_reasons == [
+        "skipped_over_budget",
+        "skipped_empty_render",
+        "selected_within_budget",
+    ]
+
+    run = AppSearchRun(
+        conversation_id=conversation_id,
+        user_message_id=user_message_id,
+        assistant_message_id=assistant_message_id,
+        query_hash="synthetic",
+        scope="all",
+        requested_types=["media", "page"],
+        citations=[skipped_over_budget, skipped_empty, fitting],
+        selected_citations=selected,
+        selection_reasons=selection_reasons,
+        context_text=context_text,
+        context_chars=context_chars,
+        latency_ms=1,
+        status="complete",
+    )
+
+    persist_app_search_run(db_session, run)
+    persist_app_search_run(db_session, run)
+
+    rows = db_session.execute(
+        text(
+            """
+            SELECT mr.selected,
+                   mr.included_in_prompt,
+                   mr.retrieval_status,
+                   mcl.selected,
+                   mcl.included_in_prompt,
+                   mcl.selection_status,
+                   mcl.selection_reason
+            FROM message_retrievals mr
+            JOIN message_retrieval_candidate_ledgers mcl ON mcl.retrieval_id = mr.id
+            WHERE mr.tool_call_id = :tool_call_id
+            ORDER BY mr.ordinal
+            """
+        ),
+        {"tool_call_id": run.tool_call_id},
+    ).fetchall()
+    assert [tuple(row[:7]) for row in rows] == [
+        (
+            False,
+            False,
+            "excluded_by_budget",
+            False,
+            False,
+            "excluded_by_budget",
+            "skipped_over_budget",
+        ),
+        (
+            False,
+            False,
+            "retrieved",
+            False,
+            False,
+            "retrieved",
+            "skipped_empty_render",
+        ),
+        (
+            True,
+            True,
+            "selected",
+            True,
+            True,
+            "selected",
+            "selected_within_budget",
+        ),
+    ]
+
+    rerank = db_session.execute(
+        text(
+            """
+            SELECT strategy, metadata
+            FROM message_rerank_ledgers
+            WHERE tool_call_id = :tool_call_id
+            """
+        ),
+        {"tool_call_id": run.tool_call_id},
+    ).one()
+    assert rerank[0] == "app_search_context_budget"
+    assert rerank[1] == {
+        "selected_limit": APP_SEARCH_SELECTED_LIMIT,
+        "scope": "all",
+        "inclusion_surface": "tool_output",
+    }
+    counts = db_session.execute(
+        text(
+            """
+            SELECT
+                (SELECT count(*) FROM message_retrieval_candidate_ledgers WHERE tool_call_id = :id),
+                (SELECT count(*) FROM message_rerank_ledgers WHERE tool_call_id = :id)
+            """
+        ),
+        {"id": run.tool_call_id},
+    ).one()
+    assert tuple(counts) == (3, 1)
 
 
 def test_execute_app_search_prioritizes_prompt_evidence_over_container_rows(
@@ -330,7 +601,7 @@ def test_execute_app_search_builds_public_filter_query(
     monkeypatch.setattr("nexus.services.agent_tools.app_search.search", fake_search)
 
     run = execute_app_search(
-        cast(Session, object()),
+        object(),
         viewer_id=viewer_id,
         conversation_id=conversation_id,
         user_message_id=uuid4(),
@@ -1469,7 +1740,7 @@ def test_render_retrieved_context_requires_matching_current_evidence(
             score=1.0,
         )
 
-        context_text, context_chars, selected = render_retrieved_context_blocks(
+        context_text, context_chars, selected, selection_reasons = render_retrieved_context_blocks(
             session,
             viewer_id=user_id,
             citations=[citation],
@@ -1478,6 +1749,7 @@ def test_render_retrieved_context_requires_matching_current_evidence(
         assert context_text == ""
         assert context_chars == 0
         assert selected == []
+        assert selection_reasons == ["skipped_empty_render"]
 
     direct_db.register_cleanup("fragments", "media_id", media_id)
     direct_db.register_cleanup("library_entries", "media_id", media_id)
@@ -1485,3 +1757,96 @@ def test_render_retrieved_context_requires_matching_current_evidence(
     direct_db.register_cleanup("memberships", "library_id", library_id)
     direct_db.register_cleanup("libraries", "id", library_id)
     direct_db.register_cleanup("users", "id", user_id)
+
+
+def test_render_retrieved_context_skips_oversized_and_empty_candidates(
+    db_session: Session,
+    bootstrapped_user,
+) -> None:
+    library_id = create_test_library(db_session, bootstrapped_user, "Oversized Packer Library")
+    oversized = _media_citation(
+        str(
+            _create_media_with_ready_summary(
+                db_session,
+                bootstrapped_user,
+                library_id,
+                title="Oversized render media",
+                summary_md="x" * APP_SEARCH_CONTEXT_CHARS,
+            )
+        )
+    )
+    oversized.selected = True
+    empty = _page_citation(uuid4())
+    empty.selected = True
+    fitting = _page_citation(_create_page(db_session, bootstrapped_user, "Fitting render page"))
+
+    context_text, context_chars, selected, selection_reasons = render_retrieved_context_blocks(
+        db_session,
+        viewer_id=bootstrapped_user,
+        citations=[oversized, empty, fitting],
+    )
+
+    assert "Fitting render page" in context_text
+    assert context_chars == len(context_text)
+    assert selected == [fitting]
+    assert fitting.selected is True
+    assert oversized.selected is False
+    assert empty.selected is False
+    assert selection_reasons == [
+        "skipped_over_budget",
+        "skipped_empty_render",
+        "selected_within_budget",
+    ]
+
+
+def test_render_retrieved_context_counts_join_separators_against_budget(
+    db_session: Session,
+    bootstrapped_user,
+) -> None:
+    note_wrapper_chars = len(
+        '<app_search_result type="note_block">\n<content></content>\n</app_search_result>'
+    )
+    first = _note_block_citation(
+        _create_note_block(
+            db_session,
+            bootstrapped_user,
+            "x" * (APP_SEARCH_CONTEXT_CHARS - note_wrapper_chars - 1),
+        )
+    )
+    second = _page_citation(_create_page(db_session, bootstrapped_user, "Separator page"))
+
+    context_text, context_chars, selected, selection_reasons = render_retrieved_context_blocks(
+        db_session,
+        viewer_id=bootstrapped_user,
+        citations=[first, second],
+    )
+
+    assert context_chars == len(context_text)
+    assert context_chars == APP_SEARCH_CONTEXT_CHARS - 1
+    assert len(context_text) <= APP_SEARCH_CONTEXT_CHARS
+    assert selected == [first]
+    assert selection_reasons == ["selected_within_budget", "skipped_over_budget"]
+
+
+def test_render_retrieved_context_ledgers_selected_limit(
+    db_session: Session,
+    bootstrapped_user,
+) -> None:
+    citations = [
+        _page_citation(_create_page(db_session, bootstrapped_user, f"Limit page {index}"))
+        for index in range(APP_SEARCH_SELECTED_LIMIT + 1)
+    ]
+
+    context_text, context_chars, selected, selection_reasons = render_retrieved_context_blocks(
+        db_session,
+        viewer_id=bootstrapped_user,
+        citations=citations,
+    )
+
+    assert context_chars == len(context_text)
+    assert len(selected) == APP_SEARCH_SELECTED_LIMIT
+    assert selected == citations[:APP_SEARCH_SELECTED_LIMIT]
+    assert citations[-1].selected is False
+    assert selection_reasons == ["selected_within_budget"] * APP_SEARCH_SELECTED_LIMIT + [
+        "skipped_selected_limit"
+    ]

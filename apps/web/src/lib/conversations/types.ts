@@ -87,6 +87,7 @@ export interface MessageRetrieval {
     | "retrieval"
     | "candidate_ledger"
     | "prompt_assembly"
+    | "tool_output"
     | "none";
   created_at?: string;
 }
@@ -142,7 +143,7 @@ export interface MessageRetrievalCandidateLedger {
   included_in_prompt: boolean;
   ledger_included_in_prompt: boolean;
   linked_retrieval_included_in_prompt?: boolean | null;
-  included_in_prompt_source: "candidate_ledger" | "linked_retrieval";
+  included_in_prompt_source: "candidate_ledger" | "linked_retrieval" | "tool_output";
   included_in_prompt_reconciled: boolean;
   selection_status: string;
   selection_reason: string;

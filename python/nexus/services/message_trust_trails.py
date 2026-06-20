@@ -155,6 +155,35 @@ def build_assistant_trust_trails(
             if retrieval.cited_edge_id is not None:
                 retrieval_by_edge_id[retrieval.cited_edge_id] = retrieval
 
+    rerank_ledgers_by_tool: dict[UUID, list[MessageRerankLedgerOut]] = {}
+    tool_output_tool_ids: set[UUID] = set()
+    if tool_ids:
+        for row in db.scalars(
+            select(MessageRerankLedger)
+            .where(MessageRerankLedger.tool_call_id.in_(tool_ids))
+            .order_by(
+                MessageRerankLedger.tool_call_id,
+                MessageRerankLedger.created_at,
+                MessageRerankLedger.id,
+            )
+        ):
+            if row.metadata_.get("inclusion_surface") == "tool_output":
+                tool_output_tool_ids.add(row.tool_call_id)
+            rerank_ledgers_by_tool.setdefault(row.tool_call_id, []).append(
+                MessageRerankLedgerOut(
+                    id=row.id,
+                    tool_call_id=row.tool_call_id,
+                    strategy=row.strategy,
+                    input_count=row.input_count,
+                    selected_count=row.selected_count,
+                    budget_chars=row.budget_chars,
+                    selected_chars=row.selected_chars,
+                    status=row.status,
+                    metadata=row.metadata_,
+                    created_at=row.created_at,
+                )
+            )
+
     candidate_ledgers_by_tool: dict[UUID, list[MessageRetrievalCandidateLedgerOut]] = {}
     if tool_ids:
         rows = db.execute(
@@ -178,7 +207,11 @@ def build_assistant_trust_trails(
                 reconciled = True
             else:
                 included = linked_included
-                source = "linked_retrieval"
+                source = (
+                    "tool_output"
+                    if linked_included and row.tool_call_id in tool_output_tool_ids
+                    else "linked_retrieval"
+                )
                 reconciled = row.included_in_prompt == linked_included
             candidate_ledgers_by_tool.setdefault(row.tool_call_id, []).append(
                 MessageRetrievalCandidateLedgerOut(
@@ -208,32 +241,6 @@ def build_assistant_trust_trails(
         retrievals_by_message.setdefault(tool.assistant_message_id, []).extend(
             retrievals_by_tool.get(tool.id, [])
         )
-
-    rerank_ledgers_by_tool: dict[UUID, list[MessageRerankLedgerOut]] = {}
-    if tool_ids:
-        for row in db.scalars(
-            select(MessageRerankLedger)
-            .where(MessageRerankLedger.tool_call_id.in_(tool_ids))
-            .order_by(
-                MessageRerankLedger.tool_call_id,
-                MessageRerankLedger.created_at,
-                MessageRerankLedger.id,
-            )
-        ):
-            rerank_ledgers_by_tool.setdefault(row.tool_call_id, []).append(
-                MessageRerankLedgerOut(
-                    id=row.id,
-                    tool_call_id=row.tool_call_id,
-                    strategy=row.strategy,
-                    input_count=row.input_count,
-                    selected_count=row.selected_count,
-                    budget_chars=row.budget_chars,
-                    selected_chars=row.selected_chars,
-                    status=row.status,
-                    metadata=row.metadata_,
-                    created_at=row.created_at,
-                )
-            )
 
     context_refs_by_run: dict[UUID, list[TrustContextRefAddedOut]] = {}
     if run_ids:
@@ -308,7 +315,9 @@ def build_assistant_trust_trails(
                     citation_role = cast(Any, edge.kind)
             if row.included_in_prompt:
                 included_in_prompt = True
-                included_source = "retrieval"
+                included_source = (
+                    "tool_output" if row.tool_call_id in tool_output_tool_ids else "retrieval"
+                )
             elif str(row.id) in prompt_retrieval_ids:
                 included_in_prompt = True
                 included_source = "prompt_assembly"

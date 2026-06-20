@@ -50,13 +50,21 @@ The current chat bottleneck is not the shared search substrate. It is
 - `APP_SEARCH_SELECTED_LIMIT = 6`
 - `APP_SEARCH_CONTEXT_CHARS = 16000`
 - `execute_app_search` builds `SearchQuery(limit=APP_SEARCH_LIMIT)`.
-- `render_retrieved_context_blocks` greedily packs rendered blocks, marks selected
-  results, and stops at the first block that would exceed the char budget.
-- `message_rerank_ledgers.strategy` records
-  `prompt_evidence_then_context_budget`; this is a budget-ordering policy, not a
-  learned or semantic reranker.
+- `render_retrieved_context_blocks` packs rendered blocks under the char budget,
+  skips empty/oversized candidates, and keeps an ordinal-aligned decision reason
+  for every candidate.
+- Current `app_search` packer reasons are `selected_within_budget`,
+  `skipped_over_budget`, `skipped_empty_render`, and `skipped_selected_limit`.
+  This cutover skips oversized evidence rather than trimming it; dedupe,
+  uncitable, and diversity policies belong to the later retrieval-controller
+  layer.
+- `message_rerank_ledgers.strategy` records `app_search_context_budget`; this is
+  a deterministic budget-ordering policy, not a learned or semantic reranker.
 - The model-facing tool continuation is compact selected-result JSON from
   `_app_search_tool_output`, not the full rendered `context_text`.
+- Trust-trail retrieval and candidate-ledger rows mark selected `app_search`
+  evidence as `included_in_prompt_source = "tool_output"` so model-visible tool
+  evidence is not confused with initial prompt assembly.
 
 This means the system can retrieve from a decent hybrid substrate and still fail
 at the evidence-controller layer by under-fetching, under-reranking, or packing a

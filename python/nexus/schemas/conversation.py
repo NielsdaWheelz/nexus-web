@@ -68,7 +68,9 @@ EVIDENCE_RETRIEVAL_STATUSES = Literal[
     "excluded_by_scope",
     "web_result",
 ]
-CANDIDATE_INCLUDED_IN_PROMPT_SOURCES = Literal["candidate_ledger", "linked_retrieval"]
+CANDIDATE_INCLUDED_IN_PROMPT_SOURCES = Literal[
+    "candidate_ledger", "linked_retrieval", "tool_output"
+]
 
 
 # =============================================================================
@@ -480,7 +482,7 @@ class TrustRetrievalOut(MessageRetrievalOut):
     citation_number: int | None = None
     citation_role: CitationRole | None = None
     included_in_prompt_source: Literal[
-        "retrieval", "candidate_ledger", "prompt_assembly", "none"
+        "retrieval", "candidate_ledger", "prompt_assembly", "tool_output", "none"
     ] = "retrieval"
 
 

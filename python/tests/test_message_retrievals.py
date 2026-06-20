@@ -161,6 +161,38 @@ def _seed_cited_run(
     db_session.flush()
     retrieval.cited_edge_id = edge.id
     db_session.add(
+        MessageRetrievalCandidateLedger(
+            tool_call_id=tool.id,
+            retrieval_id=retrieval.id,
+            ordinal=0,
+            result_type="media",
+            source_id="media-1",
+            score=0.9,
+            selected=True,
+            included_in_prompt=True,
+            selection_status="selected",
+            selection_reason="selected_within_budget",
+            result_ref=result_ref,
+            locator=None,
+        )
+    )
+    db_session.add(
+        MessageRerankLedger(
+            tool_call_id=tool.id,
+            strategy="app_search_context_budget",
+            input_count=1,
+            selected_count=1,
+            budget_chars=16000,
+            selected_chars=200,
+            status="complete",
+            metadata_={
+                "selected_limit": 6,
+                "scope": "all",
+                "inclusion_surface": "tool_output",
+            },
+        )
+    )
+    db_session.add(
         ChatPromptAssembly(
             chat_run_id=run.id,
             conversation_id=conversation_id,
@@ -335,7 +367,10 @@ def test_trust_trail_links_run_prompt_retrieval_citation_and_reference(
     assert retrieval.cited_edge_id == edge_id
     assert retrieval.citation_number == 1
     assert retrieval.included_in_prompt is True
-    assert retrieval.included_in_prompt_source == "retrieval"
+    assert retrieval.included_in_prompt_source == "tool_output"
+    assert len(tool.candidate_ledgers) == 1
+    assert tool.candidate_ledgers[0].included_in_prompt_source == "tool_output"
+    assert tool.candidate_ledgers[0].selection_reason == "selected_within_budget"
     assert len(trail.citations) == 1
     assert trail.citations[0].citation_edge_id == edge_id
     assert trail.citations[0].retrieval_id == retrieval_id

@@ -121,7 +121,7 @@ def _indexed_refs(db: Session, viewer_id: UUID, refs: list[str]) -> list[str]:
         except ApiError:
             continue
         citation = citation_from_search_result(result, filters={})
-        _, _, selected = render_retrieved_context_blocks(
+        _, _, selected, _ = render_retrieved_context_blocks(
             db,
             viewer_id=viewer_id,
             citations=[citation],
@@ -265,7 +265,7 @@ def _run_candidates(
         "contributor": 1,
     }
     citations.sort(key=lambda citation: prompt_order.get(citation.result_type, 2))
-    _, context_chars, selected = render_retrieved_context_blocks(
+    _, context_chars, selected, selection_reasons = render_retrieved_context_blocks(
         db,
         viewer_id=viewer_id,
         citations=citations,
@@ -277,6 +277,7 @@ def _run_candidates(
         "resolved_scope_refs": resolved_scopes,
         "candidates": [_citation_item(citation, scope) for citation in citations],
         "selected": [_citation_item(citation, scope) for citation in selected],
+        "selection_reasons": selection_reasons,
     }
 
 
@@ -372,6 +373,7 @@ def _candidate_metrics(candidates: list[dict], relevant_refs: list[str], grades:
 def _pack_metrics(
     candidates: list[dict],
     selected: list[dict],
+    selection_reasons: list[str],
     selected_char_count: int,
     relevant_refs: list[str],
 ) -> dict:
@@ -388,8 +390,11 @@ def _pack_metrics(
         "relevant_retrieved_not_selected_count": len(
             (set(candidate_refs) & set(relevant_refs)) - set(selected_refs)
         ),
-        "skipped_count": len(candidate_refs) - len(selected_refs),
-        "trimmed_count": 0,
+        "skipped_count": sum(
+            1 for reason in selection_reasons if not reason.startswith("selected_")
+        ),
+        "trimmed_count": selection_reasons.count("selected_trimmed_to_budget"),
+        "selection_reasons": dict(Counter(selection_reasons)),
         "duplicate_count": len(candidate_refs) - len(set(candidate_refs)),
         "uncitable_count": sum(1 for item in candidates if item["citation_target"] is None),
         "source_diversity": len({_source_key(item) for item in selected}),
@@ -402,10 +407,29 @@ def _pack_metrics(
 
 
 def _ledger_metrics(db: Session, tool_call_id: UUID) -> dict:
-    candidate_count, selected_count = db.execute(
+    candidate_count, selected_count, reasons = db.execute(
         text(
             """
-            SELECT count(*), count(*) FILTER (WHERE selected)
+            SELECT coalesce(sum(reason_count), 0),
+                   coalesce(sum(selected_count), 0),
+                   jsonb_object_agg(selection_reason, reason_count ORDER BY selection_reason)
+            FROM (
+                SELECT selection_reason,
+                       count(*) AS reason_count,
+                       count(*) FILTER (WHERE selected) AS selected_count
+                FROM message_retrieval_candidate_ledgers
+                WHERE tool_call_id = :tool_call_id
+                GROUP BY selection_reason
+            ) reason_counts
+            """
+        ),
+        {"tool_call_id": tool_call_id},
+    ).one()
+    inclusion = db.execute(
+        text(
+            """
+            SELECT count(*) FILTER (WHERE selected AND included_in_prompt),
+                   count(*) FILTER (WHERE selected AND NOT included_in_prompt)
             FROM message_retrieval_candidate_ledgers
             WHERE tool_call_id = :tool_call_id
             """
@@ -427,6 +451,9 @@ def _ledger_metrics(db: Session, tool_call_id: UUID) -> dict:
     return {
         "candidate_count": int(candidate_count),
         "selected_count": int(selected_count),
+        "selection_reasons": dict(reasons or {}),
+        "selected_included_count": int(inclusion[0]),
+        "selected_not_included_count": int(inclusion[1]),
         "rerank_input_count": int(rerank[0]),
         "rerank_selected_count": int(rerank[1]),
         "rerank_budget_chars": int(rerank[2]),
@@ -482,6 +509,7 @@ def test_search_retrieval_eval_baseline_report(
             pack_at_depth = _pack_metrics(
                 candidates,
                 candidate_run["selected"],
+                candidate_run["selection_reasons"],
                 candidate_run["context_chars"],
                 relevant_refs,
             )
@@ -516,13 +544,21 @@ def test_search_retrieval_eval_baseline_report(
         )
         candidates = [_citation_item(citation, run.scope) for citation in run.citations]
         selected = [_citation_item(citation, run.scope) for citation in run.selected_citations]
-        pack = _pack_metrics(candidates, selected, run.context_chars, relevant_refs)
+        pack = _pack_metrics(
+            candidates,
+            selected,
+            run.selection_reasons,
+            run.context_chars,
+            relevant_refs,
+        )
         assert run.tool_call_id is not None
         ledger = _ledger_metrics(db_session, run.tool_call_id)
         assert ledger["candidate_count"] == pack["candidate_count"], ledger
         assert ledger["selected_count"] == pack["selected_count"], ledger
         assert ledger["rerank_input_count"] == pack["candidate_count"], ledger
         assert ledger["rerank_selected_count"] == pack["selected_count"], ledger
+        assert ledger["selection_reasons"] == pack["selection_reasons"], ledger
+        assert ledger["selected_not_included_count"] == 0, ledger
         baseline = {
             "candidate_count": pack["candidate_count"],
             "selected_count": pack["selected_count"],
@@ -690,7 +726,7 @@ def test_search_retrieval_eval_classifies_candidate_lost_before_selection(
         )
         citations.append(citation_from_search_result(result, filters={}))
 
-    _, _, selected = render_retrieved_context_blocks(
+    _, _, selected, _ = render_retrieved_context_blocks(
         db_session,
         viewer_id=user_id,
         citations=citations,

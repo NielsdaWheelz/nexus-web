@@ -146,6 +146,7 @@ class AppSearchRun:
     requested_types: list[str]
     citations: list[RetrievalCitation]
     selected_citations: list[RetrievalCitation]
+    selection_reasons: list[str]
     context_text: str
     context_chars: int
     latency_ms: int
@@ -263,6 +264,7 @@ def execute_app_search(
             requested_types=requested_types,
             citations=[],
             selected_citations=[],
+            selection_reasons=[],
             context_text=context_text,
             context_chars=len(context_text),
             latency_ms=latency_ms,
@@ -310,7 +312,7 @@ def execute_app_search(
             "contributor": 1,
         }
         citations.sort(key=lambda citation: prompt_order.get(citation.result_type, 2))
-        context_text, context_chars, selected = render_retrieved_context_blocks(
+        context_text, context_chars, selected, selection_reasons = render_retrieved_context_blocks(
             db,
             viewer_id=viewer_id,
             citations=citations,
@@ -343,6 +345,7 @@ def execute_app_search(
         empty_status = None
         citations = []
         selected = []
+        selection_reasons = []
         context_text = ""
         context_chars = 0
 
@@ -356,6 +359,7 @@ def execute_app_search(
         requested_types=requested_types,
         citations=citations,
         selected_citations=selected,
+        selection_reasons=selection_reasons,
         context_text=context_text,
         context_chars=context_chars,
         latency_ms=latency_ms,
@@ -499,6 +503,24 @@ def _scoped_content_chunk_empty_status(
 
 def persist_app_search_run(db: Session, run: AppSearchRun) -> None:
     """Persist the app-search tool call and retrieval rows."""
+    if len(run.selection_reasons) != len(run.citations):
+        raise AssertionError("app_search selection reasons must match citations")
+    selected_ordinals: set[int] = set()
+    for ordinal, reason in enumerate(run.selection_reasons):
+        if reason == "selected_within_budget":
+            selected_ordinals.add(ordinal)
+            continue
+        if reason not in {
+            "skipped_empty_render",
+            "skipped_over_budget",
+            "skipped_selected_limit",
+        }:
+            raise AssertionError(f"unsupported app_search selection reason: {reason}")
+    if [run.citations[ordinal] for ordinal in sorted(selected_ordinals)] != run.selected_citations:
+        raise AssertionError("app_search selected citations must match selection reasons")
+    for ordinal, citation in enumerate(run.citations):
+        citation.selected = ordinal in selected_ordinals
+
     result_refs = [
         retrieval_result_ref_json(citation.result_ref_json()) for citation in run.citations
     ]
@@ -617,6 +639,17 @@ def persist_app_search_run(db: Session, run: AppSearchRun) -> None:
             },
         )
     run.tool_call_id = tool_call_id
+    if existing is not None:
+        db.execute(
+            text(
+                "DELETE FROM message_retrieval_candidate_ledgers WHERE tool_call_id = :tool_call_id"
+            ),
+            {"tool_call_id": tool_call_id},
+        )
+        db.execute(
+            text("DELETE FROM message_rerank_ledgers WHERE tool_call_id = :tool_call_id"),
+            {"tool_call_id": tool_call_id},
+        )
 
     insert_candidate_ledger = text(
         """
@@ -642,7 +675,7 @@ def persist_app_search_run(db: Session, run: AppSearchRun) -> None:
             :source_id,
             :score,
             :selected,
-            false,
+            :included_in_prompt,
             :selection_status,
             :selection_reason,
             :result_ref,
@@ -653,10 +686,17 @@ def persist_app_search_run(db: Session, run: AppSearchRun) -> None:
         bindparam("result_ref", type_=JSONB),
         bindparam("locator", type_=JSONB),
     )
-    selected_ids = {citation.source_id for citation in run.selected_citations}
     persisted_count = 0
     for ordinal, citation in enumerate(run.citations):
-        selected = citation.source_id in selected_ids
+        selection_reason = run.selection_reasons[ordinal]
+        selected = ordinal in selected_ordinals
+        selection_status = (
+            "selected"
+            if selected
+            else "excluded_by_budget"
+            if selection_reason in {"skipped_over_budget", "skipped_selected_limit"}
+            else "retrieved"
+        )
         locator = strict_citation_locator(citation)
         result_ref = retrieval_result_ref_json(citation.result_ref_json())
         retrieval_id = insert_retrieval_row(
@@ -666,7 +706,8 @@ def persist_app_search_run(db: Session, run: AppSearchRun) -> None:
             citation=citation,
             selected=selected,
             scope=run.scope,
-            retrieval_status="selected" if selected else "retrieved",
+            retrieval_status=selection_status,
+            included_in_prompt=selected,
         )
         db.execute(
             insert_candidate_ledger,
@@ -678,8 +719,9 @@ def persist_app_search_run(db: Session, run: AppSearchRun) -> None:
                 "source_id": citation.source_id,
                 "score": citation.score,
                 "selected": selected,
-                "selection_status": "selected" if selected else "retrieved",
-                "selection_reason": "within_context_budget" if selected else "below_selected_limit",
+                "included_in_prompt": selected,
+                "selection_status": selection_status,
+                "selection_reason": selection_reason,
                 "result_ref": result_ref,
                 "locator": locator,
             },
@@ -706,7 +748,7 @@ def persist_app_search_run(db: Session, run: AppSearchRun) -> None:
             )
             VALUES (
                 :tool_call_id,
-                'prompt_evidence_then_context_budget',
+                'app_search_context_budget',
                 :input_count,
                 :selected_count,
                 :budget_chars,
@@ -726,6 +768,7 @@ def persist_app_search_run(db: Session, run: AppSearchRun) -> None:
             "metadata": {
                 "selected_limit": APP_SEARCH_SELECTED_LIMIT,
                 "scope": run.scope,
+                "inclusion_surface": "tool_output",
             },
         },
     )
@@ -737,29 +780,36 @@ def render_retrieved_context_blocks(
     *,
     viewer_id: UUID,
     citations: list[RetrievalCitation],
-) -> tuple[str, int, list[RetrievalCitation]]:
+) -> tuple[str, int, list[RetrievalCitation], list[str]]:
     """Render selected search citations into bounded prompt context blocks."""
     rendered_blocks: list[str] = []
     selected: list[RetrievalCitation] = []
+    selection_reasons: list[str] = []
     total_chars = 0
 
     for citation in citations:
+        citation.selected = False
+        if len(selected) >= APP_SEARCH_SELECTED_LIMIT:
+            selection_reasons.append("skipped_selected_limit")
+            continue
         block = _render_single_retrieved_context(db, viewer_id, citation)
         if not block:
+            selection_reasons.append("skipped_empty_render")
             continue
         block_chars = len(block)
-        if total_chars + block_chars > APP_SEARCH_CONTEXT_CHARS:
-            break
+        added_chars = block_chars if not rendered_blocks else block_chars + 2
+        if total_chars + added_chars > APP_SEARCH_CONTEXT_CHARS:
+            selection_reasons.append("skipped_over_budget")
+            continue
         citation.selected = True
         selected.append(citation)
         rendered_blocks.append(block)
-        total_chars += block_chars
-        if len(selected) >= APP_SEARCH_SELECTED_LIMIT:
-            break
+        total_chars += added_chars
+        selection_reasons.append("selected_within_budget")
 
     if not rendered_blocks:
-        return "", 0, selected
-    return "\n\n".join(rendered_blocks), total_chars, selected
+        return "", 0, selected, selection_reasons
+    return "\n\n".join(rendered_blocks), total_chars, selected, selection_reasons
 
 
 def _render_single_retrieved_context(
