@@ -38,6 +38,7 @@ from nexus.db.models import (
     PdfPageTextSpan,
     ProcessingStatus,
     ResourceEdge,
+    User,
 )
 from nexus.llm_catalog import MODEL_CATALOG
 from nexus.services.content_indexing import rebuild_fragment_content_index
@@ -53,6 +54,13 @@ from nexus.services.resource_items import versions
 # =============================================================================
 # Models
 # =============================================================================
+
+
+def create_test_user(session: Session) -> UUID:
+    user = User(id=uuid4())
+    session.add(user)
+    session.commit()
+    return user.id
 
 
 def create_test_model(session: Session) -> UUID:

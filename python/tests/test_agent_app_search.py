@@ -12,6 +12,7 @@ from nexus.config import clear_settings_cache
 from nexus.errors import ApiErrorCode
 from nexus.schemas.search import SearchResponse
 from nexus.services.agent_tools.app_search import (
+    APP_SEARCH_LIMIT,
     execute_app_search,
     render_retrieved_context_blocks,
 )
@@ -354,6 +355,7 @@ def test_execute_app_search_builds_public_filter_query(
     assert captured["query"].formats == ("pdf",)
     assert captured["query"].authors == ("le-guin",)
     assert captured["query"].roles == ("author",)
+    assert captured["query"].limit == APP_SEARCH_LIMIT
 
 
 def test_li_revision_reference_dropped_from_default_scope_resolution(

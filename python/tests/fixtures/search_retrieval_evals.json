@@ -1,0 +1,86 @@
+{
+  "media_titles": {
+    "exact": "retrieval eval exact {suffix}",
+    "scoped": "retrieval eval scoped {suffix}",
+    "cross_alpha": "retrieval eval cross alpha {suffix}",
+    "cross_beta": "retrieval eval cross beta {suffix}",
+    "global": "retrieval eval global {suffix}",
+    "multi_hop": "retrieval eval multi hop {suffix}"
+  },
+  "messages": {
+    "conversation_recency": "retrieval eval conversation recency {suffix}",
+    "multi_hop_message": "retrieval eval multi hop {suffix}"
+  },
+  "cases": [
+    {
+      "id": "exact_media_title",
+      "query": "retrieval eval exact {suffix}",
+      "class": "exact_lookup",
+      "kinds": ["documents"],
+      "scope_refs": ["library"],
+      "relevance": [
+        { "media_key": "exact", "grade": 3 }
+      ]
+    },
+    {
+      "id": "scoped_media_passage",
+      "query": "retrieval eval scoped {suffix}",
+      "class": "scoped_passage_lookup",
+      "kinds": ["documents"],
+      "scope_refs": ["media:scoped"],
+      "relevance": [
+        { "media_key": "scoped", "grade": 3 }
+      ]
+    },
+    {
+      "id": "cross_document_synthesis",
+      "query": "retrieval eval cross {suffix}",
+      "class": "cross_document_synthesis",
+      "kinds": ["documents"],
+      "scope_refs": ["library"],
+      "relevance": [
+        { "media_key": "cross_alpha", "grade": 3 },
+        { "media_key": "cross_beta", "grade": 2 }
+      ]
+    },
+    {
+      "id": "global_library_question",
+      "query": "retrieval eval global {suffix}",
+      "class": "global_library_question",
+      "kinds": ["documents"],
+      "scope_refs": ["library"],
+      "relevance": [
+        { "media_key": "global", "grade": 3 }
+      ]
+    },
+    {
+      "id": "multi_hop_search_read_inspect",
+      "query": "retrieval eval multi hop {suffix}",
+      "class": "multi_hop_search_read_inspect_question",
+      "kinds": ["documents", "conversations"],
+      "scope_refs": ["library"],
+      "relevance": [
+        { "media_key": "multi_hop", "grade": 3 },
+        { "message_key": "multi_hop_message", "grade": 2 }
+      ]
+    },
+    {
+      "id": "negative_absence",
+      "query": "retrieval eval absent {missing_suffix}",
+      "class": "negative_absence_question",
+      "kinds": ["documents"],
+      "scope_refs": ["library"],
+      "relevance": []
+    },
+    {
+      "id": "conversation_recency",
+      "query": "retrieval eval conversation recency {suffix}",
+      "class": "recency_or_conversation_question",
+      "kinds": ["conversations"],
+      "scope_refs": ["library"],
+      "relevance": [
+        { "message_key": "conversation_recency", "grade": 3 }
+      ]
+    }
+  ]
+}
