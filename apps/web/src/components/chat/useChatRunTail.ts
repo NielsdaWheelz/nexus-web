@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type Dispatch,
@@ -19,24 +20,20 @@ import type { SseBackoffConfig } from "@/lib/api/sse-client";
 import { openGenerationRunStream } from "@/lib/api/useGenerationRun";
 import type {
   ChatRunResponse,
-  ConversationMessage,
   ForkOption,
   MessageToolCall,
 } from "@/lib/conversations/types";
-import { useChatMessageUpdates } from "@/components/chat/useChatMessageUpdates";
+import type { MessageUpdateAction } from "@/lib/conversations/messageUpdateReducer";
 import {
-  selectedPathAfterRun,
-  upsertForkOptionForRun,
-} from "@/lib/conversations/branching";
+  createRunVisibility,
+  type RunVisibilityContext,
+} from "@/lib/conversations/runVisibility";
+import { useChatMessageUpdates } from "@/components/chat/useChatMessageUpdates";
+import { PerRunStreamContext } from "@/components/chat/perRunStreamContext";
+import { upsertForkOptionForRun } from "@/lib/conversations/branching";
 
 type ChatRunData = ChatRunResponse["data"];
 type TerminalRunStatus = "complete" | "error" | "cancelled";
-type RunVisibilityTarget = {
-  runId: string;
-  conversationId: string;
-  userMessageId: string;
-  assistantMessageId: string;
-};
 
 const CHAT_STREAM_MAX_RECONNECTS = 8;
 const CHAT_STREAM_BACKOFF: SseBackoffConfig = {
@@ -70,7 +67,7 @@ function mergeStreamToolCalls(
 }
 
 export function useChatRunTail({
-  setMessages,
+  dispatch,
   setForkOptionsByParentId,
   onRunFinished,
   onFirstDelta,
@@ -80,21 +77,24 @@ export function useChatRunTail({
   shouldStartRun,
   shouldApplyRun,
 }: {
-  setMessages: Dispatch<SetStateAction<ConversationMessage[]>>;
+  dispatch: (action: MessageUpdateAction) => void;
   setForkOptionsByParentId?: Dispatch<SetStateAction<Record<string, ForkOption[]>>>;
   onRunFinished?: (runId: string) => void;
   onFirstDelta?: (runId: string) => void;
   onRunDone?: (runId: string, status: TerminalRunStatus, errorCode: string | null) => void;
   onConversationAvailable?: (conversationId: string, runId: string) => void;
   onContextRefAdded?: (data: SSEContextRefAddedEvent["data"]) => void;
-  shouldStartRun?: (target: RunVisibilityTarget) => boolean;
-  shouldApplyRun?: (target: RunVisibilityTarget) => boolean;
+  shouldStartRun?: (ctx: RunVisibilityContext) => boolean;
+  shouldApplyRun?: (ctx: RunVisibilityContext) => boolean;
 }) {
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const mountedRef = useRef(false);
-  const activeStreamsRef = useRef<Map<string, () => void>>(new Map());
-  const runTokensRef = useRef<Map<string, number>>(new Map());
-  const firstDeltaRunIdsRef = useRef<Set<string>>(new Set());
+  // One per-run lifecycle owner (abort handle + supersession token + first-delta
+  // latch), replacing the three former refs. `useState` with a lazy initializer
+  // creates the instance exactly once and React guarantees it persists for the
+  // component's lifetime (unlike `useMemo`, which may be discarded).
+  const [streamCtx] = useState(() => new PerRunStreamContext());
+
   const {
     handleMetaReceived,
     shouldFoldEvent,
@@ -107,7 +107,18 @@ export function useChatRunTail({
     handleContextRefAdded,
     handleDone,
     flushDeltas,
-  } = useChatMessageUpdates({ setMessages, onContextRefAdded });
+  } = useChatMessageUpdates({ dispatch, onContextRefAdded });
+
+  // The single run-visibility owner (replaces the five scattered predicates).
+  const visibility = useMemo(
+    () =>
+      createRunVisibility({
+        shouldStart: shouldStartRun,
+        shouldApply: shouldApplyRun,
+        isMounted: () => mountedRef.current,
+      }),
+    [shouldStartRun, shouldApplyRun],
+  );
 
   const mergeRunMessages = useCallback(
     (
@@ -152,26 +163,25 @@ export function useChatRunTail({
               },
             }
           : runData;
-      setMessages((prev) => {
-        return selectedPathAfterRun(prev, displayRunData, idsToReplace);
+      // The transcript merge is owned by the reducer (merge_run_pair →
+      // selectedPathAfterRun). The fork-options index is a separate state, not
+      // the transcript, so it stays its own setState.
+      dispatch({
+        type: "merge_run_pair",
+        run: displayRunData,
+        idsToReplace,
       });
       setForkOptionsByParentId?.((prev) =>
         upsertForkOptionForRun(prev, displayRunData),
       );
     },
-    [setForkOptionsByParentId, setMessages],
+    [dispatch, setForkOptionsByParentId],
   );
 
   const abortAll = useCallback(() => {
-    for (const abort of activeStreamsRef.current.values()) {
-      abort();
-    }
-    activeStreamsRef.current.clear();
-    for (const runId of runTokensRef.current.keys()) {
-      runTokensRef.current.set(runId, (runTokensRef.current.get(runId) ?? 0) + 1);
-    }
+    streamCtx.abortAll();
     setActiveRunId(null);
-  }, []);
+  }, [streamCtx]);
 
   const cancelRun = useCallback(
     async (runId: string | null = activeRunId) => {
@@ -208,51 +218,47 @@ export function useChatRunTail({
       let doneNotified = false;
       let finished = false;
       let streamDoneSeen = false;
-      const token = (runTokensRef.current.get(runId) ?? 0) + 1;
+      const token = streamCtx.currentToken(runId) + 1;
 
-      const runIsVisible = (
-        data: ChatRunData,
-        userMessageId: string,
-        assistantMessageId: string,
-      ) =>
-        shouldApplyRun?.({
-          runId,
-          conversationId: data.conversation.id,
-          userMessageId,
-          assistantMessageId,
-        }) ?? true;
-
-      const currentRunIsVisible = () =>
-        runIsVisible(runData, currentUserId, currentAssistantId);
-
-      const runCanStart = () =>
-        mountedRef.current &&
-        (shouldStartRun?.({
-          runId,
+      // Visibility context binders over the single factory; they read the
+      // mutable current ids by reference, so they always reflect the latest meta.
+      const currentVisible = () =>
+        visibility.isVisible({
           conversationId: runData.conversation.id,
           userMessageId: currentUserId,
           assistantMessageId: currentAssistantId,
-        }) ??
-          true);
+        });
+      const canStart = () =>
+        visibility.canStart({
+          conversationId: runData.conversation.id,
+          userMessageId: currentUserId,
+          assistantMessageId: currentAssistantId,
+        });
+      const dataVisible = (data: ChatRunData) =>
+        visibility.isVisible({
+          conversationId: data.conversation.id,
+          userMessageId: data.user_message.id,
+          assistantMessageId: data.assistant_message.id,
+        });
 
       const mergeRunMessagesIfVisible = (
         data: ChatRunData,
         idsToReplace?: string[],
       ) => {
-        if (!runIsVisible(data, data.user_message.id, data.assistant_message.id)) {
+        if (!dataVisible(data)) {
           return;
         }
         mergeRunMessages(data, idsToReplace);
       };
 
-      if (!runCanStart()) return;
+      if (!canStart()) return;
 
-      if (activeStreamsRef.current.has(runId)) {
+      if (streamCtx.isStreaming(runId)) {
         mergeRunMessagesIfVisible(runData);
         return;
       }
 
-      runTokensRef.current.set(runId, token);
+      streamCtx.claim(runId, token);
       if (runData.stream_state.folded_event_seq > 0) {
         shouldFoldEvent(runId, runData.stream_state.folded_event_seq);
       }
@@ -275,13 +281,13 @@ export function useChatRunTail({
         if (finished) return;
         finished = true;
         streamAbort.abort();
-        activeStreamsRef.current.delete(runId);
+        streamCtx.endStream(runId);
         setActiveRunId((current) => (current === runId ? null : current));
         onRunFinished?.(runId);
       };
 
       if (isTerminalRunStatus(runData.run.status)) {
-        if (currentRunIsVisible()) {
+        if (currentVisible()) {
           handleDone(
             runData.assistant_message.id,
             runData.run.status,
@@ -294,12 +300,12 @@ export function useChatRunTail({
       }
 
       setActiveRunId(runId);
-      activeStreamsRef.current.set(runId, () => streamAbort.abort());
+      streamCtx.beginStream(runId, streamAbort);
 
       const reconcile = async () => {
         try {
           const response = await apiFetch<ChatRunResponse>(`/api/chat-runs/${runId}`);
-          if (runTokensRef.current.get(runId) !== token) return null;
+          if (streamCtx.isSuperseded(runId, token)) return null;
           flushDeltas();
           mergeRunMessagesIfVisible(response.data, [
             originalUserId,
@@ -317,7 +323,7 @@ export function useChatRunTail({
           }
 
           if (isTerminalRunStatus(response.data.run.status)) {
-            if (currentRunIsVisible()) {
+            if (currentVisible()) {
               handleDone(
                 currentAssistantId,
                 response.data.run.status,
@@ -336,7 +342,7 @@ export function useChatRunTail({
       };
 
       const startStream = async (): Promise<void> => {
-        if (runTokensRef.current.get(runId) !== token || finished || !runCanStart()) {
+        if (streamCtx.isSuperseded(runId, token) || finished || !canStart()) {
           finishRun();
           return;
         }
@@ -346,13 +352,13 @@ export function useChatRunTail({
             decode: toChatSSEEvent,
             isTerminal: (event) => event.type === "done",
             onEvent: (event) => {
-              if (runTokensRef.current.get(runId) !== token) return;
+              if (streamCtx.isSuperseded(runId, token)) return;
               if (event.seq > 0 && !shouldFoldEvent(runId, event.seq)) return;
               switch (event.type) {
                 case "meta":
                   currentUserId = event.data.user_message_id;
                   currentAssistantId = event.data.assistant_message_id;
-                  if (currentRunIsVisible()) {
+                  if (currentVisible()) {
                     handleMetaReceived(
                       originalUserId,
                       currentUserId,
@@ -366,33 +372,32 @@ export function useChatRunTail({
                   flushDeltas();
                   break;
                 case "assistant_text_delta":
-                  if (currentRunIsVisible() && !firstDeltaRunIdsRef.current.has(runId)) {
-                    firstDeltaRunIdsRef.current.add(runId);
+                  if (currentVisible() && streamCtx.latchFirstDelta(runId)) {
                     onFirstDelta?.(runId);
                   }
-                  if (!currentRunIsVisible()) break;
+                  if (!currentVisible()) break;
                   handleDelta(currentAssistantId, event.data.text);
                   break;
                 case "tool_call_start":
-                  if (!currentRunIsVisible()) break;
+                  if (!currentVisible()) break;
                   flushDeltas();
                   handleToolCall(currentAssistantId, event.data);
                   break;
                 case "tool_call_delta":
-                  if (!currentRunIsVisible()) break;
+                  if (!currentVisible()) break;
                   handleToolCallDelta(currentAssistantId, event.data);
                   break;
                 case "tool_call_done":
-                  if (!currentRunIsVisible()) break;
+                  if (!currentVisible()) break;
                   handleToolCallDone(currentAssistantId, event.data);
                   break;
                 case "tool_result":
-                  if (!currentRunIsVisible()) break;
+                  if (!currentVisible()) break;
                   flushDeltas();
                   handleToolResult(currentAssistantId, event.data);
                   break;
                 case "citation_index":
-                  if (!currentRunIsVisible()) break;
+                  if (!currentVisible()) break;
                   handleCitationIndex(currentAssistantId, event.data);
                   break;
                 case "context_ref_added":
@@ -400,7 +405,7 @@ export function useChatRunTail({
                   break;
                 case "done":
                   streamDoneSeen = true;
-                  if (currentRunIsVisible()) {
+                  if (currentVisible()) {
                     handleDone(
                       currentAssistantId,
                       event.data.status,
@@ -419,7 +424,7 @@ export function useChatRunTail({
             // the persisted run, then resume after the folded DB cursor.
             onReconnect: async () => {
               const persisted = await reconcile();
-              if (runTokensRef.current.get(runId) !== token || finished) {
+              if (streamCtx.isSuperseded(runId, token) || finished) {
                 return "stop";
               }
               return persisted
@@ -427,15 +432,15 @@ export function useChatRunTail({
                 : "continue";
             },
             onError: (err) => {
-              if (runTokensRef.current.get(runId) !== token || finished) return;
+              if (streamCtx.isSuperseded(runId, token) || finished) return;
               // Reconnect budget exhausted (or a fatal stream error). Reconcile one
               // last time — the run may have completed in the DB exactly as the
               // stream died — and only surface the interruption if it did not.
               console.error("Chat run stream failed:", err);
               void (async () => {
                 await reconcile();
-                if (runTokensRef.current.get(runId) !== token || finished) return;
-                if (currentRunIsVisible()) {
+                if (streamCtx.isSuperseded(runId, token) || finished) return;
+                if (currentVisible()) {
                   handleDone(currentAssistantId, "error", "E_STREAM_INTERRUPTED");
                 }
                 notifyDone("error", "E_STREAM_INTERRUPTED");
@@ -444,14 +449,14 @@ export function useChatRunTail({
             },
             onComplete: (terminalEventSeen) => {
               // Terminal events still reconcile so the backend-built trust trail wins.
-              if (runTokensRef.current.get(runId) !== token) return;
+              if (streamCtx.isSuperseded(runId, token)) return;
               if (!terminalEventSeen || !streamDoneSeen) {
                 finishRun();
                 return;
               }
               void (async () => {
                 await reconcile();
-                if (runTokensRef.current.get(runId) !== token || finished) return;
+                if (streamCtx.isSuperseded(runId, token) || finished) return;
                 finishRun();
               })();
             },
@@ -469,8 +474,8 @@ export function useChatRunTail({
           if (handleUnauthenticatedApiError(err)) return;
           console.error("Failed to open chat run stream:", err);
           await reconcile();
-          if (runTokensRef.current.get(runId) !== token || finished) return;
-          if (currentRunIsVisible()) {
+          if (streamCtx.isSuperseded(runId, token) || finished) return;
+          if (currentVisible()) {
             handleDone(currentAssistantId, "error", "E_STREAM_INTERRUPTED");
           }
           notifyDone("error", "E_STREAM_INTERRUPTED");
@@ -480,7 +485,7 @@ export function useChatRunTail({
 
         // Superseded (abortAll bumped the token) or unmounted during the mint:
         // the opener skipped connecting; still run finish orchestration.
-        if (runTokensRef.current.get(runId) !== token || finished || !runCanStart()) {
+        if (streamCtx.isSuperseded(runId, token) || finished || !canStart()) {
           finishRun();
         }
       };
@@ -488,6 +493,8 @@ export function useChatRunTail({
       await startStream();
     },
     [
+      streamCtx,
+      visibility,
       handleDelta,
       handleDone,
       handleMetaReceived,
@@ -504,8 +511,6 @@ export function useChatRunTail({
       onConversationAvailable,
       onRunDone,
       onRunFinished,
-      shouldApplyRun,
-      shouldStartRun,
     ],
   );
 

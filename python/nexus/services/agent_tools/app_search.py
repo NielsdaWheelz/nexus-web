@@ -34,6 +34,7 @@ from nexus.schemas.retrieval import (
     retrieval_result_ref_json,
 )
 from nexus.services import media_intelligence
+from nexus.services.chat_run_citations import prune_tool_call_retrievals
 from nexus.services.contributor_taxonomy import CONTRIBUTOR_ROLES
 from nexus.services.contributors import get_contributor_by_handle
 from nexus.services.media_intelligence import MediaUnit
@@ -686,10 +687,7 @@ def persist_app_search_run(db: Session, run: AppSearchRun) -> None:
         )
         persisted_count = ordinal + 1
     # Trim over-count rows from a previous attempt, cleaning their citation edges
-    # too. Deferred import: chat_runs imports this module, so the chat-run-owned
-    # prune owner is reached lazily to break the cycle.
-    from nexus.services.chat_runs import prune_tool_call_retrievals
-
+    # too.
     prune_tool_call_retrievals(db, tool_call_id=tool_call_id, min_ordinal=persisted_count)
     db.execute(
         text(

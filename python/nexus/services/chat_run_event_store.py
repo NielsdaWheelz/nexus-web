@@ -40,6 +40,156 @@ def append_and_commit(db: Session, run_id: UUID, event_type: str, payload: dict[
     db.commit()
 
 
+class ChatRunEventEmitter:
+    """Single owner of durable chat run-event append. Streaming events commit
+    inline (SSE visibility); batch events defer to the caller's transaction.
+
+    The current payload grammar lives here in one place (a later streaming
+    cutover reshapes payloads HERE, not at 20 call sites). Streaming methods are
+    typed and build the exact payload dict, then ``append_and_commit`` so the SSE
+    tail sees them immediately; batch methods accept the pre-built (varied,
+    call-site-assembled) payload dict and ``append_run_event`` without committing,
+    leaving the commit to the executor's existing batch boundary.
+    """
+
+    def __init__(self, db: Session, run: ChatRun) -> None:
+        self._db = db
+        self._run = run
+
+    # -- Streaming events: typed, commit inline (SSE visibility) --------------
+
+    def assistant_text_delta(
+        self,
+        *,
+        text: str,
+        provider_event_seq_start: int,
+        provider_event_seq_end: int,
+    ) -> None:
+        append_and_commit(
+            self._db,
+            self._run.id,
+            "assistant_text_delta",
+            {
+                "assistant_message_id": str(self._run.assistant_message_id),
+                "text": text,
+                "provider_event_seq_start": provider_event_seq_start,
+                "provider_event_seq_end": provider_event_seq_end,
+            },
+        )
+
+    def assistant_activity(
+        self,
+        *,
+        phase: str,
+        provider_event_seq_start: int,
+        provider_event_seq_end: int,
+    ) -> None:
+        append_and_commit(
+            self._db,
+            self._run.id,
+            "assistant_activity",
+            {
+                "assistant_message_id": str(self._run.assistant_message_id),
+                "phase": phase,
+                "label": None,
+                "provider_event_seq_start": provider_event_seq_start,
+                "provider_event_seq_end": provider_event_seq_end,
+            },
+        )
+
+    def tool_call_start(
+        self,
+        *,
+        tool_name: str,
+        tool_call_index: int,
+        provider_tool_call_id: str,
+        provider_event_seq_start: int,
+        provider_event_seq_end: int,
+    ) -> None:
+        append_and_commit(
+            self._db,
+            self._run.id,
+            "tool_call_start",
+            {
+                "tool_call_id": None,
+                "assistant_message_id": str(self._run.assistant_message_id),
+                "tool_name": tool_name,
+                "tool_call_index": tool_call_index,
+                "provider_tool_call_id": provider_tool_call_id,
+                "provider_event_seq_start": provider_event_seq_start,
+                "provider_event_seq_end": provider_event_seq_end,
+            },
+        )
+
+    def tool_call_delta(
+        self,
+        *,
+        tool_name: str,
+        tool_call_index: int,
+        provider_tool_call_id: str,
+        input_delta: str,
+        input_preview: str | None,
+        provider_event_seq_start: int,
+        provider_event_seq_end: int,
+    ) -> None:
+        append_and_commit(
+            self._db,
+            self._run.id,
+            "tool_call_delta",
+            {
+                "tool_call_id": None,
+                "assistant_message_id": str(self._run.assistant_message_id),
+                "tool_name": tool_name,
+                "tool_call_index": tool_call_index,
+                "provider_tool_call_id": provider_tool_call_id,
+                "input_delta": input_delta,
+                "input_preview": input_preview,
+                "provider_event_seq_start": provider_event_seq_start,
+                "provider_event_seq_end": provider_event_seq_end,
+            },
+        )
+
+    def tool_call_done(
+        self,
+        *,
+        tool_name: str,
+        tool_call_index: int,
+        provider_tool_call_id: str,
+        input: dict[str, Any],
+        provider_event_seq_start: int,
+        provider_event_seq_end: int,
+    ) -> None:
+        append_and_commit(
+            self._db,
+            self._run.id,
+            "tool_call_done",
+            {
+                "tool_call_id": None,
+                "assistant_message_id": str(self._run.assistant_message_id),
+                "tool_name": tool_name,
+                "tool_call_index": tool_call_index,
+                "provider_tool_call_id": provider_tool_call_id,
+                "input": input,
+                "provider_event_seq_start": provider_event_seq_start,
+                "provider_event_seq_end": provider_event_seq_end,
+            },
+        )
+
+    # -- Batch events: pre-built payload, defer commit to the caller ----------
+
+    def meta(self, payload: dict[str, Any]) -> None:
+        append_run_event(self._db, self._run, "meta", payload)
+
+    def tool_result(self, payload: dict[str, Any]) -> None:
+        append_run_event(self._db, self._run, "tool_result", payload)
+
+    def citation_index(self, payload: dict[str, Any]) -> None:
+        append_run_event(self._db, self._run, "citation_index", payload)
+
+    def context_ref_added(self, payload: dict[str, Any]) -> None:
+        append_run_event(self._db, self._run, "context_ref_added", payload)
+
+
 def mark_running(db: Session, run_id: UUID) -> None:
     run = db.execute(select(ChatRun).where(ChatRun.id == run_id).with_for_update()).scalars().one()
     if run.status == "queued":

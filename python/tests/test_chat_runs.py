@@ -21,11 +21,12 @@ from nexus.db.models import (
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError
 from nexus.schemas.conversation import NoBranchAnchorRequest, chat_run_event_payload_json
 from nexus.services.billing_entitlements import grant_entitlement_override
+from nexus.services.chat_run_citations import _citation_target_ref
+from nexus.services.chat_run_event_store import ChatRunEventEmitter
+from nexus.services.chat_run_tools import app_search_tool_output
 from nexus.services.chat_run_validation import validate_pre_phase
 from nexus.services.chat_runs import (
     _app_search_scopes_from_tool_args,
-    _app_search_tool_output,
-    _citation_target_ref,
 )
 from nexus.services.conversation_branches import persist_active_leaf
 from tests.factories import (
@@ -1784,10 +1785,10 @@ class TestChatResponseRetry:
 class TestCitationEdgeWriteThrough:
     """Spec §5.2/§11.6: citations are edges; telemetry keeps only `cited_edge_id`.
 
-    ``_record_tool_citations`` mints one ``origin='citation'`` edge per selected
+    ``record_tool_citations`` mints one ``origin='citation'`` edge per selected
     retrieval (``source = message:<assistant_message_id>``, dense ordinals,
     replace-by-ordinal on re-execution) and points the row at it.
-    ``_emit_citation_index`` emits backend-built citations keyed by
+    ``emit_citation_index`` emits backend-built citations keyed by
     ``citation_edge_id`` and graduates cited LOCAL targets into
     ``origin='citation'`` context edges with a ``context_ref_added`` event in the
     context-ref shape.
@@ -1987,7 +1988,7 @@ class TestCitationEdgeWriteThrough:
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
     ):
         from nexus.db.models import ChatRun as ChatRunModel
-        from nexus.services.chat_runs import _emit_citation_index, _record_tool_citations
+        from nexus.services.chat_run_citations import emit_citation_index, record_tool_citations
 
         (
             user_id,
@@ -2027,7 +2028,7 @@ class TestCitationEdgeWriteThrough:
         with direct_db.session() as session:
             run = session.get(ChatRunModel, run_id)
             assert run is not None, "Test setup must persist the chat run row"
-            next_ordinal = _record_tool_citations(
+            next_ordinal = record_tool_citations(
                 session, run=run, tool_call_id=tool_call_id, start_ordinal=1
             )
             assert next_ordinal == 2, (
@@ -2035,7 +2036,7 @@ class TestCitationEdgeWriteThrough:
             )
             # Re-execution parity: recording the same tool call again replaces
             # the edge at that ordinal instead of failing on the unique index.
-            next_ordinal = _record_tool_citations(
+            next_ordinal = record_tool_citations(
                 session, run=run, tool_call_id=tool_call_id, start_ordinal=1
             )
             assert next_ordinal == 2
@@ -2079,7 +2080,9 @@ class TestCitationEdgeWriteThrough:
 
         with direct_db.session() as session:
             run = session.get(ChatRunModel, run_id)
-            _emit_citation_index(session, run, "Answer [1].")
+            emit_citation_index(
+                session, run, "Answer [1].", emitter=ChatRunEventEmitter(session, run)
+            )
             session.commit()
 
         with direct_db.session() as session:
@@ -2159,7 +2162,7 @@ class TestCitationEdgeWriteThrough:
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
     ):
         from nexus.db.models import ChatRun as ChatRunModel
-        from nexus.services.chat_runs import _emit_citation_index, _record_tool_citations
+        from nexus.services.chat_run_citations import emit_citation_index, record_tool_citations
 
         (
             user_id,
@@ -2199,11 +2202,11 @@ class TestCitationEdgeWriteThrough:
         with direct_db.session() as session:
             run = session.get(ChatRunModel, run_id)
             assert run is not None
-            next_ordinal = _record_tool_citations(
+            next_ordinal = record_tool_citations(
                 session, run=run, tool_call_id=tool_call_id, start_ordinal=1
             )
             assert next_ordinal == 1, "Unselected rows must not consume ordinals"
-            _emit_citation_index(session, run, "Answer.")
+            emit_citation_index(session, run, "Answer.", emitter=ChatRunEventEmitter(session, run))
             session.commit()
 
         with direct_db.session() as session:
@@ -2236,7 +2239,7 @@ class TestCitationEdgeWriteThrough:
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
     ):
         from nexus.db.models import ChatRun as ChatRunModel
-        from nexus.services.chat_runs import _emit_citation_index, _record_tool_citations
+        from nexus.services.chat_run_citations import emit_citation_index, record_tool_citations
 
         (
             user_id,
@@ -2276,16 +2279,21 @@ class TestCitationEdgeWriteThrough:
         with direct_db.session() as session:
             run = session.get(ChatRunModel, run_id)
             assert run is not None
-            _record_tool_citations(session, run=run, tool_call_id=tool_call_id, start_ordinal=1)
+            record_tool_citations(session, run=run, tool_call_id=tool_call_id, start_ordinal=1)
             with pytest.raises(InvalidRequestError, match=r"markers=\[\], citations=\[1\]"):
-                _emit_citation_index(session, run, "Answer without marker.")
+                emit_citation_index(
+                    session,
+                    run,
+                    "Answer without marker.",
+                    emitter=ChatRunEventEmitter(session, run),
+                )
             session.rollback()
 
     def test_citation_index_prunes_uncited_selected_retrieval(
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
     ):
         from nexus.db.models import ChatRun as ChatRunModel
-        from nexus.services.chat_runs import _emit_citation_index, _record_tool_citations
+        from nexus.services.chat_run_citations import emit_citation_index, record_tool_citations
 
         (
             user_id,
@@ -2344,10 +2352,12 @@ class TestCitationEdgeWriteThrough:
             run = session.get(ChatRunModel, run_id)
             assert run is not None
             assert (
-                _record_tool_citations(session, run=run, tool_call_id=tool_call_id, start_ordinal=1)
+                record_tool_citations(session, run=run, tool_call_id=tool_call_id, start_ordinal=1)
                 == 3
             )
-            _emit_citation_index(session, run, "Answer [1].")
+            emit_citation_index(
+                session, run, "Answer [1].", emitter=ChatRunEventEmitter(session, run)
+            )
             session.commit()
 
         with direct_db.session() as session:
@@ -2387,7 +2397,7 @@ class TestCitationEdgeWriteThrough:
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
     ):
         from nexus.db.models import ChatRun as ChatRunModel
-        from nexus.services.chat_runs import _record_tool_citations
+        from nexus.services.chat_run_citations import record_tool_citations
 
         (
             user_id,
@@ -2435,7 +2445,7 @@ class TestCitationEdgeWriteThrough:
             )
             run = session.get(ChatRunModel, run_id)
             assert run is not None
-            next_ordinal = _record_tool_citations(
+            next_ordinal = record_tool_citations(
                 session, run=run, tool_call_id=tool_call_id, start_ordinal=4
             )
             session.commit()
@@ -2460,7 +2470,7 @@ class TestCitationEdgeWriteThrough:
         assert edge_count == 0
         assert cited_edge_id is None
         payload = json.loads(
-            _app_search_tool_output(
+            app_search_tool_output(
                 SimpleNamespace(
                     selected_citations=[
                         SimpleNamespace(
@@ -2491,7 +2501,7 @@ class TestCitationEdgeWriteThrough:
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
     ):
         from nexus.db.models import ChatRun as ChatRunModel
-        from nexus.services.chat_runs import _emit_citation_index
+        from nexus.services.chat_run_citations import emit_citation_index
 
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
@@ -2560,7 +2570,9 @@ class TestCitationEdgeWriteThrough:
         with direct_db.session() as session:
             run = session.get(ChatRunModel, run_id)
             assert run is not None, "Test setup must persist the chat run row"
-            _emit_citation_index(session, run, "Answer [1].")
+            emit_citation_index(
+                session, run, "Answer [1].", emitter=ChatRunEventEmitter(session, run)
+            )
             session.commit()
 
         with direct_db.session() as session:
@@ -2601,7 +2613,7 @@ class TestCitationEdgeWriteThrough:
             WebSearchRun,
             persist_web_search_run,
         )
-        from nexus.services.chat_runs import _emit_citation_index, _record_tool_citations
+        from nexus.services.chat_run_citations import emit_citation_index, record_tool_citations
 
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
@@ -2680,11 +2692,13 @@ class TestCitationEdgeWriteThrough:
         with direct_db.session() as session:
             run = session.get(ChatRunModel, run_id)
             assert run is not None
-            next_ordinal = _record_tool_citations(
+            next_ordinal = record_tool_citations(
                 session, run=run, tool_call_id=tool_call_id, start_ordinal=1
             )
             assert next_ordinal == 2, "Only the selected web result consumes an ordinal"
-            _emit_citation_index(session, run, "Web answer [1].")
+            emit_citation_index(
+                session, run, "Web answer [1].", emitter=ChatRunEventEmitter(session, run)
+            )
             session.commit()
 
         with direct_db.session() as session:
@@ -2770,8 +2784,8 @@ class TestCitationEdgeWriteThrough:
     ):
         """Reload keeps answer content text-only and rebuilds trust from durable rows."""
         from nexus.db.models import ChatRun as ChatRunModel
+        from nexus.services.chat_run_citations import record_tool_citations
         from nexus.services.chat_run_message_blocks import message_document
-        from nexus.services.chat_runs import _record_tool_citations
         from nexus.services.message_trust_trails import build_assistant_trust_trail
 
         (
@@ -2812,7 +2826,7 @@ class TestCitationEdgeWriteThrough:
         with direct_db.session() as session:
             run = session.get(ChatRunModel, run_id)
             assert run is not None
-            _record_tool_citations(session, run=run, tool_call_id=tool_call_id, start_ordinal=1)
+            record_tool_citations(session, run=run, tool_call_id=tool_call_id, start_ordinal=1)
             session.commit()
 
         with direct_db.session() as session:
@@ -2853,8 +2867,8 @@ class TestCitationEdgeWriteThrough:
         carries none.
         """
         from nexus.db.models import ChatRun as ChatRunModel
+        from nexus.services.chat_run_citations import record_tool_citations
         from nexus.services.chat_run_response import build_chat_run_response
-        from nexus.services.chat_runs import _record_tool_citations
 
         (
             user_id,
@@ -2894,7 +2908,7 @@ class TestCitationEdgeWriteThrough:
         with direct_db.session() as session:
             run = session.get(ChatRunModel, run_id)
             assert run is not None
-            _record_tool_citations(session, run=run, tool_call_id=tool_call_id, start_ordinal=1)
+            record_tool_citations(session, run=run, tool_call_id=tool_call_id, start_ordinal=1)
             session.commit()
 
         with direct_db.session() as session:
@@ -3027,7 +3041,7 @@ class TestCitationEdgeWriteThrough:
         assistant message's citations[] field-for-field (n, kind, target,
         snapshot, and the media_id/locator render-contract fields)."""
         from nexus.db.models import ChatRun as ChatRunModel
-        from nexus.services.chat_runs import _record_tool_citations
+        from nexus.services.chat_run_citations import record_tool_citations
 
         (
             user_id,
@@ -3067,7 +3081,7 @@ class TestCitationEdgeWriteThrough:
         with direct_db.session() as session:
             run = session.get(ChatRunModel, run_id)
             assert run is not None
-            _record_tool_citations(session, run=run, tool_call_id=tool_call_id, start_ordinal=1)
+            record_tool_citations(session, run=run, tool_call_id=tool_call_id, start_ordinal=1)
             session.commit()
         with direct_db.session() as session:
             evidence_span_id = session.execute(
@@ -3127,7 +3141,7 @@ class TestCitationEdgeWriteThrough:
             WebSearchRun,
             persist_web_search_run,
         )
-        from nexus.services.chat_runs import _record_tool_citations
+        from nexus.services.chat_run_citations import record_tool_citations
 
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
@@ -3206,7 +3220,7 @@ class TestCitationEdgeWriteThrough:
         with direct_db.session() as session:
             run = session.get(ChatRunModel, run_id)
             assert run is not None
-            next_ordinal = _record_tool_citations(
+            next_ordinal = record_tool_citations(
                 session, run=run, tool_call_id=tool_call_id, start_ordinal=1
             )
             assert next_ordinal == 3, "Two cited results consume ordinals 1 and 2"
@@ -3233,7 +3247,7 @@ class TestCitationEdgeWriteThrough:
             persist_web_search_run(session, web_run([web_citation(1)]))
             run = session.get(ChatRunModel, run_id)
             assert run is not None
-            next_ordinal = _record_tool_citations(
+            next_ordinal = record_tool_citations(
                 session, run=run, tool_call_id=tool_call_id, start_ordinal=1
             )
             assert next_ordinal == 2

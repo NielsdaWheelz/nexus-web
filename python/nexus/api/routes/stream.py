@@ -61,9 +61,8 @@ _CHAT_RUN_KIND = CursorStreamKind(
     assert_viewer=lambda db, viewer_id, run_id: chat_runs_service.assert_chat_run_owner(
         db, viewer_id=viewer_id, run_id=run_id
     ),
-    read_after=lambda db, viewer_id, run_id, after: (
-        chat_runs_service.get_chat_run_events(db, viewer_id=viewer_id, run_id=run_id, after=after),
-        chat_runs_service.is_chat_run_terminal(db, viewer_id=viewer_id, run_id=run_id),
+    read_after=lambda db, viewer_id, run_id, after: run_kit.get_run_events(
+        db, run_kit.RunStreamKind.ChatRun, run_id, after
     ),
 )
 
@@ -72,9 +71,8 @@ _ORACLE_READING_KIND = CursorStreamKind(
     assert_viewer=lambda db, viewer_id, reading_id: oracle_service.assert_reading_owner(
         db, viewer_id=viewer_id, reading_id=reading_id
     ),
-    read_after=lambda db, viewer_id, reading_id, after: (
-        oracle_service.get_reading_events(db, reading_id=reading_id, after=after),
-        oracle_service.is_reading_terminal(db, reading_id=reading_id),
+    read_after=lambda db, viewer_id, reading_id, after: run_kit.get_run_events(
+        db, run_kit.RunStreamKind.OracleReading, reading_id, after
     ),
 )
 
@@ -85,11 +83,8 @@ _LIBRARY_INTELLIGENCE_KIND = CursorStreamKind(
             db, viewer_id=viewer_id, revision_id=revision_id
         )
     ),
-    read_after=lambda db, viewer_id, revision_id, after: (
-        library_intelligence_revisions_service.get_revision_events(
-            db, revision_id=revision_id, after=after
-        ),
-        library_intelligence_revisions_service.is_revision_terminal(db, revision_id=revision_id),
+    read_after=lambda db, viewer_id, revision_id, after: run_kit.get_run_events(
+        db, run_kit.RunStreamKind.LibraryIntelligence, revision_id, after
     ),
 )
 

@@ -11,6 +11,19 @@ Backend owners live under `python/nexus/api/routes/chat_runs.py`,
 `python/nexus/services/chat_run_*`, `python/nexus/services/context_assembler.py`, and
 `python/nexus/services/conversation_branches.py`.
 
+`chat_runs.py` is the run **executor** (provider-stream iteration, the tool loop,
+finalization). The cohesive services it composes each have one owner:
+`chat_run_citations` (selected-retrieval → citation edge, attached citations,
+prune, read-evidence, `citation_index`), `chat_run_tools` (`message_tool_calls`
+lifecycle + tool-output rendering + provider tool-event binding), and the
+`ChatRunEventEmitter` in `chat_run_event_store` — the single durable run-event
+append owner (typed streaming methods commit inline for SSE visibility; batch
+tool-result/citation/context events defer to the executor's transaction). The
+cross-surface run-tail query + terminal check are `run_kit.get_run_events` /
+`run_kit.is_run_terminal` (kind-dispatched for chat / oracle / library
+intelligence); viewer scoping stays in each `/stream/*` route's `assert_viewer`,
+never in the query.
+
 Frontend owners live under `apps/web/src/components/chat/*` and
 `apps/web/src/lib/conversations/*`.
 
@@ -24,7 +37,7 @@ Hard-cutover specs that govern chat work. Each owns one axis; they compose.
 - `docs/cutovers/chat-subsystem-consolidation-hard-cutover.md` — structural
   ownership + duplication collapse (message-update reducer, per-run stream
   context, visibility factory, `chat_run_citations` / `chat_run_tools` /
-  run-event emitter, `run_kit.get_run_events` / `is_run_terminal`). SPEC.
+  run-event emitter, `run_kit.get_run_events` / `is_run_terminal`). IMPLEMENTED.
 - `docs/cutovers/sota-chat-streaming-hard-cutover.md` — streaming transport,
   event grammar, coalescing, cursor replay, cancellation. SPEC.
 - `docs/cutovers/resource-chat-subject-hard-cutover.md` — surface/subject
@@ -36,7 +49,23 @@ Hard-cutover specs that govern chat work. Each owns one axis; they compose.
 
 `useConversation` is the live chat engine. It owns history loading, create-on-send,
 optimistic run lifecycle, run resumption, message updates, retry state, branch state,
-conversation context refs, and selected leaf/path state.
+conversation context refs, and selected leaf/path state. It holds the `messages`
+state as a `useReducer` over `messageUpdateReducer` — there is no raw `setMessages`
+caller.
+
+`messageUpdateReducer` (`lib/conversations/messageUpdateReducer.ts`) is the single,
+pure owner of every transcript transition. Each change to the rendered `messages[]`
+is one named, total action (`set_all` / `prepend_older` / `seed_optimistic` /
+`swap_meta_ids` / `fold_text_delta` / `apply_tool_call` / `apply_tool_result` /
+`apply_citation_index` / `apply_context_ref` / `finalize_done` / `merge_run_pair`);
+the fold layer (`useChatMessageUpdates`) and the run-tail orchestrator
+(`useChatRunTail`) dispatch actions and never mutate the list directly.
+
+`PerRunStreamContext` (`components/chat/perRunStreamContext.ts`) is the single
+per-run stream-lifecycle owner — supersession token, abort handle, and first-delta
+latch in one record per run (`abort === null` ⇔ not streaming). `createRunVisibility`
+(`lib/conversations/runVisibility.ts`) is the single run-visibility factory
+(`canStart` / `isVisible`) replacing the prior five scattered predicates.
 
 `ChatSurface` owns transcript rendering and scroll behavior.
 
@@ -209,6 +238,7 @@ Keep these tests aligned with this module contract:
 - `apps/web/src/lib/conversations/chatDraftKey.test.ts`
 - `apps/web/src/lib/conversations/chatRunBody.test.ts`
 - `apps/web/src/components/chat/AssistantMessage.test.tsx`
+- `apps/web/src/components/chat/useChatRunTail.test.tsx`
 - `apps/web/src/components/ui/FloatingActionSurface.test.tsx`
 - `apps/web/src/__tests__/components/ChatComposer.test.tsx`
 - `apps/web/src/__tests__/components/Conversation.test.tsx`

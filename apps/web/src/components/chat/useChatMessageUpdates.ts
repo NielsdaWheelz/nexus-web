@@ -1,145 +1,31 @@
 "use client";
 
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  type Dispatch,
-  type SetStateAction,
-} from "react";
-import {
-  isSearchCitationEventData,
-  isWebCitationEventData,
-  type SearchCitationEventData,
-  type WebCitationEventData,
-} from "@/lib/api/sse/citations";
+import { useCallback, useEffect, useRef } from "react";
 import type {
-  ChatToolStatus,
   SSECitationIndexEvent,
   SSEContextRefAddedEvent,
   SSEToolCallDeltaEvent,
   SSEToolCallDoneEvent,
-  SSEToolCallEvent,
   SSEToolResultEvent,
 } from "@/lib/api/sse/events";
-import { conversationMessageText } from "@/lib/conversations/types";
 import type {
-  AssistantTrustTrail,
-  ConversationMessage,
-  MessageDocument,
-  MessageRetrievalResultRef,
-  MessageRetrieval,
-  MessageToolCall,
-} from "@/lib/conversations/types";
+  MessageUpdateAction,
+  RenderToolCallData,
+} from "@/lib/conversations/messageUpdateReducer";
 
-type RenderToolCallData = SSEToolCallEvent["data"] & { status?: ChatToolStatus };
-
-function retrievalFromSearchCitation(
-  citation: SearchCitationEventData,
-  data: {
-    tool_call_id?: string | null;
-    tool_call_index?: number | null;
-    tool_name?: string;
-  },
-  index: number,
-): MessageRetrieval {
-  const result_ref = citation as MessageRetrievalResultRef;
-  return {
-    tool_call_id: data.tool_call_id ?? undefined,
-    tool_call_index: data.tool_call_index ?? null,
-    ordinal: index,
-    result_type: citation.result_type,
-    source_id: citation.source_id,
-    media_id: citation.media_id,
-    evidence_span_id: citation.evidence_span_id ?? null,
-    context_ref: citation.context_ref,
-    result_ref,
-    deep_link: citation.deep_link,
-    citation_label: citation.citation_label ?? null,
-    locator: citation.locator,
-    score: citation.score,
-    selected: citation.selected,
-    source_title: citation.title,
-    section_label: citation.source_label,
-    summary_md:
-      "summary_md" in citation ? (citation.summary_md ?? null) : null,
-    exact_snippet: citation.snippet,
-    retrieval_status: citation.selected ? "selected" : "retrieved",
-    included_in_prompt: false,
-  };
-}
-
-function retrievalFromWebCitation(
-  citation: WebCitationEventData,
-  data: {
-    tool_call_id?: string | null;
-    tool_call_index?: number | null;
-  },
-  index: number,
-): MessageRetrieval {
-  const result_ref: MessageRetrievalResultRef = citation;
-  return {
-    tool_call_id: data.tool_call_id ?? undefined,
-    tool_call_index: data.tool_call_index ?? null,
-    ordinal: index,
-    result_type: "web_result",
-    source_id: citation.source_id,
-    media_id: citation.media_id ?? null,
-    context_ref: citation.context_ref,
-    result_ref,
-    deep_link: citation.deep_link,
-    citation_label: citation.display_url ?? citation.source_name ?? null,
-    locator: citation.locator,
-    score: citation.score ?? null,
-    selected: citation.selected ?? true,
-    source_title: citation.title,
-    exact_snippet: citation.snippet,
-    retrieval_status: "web_result",
-    included_in_prompt: false,
-  };
-}
-
-function messageDocumentWithText(
-  message: ConversationMessage,
-  content: string,
-): MessageDocument {
-  return {
-    type: "message_document",
-    blocks:
-      content.trim().length > 0
-        ? [{ type: "text", format: "markdown", text: content }]
-        : [],
-  };
-}
-
-function trustTrailFor(
-  message: ConversationMessage,
-  assistantId: string,
-  conversationId = "",
-): AssistantTrustTrail {
-  if (message.trust_trail) return message.trust_trail;
-  return {
-    schema_version: "assistant_trust_trail.v1",
-    assistant_message_id: assistantId,
-    conversation_id: conversationId,
-    chat_run_id: null,
-    status: "running",
-    run: null,
-    prompt: null,
-    tool_calls: [],
-    citations: [],
-    context_refs_added: [],
-    integrity_notices: [],
-    created_at: message.created_at,
-    updated_at: message.updated_at,
-  };
-}
-
+/**
+ * useChatMessageUpdates — the fold layer.
+ *
+ * Translates streamed run events into `messageUpdateReducer` actions and owns
+ * the RAF text-delta buffer + the per-run folded-seq dedupe. It never mutates
+ * the message list directly; every transition is a dispatched action handled by
+ * the single reducer-backed engine (`useConversation`).
+ */
 export function useChatMessageUpdates({
-  setMessages,
+  dispatch,
   onContextRefAdded,
 }: {
-  setMessages: Dispatch<SetStateAction<ConversationMessage[]>>;
+  dispatch: (action: MessageUpdateAction) => void;
   onContextRefAdded?: (data: SSEContextRefAddedEvent["data"]) => void;
 }) {
   const deltaBufferRef = useRef<Map<string, string>>(new Map());
@@ -152,31 +38,16 @@ export function useChatMessageUpdates({
     if (buffer.size === 0) return;
     const snapshot = new Map(buffer);
     buffer.clear();
-    setMessages((prev) =>
-      prev.map((m) => {
-        const delta = snapshot.get(m.id);
-        if (!delta) return m;
-        const content = conversationMessageText(m) + delta;
-        return {
-          ...m,
-          message_document: messageDocumentWithText(m, content),
-        };
-      }),
-    );
-  }, [setMessages]);
+    for (const [assistantId, delta] of snapshot) {
+      dispatch({ type: "fold_text_delta", assistantId, delta });
+    }
+  }, [dispatch]);
 
   useEffect(() => {
     return () => {
       if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
     };
   }, []);
-
-  const handleOptimisticMessages = useCallback(
-    (userMsg: ConversationMessage, assistantMsg: ConversationMessage) => {
-      setMessages((prev) => [...prev, userMsg, assistantMsg]);
-    },
-    [setMessages],
-  );
 
   const handleMetaReceived = useCallback(
     (
@@ -185,23 +56,15 @@ export function useChatMessageUpdates({
       tempAsstId: string,
       realAsstId: string,
     ) => {
-      setMessages((prev) =>
-        prev.map((m) => {
-          if (m.id === tempUserId) return { ...m, id: realUserId };
-          if (m.id === tempAsstId) {
-            return {
-              ...m,
-              id: realAsstId,
-              trust_trail: m.trust_trail
-                ? { ...m.trust_trail, assistant_message_id: realAsstId }
-                : m.trust_trail,
-            };
-          }
-          return m;
-        }),
-      );
+      dispatch({
+        type: "swap_meta_ids",
+        map: [
+          { tempId: tempUserId, realId: realUserId },
+          { tempId: tempAsstId, realId: realAsstId },
+        ],
+      });
     },
-    [setMessages],
+    [dispatch],
   );
 
   const handleDelta = useCallback(
@@ -223,228 +86,55 @@ export function useChatMessageUpdates({
 
   const handleToolCall = useCallback(
     (assistantId: string, data: RenderToolCallData) => {
-      setMessages((prev) =>
-        prev.map((m) => {
-          if (m.id !== assistantId) return m;
-          const trail = trustTrailFor(m, data.assistant_message_id);
-          const existing = trail.tool_calls;
-          const previous = existing.find(
-            (call) => call.tool_call_index === data.tool_call_index,
-          );
-          const nextCall: MessageToolCall = {
-            ...(previous ?? {}),
-            id: data.tool_call_id ?? previous?.id,
-            assistant_message_id: data.assistant_message_id,
-            tool_name: data.tool_name,
-            tool_call_index: data.tool_call_index,
-            status: data.status ?? "running",
-            scope: "provider_tool",
-            requested_types: [],
-            input_preview: previous?.input_preview,
-            result_refs: previous?.result_refs ?? [],
-            selected_context_refs: previous?.selected_context_refs ?? [],
-            provider_request_ids: previous?.provider_request_ids ?? [],
-            result_count: previous?.result_count ?? 0,
-            selected_count: previous?.selected_count ?? 0,
-            retrievals: previous?.retrievals ?? [],
-            candidate_ledgers: previous?.candidate_ledgers ?? [],
-            rerank_ledgers: previous?.rerank_ledgers ?? [],
-          };
-          const index = existing.findIndex(
-            (call) => call.tool_call_index === data.tool_call_index,
-          );
-          const toolCalls =
-            index >= 0
-              ? existing.map((call, idx) =>
-                  idx === index ? { ...call, ...nextCall } : call,
-                )
-              : [...existing, nextCall];
-          return {
-            ...m,
-            trust_trail: { ...trail, status: "running", tool_calls: toolCalls },
-          };
-        }),
-      );
+      dispatch({
+        type: "apply_tool_call",
+        assistantId,
+        call: { phase: "call", data },
+      });
     },
-    [setMessages],
+    [dispatch],
   );
 
   const handleToolCallDelta = useCallback(
     (assistantId: string, data: SSEToolCallDeltaEvent["data"]) => {
       flushDeltas();
-      setMessages((prev) =>
-        prev.map((m) => {
-          if (m.id !== assistantId) return m;
-          const trail = trustTrailFor(m, data.assistant_message_id);
-          const existing = trail.tool_calls;
-          const index = existing.findIndex(
-            (call) => call.tool_call_index === data.tool_call_index,
-          );
-          const previous = index >= 0 ? existing[index] : null;
-          const nextCall: MessageToolCall = {
-            ...(previous ?? {}),
-            id: data.tool_call_id ?? previous?.id,
-            assistant_message_id: data.assistant_message_id,
-            tool_name: data.tool_name,
-            tool_call_index: data.tool_call_index,
-            status: "running",
-            scope: "provider_tool",
-            requested_types: previous?.requested_types ?? [],
-            input_preview: data.input_preview ?? previous?.input_preview,
-            result_refs: previous?.result_refs ?? [],
-            selected_context_refs: previous?.selected_context_refs ?? [],
-            provider_request_ids: previous?.provider_request_ids ?? [],
-            result_count: previous?.result_count ?? 0,
-            selected_count: previous?.selected_count ?? 0,
-            retrievals: previous?.retrievals ?? [],
-            candidate_ledgers: previous?.candidate_ledgers ?? [],
-            rerank_ledgers: previous?.rerank_ledgers ?? [],
-          };
-          const toolCalls =
-            index >= 0
-              ? existing.map((call, idx) => (idx === index ? nextCall : call))
-              : [...existing, nextCall];
-          return {
-            ...m,
-            trust_trail: { ...trail, status: "running", tool_calls: toolCalls },
-          };
-        }),
-      );
+      dispatch({
+        type: "apply_tool_call",
+        assistantId,
+        call: { phase: "delta", data },
+      });
     },
-    [flushDeltas, setMessages],
+    [dispatch, flushDeltas],
   );
 
   const handleToolCallDone = useCallback(
     (assistantId: string, data: SSEToolCallDoneEvent["data"]) => {
       flushDeltas();
-      handleToolCall(assistantId, {
-        ...data,
-        status: "running",
-      });
+      handleToolCall(assistantId, { ...data, status: "running" });
     },
     [flushDeltas, handleToolCall],
   );
 
   const handleToolResult = useCallback(
     (assistantId: string, data: SSEToolResultEvent["data"]) => {
-      const results = Array.isArray(data.results) ? data.results : [];
-      const retrievals: MessageRetrieval[] = results.flatMap(
-        (citation, index) => {
-          if (isWebCitationEventData(citation)) {
-            return [retrievalFromWebCitation(citation, data, index)];
-          }
-          if (!isSearchCitationEventData(citation)) return [];
-          return [retrievalFromSearchCitation(citation, data, index)];
-        },
-      );
-      setMessages((prev) =>
-        prev.map((m) => {
-          if (m.id !== assistantId) return m;
-          const trail = trustTrailFor(m, data.assistant_message_id);
-          const existing = trail.tool_calls;
-          const index = existing.findIndex(
-            (call) => call.tool_call_index === data.tool_call_index,
-          );
-          const previous = index >= 0 ? existing[index] : null;
-          const nextCall: MessageToolCall = {
-            ...(previous ?? {}),
-            id: data.tool_call_id ?? previous?.id,
-            assistant_message_id: data.assistant_message_id,
-            tool_name: data.tool_name,
-            tool_call_index: data.tool_call_index,
-            status: data.status,
-            scope: data.scope,
-            requested_types: data.types,
-            error_code: data.error_code ?? null,
-            latency_ms: data.latency_ms,
-            result_count: data.result_count ?? 0,
-            selected_count: data.selected_count ?? 0,
-            result_refs: data.results as Array<Record<string, unknown>>,
-            selected_context_refs: previous?.selected_context_refs ?? [],
-            provider_request_ids: data.provider_request_ids ?? previous?.provider_request_ids ?? [],
-            retrievals,
-            candidate_ledgers: previous?.candidate_ledgers ?? [],
-            rerank_ledgers: previous?.rerank_ledgers ?? [],
-          };
-          const toolCalls =
-            index >= 0
-              ? existing.map((call, idx) => (idx === index ? nextCall : call))
-              : [...existing, nextCall];
-          return {
-            ...m,
-            trust_trail: { ...trail, tool_calls: toolCalls },
-          };
-        }),
-      );
+      dispatch({ type: "apply_tool_result", assistantId, data });
     },
-    [setMessages],
+    [dispatch],
   );
 
   const handleCitationIndex = useCallback(
     (assistantId: string, data: SSECitationIndexEvent["data"]) => {
-      const citations = data.citations.map((item) => item.citation);
-      setMessages((prev) =>
-        prev.map((m) => {
-          if (m.id !== assistantId) return m;
-          const trail = trustTrailFor(m, data.assistant_message_id);
-          return {
-            ...m,
-            citations,
-            trust_trail: {
-              ...trail,
-              citations: data.citations.map((item) => ({
-                citation_edge_id: item.citation_edge_id,
-                ordinal: item.citation.ordinal,
-                role: item.citation.role,
-                target_ref: item.citation.target_ref,
-                retrieval_id: null,
-                tool_call_id: null,
-                citation: item.citation,
-              })),
-            },
-          };
-        }),
-      );
+      dispatch({ type: "apply_citation_index", assistantId, data });
     },
-    [setMessages],
+    [dispatch],
   );
 
   const handleContextRefAdded = useCallback(
     (assistantId: string, data: SSEContextRefAddedEvent["data"]) => {
       onContextRefAdded?.(data);
-      setMessages((prev) =>
-        prev.map((m) => {
-          if (m.id !== assistantId) return m;
-          const trail = trustTrailFor(m, assistantId, data.conversation_id);
-          const contextRef = {
-            chat_run_event_seq: 0,
-            id: data.id,
-            conversation_id: data.conversation_id,
-            resource_ref: data.resource_ref,
-            activation: data.activation,
-            label: data.label,
-            summary: data.summary,
-            missing: data.missing,
-            created_at: data.created_at,
-            citation_edge_id: data.citation_edge_id,
-          };
-          return {
-            ...m,
-            trust_trail: {
-              ...trail,
-              context_refs_added: trail.context_refs_added.some(
-                (existing) => existing.id === data.id,
-              )
-                ? trail.context_refs_added.map((existing) =>
-                    existing.id === data.id ? contextRef : existing,
-                  )
-                : [...trail.context_refs_added, contextRef],
-            },
-          };
-        }),
-      );
+      dispatch({ type: "apply_context_ref", assistantId, data });
     },
-    [onContextRefAdded, setMessages],
+    [dispatch, onContextRefAdded],
   );
 
   const handleDone = useCallback(
@@ -456,32 +146,20 @@ export function useChatMessageUpdates({
       const buffer = deltaBufferRef.current;
       const remaining = buffer.get(assistantId);
       buffer.delete(assistantId);
-
-      setMessages((prev) =>
-        prev.map((m) => {
-          if (m.id !== assistantId) return m;
-          const content = remaining
-            ? conversationMessageText(m) + remaining
-            : conversationMessageText(m);
-          return {
-            ...m,
-            message_document: messageDocumentWithText(m, content),
-            status,
-            error_code: errorCode,
-            trust_trail: m.trust_trail
-              ? { ...m.trust_trail, status }
-              : m.trust_trail,
-          };
-        }),
-      );
+      dispatch({
+        type: "finalize_done",
+        assistantId,
+        status,
+        errorCode,
+        delta: remaining,
+      });
     },
-    [setMessages],
+    [dispatch],
   );
 
   return {
     flushDeltas,
     shouldFoldEvent,
-    handleOptimisticMessages,
     handleMetaReceived,
     handleDelta,
     handleToolCall,

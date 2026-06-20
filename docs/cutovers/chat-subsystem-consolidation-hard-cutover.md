@@ -1,11 +1,71 @@
 # Chat Subsystem Consolidation Hard Cutover
 
-Status: SPEC - Rev 1
+Status: BUILT - 2026-06-20
 Author altitude: SME / staff
-Date: 2026-06-19
+Date: 2026-06-19 (spec) / 2026-06-20 (built)
 Type: hard cutover - no legacy paths, no fallbacks, no backward compatibility,
 no re-export shims, no dual owners. Where old scattered logic and a new single
 owner both exist, only the new owner survives.
+
+Built 2026-06-20 — all slices S0–S7 except the deferred S2 prop-grouping (F5; X3
+guard-sharing was already satisfied). **Zero behavior change, proven green:**
+
+- **FE (S0/S1):** `messageUpdateReducer` (pure, 11-action total union) + `useReducer`
+  engine → exactly **0** raw `setMessages` callers; `PerRunStreamContext` folds the
+  three former per-run refs (`abort === null` ⇔ not streaming); `createRunVisibility`
+  replaces the five predicates; dead `handleOptimisticMessages` deleted. Verify:
+  typecheck + lint clean; 24 new unit (reducer / runVisibility / perRunStreamContext)
+  + `useChatRunTail.test.tsx` (6 browser tests driving the live orchestrator —
+  supersession / first-delta latch / visibility gating / reconnect-reconcile — through
+  the real per-run context + reducer, transport boundary mocked) +
+  `useConversation.test.tsx` covering the engine's abort *decision* against a mocked
+  tail + full FE unit 929 green (the 1 `workspaceRestore` failure is unrelated
+  pre-existing pane-loader debt, not this cutover).
+- **BE (S3):** `chat_run_citations.py` (10-fn citation family) + `chat_run_tools.py`
+  (8-fn tool family) extracted from `chat_runs.py` (**2719 → 1771 LOC**, −948).
+- **BE (S4):** `ChatRunEventEmitter` is the sole durable-append owner; the per-event
+  commit policy is preserved exactly (streaming methods `append_and_commit` inline;
+  batch methods defer; `db.commit()` count unchanged at 18).
+- **BE (S5):** `run_kit.get_run_events` / `is_run_terminal` (kind-dispatched, no cycle —
+  the three `*EventOut` schemas live in `nexus/schemas/`); chat/oracle/LI drop their
+  private copies; viewer scoping stays in the route's `assert_viewer`. The chat
+  terminal check now adopts the oracle/LI scalar + missing-row-is-terminal pattern
+  (intended per §9/R3).
+- Verify: canonical `pyright` 0 + `ruff` clean; chat integration 54/54 + oracle/LI/
+  SSE/stream/run_kit 199/199; **7 negative gates** codified in
+  `tests/test_chat_subsystem_consolidation_negative_gates.py`.
+
+**Review hardening (2026-06-20).** A 10-dimension adversarial re-review
+(faithfulness / commit-policy / terminal-semantics / standards / completeness /
+consolidation, every finding independently refuted-or-confirmed) found the
+extraction byte-faithful and the zero-behavior-change contract intact — every
+correctness dimension clean (commit policy `db.commit()` 18==18; the chat
+terminal-semantics change proven HTTP/SSE-contract-equivalent since the route's
+`assert_viewer` still gates upfront, so missing-row-is-terminal only changes an
+internal close-reason label). Five low/nit polish items were then fixed: (1) the
+now-vestigial deferred `prune_tool_call_retrievals` import in `app_search.py` /
+`web_search.py` hoisted to module top — the cycle it broke is gone once prune
+moved to `chat_run_citations`, which imports neither `chat_runs` nor the agent
+tools (proven by full-app import smoke); (2) the live-orchestrator integration
+test added (`useChatRunTail.test.tsx`, above); (3) the emitter negative gate
+extended to also scan `chat_run_tools.py`; (4)–(5) this Status block's LOC and
+FE-coverage wording corrected.
+
+**S2 resolution.** X3 (shared SSE guard utilities) was already satisfied —
+`sse/guards.ts` is the single guard-util owner and both `sse/events.ts` and
+`sse/libraryIntelligenceEvents.ts` import from it; the local `events.ts` predicates
+are chat-grammar-specific (the dispatchers stay separate per §7.3).
+
+**F5 (ChatComposer/ChatSurface prop grouping) is declined on standards grounds**,
+not merely deferred. AC-8's premise — that the flat prop lists "violate the
+single-object boundary-API rule" — does not hold against
+`docs/rules/function-parameters.md`: React components already take a *single props
+object* (rule 9 is satisfied), and rule 19 is "prefer shallow object shapes by
+default," with nesting reserved for "a real named sub-concern" (rule 20). Folding
+these leaf-view props into sub-objects would *regress* against the prevailing
+house rule (prefer-shallow) for purely cosmetic gain on the critical send path. The
+dead-code half of AC-8 (`handleOptimisticMessages` removal) is done; the grouping
+half is superseded by the standard. e2e not run.
 
 This is the "simplify and consolidate the chat mess" spec. It owns **structural
 ownership and duplication collapse** in the chat subsystem. It is orthogonal to,

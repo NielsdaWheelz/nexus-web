@@ -512,39 +512,6 @@ def assert_reading_owner(db: Session, *, viewer_id: UUID, reading_id: UUID) -> N
     _get_reading_owned_by(db, viewer_id=viewer_id, reading_id=reading_id)
 
 
-def get_reading_events(db: Session, *, reading_id: UUID, after: int) -> list[OracleReadingEventOut]:
-    rows = (
-        db.execute(
-            select(OracleReadingEvent)
-            .where(
-                OracleReadingEvent.reading_id == reading_id,
-                OracleReadingEvent.seq > after,
-            )
-            .order_by(OracleReadingEvent.seq)
-        )
-        .scalars()
-        .all()
-    )
-    return [
-        OracleReadingEventOut(
-            seq=row.seq, event_type=row.event_type, payload=dict(row.payload or {})
-        )
-        for row in rows
-    ]
-
-
-def is_reading_terminal(db: Session, *, reading_id: UUID) -> bool:
-    status = db.execute(
-        select(OracleReading.status).where(OracleReading.id == reading_id)
-    ).scalar_one_or_none()
-    # A missing row (reading deleted mid-stream) is terminal — otherwise the SSE
-    # tail would stream forever. assert_reading_owner proved it existed at open.
-    # The terminal set has one owner (run_kit).
-    return status is None or status in run_kit.terminal_statuses(
-        run_kit.RunStreamKind.OracleReading
-    )
-
-
 # ---------- worker entrypoint -----------------------------------------------
 
 

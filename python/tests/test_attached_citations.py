@@ -7,19 +7,19 @@ Covers attached-resource citation behavior (resource provenance graph §5.2):
   retrieval row via ``search.get_search_result``; un-anchored highlights stay in
   the prompt but are never numbered.
 - The dense ordinal (``n``) has no holes: only citable resources consume an ``n``.
-- ``chat_runs._persist_attached_citations`` writes ONE synthetic
+- ``chat_run_citations.persist_attached_citations`` writes ONE synthetic
   ``attached_resources`` parent tool-call plus one ``message_retrievals`` row per
   citation (``selected=true``, ``retrieval_status='attached_context'``), AND
   records one ``origin='citation'`` resource edge per row (ordinal 1..k,
   ``source = message:<assistant_message_id>``) with ``cited_edge_id`` pointing
   back from the telemetry row.
-- ``chat_runs._persist_read_evidence_citation`` writes no row (returns None) when
+- ``chat_run_citations.persist_read_evidence_citation`` writes no row (returns None) when
   the read result has no materializable retrieval.
 
 Assertions go through the public service surface plus raw SQL reads of the
 persisted tables, mirroring the style of ``test_read_resource_tool.py``.
 
-Isolation: the searchable-index setup and ``chat_runs._persist_attached_citations``
+Isolation: the searchable-index setup and ``chat_run_citations.persist_attached_citations``
 both ``commit()``, so a function-scoped savepoint rollback (the ``db_session``
 fixture) cannot undo them — the committed rows would leak into later tests in the
 same session. These tests therefore run on the ``direct_db`` manager (real
@@ -38,7 +38,7 @@ from sqlalchemy.orm import Session
 
 from nexus.db.models import ChatRun, Fragment, Message, ResourceEdge
 from nexus.errors import NotFoundError
-from nexus.services import chat_runs, context_assembler, search
+from nexus.services import chat_run_citations, context_assembler, search
 from nexus.services.agent_tools.read_resource import execute_read_resource
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.resource_graph.context import add_context_ref_without_commit
@@ -280,7 +280,7 @@ def test_anchored_highlight_is_numbered_and_persists_valid_row(direct_db: Direct
         assert citations[0].result_type == "highlight"
 
         run = _make_chat_run(session, conversation_id, user_id)
-        chat_runs._persist_attached_citations(session, run, citations)
+        chat_run_citations.persist_attached_citations(session, run, citations)
 
         calls = _tool_calls(session, run.assistant_message_id)
         assert len(calls) == 1, f"Expected one synthetic tool-call; got {calls}"
@@ -326,7 +326,7 @@ def test_anchored_highlight_is_numbered_and_persists_valid_row(direct_db: Direct
         )
         assert rehydrated.citations[0].target_ref.type == "highlight"
 
-        chat_runs._persist_attached_citations(session, run, ())
+        chat_run_citations.persist_attached_citations(session, run, ())
         assert _tool_calls(session, run.assistant_message_id) == []
         assert _citation_edges(session, run.assistant_message_id) == [], (
             "Removing the attached set must delete its citation edges too"
@@ -391,7 +391,7 @@ def test_attached_content_chunk_citation_activates_primary_evidence(
         assert citations[0].deep_link == f"/media/{media_id}#evidence-{evidence_span_id}"
 
         run = _make_chat_run(session, conversation_id, user_id)
-        chat_runs._persist_attached_citations(session, run, citations)
+        chat_run_citations.persist_attached_citations(session, run, citations)
         tool_call_id, _tool_name, _tool_index = _tool_calls(session, run.assistant_message_id)[0]
 
         rows = _retrievals_under(session, tool_call_id)
@@ -541,7 +541,7 @@ def test_reexecution_with_fewer_citations_prunes_phantom_edges(direct_db: Direct
         assert len(both) == 2
 
         run = _make_chat_run(session, conversation_id, user_id)
-        chat_runs._persist_attached_citations(session, run, both)
+        chat_run_citations.persist_attached_citations(session, run, both)
         edges = _citation_edges(session, run.assistant_message_id)
         assert [edge.ordinal for edge in edges] == [1, 2], (
             f"Both attached highlights cite their media; got {[e.ordinal for e in edges]}"
@@ -552,7 +552,7 @@ def test_reexecution_with_fewer_citations_prunes_phantom_edges(direct_db: Direct
 
         # Re-execute with only the FIRST citation. The second row (ordinal 1,
         # 0-based) is pruned; its cited_edge_id still points at edge ordinal 2.
-        chat_runs._persist_attached_citations(session, run, (both[0],))
+        chat_run_citations.persist_attached_citations(session, run, (both[0],))
 
         surviving = _citation_edges(session, run.assistant_message_id)
         assert [edge.ordinal for edge in surviving] == [1], (
@@ -611,7 +611,7 @@ def test_read_evidence_with_materializable_retrieval_persists_next_ordinal(
         )
         session.commit()
 
-        n = chat_runs._persist_read_evidence_citation(
+        n = chat_run_citations.persist_read_evidence_citation(
             session,
             run=run,
             tool_call_id=tool_call_id,
@@ -697,7 +697,7 @@ def test_read_evidence_section_full_and_page_range_persist_citations(
                 tool_call_index=offset + 1,
             )
             tool_call_ids.append(tool_call_id)
-            n = chat_runs._persist_read_evidence_citation(
+            n = chat_run_citations.persist_read_evidence_citation(
                 session,
                 run=run,
                 tool_call_id=tool_call_id,
@@ -771,7 +771,7 @@ def test_read_evidence_without_materializable_retrieval_persists_nothing(
         )
         session.commit()
 
-        n = chat_runs._persist_read_evidence_citation(
+        n = chat_run_citations.persist_read_evidence_citation(
             session,
             run=run,
             tool_call_id=tool_call_id,

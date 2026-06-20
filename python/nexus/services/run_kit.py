@@ -22,11 +22,11 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import assert_never
+from typing import Any, assert_never, cast
 from uuid import UUID
 
 from pydantic import JsonValue
-from sqlalchemy import func, text
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import (
@@ -37,6 +37,9 @@ from nexus.db.models import (
     OracleReading,
     OracleReadingEvent,
 )
+from nexus.schemas.conversation import ChatRunEventOut
+from nexus.schemas.library_intelligence import LibraryIntelligenceRevisionEventOut
+from nexus.schemas.oracle import OracleReadingEventOut
 
 RunEventPayload = dict[str, JsonValue]
 
@@ -178,6 +181,108 @@ def mark_terminal(
     if isinstance(parent, OracleReading) and status == "failed":
         parent.failed_at = func.now()
     append_event(db, stream=stream, event_type="done", payload=done_payload)
+
+
+def get_run_events(
+    db: Session, kind: RunStreamKind, parent_id: UUID, after: int
+) -> tuple[
+    list[ChatRunEventOut | OracleReadingEventOut | LibraryIntelligenceRevisionEventOut], bool
+]:
+    """Return the kind's replay events with ``seq > after`` plus the terminal flag.
+
+    The single owner of the run-tail query (chat/oracle/LI) that the SSE cursor
+    stream re-reads on each notify. Per-kind payload coercion is preserved exactly
+    as the old per-surface functions did. Viewer scoping is **not** here: the
+    route's ``assert_viewer`` owns ownership (it runs upfront, once).
+    """
+    events: list[ChatRunEventOut | OracleReadingEventOut | LibraryIntelligenceRevisionEventOut]
+    if kind is RunStreamKind.ChatRun:
+        chat_rows = (
+            db.execute(
+                select(ChatRunEvent)
+                .where(ChatRunEvent.run_id == parent_id, ChatRunEvent.seq > after)
+                .order_by(ChatRunEvent.seq.asc())
+            )
+            .scalars()
+            .all()
+        )
+        events = [
+            ChatRunEventOut(
+                seq=row.seq,
+                event_type=cast(Any, row.event_type),
+                payload=row.payload,
+                created_at=row.created_at,
+            )
+            for row in chat_rows
+        ]
+    elif kind is RunStreamKind.OracleReading:
+        oracle_rows = (
+            db.execute(
+                select(OracleReadingEvent)
+                .where(
+                    OracleReadingEvent.reading_id == parent_id,
+                    OracleReadingEvent.seq > after,
+                )
+                .order_by(OracleReadingEvent.seq)
+            )
+            .scalars()
+            .all()
+        )
+        events = [
+            OracleReadingEventOut(
+                seq=row.seq, event_type=row.event_type, payload=dict(row.payload or {})
+            )
+            for row in oracle_rows
+        ]
+    elif kind is RunStreamKind.LibraryIntelligence:
+        li_rows = (
+            db.execute(
+                select(LibraryIntelligenceRevisionEvent)
+                .where(
+                    LibraryIntelligenceRevisionEvent.revision_id == parent_id,
+                    LibraryIntelligenceRevisionEvent.seq > after,
+                )
+                .order_by(LibraryIntelligenceRevisionEvent.seq)
+            )
+            .scalars()
+            .all()
+        )
+        events = [
+            LibraryIntelligenceRevisionEventOut(
+                seq=row.seq,
+                event_type=row.event_type,
+                payload=dict(row.payload) if isinstance(row.payload, dict) else {},
+            )
+            for row in li_rows
+        ]
+    else:
+        assert_never(kind)
+    return events, is_run_terminal(db, kind, parent_id)
+
+
+def is_run_terminal(db: Session, kind: RunStreamKind, parent_id: UUID) -> bool:
+    """Whether the run is terminal — a missing row counts as terminal.
+
+    A row deleted mid-stream ends the SSE tail cleanly (it would otherwise stream
+    forever). Adopts the scalar-status query for all three kinds. No viewer scoping.
+    """
+    if kind is RunStreamKind.ChatRun:
+        status = db.execute(
+            select(ChatRun.status).where(ChatRun.id == parent_id)
+        ).scalar_one_or_none()
+    elif kind is RunStreamKind.OracleReading:
+        status = db.execute(
+            select(OracleReading.status).where(OracleReading.id == parent_id)
+        ).scalar_one_or_none()
+    elif kind is RunStreamKind.LibraryIntelligence:
+        status = db.execute(
+            select(LibraryIntelligenceArtifactRevision.status).where(
+                LibraryIntelligenceArtifactRevision.id == parent_id
+            )
+        ).scalar_one_or_none()
+    else:
+        assert_never(kind)
+    return status is None or status in terminal_statuses(kind)
 
 
 def fail_run_after_worker_exception[P](

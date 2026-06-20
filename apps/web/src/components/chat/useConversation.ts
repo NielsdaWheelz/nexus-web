@@ -25,6 +25,7 @@ import {
   useEffect,
   useLayoutEffect,
   useMemo,
+  useReducer,
   useRef,
   useState,
 } from "react";
@@ -44,6 +45,7 @@ import {
 import type { SSEContextRefAddedEvent } from "@/lib/api/sse/events";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { addContextRef } from "@/lib/resourceGraph/contextRefs";
+import { messageUpdateReducer } from "@/lib/conversations/messageUpdateReducer";
 import { toFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
 import type {
   BranchDraft,
@@ -161,7 +163,13 @@ export function useConversation(
     initialConversationId,
   );
   const [title, setTitle] = useState("New chat");
-  const [messages, setMessages] = useState<ConversationMessage[]>([]);
+  // The reducer is the single owner of every transcript transition; the engine
+  // holds the state and dispatches actions (it is the only `setMessages`-class
+  // consumer — there is no raw setter).
+  const [messages, dispatchMessages] = useReducer(
+    messageUpdateReducer,
+    [] as ConversationMessage[],
+  );
   const [olderCursor, setOlderCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(Boolean(initialConversationId));
   const [error, setError] = useState<FeedbackContent | null>(null);
@@ -243,7 +251,7 @@ export function useConversation(
   const { activeRunId, tailChatRun, abortAll, cancelRun } = useChatRunTail(
     branching
       ? {
-          setMessages,
+          dispatch: dispatchMessages,
           setForkOptionsByParentId,
           onContextRefAdded,
           onConversationAvailable: onConversationCreated,
@@ -251,7 +259,7 @@ export function useConversation(
           shouldApplyRun: shouldApplyRunToSelectedPath,
         }
       : {
-          setMessages,
+          dispatch: dispatchMessages,
           onContextRefAdded,
           onConversationAvailable: onConversationCreated,
           shouldStartRun: shouldStartRunForCurrentConversation,
@@ -321,7 +329,7 @@ export function useConversation(
   const applyConversationTree = useCallback(
     (tree: ConversationTreeResponse) => {
       setTitle(tree.conversation.title);
-      setMessages(tree.selected_path);
+      dispatchMessages({ type: "set_all", messages: tree.selected_path });
       selectedPathIdsRef.current = messageIdsForPath(
         tree.selected_path,
         tree.active_leaf_message_id,
@@ -466,7 +474,7 @@ export function useConversation(
     abortAll();
     setConversationId(initialConversationId);
     setTitle("New chat");
-    setMessages([]);
+    dispatchMessages({ type: "set_all", messages: [] });
     setOlderCursor(null);
     setLoading(Boolean(initialConversationId));
     setError(null);
@@ -539,7 +547,10 @@ export function useConversation(
       }
     } else {
       if (branching) return;
-      setMessages(historyResource.data.messages);
+      dispatchMessages({
+        type: "set_all",
+        messages: historyResource.data.messages,
+      });
       setOlderCursor(historyResource.data.olderCursor);
     }
     setError(null);
@@ -581,11 +592,7 @@ export function useConversation(
         `/api/conversations/${id}/messages?${params}`,
       );
       scrollRef.current?.captureAnchor(null);
-      setMessages((prev) => {
-        const existingIds = new Set(prev.map((m) => m.id));
-        const next = response.data.filter((m) => !existingIds.has(m.id));
-        return [...next, ...prev];
-      });
+      dispatchMessages({ type: "prepend_older", messages: response.data });
       setOlderCursor(response.page.before_cursor ?? null);
     } catch (err) {
       if (handleUnauthenticatedApiError(err)) return;
@@ -657,7 +664,11 @@ export function useConversation(
       // Seed the optimistic pair for a brand-new turn (no branch parent). For a
       // branch reply, useChatRunTail merges it into the existing path.
       if (!runData.user_message.parent_message_id) {
-        setMessages([runData.user_message, runData.assistant_message]);
+        dispatchMessages({
+          type: "seed_optimistic",
+          user: runData.user_message,
+          assistant: runData.assistant_message,
+        });
       }
       // Linear mode is single-stream: abort the previous run before
       // tailing the new one. Branching
@@ -734,7 +745,7 @@ export function useConversation(
       // restores it on the next messages-driven layout.
       scrollRef.current?.captureAnchor(anchorMessageId);
 
-      setMessages(nextPath);
+      dispatchMessages({ type: "set_all", messages: nextPath });
       selectedPathIdsRef.current = messageIdsForPath(nextPath, nextLeafId);
       setActiveLeafMessageId(nextLeafId);
       if (
@@ -772,7 +783,7 @@ export function useConversation(
         if (handleUnauthenticatedApiError(err)) return;
         setError(toFeedback(err, { fallback: "Failed to switch fork" }));
         scrollRef.current?.captureAnchor(anchorMessageId);
-        setMessages(previous.messages);
+        dispatchMessages({ type: "set_all", messages: previous.messages });
         selectedPathIdsRef.current = messageIdsForPath(
           previous.messages,
           previous.activeLeafMessageId,

@@ -48,7 +48,6 @@ from nexus.services.oracle import (
     create_reading,
     execute_reading,
     get_reading_detail,
-    is_reading_terminal,
 )
 from nexus.services.search import search as run_search
 from nexus.services.search.query import SearchQuery, SearchScope
@@ -3590,7 +3589,7 @@ def test_is_reading_terminal_treats_missing_reading_as_terminal(db_session: Sess
     cleanly instead of streaming forever. Regression lock for the is_reading_terminal
     fix that the unified cursor stream relies on for its gone-terminal close path.
     """
-    assert is_reading_terminal(db_session, reading_id=uuid4()) is True
+    assert run_kit.is_run_terminal(db_session, run_kit.RunStreamKind.OracleReading, uuid4()) is True
 
 
 def _seed_ready_note(

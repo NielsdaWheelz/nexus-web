@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
-import { useState } from "react";
+import { useReducer } from "react";
 import AssistantEvidenceDisclosure from "./AssistantEvidenceDisclosure";
 import { useChatMessageUpdates } from "./useChatMessageUpdates";
+import { messageUpdateReducer } from "@/lib/conversations/messageUpdateReducer";
 import type { SSECitationIndexEvent } from "@/lib/api/sse/events";
 import type { CitationOut } from "@/lib/conversations/citationOut";
 import type { ConversationMessage } from "@/lib/conversations/types";
@@ -127,10 +128,10 @@ const ONE_CITATION_EVENT: SSECitationIndexEvent["data"] = {
 // (ordinal/role/target/locator) that flows to render, so we can assert the
 // backend-built locator survives the live fold.
 function CitationIndexHarness() {
-  const [messages, setMessages] = useState<ConversationMessage[]>([
+  const [messages, dispatch] = useReducer(messageUpdateReducer, [
     assistantMessage(),
   ]);
-  const { handleCitationIndex } = useChatMessageUpdates({ setMessages });
+  const { handleCitationIndex } = useChatMessageUpdates({ dispatch });
   const message = messages[0];
   return (
     <div>
@@ -173,13 +174,13 @@ function foldedRows(): string[] {
 }
 
 function ToolDeltaHarness() {
-  const [messages, setMessages] = useState<ConversationMessage[]>([
+  const [messages, dispatch] = useReducer(messageUpdateReducer, [
     {
       ...assistantMessage(),
       message_document: { type: "message_document", blocks: [] },
     },
   ]);
-  const { handleToolCallDelta } = useChatMessageUpdates({ setMessages });
+  const { handleToolCallDelta } = useChatMessageUpdates({ dispatch });
   const tool = messages[0].trust_trail?.tool_calls[0];
   return (
     <div>

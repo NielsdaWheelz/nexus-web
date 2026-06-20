@@ -27,6 +27,7 @@ from nexus.schemas.retrieval import (
     retrieval_locator_json,
     retrieval_result_ref_json,
 )
+from nexus.services.chat_run_citations import prune_tool_call_retrievals
 from nexus.services.retrieval_citation import RetrievalCitation, insert_retrieval_row
 
 logger = get_logger(__name__)
@@ -469,8 +470,6 @@ def persist_web_search_run(db: Session, run: WebSearchRun) -> None:
             },
         )
     run.tool_call_id = tool_call_id
-    from nexus.services.chat_runs import prune_tool_call_retrievals
-
     if existing is not None:
         prune_tool_call_retrievals(db, tool_call_id=tool_call_id)
 

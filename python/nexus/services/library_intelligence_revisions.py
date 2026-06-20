@@ -6,15 +6,12 @@ from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import select, text
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import is_library_member
-from nexus.db.models import LibraryIntelligenceRevisionEvent
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas.citation import CitationOut
-from nexus.schemas.library_intelligence import LibraryIntelligenceRevisionEventOut
-from nexus.services import run_kit
 from nexus.services.library_intelligence import coverage_counts
 from nexus.services.resource_graph.citations import build_citation_outs
 from nexus.services.resource_graph.refs import ResourceRef
@@ -230,41 +227,6 @@ def assert_revision_viewer(db: Session, *, viewer_id: UUID, revision_id: UUID) -
     )
     if row is None or not is_library_member(db, viewer_id, UUID(str(row["library_id"]))):
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Revision not found")
-
-
-def get_revision_events(
-    db: Session, *, revision_id: UUID, after: int
-) -> list[LibraryIntelligenceRevisionEventOut]:
-    rows = (
-        db.execute(
-            select(LibraryIntelligenceRevisionEvent)
-            .where(
-                LibraryIntelligenceRevisionEvent.revision_id == revision_id,
-                LibraryIntelligenceRevisionEvent.seq > after,
-            )
-            .order_by(LibraryIntelligenceRevisionEvent.seq)
-        )
-        .scalars()
-        .all()
-    )
-    return [
-        LibraryIntelligenceRevisionEventOut(
-            seq=row.seq,
-            event_type=row.event_type,
-            payload=dict(row.payload) if isinstance(row.payload, dict) else {},
-        )
-        for row in rows
-    ]
-
-
-def is_revision_terminal(db: Session, *, revision_id: UUID) -> bool:
-    status = db.execute(
-        text("SELECT status FROM library_intelligence_artifact_revisions WHERE id = :revision_id"),
-        {"revision_id": revision_id},
-    ).scalar_one_or_none()
-    return status is None or status in run_kit.terminal_statuses(
-        run_kit.RunStreamKind.LibraryIntelligence
-    )
 
 
 def _require_member(db: Session, viewer_id: UUID, library_id: UUID) -> None:
