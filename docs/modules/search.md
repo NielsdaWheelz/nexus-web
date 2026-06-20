@@ -1,0 +1,354 @@
+# Search And Retrieval Module
+
+**Status:** Draft architecture contract, 2026-06-20.
+
+## Scope
+
+The search module owns local-library retrieval for the search page, palette search,
+chat `app_search`, note object-ref resolution, and any future retrieval controller
+that selects evidence from Nexus-owned resources.
+
+Backend owners live under `python/nexus/services/search/`,
+`python/nexus/services/content_indexing.py`,
+`python/nexus/services/note_indexing.py`, and the chat adapter
+`python/nexus/services/agent_tools/app_search.py`.
+
+Frontend owners live under `apps/web/src/lib/search/*`,
+`apps/web/src/app/(authenticated)/search/*`, and palette callers that consume the
+shared search query model.
+
+Search does not own citation identity. Citations are graph-owned
+`resource_edges`; `message_retrievals` and retrieval ledgers are telemetry.
+
+## Current Architecture
+
+One shared `search(db, viewer, SearchQuery)` serves three user-facing surfaces:
+the search page, chat `app_search`, and object-ref resolution for notes. The edge
+parses transport into a strict `SearchQuery`; internal callers do not pass raw
+HTTP params or tool args inward.
+
+Retrieval is already hybrid. For semantic-capable result types, search builds one
+query embedding, retrieves candidates from vector ANN and lexical FTS, applies
+type weighting and per-type normalization, sorts deterministically, and paginates
+to the requested result limit. The shared tuning constants currently include:
+
+- `DEFAULT_LIMIT = 20`
+- `MAX_LIMIT = 50`
+- `CANDIDATES_PER_TYPE = 200`
+- `CONTENT_CHUNK_MIN_ANN_CANDIDATES = 200`
+- `CONTENT_CHUNK_ANN_CANDIDATE_MULTIPLIER = 20`
+- `CONTENT_CHUNK_MIN_SEMANTIC_SIMILARITY = 0.50`
+
+Multi-scope execution lives in `search/batch.py`: each scope is searched through
+the shared `SearchQuery`, results are deduped by `(type, id)`, the best score is
+kept, and the merged list is capped by the base query limit.
+
+The current chat bottleneck is not the shared search substrate. It is
+`app_search` evidence selection:
+
+- `APP_SEARCH_LIMIT = 8`
+- `APP_SEARCH_SELECTED_LIMIT = 6`
+- `APP_SEARCH_CONTEXT_CHARS = 16000`
+- `execute_app_search` builds `SearchQuery(limit=APP_SEARCH_LIMIT)`.
+- `render_retrieved_context_blocks` greedily packs rendered blocks, marks selected
+  results, and stops at the first block that would exceed the char budget.
+- `message_rerank_ledgers.strategy` records
+  `prompt_evidence_then_context_budget`; this is a budget-ordering policy, not a
+  learned or semantic reranker.
+- The model-facing tool continuation is compact selected-result JSON from
+  `_app_search_tool_output`, not the full rendered `context_text`.
+
+This means the system can retrieve from a decent hybrid substrate and still fail
+at the evidence-controller layer by under-fetching, under-reranking, or packing a
+low-diversity prompt.
+
+## Ownership Boundaries
+
+Search owns:
+
+- `SearchQuery`, kind/filter parsing, validation, and result-type expansion.
+- Scope parsing, authorization, and scope-to-entity SQL.
+- Hybrid candidate generation, ranking, reranking policy, and candidate/result
+  count policy.
+- Search result projection into `SearchResultOut` and `RetrievalCitation`
+  inputs.
+- Retrieval quality evaluation for local-library search.
+
+Chat owns:
+
+- Conversation context-ref admission for tool scopes.
+- Tool-call execution, retries, SSE events, and provider loop orchestration.
+- Chat-specific evidence packing, prompt-budget tradeoffs, and retrieval ledgers.
+- Mapping selected retrieval telemetry rows to graph citation edges through the
+  chat-run citation owner.
+
+Resource graph owns:
+
+- `ResourceRef` identity.
+- Context refs, citation edges, and connection edges.
+- `CitationOut` read models and target-resource activation.
+
+Content indexing owns:
+
+- `content_blocks`, `evidence_spans`, `content_chunks`, embeddings, and
+  `content_index_states`.
+- Owner-polymorphic reindexing for media and notes.
+- Active embedding provider/model gating.
+
+`app_search` must stay a chat adapter and telemetry writer. It must not become a
+private vector store, private graph query engine, private citation owner, or
+second search semantics layer.
+
+## Query Classes
+
+Retrieval policy should classify queries before choosing depth:
+
+- Exact lookup: title, person, phrase, citation, date, or identifier.
+- Local passage lookup: "where does this concept appear?"
+- Scoped document lookup: a question about a known media/library ref.
+- Cross-document synthesis: compare, trace, find patterns, or summarize across
+  sources.
+- Global sensemaking: "what do my sources say about X?"
+- Multi-hop retrieval: answer requires a sequence of lookup, inspect, read, and
+  follow-up search.
+- Negative/absence questions: "do any sources mention X?"
+- Recency/continuity questions over conversations or notes.
+
+Small top-k is least appropriate for cross-document, global, multi-hop, and
+absence questions. Those should select deeper candidate pools and use iterative
+tooling.
+
+## Gold-Standard Retrieval Controller
+
+The target architecture is a staged retrieval controller. The stages are explicit
+so they can be evaluated and ledgered independently.
+
+1. Query planning
+   - Normalize the user request.
+   - Detect query class.
+   - Decompose broad questions into subqueries when useful.
+   - Choose scope, candidate depth, rerank mode, and evidence budget.
+
+2. Candidate generation
+   - Use the shared hybrid search substrate.
+   - Over-retrieve candidates for quality-sensitive modes.
+   - Keep lexical, semantic, scope, type, recency, and locator metadata.
+   - Separate candidate count from selected evidence count.
+
+3. Reranking
+   - Start with deterministic rerank features: hybrid score, lexical exactness,
+     source type, owner diversity, section proximity, recency, and citation
+     usefulness.
+   - Add MMR/diversity to avoid one source or one section crowding out the pack.
+   - Add a cross-encoder or LLM reranker behind the same interface only after
+     deterministic evaluation exists.
+
+4. Evidence packing
+   - Select evidence under a real token budget, not only a char budget.
+   - Skip, trim, or summarize oversized blocks instead of breaking the pack.
+   - Apply per-source and per-section quotas.
+   - Prefer exact passage evidence over container rows.
+   - Return "more available" metadata so the model can ask for additional
+     retrieval or exact reads.
+
+5. Exact read and inspect follow-up
+   - Use `inspect_resource` for document maps and `read_resource` for exact
+     passages after search identifies promising sources.
+   - Treat search as candidate discovery; treat reads as final evidence when a
+     question depends on precise wording.
+
+6. Citation materialization
+   - Selected, citable evidence becomes citation edges through chat-run citation
+     ownership.
+   - `message_retrievals` and candidate/rerank ledgers remain telemetry.
+
+## Five-Cutover Roadmap
+
+The retrieval-controller work is intentionally split into five hard cutovers.
+Each cutover should be independently reviewable, testable, and revertible.
+
+1. [`search-retrieval-evals-hard-cutover.md`](../cutovers/search-retrieval-evals-hard-cutover.md)
+   - Build golden query fixtures and retrieval evals before changing runtime
+     behavior.
+   - Measure candidate recall, ranking, selected-pack recall, citation precision,
+     latency, and cost.
+
+2. [`search-evidence-packer-ledger-hard-cutover.md`](../cutovers/search-evidence-packer-ledger-hard-cutover.md)
+   - Fix deterministic packer correctness.
+   - Skip/trim oversized blocks, continue to later candidates, and ledger every
+     selection decision.
+
+3. [`search-candidate-policy-hard-cutover.md`](../cutovers/search-candidate-policy-hard-cutover.md)
+   - Separate candidate depth from selected evidence depth.
+   - Replace `APP_SEARCH_LIMIT = 8` as the only candidate policy with a
+     search-owned retrieval policy.
+
+4. [`search-rerank-selection-hard-cutover.md`](../cutovers/search-rerank-selection-hard-cutover.md)
+   - Add deterministic reranking and diversity before learned/provider rerankers.
+   - Select evidence by relevance, exactness, source/section diversity, citation
+     quality, and prompt budget.
+
+5. [`search-agentic-contextual-retrieval-hard-cutover.md`](../cutovers/search-agentic-contextual-retrieval-hard-cutover.md)
+   - Add deep retrieval after the foundation is measured and stable.
+   - Cover query planning, iterative search/inspect/read, contextual chunks,
+     hierarchy/graph retrieval, and long-context routing.
+
+## SOTA And Product Meta
+
+The practical state of the art is not "bigger top-k" alone. It is measured,
+multi-stage retrieval:
+
+- Hybrid sparse+dense retrieval generally beats embeddings alone.
+- Retrieval systems often feed a reranker with tens or hundreds of candidates,
+  then pass a smaller selected set to the model.
+- Contextual chunk headers improve chunk-level recall by preserving document
+  context at index time.
+- Rerankers trade runtime cost and latency for better selected evidence.
+- Agentic RAG treats retrieval as iterative and state-dependent, not as a single
+  preprocessing step.
+- Graph and hierarchy approaches help most on global, cross-document, and
+  multi-hop questions where flat chunk retrieval loses structure.
+
+Useful external baselines:
+
+- Anthropic Contextual Retrieval:
+  `https://www.anthropic.com/engineering/contextual-retrieval`
+- Claude contextual retrieval cookbook:
+  `https://platform.claude.com/cookbook/capabilities-contextual-embeddings-guide`
+- Azure AI Search hybrid retrieval and semantic reranking:
+  `https://learn.microsoft.com/en-us/azure/search/hybrid-search-how-to-query`
+- OpenAI File Search retrieval customization:
+  `https://developers.openai.com/api/docs/guides/tools-file-search`
+- OpenAI Deep Research:
+  `https://developers.openai.com/api/docs/guides/deep-research`
+- LlamaIndex retrieval evaluation:
+  `https://developers.llamaindex.ai/python/examples/evaluation/retrieval/retriever_eval/`
+- Ragas metrics:
+  `https://docs.ragas.io/en/stable/concepts/metrics/available_metrics/`
+- Agentic RAG survey:
+  `https://arxiv.org/html/2506.10408v1`
+- Long-context vs RAG routing:
+  `https://arxiv.org/html/2407.16833v1`
+- Long-context RAG hard negatives:
+  `https://openreview.net/forum?id=oU3tpaR8fm`
+- Graph/hierarchical RAG research space:
+  `https://arxiv.org/html/2505.24226v2`
+  `https://arxiv.org/html/2506.05690v2`
+- Gemini long-context docs:
+  `https://ai.google.dev/gemini-api/docs/long-context`
+- NotebookLM product/user signals:
+  `https://support.google.com/notebooklm/answer/16269187`
+  `https://support.google.com/notebooklm/answer/16179559`
+
+For Nexus, the one-user prototype constraint should bias toward quality and
+observability over low-latency enterprise defaults. It is acceptable to spend more
+tokens and seconds for "deep retrieval" modes, as long as ordinary searches keep a
+fast path and every retrieval decision is inspectable.
+
+## Horizon
+
+The expected direction is not one giant context window replacing retrieval.
+Long-context models will keep improving, but retrieval remains useful for cost,
+privacy, focus, provenance, source control, and inspectable evidence.
+
+Near term:
+
+- hybrid sparse+dense search, contextual chunks, reranking, and retrieval evals
+  become table stakes
+- deep-research products normalize search/fetch/read loops with citations
+- user-facing research tools increasingly discover sources instead of only using
+  uploaded files
+
+Mid term:
+
+- personal systems maintain source maps, concept graphs, and user-specific
+  ranking signals
+- retrieval policy routes between fast RAG, deep retrieval, and long-context
+  reading
+- trust trails expose not only citations, but searched scope, skipped evidence,
+  contradictions, and confidence
+
+Long term:
+
+- retrieval becomes a persistent memory substrate across reading, notes, chat,
+  search, and research
+- evidence graphs become versioned, user-specific models of a library or project
+- context windows are huge, but selected evidence still matters because users
+  need controllable, reviewable provenance
+
+## Evaluation Contract
+
+Retrieval changes must be eval-driven. A candidate-generation or reranking change
+is not complete because one answer "looks better."
+
+Minimum offline metrics:
+
+- Recall@K for candidate pools.
+- MRR for first relevant result.
+- Precision@K for noisy query classes.
+- NDCG or AP when graded relevance exists.
+- Evidence-pack recall: relevant items included in the final selected context.
+- Citation precision: cited resources support the generated claim.
+- Latency and token cost by retrieval mode.
+
+Minimum datasets:
+
+- Exact lookup queries.
+- Single-document passage queries.
+- Multi-document synthesis queries.
+- Global library questions.
+- Multi-hop read/inspect/search questions.
+- Negative/absence questions.
+- Scoped media/library queries.
+- Regression examples from real failed chat turns.
+
+The eval harness should replay candidate generation, rerank, and pack stages
+separately so the failure point is visible.
+
+## Trust Trail And Ledgers
+
+The durable observability model should show:
+
+- Tool call inputs and normalized search query.
+- Candidate pool size, score features, and source metadata.
+- Rerank strategy and score/reason for each candidate.
+- Selection state: selected, skipped, trimmed, summarized, duplicate,
+  over-budget, low-rank, low-diversity-value, unsupported, or uncitable.
+- Prompt inclusion state for tool-output evidence as well as initial prompt
+  assembly evidence.
+- Citation edge backpointers for cited selected evidence.
+- "More available" counts by scope/source/type.
+
+`message_retrieval_candidate_ledgers` and `message_rerank_ledgers` are the right
+substrate; they need richer decision reasons and inclusion semantics before
+higher-risk retrieval changes.
+
+## What Not To Do
+
+- Do not fix retrieval by only increasing `APP_SEARCH_LIMIT`.
+- Do not move search semantics into `app_search`.
+- Do not query `resource_edges` directly from `app_search`; use graph context
+  admission and shared search scope owners.
+- Do not promote `message_retrievals` to citation identity.
+- Do not bypass `SearchQuery` with tool-specific typed IDs or private filters.
+- Do not add a model reranker before there is an eval harness and deterministic
+  baseline.
+- Do not hide retrieval failures behind summaries; expose skipped/available
+  evidence and reasons in the trust trail.
+
+## Contract Tests
+
+Keep these tests aligned with the module contract:
+
+- `python/tests/test_search.py`
+- `python/tests/test_search_kinds.py`
+- `python/tests/test_search_intent_model_guards.py`
+- `python/tests/test_search_scope_matrix.py`
+- `python/tests/test_search_batch.py`
+- `python/tests/test_agent_app_search.py`
+- `python/tests/test_chat_runs.py`
+- `python/tests/test_attached_citations.py`
+- `python/tests/test_cutover_negative_gates.py`
+- `apps/web/src/lib/search/searchApi.test.ts`
+- `apps/web/src/lib/api/sse/events.test.ts`
+- `apps/web/src/components/chat/useChatMessageUpdates.test.tsx`
