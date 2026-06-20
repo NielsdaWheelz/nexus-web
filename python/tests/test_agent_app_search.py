@@ -334,6 +334,9 @@ def test_execute_app_search_persists_retrieval_metadata(
             "policy_reason": "global_scope",
             "context_route": "search_fetch_read",
             "context_route_reason": "default_search_fetch_read",
+            "selected_source_map_count": sum(
+                1 for citation in run.selected_citations if citation.source_map
+            ),
             "scope": "all",
             "resolved_scopes": [],
             "inclusion_surface": "tool_output",
@@ -517,6 +520,7 @@ def test_persist_app_search_run_records_packer_decisions(
         "policy_reason": "global_scope",
         "context_route": "search_fetch_read",
         "context_route_reason": "default_search_fetch_read",
+        "selected_source_map_count": 0,
         "scope": "all",
         "resolved_scopes": [],
         "inclusion_surface": "tool_output",
@@ -2188,9 +2192,13 @@ def test_render_retrieved_context_requires_matching_current_evidence(
                 """
                 SELECT cc.id,
                        cc.owner_id,
-                       ccp.block_id
+                       ccp.block_id,
+                       cc.primary_evidence_span_id,
+                       es.span_text,
+                       es.citation_label
                 FROM content_chunks cc
                 JOIN content_chunk_parts ccp ON ccp.chunk_id = cc.id
+                JOIN evidence_spans es ON es.id = cc.primary_evidence_span_id
                 WHERE cc.owner_kind = 'media' AND cc.owner_id = :media_id
                 ORDER BY cc.chunk_idx ASC, ccp.part_idx ASC
                 LIMIT 1
@@ -2198,6 +2206,44 @@ def test_render_retrieved_context_requires_matching_current_evidence(
             ),
             {"media_id": media_id},
         ).one()
+        current_citation = RetrievalCitation(
+            result_type="content_chunk",
+            source_id=str(row[0]),
+            title="Evidence Guard Needle",
+            source_label=None,
+            snippet=str(row[4]),
+            deep_link="/media/test",
+            citation_target=f"content_chunk:{row[0]}",
+            citation_label=str(row[5]),
+            locator=None,
+            context_ref={
+                "type": "content_chunk",
+                "id": str(row[0]),
+                "evidence_span_ids": [str(row[3])],
+            },
+            evidence_span_id=str(row[3]),
+            media_id=str(media_id),
+            media_kind="web_article",
+            score=1.0,
+        )
+
+        context_text, context_chars, selected, selection_reasons = render_retrieved_context_blocks(
+            session,
+            viewer_id=user_id,
+            citations=[current_citation],
+        )
+
+        assert '<app_search_result type="content_chunk">' in context_text
+        assert context_chars == len(context_text)
+        assert selected == [current_citation]
+        assert selection_reasons == ["selected_within_budget"]
+        assert current_citation.source_map is not None
+        assert current_citation.source_map["version"] == "source_map.v1"
+        assert current_citation.source_map["context_header"]
+        assert current_citation.source_map["read_uri"] == f"content_chunk:{row[0]}"
+        assert current_citation.source_map["part_count"] >= 1
+        assert "citation_target" not in current_citation.source_map
+
         span_text = "wrong current evidence"
         mismatch_span_id = session.execute(
             text(

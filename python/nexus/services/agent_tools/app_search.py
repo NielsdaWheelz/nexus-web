@@ -35,6 +35,7 @@ from nexus.schemas.retrieval import (
     retrieval_result_ref_json,
 )
 from nexus.services import media_intelligence
+from nexus.services.content_indexing import load_content_chunk_source_map
 from nexus.services.contributor_taxonomy import CONTRIBUTOR_ROLES
 from nexus.services.contributors import get_contributor_by_handle
 from nexus.services.media_intelligence import MediaUnit
@@ -848,6 +849,9 @@ def persist_app_search_run(db: Session, run: AppSearchRun) -> None:
                 "policy_reason": run.policy_reason,
                 "context_route": run.context_route,
                 "context_route_reason": run.context_route_reason,
+                "selected_source_map_count": sum(
+                    1 for citation in run.selected_citations if citation.source_map
+                ),
                 "scope": run.scope,
                 "resolved_scopes": run.resolved_scopes,
                 "inclusion_surface": "tool_output",
@@ -1210,6 +1214,12 @@ def _render_content_chunk_context(
         lines.append(f"<timestamp>{timestamp}</timestamp>")
     if row[4]:
         lines.append(f"<source_kind>{xml_escape(str(row[4]))}</source_kind>")
+    source_map = load_content_chunk_source_map(
+        db,
+        chunk_id=chunk_id,
+        evidence_span_id=evidence_span_id,
+    )
+    citation.source_map = source_map
     _append_contributors_xml(lines, citation.contributors)
     lines.append(f"<evidence_span>{xml_escape(row[9] or '')}</evidence_span>")
     _append_citation_source_xml(lines, citation)

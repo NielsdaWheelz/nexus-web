@@ -63,6 +63,7 @@ class RetrievalCitation:
     contributors: list[dict[str, Any]] = field(default_factory=list)
     filters: dict[str, Any] = field(default_factory=dict)
     result_ref: dict[str, Any] = field(default_factory=dict)
+    source_map: dict[str, Any] | None = None
     selected: bool = False
 
     def result_ref_json(self) -> dict[str, Any]:

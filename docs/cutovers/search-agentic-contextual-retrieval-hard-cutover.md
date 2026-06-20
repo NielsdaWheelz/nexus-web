@@ -1,7 +1,7 @@
 # Search Agentic Contextual Retrieval Hard Cutover
 
-**Status:** Planner/read-handoff, chat tool-loop hardening, and long-context
-eligibility ledger implemented - 2026-06-20
+**Status:** Planner/read-handoff, chat tool-loop hardening, long-context
+eligibility ledger, and contextual source-map read model implemented - 2026-06-20
 
 **Type:** Hard cutover. Add the future-facing retrieval layer only after evals,
 packer correctness, candidate policy, and deterministic selection are in place.
@@ -30,9 +30,15 @@ graph-assisted expansion, and long-context routing.
 - `app_search` ledgers a private `context_route` policy: default
   `search_fetch_read`, with `long_context_candidate` only for an explicit
   single-media whole-source query. This is eligibility metadata, not execution.
+- `content_indexing` exposes deterministic `source_map.v1` read models for
+  content chunks from the existing `content_chunks`, `content_chunk_parts`,
+  `content_blocks`, and `evidence_spans` rows.
+- Selected `content_chunk` results carry compact source-map guidance in
+  `app_search` output and aggregate source-map visibility in rerank metadata.
+  Source maps do not become citation targets.
 
-Deferred by design: graph expansion, contextual/hierarchical artifacts,
-and long-context execution.
+Deferred by design: graph expansion, generated contextual summaries,
+hierarchical artifacts, and long-context execution.
 
 ## Why This Is Last
 
@@ -129,6 +135,10 @@ OpenAI Deep Research's search/fetch split is the right conceptual shape:
 
 Add contextual chunk headers or summaries only after the deterministic retrieval
 path is measured.
+
+First slice implemented: deterministic `source_map.v1` derives from the current
+content index and attaches section/context guidance to selected `content_chunk`
+results. It is source-derived retrieval guidance, not generated evidence.
 
 Candidate artifacts:
 

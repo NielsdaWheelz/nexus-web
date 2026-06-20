@@ -2537,11 +2537,22 @@ class TestCitationEdgeWriteThrough:
                 SimpleNamespace(
                     selected_citations=[
                         SimpleNamespace(
-                            citation_target=f"note_block:{citation_id}",
-                            title="Readable note",
-                            snippet="Exact selected note text",
-                            result_type="note_block",
-                            source_label="Notes",
+                            citation_target=f"content_chunk:{citation_id}",
+                            title="Readable chunk",
+                            snippet="Exact selected chunk text",
+                            result_type="content_chunk",
+                            source_label="Article",
+                            source_map={
+                                "version": "source_map.v1",
+                                "source_revision": "sha256:abc",
+                                "chunk_uri": f"content_chunk:{citation_id}",
+                                "read_uri": f"content_chunk:{citation_id}",
+                                "evidence_uri": "evidence_span:ignored",
+                                "context_header": "web_article: Heading",
+                                "section_path": ["Heading"],
+                                "part_count": 1,
+                                "parts": [{"not": "included"}],
+                            },
                         )
                     ],
                     citations=[object(), object()],
@@ -2554,11 +2565,21 @@ class TestCitationEdgeWriteThrough:
 
         assert payload["results"] == [
             {
-                "title": "Readable note",
-                "snippet": "Exact selected note text",
-                "kind": "note_block",
-                "source_label": "Notes",
-                "read_uri": f"note_block:{citation_id}",
+                "title": "Readable chunk",
+                "snippet": "Exact selected chunk text",
+                "kind": "content_chunk",
+                "source_label": "Article",
+                "read_uri": f"content_chunk:{citation_id}",
+                "source_map": {
+                    "version": "source_map.v1",
+                    "source_revision": "sha256:abc",
+                    "chunk_uri": f"content_chunk:{citation_id}",
+                    "read_uri": f"content_chunk:{citation_id}",
+                    "evidence_uri": "evidence_span:ignored",
+                    "context_header": "web_article: Heading",
+                    "section_path": ["Heading"],
+                    "part_count": 1,
+                },
                 "n": 7,
             }
         ]

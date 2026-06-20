@@ -85,6 +85,10 @@ The current chat bottleneck is not the shared search substrate. It is
   not a learned/provider reranker.
 - The model-facing tool continuation is compact selected-result JSON from
   `_app_search_tool_output`, not the full rendered `context_text`.
+- Selected `content_chunk` results can include compact `source_map.v1` guidance
+  derived by `content_indexing` from current chunk/block/span rows. The map
+  exposes owner, source revision, read/evidence URIs, section path, context
+  header, and part count; it is not a citation target.
 - Persisted `web_result` rows are renderable app-search evidence; live public web
   search still belongs to the separate `web_search` tool.
 - Public `web_search` writes the same rerank ledger table with
@@ -94,9 +98,11 @@ The current chat bottleneck is not the shared search substrate. It is
   selected retrieval rows plus rerank metadata `inclusion_surface = "tool_output"`
   so model-visible tool evidence is not confused with initial prompt assembly.
 
-This means the system can retrieve from a decent hybrid substrate and select a
-more balanced deterministic evidence pack, while still needing later
-query-planning, exact-read, contextual-retrieval, and learned-reranker gates.
+This means the system can retrieve from a decent hybrid substrate, select a more
+balanced deterministic evidence pack, and expose current-index source-map
+guidance for selected chunks, while still needing later query-planning,
+generated contextual summaries, graph expansion, long-context execution, and
+learned-reranker gates.
 
 ## Ownership Boundaries
 

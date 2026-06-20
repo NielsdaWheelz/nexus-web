@@ -118,6 +118,7 @@ def _citation_item(citation: RetrievalCitation, scope: str) -> dict:
         "source_label": citation.source_label,
         "locator": citation.locator,
         "citation_target": citation.citation_target,
+        "source_map": citation.source_map,
         "scope": scope,
     }
 
@@ -393,6 +394,7 @@ def _pack_metrics(
         ),
         "trimmed_count": selection_reasons.count("selected_trimmed_to_budget"),
         "selection_reasons": dict(Counter(selection_reasons)),
+        "selected_source_map_count": sum(1 for item in selected if item["source_map"]),
         "duplicate_count": len(candidate_refs) - len(set(candidate_refs)),
         "uncitable_count": sum(1 for item in candidates if item["citation_target"] is None),
         "source_diversity": len({_source_key(item) for item in selected}),
@@ -603,6 +605,7 @@ def test_search_retrieval_eval_baseline_report(
             "policy_reason": run.policy_reason,
             "context_route": run.context_route,
             "context_route_reason": run.context_route_reason,
+            "selected_source_map_count": pack["selected_source_map_count"],
             "scope": run.scope,
             "resolved_scopes": run.resolved_scopes,
             "inclusion_surface": "tool_output",
@@ -615,6 +618,7 @@ def test_search_retrieval_eval_baseline_report(
             "policy_reason": run.policy_reason,
             "context_route": run.context_route,
             "context_route_reason": run.context_route_reason,
+            "selected_source_map_count": pack["selected_source_map_count"],
             "candidate_count": pack["candidate_count"],
             "selected_count": pack["selected_count"],
             "context_chars": run.context_chars,
@@ -703,6 +707,7 @@ def test_search_retrieval_eval_baseline_report(
             "selected_char_count",
             "skipped_count",
             "trimmed_count",
+            "selected_source_map_count",
             "duplicate_count",
             "uncitable_count",
             "source_diversity",
@@ -768,7 +773,7 @@ def test_search_retrieval_eval_fixture_shape_is_exhaustive() -> None:
     assert len(by_class["cross_document_synthesis"]["relevance"]) >= 2
     assert by_class["scoped_passage_lookup"]["scope_refs"][0].startswith("media:")
     assert by_class["single_source_summary"]["scope_refs"][0].startswith("media:")
-    assert "whole document" in by_class["single_source_summary"]["query"]
+    assert "summary" in by_class["single_source_summary"]["query"]
     assert by_class["negative_absence_question"]["relevance"] == []
     assert "{missing_suffix}" in by_class["negative_absence_question"]["query"]
     assert any(

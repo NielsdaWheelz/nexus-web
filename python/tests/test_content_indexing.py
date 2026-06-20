@@ -13,6 +13,7 @@ from nexus.db.models import ResourceEdge
 from nexus.services.content_indexing import (
     IndexableBlock,
     IndexOwner,
+    load_content_chunk_source_map,
     rebuild_content_index,
     repair_ready_media_content_index_now,
 )
@@ -164,6 +165,83 @@ def test_rebuild_rejects_overlapping_source_offsets(db_session: Session):
             ],
             reason="validation_test",
         )
+
+
+def test_content_chunk_source_map_is_deterministic(db_session: Session):
+    user_id = uuid4()
+    media_id = uuid4()
+    fragment_id = uuid4()
+    first_text = "Source map first paragraph. "
+    second_text = "Source map second paragraph."
+
+    _insert_ready_media(db_session, user_id=user_id, media_id=media_id)
+    rebuild_content_index(
+        db_session,
+        owner=IndexOwner("media", media_id),
+        source_kind="web_article",
+        blocks=[
+            _web_block(
+                media_id=media_id,
+                text_value=first_text,
+                locator=_web_locator(fragment_id, first_text),
+                heading_path=("Root", "Details"),
+            ),
+            _web_block(
+                media_id=media_id,
+                text_value=second_text,
+                locator=_web_locator(fragment_id, second_text, start_offset=len(first_text)),
+                block_idx=1,
+                source_start_offset=len(first_text),
+                heading_path=("Root", "Details"),
+            ),
+        ],
+        reason="source_map_test",
+    )
+
+    chunk_id, evidence_span_id = db_session.execute(
+        text(
+            """
+            SELECT id, primary_evidence_span_id
+            FROM content_chunks
+            WHERE owner_kind = 'media' AND owner_id = :media_id
+            """
+        ),
+        {"media_id": media_id},
+    ).one()
+    source_map = load_content_chunk_source_map(
+        db_session,
+        chunk_id=chunk_id,
+        evidence_span_id=evidence_span_id,
+    )
+
+    assert source_map == load_content_chunk_source_map(
+        db_session,
+        chunk_id=chunk_id,
+        evidence_span_id=evidence_span_id,
+    )
+    assert source_map is not None
+    assert source_map["version"] == "source_map.v1"
+    assert source_map["owner"] == {"kind": "media", "id": str(media_id)}
+    assert source_map["source_kind"] == "web_article"
+    assert str(source_map["source_revision"]).startswith("sha256:")
+    assert source_map["chunk_uri"] == f"content_chunk:{chunk_id}"
+    assert source_map["read_uri"] == f"content_chunk:{chunk_id}"
+    assert source_map["evidence_uri"] == f"evidence_span:{evidence_span_id}"
+    assert source_map["section_path"] == ["Root", "Details"]
+    assert source_map["context_header"] == "web_article: Root / Details"
+    assert source_map["part_count"] == 2
+    assert "citation_target" not in source_map
+    assert [
+        (part["source_start_offset"], part["source_end_offset"]) for part in source_map["parts"]
+    ] == [(0, len(first_text)), (len(first_text), len(first_text) + len(second_text))]
+    assert (
+        load_content_chunk_source_map(
+            db_session,
+            chunk_id=chunk_id,
+            evidence_span_id=uuid4(),
+        )
+        is None
+    )
 
 
 def test_embedding_failure_preserves_prior_current_index(
@@ -490,6 +568,7 @@ def _web_block(
     source_start_offset: int = 0,
     source_end_offset: int | None = None,
     block_kind: str = "paragraph",
+    heading_path: tuple[str, ...] = (),
 ) -> IndexableBlock:
     return IndexableBlock(
         owner=IndexOwner("media", media_id),
@@ -506,7 +585,7 @@ def _web_block(
         ),
         locator=locator,
         selector=selector if selector is not None else locator,
-        heading_path=(),
+        heading_path=heading_path,
         metadata={},
     )
 

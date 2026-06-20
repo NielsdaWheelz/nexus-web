@@ -440,6 +440,22 @@ def _app_search_tool_output(run_result: Any, start_ordinal: int) -> str:
         }
         if read_uri is not None:
             item["read_uri"] = read_uri
+        source_map = getattr(citation, "source_map", None)
+        if isinstance(source_map, dict):
+            item["source_map"] = {
+                key: source_map[key]
+                for key in (
+                    "version",
+                    "source_revision",
+                    "chunk_uri",
+                    "read_uri",
+                    "evidence_uri",
+                    "context_header",
+                    "section_path",
+                    "part_count",
+                )
+                if key in source_map
+            }
         if citation.citation_target is not None:
             item["n"] = next_ordinal
             next_ordinal += 1
