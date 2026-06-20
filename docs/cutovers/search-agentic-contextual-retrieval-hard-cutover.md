@@ -40,11 +40,13 @@ graph-assisted expansion, and long-context routing.
   assistant message, using the same handoff ledger as `read_resource`.
 - `resource_graph.context` exposes graph-derived app-search scope expansion
   candidates from conversation context refs, with edge metadata and capability /
-  visibility filtering. This is retrieval guidance only; `app_search` does not
-  widen runtime scopes from it yet.
+  visibility filtering.
+- `app_search` uses that graph read model only for omitted-scope broad, global,
+  absence, and multi-hop query classes, ledgers `graph_expanded_scopes`, and
+  leaves explicit scopes plus exact lookups unexpanded.
 
-Deferred by design: runtime graph expansion, generated contextual summaries,
-hierarchical artifacts, and long-context execution.
+Deferred by design: generated contextual summaries, hierarchical artifacts, and
+long-context execution.
 
 ## Why This Is Last
 

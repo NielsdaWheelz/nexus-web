@@ -41,6 +41,7 @@ from nexus.services.contributors import get_contributor_by_handle
 from nexus.services.media_intelligence import MediaUnit
 from nexus.services.resource_graph.context import (
     conversation_has_note_search_scope_refs,
+    search_scope_expansions_for_conversation,
     search_scope_refs_for_conversation,
 )
 from nexus.services.resource_graph.refs import (
@@ -157,6 +158,7 @@ class AppSearchRun:
     query_class: str
     retrieval_mode: str
     policy_reason: str
+    graph_expanded_scopes: list[str]
     citations: list[RetrievalCitation]
     selected_citations: list[RetrievalCitation]
     selection_reasons: list[str]
@@ -242,6 +244,7 @@ def execute_app_search(
     context_route_reason = plan.context_route_reason
     policy_reason = "validation_failed"
     resolved_scopes: list[str] = []
+    graph_expanded_scopes: list[str] = []
     start = time.monotonic()
     status = "complete"
     error_code = None
@@ -259,6 +262,21 @@ def execute_app_search(
             conversation_id=conversation_id,
             scopes=scopes,
         )
+        if not scopes and query_class in {
+            "cross_document_synthesis",
+            "global_library_question",
+            "multi_hop_search_read_inspect_question",
+            "negative_absence_question",
+        }:
+            seen = set(resolved_scopes)
+            for expansion in search_scope_expansions_for_conversation(
+                db, viewer_id=viewer_id, conversation_id=conversation_id
+            ):
+                if expansion.ref.uri in seen:
+                    continue
+                seen.add(expansion.ref.uri)
+                resolved_scopes.append(expansion.ref.uri)
+                graph_expanded_scopes.append(expansion.ref.uri)
         scope_count = len(resolved_scopes)
         plan = plan_app_search(query, resolved_scopes, kinds)
         query_class = plan.query_class
@@ -301,6 +319,7 @@ def execute_app_search(
             query_class=query_class,
             retrieval_mode=retrieval_mode,
             policy_reason=policy_reason,
+            graph_expanded_scopes=graph_expanded_scopes,
             context_route=context_route,
             context_route_reason=context_route_reason,
             citations=[],
@@ -387,6 +406,7 @@ def execute_app_search(
         query_class=query_class,
         retrieval_mode=retrieval_mode,
         policy_reason=policy_reason,
+        graph_expanded_scopes=graph_expanded_scopes,
         context_route=context_route,
         context_route_reason=context_route_reason,
         citations=citations,
@@ -847,6 +867,8 @@ def persist_app_search_run(db: Session, run: AppSearchRun) -> None:
                 "query_class": run.query_class,
                 "retrieval_mode": run.retrieval_mode,
                 "policy_reason": run.policy_reason,
+                "graph_expanded_scopes": run.graph_expanded_scopes,
+                "graph_expanded_scope_count": len(run.graph_expanded_scopes),
                 "context_route": run.context_route,
                 "context_route_reason": run.context_route_reason,
                 "selected_source_map_count": sum(

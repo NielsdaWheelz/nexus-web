@@ -332,6 +332,8 @@ def test_execute_app_search_persists_retrieval_metadata(
             "query_class": "exact_lookup",
             "retrieval_mode": "deep",
             "policy_reason": "global_scope",
+            "graph_expanded_scopes": [],
+            "graph_expanded_scope_count": 0,
             "context_route": "search_fetch_read",
             "context_route_reason": "default_search_fetch_read",
             "selected_source_map_count": sum(
@@ -417,6 +419,7 @@ def test_persist_app_search_run_records_packer_decisions(
         query_class="exact_lookup",
         retrieval_mode="deep",
         policy_reason="global_scope",
+        graph_expanded_scopes=[],
         citations=[skipped_over_budget, skipped_empty, fitting],
         selected_citations=selected,
         selection_reasons=selection_reasons,
@@ -518,6 +521,8 @@ def test_persist_app_search_run_records_packer_decisions(
         "query_class": "exact_lookup",
         "retrieval_mode": "deep",
         "policy_reason": "global_scope",
+        "graph_expanded_scopes": [],
+        "graph_expanded_scope_count": 0,
         "context_route": "search_fetch_read",
         "context_route_reason": "default_search_fetch_read",
         "selected_source_map_count": 0,
@@ -1347,6 +1352,107 @@ def test_default_scope_resolution_uses_conversation_for_highlight_context(
     assert resolved == [f"conversation:{conversation_id}"], (
         f"highlight-only context must not fall back to global search; got {resolved}"
     )
+
+
+def test_default_app_search_graph_expands_context_for_broad_queries(
+    db_session: Session,
+    bootstrapped_user,
+) -> None:
+    from nexus.services.resource_graph.edges import create_edge
+    from nexus.services.resource_graph.refs import ResourceRef
+    from nexus.services.resource_graph.schemas import EdgeCreate
+
+    needle = f"Graph expansion topic {uuid4().hex}"
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    user_message_id = create_test_message(db_session, conversation_id, seq=1, content=needle)
+    assistant_message_id = create_test_message(
+        db_session,
+        conversation_id,
+        seq=2,
+        role="assistant",
+        content="",
+        status="pending",
+    )
+    library_id = create_test_library(db_session, bootstrapped_user, "Graph Expansion Library")
+    media_id = create_searchable_media_in_library(
+        db_session, bootstrapped_user, library_id, title=needle
+    )
+    page_id = uuid4()
+    note_block_id = uuid4()
+    db_session.execute(
+        text("INSERT INTO pages (id, user_id, title) VALUES (:id, :user_id, 'Graph page')"),
+        {"id": page_id, "user_id": bootstrapped_user},
+    )
+    db_session.execute(
+        text(
+            """
+            INSERT INTO note_blocks (id, user_id, body_pm_json, body_text)
+            VALUES (:id, :user_id, '{"type":"paragraph"}'::jsonb, 'Graph note')
+            """
+        ),
+        {"id": note_block_id, "user_id": bootstrapped_user},
+    )
+    page_ref = ResourceRef(scheme="page", id=page_id)
+    note_ref = ResourceRef(scheme="note_block", id=note_block_id)
+    media_ref = ResourceRef(scheme="media", id=media_id)
+    create_edge(
+        db_session,
+        viewer_id=bootstrapped_user,
+        input=EdgeCreate(
+            source=page_ref,
+            target=note_ref,
+            kind="context",
+            origin="user",
+            source_order_key="0000000001",
+        ),
+    )
+    create_edge(
+        db_session,
+        viewer_id=bootstrapped_user,
+        input=EdgeCreate(source=note_ref, target=media_ref, kind="context", origin="user"),
+    )
+    add_context_edge(db_session, conversation_id, f"page:{page_id}")
+    db_session.commit()
+
+    broad = execute_app_search(
+        db_session,
+        viewer_id=bootstrapped_user,
+        conversation_id=conversation_id,
+        user_message_id=user_message_id,
+        assistant_message_id=assistant_message_id,
+        scopes=[],
+        query=f"compare themes {needle}",
+    )
+    exact = execute_app_search(
+        db_session,
+        viewer_id=bootstrapped_user,
+        conversation_id=conversation_id,
+        user_message_id=user_message_id,
+        assistant_message_id=assistant_message_id,
+        scopes=[],
+        query=needle,
+        tool_call_index=1,
+    )
+
+    assert broad.resolved_scopes == [f"conversation:{conversation_id}", f"media:{media_id}"]
+    assert broad.graph_expanded_scopes == [f"media:{media_id}"]
+    assert broad.scope == "multi_scope:2"
+    assert broad.policy_reason == "multiple_scopes"
+    metadata = db_session.execute(
+        text(
+            """
+            SELECT metadata
+            FROM message_rerank_ledgers
+            WHERE tool_call_id = :tool_call_id
+            """
+        ),
+        {"tool_call_id": broad.tool_call_id},
+    ).scalar_one()
+    assert metadata["graph_expanded_scopes"] == [f"media:{media_id}"]
+    assert metadata["graph_expanded_scope_count"] == 1
+
+    assert exact.resolved_scopes == [f"conversation:{conversation_id}"]
+    assert exact.graph_expanded_scopes == []
 
 
 def test_execute_app_search_error_output_escapes_attribute_quotes(

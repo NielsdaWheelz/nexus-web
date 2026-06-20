@@ -603,6 +603,8 @@ def test_search_retrieval_eval_baseline_report(
             "query_class": run.query_class,
             "retrieval_mode": run.retrieval_mode,
             "policy_reason": run.policy_reason,
+            "graph_expanded_scopes": run.graph_expanded_scopes,
+            "graph_expanded_scope_count": len(run.graph_expanded_scopes),
             "context_route": run.context_route,
             "context_route_reason": run.context_route_reason,
             "selected_source_map_count": pack["selected_source_map_count"],
