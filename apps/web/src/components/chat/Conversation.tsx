@@ -38,7 +38,7 @@ import {
 } from "@/components/feedback/Feedback";
 import type { SSEContextRefAddedEvent } from "@/lib/api/sse/events";
 import type { ContextRefOut } from "@/lib/resourceGraph/contextRefs";
-import type { BranchDraft } from "@/lib/conversations/types";
+import type { BranchDraft, ForkOption } from "@/lib/conversations/types";
 import {
   usePaneParam,
   usePaneRouter,
@@ -140,6 +140,16 @@ export default function Conversation() {
       setBranchFocusKey(
         `${nextDraft.parentMessageId}:${nextDraft.anchor.kind}:${Date.now()}`,
       );
+    },
+    [branch],
+  );
+
+  // Stable across streaming renders (deps: branch) so `React.memo(MessageRow)`
+  // keeps unchanged rows mounted while a sibling streams; also the forks panel's
+  // switch handler.
+  const handleSelectFork = useCallback(
+    (fork: ForkOption) => {
+      void branch?.switchToFork(fork);
     },
     [branch],
   );
@@ -321,9 +331,7 @@ export default function Conversation() {
                       switchableLeafIds={branch.switchableLeafIds}
                       activeLeafMessageId={branch.activeLeafMessageId}
                       selectedPathMessageIds={branch.selectedPathMessageIds}
-                      onSelectFork={(fork) => {
-                        void branch.switchToFork(fork);
-                      }}
+                      onSelectFork={handleSelectFork}
                       onSelectGraphLeaf={(leafId) => {
                         void branch.switchToLeaf(leafId, null);
                       }}
@@ -343,6 +351,7 @@ export default function Conversation() {
       convo.conversationId,
       contextRefs,
       handleOpenResource,
+      handleSelectFork,
       removeContextRef,
     ],
   );
@@ -378,13 +387,7 @@ export default function Conversation() {
             onReaderSourceActivate={handleReaderSourceActivate}
             forkOptionsByParentId={branch?.forkOptionsByParentId}
             switchableLeafIds={branch?.switchableLeafIds}
-            onSelectFork={
-              branch
-                ? (fork) => {
-                    void branch.switchToFork(fork);
-                  }
-                : undefined
-            }
+            onSelectFork={branch ? handleSelectFork : undefined}
             onReplyToAssistant={branch ? handleReplyToAssistant : undefined}
             onRetryAssistantResponse={convo.retryAssistantResponse}
             retryingAssistantMessageIds={convo.retryingAssistantMessageIds.ids}

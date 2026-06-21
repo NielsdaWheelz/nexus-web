@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback } from "react";
+import { memo, useCallback } from "react";
 import { formatDisplayDate } from "@/lib/display/format";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
@@ -39,7 +39,10 @@ function errorLabel(message: ConversationMessage): string {
   return "The response failed.";
 }
 
-export function MessageRow({
+// Memoized so a streaming text delta — which replaces only the streaming
+// message object and keeps every other row's props referentially stable —
+// re-renders just that one row, not the whole transcript (AC-10).
+export const MessageRow = memo(function MessageRow({
   message,
   forkOptions = [],
   switchableLeafIds,
@@ -109,4 +112,4 @@ export function MessageRow({
 
   const _exhaustive: never = message.role;
   return _exhaustive;
-}
+});

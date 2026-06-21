@@ -20,6 +20,11 @@ import { MessageRow } from "./MessageRow";
 import { useChatScroll, type ChatScrollHandle } from "./useChatScroll";
 import styles from "./ChatSurface.module.css";
 
+// Stable empty-forks reference: rows without forks must receive the same array
+// identity every render so `React.memo(MessageRow)` can skip them while a
+// sibling row streams.
+const NO_FORKS: ForkOption[] = [];
+
 interface ChatSurfaceProps {
   messages: ConversationMessage[];
   composer: ReactNode;
@@ -130,7 +135,7 @@ const ChatSurface = forwardRef<ChatScrollHandle, ChatSurfaceProps>(
               <MessageRow
                 key={msg.id}
                 message={msg}
-                forkOptions={forkOptionsByParentId[msg.id] ?? []}
+                forkOptions={forkOptionsByParentId[msg.id] ?? NO_FORKS}
                 switchableLeafIds={switchableLeafIds}
                 onSelectFork={onSelectFork}
                 onReplyToAssistant={onReplyToAssistant}

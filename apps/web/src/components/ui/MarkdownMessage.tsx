@@ -1,8 +1,9 @@
 /**
  * MarkdownMessage — renders assistant message content as markdown.
  *
- * Uses react-markdown with GFM support and syntax highlighting.
- * Two modes: full memo for completed messages, block-split for streaming.
+ * Uses react-markdown with GFM support and syntax highlighting. Memoized so a
+ * completed message re-parses only when its content or citations change; only
+ * the one actively streaming message re-parses, per coalesced delta flush.
  */
 
 "use client";

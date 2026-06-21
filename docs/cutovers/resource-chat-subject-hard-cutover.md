@@ -1,9 +1,14 @@
 # Resource Chat Subject Hard Cutover
 
-Status: SPECIFICATION
+Status: BUILT - 2026-06-16
 Author: Codex
 Type: hard cutover
 Date: 2026-06-16
+
+Built 2026-06-16 (`f9acaa3c`): every supported `ResourceRef` is a chat subject
+through one capability / subject-resolution / turn-context / prompt pipeline; the
+legacy document-chat owner and the `reader_context` field are gone. See
+`docs/modules/chat.md`.
 
 ## North Star
 

@@ -1,10 +1,16 @@
 # SOTA Chat Streaming Hard Cutover
 
-Status: SPEC - Rev 1
+Status: BUILT - 2026-06-20
 Author altitude: SME / staff
-Date: 2026-06-18
+Date: 2026-06-18 (spec) / 2026-06-20 (built)
 Type: hard cutover - no legacy paths, no fallbacks, no backward compatibility,
 no compatibility shims, no dual stream contracts.
+
+Built: the streaming transport, event grammar, coalescing, cursor replay, and
+cancellation merged 2026-06-18 (`946c0fb7`). The final AC-10 frontend-smoothness
+piece landed 2026-06-20 — older transcript rows now skip re-render during
+streaming via `React.memo(MessageRow)` over referentially-stable row props
+(completed messages were already memoized in `MarkdownMessage`).
 
 Supersedes the chat/provider-streaming assumptions in:
 

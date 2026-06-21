@@ -32,16 +32,15 @@ Frontend owners live under `apps/web/src/components/chat/*` and
 Hard-cutover specs that govern chat work. Each owns one axis; they compose.
 
 - `docs/cutovers/chat-scroll-anchoring-hard-cutover.md` — transcript scroll
-  anchoring (hybrid pin-to-top then stick-to-bottom). IMPLEMENTED (row
-  memoization deferred to the streaming cutover).
+  anchoring (hybrid pin-to-top then stick-to-bottom). IMPLEMENTED.
 - `docs/cutovers/chat-subsystem-consolidation-hard-cutover.md` — structural
   ownership + duplication collapse (message-update reducer, per-run stream
   context, visibility factory, `chat_run_citations` / `chat_run_tools` /
   run-event emitter, `run_kit.get_run_events` / `is_run_terminal`). IMPLEMENTED.
 - `docs/cutovers/sota-chat-streaming-hard-cutover.md` — streaming transport,
-  event grammar, coalescing, cursor replay, cancellation. SPEC.
+  event grammar, coalescing, cursor replay, cancellation. IMPLEMENTED.
 - `docs/cutovers/resource-chat-subject-hard-cutover.md` — surface/subject
-  consolidation (one `ResourceRef` chat subject). SPEC.
+  consolidation (one `ResourceRef` chat subject). IMPLEMENTED.
 - `docs/cutovers/assistant-message-trust-trail-hard-cutover.md` — assistant
   trust-trail read model. IMPLEMENTED.
 
@@ -238,6 +237,7 @@ Keep these tests aligned with this module contract:
 - `apps/web/src/lib/conversations/chatDraftKey.test.ts`
 - `apps/web/src/lib/conversations/chatRunBody.test.ts`
 - `apps/web/src/components/chat/AssistantMessage.test.tsx`
+- `apps/web/src/components/chat/MessageRow.test.tsx`
 - `apps/web/src/components/chat/useChatRunTail.test.tsx`
 - `apps/web/src/components/ui/FloatingActionSurface.test.tsx`
 - `apps/web/src/__tests__/components/ChatComposer.test.tsx`
