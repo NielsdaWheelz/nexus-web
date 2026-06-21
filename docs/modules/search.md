@@ -101,9 +101,15 @@ The current chat bottleneck is not the shared search substrate. It is
 This means the system can retrieve from a decent hybrid substrate, select a more
 balanced deterministic evidence pack, and expose current-index source-map
 guidance for selected chunks. Omitted-scope broad queries can use graph-derived
-scope expansion through the resource graph owner. The system still needs later
-query-planning, generated contextual summaries, long-context execution, and
-learned-reranker gates.
+scope expansion through the resource graph owner. Broad questions can decompose
+into several visible `app_search` calls through the chat tool loop. Explicit
+single-media whole-source queries can privately route through chat-owned
+long-context execution with normal read citations; if a body cannot be cited, it
+is not forwarded as evidence. The private/public web boundary is prompt policy
+plus separate visible ledgers today, not a runtime mixing gate. The system still
+needs later generated contextual summaries, hierarchical artifacts, full
+run-level planning, runtime private/public routing policy, and learned-reranker
+gates.
 
 ## Ownership Boundaries
 

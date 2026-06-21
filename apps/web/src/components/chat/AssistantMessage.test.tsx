@@ -76,7 +76,9 @@ describe("AssistantMessage", () => {
     selectText(answer, "beta");
     fireEvent.mouseUp(answer);
 
-    await user.click(await screen.findByRole("button", { name: "Fork from selection" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Fork from selection" }),
+    );
 
     expect(onReplyToAssistant).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -197,6 +199,7 @@ describe("AssistantMessage", () => {
           latency_ms: 12,
           result_count: 1,
           selected_count: 1,
+          more_candidates_available: true,
           error_code: null,
           retrievals: [
             {
@@ -290,7 +293,8 @@ describe("AssistantMessage", () => {
               metadata: {
                 selection_strategy: "app_search_deterministic_selection",
                 selection_policy_version: "v1",
-                ordering_policy: "hybrid_score_exactness_citation_quality_diversity",
+                ordering_policy:
+                  "hybrid_score_exactness_citation_quality_diversity",
                 diversity_policy: "source_section_penalty",
                 budget_policy: "greedy_context_budget",
                 candidate_limit: 50,
@@ -339,7 +343,8 @@ describe("AssistantMessage", () => {
       integrity_notices: [
         {
           code: "candidate_inclusion_mismatch:candidate-2",
-          message: "Candidate ledger candidate-2 prompt-inclusion flag disagrees.",
+          message:
+            "Candidate ledger candidate-2 prompt-inclusion flag disagrees.",
         },
       ],
     };
@@ -359,11 +364,20 @@ describe("AssistantMessage", () => {
 
     expect(screen.getByText("openai/gpt-test")).toBeInTheDocument();
     expect(screen.getByText(/#1 app_search - complete/)).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /tool tool-1 - all - 1 results \/ 1 selected - more available - 12ms/,
+      ),
+    ).toBeInTheDocument();
     expect(screen.getByText(/retrieval 0: Source title/)).toBeInTheDocument();
     expect(screen.getByText(/candidate 0: source-1/)).toBeInTheDocument();
-    expect(screen.getByText("app_search_deterministic_selection")).toBeInTheDocument();
     expect(
-      screen.getByText("deep - global_scope - candidates 50 - selected cap 6 - unclassified"),
+      screen.getByText("app_search_deterministic_selection"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "deep - global_scope - candidates 50 - selected cap 6 - unclassified",
+      ),
     ).toBeInTheDocument();
     expect(
       screen.getByText(
@@ -382,7 +396,9 @@ describe("AssistantMessage", () => {
       expect.anything(),
     );
     expect(screen.getAllByText("Source title").length).toBeGreaterThan(0);
-    expect(screen.getByText(/Candidate ledger candidate-2/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Candidate ledger candidate-2/),
+    ).toBeInTheDocument();
   });
 
   it("labels active future tools by tool name", () => {

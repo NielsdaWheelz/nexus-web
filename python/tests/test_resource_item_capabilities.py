@@ -22,6 +22,7 @@ from nexus.services.resource_items.capabilities import (
     resource_can_be_ordered_adjacency_target,
     resource_can_link,
     resource_can_own_ordered_adjacency,
+    resource_can_seed_app_search_expansion,
     resource_citation_result_type,
     resource_expansion_policy,
     resource_inspect_policy,
@@ -95,6 +96,10 @@ def test_read_search_and_citation_capabilities_are_owned_together() -> None:
     assert resource_inspect_policy(_ref("highlight")) == "none"
     assert resource_prompt_render_policy(_ref("highlight")) == "quote"
     assert resource_can_be_app_search_scope(_ref("media")) is True
+    assert resource_can_seed_app_search_expansion(_ref("media")) is True
+    assert resource_can_seed_app_search_expansion(_ref("page")) is True
+    assert resource_can_seed_app_search_expansion(_ref("oracle_reading")) is False
+    assert resource_can_seed_app_search_expansion(_ref("library_intelligence_revision")) is False
     assert expandable_resource_schemes() == (
         "media",
         "page",

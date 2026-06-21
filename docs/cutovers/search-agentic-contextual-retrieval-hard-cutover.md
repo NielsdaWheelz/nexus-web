@@ -1,7 +1,8 @@
 # Search Agentic Contextual Retrieval Hard Cutover
 
 **Status:** Planner/read-handoff, chat tool-loop hardening, long-context
-eligibility ledger, and contextual source-map read model implemented - 2026-06-20
+single-media execution, and contextual source-map read model implemented -
+2026-06-20
 
 **Type:** Hard cutover. Add the future-facing retrieval layer only after evals,
 packer correctness, candidate policy, and deterministic selection are in place.
@@ -29,7 +30,17 @@ graph-assisted expansion, and long-context routing.
   of silently falling through to a complete run.
 - `app_search` ledgers a private `context_route` policy: default
   `search_fetch_read`, with `long_context_candidate` only for an explicit
-  single-media whole-source query. This is eligibility metadata, not execution.
+  single-media whole-source query.
+- Chat executes that private long-context route by reading the scoped media
+  through `read_resource`, including the body in the `app_search` tool output
+  under the aggregate tool-output budget, and materializing a normal read
+  citation only when the body is forwarded to the model.
+- The system prompt tells the model to decompose broad comparison, absence, and
+  multi-hop questions into several focused `app_search` calls. Each call remains
+  visible as its own ordered tool call, rerank ledger, and trust-trail entry.
+- The system prompt keeps private `app_search` evidence and public `web_search`
+  evidence separated unless the user explicitly asks to combine saved sources
+  with the web.
 - `content_indexing` exposes deterministic `source_map.v1` read models for
   content chunks from the existing `content_chunks`, `content_chunk_parts`,
   `content_blocks`, and `evidence_spans` rows.
@@ -44,12 +55,13 @@ graph-assisted expansion, and long-context routing.
 - `app_search` uses that graph read model only for omitted-scope broad, global,
   absence, and multi-hop query classes, ledgers `graph_expanded_scopes`, and
   leaves explicit scopes plus exact lookups unexpanded.
+- Trust-trail tool-call read models expose `more_candidates_available` from
+  durable result/selected counts, matching the model-visible `app_search` output.
 - Generated/contextual hierarchy artifacts remain behind negative gates:
   generated retrieval artifacts have no search-result or citation identity, and
   source-map eval payloads stay guidance-only.
 
-Deferred by design: generated contextual summaries, hierarchical artifacts, and
-long-context execution.
+Deferred by design: generated contextual summaries and hierarchical artifacts.
 
 ## Why This Is Last
 
@@ -101,8 +113,8 @@ Add a deep retrieval mode that can choose among:
 - query decomposition into several searches
 - scoped source discovery
 - graph/context expansion from existing `ResourceRef` relationships
-- long-context route for small enough source sets
-- contextual/hierarchical source maps for broad/global questions
+- long-context route for explicit single-media whole-source requests
+- deterministic source maps for selected content chunks
 
 This must remain grounded in existing owners:
 
@@ -114,7 +126,11 @@ This must remain grounded in existing owners:
 
 ## Query Planner
 
-The planner should classify:
+Current slice: `plan_app_search` is a deterministic app-search policy
+classifier. It ledgers query class, candidate depth, retrieval mode, policy
+reason, and private context route. It does not yet own a full run-level planner.
+
+A later run-level planner should classify:
 
 - answerable from current attached context
 - needs local search
@@ -122,11 +138,13 @@ The planner should classify:
 - needs inspect/map before read
 - needs cross-source synthesis
 - needs absence/breadth search
-- needs long-context route
+- needs long-context route beyond explicit single-media reads
 - needs web search or outside-source discovery
 
-The first planner can be deterministic. A model-based planner should be added
-only when its decisions can be evaluated against tool-call accuracy fixtures.
+The current non-search planner behavior is prompt guidance plus visible tool
+telemetry. A model-based planner or runtime web/private-source policy should be
+added only when its decisions can be evaluated against tool-call accuracy
+fixtures.
 
 ## Tool Loop Contract
 
@@ -137,7 +155,9 @@ Harden the tool loop as part of deep retrieval:
 - "more candidates available" signal in tool output/trust trail
 - clear system-prompt guidance for search vs inspect vs read
 - no hidden uncited evidence path
-- no web/private-source mixing without an explicit policy boundary
+- no web/private-source mixing without an explicit policy boundary; current
+  implementation provides prompt policy and separate visible ledgers, not a
+  runtime mixing gate
 
 OpenAI Deep Research's search/fetch split is the right conceptual shape:
 `app_search` discovers candidates; `read_resource` fetches exact evidence.
@@ -217,13 +237,27 @@ Nexus adaptable by making retrieval decisions typed, measured, and inspectable.
 
 ## Acceptance Criteria
 
+Implemented acceptance:
+
 - Deep mode is opt-in or policy-routed, not the default for every query.
-- Query planner decisions are ledgered.
-- Search/fetch/read tool use can be evaluated.
+- App-search planner decisions are ledgered.
+- Search/fetch/read tool use can be evaluated through ordered tool calls,
+  rerank ledgers, retrieval rows, citations, and trust trails.
 - Max tool iterations and aggregate tool budget are typed and tested.
-- Contextual/hierarchical artifacts are versioned and owner-bound.
+- Deterministic `source_map.v1` guidance is versioned, owner-bound, and not a
+  citation target.
 - Graph expansion never bypasses `ResourceRef` or capability policy.
 - Citation targets remain concrete, user-activatable resources.
+- Generated retrieval artifacts have no app-search scope, conversation-search
+  scope, search-result identity, or citation identity.
+
+Deferred acceptance:
+
+- Full run-level planner for attached-context/search/read/inspect/web routing.
+- Runtime public/private-source mixing enforcement beyond prompt policy and
+  visible separate ledgers.
+- Generated contextual summaries and hierarchical artifacts that reindex
+  deterministically under a generated-artifact owner.
 
 ## Likely Files
 
@@ -246,7 +280,7 @@ Nexus adaptable by making retrieval decisions typed, measured, and inspectable.
 - Tool-output aggregate budget is enforced.
 - Search result followed by read_resource produces citable exact evidence.
 - Long-context route is selected only under explicit policy.
-- Generated contextual artifacts reindex deterministically.
+- Generated contextual artifacts reindex deterministically. Deferred.
 - Graph expansion respects capability policy and source visibility.
 
 ## Verification

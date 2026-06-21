@@ -121,6 +121,7 @@ export interface MessageToolCall {
   latency_ms?: number | null;
   result_count?: number;
   selected_count?: number;
+  more_candidates_available?: boolean;
   status: ChatToolStatus;
   error_code?: string | null;
   input_preview?: string;

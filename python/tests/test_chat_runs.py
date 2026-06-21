@@ -2587,6 +2587,34 @@ class TestCitationEdgeWriteThrough:
         assert payload["selected_count"] == 1
         assert payload["more_candidates_available"] is True
 
+    def test_app_search_tool_output_includes_long_context_payload(self):
+        payload = json.loads(
+            _app_search_tool_output(
+                SimpleNamespace(
+                    selected_citations=[],
+                    citations=[],
+                    status="complete",
+                    error_code=None,
+                ),
+                1,
+                long_context={
+                    "status": "included",
+                    "uri": "media:11111111-1111-1111-1111-111111111111",
+                    "kind": "full",
+                    "body": "Whole source text.",
+                    "n": 1,
+                },
+            )
+        )
+
+        assert payload["long_context"] == {
+            "status": "included",
+            "uri": "media:11111111-1111-1111-1111-111111111111",
+            "kind": "full",
+            "body": "Whole source text.",
+            "n": 1,
+        }
+
     def test_emit_citation_index_streams_note_block_locator(
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
     ):
@@ -2912,6 +2940,23 @@ class TestCitationEdgeWriteThrough:
         with direct_db.session() as session:
             run = session.get(ChatRunModel, run_id)
             assert run is not None
+            session.execute(
+                text(
+                    """
+                    UPDATE message_tool_calls
+                    SET result_refs = CAST(:result_refs AS jsonb),
+                        selected_context_refs = CAST(:selected_context_refs AS jsonb)
+                    WHERE id = :tool_call_id
+                    """
+                ),
+                {
+                    "tool_call_id": tool_call_id,
+                    "result_refs": json.dumps(
+                        [{"uri": "content_chunk:1"}, {"uri": "content_chunk:2"}]
+                    ),
+                    "selected_context_refs": json.dumps([{"uri": "content_chunk:1"}]),
+                },
+            )
             _record_tool_citations(session, run=run, tool_call_id=tool_call_id, start_ordinal=1)
             session.commit()
 
@@ -2925,6 +2970,7 @@ class TestCitationEdgeWriteThrough:
 
         assert document["blocks"] == [{"type": "text", "format": "markdown", "text": "Answer [1]."}]
         assert len(trail.tool_calls) == 1
+        assert trail.tool_calls[0].more_candidates_available is True
         assert len(trail.tool_calls[0].retrievals) == 1
         retrieval = trail.tool_calls[0].retrievals[0]
         assert retrieval.result_type == "content_chunk"

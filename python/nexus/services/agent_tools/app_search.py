@@ -58,7 +58,7 @@ from nexus.services.retrieval_citation import (
     insert_retrieval_row,
     strict_citation_locator,
 )
-from nexus.services.search import search
+from nexus.services.search import get_search_result, search
 from nexus.services.search.batch import search_scopes
 from nexus.services.search.kinds import SEARCH_FORMATS, SEARCH_KINDS
 from nexus.services.search.policy import plan_app_search
@@ -197,6 +197,7 @@ class AppSearchRun:
             "error_code": self.error_code,
             "result_count": len(self.citations),
             "selected_count": len(self.selected_citations),
+            "more_candidates_available": len(self.citations) > len(self.selected_citations),
             "latency_ms": self.latency_ms,
             "filters": self.filters,
             "results": [citation.result_ref_json() for citation in self.citations],
@@ -285,6 +286,9 @@ def execute_app_search(
         context_route = plan.context_route
         context_route_reason = plan.context_route_reason
         policy_reason = plan.policy_reason
+        if not scopes and context_route == "long_context_candidate":
+            context_route = "search_fetch_read"
+            context_route_reason = "default_search_fetch_read"
         base_query = build_search_query(
             text=query,
             raw_kinds=None if kinds is None else list(kinds),
@@ -353,6 +357,20 @@ def execute_app_search(
         citations = [
             citation_from_search_result(result, filters=filters) for result in response.results
         ]
+        if context_route == "long_context_candidate" and len(resolved_scopes) == 1:
+            seen = {(citation.result_type, citation.source_id) for citation in citations}
+            for citation in _long_context_media_scope_citations(
+                db,
+                viewer_id=viewer_id,
+                scope_uri=resolved_scopes[0],
+                limit=candidate_limit,
+                filters=filters,
+            ):
+                key = (citation.result_type, citation.source_id)
+                if key in seen:
+                    continue
+                seen.add(key)
+                citations.append(citation)
         citations, rerank_trace = rerank_app_search_candidates(query, citations)
         context_text, context_chars, selected, selection_reasons = render_retrieved_context_blocks(
             db,
@@ -482,6 +500,45 @@ def _resolve_scope_uris(
         seen.add(uri)
         resolved.append(uri)
     return resolved
+
+
+def _long_context_media_scope_citations(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    scope_uri: str,
+    limit: int,
+    filters: dict[str, Any],
+) -> list[RetrievalCitation]:
+    scope_type, media_id = parse_scope(scope_uri)
+    if scope_type != "media" or media_id is None:
+        return []
+    chunk_ids = db.execute(
+        text(
+            """
+            SELECT cc.id
+            FROM content_chunks cc
+            JOIN content_index_states cis ON cis.owner_kind = cc.owner_kind
+                AND cis.owner_id = cc.owner_id
+                AND cis.status = 'ready'
+            WHERE cc.owner_kind = 'media'
+              AND cc.owner_id = :media_id
+              AND cc.primary_evidence_span_id IS NOT NULL
+            ORDER BY cc.chunk_idx ASC, cc.id ASC
+            LIMIT :limit
+            """
+        ),
+        {"media_id": media_id, "limit": limit},
+    ).scalars()
+
+    citations: list[RetrievalCitation] = []
+    for chunk_id in chunk_ids:
+        try:
+            result = get_search_result(db, viewer_id, "content_chunk", str(chunk_id))
+        except ApiError:
+            continue
+        citations.append(citation_from_search_result(result, filters=filters))
+    return citations
 
 
 def _empty_status_for_scopes(

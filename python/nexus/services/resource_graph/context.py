@@ -53,6 +53,7 @@ from nexus.services.resource_items.capabilities import (
     conversation_search_scope_schemes,
     resource_can_attach,
     resource_can_be_app_search_scope,
+    resource_can_seed_app_search_expansion,
 )
 from nexus.services.resource_items.routing import resource_activation_for_ref
 
@@ -424,6 +425,8 @@ def search_scope_expansions_for_conversation(
     direct_scope_uris: set[str] = set()
     for scheme, resource_id in rows:
         ref = ResourceRef(scheme=cast("ResourceScheme", scheme), id=resource_id)
+        if not resource_can_seed_app_search_expansion(ref):
+            continue
         seeds.append(ref)
         if resource_can_be_app_search_scope(ref):
             direct_scope_uris.add(ref.uri)
@@ -437,7 +440,10 @@ def search_scope_expansions_for_conversation(
             refs=tuple(seeds),
             direction="both",
             rollup="owner",
-            filters=ConnectionFilters(),
+            filters=ConnectionFilters(
+                kinds=("context", "supports", "contradicts"),
+                origins=("user", "citation", "note_body", "highlight_note"),
+            ),
             limit=limit,
         ),
     )

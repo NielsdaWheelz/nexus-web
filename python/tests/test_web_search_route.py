@@ -374,8 +374,13 @@ async def test_read_only_projection_matches_chat_tool_projection_field_for_field
         latency_ms=0,
         status="complete",
     )
-    chat_projection = run.retrieval_result_event()["results"]
+    event = run.retrieval_result_event()
+    chat_projection = event["results"]
 
     assert route_projection == chat_projection, (
         "route and chat-tool web-result projections must be identical field-for-field"
     )
+    assert event["more_candidates_available"] is True
+
+    run.selected_citations = list(read_result.citations)
+    assert run.retrieval_result_event()["more_candidates_available"] is False

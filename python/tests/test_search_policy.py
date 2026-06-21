@@ -27,6 +27,14 @@ def test_app_search_planner_chooses_scope_depth_and_query_class() -> None:
     assert scoped_summary.context_route == "long_context_candidate"
     assert scoped_summary.context_route_reason == "single_media_whole_source_query"
 
+    scoped_search = plan_app_search(
+        "summarize the pricing argument",
+        ["media:00000000-0000-0000-0000-000000000001"],
+        [],
+    )
+    assert scoped_search.query_class == "scoped_passage_lookup"
+    assert scoped_search.context_route == "search_fetch_read"
+
     library_absence = plan_app_search(
         "Do any sources mention barter?",
         ["library:00000000-0000-0000-0000-000000000001"],

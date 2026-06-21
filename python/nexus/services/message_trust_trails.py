@@ -366,6 +366,8 @@ def build_assistant_trust_trails(
                 latency_ms=tool.latency_ms,
                 result_count=len(tool.result_refs),
                 selected_count=len(tool.selected_context_refs),
+                more_candidates_available=tool.tool_name in {"app_search", "web_search"}
+                and len(tool.result_refs) > len(tool.selected_context_refs),
                 error_code=tool.error_code,
                 provider_request_ids=tool.provider_request_ids,
                 result_refs=tool.result_refs,

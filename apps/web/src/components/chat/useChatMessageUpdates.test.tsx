@@ -4,7 +4,10 @@ import { userEvent } from "vitest/browser";
 import { useState } from "react";
 import AssistantEvidenceDisclosure from "./AssistantEvidenceDisclosure";
 import { useChatMessageUpdates } from "./useChatMessageUpdates";
-import type { SSECitationIndexEvent } from "@/lib/api/sse/events";
+import type {
+  SSECitationIndexEvent,
+  SSEToolResultEvent,
+} from "@/lib/api/sse/events";
 import type { CitationOut } from "@/lib/conversations/citationOut";
 import type { ConversationMessage } from "@/lib/conversations/types";
 
@@ -191,8 +194,8 @@ function ToolDeltaHarness() {
             tool_name: "app_search",
             tool_call_index: 1,
             provider_tool_call_id: "provider-tool-1",
-            input_delta: "{\"query\":\"ne",
-            input_preview: "{\"query\":\"nexus\"}",
+            input_delta: '{"query":"ne',
+            input_preview: '{"query":"nexus"}',
             provider_event_seq_start: 4,
             provider_event_seq_end: 4,
           })
@@ -207,6 +210,54 @@ function ToolDeltaHarness() {
               tool.tool_call_index,
               tool.status,
               tool.input_preview ?? "",
+            ].join(":")
+          : ""}
+      </output>
+    </div>
+  );
+}
+
+function ToolResultHarness() {
+  const [messages, setMessages] = useState<ConversationMessage[]>([
+    {
+      ...assistantMessage(),
+      message_document: { type: "message_document", blocks: [] },
+    },
+  ]);
+  const { handleToolResult } = useChatMessageUpdates({ setMessages });
+  const data: SSEToolResultEvent["data"] = {
+    tool_call_id: "tool-1",
+    assistant_message_id: ASSISTANT_ID,
+    tool_name: "app_search",
+    tool_call_index: 1,
+    status: "complete",
+    scope: "all",
+    types: ["media"],
+    error_code: null,
+    result_count: 8,
+    selected_count: 6,
+    more_candidates_available: true,
+    latency_ms: 12,
+    provider_request_ids: [],
+    filters: {},
+    results: [],
+  };
+  const tool = messages[0].trust_trail?.tool_calls[0];
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => handleToolResult(ASSISTANT_ID, data)}
+      >
+        Fold tool result
+      </button>
+      <output aria-label="tool result">
+        {tool
+          ? [
+              tool.tool_name,
+              tool.result_count ?? 0,
+              tool.selected_count ?? 0,
+              tool.more_candidates_available ? "more" : "done",
             ].join(":")
           : ""}
       </output>
@@ -281,7 +332,18 @@ describe("useChatMessageUpdates tool-call fold", () => {
     await user.click(screen.getByRole("button", { name: "Fold tool delta" }));
 
     expect(screen.getByLabelText("tool preview")).toHaveTextContent(
-      "app_search:1:running:{\"query\":\"nexus\"}",
+      'app_search:1:running:{"query":"nexus"}',
+    );
+  });
+
+  it("folds tool_result more-candidates state into the live trust trail", async () => {
+    const user = userEvent.setup();
+    render(<ToolResultHarness />);
+
+    await user.click(screen.getByRole("button", { name: "Fold tool result" }));
+
+    expect(screen.getByLabelText("tool result")).toHaveTextContent(
+      "app_search:8:6:more",
     );
   });
 });

@@ -1,5 +1,6 @@
 """Backend contract tests for OpenAI reasoning behavior."""
 
+import json
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -282,6 +283,240 @@ class _AppSearchRouter:
         yield _done_event(
             usage=TokenUsage(input_tokens=10, output_tokens=3, total_tokens=13),
             provider_request_id="resp_final",
+        )
+
+
+class _DecomposedAppSearchRouter:
+    def __init__(self) -> None:
+        self.requests: list[ModelCall] = []
+
+    async def stream(self, req, *, key, timeout_s, cancel=None):
+        del cancel
+        self.requests.append(req)
+        if len(self.requests) == 1:
+            calls = (
+                ToolCall(
+                    id="decomposed-search-1",
+                    name="app_search",
+                    arguments={"query": f"decomposed theme search {uuid4().hex}"},
+                ),
+                ToolCall(
+                    id="decomposed-search-2",
+                    name="app_search",
+                    arguments={"query": f"decomposed disagreement search {uuid4().hex}"},
+                ),
+            )
+            for call in calls:
+                yield ModelStreamEvent(
+                    type="tool_call_start",
+                    provider="openai",
+                    model="gpt-5.5",
+                    tool_call_id=call.id,
+                    tool_name=call.name,
+                )
+                yield ModelStreamEvent(
+                    type="tool_call_done",
+                    provider="openai",
+                    model="gpt-5.5",
+                    tool_call_id=call.id,
+                    tool_call=call,
+                )
+            yield _done_event(
+                usage=TokenUsage(input_tokens=10, output_tokens=3, total_tokens=13),
+                provider_request_id="resp_decomposed_searches",
+            )
+            return
+        yield _text_event("Final answer.")
+        yield _done_event(
+            usage=TokenUsage(input_tokens=10, output_tokens=3, total_tokens=13),
+            provider_request_id="resp_decomposed_final",
+        )
+
+
+class _LongContextAppSearchRouter:
+    def __init__(self, media_id: UUID) -> None:
+        self.media_id = media_id
+        self.requests: list[ModelCall] = []
+
+    async def stream(self, req, *, key, timeout_s, cancel=None):
+        del cancel
+        self.requests.append(req)
+        if len(self.requests) == 1:
+            call = ToolCall(
+                id="long-context-app-search",
+                name="app_search",
+                arguments={
+                    "query": "summarize whole Long Context Source",
+                    "scopes": [f"media:{self.media_id}"],
+                },
+            )
+            yield ModelStreamEvent(
+                type="tool_call_start",
+                provider="openai",
+                model="gpt-5.5",
+                tool_call_id=call.id,
+                tool_name=call.name,
+            )
+            yield ModelStreamEvent(
+                type="tool_call_done",
+                provider="openai",
+                model="gpt-5.5",
+                tool_call_id=call.id,
+                tool_call=call,
+            )
+            yield _done_event(
+                usage=TokenUsage(input_tokens=10, output_tokens=3, total_tokens=13),
+                provider_request_id="resp_long_context_search",
+            )
+            return
+        payload = json.loads(req.messages[-1].tool_results[0].output)
+        yield _text_event(f"Final answer [{payload['long_context']['n']}].")
+        yield _done_event(
+            usage=TokenUsage(input_tokens=10, output_tokens=3, total_tokens=13),
+            provider_request_id="resp_long_context_final",
+        )
+
+
+class _LongContextThenAppSearchRouter:
+    def __init__(self, media_id: UUID) -> None:
+        self.media_id = media_id
+        self.requests: list[ModelCall] = []
+
+    async def stream(self, req, *, key, timeout_s, cancel=None):
+        del cancel
+        self.requests.append(req)
+        if len(self.requests) == 1:
+            calls = (
+                ToolCall(
+                    id="long-context-app-search",
+                    name="app_search",
+                    arguments={
+                        "query": "summarize whole Long Context Source",
+                        "scopes": [f"media:{self.media_id}"],
+                    },
+                ),
+                ToolCall(
+                    id="second-app-search",
+                    name="app_search",
+                    arguments={"query": f"follow-up search {uuid4().hex}"},
+                ),
+            )
+            for call in calls:
+                yield ModelStreamEvent(
+                    type="tool_call_start",
+                    provider="openai",
+                    model="gpt-5.5",
+                    tool_call_id=call.id,
+                    tool_name=call.name,
+                )
+                yield ModelStreamEvent(
+                    type="tool_call_done",
+                    provider="openai",
+                    model="gpt-5.5",
+                    tool_call_id=call.id,
+                    tool_call=call,
+                )
+            yield _done_event(
+                usage=TokenUsage(input_tokens=10, output_tokens=3, total_tokens=13),
+                provider_request_id="resp_long_context_then_search",
+            )
+            return
+        payload = json.loads(req.messages[-1].tool_results[0].output)
+        yield _text_event(f"Final answer [{payload['long_context']['n']}].")
+        yield _done_event(
+            usage=TokenUsage(input_tokens=10, output_tokens=3, total_tokens=13),
+            provider_request_id="resp_long_context_then_search_final",
+        )
+
+
+class _AppSearchThenUnknownToolRouter:
+    def __init__(self, media_id: UUID) -> None:
+        self.media_id = media_id
+        self.requests: list[ModelCall] = []
+
+    async def stream(self, req, *, key, timeout_s, cancel=None):
+        del cancel
+        self.requests.append(req)
+        if len(self.requests) == 1:
+            calls = (
+                ToolCall(
+                    id="app-search-before-budget-failure",
+                    name="app_search",
+                    arguments={
+                        "query": "searchable content",
+                        "scopes": [f"media:{self.media_id}"],
+                    },
+                ),
+                ToolCall(id="oversized-unknown-tool", name="mystery_tool", arguments={}),
+            )
+            for call in calls:
+                yield ModelStreamEvent(
+                    type="tool_call_start",
+                    provider="openai",
+                    model="gpt-5.5",
+                    tool_call_id=call.id,
+                    tool_name=call.name,
+                )
+                yield ModelStreamEvent(
+                    type="tool_call_done",
+                    provider="openai",
+                    model="gpt-5.5",
+                    tool_call_id=call.id,
+                    tool_call=call,
+                )
+            yield _done_event(
+                usage=TokenUsage(input_tokens=10, output_tokens=3, total_tokens=13),
+                provider_request_id="resp_app_search_then_budget_failure",
+            )
+            return
+        yield _text_event("Final answer.")
+        yield _done_event(
+            usage=TokenUsage(input_tokens=10, output_tokens=3, total_tokens=13),
+            provider_request_id="resp_after_budget_failure",
+        )
+
+
+class _LongContextBodyOptionalRouter:
+    def __init__(self, media_id: UUID) -> None:
+        self.media_id = media_id
+        self.requests: list[ModelCall] = []
+
+    async def stream(self, req, *, key, timeout_s, cancel=None):
+        del cancel
+        self.requests.append(req)
+        if len(self.requests) == 1:
+            call = ToolCall(
+                id="long-context-app-search",
+                name="app_search",
+                arguments={
+                    "query": "summarize whole Long Context Source",
+                    "scopes": [f"media:{self.media_id}"],
+                },
+            )
+            yield ModelStreamEvent(
+                type="tool_call_start",
+                provider="openai",
+                model="gpt-5.5",
+                tool_call_id=call.id,
+                tool_name=call.name,
+            )
+            yield ModelStreamEvent(
+                type="tool_call_done",
+                provider="openai",
+                model="gpt-5.5",
+                tool_call_id=call.id,
+                tool_call=call,
+            )
+            yield _done_event(
+                usage=TokenUsage(input_tokens=10, output_tokens=3, total_tokens=13),
+                provider_request_id="resp_long_context_optional_body",
+            )
+            return
+        payload = json.loads(req.messages[-1].tool_results[0].output)
+        yield _text_event(f"Final answer saw {payload['long_context']['status']}.")
+        yield _done_event(
+            usage=TokenUsage(input_tokens=10, output_tokens=3, total_tokens=13),
+            provider_request_id="resp_long_context_optional_final",
         )
 
 
@@ -993,6 +1228,43 @@ def _create_run_for_executor(
     return run_id
 
 
+def _create_run_with_context_media(
+    auth_client, direct_db: DirectSessionManager, *, title: str = "Long Context Source"
+) -> tuple[UUID, UUID]:
+    user_id = create_test_user_id()
+    auth_client.get("/me", headers=auth_headers(user_id))
+    _seed_ai_plus_billing(direct_db, user_id)
+    with direct_db.session() as session:
+        model_id = create_test_model(session)
+        media_id = create_searchable_media(session, user_id, title=title)
+    conversation_id = _create_conversation(auth_client, user_id)
+    with direct_db.session() as session:
+        add_context_ref_without_commit(
+            session,
+            viewer_id=user_id,
+            conversation_id=conversation_id,
+            target=assert_resource_ref(f"media:{media_id}"),
+            origin="user",
+        )
+        session.commit()
+
+    response = _post_chat_run(
+        auth_client,
+        user_id,
+        model_id,
+        reasoning="default",
+        conversation_id=conversation_id,
+    )
+    assert response.status_code == 200, f"Create failed: {response.text}"
+    run_id = UUID(response.json()["data"]["run"]["id"])
+    direct_db.register_cleanup("llm_calls", "owner_id", run_id)
+    direct_db.register_cleanup("media", "id", media_id)
+    direct_db.register_cleanup("library_entries", "media_id", media_id)
+    direct_db.register_cleanup("fragments", "media_id", media_id)
+    _register_run_cleanup(direct_db, conversation_id)
+    return run_id, media_id
+
+
 def _fetch_run_error(direct_db: DirectSessionManager, run_id: UUID):
     with direct_db.session() as session:
         return session.execute(
@@ -1169,6 +1441,71 @@ async def test_tool_loop_enforces_aggregate_tool_output_budget_before_continuati
 
 
 @pytest.mark.integration
+async def test_tool_output_budget_marks_unforwarded_retrievals_not_in_prompt(
+    auth_client, direct_db: DirectSessionManager, chat_runs_schema, monkeypatch
+):
+    run_id, media_id = _create_run_with_context_media(auth_client, direct_db)
+    router = _AppSearchThenUnknownToolRouter(media_id)
+
+    def fake_estimate_tokens(text: str) -> int:
+        return 10**9 if "unknown tool" in text else 1
+
+    monkeypatch.setattr("nexus.services.chat_runs.estimate_tokens", fake_estimate_tokens)
+    with direct_db.session() as session:
+        result = await execute_chat_run(session, run_id=run_id, llm_router=router)
+
+    assert result == {"status": "error", "error_code": "E_LLM_TOOL_OUTPUT_TOO_LARGE"}
+    assert len(router.requests) == 1
+    with direct_db.session() as session:
+        run = session.get(ChatRun, run_id)
+        assert run is not None
+        retrieval = session.execute(
+            text(
+                """
+                SELECT COUNT(*) FILTER (WHERE mr.selected) AS selected_count,
+                       COUNT(*) FILTER (WHERE mr.included_in_prompt) AS included_count,
+                       COUNT(*) FILTER (WHERE mr.cited_edge_id IS NOT NULL) AS cited_count,
+                       COUNT(*) FILTER (
+                           WHERE mr.selected
+                             AND mr.retrieval_status = 'excluded_by_budget'
+                       ) AS selected_excluded_count
+                FROM message_tool_calls mtc
+                JOIN message_retrievals mr ON mr.tool_call_id = mtc.id
+                WHERE mtc.assistant_message_id = :assistant_message_id
+                  AND mtc.tool_name = 'app_search'
+                """
+            ),
+            {"assistant_message_id": run.assistant_message_id},
+        ).one()
+        ledger = session.execute(
+            text(
+                """
+                SELECT COUNT(*) FILTER (WHERE mcl.selected) AS selected_count,
+                       COUNT(*) FILTER (WHERE mcl.included_in_prompt) AS included_count,
+                       COUNT(*) FILTER (
+                           WHERE mcl.selected
+                             AND mcl.selection_status = 'excluded_by_budget'
+                             AND mcl.selection_reason = 'tool_output_budget'
+                       ) AS selected_excluded_count
+                FROM message_tool_calls mtc
+                JOIN message_retrieval_candidate_ledgers mcl ON mcl.tool_call_id = mtc.id
+                WHERE mtc.assistant_message_id = :assistant_message_id
+                  AND mtc.tool_name = 'app_search'
+                """
+            ),
+            {"assistant_message_id": run.assistant_message_id},
+        ).one()
+
+    assert retrieval.selected_count > 0
+    assert retrieval.included_count == 0
+    assert retrieval.cited_count == 0
+    assert retrieval.selected_excluded_count == retrieval.selected_count
+    assert ledger.selected_count == retrieval.selected_count
+    assert ledger.included_count == 0
+    assert ledger.selected_excluded_count == ledger.selected_count
+
+
+@pytest.mark.integration
 async def test_app_search_policy_survives_chat_run_dispatch_and_trust_trail(
     auth_client, direct_db: DirectSessionManager, chat_runs_schema
 ):
@@ -1203,6 +1540,295 @@ async def test_app_search_policy_survives_chat_run_dispatch_and_trust_trail(
     assert metadata["context_route"] == "search_fetch_read"
     assert metadata["scope"] == "all"
     assert metadata["resolved_scopes"] == []
+
+
+@pytest.mark.integration
+async def test_decomposed_app_search_calls_persist_as_ordered_tool_calls(
+    auth_client, direct_db: DirectSessionManager, chat_runs_schema
+):
+    run_id = _create_run_for_executor(auth_client, direct_db)
+    router = _DecomposedAppSearchRouter()
+
+    with direct_db.session() as session:
+        result = await execute_chat_run(session, run_id=run_id, llm_router=router)
+
+    assert result == {"status": "complete"}
+    assert len(router.requests) == 2
+    assert [item.call_id for item in router.requests[1].messages[-1].tool_results] == [
+        "decomposed-search-1",
+        "decomposed-search-2",
+    ]
+
+    with direct_db.session() as session:
+        run = session.get(ChatRun, run_id)
+        assert run is not None
+        trail = build_assistant_trust_trail(
+            session,
+            viewer_id=run.owner_user_id,
+            assistant_message_id=run.assistant_message_id,
+        )
+        rows = session.execute(
+            text(
+                """
+                SELECT tool_call_index, tool_name, status
+                FROM message_tool_calls
+                WHERE assistant_message_id = :assistant_message_id
+                ORDER BY tool_call_index
+                """
+            ),
+            {"assistant_message_id": run.assistant_message_id},
+        ).fetchall()
+        trail = build_assistant_trust_trail(
+            session,
+            viewer_id=run.owner_user_id,
+            assistant_message_id=run.assistant_message_id,
+        )
+
+    assert [(row.tool_call_index, row.tool_name, row.status) for row in rows] == [
+        (1, "app_search", "complete"),
+        (2, "app_search", "complete"),
+    ]
+    app_search_tools = [tool for tool in trail.tool_calls if tool.tool_name == "app_search"]
+    assert len(app_search_tools) == 2
+    assert all(len(tool.rerank_ledgers) == 1 for tool in app_search_tools)
+
+
+@pytest.mark.integration
+async def test_long_context_app_search_executes_private_read_path(
+    auth_client, direct_db: DirectSessionManager, chat_runs_schema
+):
+    run_id, media_id = _create_run_with_context_media(auth_client, direct_db)
+
+    router = _LongContextAppSearchRouter(media_id)
+    with direct_db.session() as session:
+        result = await execute_chat_run(session, run_id=run_id, llm_router=router)
+
+    assert result == {"status": "complete"}
+    assert len(router.requests) == 2
+    payload = json.loads(router.requests[1].messages[-1].tool_results[0].output)
+    assert payload["long_context"]["status"] == "included"
+    assert payload["long_context"]["uri"] == f"media:{media_id}"
+    assert "canonical text for Long Context Source" in payload["long_context"]["body"]
+    assert payload["long_context"]["n"] >= 1
+
+    with direct_db.session() as session:
+        run = session.get(ChatRun, run_id)
+        assert run is not None
+        rows = session.execute(
+            text(
+                """
+                SELECT mtc.tool_name, mr.result_type, mr.included_in_prompt,
+                       mr.cited_edge_id IS NOT NULL AS cited
+                FROM message_tool_calls mtc
+                JOIN message_retrievals mr ON mr.tool_call_id = mtc.id
+                WHERE mtc.assistant_message_id = :assistant_message_id
+                ORDER BY mtc.tool_call_index, mr.ordinal
+                """
+            ),
+            {"assistant_message_id": run.assistant_message_id},
+        ).fetchall()
+        trail = build_assistant_trust_trail(
+            session,
+            viewer_id=run.owner_user_id,
+            assistant_message_id=run.assistant_message_id,
+        )
+
+    assert any(
+        row.tool_name == "read_resource"
+        and row.result_type == "media"
+        and row.included_in_prompt
+        and row.cited
+        for row in rows
+    )
+    read_tool = next(tool for tool in trail.tool_calls if tool.tool_name == "read_resource")
+    assert read_tool.more_candidates_available is False
+
+
+@pytest.mark.integration
+async def test_long_context_body_is_omitted_when_citation_materialization_fails(
+    auth_client, direct_db: DirectSessionManager, chat_runs_schema, monkeypatch
+):
+    run_id, media_id = _create_run_with_context_media(auth_client, direct_db)
+
+    def missing_search_result(*args, **kwargs):
+        del args, kwargs
+        raise ValueError("citation target is gone")
+
+    monkeypatch.setattr("nexus.services.chat_runs.get_search_result", missing_search_result)
+    router = _LongContextBodyOptionalRouter(media_id)
+    with direct_db.session() as session:
+        result = await execute_chat_run(session, run_id=run_id, llm_router=router)
+
+    assert result == {"status": "complete"}
+    payload = json.loads(router.requests[1].messages[-1].tool_results[0].output)
+    assert payload["long_context"]["status"] == "error"
+    assert payload["long_context"]["error_code"] == "citation_unavailable"
+    assert "body" not in payload["long_context"]
+    assert "n" not in payload["long_context"]
+
+    with direct_db.session() as session:
+        run = session.get(ChatRun, run_id)
+        assert run is not None
+        row = session.execute(
+            text(
+                """
+                SELECT COUNT(*) AS trace_count,
+                       COUNT(mr.id) AS retrieval_count
+                FROM message_tool_calls mtc
+                LEFT JOIN message_retrievals mr ON mr.tool_call_id = mtc.id
+                WHERE mtc.assistant_message_id = :assistant_message_id
+                  AND mtc.tool_name = 'read_resource'
+                """
+            ),
+            {"assistant_message_id": run.assistant_message_id},
+        ).one()
+
+    assert row.trace_count == 1
+    assert row.retrieval_count == 0
+
+
+@pytest.mark.integration
+async def test_long_context_non_full_read_returns_message_without_body_or_citation(
+    auth_client, direct_db: DirectSessionManager, chat_runs_schema
+):
+    run_id, media_id = _create_run_with_context_media(auth_client, direct_db)
+    with direct_db.session() as session:
+        session.execute(
+            text("UPDATE fragments SET canonical_text = :body WHERE media_id = :media_id"),
+            {"media_id": media_id, "body": "x" * 60_000},
+        )
+        session.commit()
+
+    router = _LongContextBodyOptionalRouter(media_id)
+    with direct_db.session() as session:
+        result = await execute_chat_run(session, run_id=run_id, llm_router=router)
+
+    assert result == {"status": "complete"}
+    payload = json.loads(router.requests[1].messages[-1].tool_results[0].output)
+    assert payload["long_context"]["status"] == "too_large"
+    assert payload["long_context"]["kind"] == "too_large"
+    assert "inspect_resource" in payload["long_context"]["message"]
+    assert "body" not in payload["long_context"]
+    assert "n" not in payload["long_context"]
+
+    with direct_db.session() as session:
+        run = session.get(ChatRun, run_id)
+        assert run is not None
+        row = session.execute(
+            text(
+                """
+                SELECT COUNT(*) AS trace_count,
+                       COUNT(mr.id) AS retrieval_count
+                FROM message_tool_calls mtc
+                LEFT JOIN message_retrievals mr ON mr.tool_call_id = mtc.id
+                WHERE mtc.assistant_message_id = :assistant_message_id
+                  AND mtc.tool_name = 'read_resource'
+                """
+            ),
+            {"assistant_message_id": run.assistant_message_id},
+        ).one()
+
+    assert row.trace_count == 1
+    assert row.retrieval_count == 0
+
+
+@pytest.mark.integration
+async def test_long_context_internal_read_does_not_steal_provider_tool_index(
+    auth_client, direct_db: DirectSessionManager, chat_runs_schema
+):
+    run_id, media_id = _create_run_with_context_media(auth_client, direct_db)
+
+    router = _LongContextThenAppSearchRouter(media_id)
+    with direct_db.session() as session:
+        result = await execute_chat_run(session, run_id=run_id, llm_router=router)
+
+    assert result == {"status": "complete"}
+    assert [item.call_id for item in router.requests[1].messages[-1].tool_results] == [
+        "long-context-app-search",
+        "second-app-search",
+    ]
+    with direct_db.session() as session:
+        run = session.get(ChatRun, run_id)
+        assert run is not None
+        rows = session.execute(
+            text(
+                """
+                SELECT id, tool_call_index, tool_name
+                FROM message_tool_calls
+                WHERE assistant_message_id = :assistant_message_id
+                ORDER BY tool_call_index
+                """
+            ),
+            {"assistant_message_id": run.assistant_message_id},
+        ).fetchall()
+        events = (
+            session.execute(
+                text(
+                    """
+                SELECT payload
+                FROM chat_run_events
+                WHERE run_id = :run_id AND event_type = 'tool_call_done'
+                ORDER BY seq
+                """
+                ),
+                {"run_id": run_id},
+            )
+            .scalars()
+            .all()
+        )
+
+    assert [(row.tool_call_index, row.tool_name) for row in rows] == [
+        (1, "app_search"),
+        (2, "app_search"),
+        (3, "read_resource"),
+    ]
+    assert [
+        (payload["provider_tool_call_id"], payload["tool_call_id"], payload["tool_call_index"])
+        for payload in events
+    ] == [
+        ("long-context-app-search", str(rows[0].id), 1),
+        ("second-app-search", str(rows[1].id), 2),
+    ]
+
+
+@pytest.mark.integration
+async def test_long_context_app_search_budget_checks_final_payload(
+    auth_client, direct_db: DirectSessionManager, chat_runs_schema, monkeypatch
+):
+    run_id, media_id = _create_run_with_context_media(auth_client, direct_db)
+
+    def fake_estimate_tokens(text: str) -> int:
+        try:
+            payload = json.loads(text)
+        except ValueError:
+            return 1
+        if isinstance(payload, dict) and isinstance(payload.get("long_context"), dict):
+            return 10**9 if "n" in payload["long_context"] else 1
+        return 1
+
+    monkeypatch.setattr("nexus.services.chat_runs.estimate_tokens", fake_estimate_tokens)
+    router = _LongContextAppSearchRouter(media_id)
+    with direct_db.session() as session:
+        result = await execute_chat_run(session, run_id=run_id, llm_router=router)
+
+    assert result == {"status": "error", "error_code": "E_LLM_TOOL_OUTPUT_TOO_LARGE"}
+    assert len(router.requests) == 1
+    with direct_db.session() as session:
+        run = session.get(ChatRun, run_id)
+        assert run is not None
+        read_trace_count = session.execute(
+            text(
+                """
+                SELECT COUNT(*)
+                FROM message_tool_calls
+                WHERE assistant_message_id = :assistant_message_id
+                  AND tool_name = 'read_resource'
+                """
+            ),
+            {"assistant_message_id": run.assistant_message_id},
+        ).scalar_one()
+
+    assert read_trace_count == 0
 
 
 @pytest.mark.integration

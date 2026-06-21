@@ -1545,3 +1545,26 @@ def test_synapse_origin_edges_constructed_only_in_synapse_service():
         "services/resource_graph/policy.py",
     )
     assert not hits, f'origin="synapse" written outside services/synapse.py:\n{_fmt(hits)}'
+
+
+def test_generated_retrieval_artifacts_have_no_search_expansion_identity():
+    from nexus.services.resource_items.capabilities import RESOURCE_ITEM_CAPABILITIES
+
+    generated = {
+        scheme
+        for scheme, capability in RESOURCE_ITEM_CAPABILITIES.items()
+        if capability.chat_subject == "generated_output"
+    }
+
+    assert generated == {
+        "oracle_reading",
+        "library_intelligence_artifact",
+        "library_intelligence_revision",
+    }
+    assert all(not RESOURCE_ITEM_CAPABILITIES[scheme].app_search_scope for scheme in generated)
+    assert all(
+        not RESOURCE_ITEM_CAPABILITIES[scheme].conversation_search_scope for scheme in generated
+    )
+    assert all(
+        RESOURCE_ITEM_CAPABILITIES[scheme].citable_result_type is None for scheme in generated
+    )

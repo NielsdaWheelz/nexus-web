@@ -18,6 +18,7 @@ from nexus.errors import ApiError
 from nexus.services.agent_tools.app_search import (
     APP_SEARCH_CONTEXT_CHARS,
     APP_SEARCH_SELECTED_LIMIT,
+    _long_context_media_scope_citations,
     _resolve_scope_uris,
     execute_app_search,
     render_retrieved_context_blocks,
@@ -259,6 +260,21 @@ def _run_candidates(
     citations = [
         citation_from_search_result(result, filters=filters) for result in response.results
     ]
+    plan = plan_app_search(fixture["query"], resolved_scopes, fixture["kinds"])
+    if plan.context_route == "long_context_candidate" and len(resolved_scopes) == 1:
+        seen = {(citation.result_type, citation.source_id) for citation in citations}
+        for citation in _long_context_media_scope_citations(
+            db,
+            viewer_id=viewer_id,
+            scope_uri=resolved_scopes[0],
+            limit=depth,
+            filters=filters,
+        ):
+            key = (citation.result_type, citation.source_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            citations.append(citation)
     prompt_citations, _ = rerank_app_search_candidates(fixture["query"], citations)
     _, context_chars, selected, selection_reasons = render_retrieved_context_blocks(
         db,

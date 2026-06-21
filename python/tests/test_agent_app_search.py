@@ -870,11 +870,13 @@ def test_execute_app_search_uses_moderate_candidate_depth_for_single_media_scope
             user_message_id=user_message_id,
             assistant_message_id=assistant_message_id,
             scopes=[f"media:{media_id}"],
-            query=f"summarize this whole document {needle}",
+            query="summarize this whole document",
         )
 
         assert summary_run.status == "complete"
         assert summary_run.candidate_limit == APP_SEARCH_SCOPED_CANDIDATE_LIMIT
+        assert any(citation.result_type == "content_chunk" for citation in summary_run.citations)
+        assert summary_run.selected_citations
         assert summary_run.query_class == "single_source_summary"
         assert summary_run.retrieval_mode == "fast"
         assert summary_run.policy_reason == "single_narrow_scope"
@@ -896,6 +898,21 @@ def test_execute_app_search_uses_moderate_candidate_depth_for_single_media_scope
         assert metadata["retrieval_mode"] == "fast"
         assert metadata["context_route"] == "long_context_candidate"
         assert metadata["context_route_reason"] == "single_media_whole_source_query"
+
+        default_scope_summary_run = execute_app_search(
+            session,
+            viewer_id=user_id,
+            conversation_id=conversation_id,
+            user_message_id=user_message_id,
+            assistant_message_id=assistant_message_id,
+            scopes=[],
+            query=f"summarize this whole document {needle}",
+        )
+
+        assert default_scope_summary_run.status == "complete"
+        assert default_scope_summary_run.query_class == "single_source_summary"
+        assert default_scope_summary_run.context_route == "search_fetch_read"
+        assert default_scope_summary_run.context_route_reason == "default_search_fetch_read"
 
     direct_db.register_cleanup("resource_edges", "source_id", conversation_id)
     direct_db.register_cleanup("resource_edges", "target_id", media_id)

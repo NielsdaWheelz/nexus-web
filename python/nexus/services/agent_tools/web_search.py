@@ -204,6 +204,7 @@ class WebSearchRun:
             "error_code": self.error_code,
             "result_count": len(self.citations),
             "selected_count": len(self.selected_citations),
+            "more_candidates_available": len(self.citations) > len(self.selected_citations),
             "latency_ms": self.latency_ms,
             "filters": {
                 "freshness_days": self.requested_freshness_days,

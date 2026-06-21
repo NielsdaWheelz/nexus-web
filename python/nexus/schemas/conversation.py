@@ -316,6 +316,7 @@ class ChatRunToolResultEventPayload(BaseModel):
     error_code: str | None = None
     result_count: int | None = Field(default=None, ge=0)
     selected_count: int | None = Field(default=None, ge=0)
+    more_candidates_available: bool | None = None
     latency_ms: int | None = Field(default=None, ge=0)
     provider_request_ids: list[str] = Field(default_factory=list)
     results: list[RetrievalResultRef] = Field(default_factory=list)
@@ -497,6 +498,7 @@ class TrustToolCallOut(BaseModel):
     latency_ms: int | None = None
     result_count: int
     selected_count: int
+    more_candidates_available: bool = False
     error_code: str | None = None
     provider_request_ids: list[str]
     result_refs: list[dict[str, Any]]

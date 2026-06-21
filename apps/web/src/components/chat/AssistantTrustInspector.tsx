@@ -228,6 +228,7 @@ function ToolRow({ tool }: { tool: MessageToolCall }) {
         tool {tool.id ? shortId(tool.id) : "pending"} - {tool.scope ?? "all"} -{" "}
         {tool.result_count ?? tool.result_refs.length} results /{" "}
         {tool.selected_count ?? tool.selected_context_refs.length} selected
+        {tool.more_candidates_available ? " - more available" : ""}
         {typeof tool.latency_ms === "number" ? ` - ${tool.latency_ms}ms` : ""}
       </div>
       {tool.retrievals.length > 0 ? (

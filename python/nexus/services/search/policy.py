@@ -29,7 +29,14 @@ def plan_app_search(
 ) -> AppSearchRetrievalPlan:
     if len(scope_uris) == 1 and scope_uris[0].startswith("media:"):
         terms = set(re.findall(r"[a-z0-9]+", query.lower()))
-        if terms & {"analyze", "analysis", "entire", "overview", "summarize", "summary", "whole"}:
+        if terms & {"all", "entire", "full", "whole"} and terms & {
+            "article",
+            "book",
+            "document",
+            "media",
+            "source",
+            "text",
+        }:
             return AppSearchRetrievalPlan(
                 query_class="single_source_summary",
                 candidate_limit=APP_SEARCH_SCOPED_CANDIDATE_LIMIT,

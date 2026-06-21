@@ -427,7 +427,13 @@ def _uuid_or_none(raw: object) -> UUID | None:
     return parsed if str(parsed) == raw else None
 
 
-def _app_search_tool_output(run_result: Any, start_ordinal: int) -> str:
+def _app_search_tool_output(
+    run_result: Any,
+    start_ordinal: int,
+    long_context: dict[str, object] | None = None,
+    *,
+    number_results: bool = True,
+) -> str:
     next_ordinal = start_ordinal
     results = []
     for citation in run_result.selected_citations:
@@ -456,21 +462,68 @@ def _app_search_tool_output(run_result: Any, start_ordinal: int) -> str:
                 )
                 if key in source_map
             }
-        if citation.citation_target is not None:
+        if number_results and citation.citation_target is not None:
             item["n"] = next_ordinal
             next_ordinal += 1
         results.append(item)
-    return json.dumps(
+    payload: dict[str, object] = {
+        "results": results,
+        "total_candidates": len(run_result.citations),
+        "selected_count": len(run_result.selected_citations),
+        "more_candidates_available": len(run_result.citations) > len(run_result.selected_citations),
+        "status": run_result.status,
+        "error_code": run_result.error_code,
+    }
+    if long_context is not None:
+        payload["long_context"] = long_context
+    return json.dumps(payload, default=str)
+
+
+def _app_search_long_context_read(
+    db: Session, *, run: ChatRun, run_result: Any
+) -> tuple[dict[str, object], Any] | None:
+    if getattr(run_result, "context_route", None) != "long_context_candidate":
+        return None
+    scopes = getattr(run_result, "resolved_scopes", [])
+    if len(scopes) != 1 or not str(scopes[0]).startswith("media:"):
+        return None
+
+    uri = str(scopes[0])
+    result = execute_read_resource(
+        db,
+        viewer_id=run.owner_user_id,
+        conversation_id=run.conversation_id,
+        assistant_message_id=run.assistant_message_id,
+        uri=uri,
+    )
+    if result.is_error:
+        return (
+            {
+                "status": "error",
+                "uri": uri,
+                "error_code": result.error_code,
+                "message": result.body,
+            },
+            result,
+        )
+    if result.kind != "full":
+        return (
+            {
+                "status": result.kind,
+                "uri": uri,
+                "kind": result.kind,
+                "message": result.body,
+            },
+            result,
+        )
+    return (
         {
-            "results": results,
-            "total_candidates": len(run_result.citations),
-            "selected_count": len(run_result.selected_citations),
-            "more_candidates_available": len(run_result.citations)
-            > len(run_result.selected_citations),
-            "status": run_result.status,
-            "error_code": run_result.error_code,
+            "status": "included",
+            "uri": uri,
+            "kind": result.kind,
+            "body": result.body,
         },
-        default=str,
+        result,
     )
 
 
@@ -691,6 +744,74 @@ def _clear_message_citations(db: Session, run: ChatRun) -> None:
         _delete_citation_edge(db, viewer_id=run.owner_user_id, edge_id=edge_id)
 
 
+def _mark_unforwarded_tool_batch_excluded_by_budget(
+    db: Session, *, run: ChatRun, tool_call_ids: list[UUID]
+) -> None:
+    if not tool_call_ids:
+        return
+    edge_ids = (
+        db.execute(
+            text(
+                """
+                SELECT cited_edge_id
+                FROM message_retrievals
+                WHERE tool_call_id = ANY(:tool_call_ids)
+                  AND cited_edge_id IS NOT NULL
+                """
+            ),
+            {"tool_call_ids": tool_call_ids},
+        )
+        .scalars()
+        .all()
+    )
+    for edge_id in edge_ids:
+        _delete_citation_edge(db, viewer_id=run.owner_user_id, edge_id=edge_id)
+    db.execute(
+        text(
+            """
+            UPDATE message_retrievals
+            SET cited_edge_id = NULL,
+                included_in_prompt = false,
+                retrieval_status = CASE
+                    WHEN selected THEN 'excluded_by_budget'
+                    ELSE retrieval_status
+                END
+            WHERE tool_call_id = ANY(:tool_call_ids)
+            """
+        ),
+        {"tool_call_ids": tool_call_ids},
+    )
+    db.execute(
+        text(
+            """
+            UPDATE message_retrieval_candidate_ledgers
+            SET included_in_prompt = false,
+                selection_status = CASE
+                    WHEN selected THEN 'excluded_by_budget'
+                    ELSE selection_status
+                END,
+                selection_reason = CASE
+                    WHEN selected THEN 'tool_output_budget'
+                    ELSE selection_reason
+                END
+            WHERE tool_call_id = ANY(:tool_call_ids)
+            """
+        ),
+        {"tool_call_ids": tool_call_ids},
+    )
+    db.execute(
+        text(
+            """
+            UPDATE message_tool_calls
+            SET selected_context_refs = '[]'::jsonb
+            WHERE id = ANY(:tool_call_ids)
+              AND tool_name IN ('app_search', 'web_search')
+            """
+        ),
+        {"tool_call_ids": tool_call_ids},
+    )
+
+
 def _persist_read_evidence_citation(
     db: Session,
     *,
@@ -724,8 +845,7 @@ def _persist_read_evidence_citation(
             included_in_prompt=True,
         )
     except (NotFoundError, ValueError):
-        # justify-ignore-error: no resolvable anchor → the read body still
-        # returns, but it is not cited (no row, no `n`).
+        # justify-ignore-error: no resolvable anchor means no citable tool output.
         return None
     _record_tool_citations(db, run=run, tool_call_id=tool_call_id, start_ordinal=start_ordinal)
     return start_ordinal
@@ -2204,6 +2324,8 @@ async def _execute_chat_run(
                     )
                 )
                 tool_results: list[ToolResult] = []
+                unforwarded_tool_call_ids: list[UUID] = []
+                synthetic_tool_call_index_next = tool_call_index_next + len(pending_tool_calls)
                 for tc in pending_tool_calls:
                     tool_call_index_next += 1
                     if tc.name == APP_SEARCH_TOOL_NAME:
@@ -2281,8 +2403,14 @@ async def _execute_chat_run(
                             forced_error=forced_error,
                         )
                         assert run_result.tool_call_id is not None
-                        start_n = citation_n_next
-                        output = _app_search_tool_output(run_result, start_n)
+                        unforwarded_tool_call_ids.append(run_result.tool_call_id)
+                        search_start_n = citation_n_next
+                        long_context_result = _app_search_long_context_read(
+                            db, run=run, run_result=run_result
+                        )
+                        long_context = (
+                            long_context_result[0] if long_context_result is not None else None
+                        )
                         append_run_event(
                             db,
                             run,
@@ -2294,14 +2422,119 @@ async def _execute_chat_run(
                                 "error_code": run_result.error_code,
                             },
                         )
+                        number_search_results = long_context_result is None
+                        cite_long_context = False
+                        read_result = None
+                        read_tool_call_index = None
+                        if long_context_result is not None:
+                            read_result = long_context_result[1]
+                            synthetic_tool_call_index_next += 1
+                            read_tool_call_index = synthetic_tool_call_index_next
+                            if (
+                                long_context is not None
+                                and long_context.get("status") == "included"
+                                and not read_result.is_error
+                                and read_result.citation_result_type is not None
+                                and read_result.citation_source_id is not None
+                            ):
+                                assert long_context is not None
+                                long_context["n"] = citation_n_next
+                                cite_long_context = True
+                            elif (
+                                long_context is not None
+                                and long_context.get("status") == "included"
+                            ):
+                                long_context = {
+                                    "status": "error",
+                                    "uri": read_result.uri,
+                                    "error_code": "citation_unavailable",
+                                    "message": (
+                                        "Long-context body was not included because "
+                                        "it could not be cited."
+                                    ),
+                                }
+                            elif long_context is not None:
+                                long_context.pop("n", None)
+                        output = _app_search_tool_output(
+                            run_result,
+                            search_start_n,
+                            long_context=long_context,
+                            number_results=number_search_results,
+                        )
                         if not claim_tool_output(tc.name, output):
                             break
-                        citation_n_next = _record_tool_citations(
-                            db,
-                            run=run,
-                            tool_call_id=run_result.tool_call_id,
-                            start_ordinal=citation_n_next,
-                        )
+                        read_tool_call_id = None
+                        if long_context_result is not None:
+                            assert read_result is not None
+                            assert read_tool_call_index is not None
+                            read_tool_call_id = _persist_tool_call_trace(
+                                db,
+                                run=run,
+                                tool_call_index=read_tool_call_index,
+                                tool_name=READ_RESOURCE_TOOL_NAME,
+                                result=read_result,
+                            )
+                            unforwarded_tool_call_ids.append(read_tool_call_id)
+                            append_run_event(
+                                db,
+                                run,
+                                "tool_result",
+                                _tool_trace_event(
+                                    run=run,
+                                    tool_call_id=read_tool_call_id,
+                                    tool_call_index=read_tool_call_index,
+                                    tool_name=READ_RESOURCE_TOOL_NAME,
+                                    result=read_result,
+                                ),
+                            )
+                            if cite_long_context:
+                                read_n = _persist_read_evidence_citation(
+                                    db,
+                                    run=run,
+                                    tool_call_id=read_tool_call_id,
+                                    result=read_result,
+                                    start_ordinal=citation_n_next,
+                                )
+                                if read_n is not None:
+                                    assert long_context is not None
+                                    long_context["n"] = read_n
+                                    citation_n_next += 1
+                                    output = _app_search_tool_output(
+                                        run_result,
+                                        search_start_n,
+                                        long_context=long_context,
+                                        number_results=False,
+                                    )
+                                else:
+                                    assert long_context is not None
+                                    long_context = {
+                                        "status": "error",
+                                        "uri": read_result.uri,
+                                        "error_code": "citation_unavailable",
+                                        "message": (
+                                            "Long-context body was not included because "
+                                            "it could not be cited."
+                                        ),
+                                    }
+                                    output = _app_search_tool_output(
+                                        run_result,
+                                        search_start_n,
+                                        long_context=long_context,
+                                        number_results=False,
+                                    )
+                        if number_search_results:
+                            citation_n_next = _record_tool_citations(
+                                db,
+                                run=run,
+                                tool_call_id=run_result.tool_call_id,
+                                start_ordinal=citation_n_next,
+                            )
+                            output = _app_search_tool_output(
+                                run_result,
+                                search_start_n,
+                                long_context=long_context,
+                                number_results=True,
+                            )
                         db.commit()
                         tool_results.append(
                             ToolResult(
@@ -2349,6 +2582,7 @@ async def _execute_chat_run(
                         )
                         db.commit()
                         if web_search_provider is None:
+                            unforwarded_tool_call_ids.append(web_tool_call_id)
                             error_code = "web_search_not_configured"
                             _persist_tool_call_error(
                                 db,
@@ -2396,6 +2630,7 @@ async def _execute_chat_run(
                             tool_call_index=tool_call_index_next,
                         )
                         assert run_result.tool_call_id is not None
+                        unforwarded_tool_call_ids.append(run_result.tool_call_id)
                         start_n = citation_n_next
                         output = _web_search_tool_output(run_result, start_n)
                         append_run_event(
@@ -2471,6 +2706,7 @@ async def _execute_chat_run(
                             tool_name=READ_RESOURCE_TOOL_NAME,
                             result=read_result,
                         )
+                        unforwarded_tool_call_ids.append(read_tool_call_id)
                         read_n = (
                             citation_n_next
                             if not read_result.is_error
@@ -2559,6 +2795,7 @@ async def _execute_chat_run(
                             tool_name=INSPECT_RESOURCE_TOOL_NAME,
                             result=inspect_result,
                         )
+                        unforwarded_tool_call_ids.append(inspect_tool_call_id)
                         output = inspect_result.tool_output()
                         append_run_event(
                             db,
@@ -2592,6 +2829,7 @@ async def _execute_chat_run(
                             scope="provider_tool",
                             requested_types=[],
                         )
+                        unforwarded_tool_call_ids.append(tool_call_id)
                         _bind_provider_tool_call_events(
                             db,
                             run=run,
@@ -2646,8 +2884,12 @@ async def _execute_chat_run(
                                 is_error=True,
                             )
                         )
+                tool_call_index_next = synthetic_tool_call_index_next
                 if tool_output_budget_error is not None:
                     error_code = ApiErrorCode.E_LLM_TOOL_OUTPUT_TOO_LARGE.value
+                    _mark_unforwarded_tool_batch_excluded_by_budget(
+                        db, run=run, tool_call_ids=unforwarded_tool_call_ids
+                    )
                     finalize_error(
                         db,
                         run_id=run.id,

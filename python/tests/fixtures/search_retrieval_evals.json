@@ -43,7 +43,7 @@
     },
     {
       "id": "single_source_summary",
-      "query": "summary retrieval eval source summary {suffix}",
+      "query": "summarize whole document retrieval eval source summary {suffix}",
       "class": "single_source_summary",
       "kinds": ["documents"],
       "scope_refs": ["media:source_summary"],

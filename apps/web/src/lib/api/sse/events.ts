@@ -133,6 +133,7 @@ export interface SSEToolResultEvent {
     error_code?: string | null;
     result_count?: number | null;
     selected_count?: number | null;
+    more_candidates_available?: boolean | null;
     latency_ms?: number | null;
     provider_request_ids?: string[];
     filters: Record<string, unknown>;
@@ -432,6 +433,7 @@ function parseToolResultData(
       "error_code",
       "result_count",
       "selected_count",
+      "more_candidates_available",
       "latency_ms",
       "provider_request_ids",
       "filters",
@@ -452,6 +454,9 @@ function parseToolResultData(
     !isOptionalString(data.error_code) ||
     !isOptionalNonNegativeInteger(data.result_count) ||
     !isOptionalNonNegativeInteger(data.selected_count) ||
+    (data.more_candidates_available !== undefined &&
+      data.more_candidates_available !== null &&
+      typeof data.more_candidates_available !== "boolean") ||
     (data.latency_ms !== undefined &&
       data.latency_ms !== null &&
       (typeof data.latency_ms !== "number" ||
