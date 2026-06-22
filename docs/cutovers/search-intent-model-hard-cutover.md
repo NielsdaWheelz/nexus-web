@@ -6,7 +6,9 @@
 > **Review/hardening pass (2026-06-07).** A 10-cluster adversarial review (completeness + standards + consolidation vs `docs/rules/`) surfaced fixes, all applied + verified: **consolidation** — `visible_conversation_ids_cte_sql` moved to its canonical owner `auth/permissions.py` (beside its 3 siblings + `can_read_conversation`); one `scope_from_uri` shared by the route + chat tool; `_scoped_content_chunk_empty_status` now consumes the §4.6 `scope_filter_sql`; `_csv_frozenset` → `parse_comma_list`; `DEFAULT_LIMIT` centralized; four query validators share `_dedup`/`_validate_dedup`; package `__init__` re-exports trimmed; FE operator parser consumes `contributors/vocab.ts` (`CONTRIBUTOR_ROLES`). **Dead code** — deleted `validate_result_types`, `SEARCH_SCOPE_PREFIXES`, `VALID_FORMATS`, telemetry's `types is None` branch, the orphan `.score` CSS + `conversation.py` comment, the `'podcasts'` plural alias. **Correctness** — palette "See all" now serializes the `SearchQuery` (`searchHref(searchQueryFromInput(...))`) instead of dumping operators into `q=`; `Chip` pressable branch forwards its ref + rest props; authors render once (ContributorFilter, display names) not twice; `_search_type`'s unreachable branch raises `E_INTERNAL` not a 400. **Tests/gates** — added `effective_kinds`/validator unit tests (`test_search_kinds.py`, 72), `search_scopes` behavior (`test_search_batch.py`, 6), FE `searchApi`/`normalizeSearchResult`/`Chip`/`AppliedFilters`/`SearchPaneBody` tests, the AC-6 filter-doesn't-bypass-embedding test, implied-kind + out-of-vocab-400 + 4-key deleted-param 400 integration tests, the 0140 column-drop migration test, and §14 gates for `e2e/tests/**` + `docs/**` + palette + the `MessageToolCall` DDL. **e2e** fully migrated to the six-kind surface (`search.spec.ts`, `real-media-seed.ts`, `security-headers.csp.spec.ts`, `workspace-pane-minimize.spec.ts`). **Note (not a bug):** the chat `app_search` tool's `filters["formats"]` carries **storage** values (web_article/podcast_episode — the renamed internal `content_kinds`), not the public `MediaFormat` vocab, so it is fed to retrievers as-is and must NOT be remapped through `FORMAT_TO_STORAGE`. **Verified:** backend integration 158 (search/contributor/app_search/chat/citations) + migrations green; backend unit 132 (guards/kinds/batch/matrix); FE typecheck/lint clean, 106 unit + 20 browser. `make test-e2e`/`test-csp` still not run; uncommitted.
 
 **Type:** Hard cutover — no legacy code, no fallbacks, no backward-compat shims, no dual param sets.
-**Migration:** Yes — one small migration (drop `message_tool_calls.semantic`). Number assigned at build against the then-current head (`0137`; **note** the authors cutover also claims `0138`, so this is `0138` only if it lands first, else next free).
+**Migration:** Yes — `0140_drop_message_tool_calls_semantic.py` drops
+`message_tool_calls.semantic`. Downgrade raises `NotImplementedError` because
+this is a hard cutover; the migration docstring records the manual re-add shape.
 
 ## One-line
 
@@ -335,7 +337,11 @@ The handler inspects `request.query_params` and raises `InvalidRequestError(E_IN
 
 ### 6.5 Response — unchanged
 
-`SearchResponse` (`schemas/search.py:320`) with the 14-variant discriminated union + `page`. Result `type` discriminants and locators are frozen (rendering + citations).
+`SearchResponse` (`schemas/search.py`) uses the canonical `SEARCH_RESULT_TYPES`
+/ `ALL_RESULT_TYPES` result discriminants, including `reader_apparatus_item`.
+Result `type` discriminants and locators are frozen by the current backend,
+database, and frontend authorities rather than by a duplicated count in this
+doc.
 
 ### 6.6 Deleted from the contract
 
@@ -447,11 +453,13 @@ A library/media/conversation pane passes `scope` contextually (`in:library:<id>`
 
 ## 11. Migration / data
 
-One migration (`0138`-or-next; coordinate with the authors cutover which also claims `0138`):
+One migration: `0140_drop_message_tool_calls_semantic.py`.
 
 - `ALTER TABLE message_tool_calls DROP COLUMN semantic;`
-- No other schema change. `requested_types` is **retained** (re-meaning: resolved internal result types; old rows' values stay valid 14-type strings). `message_retrievals.result_type` CHECK (the 14 types) is unchanged.
-- No backfill: telemetry is not load-bearing history (single-user prototype). The HTTP/service contract carries no persisted filter rows beyond the above.
+- No other schema change. `requested_types` is **retained** (re-meaning: resolved internal result types). `message_retrievals.result_type` keeps the canonical current result-type CHECK.
+- No backfill: telemetry is not load-bearing history (single-user prototype). The HTTP/service contract carries no persisted filter rows beyond the above. Existing values stay valid current result-type strings.
+- No automatic downgrade path; downgrade raises `NotImplementedError` with manual
+  re-add notes in the migration docstring.
 
 ---
 
@@ -491,7 +499,11 @@ One migration (`0138`-or-next; coordinate with the authors cutover which also cl
 
 - No `APP_SEARCH_RESULT_TYPES` anywhere.
 - No `\bsemantic\b` in `services/search/**`, `routes/search.py`, `agent_tools/app_search.py`, `schemas/conversation.py` (SSE), or `message_tool_calls` DDL/model.
-- No `content_kinds` / `contributor_handles` / `\btypes=` in `apps/web/src/lib/search/**`, `SearchPaneBody.tsx`, `usePaletteController.ts`, `routes/search.py`, `agent_tools/app_search.py`, **`e2e/tests/**`**, **`docs/**`** (except this spec's old→new tables).
+- No stale `/search?...content_kinds=`, `/search?...contributor_handles=`, or
+  `/search?...types=` deep links in app search surfaces, e2e tests, or docs
+  except this spec's old-to-new examples. Endpoint-local vocabularies owned by
+  other cutovers, such as author-directory `content_kinds`, are not part of
+  this search URL-param guard.
 - No `<input type="checkbox">` in `SearchPaneBody.tsx`.
 - No `parse_scope` / `hash_query` defined in `services/search/service.py`.
 - No `_search_across_scopes` in `agent_tools/app_search.py` (moved to `search/batch.py`).
@@ -508,7 +520,7 @@ One migration (`0138`-or-next; coordinate with the authors cutover which also cl
 
 ## 16. Files
 
-**Created (backend):** `services/search/__init__.py`, `service.py`, `query.py`, `kinds.py`, `scope.py`, `batch.py`, `embedding.py`, `ranking.py`, `projection.py`, `cursor.py`, `retrievers/{media,library_content,objects,highlights,conversations,contributors,web}.py`; migration `0138`-or-next.
+**Created (backend):** `services/search/__init__.py`, `service.py`, `query.py`, `kinds.py`, `scope.py`, `batch.py`, `embedding.py`, `ranking.py`, `projection.py`, `cursor.py`, `retrievers/{media,library_content,objects,highlights,conversations,contributors,web}.py`; migration `0140_drop_message_tool_calls_semantic.py`.
 **Created (frontend):** `lib/search/{kinds,query,parseSearchInput,searchParams,searchApi,searchViewModel}.ts`, `components/search/{KindChips,AppliedFilters}.tsx`.
 **Modified:** `python/nexus/api/routes/search.py`, `schemas/search.py` (canonical runtime list), `schemas/conversation.py` (import canonical types; SSE drop `semantic`, rename `filters` keys), `db/models.py` (drop `semantic`), `agent_tools/app_search.py` (use `search_batch`, renames), the chat-UI SSE consumer + its TS type, `components/ui/Chip.tsx` (pressable mode), `SearchPaneBody.tsx`, `page.module.css`, `palette/usePaletteController.ts`, `lib/search/types.ts` (rename `ALL_SEARCH_TYPES`→`RESULT_TYPE_VALUES`), `components/search/SearchResultRow.tsx` (drop score), `e2e/tests/real-media/real-media-seed.ts`, `docs/architecture.md`, `docs/cutovers/authors-directory-and-contributor-ownership-hard-cutover.md` (deep-link param).
 **Deleted:** `services/search.py` (→ package), `lib/search/resultRowAdapter.ts`, `APP_SEARCH_RESULT_TYPES`, the three checkbox fieldsets + their constants, the `semantic` axis (param/arg/column/SSE field), the submit/disable/score code, `_search_across_scopes` (→ `batch.py`), the `content_kinds` alias branches.

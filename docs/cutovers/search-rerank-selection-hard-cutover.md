@@ -52,9 +52,9 @@ Implemented selector features:
 - locator-derived section/page/time bucket where present
 - duplicate source/section penalties
 
-At this slice boundary, runtime still recorded `query_class = "unclassified"`.
-These query-class policies were left to the later retrieval-controller/planner
-cutover, not hidden inside the selector:
+At this slice boundary, query-class policy was not hidden inside the selector.
+The later candidate-policy, run-level planner, and learned-reranker slices fill
+and consume query-class metadata explicitly:
 
 - exact lookup: prioritize exact lexical/title/person matches; low diversity
   pressure
@@ -63,8 +63,9 @@ cutover, not hidden inside the selector:
 - absence question: prioritize broad coverage and ledger searched scopes
 - multi-hop: select enough evidence to decide next tool call, not final answer
 
-Do not add a learned cross-encoder or LLM reranker in this cutover. The first
-selector must be deterministic, locally testable, and easy to inspect.
+This cutover owns the deterministic selector. Provider/LLM reranking belongs to
+`search-learned-reranker-hard-cutover.md` and must stay behind its explicit
+route policy, ledgering, eval, and failure contracts.
 
 ## Rerank Ledger Contract
 
@@ -100,7 +101,7 @@ A provider-backed, cross-encoder, or LLM reranker can be considered only after:
 - deterministic selector metrics are stable
 - eval fixtures include enough real failures to justify cost
 - latency and token budgets are explicit
-- provider failure has a typed fallback
+- provider failure has a typed failure path that forwards no evidence
 - reranker output is ledgered and auditable
 
 Potential future providers/approaches:

@@ -95,7 +95,7 @@ test.describe("chat streaming", () => {
       await page.goto(`/conversations/${conversationId}`);
       const runId = await sendChat(
         page,
-        "What does this source say about water on the Moon? Use the attached evidence.",
+        "What do my saved sources say about water on the Moon?",
       );
       worker = startE2eWorkerUntilChatRunTerminal({
         chatRunId: runId,
@@ -162,7 +162,7 @@ test.describe("chat streaming", () => {
       await page.goto(`/conversations/${conversationId}`);
       const runId = await sendChat(
         page,
-        "What does this source say about water on the Moon? Use the attached evidence.",
+        "What do my saved sources say about water on the Moon?",
       );
       worker = startE2eWorkerUntilChatRunTerminal({
         chatRunId: runId,

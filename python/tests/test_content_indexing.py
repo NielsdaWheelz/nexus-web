@@ -19,7 +19,11 @@ from nexus.services.content_indexing import (
 )
 from nexus.services.resource_graph.cleanup import assert_no_dangling_bare_edges
 from nexus.services.resource_graph.refs import ResourceRef
-from tests.factories import create_test_conversation_with_message
+from tests.factories import (
+    add_media_to_library,
+    create_test_conversation_with_message,
+    create_test_library,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -175,6 +179,7 @@ def test_content_chunk_source_map_is_deterministic(db_session: Session):
     second_text = "Source map second paragraph."
 
     _insert_ready_media(db_session, user_id=user_id, media_id=media_id)
+    add_media_to_library(db_session, create_test_library(db_session, user_id), media_id)
     rebuild_content_index(
         db_session,
         owner=IndexOwner("media", media_id),
@@ -210,12 +215,14 @@ def test_content_chunk_source_map_is_deterministic(db_session: Session):
     ).one()
     source_map = load_content_chunk_source_map(
         db_session,
+        viewer_id=user_id,
         chunk_id=chunk_id,
         evidence_span_id=evidence_span_id,
     )
 
     assert source_map == load_content_chunk_source_map(
         db_session,
+        viewer_id=user_id,
         chunk_id=chunk_id,
         evidence_span_id=evidence_span_id,
     )
@@ -237,8 +244,18 @@ def test_content_chunk_source_map_is_deterministic(db_session: Session):
     assert (
         load_content_chunk_source_map(
             db_session,
+            viewer_id=user_id,
             chunk_id=chunk_id,
             evidence_span_id=uuid4(),
+        )
+        is None
+    )
+    assert (
+        load_content_chunk_source_map(
+            db_session,
+            viewer_id=uuid4(),
+            chunk_id=chunk_id,
+            evidence_span_id=evidence_span_id,
         )
         is None
     )

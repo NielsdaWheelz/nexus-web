@@ -22,6 +22,7 @@ export default function AssistantTrustInspector({
     event?: React.MouseEvent,
   ) => void;
 }) {
+  const retrievalPlan = trustTrail.run?.retrieval_plan ?? null;
   const retrieved = trustTrail.tool_calls.reduce(
     (count, tool) => count + tool.retrievals.length,
     0,
@@ -78,6 +79,59 @@ export default function AssistantTrustInspector({
               <div>
                 <dt>Output</dt>
                 <dd>{trustTrail.run.final_chars ?? 0} chars</dd>
+              </div>
+            </dl>
+          </section>
+        ) : null}
+
+        {retrievalPlan ? (
+          <section>
+            <h4>Retrieval</h4>
+            <dl className={styles.trustMeta}>
+              <div>
+                <dt>Route</dt>
+                <dd>
+                  {retrievalPlan.route_intent} / {retrievalPlan.source_domain}
+                </dd>
+              </div>
+              <div>
+                <dt>Policy</dt>
+                <dd>
+                  {retrievalPlan.query_class} / {retrievalPlan.mixing_policy}
+                </dd>
+              </div>
+              <div>
+                <dt>Tools</dt>
+                <dd>{retrievalPlan.allowed_tools.join(", ") || "none"}</dd>
+              </div>
+              <div>
+                <dt>Blocked</dt>
+                <dd>{retrievalPlan.blocked_tools.join(", ") || "none"}</dd>
+              </div>
+              <div>
+                <dt>Sequence</dt>
+                <dd>{retrievalPlan.candidate_tool_sequence.join(", ") || "none"}</dd>
+              </div>
+              {retrievalPlan.internal_tool_sequence.length > 0 ? (
+                <div>
+                  <dt>Internal</dt>
+                  <dd>{retrievalPlan.internal_tool_sequence.join(", ")}</dd>
+                </div>
+              ) : null}
+              <div>
+                <dt>Refs</dt>
+                <dd>
+                  {retrievalPlan.context_ref_count} context /{" "}
+                  {retrievalPlan.search_scope_count} scopes
+                </dd>
+              </div>
+              <div>
+                <dt>Budget</dt>
+                <dd>{retrievalPlan.budget_policy}</dd>
+              </div>
+              <div>
+                <dt>Reason</dt>
+                <dd>{retrievalPlan.reason}</dd>
               </div>
             </dl>
           </section>
@@ -231,6 +285,17 @@ function ToolRow({ tool }: { tool: MessageToolCall }) {
         {tool.more_candidates_available ? " - more available" : ""}
         {typeof tool.latency_ms === "number" ? ` - ${tool.latency_ms}ms` : ""}
       </div>
+      {tool.source_domain && tool.source_policy ? (
+        <div className={styles.trustCode}>
+          source {tool.source_domain} - {tool.source_policy.decision} -{" "}
+          {tool.source_policy.reason}
+          {" - "}
+          {tool.source_policy.version} - mix{" "}
+          {tool.source_policy.mixing_allowed ? "allowed" : "blocked"} - seen{" "}
+          {tool.source_policy.domains_seen.join(",") || "none"} - requested{" "}
+          {tool.source_policy.requested_domains.join(",") || "none"}
+        </div>
+      ) : null}
       {tool.retrievals.length > 0 ? (
         <ol className={styles.trustNestedList}>
           {tool.retrievals.map((retrieval) => (
@@ -288,6 +353,22 @@ function ToolRow({ tool }: { tool: MessageToolCall }) {
               typeof ledger.metadata.policy_reason === "string"
                 ? ledger.metadata.policy_reason
                 : null;
+            const rerankMode =
+              typeof ledger.metadata.rerank_mode === "string"
+                ? ledger.metadata.rerank_mode
+                : null;
+            const rerankReason =
+              typeof ledger.metadata.rerank_reason === "string"
+                ? ledger.metadata.rerank_reason
+                : null;
+            const contextRoute =
+              typeof ledger.metadata.context_route === "string"
+                ? ledger.metadata.context_route
+                : null;
+            const contextRouteReason =
+              typeof ledger.metadata.context_route_reason === "string"
+                ? ledger.metadata.context_route_reason
+                : null;
             const selectionVersion =
               typeof ledger.metadata.selection_policy_version === "string"
                 ? ledger.metadata.selection_policy_version
@@ -304,9 +385,110 @@ function ToolRow({ tool }: { tool: MessageToolCall }) {
               typeof ledger.metadata.budget_policy === "string"
                 ? ledger.metadata.budget_policy
                 : null;
+            const provider =
+              typeof ledger.metadata.provider === "string"
+                ? ledger.metadata.provider
+                : null;
+            const model =
+              typeof ledger.metadata.model === "string" ? ledger.metadata.model : null;
+            const keyMode =
+              typeof ledger.metadata.key_mode_used === "string"
+                ? ledger.metadata.key_mode_used
+                : null;
+            const llmCallId =
+              typeof ledger.metadata.llm_call_id === "string"
+                ? ledger.metadata.llm_call_id
+                : null;
+            const llmCallIds = Array.isArray(ledger.metadata.llm_call_ids)
+              ? ledger.metadata.llm_call_ids.filter(
+                  (item): item is string => typeof item === "string",
+                )
+              : [];
+            const providerRequestId =
+              typeof ledger.metadata.provider_request_id === "string"
+                ? ledger.metadata.provider_request_id
+                : null;
+            const providerRequestIds = Array.isArray(
+              ledger.metadata.provider_request_ids,
+            )
+              ? ledger.metadata.provider_request_ids.filter(
+                  (item): item is string => typeof item === "string",
+                )
+              : [];
+            const showCallList =
+              (llmCallIds.length > 0 && !llmCallId) ||
+              llmCallIds.some((id) => id !== llmCallId) ||
+              (providerRequestIds.length > 0 && !providerRequestId) ||
+              providerRequestIds.some((id) => id !== providerRequestId);
+            const inputTokens =
+              typeof ledger.metadata.input_tokens === "number"
+                ? ledger.metadata.input_tokens
+                : null;
+            const outputTokens =
+              typeof ledger.metadata.output_tokens === "number"
+                ? ledger.metadata.output_tokens
+                : null;
+            const totalTokens =
+              typeof ledger.metadata.total_tokens === "number"
+                ? ledger.metadata.total_tokens
+                : null;
+            const latencyMs =
+              typeof ledger.metadata.latency_ms === "number"
+                ? ledger.metadata.latency_ms
+                : null;
+            const costMicros =
+              typeof ledger.metadata.estimated_cost_usd_micros === "number"
+                ? ledger.metadata.estimated_cost_usd_micros
+                : null;
+            const costStatus =
+              typeof ledger.metadata.cost_status === "string"
+                ? ledger.metadata.cost_status
+                : null;
+            const costStatuses = Array.isArray(ledger.metadata.cost_statuses)
+              ? ledger.metadata.cost_statuses.filter(
+                  (item): item is string => typeof item === "string",
+                )
+              : [];
+            const rerankInputCount =
+              typeof ledger.metadata.rerank_input_count === "number"
+                ? ledger.metadata.rerank_input_count
+                : null;
+            const rerankOutputCount =
+              typeof ledger.metadata.rerank_output_count === "number"
+                ? ledger.metadata.rerank_output_count
+                : null;
+            const failureCode =
+              typeof ledger.metadata.failure_error_code === "string"
+                ? ledger.metadata.failure_error_code
+                : typeof ledger.metadata.error_code === "string"
+                  ? ledger.metadata.error_code
+                : null;
+            const privateSnippetPolicy =
+              typeof ledger.metadata.private_snippet_policy === "string"
+                ? ledger.metadata.private_snippet_policy
+                : null;
+            const privateSnippetReason =
+              typeof ledger.metadata.private_snippet_policy_reason === "string"
+                ? ledger.metadata.private_snippet_policy_reason
+                : null;
+            const rerankTrace = rerankTraceItems(
+              ledger.metadata.candidate_rerank_trace,
+            );
+            const retrievalGuidance =
+              ledger.metadata.retrieval_guidance &&
+              typeof ledger.metadata.retrieval_guidance === "object" &&
+              !Array.isArray(ledger.metadata.retrieval_guidance)
+                ? (ledger.metadata.retrieval_guidance as Record<string, unknown>)
+                : null;
+            const guidanceStatus =
+              typeof retrievalGuidance?.status === "string"
+                ? retrievalGuidance.status
+                : null;
             const policy = [
               retrievalMode,
               policyReason,
+              rerankMode,
+              rerankReason,
               candidateLimit === null ? null : `candidates ${candidateLimit}`,
               selectedLimit === null ? null : `selected cap ${selectedLimit}`,
               queryClass,
@@ -336,6 +518,119 @@ function ToolRow({ tool }: { tool: MessageToolCall }) {
                 {policy ? <div className={styles.trustCode}>{policy}</div> : null}
                 {selectionPolicy ? (
                   <div className={styles.trustCode}>{selectionPolicy}</div>
+                ) : null}
+                {contextRoute || contextRouteReason ? (
+                  <div className={styles.trustCode}>
+                    context {contextRoute ?? "unknown"}
+                    {contextRouteReason ? ` - ${contextRouteReason}` : ""}
+                  </div>
+                ) : null}
+                {provider || model || keyMode ? (
+                  <div className={styles.trustCode}>
+                    reranker {provider ?? "unknown"}/{model ?? "unknown"}
+                    {keyMode ? ` - ${keyMode}` : ""}
+                  </div>
+                ) : null}
+                {llmCallId ||
+                providerRequestId ||
+                latencyMs !== null ||
+                costMicros !== null ||
+                costStatus ? (
+                  <div className={styles.trustCode}>
+                    {llmCallId ? `call ${shortId(llmCallId)}` : "call unknown"}
+                    {providerRequestId ? ` - request ${providerRequestId}` : ""}
+                    {latencyMs === null ? "" : ` - ${latencyMs}ms`}
+                    {costMicros === null ? "" : ` - ${costMicros} micros`}
+                    {costStatus ? ` - ${costStatus}` : ""}
+                  </div>
+                ) : null}
+                {showCallList ? (
+                  <div className={styles.trustCode}>
+                    calls {llmCallIds.map(shortId).join(",") || "none"} - requests{" "}
+                    {providerRequestIds.join(",") || "none"}
+                    {costStatuses.length > 1
+                      ? ` - cost statuses ${costStatuses.join(",")}`
+                      : ""}
+                  </div>
+                ) : null}
+                {inputTokens !== null || outputTokens !== null || totalTokens !== null ? (
+                  <div className={styles.trustCode}>
+                    tokens input {inputTokens ?? "unknown"} - output{" "}
+                    {outputTokens ?? "unknown"} - total {totalTokens ?? "unknown"}
+                  </div>
+                ) : null}
+                {privateSnippetPolicy || privateSnippetReason ? (
+                  <div className={styles.trustCode}>
+                    private snippets {privateSnippetPolicy ?? "unknown"}
+                    {privateSnippetReason ? ` - ${privateSnippetReason}` : ""}
+                  </div>
+                ) : null}
+                {rerankInputCount !== null || rerankOutputCount !== null || failureCode ? (
+                  <div className={styles.trustCode}>
+                    rerank {rerankOutputCount ?? "unknown"}/
+                    {rerankInputCount ?? "unknown"} output/input
+                    {failureCode ? ` - ${failureCode}` : ""}
+                  </div>
+                ) : null}
+                {guidanceStatus && guidanceStatus !== "unused" ? (
+                  <div className={styles.trustCode}>
+                    retrieval guidance {guidanceStatus}
+                  </div>
+                ) : null}
+                {rerankTrace.length > 0 ? (
+                  <ol className={styles.trustNestedList}>
+                    {rerankTrace.map((item, index) => (
+                      <li
+                        key={`${item.sourceId ?? "candidate"}:${item.from ?? index}:${item.to ?? index}`}
+                      >
+                        <div className={styles.trustLine}>
+                          <span>
+                            rerank {item.from ?? "?"} -&gt; {item.to ?? "?"}
+                            {item.sourceId ? `: ${item.sourceId}` : ""}
+                          </span>
+                          <span className={styles.trustFlags}>
+                            {item.selected ? "selected" : "candidate"} /{" "}
+                            {item.includedInPrompt ? "included" : "not included"}
+                          </span>
+                        </div>
+                        <div className={styles.trustCode}>
+                          {item.providerReason ?? item.reason ?? "provider_rank"}
+                          {item.providerScore === null
+                            ? ""
+                            : ` - provider ${item.providerScore.toFixed(3)}`}
+                          {item.selectionScore === null
+                            ? ""
+                            : ` - selection ${item.selectionScore.toFixed(3)}`}
+                          {item.score === null ? "" : ` - base ${item.score.toFixed(3)}`}
+                          {item.citationQuality === null
+                            ? ""
+                            : ` - citation ${item.citationQuality.toFixed(3)}`}
+                          {item.selectionStatus ? ` - ${item.selectionStatus}` : ""}
+                          {item.resultType ? ` - ${item.resultType}` : ""}
+                          {item.selectionReason ? ` - ${item.selectionReason}` : ""}
+                        </div>
+                        {item.source ||
+                        item.section ||
+                        item.lexical !== null ||
+                        item.sourcePenalty !== null ||
+                        item.sectionPenalty !== null ? (
+                          <div className={styles.trustCode}>
+                            {item.source ? `source ${item.source}` : ""}
+                            {item.section ? ` - section ${item.section}` : ""}
+                            {item.lexical === null
+                              ? ""
+                              : ` - lexical ${item.lexical.toFixed(3)}`}
+                            {item.sourcePenalty === null
+                              ? ""
+                              : ` - source penalty ${item.sourcePenalty.toFixed(3)}`}
+                            {item.sectionPenalty === null
+                              ? ""
+                              : ` - section penalty ${item.sectionPenalty.toFixed(3)}`}
+                          </div>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ol>
                 ) : null}
               </li>
             );
@@ -385,4 +680,44 @@ function RetrievalRow({ retrieval }: { retrieval: MessageRetrieval }) {
 
 function shortId(id: string): string {
   return id.slice(0, 8);
+}
+
+function rerankTraceItems(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .filter(
+      (item): item is Record<string, unknown> =>
+        typeof item === "object" && item !== null && !Array.isArray(item),
+    )
+    .map((item) => ({
+      from: typeof item.from === "number" ? item.from : null,
+      to: typeof item.to === "number" ? item.to : null,
+      sourceId: typeof item.source_id === "string" ? item.source_id : null,
+      source: typeof item.source === "string" ? item.source : null,
+      section: typeof item.section === "string" ? item.section : null,
+      reason: typeof item.reason === "string" ? item.reason : null,
+      resultType: typeof item.result_type === "string" ? item.result_type : null,
+      score: typeof item.score === "number" ? item.score : null,
+      selectionScore:
+        typeof item.selection_score === "number" ? item.selection_score : null,
+      lexical: typeof item.lexical === "number" ? item.lexical : null,
+      citationQuality:
+        typeof item.citation_quality === "number" ? item.citation_quality : null,
+      sourcePenalty:
+        typeof item.source_penalty === "number" ? item.source_penalty : null,
+      sectionPenalty:
+        typeof item.section_penalty === "number" ? item.section_penalty : null,
+      providerReason:
+        typeof item.provider_reason === "string" ? item.provider_reason : null,
+      providerScore:
+        typeof item.provider_score === "number" ? item.provider_score : null,
+      selectionReason:
+        typeof item.selection_reason === "string" ? item.selection_reason : null,
+      selectionStatus:
+        typeof item.selection_status === "string" ? item.selection_status : null,
+      selected: item.selected === true,
+      includedInPrompt: item.included_in_prompt === true,
+    }));
 }

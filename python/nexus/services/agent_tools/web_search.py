@@ -28,6 +28,7 @@ from nexus.schemas.retrieval import (
     retrieval_locator_json,
     retrieval_result_ref_json,
 )
+from nexus.services.chat_tool_source_policy import load_started_tool_source_policy
 from nexus.services.retrieval_citation import RetrievalCitation, insert_retrieval_row
 
 logger = get_logger(__name__)
@@ -78,6 +79,14 @@ def normalize_web_search_query(query: str) -> str:
     return normalized
 
 
+def normalize_web_search_freshness_days(freshness_days: int | None) -> int | None:
+    if freshness_days is None:
+        return None
+    if isinstance(freshness_days, bool) or freshness_days < 1:
+        raise WebSearchQueryError("Web search freshness_days must be positive")
+    return freshness_days
+
+
 WEB_SEARCH_TOOL_DEFINITION: dict[str, Any] = {
     "name": WEB_SEARCH_TOOL_NAME,
     "description": "Search the open public web for current or non-saved information.",
@@ -92,6 +101,7 @@ WEB_SEARCH_TOOL_DEFINITION: dict[str, Any] = {
             },
         },
         "required": ["query"],
+        "additionalProperties": False,
     },
 }
 
@@ -112,6 +122,7 @@ class WebSearchCitation:
     provider: str
     provider_request_id: str | None
     selected: bool = False
+    snapshot_source_id: str | None = None
 
     def locator_json(self) -> dict[str, Any]:
         locator = retrieval_locator_json(
@@ -127,7 +138,7 @@ class WebSearchCitation:
         return locator
 
     def to_json(self, *, source_id: str | None = None) -> dict[str, Any]:
-        source_id = source_id or self.result_ref
+        source_id = source_id or self.snapshot_source_id or self.result_ref
         return {
             "type": "web_result",
             "id": source_id,
@@ -172,11 +183,15 @@ class WebSearchRun:
     context_chars: int
     latency_ms: int
     status: str
+    source_domain: str = "public_web"
+    source_policy: dict[str, object] = field(default_factory=dict)
     error_code: str | None = None
     provider_request_ids: list[str] = field(default_factory=list)
+    selection_reasons: list[str] = field(default_factory=list)
     empty_status: str | None = None
     tool_call_id: UUID | None = None
     tool_call_index: int = 0
+    retrieval_ids: list[str] = field(default_factory=list)
 
     def tool_call_event(self) -> dict[str, Any]:
         return {
@@ -192,6 +207,8 @@ class WebSearchRun:
                 "allowed_domains": self.requested_domains.get("allowed", []),
                 "blocked_domains": self.requested_domains.get("blocked", []),
             },
+            "source_domain": self.source_domain,
+            "source_policy": dict(self.source_policy),
         }
 
     def retrieval_result_event(self) -> dict[str, Any]:
@@ -206,12 +223,16 @@ class WebSearchRun:
             "selected_count": len(self.selected_citations),
             "more_candidates_available": len(self.citations) > len(self.selected_citations),
             "latency_ms": self.latency_ms,
+            "provider_request_ids": self.provider_request_ids,
             "filters": {
                 "freshness_days": self.requested_freshness_days,
                 "allowed_domains": self.requested_domains.get("allowed", []),
                 "blocked_domains": self.requested_domains.get("blocked", []),
             },
             "results": [citation.to_json() for citation in self.citations],
+            "retrieval_ids": self.retrieval_ids,
+            "source_domain": self.source_domain,
+            "source_policy": dict(self.source_policy),
         }
 
 
@@ -262,12 +283,13 @@ async def search_web_readonly(
     transport) propagates to the caller's boundary.
     """
     normalized_query = normalize_web_search_query(query)
+    normalized_freshness_days = normalize_web_search_freshness_days(freshness_days)
     response = await provider.search(
         WebSearchRequest(
             query=normalized_query,
             result_type=WebSearchResultType.MIXED,
             limit=WEB_SEARCH_LIMIT,
-            freshness_days=freshness_days,
+            freshness_days=normalized_freshness_days,
         )
     )
     return WebSearchReadResult(
@@ -279,26 +301,33 @@ async def search_web_readonly(
 
 def render_web_context_blocks(
     citations: list[WebSearchCitation],
-) -> tuple[str, int, list[WebSearchCitation]]:
+) -> tuple[str, int, list[WebSearchCitation], list[str]]:
     """Render selected web results into bounded prompt context blocks."""
 
     rendered_blocks: list[str] = []
     selected: list[WebSearchCitation] = []
+    selection_reasons: list[str] = []
     total_chars = 0
 
-    for citation in citations[:WEB_SEARCH_SELECTED_LIMIT]:
+    for citation in citations:
+        if len(selected) >= WEB_SEARCH_SELECTED_LIMIT:
+            selection_reasons.append("skipped_selected_limit")
+            continue
         block = _render_single_web_context(citation)
-        block_chars = len(block)
-        if total_chars + block_chars > WEB_SEARCH_CONTEXT_CHARS:
-            break
+        added_chars = len(block) + (2 if rendered_blocks else 0)
+        if total_chars + added_chars > WEB_SEARCH_CONTEXT_CHARS:
+            selection_reasons.append("skipped_over_budget")
+            continue
         citation.selected = True
         selected.append(citation)
         rendered_blocks.append(block)
-        total_chars += block_chars
+        total_chars += added_chars
+        selection_reasons.append("selected_within_budget")
 
     if not rendered_blocks:
-        return "", 0, selected
-    return "\n\n".join(rendered_blocks), total_chars, selected
+        return "", 0, selected, selection_reasons
+    context_text = "\n\n".join(rendered_blocks)
+    return context_text, len(context_text), selected, selection_reasons
 
 
 def _render_single_web_context(citation: WebSearchCitation) -> str:
@@ -321,12 +350,20 @@ def _render_single_web_context(citation: WebSearchCitation) -> str:
 
 def persist_web_search_run(db: Session, run: WebSearchRun) -> None:
     """Persist the web-search tool call and retrieval rows."""
+    tool_call_id, run.source_domain, run.source_policy = load_started_tool_source_policy(
+        db,
+        assistant_message_id=run.assistant_message_id,
+        tool_call_index=run.tool_call_index,
+        tool_name=WEB_SEARCH_TOOL_NAME,
+    )
     owner_user_id = db.scalar(
         text("SELECT owner_user_id FROM conversations WHERE id = :conversation_id"),
         {"conversation_id": run.conversation_id},
     )
     if owner_user_id is None:
         raise ValueError("web_search conversation is missing")
+    if len(run.selection_reasons) != len(run.citations):
+        raise AssertionError("web_search selection reasons must match citations")
     snapshot_ids: dict[str, str] = {}
     for citation in run.citations:
         snapshot = ResourceExternalSnapshot(
@@ -340,6 +377,7 @@ def persist_web_search_run(db: Session, run: WebSearchRun) -> None:
         db.add(snapshot)
         db.flush()
         source_id = str(snapshot.id)
+        citation.snapshot_source_id = source_id
         snapshot.source_snapshot = citation.to_json(source_id=source_id)
         snapshot_ids[citation.result_ref] = source_id
 
@@ -358,86 +396,8 @@ def persist_web_search_run(db: Session, run: WebSearchRun) -> None:
     ]
     requested_types = [run.result_type]
 
-    existing = db.execute(
+    updated = db.execute(
         text(
-            """
-            SELECT id
-            FROM message_tool_calls
-            WHERE assistant_message_id = :assistant_message_id
-              AND tool_call_index = :tool_call_index
-            FOR UPDATE
-            """
-        ),
-        {
-            "assistant_message_id": run.assistant_message_id,
-            "tool_call_index": run.tool_call_index,
-        },
-    ).first()
-
-    if existing is None:
-        insert_tool = text(
-            """
-            INSERT INTO message_tool_calls (
-                conversation_id,
-                user_message_id,
-                assistant_message_id,
-                tool_name,
-                tool_call_index,
-                query_hash,
-                scope,
-                requested_types,
-                result_refs,
-                selected_context_refs,
-                provider_request_ids,
-                latency_ms,
-                status,
-                error_code
-            )
-            VALUES (
-                :conversation_id,
-                :user_message_id,
-                :assistant_message_id,
-                :tool_name,
-                :tool_call_index,
-                :query_hash,
-                'public_web',
-                :requested_types,
-                :result_refs,
-                :selected_context_refs,
-                :provider_request_ids,
-                :latency_ms,
-                :status,
-                :error_code
-            )
-            RETURNING id
-            """
-        ).bindparams(
-            bindparam("requested_types", type_=JSONB),
-            bindparam("result_refs", type_=JSONB),
-            bindparam("selected_context_refs", type_=JSONB),
-            bindparam("provider_request_ids", type_=JSONB),
-        )
-        tool_call_id = db.execute(
-            insert_tool,
-            {
-                "conversation_id": run.conversation_id,
-                "user_message_id": run.user_message_id,
-                "assistant_message_id": run.assistant_message_id,
-                "tool_name": WEB_SEARCH_TOOL_NAME,
-                "tool_call_index": run.tool_call_index,
-                "query_hash": run.query_hash,
-                "requested_types": requested_types,
-                "result_refs": result_refs,
-                "selected_context_refs": selected_context_refs,
-                "provider_request_ids": run.provider_request_ids,
-                "latency_ms": run.latency_ms,
-                "status": run.status,
-                "error_code": run.error_code,
-            },
-        ).scalar_one()
-    else:
-        tool_call_id = existing[0]
-        update_tool = text(
             """
             UPDATE message_tool_calls
             SET query_hash = :query_hash,
@@ -457,26 +417,26 @@ def persist_web_search_run(db: Session, run: WebSearchRun) -> None:
             bindparam("result_refs", type_=JSONB),
             bindparam("selected_context_refs", type_=JSONB),
             bindparam("provider_request_ids", type_=JSONB),
-        )
-        db.execute(
-            update_tool,
-            {
-                "tool_call_id": tool_call_id,
-                "query_hash": run.query_hash,
-                "requested_types": requested_types,
-                "result_refs": result_refs,
-                "selected_context_refs": selected_context_refs,
-                "provider_request_ids": run.provider_request_ids,
-                "latency_ms": run.latency_ms,
-                "status": run.status,
-                "error_code": run.error_code,
-            },
-        )
+        ),
+        {
+            "tool_call_id": tool_call_id,
+            "query_hash": run.query_hash,
+            "requested_types": requested_types,
+            "result_refs": result_refs,
+            "selected_context_refs": selected_context_refs,
+            "provider_request_ids": run.provider_request_ids,
+            "latency_ms": run.latency_ms,
+            "status": run.status,
+            "error_code": run.error_code,
+        },
+    )
+    if getattr(updated, "rowcount", None) != 1:
+        raise AssertionError("web_search tool call update must affect one row")
     run.tool_call_id = tool_call_id
     from nexus.services.chat_runs import prune_tool_call_retrievals
 
-    if existing is not None:
-        prune_tool_call_retrievals(db, tool_call_id=tool_call_id)
+    prune_tool_call_retrievals(db, tool_call_id=tool_call_id)
+    run.retrieval_ids = []
 
     insert_candidate_ledger = text(
         """
@@ -502,7 +462,7 @@ def persist_web_search_run(db: Session, run: WebSearchRun) -> None:
             :source_id,
             :score,
             :selected,
-            false,
+            :included_in_prompt,
             :selection_status,
             :selection_reason,
             :result_ref,
@@ -514,18 +474,16 @@ def persist_web_search_run(db: Session, run: WebSearchRun) -> None:
         bindparam("locator", type_=JSONB),
     )
     selected_refs = {citation.result_ref for citation in run.selected_citations}
-    selection_reasons: list[str] = []
     candidate_rerank_trace: list[dict[str, Any]] = []
     persisted_count = 0
     for ordinal, citation in enumerate(run.citations):
         selected = citation.result_ref in selected_refs
-        selection_status = "web_result" if selected else "retrieved"
-        selection_reason = "within_context_budget" if selected else "below_selected_limit"
+        selection_reason = run.selection_reasons[ordinal]
+        selection_status = "web_result" if selected else "excluded_by_budget"
         score = 1.0 / max(citation.rank, 1)
         source_id = snapshot_ids[citation.result_ref]
         result_ref = retrieval_result_ref_json(citation.to_json(source_id=source_id))
         locator = citation.locator_json()
-        selection_reasons.append(selection_reason)
         candidate_rerank_trace.append(
             {
                 "from": ordinal,
@@ -538,7 +496,7 @@ def persist_web_search_run(db: Session, run: WebSearchRun) -> None:
                 "selection_score": score,
                 "reason": "provider_rank",
                 "selected": selected,
-                "included_in_prompt": False,
+                "included_in_prompt": selected,
                 "selection_status": selection_status,
                 "selection_reason": selection_reason,
             }
@@ -566,9 +524,11 @@ def persist_web_search_run(db: Session, run: WebSearchRun) -> None:
                 selected=selected,
             ),
             selected=selected,
+            included_in_prompt=selected,
             scope="public_web",
             retrieval_status="web_result",
         )
+        run.retrieval_ids.append(str(retrieval_id))
         db.execute(
             insert_candidate_ledger,
             {
@@ -579,6 +539,7 @@ def persist_web_search_run(db: Session, run: WebSearchRun) -> None:
                 "source_id": source_id,
                 "score": score,
                 "selected": selected,
+                "included_in_prompt": selected,
                 "selection_status": selection_status,
                 "selection_reason": selection_reason,
                 "result_ref": result_ref,
@@ -635,7 +596,7 @@ def persist_web_search_run(db: Session, run: WebSearchRun) -> None:
                 "scope": "public_web",
                 "result_type": run.result_type,
                 "provider_request_ids": run.provider_request_ids,
-                "selection_reason_counts": dict(Counter(selection_reasons)),
+                "selection_reason_counts": dict(Counter(run.selection_reasons)),
                 "candidate_rerank_trace": candidate_rerank_trace,
             },
         },
@@ -661,6 +622,7 @@ async def execute_web_search(
     normalized_query: str | None = None
     citations: list[WebSearchCitation] = []
     selected: list[WebSearchCitation] = []
+    selection_reasons: list[str] = []
     context_text = ""
     context_chars = 0
     provider_request_ids: list[str] = []
@@ -671,7 +633,9 @@ async def execute_web_search(
         citations = result.citations
         if result.provider_request_id:
             provider_request_ids = [result.provider_request_id]
-        context_text, context_chars, selected = render_web_context_blocks(citations)
+        context_text, context_chars, selected, selection_reasons = render_web_context_blocks(
+            citations
+        )
     except WebSearchQueryError as exc:
         logger.warning("agent_web_search_invalid_query", reason=str(exc))
         status = "error"
@@ -707,6 +671,7 @@ async def execute_web_search(
         status=status,
         error_code=error_code,
         provider_request_ids=provider_request_ids,
+        selection_reasons=selection_reasons,
         tool_call_index=tool_call_index,
     )
     persist_web_search_run(db, run)

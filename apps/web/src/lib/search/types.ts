@@ -30,6 +30,7 @@ export interface SearchSourceMetadata {
   title: string;
   contributors: ContributorCredit[];
   published_date: string | null;
+  summary_md?: string | null;
 }
 
 export interface SearchBaseResult {

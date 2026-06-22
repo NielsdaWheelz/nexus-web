@@ -16,7 +16,8 @@ import json
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
 from nexus.services.agent_tools.read_resource import ReadResourceResult, execute_read_resource
@@ -630,20 +631,32 @@ def test_read_resource_accepts_app_search_selected_result_in_same_assistant_mess
             """
             INSERT INTO message_tool_calls (
                 id, conversation_id, user_message_id, assistant_message_id,
-                tool_name, tool_call_index, query_hash, scope, requested_types, status
+                tool_name, tool_call_index, query_hash, scope, requested_types,
+                source_domain, source_policy, status
             )
             VALUES (
                 :tool_call_id, :conversation_id, :user_message_id, :assistant_message_id,
                 'app_search', 0, 'search-selected-read', 'all', '["note_block"]'::jsonb,
+                'private_app',
+                :source_policy,
                 'complete'
             )
             """
-        ),
+        ).bindparams(bindparam("source_policy", type_=JSONB)),
         {
             "tool_call_id": tool_call_id,
             "conversation_id": conversation_id,
             "user_message_id": user_message_id,
             "assistant_message_id": assistant_message_id,
+            "source_policy": {
+                "version": "source_boundary_policy.v1",
+                "decision": "allowed",
+                "source_domain": "private_app",
+                "mixing_allowed": False,
+                "reason": "single_domain_private_app",
+                "domains_seen": [],
+                "requested_domains": ["private_app"],
+            },
         },
     )
     db_session.execute(

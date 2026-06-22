@@ -60,6 +60,7 @@ The harness must support:
 - Query class labels:
   - exact lookup
   - scoped passage lookup
+  - single source summary
   - cross-document synthesis
   - global library question
   - multi-hop search/read/inspect question
@@ -68,7 +69,7 @@ The harness must support:
 - Candidate-pool evaluation at multiple depths.
 - Selected-evidence evaluation after `app_search` packing.
 - Failure classification by stage.
-- A compact text/JSON report suitable for local tests and future CI artifacts.
+- A compact JSON report suitable for local tests and future CI artifacts.
 
 ## Metrics
 
@@ -131,11 +132,15 @@ be reused across candidate, packer, and answer-level checks.
 - Start with synthetic DB fixtures in existing backend tests, then add a small
   manually curated real-library regression set when available.
 - Preserve the legacy depth-8 comparison as the eval baseline.
+- Write `search-retrieval-evals-baseline.json` to the pytest `tmp_path`; no
+  durable committed report is produced by the default lane.
 - Evaluate candidate depths 8, 20, and 50. Runtime now uses the search-owned
   20/50 candidate policy, while selected evidence remains capped separately.
 - Keep eval helpers under test ownership until there is a reason to expose them
   as operator tooling.
-- Provider-backed answer evaluation should be opt-in and skipped by default.
+- Default evals measure retrieval and selected evidence packing. Answer-level
+  citation precision, unsupported-claim count, and provider-backed grading stay
+  opt-in operator lanes until there is a real failed-answer regression set.
 
 ## Acceptance Criteria
 
@@ -145,6 +150,8 @@ be reused across candidate, packer, and answer-level checks.
 - The harness can compare candidate limits without changing production behavior.
 - Tests fail clearly when a relevant ref is indexed but lost before selection.
 - No LLM/provider call is required for the default test lane.
+- The default lane does not claim answer-quality proof; answer evals must state
+  their provider/model, fixture set, and citation-precision thresholds.
 
 ## Likely Files
 

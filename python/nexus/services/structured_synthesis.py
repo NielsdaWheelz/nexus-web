@@ -179,6 +179,7 @@ async def run_structured_synthesis[T: BaseModel](
     request: SynthesisRequest,
     schema: type[T],
     validate: Callable[[T], str | None] | None = None,
+    repair: bool = True,
 ) -> SynthesisResult[T]:
     """Make a structured call, with one bounded repair round, into ``schema``.
 
@@ -200,6 +201,8 @@ async def run_structured_synthesis[T: BaseModel](
         value = _validated_value(response.text, schema=schema, validate=validate)
         return SynthesisResult(value=value, usage=response.usage)
     except StructuredSynthesisError as exc:
+        if not repair:
+            raise
         first_usage = response.usage
         repair_request = _repair_request(request.llm_request, raw=response.text, reason=str(exc))
     response = await llm.generate(

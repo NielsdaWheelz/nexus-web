@@ -24,7 +24,6 @@ from nexus.auth.permissions import (
     can_read_conversation,
     can_read_highlight,
     can_read_media,
-    visible_media_ids_cte_sql,
     visible_podcast_ids_cte_sql,
 )
 from nexus.coerce import parse_uuid
@@ -34,11 +33,11 @@ from nexus.schemas.retrieval import (
     retrieval_context_ref_json,
     retrieval_result_ref_json,
 )
-from nexus.services import media_intelligence
+from nexus.services.api_key_resolver import ResolvedKey
+from nexus.services.chat_tool_source_policy import load_started_tool_source_policy
 from nexus.services.content_indexing import load_content_chunk_source_map
 from nexus.services.contributor_taxonomy import CONTRIBUTOR_ROLES
 from nexus.services.contributors import get_contributor_by_handle
-from nexus.services.media_intelligence import MediaUnit
 from nexus.services.resource_graph.context import (
     conversation_has_note_search_scope_refs,
     search_scope_expansions_for_conversation,
@@ -51,6 +50,7 @@ from nexus.services.resource_graph.refs import (
 from nexus.services.resource_items.capabilities import (
     app_search_scope_hint,
     resource_can_be_app_search_scope,
+    resource_citation_result_type,
 )
 from nexus.services.retrieval_citation import (
     RetrievalCitation,
@@ -60,13 +60,21 @@ from nexus.services.retrieval_citation import (
 )
 from nexus.services.search import get_search_result, search
 from nexus.services.search.batch import search_scopes
+from nexus.services.search.content_chunk_candidates import (
+    has_retrievable_content_chunks,
+    ordered_media_content_chunk_ids,
+)
+from nexus.services.search.guidance import load_app_search_guidance, unused_guidance_metadata
 from nexus.services.search.kinds import SEARCH_FORMATS, SEARCH_KINDS
+from nexus.services.search.llm_rerank import (
+    APP_SEARCH_PROVIDER_RERANK_STRATEGY,
+    APP_SEARCH_PROVIDER_RERANK_VERSION,
+    rerank_app_search_candidates_with_llm,
+)
 from nexus.services.search.policy import plan_app_search
 from nexus.services.search.query import build_search_query
 from nexus.services.search.scope import (
-    ScopeUnsupported,
     parse_scope,
-    scope_filter_sql,
     scope_from_uri,
 )
 from nexus.services.search.selection import (
@@ -166,6 +174,8 @@ class AppSearchRun:
     context_chars: int
     latency_ms: int
     status: str
+    source_domain: str = "private_app"
+    source_policy: dict[str, object] = field(default_factory=dict)
     error_code: str | None = None
     filters: dict[str, Any] = field(default_factory=dict)
     empty_status: str | None = None
@@ -174,6 +184,13 @@ class AppSearchRun:
     rerank_trace: list[dict[str, Any]] = field(default_factory=list)
     context_route: str = "search_fetch_read"
     context_route_reason: str = "default_search_fetch_read"
+    rerank_mode: str = "deterministic"
+    rerank_reason: str = "deterministic_baseline"
+    guidance_metadata: dict[str, object] = field(default_factory=unused_guidance_metadata)
+    selection_strategy: str = APP_SEARCH_SELECTION_STRATEGY
+    selection_policy_version: str = APP_SEARCH_SELECTION_VERSION
+    selection_metadata: dict[str, object] = field(default_factory=dict)
+    retrieval_ids: list[str] = field(default_factory=list)
 
     def tool_call_event(self) -> dict[str, Any]:
         return {
@@ -185,9 +202,22 @@ class AppSearchRun:
             "scope": self.scope,
             "types": self.requested_types,
             "filters": self.filters,
+            "source_domain": self.source_domain,
+            "source_policy": dict(self.source_policy),
         }
 
     def retrieval_result_event(self) -> dict[str, Any]:
+        provider_request_ids: list[str] = []
+        provider_request_ids_value = self.selection_metadata.get("provider_request_ids")
+        if isinstance(provider_request_ids_value, list):
+            provider_request_ids = [
+                item for item in provider_request_ids_value if isinstance(item, str)
+            ]
+        elif isinstance(
+            provider_request_id := self.selection_metadata.get("provider_request_id"),
+            str,
+        ):
+            provider_request_ids = [provider_request_id]
         return {
             "tool_call_id": str(self.tool_call_id) if self.tool_call_id else None,
             "assistant_message_id": str(self.assistant_message_id),
@@ -199,8 +229,12 @@ class AppSearchRun:
             "selected_count": len(self.selected_citations),
             "more_candidates_available": len(self.citations) > len(self.selected_citations),
             "latency_ms": self.latency_ms,
+            "provider_request_ids": provider_request_ids,
             "filters": self.filters,
             "results": [citation.result_ref_json() for citation in self.citations],
+            "retrieval_ids": self.retrieval_ids,
+            "source_domain": self.source_domain,
+            "source_policy": dict(self.source_policy),
         }
 
 
@@ -217,6 +251,7 @@ def execute_app_search(
     assistant_message_id: UUID,
     scopes: Sequence[str],
     query: str,
+    provider_rerank_allowed: bool,
     kinds: Sequence[str] | None = None,
     formats: Sequence[str] | None = None,
     authors: Sequence[str] | None = None,
@@ -237,12 +272,19 @@ def execute_app_search(
     }
     requested_types: list[str] = []
     scope_count = 0
-    plan = plan_app_search(query, (), kinds)
+    plan = plan_app_search(
+        query,
+        (),
+        kinds,
+        provider_rerank_allowed=provider_rerank_allowed,
+    )
     query_class = plan.query_class
     candidate_limit = plan.candidate_limit
     retrieval_mode = plan.retrieval_mode
     context_route = plan.context_route
     context_route_reason = plan.context_route_reason
+    rerank_mode = plan.rerank_mode
+    rerank_reason = plan.rerank_reason
     policy_reason = "validation_failed"
     resolved_scopes: list[str] = []
     graph_expanded_scopes: list[str] = []
@@ -250,6 +292,7 @@ def execute_app_search(
     status = "complete"
     error_code = None
     empty_status: str | None = None
+    app_guidance_metadata = unused_guidance_metadata()
 
     # Empty input → use conversation's media/library context refs; explicit
     # input → validate each URI is a media/library reference of this
@@ -257,6 +300,11 @@ def execute_app_search(
     try:
         if forced_error is not None:
             raise InvalidScopeError(forced_error)
+        if not query.strip():
+            raise ApiError(
+                ApiErrorCode.E_INVALID_REQUEST,
+                "app_search query must be a non-empty string.",
+            )
         resolved_scopes = _resolve_scope_uris(
             db,
             viewer_id=viewer_id,
@@ -279,18 +327,35 @@ def execute_app_search(
                 resolved_scopes.append(expansion.ref.uri)
                 graph_expanded_scopes.append(expansion.ref.uri)
         scope_count = len(resolved_scopes)
-        plan = plan_app_search(query, resolved_scopes, kinds)
+        plan = plan_app_search(
+            query,
+            resolved_scopes,
+            kinds,
+            provider_rerank_allowed=provider_rerank_allowed,
+        )
         query_class = plan.query_class
         candidate_limit = plan.candidate_limit
         retrieval_mode = plan.retrieval_mode
         context_route = plan.context_route
         context_route_reason = plan.context_route_reason
+        rerank_mode = plan.rerank_mode
+        rerank_reason = plan.rerank_reason
         policy_reason = plan.policy_reason
         if not scopes and context_route == "long_context_candidate":
             context_route = "search_fetch_read"
             context_route_reason = "default_search_fetch_read"
+        app_guidance_read = load_app_search_guidance(
+            db,
+            viewer_id=viewer_id,
+            query_class=query_class,
+            scope_uris=resolved_scopes,
+        )
+        app_guidance_metadata = app_guidance_read.metadata
+        search_text = (
+            f"{query} {app_guidance_read.query_suffix}" if app_guidance_read.query_suffix else query
+        )
         base_query = build_search_query(
-            text=query,
+            text=search_text,
             raw_kinds=None if kinds is None else list(kinds),
             raw_formats=None if formats is None else list(formats),
             raw_authors=None if authors is None else list(authors),
@@ -326,6 +391,8 @@ def execute_app_search(
             graph_expanded_scopes=graph_expanded_scopes,
             context_route=context_route,
             context_route_reason=context_route_reason,
+            rerank_mode=rerank_mode,
+            rerank_reason=rerank_reason,
             citations=[],
             selected_citations=[],
             selection_reasons=[],
@@ -338,6 +405,21 @@ def execute_app_search(
             filters=filters,
             empty_status=None,
             tool_call_index=tool_call_index,
+            guidance_metadata=app_guidance_metadata,
+            selection_strategy=APP_SEARCH_PROVIDER_RERANK_STRATEGY
+            if rerank_mode == "provider_rerank"
+            else APP_SEARCH_SELECTION_STRATEGY,
+            selection_policy_version=APP_SEARCH_PROVIDER_RERANK_VERSION
+            if rerank_mode == "provider_rerank"
+            else APP_SEARCH_SELECTION_VERSION,
+            selection_metadata={
+                "baseline_strategy": APP_SEARCH_SELECTION_STRATEGY,
+                "ordering_policy": "provider_ordered_candidates",
+                "rerank_input_count": 0,
+                "rerank_output_count": 0,
+            }
+            if rerank_mode == "provider_rerank"
+            else {},
         )
         persist_app_search_run(db, run)
         return run
@@ -372,12 +454,37 @@ def execute_app_search(
                 seen.add(key)
                 citations.append(citation)
         citations, rerank_trace = rerank_app_search_candidates(query, citations)
-        context_text, context_chars, selected, selection_reasons = render_retrieved_context_blocks(
-            db,
-            viewer_id=viewer_id,
-            citations=citations,
-        )
-        if not context_text and not citations:
+        if rerank_mode == "provider_rerank":
+            for citation in citations:
+                if citation.result_type != "content_chunk" or citation.source_map is not None:
+                    continue
+                chunk_id = parse_uuid(citation.context_ref.get("id"))
+                evidence_span_id = parse_uuid(citation.evidence_span_id)
+                if chunk_id is None or evidence_span_id is None:
+                    continue
+                citation.source_map = load_content_chunk_source_map(
+                    db,
+                    viewer_id=viewer_id,
+                    chunk_id=chunk_id,
+                    evidence_span_id=evidence_span_id,
+                )
+            status = "running"
+            context_text = ""
+            context_chars = 0
+            selected = []
+            selection_reasons = ["skipped_provider_rerank_pending"] * len(citations)
+        else:
+            (
+                context_text,
+                context_chars,
+                selected,
+                selection_reasons,
+            ) = render_retrieved_context_blocks(
+                db,
+                viewer_id=viewer_id,
+                citations=citations,
+            )
+        if rerank_mode != "provider_rerank" and not context_text and not citations:
             result_status = _empty_status_for_scopes(
                 db,
                 viewer_id=viewer_id,
@@ -427,6 +534,8 @@ def execute_app_search(
         graph_expanded_scopes=graph_expanded_scopes,
         context_route=context_route,
         context_route_reason=context_route_reason,
+        rerank_mode=rerank_mode,
+        rerank_reason=rerank_reason,
         citations=citations,
         selected_citations=selected,
         selection_reasons=selection_reasons,
@@ -439,7 +548,100 @@ def execute_app_search(
         filters=filters,
         empty_status=empty_status,
         tool_call_index=tool_call_index,
+        guidance_metadata=app_guidance_metadata,
+        selection_strategy=APP_SEARCH_PROVIDER_RERANK_STRATEGY
+        if rerank_mode == "provider_rerank"
+        else APP_SEARCH_SELECTION_STRATEGY,
+        selection_policy_version=APP_SEARCH_PROVIDER_RERANK_VERSION
+        if rerank_mode == "provider_rerank"
+        else APP_SEARCH_SELECTION_VERSION,
+        selection_metadata={
+            "baseline_strategy": APP_SEARCH_SELECTION_STRATEGY,
+            "ordering_policy": "provider_ordered_candidates",
+            "rerank_input_count": len(citations),
+            "rerank_output_count": 0,
+        }
+        if rerank_mode == "provider_rerank"
+        else {},
     )
+    persist_app_search_run(db, run)
+    return run
+
+
+async def apply_provider_rerank_to_app_search_run(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    run: AppSearchRun,
+    query: str,
+    llm_owner: Any,
+    llm: Any,
+    provider: str,
+    model_name: str,
+    resolved_key: ResolvedKey,
+    key_mode_requested: str,
+) -> AppSearchRun:
+    """Replace deterministic app-search selection with a provider-reranked route."""
+    if run.status == "error" or run.rerank_mode != "provider_rerank":
+        return run
+    try:
+        result = await rerank_app_search_candidates_with_llm(
+            db,
+            viewer_id=viewer_id,
+            owner=llm_owner,
+            llm=llm,
+            provider=provider,
+            model_name=model_name,
+            resolved_key=resolved_key,
+            key_mode_requested=key_mode_requested,
+            query_class=run.query_class,
+            query=query,
+            citations=run.citations,
+        )
+        run.citations = result.citations
+        run.rerank_trace = result.trace
+        run.selection_strategy = APP_SEARCH_PROVIDER_RERANK_STRATEGY
+        run.selection_policy_version = APP_SEARCH_PROVIDER_RERANK_VERSION
+        run.selection_metadata = {
+            **result.metadata,
+            "ordering_policy": "provider_ordered_candidates",
+        }
+        (
+            run.context_text,
+            run.context_chars,
+            run.selected_citations,
+            run.selection_reasons,
+        ) = render_retrieved_context_blocks(db, viewer_id=viewer_id, citations=run.citations)
+        run.status = "complete"
+        run.error_code = None
+    except ApiError as exc:
+        failure_metadata = (
+            exc.details.get("rerank_metadata", {}) if isinstance(exc.details, dict) else {}
+        )
+        run.status = "error"
+        run.error_code = exc.code.value
+        run.context_text = ""
+        run.context_chars = 0
+        run.selected_citations = []
+        run.selection_reasons = ["skipped_provider_rerank_failed"] * len(run.citations)
+        run.selection_strategy = APP_SEARCH_PROVIDER_RERANK_STRATEGY
+        run.selection_policy_version = APP_SEARCH_PROVIDER_RERANK_VERSION
+        run.selection_metadata = {
+            "baseline_strategy": APP_SEARCH_SELECTION_STRATEGY,
+            "provider": provider,
+            "model": model_name,
+            "key_mode_used": resolved_key.mode,
+            "query_class": run.query_class,
+            "rerank_input_count": len(run.citations),
+            "rerank_output_count": 0,
+            "failure_error_code": exc.code.value,
+            "ordering_policy": "provider_ordered_candidates",
+            **failure_metadata,
+        }
+        if run.rerank_trace:
+            run.rerank_trace = [
+                {**trace, "reason": "provider_rerank_failed"} for trace in run.rerank_trace
+            ]
     persist_app_search_run(db, run)
     return run
 
@@ -513,23 +715,12 @@ def _long_context_media_scope_citations(
     scope_type, media_id = parse_scope(scope_uri)
     if scope_type != "media" or media_id is None:
         return []
-    chunk_ids = db.execute(
-        text(
-            """
-            SELECT cc.id
-            FROM content_chunks cc
-            JOIN content_index_states cis ON cis.owner_kind = cc.owner_kind
-                AND cis.owner_id = cc.owner_id
-                AND cis.status = 'ready'
-            WHERE cc.owner_kind = 'media'
-              AND cc.owner_id = :media_id
-              AND cc.primary_evidence_span_id IS NOT NULL
-            ORDER BY cc.chunk_idx ASC, cc.id ASC
-            LIMIT :limit
-            """
-        ),
-        {"media_id": media_id, "limit": limit},
-    ).scalars()
+    chunk_ids = ordered_media_content_chunk_ids(
+        db,
+        viewer_id=viewer_id,
+        media_id=media_id,
+        limit=limit,
+    )
 
     citations: list[RetrievalCitation] = []
     for chunk_id in chunk_ids:
@@ -551,76 +742,23 @@ def _empty_status_for_scopes(
     if not scopes:
         return "no_results"
     for scope_uri in scopes:
-        status = _scoped_content_chunk_empty_status(
+        if has_retrievable_content_chunks(
             db,
             viewer_id=viewer_id,
-            scope=scope_uri,
-        )
-        if status == "no_results":
+            scope=scope_from_uri(scope_uri),
+        ):
             return "no_results"
     return "no_indexed_evidence"
 
 
-def _scoped_content_chunk_empty_status(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    scope: str,
-) -> str:
-    scope_type, scope_id = parse_scope(scope)
-    # Reuse the §4.6 scope owner so this probe filters identically to the content_chunk
-    # retriever.
-    scope_clause = scope_filter_sql(scope_type, scope_id, "content_chunk")
-    if isinstance(scope_clause, ScopeUnsupported):
-        return "no_indexed_evidence"
-    scope_filter, scope_params = scope_clause
-    params: dict[str, Any] = {"viewer_id": viewer_id, **scope_params}
-
-    note_exists = ""
-    note_clause = scope_filter_sql(scope_type, scope_id, "note_block")
-    if not isinstance(note_clause, ScopeUnsupported):
-        note_scope_filter, _ = note_clause  # same :scope_id bind, already in params
-        note_exists = f"""
-            OR EXISTS (
-                SELECT 1
-                FROM content_chunks cc
-                JOIN note_blocks nb ON nb.id = cc.owner_id AND cc.owner_kind = 'note_block'
-                    AND nb.user_id = :viewer_id
-                JOIN content_index_states ncis ON ncis.owner_kind = cc.owner_kind
-                    AND ncis.owner_id = cc.owner_id AND ncis.status = 'ready'
-                WHERE TRUE
-                {note_scope_filter}
-            )
-        """
-
-    row = db.execute(
-        text(
-            f"""
-            WITH visible_media AS ({visible_media_ids_cte_sql()})
-            SELECT 1 WHERE
-            EXISTS (
-                SELECT 1
-                FROM content_chunks cc
-                JOIN media m ON m.id = cc.owner_id AND cc.owner_kind = 'media'
-                JOIN visible_media vm ON vm.media_id = cc.owner_id AND cc.owner_kind = 'media'
-                JOIN content_index_states mcis ON mcis.owner_kind = cc.owner_kind
-                    AND mcis.owner_id = cc.owner_id AND mcis.status = 'ready'
-                JOIN evidence_spans es ON es.id = cc.primary_evidence_span_id
-                    AND es.owner_kind = cc.owner_kind AND es.owner_id = cc.owner_id
-                WHERE TRUE
-                {scope_filter}
-            )
-            {note_exists}
-            LIMIT 1
-            """
-        ),
-        params,
-    ).first()
-    return "no_results" if row is not None else "no_indexed_evidence"
-
-
 def persist_app_search_run(db: Session, run: AppSearchRun) -> None:
     """Persist the app-search tool call and retrieval rows."""
+    tool_call_id, run.source_domain, run.source_policy = load_started_tool_source_policy(
+        db,
+        assistant_message_id=run.assistant_message_id,
+        tool_call_index=run.tool_call_index,
+        tool_name=APP_SEARCH_TOOL_NAME,
+    )
     if len(run.selection_reasons) != len(run.citations):
         raise AssertionError("app_search selection reasons must match citations")
     if run.rerank_trace and len(run.rerank_trace) != len(run.citations):
@@ -634,7 +772,12 @@ def persist_app_search_run(db: Session, run: AppSearchRun) -> None:
             selection_statuses.append("selected")
         elif reason in {"skipped_over_budget", "skipped_selected_limit"}:
             selection_statuses.append("excluded_by_budget")
-        elif reason == "skipped_empty_render":
+        elif reason in {
+            "skipped_empty_render",
+            "skipped_provider_rerank_failed",
+            "skipped_provider_rerank_pending",
+            "skipped_uncitable",
+        }:
             selection_statuses.append("retrieved")
         else:
             raise AssertionError(f"unsupported app_search selection reason: {reason}")
@@ -669,91 +812,59 @@ def persist_app_search_run(db: Session, run: AppSearchRun) -> None:
         )
         candidate_rerank_trace.append(trace)
 
+    metadata = {
+        **run.selection_metadata,
+        "selection_strategy": run.selection_strategy,
+        "selection_policy_version": run.selection_policy_version,
+        "ordering_policy": (
+            "provider_ordered_candidates"
+            if run.selection_strategy == APP_SEARCH_PROVIDER_RERANK_STRATEGY
+            else "hybrid_score_exactness_citation_quality_diversity"
+        ),
+        "diversity_policy": "source_section_penalty",
+        "budget_policy": "greedy_context_budget",
+        "candidate_limit": run.candidate_limit,
+        "selected_limit": APP_SEARCH_SELECTED_LIMIT,
+        "context_budget_chars": APP_SEARCH_CONTEXT_CHARS,
+        "scope_count": run.scope_count,
+        "result_type_mix": dict(Counter(citation.result_type for citation in run.citations)),
+        "query_class": run.query_class,
+        "retrieval_mode": run.retrieval_mode,
+        "policy_reason": run.policy_reason,
+        "rerank_mode": run.rerank_mode,
+        "rerank_reason": run.rerank_reason,
+        "graph_expanded_scopes": run.graph_expanded_scopes,
+        "graph_expanded_scope_count": len(run.graph_expanded_scopes),
+        "context_route": run.context_route,
+        "context_route_reason": run.context_route_reason,
+        "retrieval_guidance": run.guidance_metadata,
+        "selected_source_map_count": sum(
+            1 for citation in run.selected_citations if citation.source_map
+        ),
+        "scope": run.scope,
+        "resolved_scopes": run.resolved_scopes,
+        "inclusion_surface": "tool_output",
+        "selection_reason_counts": dict(Counter(run.selection_reasons)),
+        "candidate_rerank_trace": candidate_rerank_trace,
+    }
+    _validate_provider_rerank_metadata(run, metadata)
+
     result_refs = [
         retrieval_result_ref_json(citation.result_ref_json()) for citation in run.citations
     ]
     selected_context_refs = [
         retrieval_context_ref_json(citation.context_ref) for citation in run.selected_citations
     ]
-    existing = db.execute(
+    provider_request_ids: list[str] = []
+    provider_request_ids_value = run.selection_metadata.get("provider_request_ids")
+    if isinstance(provider_request_ids_value, list):
+        provider_request_ids = [
+            item for item in provider_request_ids_value if isinstance(item, str)
+        ]
+    elif isinstance(provider_request_id := run.selection_metadata.get("provider_request_id"), str):
+        provider_request_ids = [provider_request_id]
+    updated = db.execute(
         text(
-            """
-            SELECT id
-            FROM message_tool_calls
-            WHERE assistant_message_id = :assistant_message_id
-              AND tool_call_index = :tool_call_index
-            FOR UPDATE
-            """
-        ),
-        {
-            "assistant_message_id": run.assistant_message_id,
-            "tool_call_index": run.tool_call_index,
-        },
-    ).first()
-
-    if existing is None:
-        insert_tool = text(
-            """
-            INSERT INTO message_tool_calls (
-                conversation_id,
-                user_message_id,
-                assistant_message_id,
-                tool_name,
-                tool_call_index,
-                query_hash,
-                scope,
-                requested_types,
-                result_refs,
-                selected_context_refs,
-                provider_request_ids,
-                latency_ms,
-                status,
-                error_code
-            )
-            VALUES (
-                :conversation_id,
-                :user_message_id,
-                :assistant_message_id,
-                :tool_name,
-                :tool_call_index,
-                :query_hash,
-                :scope,
-                :requested_types,
-                :result_refs,
-                :selected_context_refs,
-                '[]'::jsonb,
-                :latency_ms,
-                :status,
-                :error_code
-            )
-            RETURNING id
-            """
-        ).bindparams(
-            bindparam("requested_types", type_=JSONB),
-            bindparam("result_refs", type_=JSONB),
-            bindparam("selected_context_refs", type_=JSONB),
-        )
-        tool_call_id = db.execute(
-            insert_tool,
-            {
-                "conversation_id": run.conversation_id,
-                "user_message_id": run.user_message_id,
-                "assistant_message_id": run.assistant_message_id,
-                "tool_name": APP_SEARCH_TOOL_NAME,
-                "tool_call_index": run.tool_call_index,
-                "query_hash": run.query_hash,
-                "scope": run.scope,
-                "requested_types": run.requested_types,
-                "result_refs": result_refs,
-                "selected_context_refs": selected_context_refs,
-                "latency_ms": run.latency_ms,
-                "status": run.status,
-                "error_code": run.error_code,
-            },
-        ).scalar_one()
-    else:
-        tool_call_id = existing[0]
-        update_tool = text(
             """
             UPDATE message_tool_calls
             SET query_hash = :query_hash,
@@ -761,6 +872,7 @@ def persist_app_search_run(db: Session, run: AppSearchRun) -> None:
                 requested_types = :requested_types,
                 result_refs = :result_refs,
                 selected_context_refs = :selected_context_refs,
+                provider_request_ids = :provider_request_ids,
                 latency_ms = :latency_ms,
                 status = :status,
                 error_code = :error_code,
@@ -771,33 +883,33 @@ def persist_app_search_run(db: Session, run: AppSearchRun) -> None:
             bindparam("requested_types", type_=JSONB),
             bindparam("result_refs", type_=JSONB),
             bindparam("selected_context_refs", type_=JSONB),
-        )
-        db.execute(
-            update_tool,
-            {
-                "tool_call_id": tool_call_id,
-                "query_hash": run.query_hash,
-                "scope": run.scope,
-                "requested_types": run.requested_types,
-                "result_refs": result_refs,
-                "selected_context_refs": selected_context_refs,
-                "latency_ms": run.latency_ms,
-                "status": run.status,
-                "error_code": run.error_code,
-            },
-        )
+            bindparam("provider_request_ids", type_=JSONB),
+        ),
+        {
+            "tool_call_id": tool_call_id,
+            "query_hash": run.query_hash,
+            "scope": run.scope,
+            "requested_types": run.requested_types,
+            "result_refs": result_refs,
+            "selected_context_refs": selected_context_refs,
+            "provider_request_ids": provider_request_ids,
+            "latency_ms": run.latency_ms,
+            "status": run.status,
+            "error_code": run.error_code,
+        },
+    )
+    if getattr(updated, "rowcount", None) != 1:
+        raise AssertionError("app_search tool call update must affect one row")
     run.tool_call_id = tool_call_id
-    if existing is not None:
-        db.execute(
-            text(
-                "DELETE FROM message_retrieval_candidate_ledgers WHERE tool_call_id = :tool_call_id"
-            ),
-            {"tool_call_id": tool_call_id},
-        )
-        db.execute(
-            text("DELETE FROM message_rerank_ledgers WHERE tool_call_id = :tool_call_id"),
-            {"tool_call_id": tool_call_id},
-        )
+    db.execute(
+        text("DELETE FROM message_retrieval_candidate_ledgers WHERE tool_call_id = :tool_call_id"),
+        {"tool_call_id": tool_call_id},
+    )
+    db.execute(
+        text("DELETE FROM message_rerank_ledgers WHERE tool_call_id = :tool_call_id"),
+        {"tool_call_id": tool_call_id},
+    )
+    run.retrieval_ids = []
 
     insert_candidate_ledger = text(
         """
@@ -851,6 +963,7 @@ def persist_app_search_run(db: Session, run: AppSearchRun) -> None:
             retrieval_status=selection_status,
             included_in_prompt=selected,
         )
+        run.retrieval_ids.append(str(retrieval_id))
         db.execute(
             insert_candidate_ledger,
             {
@@ -902,44 +1015,76 @@ def persist_app_search_run(db: Session, run: AppSearchRun) -> None:
         ).bindparams(bindparam("metadata", type_=JSONB)),
         {
             "tool_call_id": tool_call_id,
-            "strategy": APP_SEARCH_SELECTION_STRATEGY,
+            "strategy": run.selection_strategy,
             "input_count": len(run.citations),
             "selected_count": len(run.selected_citations),
             "budget_chars": APP_SEARCH_CONTEXT_CHARS,
             "selected_chars": run.context_chars if run.selected_citations else 0,
             "status": run.status,
-            "metadata": {
-                "selection_strategy": APP_SEARCH_SELECTION_STRATEGY,
-                "selection_policy_version": APP_SEARCH_SELECTION_VERSION,
-                "ordering_policy": "hybrid_score_exactness_citation_quality_diversity",
-                "diversity_policy": "source_section_penalty",
-                "budget_policy": "greedy_context_budget",
-                "candidate_limit": run.candidate_limit,
-                "selected_limit": APP_SEARCH_SELECTED_LIMIT,
-                "context_budget_chars": APP_SEARCH_CONTEXT_CHARS,
-                "scope_count": run.scope_count,
-                "result_type_mix": dict(
-                    Counter(citation.result_type for citation in run.citations)
-                ),
-                "query_class": run.query_class,
-                "retrieval_mode": run.retrieval_mode,
-                "policy_reason": run.policy_reason,
-                "graph_expanded_scopes": run.graph_expanded_scopes,
-                "graph_expanded_scope_count": len(run.graph_expanded_scopes),
-                "context_route": run.context_route,
-                "context_route_reason": run.context_route_reason,
-                "selected_source_map_count": sum(
-                    1 for citation in run.selected_citations if citation.source_map
-                ),
-                "scope": run.scope,
-                "resolved_scopes": run.resolved_scopes,
-                "inclusion_surface": "tool_output",
-                "selection_reason_counts": dict(Counter(run.selection_reasons)),
-                "candidate_rerank_trace": candidate_rerank_trace,
-            },
+            "metadata": metadata,
         },
     )
     db.commit()
+
+
+def _validate_provider_rerank_metadata(run: AppSearchRun, metadata: Mapping[str, object]) -> None:
+    if run.selection_strategy != APP_SEARCH_PROVIDER_RERANK_STRATEGY:
+        return
+    if metadata.get("selection_policy_version") != APP_SEARCH_PROVIDER_RERANK_VERSION:
+        raise AssertionError("provider rerank metadata has wrong version")
+    if metadata.get("baseline_strategy") != APP_SEARCH_SELECTION_STRATEGY:
+        raise AssertionError("provider rerank metadata must name deterministic baseline")
+    if metadata.get("rerank_mode") != "provider_rerank":
+        raise AssertionError("provider rerank metadata has wrong mode")
+    if metadata.get("rerank_input_count") != len(run.citations):
+        raise AssertionError("provider rerank input count must match candidates")
+    if run.status == "running":
+        if run.selected_citations:
+            raise AssertionError("provider rerank pending run cannot select evidence")
+        return
+    if run.status == "error":
+        if run.selected_citations:
+            raise AssertionError("provider rerank error cannot select evidence")
+        if len(run.citations) > 0 and "failure_error_code" not in metadata:
+            raise AssertionError("provider rerank error must include failure_error_code")
+        if metadata.get("rerank_output_count") != 0:
+            raise AssertionError("provider rerank error must have zero outputs")
+        return
+    if run.status != "complete":
+        raise AssertionError("provider rerank run has unsupported status")
+    if metadata.get("rerank_output_count") != len(run.citations):
+        raise AssertionError("provider rerank completion must rank every candidate")
+    llm_call_ids = metadata.get("llm_call_ids")
+    if len(run.citations) > 0 and (
+        not isinstance(llm_call_ids, list)
+        or not llm_call_ids
+        or not all(isinstance(item, str) and item for item in llm_call_ids)
+    ):
+        raise AssertionError("provider rerank completion must include llm_call_ids")
+    for key in {
+        "provider",
+        "model",
+        "key_mode_used",
+        "llm_call_id",
+        "cost_status",
+        "private_snippet_policy",
+        "private_snippet_policy_reason",
+    }:
+        value = metadata.get(key)
+        if len(run.citations) > 0 and (not isinstance(value, str) or not value):
+            raise AssertionError(f"provider rerank completion missing {key}")
+    for key in {
+        "latency_ms",
+        "estimated_cost_usd_micros",
+        "input_tokens",
+        "output_tokens",
+        "total_tokens",
+    }:
+        value = metadata.get(key)
+        if value is not None and (
+            not isinstance(value, int) or isinstance(value, bool) or value < 0
+        ):
+            raise AssertionError(f"provider rerank metadata {key} is invalid")
 
 
 def render_retrieved_context_blocks(
@@ -959,6 +1104,9 @@ def render_retrieved_context_blocks(
         if len(selected) >= APP_SEARCH_SELECTED_LIMIT:
             selection_reasons.append("skipped_selected_limit")
             continue
+        if not _citation_is_citable(citation):
+            selection_reasons.append("skipped_uncitable")
+            continue
         block = _render_single_retrieved_context(db, viewer_id, citation)
         if not block:
             selection_reasons.append("skipped_empty_render")
@@ -977,6 +1125,16 @@ def render_retrieved_context_blocks(
     if not rendered_blocks:
         return "", 0, selected, selection_reasons
     return "\n\n".join(rendered_blocks), total_chars, selected, selection_reasons
+
+
+def _citation_is_citable(citation: RetrievalCitation) -> bool:
+    if not citation.citation_target:
+        return False
+    ref = parse_resource_ref(citation.citation_target)
+    return (
+        not isinstance(ref, ResourceRefParseFailure)
+        and resource_citation_result_type(ref) is not None
+    )
 
 
 def _render_single_retrieved_context(
@@ -1053,9 +1211,6 @@ def _render_media_block(db: Session, media_id: UUID) -> str | None:
     lines = ['<app_search_result type="media">', f"<source>{xml_escape(row[0] or '')}</source>"]
     if row[1]:
         lines.append(f"<url>{xml_escape(row[1])}</url>")
-    unit = media_intelligence.get_media_unit(db, media_id=media_id)
-    if isinstance(unit, MediaUnit) and unit.summary_md:
-        lines.append(f"<summary>{xml_escape(unit.summary_md)}</summary>")
     lines.append("</app_search_result>")
     return "\n".join(lines)
 
@@ -1295,6 +1450,7 @@ def _render_content_chunk_context(
         lines.append(f"<source_kind>{xml_escape(str(row[4]))}</source_kind>")
     source_map = load_content_chunk_source_map(
         db,
+        viewer_id=viewer_id,
         chunk_id=chunk_id,
         evidence_span_id=evidence_span_id,
     )

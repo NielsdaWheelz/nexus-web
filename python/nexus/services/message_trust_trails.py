@@ -34,6 +34,7 @@ from nexus.schemas.conversation import (
     TrustIntegrityNoticeOut,
     TrustPromptAssemblyOut,
     TrustRetrievalOut,
+    TrustRetrievalPlanOut,
     TrustRunOut,
     TrustToolCallOut,
 )
@@ -256,6 +257,7 @@ def build_assistant_trust_trails(
                     id=payload.id,
                     conversation_id=payload.conversation_id,
                     resource_ref=payload.resource_ref,
+                    activation=payload.activation,
                     label=payload.label,
                     summary=payload.summary,
                     missing=payload.missing,
@@ -370,6 +372,8 @@ def build_assistant_trust_trails(
                 and len(tool.result_refs) > len(tool.selected_context_refs),
                 error_code=tool.error_code,
                 provider_request_ids=tool.provider_request_ids,
+                source_domain=cast(Any, tool.source_domain),
+                source_policy=cast(Any, tool.source_policy),
                 result_refs=tool.result_refs,
                 selected_context_refs=tool.selected_context_refs,
                 retrievals=retrievals,
@@ -517,6 +521,11 @@ def build_assistant_trust_trails(
                     final_chars=cast(int | None, done_payload.get("final_chars")),
                     started_at=run.started_at,
                     completed_at=run.completed_at,
+                    retrieval_plan=(
+                        TrustRetrievalPlanOut.model_validate(run.retrieval_plan)
+                        if run.retrieval_plan is not None
+                        else None
+                    ),
                 )
                 if run is not None and model is not None
                 else None

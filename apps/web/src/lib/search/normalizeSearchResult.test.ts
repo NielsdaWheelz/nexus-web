@@ -88,6 +88,7 @@ describe("normalizeSearchResult happy-path adaptation", () => {
         type: "content_chunk",
         id: "chunk-7",
         evidence_span_ids: ["span-1"],
+        locator: PDF_GEOMETRY_LOCATOR,
       },
       locator: PDF_GEOMETRY_LOCATOR,
     });
@@ -105,6 +106,7 @@ describe("normalizeSearchResult happy-path adaptation", () => {
         type: "content_chunk",
         id: "chunk-7",
         evidenceSpanIds: ["span-1"],
+        locator: PDF_GEOMETRY_LOCATOR,
       },
     });
     expect(row.snippetSegments).toEqual([
@@ -434,6 +436,92 @@ describe("normalizeSearchResult structural rejections", () => {
     ).toBeNull();
   });
 
+  it("rejects unexpected top-level result keys", () => {
+    expect(
+      normalize({
+        type: "content_chunk",
+        id: "chunk-7",
+        score: 0.88,
+        snippet: "section text",
+        title: "PDF Source",
+        source_label: "PDF Source - p. 12",
+        media_id: "media-pdf-1",
+        media_kind: "pdf",
+        source: {
+          media_id: "media-pdf-1",
+          media_kind: "pdf",
+          title: "PDF Source",
+          contributors: [],
+          published_date: null,
+        },
+        activationHref: "/media/media-pdf-1#evidence-span-1",
+        citation_label: "p. 12",
+        context_ref: {
+          type: "content_chunk",
+          id: "chunk-7",
+          evidence_span_ids: ["span-1"],
+        },
+        locator: PDF_GEOMETRY_LOCATOR,
+        reranker_generated_reason: "direct answer",
+      }),
+    ).toBeNull();
+  });
+
+  it("rejects unexpected context_ref keys", () => {
+    expect(
+      normalize({
+        type: "page",
+        id: "page-1",
+        score: 0.5,
+        snippet: "s",
+        title: "t",
+        source_label: "page",
+        media_id: null,
+        media_kind: null,
+        activationHref: "/pages/page-1",
+        context_ref: {
+          type: "page",
+          id: "page-1",
+          citation_target: "page:page-1",
+        },
+      }),
+    ).toBeNull();
+  });
+
+  it("rejects unexpected source metadata keys", () => {
+    expect(
+      normalize({
+        type: "fragment",
+        id: "fragment-1",
+        score: 0.87,
+        snippet: "fragment source text",
+        title: "Reader Source",
+        source_label: "Reader Source - section 2",
+        media_id: "media-1",
+        media_kind: "web_article",
+        activationHref: "/media/media-1#fragment-fragment-1",
+        context_ref: { type: "fragment", id: "fragment-1" },
+        locator: {
+          type: "web_text_offsets",
+          media_id: "media-1",
+          media_kind: "web_article",
+          fragment_id: "fragment-1",
+          start_offset: 0,
+          end_offset: 20,
+          text_quote_selector: { exact: "fragment source text" },
+        },
+        source: {
+          media_id: "media-1",
+          media_kind: "web_article",
+          title: "Reader Source",
+          contributors: [],
+          published_date: null,
+          generated_text: "generated evidence",
+        },
+      }),
+    ).toBeNull();
+  });
+
   it("rejects rows without an activatable resource target", () => {
     expect(
       normalizeSearchResult({
@@ -557,6 +645,112 @@ describe("normalizeSearchResult locator / type-mismatch rejections", () => {
     ).toBeNull();
   });
 
+  it("rejects rows whose context_ref type drifts from the result variant", () => {
+    const rows: Record<string, unknown>[] = [
+      {
+        type: "podcast",
+        id: "podcast-1",
+        score: 0.77,
+        snippet: "systems thinking weekly",
+        title: "Systems Thinking Weekly",
+        source_label: "Systems Thinking Weekly",
+        media_id: null,
+        media_kind: null,
+        activationHref: "/podcasts/podcast-1",
+        context_ref: { type: "media", id: "podcast-1" },
+        contributors: [],
+      },
+      {
+        type: "page",
+        id: "page-1",
+        score: 0.5,
+        snippet: "page",
+        title: "Page",
+        source_label: "page",
+        media_id: null,
+        media_kind: null,
+        activationHref: "/pages/page-1",
+        context_ref: { type: "note_block", id: "page-1" },
+      },
+      {
+        type: "note_block",
+        id: "note-1",
+        score: 0.91,
+        snippet: "note match",
+        title: "Notes",
+        source_label: "note",
+        media_id: null,
+        media_kind: null,
+        activationHref: "/notes/note-1",
+        context_ref: { type: "page", id: "note-1" },
+        body_text: "note body text",
+        highlight_excerpt: null,
+        locator: {
+          type: "note_block_offsets",
+          block_id: "note-1",
+          start_offset: 0,
+          end_offset: 14,
+        },
+      },
+      {
+        type: "highlight",
+        id: "highlight-1",
+        score: 0.94,
+        snippet: "important quote",
+        title: "Reader Source",
+        source_label: "Reader Source",
+        media_id: "media-1",
+        media_kind: "web_article",
+        activationHref: "/media/media-1#highlight-highlight-1",
+        context_ref: { type: "fragment", id: "highlight-1" },
+        color: "yellow",
+        exact: "important quote",
+        locator: {
+          type: "web_text_offsets",
+          media_id: "media-1",
+          media_kind: "web_article",
+          fragment_id: "fragment-1",
+          start_offset: 0,
+          end_offset: 15,
+          text_quote_selector: { exact: "important quote" },
+        },
+        source: {
+          media_id: "media-1",
+          media_kind: "web_article",
+          title: "Reader Source",
+          contributors: [],
+          published_date: null,
+        },
+      },
+      {
+        type: "message",
+        id: "message-1",
+        score: 0.7,
+        snippet: "message text",
+        title: "Message",
+        source_label: "conversation",
+        media_id: null,
+        media_kind: null,
+        activationHref: "/conversations/conversation-1",
+        context_ref: { type: "conversation", id: "message-1" },
+        conversation_id: "conversation-1",
+        seq: 2,
+        locator: {
+          type: "message_offsets",
+          conversation_id: "conversation-1",
+          message_id: "message-1",
+          start_offset: 0,
+          end_offset: 12,
+          message_seq: 2,
+        },
+      },
+    ];
+
+    for (const row of rows) {
+      expect(normalize(row)).toBeNull();
+    }
+  });
+
   it("rejects a content_chunk with no evidence_span_ids", () => {
     expect(
       normalize({
@@ -579,6 +773,74 @@ describe("normalizeSearchResult locator / type-mismatch rejections", () => {
         citation_label: "p. 12",
         context_ref: { type: "content_chunk", id: "chunk-7", evidence_span_ids: [] },
         locator: PDF_GEOMETRY_LOCATOR,
+      }),
+    ).toBeNull();
+  });
+
+  it("rejects a content_chunk with a note-block locator", () => {
+    expect(
+      normalize({
+        type: "content_chunk",
+        id: "chunk-7",
+        score: 0.88,
+        snippet: "section text",
+        title: "PDF Source",
+        source_label: "PDF Source - p. 12",
+        media_id: "media-pdf-1",
+        media_kind: "pdf",
+        source: {
+          media_id: "media-pdf-1",
+          media_kind: "pdf",
+          title: "PDF Source",
+          contributors: [],
+          published_date: null,
+        },
+        activationHref: "/media/media-pdf-1#evidence-span-1",
+        citation_label: "p. 12",
+        context_ref: {
+          type: "content_chunk",
+          id: "chunk-7",
+          evidence_span_ids: ["span-1"],
+        },
+        locator: {
+          type: "note_block_offsets",
+          block_id: "note-1",
+          start_offset: 0,
+          end_offset: 12,
+        },
+      }),
+    ).toBeNull();
+  });
+
+  it("rejects a content_chunk with a note-block context_ref locator", () => {
+    expect(
+      normalize({
+        type: "content_chunk",
+        id: "chunk-1",
+        score: 0.5,
+        snippet: "text",
+        title: "Source",
+        source_label: "Source",
+        media_id: "media-1",
+        media_kind: "web_article",
+        context_ref: {
+          type: "content_chunk",
+          id: "chunk-1",
+          locator: {
+            type: "note_block_offsets",
+            block_id: "note-1",
+            start_offset: 0,
+            end_offset: 4,
+          },
+        },
+        locator: PDF_GEOMETRY_LOCATOR,
+        source: {
+          media_id: "media-1",
+          media_kind: "web_article",
+          title: "Source",
+          contributors: [],
+          published_date: null,
+        },
       }),
     ).toBeNull();
   });

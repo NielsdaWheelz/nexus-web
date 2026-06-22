@@ -76,13 +76,15 @@ The current chat bottleneck is not the shared search substrate. It is
   skips empty/oversized candidates, and keeps an ordinal-aligned decision reason
   for every candidate.
 - Current `app_search` packer reasons are `selected_within_budget`,
-  `skipped_over_budget`, `skipped_empty_render`, and `skipped_selected_limit`.
-  Oversized evidence is skipped rather than trimmed; deeper exact-read,
-  uncitable, and summarization policies belong to the later
-  retrieval-controller layer.
-- `message_rerank_ledgers.strategy` records
-  `app_search_deterministic_selection`; this is a deterministic local selector,
-  not a learned/provider reranker.
+  `skipped_over_budget`, `skipped_empty_render`, `skipped_uncitable`, and
+  `skipped_selected_limit`. Provider-rerank adapter outcomes use
+  `skipped_provider_rerank_pending` and `skipped_provider_rerank_failed`; those
+  are provider-route states, not ordinary packer decisions. Oversized evidence
+  is skipped rather than trimmed; deeper exact-read and summarization policies
+  belong to the later retrieval-controller layer.
+- `message_rerank_ledgers.strategy` records the active selector. The default
+  selector remains `app_search_deterministic_selection`; provider rerank runs
+  use `app_search_provider_rerank` and still write the same ledger shape.
 - The model-facing tool continuation is compact selected-result JSON from
   `_app_search_tool_output`, not the full rendered `context_text`.
 - Selected `content_chunk` results can include compact `source_map.v1` guidance
@@ -105,11 +107,12 @@ scope expansion through the resource graph owner. Broad questions can decompose
 into several visible `app_search` calls through the chat tool loop. Explicit
 single-media whole-source queries can privately route through chat-owned
 long-context execution with normal read citations; if a body cannot be cited, it
-is not forwarded as evidence. The private/public web boundary is prompt policy
-plus separate visible ledgers today, not a runtime mixing gate. The system still
-needs later generated contextual summaries, hierarchical artifacts, full
-run-level planning, runtime private/public routing policy, and learned-reranker
-gates.
+is not forwarded as evidence. The private/public web boundary is a chat-owned
+runtime source policy: same-run private/public tool evidence is blocked before
+adapter execution unless the planner classified an explicit saved-source/public
+web comparison. The system still needs later generated contextual summaries, a
+real generated-guidance owner/job, comparative eval proof, and default adoption
+of the learned/provider reranker route.
 
 ## Ownership Boundaries
 
@@ -119,6 +122,8 @@ Search owns:
 - Scope parsing, authorization, and scope-to-entity SQL.
 - Hybrid candidate generation, ranking, reranking policy, and candidate/result
   count policy.
+- The provider-rerank output contract and ordinal-to-candidate grounding for
+  app-search reranking.
 - Search result projection into `SearchResultOut` and `RetrievalCitation`
   inputs.
 - Retrieval quality evaluation for local-library search.
@@ -194,7 +199,9 @@ so they can be evaluated and ledgered independently.
 
 4. Evidence packing
    - Select evidence under a real token budget, not only a char budget.
-   - Skip, trim, or summarize oversized blocks instead of breaking the pack.
+   - Current foundation behavior skips oversized blocks instead of breaking the
+     pack; trim/summarize requires a separate owner, ledger vocabulary, and
+     tests.
    - Apply per-source and per-section quotas.
    - Prefer exact passage evidence over container rows.
    - Return "more available" metadata so the model can ask for additional
@@ -211,9 +218,9 @@ so they can be evaluated and ledgered independently.
      ownership.
    - `message_retrievals` and candidate/rerank ledgers remain telemetry.
 
-## Five-Cutover Roadmap
+## Foundation Cutovers
 
-The retrieval-controller work is intentionally split into five hard cutovers.
+The initial retrieval-controller foundation was split into five hard cutovers.
 Each cutover should be independently reviewable, testable, and revertible.
 
 1. [`search-retrieval-evals-hard-cutover.md`](../cutovers/search-retrieval-evals-hard-cutover.md)
@@ -224,7 +231,7 @@ Each cutover should be independently reviewable, testable, and revertible.
 
 2. [`search-evidence-packer-ledger-hard-cutover.md`](../cutovers/search-evidence-packer-ledger-hard-cutover.md)
    - Fix deterministic packer correctness.
-   - Skip/trim oversized blocks, continue to later candidates, and ledger every
+   - Skip oversized blocks, continue to later candidates, and ledger every
      selection decision.
 
 3. [`search-candidate-policy-hard-cutover.md`](../cutovers/search-candidate-policy-hard-cutover.md)
@@ -243,10 +250,35 @@ Each cutover should be independently reviewable, testable, and revertible.
    - Cover query planning, iterative search/inspect/read, contextual chunks,
      hierarchy/graph retrieval, and long-context routing.
 
-## SOTA And Product Meta
+## Follow-Up Hard-Cutover Specs And Status
 
-The practical state of the art is not "bigger top-k" alone. It is measured,
-multi-stage retrieval:
+After the foundation, these hard-cutover specs were split out. Some are now
+implemented; each spec owns its exact status and remaining gaps:
+
+1. [`search-run-level-planner-hard-cutover.md`](../cutovers/search-run-level-planner-hard-cutover.md)
+   - Implemented chat-owned route planning and plan-before-private-body
+     rendering; hardened with a committed `llm_calls.call_status='started'`
+     row before chat provider stream open.
+
+2. [`search-source-boundary-policy-hard-cutover.md`](../cutovers/search-source-boundary-policy-hard-cutover.md)
+   - Implemented same-run runtime public/private tool-evidence enforcement;
+     remaining boundary is historical-message source classification, if product
+     scope expands beyond same-run tool evidence.
+
+3. [`search-contextual-hierarchy-artifacts-hard-cutover.md`](../cutovers/search-contextual-hierarchy-artifacts-hard-cutover.md)
+   - First source-map retrieval slice implemented; remaining work is real
+     generated contextual summaries, hierarchy jobs, owner consumption, and
+     comparative eval proof.
+
+4. [`search-learned-reranker-hard-cutover.md`](../cutovers/search-learned-reranker-hard-cutover.md)
+   - Provider-rerank route implemented behind planner/search policy gates;
+     remaining work is default adoption only after live/operator eval proof.
+
+## External Retrieval Patterns And Product Meta
+
+These are external retrieval patterns and product targets, not implementation
+claims or eval proof for every Nexus route. The practical state of the art is
+not "bigger top-k" alone. It is measured, multi-stage retrieval:
 
 - Hybrid sparse+dense retrieval generally beats embeddings alone.
 - Retrieval systems often feed a reranker with tens or hundreds of candidates,
@@ -350,6 +382,9 @@ Minimum datasets:
 - Multi-hop read/inspect/search questions.
 - Negative/absence questions.
 - Scoped media/library queries.
+
+Next dataset to add:
+
 - Regression examples from real failed chat turns.
 
 The eval harness should replay candidate generation, rerank, and pack stages
@@ -362,18 +397,22 @@ The durable observability model should show:
 - Tool call inputs and normalized search query.
 - Candidate pool size, score features, and source metadata.
 - Rerank strategy and score/reason for each candidate.
-- Selection state: selected, skipped, trimmed, summarized, duplicate,
-  over-budget, low-rank, low-diversity-value, unsupported, or uncitable.
+- Selection state: selected, skipped, duplicate, over-budget, low-rank,
+  low-diversity-value, unsupported, or uncitable. Future trim/summarize states
+  require their own runtime owner and tests before they enter this ledger
+  vocabulary.
 - Prompt inclusion state for tool-output evidence as well as initial prompt
   assembly evidence.
 - Citation edge backpointers for cited selected evidence.
-- "More available" counts by scope/source/type.
+- Implemented `more_candidates_available` boolean on tool-result read models.
+- Future richer "more available" counts by scope/source/type.
 
 `message_retrieval_candidate_ledgers` and `message_rerank_ledgers` are the right
 substrate. The current app-search selector records strategy metadata, selection
-reason counts, and a per-candidate rerank trace; future retrieval-controller
-work should add exact-read and "more available" semantics before higher-risk
-retrieval changes.
+reason counts, a per-candidate rerank trace, and the coarse
+`more_candidates_available` boolean; future retrieval-controller work should add
+exact-read follow-up and richer "more available" count semantics before
+higher-risk retrieval changes.
 
 ## What Not To Do
 
@@ -383,8 +422,8 @@ retrieval changes.
   admission and shared search scope owners.
 - Do not promote `message_retrievals` to citation identity.
 - Do not bypass `SearchQuery` with tool-specific typed IDs or private filters.
-- Do not add a model reranker before there is an eval harness and deterministic
-  baseline.
+- Do not default-adopt, expand, or replace the current provider-rerank route
+  before there is eval proof and a deterministic baseline.
 - Do not hide retrieval failures behind summaries; expose skipped/available
   evidence and reasons in the trust trail.
 
@@ -394,13 +433,22 @@ Keep these tests aligned with the module contract:
 
 - `python/tests/test_search.py`
 - `python/tests/test_search_kinds.py`
+- `python/tests/test_search_retrieval_evals.py`
 - `python/tests/test_search_intent_model_guards.py`
 - `python/tests/test_search_scope_matrix.py`
 - `python/tests/test_search_batch.py`
+- `python/tests/test_search_llm_rerank.py`
+- `python/tests/test_search_policy.py`
+- `python/tests/test_chat_retrieval_plan.py`
+- `python/tests/test_source_boundary_policy.py`
+- `python/tests/test_content_indexing.py`
 - `python/tests/test_agent_app_search.py`
 - `python/tests/test_chat_runs.py`
+- `python/tests/test_openai_reasoning_contracts.py`
 - `python/tests/test_attached_citations.py`
 - `python/tests/test_cutover_negative_gates.py`
 - `apps/web/src/lib/search/searchApi.test.ts`
 - `apps/web/src/lib/api/sse/events.test.ts`
 - `apps/web/src/components/chat/useChatMessageUpdates.test.tsx`
+- `apps/web/src/components/chat/useChatRunTail.test.tsx`
+- `apps/web/src/components/chat/AssistantMessage.test.tsx`

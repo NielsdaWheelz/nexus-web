@@ -26,7 +26,8 @@ from uuid import UUID, uuid4
 import pytest
 import respx
 from pydantic import ValidationError
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
+from sqlalchemy.dialects.postgresql import JSONB
 
 from nexus.config import clear_settings_cache
 from nexus.db.models import Fragment
@@ -2484,20 +2485,31 @@ class TestSearchResultFormat:
                         id, conversation_id, user_message_id, assistant_message_id,
                         tool_name, tool_call_index, scope, requested_types,
                         result_refs, selected_context_refs, provider_request_ids,
-                        status
+                        source_domain, source_policy, status
                     )
                     VALUES (
                         :tool_call_id, :conversation_id, :user_message_id,
                         :assistant_message_id, 'web_search', 1, 'public_web',
                         '["web_result"]'::jsonb, '[]'::jsonb, '[]'::jsonb,
-                        '["provider-request-1"]'::jsonb, 'complete'
+                        '["provider-request-1"]'::jsonb, 'public_web',
+                        :source_policy,
+                        'complete'
                     )
-                """),
+                """).bindparams(bindparam("source_policy", type_=JSONB)),
                 {
                     "tool_call_id": tool_call_id,
                     "conversation_id": conversation_id,
                     "user_message_id": user_message_id,
                     "assistant_message_id": assistant_message_id,
+                    "source_policy": {
+                        "version": "source_boundary_policy.v1",
+                        "decision": "allowed",
+                        "source_domain": "public_web",
+                        "mixing_allowed": False,
+                        "reason": "single_domain_public_web",
+                        "domains_seen": [],
+                        "requested_domains": ["public_web"],
+                    },
                 },
             )
             session.execute(

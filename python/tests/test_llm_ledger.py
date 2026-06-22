@@ -85,6 +85,19 @@ class _FakeRouter:
             raise self._error
 
 
+class _StreamConstructionErrorRouter:
+    async def generate(self, req, *, key, timeout_s):
+        raise AssertionError("not used")
+
+    def stream(self, req, *, key, timeout_s, cancel=None):
+        del req, key, timeout_s, cancel
+        raise ModelCallError(
+            ModelCallErrorCode.PROVIDER_DOWN,
+            "stream did not start",
+            provider_request_id="req_stream_start_down",
+        )
+
+
 def _request(*, cache_ttl: PromptCacheTTL = "none") -> ModelCall:
     return ModelCall(
         model=ModelRef(provider="anthropic", model="claude-haiku-4-5-20251001"),
@@ -164,6 +177,7 @@ async def test_generate_success_writes_row_and_increments_call_seq(db_session, l
     assert row.latency_ms is not None and row.latency_ms >= 0
     assert row.error_class is None and row.error_detail is None
     assert row.provider_request_id == "req_1"
+    assert row.call_status == "succeeded"
     assert row.cost_status == "missing_pricing"
     assert row.total_cost_usd_micros is None
     assert row.pricing_snapshot == {
@@ -223,6 +237,38 @@ async def test_generate_success_writes_row_and_increments_call_seq(db_session, l
     assert finished[0]["cache_read_input_tokens"] == 6
     assert finished[0]["cached_input_tokens"] == 6
     assert finished[0]["provider_request_id"] == "req_1"
+
+
+async def test_generate_commits_started_row_before_provider_call(direct_db, log_sink):
+    owner = LlmCallOwner(kind="oracle_reading", id=uuid4())
+    direct_db.register_cleanup("llm_calls", "owner_id", owner.id)
+    seen: dict[str, str] = {}
+
+    class InspectingRouter(_FakeRouter):
+        async def generate(self, req, *, key, timeout_s):
+            with direct_db.session() as verify:
+                row = verify.execute(
+                    select(LLMCall.call_status, LLMCall.terminal_attempt_status).where(
+                        LLMCall.owner_kind == owner.kind,
+                        LLMCall.owner_id == owner.id,
+                    )
+                ).one()
+            seen["call_status"] = row.call_status
+            seen["terminal_attempt_status"] = row.terminal_attempt_status
+            return await super().generate(req, key=key, timeout_s=timeout_s)
+
+    with direct_db.session() as db:
+        await _observe(
+            db,
+            InspectingRouter(
+                response=ModelResponse(text="ok", usage=_USAGE, provider_request_id="req_1")
+            ),
+            owner=owner,
+            streaming=False,
+        )
+        db.commit()
+
+    assert seen == {"call_status": "started", "terminal_attempt_status": "started"}
 
 
 async def test_generate_success_writes_catalog_priced_cost_fields(
@@ -376,6 +422,7 @@ async def test_generate_provider_error_writes_failure_row_and_reraises(db_sessio
 
     (row,) = _rows(db_session, owner)
     assert row.error_class == "E_LLM_TIMEOUT", "ModelCallError maps to the API error code"
+    assert row.call_status == "failed"
     assert row.error_detail == "ModelCallError: took too long (provider_request_id=req_timeout)"
     assert row.provider_request_id == "req_timeout"
     assert (row.attempt_count, row.retry_count, row.terminal_attempt_status) == (
@@ -412,7 +459,7 @@ async def test_generate_provider_error_writes_failure_row_and_reraises(db_sessio
     assert failed[0]["provider_request_id"] == "req_timeout"
 
 
-async def test_generate_unclassified_exception_records_type_name(db_session, log_sink):
+async def test_generate_unclassified_exception_records_closed_error(db_session, log_sink):
     owner = LlmCallOwner(kind="media_summary", id=uuid4())
     router = _FakeRouter(error=RuntimeError("boom"))
 
@@ -420,7 +467,7 @@ async def test_generate_unclassified_exception_records_type_name(db_session, log
         await _observe(db_session, router, owner=owner, streaming=False)
 
     (row,) = _rows(db_session, owner)
-    assert row.error_class == "RuntimeError"
+    assert row.error_class == "E_LLM_PROVIDER_DOWN"
     assert row.error_detail == "RuntimeError: boom"
 
 
@@ -451,6 +498,7 @@ async def test_stream_success_writes_row_from_terminal_chunk(db_session, log_sin
     assert [event.text for event in chunks if event.type == "text_delta"] == ["hel", "lo"]
     (row,) = _rows(db_session, owner)
     assert row.streaming is True
+    assert row.call_status == "succeeded"
     assert row.total_tokens == 18
     assert row.provider_request_id == "req_s"
     assert (row.attempt_count, row.retry_count, row.terminal_attempt_status) == (
@@ -488,12 +536,18 @@ async def test_stream_row_written_before_terminal_chunk_yields(db_session, log_s
         key_mode_requested="auto",
         key_mode_used="byok",
     )
+    (started_row,) = _rows(db_session, owner)
+    assert (started_row.call_status, started_row.terminal_attempt_status) == (
+        "started",
+        "started",
+    )
     async for event in stream:
         if event.terminal:
             break
     await stream.aclose()
 
     (row,) = _rows(db_session, owner)
+    assert row.call_status == "succeeded"
     assert row.total_tokens == 18 and row.error_class is None
 
 
@@ -520,6 +574,7 @@ async def test_stream_aclose_before_terminal_chunk_writes_abandoned_row(db_sessi
     await stream.aclose()
 
     (row,) = _rows(db_session, owner)
+    assert row.call_status == "failed"
     assert row.error_class == "E_LLM_INTERRUPTED"
     assert row.error_detail == "stream abandoned before terminal chunk"
     assert (row.attempt_count, row.retry_count, row.terminal_attempt_status) == (
@@ -554,6 +609,35 @@ async def test_stream_failure_mid_iteration_writes_failure_row_and_reraises(db_s
     failed = _events(log_sink, "llm.request.failed")
     assert len(failed) == 1
     assert failed[0]["provider_request_id"] == "req_stream_down"
+
+
+def test_stream_construction_failure_writes_failure_row_and_reraises(db_session, log_sink):
+    owner = LlmCallOwner(kind="chat_run", id=uuid4())
+
+    with pytest.raises(ModelCallError):
+        observed_generate_stream(
+            db_session,
+            owner=owner,
+            llm=_StreamConstructionErrorRouter(),
+            provider="anthropic",
+            request=_request(),
+            api_key="k",
+            timeout_s=30,
+            llm_operation="chat_send",
+            key_mode_requested="auto",
+            key_mode_used="byok",
+        )
+
+    (row,) = _rows(db_session, owner)
+    assert row.call_status == "failed"
+    assert row.error_class == "E_LLM_PROVIDER_DOWN"
+    assert row.error_detail == (
+        "ModelCallError: stream did not start (provider_request_id=req_stream_start_down)"
+    )
+    assert row.provider_request_id == "req_stream_start_down"
+    failed = _events(log_sink, "llm.request.failed")
+    assert len(failed) == 1
+    assert failed[0]["provider_request_id"] == "req_stream_start_down"
 
 
 async def test_stream_without_terminal_chunk_still_writes_one_row(db_session, log_sink):

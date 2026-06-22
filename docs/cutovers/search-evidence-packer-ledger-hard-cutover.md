@@ -8,8 +8,8 @@ deterministic, explainable evidence-selection behavior.
 ## One-Line
 
 Fix the current `app_search` evidence packer before increasing retrieval depth:
-skip or trim oversized blocks, continue to later candidates, ledger every
-decision, and make tool-output prompt inclusion explicit.
+skip oversized blocks, continue to later candidates, ledger every decision, and
+make tool-output prompt inclusion explicit.
 
 ## Problem
 
@@ -53,9 +53,7 @@ Required behavior:
 
 - Empty rendered blocks are skipped and ledgered.
 - Oversized blocks do not stop the loop.
-- Oversized blocks are either:
-  - skipped with an explicit reason, or
-  - trimmed to a bounded excerpt with an explicit reason.
+- Oversized blocks are skipped with an explicit reason.
 - Later candidates can still be selected after an oversized candidate.
 - Selected evidence rows expose prompt-inclusion semantics appropriate to
   tool-output evidence.
@@ -67,16 +65,14 @@ Required behavior:
 Use explicit reason strings. Initial vocabulary:
 
 - `selected_within_budget`
-- `selected_trimmed_to_budget`
 - `skipped_over_budget`
 - `skipped_empty_render`
-- `skipped_duplicate_source`
-- `skipped_duplicate_section`
 - `skipped_uncitable`
 - `skipped_selected_limit`
-- `retrieved_not_selected`
 
-The exact final names can differ, but the categories must survive.
+Duplicate source/section pressure is owned by the reranker trace, not the packer
+skip vocabulary. The packer reasons describe why a candidate was or was not
+forwarded into the tool-output evidence pack.
 
 ## Prompt Inclusion Semantics
 
@@ -117,7 +113,6 @@ evidence with `included_in_prompt = true` and rerank metadata
 ## Tests To Add
 
 - Oversized first block, later fitting block selected.
-- Oversized block trimmed when trimming is enabled.
 - Empty render does not count against selected limit.
 - Selected evidence has tool-output inclusion semantics.
 - Candidate ledger reason coverage.

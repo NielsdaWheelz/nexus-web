@@ -63,6 +63,14 @@ graph-assisted expansion, and long-context routing.
 
 Deferred by design: generated contextual summaries and hierarchical artifacts.
 
+The remaining hard-cutover specs are split out so this document stays the
+implemented foundation plus context, not a mixed-status mega-spec:
+
+- [`search-run-level-planner-hard-cutover.md`](search-run-level-planner-hard-cutover.md)
+- [`search-source-boundary-policy-hard-cutover.md`](search-source-boundary-policy-hard-cutover.md)
+- [`search-contextual-hierarchy-artifacts-hard-cutover.md`](search-contextual-hierarchy-artifacts-hard-cutover.md)
+- [`search-learned-reranker-hard-cutover.md`](search-learned-reranker-hard-cutover.md)
+
 ## Why This Is Last
 
 Agentic and graph/hierarchical retrieval can be powerful, but they are expensive
@@ -126,25 +134,16 @@ This must remain grounded in existing owners:
 
 ## Query Planner
 
-Current slice: `plan_app_search` is a deterministic app-search policy
-classifier. It ledgers query class, candidate depth, retrieval mode, policy
-reason, and private context route. It does not yet own a full run-level planner.
+`plan_app_search` remains the deterministic app-search policy classifier. It
+ledgers query class, candidate depth, retrieval mode, policy reason, and private
+context route for the search tool itself.
 
-A later run-level planner should classify:
-
-- answerable from current attached context
-- needs local search
-- needs exact read
-- needs inspect/map before read
-- needs cross-source synthesis
-- needs absence/breadth search
-- needs long-context route beyond explicit single-media reads
-- needs web search or outside-source discovery
-
-The current non-search planner behavior is prompt guidance plus visible tool
-telemetry. A model-based planner or runtime web/private-source policy should be
-added only when its decisions can be evaluated against tool-call accuracy
-fixtures.
+The chat-owned run-level planner is implemented separately in
+`search-run-level-planner-hard-cutover.md`. It classifies attached-context,
+private search/read/inspect, long-context, public-web, and explicit
+private/public comparison routes before tool execution. Future work is
+model-based planner expansion and eval reporting, not another per-tool search
+policy.
 
 ## Tool Loop Contract
 
@@ -155,9 +154,10 @@ Harden the tool loop as part of deep retrieval:
 - "more candidates available" signal in tool output/trust trail
 - clear system-prompt guidance for search vs inspect vs read
 - no hidden uncited evidence path
-- no web/private-source mixing without an explicit policy boundary; current
-  implementation provides prompt policy and separate visible ledgers, not a
-  runtime mixing gate
+- no web/private-source same-run tool-evidence mixing without an explicit
+  policy boundary; the implemented source-boundary slice blocks mixed private
+  app/public web tool batches before adapter execution unless the planner
+  classified an explicit comparison route
 
 OpenAI Deep Research's search/fetch split is the right conceptual shape:
 `app_search` discovers candidates; `read_resource` fetches exact evidence.
@@ -251,13 +251,17 @@ Implemented acceptance:
 - Generated retrieval artifacts have no app-search scope, conversation-search
   scope, search-result identity, or citation identity.
 
-Deferred acceptance:
+Composed follow-up specs:
 
-- Full run-level planner for attached-context/search/read/inspect/web routing.
-- Runtime public/private-source mixing enforcement beyond prompt policy and
-  visible separate ledgers.
+- Run-level planner for attached-context/search/read/inspect/web routing:
+  [`search-run-level-planner-hard-cutover.md`](search-run-level-planner-hard-cutover.md).
+- Runtime public/private-source mixing enforcement for same-run tool evidence:
+  [`search-source-boundary-policy-hard-cutover.md`](search-source-boundary-policy-hard-cutover.md).
 - Generated contextual summaries and hierarchical artifacts that reindex
-  deterministically under a generated-artifact owner.
+  deterministically under a generated-artifact owner:
+  [`search-contextual-hierarchy-artifacts-hard-cutover.md`](search-contextual-hierarchy-artifacts-hard-cutover.md).
+- Learned/provider reranking after deterministic eval proof:
+  [`search-learned-reranker-hard-cutover.md`](search-learned-reranker-hard-cutover.md).
 
 ## Likely Files
 

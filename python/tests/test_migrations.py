@@ -15,9 +15,12 @@ from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import create_engine, text
+from sqlalchemy import bindparam, create_engine, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.orm import Session
+
+from nexus.schemas.conversation import TrustRetrievalPlanOut, chat_run_event_payload_json
 
 pytestmark = pytest.mark.integration
 
@@ -9257,19 +9260,30 @@ class TestMigration0143PolymorphicOwner:
                         """
                         INSERT INTO message_tool_calls (
                             id, conversation_id, user_message_id, assistant_message_id,
-                            tool_name, tool_call_index, scope, status
+                            tool_name, tool_call_index, scope, source_domain,
+                            source_policy, status
                         )
                         VALUES (
                             :id, :conversation_id, :user_message_id, :assistant_message_id,
-                            'app_search', 0, 'all', 'complete'
+                            'app_search', 0, 'all', 'private_app',
+                            :source_policy, 'complete'
                         )
                         """
-                    ),
+                    ).bindparams(bindparam("source_policy", type_=JSONB)),
                     {
                         "id": tool_call_id,
                         "conversation_id": conversation_id,
                         "user_message_id": user_message_id,
                         "assistant_message_id": assistant_message_id,
+                        "source_policy": {
+                            "version": "source_boundary_policy.v1",
+                            "decision": "allowed",
+                            "source_domain": "private_app",
+                            "mixing_allowed": False,
+                            "reason": "single_domain_private_app",
+                            "domains_seen": [],
+                            "requested_domains": ["private_app"],
+                        },
                     },
                 )
 
@@ -10237,14 +10251,16 @@ class TestMigration0145LlmCallLedgerAndErrorFloor:
             INSERT INTO llm_calls (
                 owner_kind, owner_id, call_seq, provider, provider_route, model_name,
                 llm_operation, streaming, reasoning_effort,
-                key_mode_requested, key_mode_used, input_tokens, provider_usage,
-                total_cost_usd_micros, cost_status, pricing_snapshot
+                key_mode_requested, key_mode_used, call_status, terminal_attempt_status,
+                input_tokens, provider_usage, total_cost_usd_micros, cost_status,
+                pricing_snapshot
             )
             VALUES (
                 :owner_kind, :owner_id, :call_seq, :provider, :provider_route, 'm',
-                'chat_send', true, 'none', 'auto', 'platform', :input_tokens,
-                CAST(:provider_usage AS jsonb), :total_cost_usd_micros, :cost_status,
-                CAST(:pricing_snapshot AS jsonb)
+                'chat_send', true, 'none', 'auto', 'platform',
+                :call_status, :terminal_attempt_status, :input_tokens,
+                CAST(:provider_usage AS jsonb), :total_cost_usd_micros,
+                :cost_status, CAST(:pricing_snapshot AS jsonb)
             )
             """
         )
@@ -10256,6 +10272,8 @@ class TestMigration0145LlmCallLedgerAndErrorFloor:
                 "call_seq": 1,
                 "provider": "openai",
                 "provider_route": "openai",
+                "call_status": "succeeded",
+                "terminal_attempt_status": "success",
                 "input_tokens": None,
                 "provider_usage": None,
                 "total_cost_usd_micros": None,
@@ -10300,11 +10318,13 @@ class TestMigration0145LlmCallLedgerAndErrorFloor:
                     INSERT INTO llm_calls (
                         owner_kind, owner_id, call_seq, provider, provider_route, model_name,
                         llm_operation, streaming, reasoning_effort,
-                        key_mode_requested, key_mode_used, cost_status, attempt_count, retry_count
+                        key_mode_requested, key_mode_used, call_status, terminal_attempt_status,
+                        cost_status, attempt_count, retry_count
                     )
                     VALUES (
                         'chat_run', :owner_id, 1, 'openai', 'openai', 'm',
-                        'chat_send', true, 'none', 'auto', 'platform', 'missing_usage', 1, 1
+                        'chat_send', true, 'none', 'auto', 'platform',
+                        'succeeded', 'success', 'missing_usage', 1, 1
                     )
                     """,
                     "ck_llm_calls_attempt_counts",
@@ -10314,26 +10334,13 @@ class TestMigration0145LlmCallLedgerAndErrorFloor:
                     INSERT INTO llm_calls (
                         owner_kind, owner_id, call_seq, provider, provider_route, model_name,
                         llm_operation, streaming, reasoning_effort,
-                        key_mode_requested, key_mode_used, cost_status, terminal_attempt_status
+                        key_mode_requested, key_mode_used, call_status, terminal_attempt_status,
+                        cost_status, provider_attempts
                     )
                     VALUES (
                         'chat_run', :owner_id, 1, 'openai', 'openai', 'm',
-                        'chat_send', true, 'none', 'auto', 'platform', 'missing_usage', 'unknown'
-                    )
-                    """,
-                    "ck_llm_calls_terminal_attempt_status",
-                ),
-                (
-                    """
-                    INSERT INTO llm_calls (
-                        owner_kind, owner_id, call_seq, provider, provider_route, model_name,
-                        llm_operation, streaming, reasoning_effort,
-                        key_mode_requested, key_mode_used, cost_status, provider_attempts
-                    )
-                    VALUES (
-                        'chat_run', :owner_id, 1, 'openai', 'openai', 'm',
-                        'chat_send', true, 'none', 'auto', 'platform', 'missing_usage',
-                        '{}'::jsonb
+                        'chat_send', true, 'none', 'auto', 'platform',
+                        'succeeded', 'success', 'missing_usage', '{}'::jsonb
                     )
                     """,
                     "ck_llm_calls_provider_attempts_array",
@@ -11017,11 +11024,13 @@ class TestMigration0151LlmProviderRuntimeCatalog:
                         INSERT INTO llm_calls (
                             owner_kind, owner_id, call_seq, provider, provider_route, model_name,
                             llm_operation, streaming, reasoning_effort,
-                            key_mode_requested, key_mode_used, cost_status
+                            key_mode_requested, key_mode_used, call_status,
+                            terminal_attempt_status, cost_status
                         )
                         VALUES (
                             'chat_run', :owner_id, 1, :provider, :provider, :model_name,
-                            'chat_send', false, 'default', 'auto', 'platform', 'missing_usage'
+                            'chat_send', false, 'default', 'auto', 'platform',
+                            'succeeded', 'success', 'missing_usage'
                         )
                         """
                     ),
@@ -11112,11 +11121,13 @@ class TestMigration0151LlmProviderRuntimeCatalog:
                 INSERT INTO llm_calls (
                     owner_kind, owner_id, call_seq, provider, provider_route, model_name,
                     llm_operation, streaming, reasoning_effort,
-                    key_mode_requested, key_mode_used, cost_status
+                    key_mode_requested, key_mode_used, call_status,
+                    terminal_attempt_status, cost_status
                 )
                 VALUES (
                     'chat_run', :owner_id, 1, 'deepseek', 'openai', 'removed-model',
-                    'chat_send', false, 'default', 'auto', 'platform', 'missing_usage'
+                    'chat_send', false, 'default', 'auto', 'platform',
+                    'succeeded', 'success', 'missing_usage'
                 )
                 """,
                 {"owner_id": uuid4()},
@@ -11978,11 +11989,13 @@ class TestMigration0149SynapseResonance:
                     INSERT INTO llm_calls (
                         owner_kind, owner_id, call_seq, provider, provider_route, model_name,
                         llm_operation, streaming, reasoning_effort,
-                        key_mode_requested, key_mode_used, cost_status
+                        key_mode_requested, key_mode_used, call_status,
+                        terminal_attempt_status, cost_status
                     )
                     VALUES (
                         'synapse_scan', :owner_id, 1, 'anthropic', 'anthropic', 'm',
-                        'synapse_scan', false, 'none', 'auto', 'platform', 'missing_usage'
+                        'synapse_scan', false, 'none', 'auto', 'platform',
+                        'succeeded', 'success', 'missing_usage'
                     )
                     """
                 ),
@@ -12110,6 +12123,29 @@ class TestMigration0153ChatRunPolicyConstraints:
                     session.commit()
                 session.rollback()
             assert expected_constraint in str(exc_info.value)
+        with Session(head_engine) as session:
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO llm_calls (
+                            owner_kind, owner_id, call_seq, provider, provider_route,
+                            model_name, llm_operation, streaming, reasoning_effort,
+                            key_mode_requested, key_mode_used, terminal_attempt_status,
+                            cost_status
+                        )
+                        VALUES (
+                            'chat_run', :owner_id, 1, 'openai', 'openai', 'm',
+                            'chat_send', true, 'none', 'auto', 'platform',
+                            'success', 'missing_usage'
+                        )
+                        """
+                    ),
+                    {"owner_id": uuid4()},
+                )
+                session.commit()
+            session.rollback()
+        assert "call_status" in str(exc_info.value)
 
     def test_0153_canonicalizes_legacy_chat_run_key_modes(self):
         reset_test_schema()
@@ -13786,6 +13822,9 @@ class TestMigration0167SotaChatStreamingHardCutover:
                 ).scalar_one()
                 assert "assistant_text_delta" in constraint
                 assert "tool_result" in constraint
+                assert "retrieval_plan" in constraint
+                assert "prompt_assembly" in constraint
+                assert "tool_ledger_snapshot" in constraint
                 assert "retrieval_result" not in constraint
 
                 session.execute(
@@ -13831,6 +13870,9 @@ class TestMigration0167SotaChatStreamingHardCutover:
                         "tool_call_delta",
                         "tool_call_done",
                         "tool_result",
+                        "retrieval_plan",
+                        "prompt_assembly",
+                        "tool_ledger_snapshot",
                         "citation_index",
                         "context_ref_added",
                         "done",
@@ -13851,7 +13893,7 @@ class TestMigration0167SotaChatStreamingHardCutover:
             engine.dispose()
             reset_test_schema()
 
-    def test_0167_downgrade_is_blocked(self):
+    def test_head_downgrade_is_blocked_at_0173(self):
         reset_test_schema()
         try:
             assert run_alembic_command("upgrade head").returncode == 0
@@ -13860,6 +13902,992 @@ class TestMigration0167SotaChatStreamingHardCutover:
 
             assert result.returncode != 0
             combined = (result.stdout or "") + (result.stderr or "")
-            assert "Hard cutover: 0167 is not reversible" in combined
+            assert "Hard cutover: 0173 is not reversible" in combined
         finally:
+            reset_test_schema()
+
+
+class TestMigration0168ChatRetrievalPlan:
+    def test_0168_adds_run_retrieval_plan(self):
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0167")
+            assert result.returncode == 0, f"upgrade to 0167 failed: {result.stderr}"
+
+            user_id = uuid4()
+            conversation_id = uuid4()
+            user_message_id = uuid4()
+            assistant_message_id = uuid4()
+            model_id = uuid4()
+            run_id = uuid4()
+            prompt_assembly_id = uuid4()
+            missing_plan_user_message_id = uuid4()
+            missing_plan_assistant_message_id = uuid4()
+            missing_plan_run_id = uuid4()
+            valid_plan_user_message_id = uuid4()
+            valid_plan_assistant_message_id = uuid4()
+            valid_plan_run_id = uuid4()
+            with Session(engine) as session:
+                session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO models (id, provider, model_name, max_context_tokens)
+                        VALUES (:id, 'openai', 'migration-test', 100000)
+                        """
+                    ),
+                    {"id": model_id},
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO conversations (id, owner_user_id, sharing, next_seq)
+                        VALUES (:id, :owner_user_id, 'private', 3)
+                        """
+                    ),
+                    {"id": conversation_id, "owner_user_id": user_id},
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO messages (
+                            id, conversation_id, seq, role, content, status, parent_message_id
+                        )
+                        VALUES
+                          (:user_message_id, :conversation_id, 1, 'user', 'hi', 'complete', null),
+                          (
+                            :assistant_message_id, :conversation_id, 2, 'assistant', '',
+                            'pending', :user_message_id
+                          )
+                        """
+                    ),
+                    {
+                        "user_message_id": user_message_id,
+                        "assistant_message_id": assistant_message_id,
+                        "conversation_id": conversation_id,
+                    },
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO chat_runs (
+                            id, owner_user_id, conversation_id, user_message_id,
+                            assistant_message_id, idempotency_key, payload_hash,
+                            status, model_id, reasoning, key_mode
+                        )
+                        VALUES (
+                            :id, :owner_user_id, :conversation_id, :user_message_id,
+                            :assistant_message_id, :idempotency_key, 'hash',
+                            'running', :model_id, 'none', 'auto'
+                        )
+                        """
+                    ),
+                    {
+                        "id": run_id,
+                        "owner_user_id": user_id,
+                        "conversation_id": conversation_id,
+                        "user_message_id": user_message_id,
+                        "assistant_message_id": assistant_message_id,
+                        "idempotency_key": f"migration-{run_id}",
+                        "model_id": model_id,
+                    },
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO chat_prompt_assemblies (
+                            id, chat_run_id, conversation_id, assistant_message_id,
+                            model_id, cacheable_input_tokens_estimate,
+                            max_context_tokens, reserved_output_tokens,
+                            reserved_reasoning_tokens, input_budget_tokens,
+                            estimated_input_tokens
+                        )
+                        VALUES (
+                            :id, :chat_run_id, :conversation_id, :assistant_message_id,
+                            :model_id, 0, 100000, 1, 1, 100, 10
+                        )
+                        """
+                    ),
+                    {
+                        "id": prompt_assembly_id,
+                        "chat_run_id": run_id,
+                        "conversation_id": conversation_id,
+                        "assistant_message_id": assistant_message_id,
+                        "model_id": model_id,
+                    },
+                )
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade to head failed: {result.stderr}"
+
+            historical_plan = {
+                "version": "chat_retrieval_plan.v1",
+                "route_intent": "no_retrieval",
+                "source_domain": "none",
+                "mixing_policy": "no_retrieval",
+                "query_class": "no_retrieval",
+                "allowed_tools": [],
+                "blocked_tools": ["app_search", "web_search", "read_resource", "inspect_resource"],
+                "candidate_tool_sequence": [],
+                "internal_tool_sequence": [],
+                "reason": "pre_cutover",
+                "context_ref_count": 0,
+                "search_scope_count": 0,
+                "search_scope_uris": [],
+                "budget_policy": "tool_output_budget_from_prompt_assembly",
+            }
+            complete_plan = {
+                **historical_plan,
+                "route_intent": "private_app_search",
+                "source_domain": "private_app",
+                "mixing_policy": "single_domain",
+                "query_class": "exact_lookup",
+                "allowed_tools": ["app_search", "inspect_resource", "read_resource"],
+                "blocked_tools": ["web_search"],
+                "candidate_tool_sequence": ["app_search", "inspect_resource", "read_resource"],
+                "internal_tool_sequence": [],
+                "reason": "test",
+                "budget_policy": "tool_output_budget_from_prompt_assembly",
+            }
+            TrustRetrievalPlanOut.model_validate(historical_plan)
+            TrustRetrievalPlanOut.model_validate(complete_plan)
+            with Session(engine) as session:
+                row = session.execute(
+                    text(
+                        """
+                SELECT cr.retrieval_plan AS run_retrieval_plan
+                FROM chat_runs cr
+                JOIN chat_prompt_assemblies cpa ON cpa.chat_run_id = cr.id
+                WHERE cpa.id = :id
+                        """
+                    ),
+                    {"id": prompt_assembly_id},
+                ).one()
+                assert row.run_retrieval_plan == historical_plan
+
+                columns = {
+                    row.table_name: row
+                    for row in session.execute(
+                        text(
+                            """
+                            SELECT table_name, is_nullable, column_default, udt_name
+                            FROM information_schema.columns
+                            WHERE (
+                                table_name = 'chat_runs'
+                                OR table_name = 'chat_prompt_assemblies'
+                            )
+                              AND column_name = 'retrieval_plan'
+                            """
+                        )
+                    )
+                }
+                assert columns["chat_runs"].is_nullable == "YES"
+                assert columns["chat_runs"].column_default is None
+                assert columns["chat_runs"].udt_name == "jsonb"
+                assert "chat_prompt_assemblies" not in columns
+                constraint = session.execute(
+                    text(
+                        """
+                        SELECT pg_get_constraintdef(oid)
+                        FROM pg_constraint
+                        WHERE conrelid = 'chat_runs'::regclass
+                          AND conname = 'ck_chat_runs_retrieval_plan_object'
+                        """
+                    )
+                ).scalar_one()
+                assert "jsonb_typeof(retrieval_plan)" in constraint
+                assert "'object'" in constraint
+                assert (
+                    session.execute(text("SELECT to_regclass('chat_retrieval_plans')")).scalar_one()
+                    is None
+                )
+
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO messages (
+                            id, conversation_id, seq, role, content, status, parent_message_id
+                        )
+                        VALUES
+                          (
+                            :missing_user_message_id, :conversation_id, 3, 'user',
+                            'missing plan', 'complete', null
+                          ),
+                          (
+                            :missing_assistant_message_id, :conversation_id, 4, 'assistant',
+                            '', 'pending', :missing_user_message_id
+                          ),
+                          (
+                            :valid_user_message_id, :conversation_id, 5, 'user',
+                            'valid plan', 'complete', null
+                          ),
+                          (
+                            :valid_assistant_message_id, :conversation_id, 6, 'assistant',
+                            '', 'pending', :valid_user_message_id
+                          )
+                        """
+                    ),
+                    {
+                        "missing_user_message_id": missing_plan_user_message_id,
+                        "missing_assistant_message_id": missing_plan_assistant_message_id,
+                        "valid_user_message_id": valid_plan_user_message_id,
+                        "valid_assistant_message_id": valid_plan_assistant_message_id,
+                        "conversation_id": conversation_id,
+                    },
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO chat_runs (
+                            id, owner_user_id, conversation_id, user_message_id,
+                            assistant_message_id, idempotency_key, payload_hash,
+                            status, model_id, reasoning, key_mode
+                        )
+                        VALUES
+                          (
+                            :missing_run_id, :owner_user_id, :conversation_id,
+                            :missing_user_message_id, :missing_assistant_message_id,
+                            :missing_key, 'hash', 'running', :model_id, 'none', 'auto'
+                          ),
+                          (
+                            :valid_run_id, :owner_user_id, :conversation_id,
+                            :valid_user_message_id, :valid_assistant_message_id,
+                            :valid_key, 'hash', 'running', :model_id, 'none', 'auto'
+                          )
+                        """
+                    ),
+                    {
+                        "missing_run_id": missing_plan_run_id,
+                        "valid_run_id": valid_plan_run_id,
+                        "owner_user_id": user_id,
+                        "conversation_id": conversation_id,
+                        "missing_user_message_id": missing_plan_user_message_id,
+                        "missing_assistant_message_id": missing_plan_assistant_message_id,
+                        "valid_user_message_id": valid_plan_user_message_id,
+                        "valid_assistant_message_id": valid_plan_assistant_message_id,
+                        "missing_key": f"missing-plan-{missing_plan_run_id}",
+                        "valid_key": f"valid-plan-{valid_plan_run_id}",
+                        "model_id": model_id,
+                    },
+                )
+                session.commit()
+
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO chat_prompt_assemblies (
+                            chat_run_id, conversation_id, assistant_message_id,
+                            model_id, cacheable_input_tokens_estimate,
+                            max_context_tokens, reserved_output_tokens,
+                            reserved_reasoning_tokens, input_budget_tokens,
+                            estimated_input_tokens
+                        )
+                        VALUES (
+                            :chat_run_id, :conversation_id, :assistant_message_id,
+                            :model_id, 0, 100000, 1, 1, 100, 10
+                        )
+                        """
+                    ),
+                    {
+                        "chat_run_id": missing_plan_run_id,
+                        "conversation_id": conversation_id,
+                        "assistant_message_id": missing_plan_assistant_message_id,
+                        "model_id": model_id,
+                    },
+                )
+                session.commit()
+
+                with pytest.raises(IntegrityError):
+                    session.execute(
+                        text(
+                            """
+                            UPDATE chat_runs
+                            SET retrieval_plan = :retrieval_plan
+                            WHERE id = :run_id
+                            """
+                        ).bindparams(bindparam("retrieval_plan", type_=JSONB)),
+                        {"run_id": valid_plan_run_id, "retrieval_plan": []},
+                    )
+                    session.commit()
+                session.rollback()
+
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO chat_prompt_assemblies (
+                            chat_run_id, conversation_id, assistant_message_id,
+                            model_id, cacheable_input_tokens_estimate,
+                            max_context_tokens, reserved_output_tokens,
+                            reserved_reasoning_tokens, input_budget_tokens,
+                            estimated_input_tokens
+                        )
+                        VALUES (
+                            :chat_run_id, :conversation_id, :assistant_message_id,
+                            :model_id, 0, 100000, 1, 1, 100, 10
+                        )
+                        """
+                    ),
+                    {
+                        "chat_run_id": valid_plan_run_id,
+                        "conversation_id": conversation_id,
+                        "assistant_message_id": valid_plan_assistant_message_id,
+                        "model_id": model_id,
+                    },
+                )
+                session.commit()
+        finally:
+            engine.dispose()
+            reset_test_schema()
+
+
+class TestMigration0169MessageToolCallSourcePolicy:
+    def test_0169_backfills_required_tool_call_source_policy(self):
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0168")
+            assert result.returncode == 0, f"upgrade to 0168 failed: {result.stderr}"
+
+            user_id = uuid4()
+            conversation_id = uuid4()
+            user_message_id = uuid4()
+            assistant_message_id = uuid4()
+            missing_policy_user_message_id = uuid4()
+            missing_policy_assistant_message_id = uuid4()
+            valid_policy_user_message_id = uuid4()
+            valid_policy_assistant_message_id = uuid4()
+            tool_ids = {
+                name: uuid4()
+                for name in (
+                    "app_search",
+                    "read_resource",
+                    "inspect_resource",
+                    "attached_resources",
+                    "web_search",
+                    "mystery_tool",
+                )
+            }
+            with Session(engine) as session:
+                session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO conversations (id, owner_user_id, sharing, next_seq)
+                        VALUES (:id, :owner_user_id, 'private', 20)
+                        """
+                    ),
+                    {"id": conversation_id, "owner_user_id": user_id},
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO messages (
+                            id, conversation_id, seq, role, content, status,
+                            parent_message_id
+                        )
+                        VALUES
+                          (:user_message_id, :conversation_id, 1, 'user', 'hi', 'complete', NULL),
+                          (:assistant_message_id, :conversation_id, 2, 'assistant', '', 'pending',
+                           :user_message_id),
+                          (:missing_user_message_id, :conversation_id, 3, 'user', 'missing',
+                           'complete', NULL),
+                          (:missing_assistant_message_id, :conversation_id, 4, 'assistant', '',
+                           'pending', :missing_user_message_id),
+                          (:valid_user_message_id, :conversation_id, 5, 'user', 'valid',
+                           'complete', NULL),
+                          (:valid_assistant_message_id, :conversation_id, 6, 'assistant', '',
+                           'pending', :valid_user_message_id)
+                        """
+                    ),
+                    {
+                        "conversation_id": conversation_id,
+                        "user_message_id": user_message_id,
+                        "assistant_message_id": assistant_message_id,
+                        "missing_user_message_id": missing_policy_user_message_id,
+                        "missing_assistant_message_id": missing_policy_assistant_message_id,
+                        "valid_user_message_id": valid_policy_user_message_id,
+                        "valid_assistant_message_id": valid_policy_assistant_message_id,
+                    },
+                )
+                for index, (tool_name, tool_id) in enumerate(tool_ids.items(), start=1):
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO message_tool_calls (
+                                id, conversation_id, user_message_id,
+                                assistant_message_id, tool_name, tool_call_index,
+                                scope, status
+                            )
+                            VALUES (
+                                :id, :conversation_id, :user_message_id,
+                                :assistant_message_id, :tool_name, :tool_call_index,
+                                'all', 'complete'
+                            )
+                            """
+                        ),
+                        {
+                            "id": tool_id,
+                            "conversation_id": conversation_id,
+                            "user_message_id": user_message_id,
+                            "assistant_message_id": assistant_message_id,
+                            "tool_name": tool_name,
+                            "tool_call_index": index,
+                        },
+                    )
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade to head failed: {result.stderr}"
+
+            complete_policy = {
+                "version": "source_boundary_policy.v1",
+                "decision": "allowed",
+                "source_domain": "private_app",
+                "mixing_allowed": False,
+                "reason": "single_domain_private_app",
+                "domains_seen": [],
+                "requested_domains": ["private_app"],
+            }
+            with Session(engine) as session:
+                rows = session.execute(
+                    text(
+                        """
+                        SELECT tool_name, source_domain, source_policy
+                        FROM message_tool_calls
+                        WHERE assistant_message_id = :assistant_message_id
+                        ORDER BY tool_call_index
+                        """
+                    ),
+                    {"assistant_message_id": assistant_message_id},
+                ).fetchall()
+                assert [(row.tool_name, row.source_domain) for row in rows] == [
+                    ("app_search", "private_app"),
+                    ("read_resource", "private_app"),
+                    ("inspect_resource", "private_app"),
+                    ("attached_resources", "private_app"),
+                    ("web_search", "public_web"),
+                    ("mystery_tool", "provider_control"),
+                ]
+                assert [row.source_policy for row in rows] == [
+                    {
+                        "version": "source_boundary_policy.v1",
+                        "decision": "allowed",
+                        "source_domain": "private_app",
+                        "mixing_allowed": False,
+                        "reason": "historical_pre_cutover",
+                        "domains_seen": [],
+                        "requested_domains": ["private_app"],
+                    },
+                    {
+                        "version": "source_boundary_policy.v1",
+                        "decision": "allowed",
+                        "source_domain": "private_app",
+                        "mixing_allowed": False,
+                        "reason": "historical_pre_cutover",
+                        "domains_seen": [],
+                        "requested_domains": ["private_app"],
+                    },
+                    {
+                        "version": "source_boundary_policy.v1",
+                        "decision": "allowed",
+                        "source_domain": "private_app",
+                        "mixing_allowed": False,
+                        "reason": "historical_pre_cutover",
+                        "domains_seen": [],
+                        "requested_domains": ["private_app"],
+                    },
+                    {
+                        "version": "source_boundary_policy.v1",
+                        "decision": "allowed",
+                        "source_domain": "private_app",
+                        "mixing_allowed": False,
+                        "reason": "historical_pre_cutover",
+                        "domains_seen": [],
+                        "requested_domains": ["private_app"],
+                    },
+                    {
+                        "version": "source_boundary_policy.v1",
+                        "decision": "allowed",
+                        "source_domain": "public_web",
+                        "mixing_allowed": False,
+                        "reason": "historical_pre_cutover",
+                        "domains_seen": [],
+                        "requested_domains": ["public_web"],
+                    },
+                    {
+                        "version": "source_boundary_policy.v1",
+                        "decision": "allowed",
+                        "source_domain": "provider_control",
+                        "mixing_allowed": False,
+                        "reason": "historical_pre_cutover",
+                        "domains_seen": [],
+                        "requested_domains": [],
+                    },
+                ]
+
+                columns = {
+                    row.column_name: row
+                    for row in session.execute(
+                        text(
+                            """
+                            SELECT column_name, is_nullable, column_default, udt_name
+                            FROM information_schema.columns
+                            WHERE table_name = 'message_tool_calls'
+                              AND column_name IN ('source_domain', 'source_policy')
+                            """
+                        )
+                    )
+                }
+                assert columns["source_domain"].is_nullable == "NO"
+                assert columns["source_domain"].column_default is None
+                assert columns["source_policy"].is_nullable == "NO"
+                assert columns["source_policy"].column_default is None
+                assert columns["source_policy"].udt_name == "jsonb"
+                constraint = session.execute(
+                    text(
+                        """
+                        SELECT pg_get_constraintdef(oid)
+                        FROM pg_constraint
+                        WHERE conrelid = 'message_tool_calls'::regclass
+                          AND conname = 'ck_message_tool_calls_source_policy_object'
+                        """
+                    )
+                ).scalar_one()
+                assert "jsonb_typeof(source_policy)" in constraint
+                assert "'object'" in constraint
+
+                with pytest.raises(IntegrityError):
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO message_tool_calls (
+                                conversation_id, user_message_id, assistant_message_id,
+                                tool_name, tool_call_index, scope, status
+                            )
+                            VALUES (
+                                :conversation_id, :user_message_id, :assistant_message_id,
+                                'app_search', 100, 'all', 'complete'
+                            )
+                            """
+                        ),
+                        {
+                            "conversation_id": conversation_id,
+                            "user_message_id": missing_policy_user_message_id,
+                            "assistant_message_id": missing_policy_assistant_message_id,
+                        },
+                    )
+                    session.commit()
+                session.rollback()
+
+                with pytest.raises(IntegrityError):
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO message_tool_calls (
+                                conversation_id, user_message_id, assistant_message_id,
+                                tool_name, tool_call_index, scope, source_domain,
+                                source_policy, status
+                            )
+                            VALUES (
+                                :conversation_id, :user_message_id, :assistant_message_id,
+                                'app_search', 101, 'all', 'private_app',
+                                :source_policy, 'complete'
+                            )
+                            """
+                        ).bindparams(bindparam("source_policy", type_=JSONB)),
+                        {
+                            "conversation_id": conversation_id,
+                            "user_message_id": valid_policy_user_message_id,
+                            "assistant_message_id": valid_policy_assistant_message_id,
+                            "source_policy": [],
+                        },
+                    )
+                    session.commit()
+                session.rollback()
+
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO message_tool_calls (
+                            conversation_id, user_message_id, assistant_message_id,
+                            tool_name, tool_call_index, scope, source_domain,
+                            source_policy, status
+                        )
+                        VALUES (
+                            :conversation_id, :user_message_id, :assistant_message_id,
+                            'app_search', 102, 'all', 'private_app',
+                            :source_policy, 'complete'
+                        )
+                        """
+                    ).bindparams(bindparam("source_policy", type_=JSONB)),
+                    {
+                        "conversation_id": conversation_id,
+                        "user_message_id": valid_policy_user_message_id,
+                        "assistant_message_id": valid_policy_assistant_message_id,
+                        "source_policy": complete_policy,
+                    },
+                )
+                session.commit()
+        finally:
+            engine.dispose()
+            reset_test_schema()
+
+
+class TestMigration0171ChatPromptAndToolLedgerEvents:
+    def test_0171_backfills_tool_result_event_source_policy(self):
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0169")
+            assert result.returncode == 0, f"upgrade to 0169 failed: {result.stderr}"
+
+            user_id = uuid4()
+            conversation_id = uuid4()
+            user_message_id = uuid4()
+            assistant_message_id = uuid4()
+            model_id = uuid4()
+            run_id = uuid4()
+            app_tool_call_id = uuid4()
+            web_tool_call_id = uuid4()
+            private_policy = {
+                "version": "source_boundary_policy.v1",
+                "decision": "allowed",
+                "source_domain": "private_app",
+                "mixing_allowed": False,
+                "reason": "single_domain_private_app",
+                "domains_seen": [],
+                "requested_domains": ["private_app"],
+            }
+            public_policy = {
+                "version": "source_boundary_policy.v1",
+                "decision": "allowed",
+                "source_domain": "public_web",
+                "mixing_allowed": False,
+                "reason": "single_domain_public_web",
+                "domains_seen": [],
+                "requested_domains": ["public_web"],
+            }
+            with Session(engine) as session:
+                session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO models (id, provider, model_name, max_context_tokens)
+                        VALUES (:id, 'openai', 'migration-test', 100000)
+                        """
+                    ),
+                    {"id": model_id},
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO conversations (id, owner_user_id, sharing, next_seq)
+                        VALUES (:id, :owner_user_id, 'private', 3)
+                        """
+                    ),
+                    {"id": conversation_id, "owner_user_id": user_id},
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO messages (
+                            id, conversation_id, seq, role, content, status,
+                            parent_message_id
+                        )
+                        VALUES
+                          (:user_message_id, :conversation_id, 1, 'user', 'hi', 'complete', NULL),
+                          (:assistant_message_id, :conversation_id, 2, 'assistant', '',
+                           'pending', :user_message_id)
+                        """
+                    ),
+                    {
+                        "conversation_id": conversation_id,
+                        "user_message_id": user_message_id,
+                        "assistant_message_id": assistant_message_id,
+                    },
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO chat_runs (
+                            id, owner_user_id, conversation_id, user_message_id,
+                            assistant_message_id, idempotency_key, payload_hash,
+                            status, model_id, reasoning, key_mode
+                        )
+                        VALUES (
+                            :id, :owner_user_id, :conversation_id, :user_message_id,
+                            :assistant_message_id, :idempotency_key, 'hash',
+                            'running', :model_id, 'none', 'auto'
+                        )
+                        """
+                    ),
+                    {
+                        "id": run_id,
+                        "owner_user_id": user_id,
+                        "conversation_id": conversation_id,
+                        "user_message_id": user_message_id,
+                        "assistant_message_id": assistant_message_id,
+                        "idempotency_key": f"migration-{run_id}",
+                        "model_id": model_id,
+                    },
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO message_tool_calls (
+                            id, conversation_id, user_message_id, assistant_message_id,
+                            tool_name, tool_call_index, scope, source_domain,
+                            source_policy, status
+                        )
+                        VALUES
+                          (
+                            :app_tool_call_id, :conversation_id, :user_message_id,
+                            :assistant_message_id, 'app_search', 0, 'all', 'private_app',
+                            CAST(:private_policy AS jsonb), 'complete'
+                          ),
+                          (
+                            :web_tool_call_id, :conversation_id, :user_message_id,
+                            :assistant_message_id, 'web_search', 1, 'all', 'public_web',
+                            CAST(:public_policy AS jsonb), 'complete'
+                          )
+                        """
+                    ),
+                    {
+                        "app_tool_call_id": app_tool_call_id,
+                        "web_tool_call_id": web_tool_call_id,
+                        "conversation_id": conversation_id,
+                        "user_message_id": user_message_id,
+                        "assistant_message_id": assistant_message_id,
+                        "private_policy": json.dumps(private_policy),
+                        "public_policy": json.dumps(public_policy),
+                    },
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO chat_run_events (run_id, seq, event_type, payload)
+                        VALUES
+                          (:run_id, 1, 'tool_result', CAST(:app_payload AS jsonb)),
+                          (:run_id, 2, 'tool_result', CAST(:web_payload AS jsonb)),
+                          (:run_id, 3, 'tool_result', CAST(:unknown_payload AS jsonb))
+                        """
+                    ),
+                    {
+                        "run_id": run_id,
+                        "app_payload": json.dumps(
+                            {
+                                "tool_call_id": str(app_tool_call_id),
+                                "assistant_message_id": str(assistant_message_id),
+                                "tool_name": "app_search",
+                                "tool_call_index": 0,
+                                "status": "complete",
+                                "scope": "all",
+                                "types": ["media"],
+                                "filters": {
+                                    "semantic": True,
+                                    "content_kinds": ["web_article"],
+                                    "contributor_handles": ["someone"],
+                                },
+                                "result_count": 0,
+                                "selected_count": 0,
+                                "more_candidates_available": False,
+                                "results": [],
+                            }
+                        ),
+                        "web_payload": json.dumps(
+                            {
+                                "assistant_message_id": str(assistant_message_id),
+                                "tool_name": "web_search",
+                                "tool_call_index": 1,
+                                "status": "complete",
+                                "scope": "web",
+                                "types": ["web"],
+                                "filters": {},
+                                "result_count": 0,
+                                "selected_count": 0,
+                                "more_candidates_available": False,
+                                "results": [],
+                            }
+                        ),
+                        "unknown_payload": json.dumps(
+                            {
+                                "assistant_message_id": str(assistant_message_id),
+                                "tool_name": "future_tool",
+                                "tool_call_index": 99,
+                                "status": "error",
+                                "scope": "provider_tool",
+                                "types": [],
+                                "filters": {},
+                                "result_count": 0,
+                                "selected_count": 0,
+                                "more_candidates_available": False,
+                                "results": [],
+                            }
+                        ),
+                    },
+                )
+                session.commit()
+
+            result = run_alembic_command("upgrade 0171")
+            assert result.returncode == 0, f"upgrade to 0171 failed: {result.stderr}"
+
+            with Session(engine) as session:
+                rows = session.execute(
+                    text(
+                        """
+                        SELECT payload
+                        FROM chat_run_events
+                        WHERE run_id = :run_id
+                        ORDER BY seq
+                        """
+                    ),
+                    {"run_id": run_id},
+                ).fetchall()
+                payloads = [chat_run_event_payload_json("tool_result", row.payload) for row in rows]
+                assert [payload["source_domain"] for payload in payloads] == [
+                    "private_app",
+                    "public_web",
+                    "provider_control",
+                ]
+                assert payloads[0]["filters"] == {
+                    "authors": ["someone"],
+                    "formats": ["web_article"],
+                }
+                assert rows[0].payload["source_policy"]["reason"] == "single_domain_private_app"
+                assert rows[1].payload["source_policy"]["reason"] == "single_domain_public_web"
+                assert rows[2].payload["source_policy"]["reason"] == "provider_control_only"
+                assert rows[2].payload["source_policy"]["requested_domains"] == []
+        finally:
+            engine.dispose()
+            reset_test_schema()
+
+
+class TestMigration0172LLMCallStartStatus:
+    def test_0172_backfills_statuses_and_removes_defaults(self):
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0171")
+            assert result.returncode == 0, f"upgrade to 0171 failed: {result.stderr}"
+
+            success_owner_id = uuid4()
+            failed_owner_id = uuid4()
+            with Session(engine) as session:
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO llm_calls (
+                            owner_kind, owner_id, call_seq, provider, provider_route,
+                            model_name, llm_operation, streaming, reasoning_effort,
+                            key_mode_requested, key_mode_used, cost_status
+                        )
+                        VALUES (
+                            'chat_run', :owner_id, 1, 'openai', 'openai', 'm',
+                            'chat_send', false, 'none', 'auto', 'platform', 'missing_usage'
+                        )
+                        """
+                    ),
+                    {"owner_id": success_owner_id},
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO llm_calls (
+                            owner_kind, owner_id, call_seq, provider, provider_route,
+                            model_name, llm_operation, streaming, reasoning_effort,
+                            key_mode_requested, key_mode_used, error_class, cost_status
+                        )
+                        VALUES (
+                            'chat_run', :owner_id, 1, 'openai', 'openai', 'm',
+                            'chat_send', false, 'none', 'auto', 'platform',
+                            'E_LLM_TIMEOUT', 'missing_usage'
+                        )
+                        """
+                    ),
+                    {"owner_id": failed_owner_id},
+                )
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade to head failed: {result.stderr}"
+
+            with Session(engine) as session:
+                rows = {
+                    row.owner_id: row
+                    for row in session.execute(
+                        text(
+                            """
+                            SELECT owner_id, call_status, terminal_attempt_status
+                            FROM llm_calls
+                            WHERE owner_id IN (:success_owner_id, :failed_owner_id)
+                            """
+                        ),
+                        {
+                            "success_owner_id": success_owner_id,
+                            "failed_owner_id": failed_owner_id,
+                        },
+                    )
+                }
+                assert rows[success_owner_id].call_status == "succeeded"
+                assert rows[success_owner_id].terminal_attempt_status == "success"
+                assert rows[failed_owner_id].call_status == "failed"
+                assert rows[failed_owner_id].terminal_attempt_status == "terminal_error"
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO llm_calls (
+                            owner_kind, owner_id, call_seq, provider, provider_route,
+                            model_name, llm_operation, streaming, reasoning_effort,
+                            key_mode_requested, key_mode_used, cost_status,
+                            call_status, terminal_attempt_status
+                        )
+                        VALUES (
+                            'chat_run', :owner_id, 1, 'openai', 'openai', 'm',
+                            'chat_send', false, 'none', 'auto', 'platform',
+                            'missing_usage', 'started', 'started'
+                        )
+                        """
+                    ),
+                    {"owner_id": uuid4()},
+                )
+                session.commit()
+
+                columns = {
+                    row.column_name: row
+                    for row in session.execute(
+                        text(
+                            """
+                            SELECT column_name, is_nullable, column_default
+                            FROM information_schema.columns
+                            WHERE table_name = 'llm_calls'
+                              AND column_name IN ('call_status', 'terminal_attempt_status')
+                            """
+                        )
+                    )
+                }
+                assert columns["call_status"].is_nullable == "NO"
+                assert columns["call_status"].column_default is None
+                assert columns["terminal_attempt_status"].is_nullable == "NO"
+                assert columns["terminal_attempt_status"].column_default is None
+                constraints = {
+                    row.conname
+                    for row in session.execute(
+                        text(
+                            """
+                            SELECT conname
+                            FROM pg_constraint
+                            WHERE conrelid = 'llm_calls'::regclass
+                              AND conname IN (
+                                'ck_llm_calls_call_status',
+                                'ck_llm_calls_terminal_attempt_status'
+                              )
+                            """
+                        )
+                    )
+                }
+                assert constraints == set()
+        finally:
+            engine.dispose()
             reset_test_schema()

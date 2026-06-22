@@ -45,7 +45,7 @@ def rerank_app_search_candidates(
         lexical = _lexical_score(text, query_terms)
         phrase_match = bool(phrase and phrase in text)
         type_bonus = _type_bonus(citation.result_type)
-        citation_quality = _citation_quality(citation)
+        citation_quality = citation_quality_score(citation)
         remaining.append(
             {
                 "citation": citation,
@@ -160,7 +160,7 @@ def _type_bonus(result_type: str) -> float:
     return 0.0
 
 
-def _citation_quality(citation: RetrievalCitation) -> float:
+def citation_quality_score(citation: RetrievalCitation) -> float:
     quality = 0.0
     if citation.citation_target:
         quality += 0.1

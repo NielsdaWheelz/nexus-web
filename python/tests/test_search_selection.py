@@ -2,8 +2,12 @@
 
 from uuid import uuid4
 
+import pytest
+
 from nexus.services.retrieval_citation import RetrievalCitation
 from nexus.services.search.selection import rerank_app_search_candidates
+
+pytestmark = pytest.mark.unit
 
 
 def _citation(
@@ -13,8 +17,9 @@ def _citation(
     text: str,
     media_id: str | None = None,
     locator: dict | None = None,
+    source_id: str | None = None,
 ) -> RetrievalCitation:
-    source_id = str(uuid4())
+    source_id = source_id or str(uuid4())
     evidence_span_id = str(uuid4()) if result_type == "content_chunk" else None
     return RetrievalCitation(
         result_type=result_type,
@@ -138,3 +143,12 @@ def test_app_search_selection_keeps_exact_lookup_concentrated() -> None:
 
     assert selected == [first, second, other]
     assert [item["reason"] for item in trace] == ["kept_order", "kept_order", "kept_order"]
+
+
+def test_app_search_selection_trace_has_no_generated_guidance_placeholders() -> None:
+    first = _citation("content_chunk", score=1.0, text="attention")
+    selected, trace = rerank_app_search_candidates("attention", [first])
+
+    assert selected == [first]
+    assert "guidance_bonus" not in trace[0]
+    assert "guidance_revision_ids" not in trace[0]

@@ -8,13 +8,12 @@ verifier-taxonomy column, legacy provider-runtime import path, or an over-eager
 deletion of a load-bearing store all fail here with a file:line pointer.
 
 These are pure repo greps (no DB, no app import), so they run in the unit lane.
-Each gate scans ONLY ``python/nexus`` + ``apps/web/src``.
+Most gates scan ``python/nexus`` + ``apps/web/src``. Some cutovers also scan
+production-adjacent scripts, selected docs, or exact owner files when that is
+the contract under test.
 
-Exclusions (intentional): the drop migrations (repo-root ``migrations/``) and the
-Python tests (``python/tests/``) both live OUTSIDE the scanned roots, so they can
-never appear in a hit and need no exclusion. The only thing that needs excluding
-is the frontend ``*.test.{ts,tsx}`` files, which DO live under apps/web/src and
-legitimately name dropped symbols in their own absence assertions.
+Exclusions are gate-specific. Frontend ``*.test.{ts,tsx}`` files live under
+apps/web/src and often legitimately name dropped symbols in absence assertions.
 """
 
 from __future__ import annotations
@@ -35,6 +34,7 @@ _WEB_ROOT = _REPO_ROOT / "apps" / "web" / "src"
 # code that the provenance-graph battery (§18.3) must also scrub.
 _SCRIPTS_ROOT = _REPO_ROOT / "python" / "scripts"
 _REPO_SCRIPTS_ROOT = _REPO_ROOT / "scripts"
+_AGENT_TOOL_ADAPTERS = tuple(sorted((_PY_ROOT / "services" / "agent_tools").glob("*.py")))
 _CURRENT_CITATION_CONTRACT_DOCS = (
     _REPO_ROOT / "docs" / "architecture.md",
     _REPO_ROOT / "docs" / "modules" / "chat.md",
@@ -558,6 +558,16 @@ def test_message_llm_absent_from_production():
     assert not hits, f"message_llm / MessageLLM still referenced in production:\n{_fmt(hits)}"
 
 
+def test_llm_call_lifecycle_status_writes_stay_in_owners():
+    hits = _excluding(
+        _grep(r"\b(call_status|terminal_attempt_status)\s*=", _PY_ROOT),
+        "db/models.py",
+        "services/llm_ledger.py",
+        "services/chat_run_finalize.py",
+    )
+    assert not hits, f"llm_calls lifecycle status write outside owners:\n{_fmt(hits)}"
+
+
 # =============================================================================
 # Worker envelope: one event loop / client / router owner (AC-4)
 # =============================================================================
@@ -601,7 +611,8 @@ def test_no_direct_provider_sdk_imports_in_nexus():
     # Nexus may import provider_runtime. Direct provider SDK/API substrates belong
     # in the shared runtime package, not in application services.
     pattern = (
-        r"^\s*(from|import) (openai|anthropic|groq)\b|"
+        r"^\s*(from|import) "
+        r"(openai|anthropic|groq|cohere|voyageai|voyage|mistralai|ollama|together|litellm)\b|"
         r"^\s*from google import genai\b|"
         r"^\s*(from|import) google\.(genai|generativeai)\b|"
         r"^\s*(from|import) pydantic_ai\.(models|providers)\b"
@@ -687,6 +698,8 @@ def test_provider_runtime_dependency_is_not_editable_sibling_path():
 def test_live_provider_gate_includes_shared_llm_provider_matrix():
     makefile = (_REPO_ROOT / "Makefile").read_text(encoding="utf-8")
     assert "_test-shared-llm-provider-matrix-raw" in makefile
+    assert "_test-search-rerank-live-evals-raw" in makefile
+    assert "tests/live_providers/test_search_rerank_live_eval.py" in makefile
     assert "tests/live/test_provider_matrix.py" in makefile
     assert "LLM_RUNTIME_LIVE=1" in makefile
     assert "env -u LLM_RUNTIME_LIVE_PROVIDERS" in makefile
@@ -708,6 +721,8 @@ def test_live_provider_gate_includes_shared_llm_provider_matrix():
     assert "live_ready=false" in workflow
     assert "Live-provider gate not run" in workflow
     assert "This CI run is not live-provider proof" in workflow
+    assert "always() && steps.live-provider-secrets.outputs.live_ready == 'true'" in workflow
+    assert "test-results/search-rerank-live-evals/" in workflow
     assert "Test live-provider gate" in workflow
     assert "if: steps.live-provider-secrets.outputs.live_ready == 'true'" in workflow
     for secret in (
@@ -779,6 +794,9 @@ def test_chat_run_events_check_is_new_stream_grammar_only():
         "tool_call_delta",
         "tool_call_done",
         "tool_result",
+        "retrieval_plan",
+        "prompt_assembly",
+        "tool_ledger_snapshot",
         "citation_index",
         "context_ref_added",
         "done",
@@ -1300,6 +1318,16 @@ def test_app_search_does_not_query_resource_edges_directly():
     )
 
 
+def test_private_chat_tools_do_not_call_public_web_search():
+    paths = (
+        _PY_ROOT / "services" / "agent_tools" / "app_search.py",
+        _PY_ROOT / "services" / "agent_tools" / "read_resource.py",
+        _PY_ROOT / "services" / "agent_tools" / "inspect_resource.py",
+    )
+    hits = _grep(r"\b(web_search_tool|execute_web_search|search_web_readonly)\b", *paths)
+    assert not hits, f"private chat tools must not call public web search:\n{_fmt(hits)}"
+
+
 # =============================================================================
 # Resource capability registry cutover — one capability owner, one route owner
 # =============================================================================
@@ -1548,6 +1576,7 @@ def test_synapse_origin_edges_constructed_only_in_synapse_service():
 
 
 def test_generated_retrieval_artifacts_have_no_search_expansion_identity():
+    from nexus.schemas.search import ALL_RESULT_TYPES
     from nexus.services.resource_items.capabilities import RESOURCE_ITEM_CAPABILITIES
 
     generated = {
@@ -1568,3 +1597,146 @@ def test_generated_retrieval_artifacts_have_no_search_expansion_identity():
     assert all(
         RESOURCE_ITEM_CAPABILITIES[scheme].citable_result_type is None for scheme in generated
     )
+
+    retrieval_guidance = {
+        "source_map",
+        "source_map.v1",
+        "context_summary",
+        "section_summary",
+        "document_summary",
+        "hierarchy_node",
+        "retrieval_artifact",
+        "retrieval_artifact_revision",
+        "app_search_reranker.v1",
+        "app_search_provider_rerank",
+        "search_rerank",
+    }
+    assert retrieval_guidance.isdisjoint(ALL_RESULT_TYPES)
+    assert retrieval_guidance.isdisjoint(RESOURCE_ITEM_CAPABILITIES)
+
+
+def test_app_search_does_not_import_retrieval_artifact_storage():
+    path = _PY_ROOT / "services" / "agent_tools" / "app_search.py"
+    text = path.read_text(encoding="utf-8")
+    assert "retrieval_artifacts" not in text
+    assert "retrieval_artifact_revisions" not in text
+
+
+def test_app_search_content_chunk_candidate_sql_stays_search_owned():
+    path = _PY_ROOT / "services" / "agent_tools" / "app_search.py"
+    text = path.read_text(encoding="utf-8")
+    long_context = re.search(
+        r"def _long_context_media_scope_citations\([\s\S]*?\n\ndef _empty_status_for_scopes",
+        text,
+    )
+    assert long_context is not None
+    assert "content_chunks" not in long_context.group(0)
+    assert "content_index_states" not in long_context.group(0)
+    assert "_scoped_content_chunk_empty_status" not in text
+
+    search_owner = (_PY_ROOT / "services" / "search" / "content_chunk_candidates.py").read_text(
+        encoding="utf-8"
+    )
+    assert "def ordered_media_content_chunk_ids" in search_owner
+    assert "def has_retrievable_content_chunks" in search_owner
+
+
+def test_generated_retrieval_artifact_storage_is_not_in_first_slice():
+    assert not (_PY_ROOT / "services" / "retrieval_artifacts.py").exists()
+    assert not list(
+        (_REPO_ROOT / "migrations" / "alembic" / "versions").glob("*retrieval_artifacts*.py")
+    )
+
+
+def test_app_search_does_not_import_provider_rerank_runtime():
+    path = _PY_ROOT / "services" / "agent_tools" / "app_search.py"
+    text = path.read_text(encoding="utf-8")
+    assert "provider_runtime" not in text
+    assert "llm_ledger" not in text
+    assert "ModelRuntime" not in text
+
+
+def test_web_search_does_not_import_app_search_provider_reranker():
+    path = _PY_ROOT / "services" / "agent_tools" / "web_search.py"
+    text = path.read_text(encoding="utf-8")
+    assert "llm_rerank" not in text
+    assert "app_search_provider_rerank" not in text
+    assert "search_rerank" not in text
+    assert "provider_runtime" not in text
+    assert "LedgeredLLM" not in text
+
+
+def test_chat_tool_adapters_do_not_import_source_boundary_policy_owner():
+    hits = _grep(
+        r"\bchat_retrieval_plan\b|\bsource_boundary_policy_json\b|"
+        r"\bSourceBoundaryPolicy\b|\bevaluate_source_boundary_policy\b|"
+        r"\bsource_domain_for_tool\b",
+        *_AGENT_TOOL_ADAPTERS,
+    )
+    assert not hits, (
+        f"source-boundary policy generation/evaluation belongs to chat owner files:\n{_fmt(hits)}"
+    )
+
+
+def test_chat_run_create_request_has_no_retrieval_policy_knobs():
+    backend = (_PY_ROOT / "schemas" / "conversation.py").read_text(encoding="utf-8")
+    backend_match = re.search(
+        r"class ChatRunCreateRequest\(BaseModel\):(?P<body>[\s\S]*?)\n\nclass ChatRunOut",
+        backend,
+    )
+    assert backend_match is not None
+    frontend = (
+        _REPO_ROOT / "apps" / "web" / "src" / "lib" / "api" / "sse" / "requests.ts"
+    ).read_text(encoding="utf-8")
+    frontend_match = re.search(
+        r"export interface ChatRunCreateRequest \{(?P<body>[\s\S]*?)\n\}",
+        frontend,
+    )
+    assert frontend_match is not None
+    pattern = re.compile(
+        r"\b(route_intent|retrieval_plan|allowed_tools|blocked_tools|"
+        r"source_domain|source_policy|candidate_tool_sequence|internal_tool_sequence|"
+        r"search_scope_uris)\b"
+    )
+    assert not pattern.search(backend_match.group("body"))
+    assert not pattern.search(frontend_match.group("body"))
+
+
+def test_chat_tool_schemas_do_not_expose_source_policy_arguments():
+    pattern = re.compile(
+        r"\b(source_domain|source_policy|source_boundary_policy|"
+        r"retrieval_plan|route_intent|allowed_tools|blocked_tools|"
+        r"internal_tool_sequence)\b"
+    )
+    definitions = {
+        "app_search.py": "APP_SEARCH_TOOL_DEFINITION",
+        "web_search.py": "WEB_SEARCH_TOOL_DEFINITION",
+        "read_resource.py": "READ_RESOURCE_TOOL_DEFINITION",
+        "inspect_resource.py": "INSPECT_RESOURCE_TOOL_DEFINITION",
+    }
+    hits: list[_Hit] = []
+    for filename, marker in definitions.items():
+        path = _PY_ROOT / "services" / "agent_tools" / filename
+        text = path.read_text(encoding="utf-8")
+        schema = text[text.index(marker) : text.index("\n\n@dataclass")]
+        for match in pattern.finditer(schema):
+            hits.append(
+                _Hit(
+                    path.as_posix(),
+                    text[: text.index(marker) + match.start()].count("\n") + 1,
+                    match.group(0),
+                )
+            )
+    assert not hits, f"source/retrieval policy leaked into tool schemas:\n{_fmt(hits)}"
+
+
+def test_search_provider_rerank_runtime_coupling_stays_in_owner():
+    hits = _excluding(
+        _grep(
+            r"\b(provider_runtime|ModelRuntime|LedgeredLLM|run_structured_synthesis|"
+            r"APP_SEARCH_RERANK_LLM_OPERATION)\b",
+            _PY_ROOT / "services" / "search",
+        ),
+        "services/search/llm_rerank.py",
+    )
+    assert not hits, f"provider-rerank runtime coupling outside owner:\n{_fmt(hits)}"

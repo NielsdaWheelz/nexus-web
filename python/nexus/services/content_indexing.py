@@ -15,6 +15,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from nexus.auth.permissions import can_read_media
 from nexus.services import media_intelligence
 from nexus.services.resource_graph import cleanup
 from nexus.services.resource_graph.refs import ResourceRef
@@ -67,7 +68,7 @@ class ContentIndexResult:
 
 
 def load_content_chunk_source_map(
-    db: Session, *, chunk_id: UUID, evidence_span_id: UUID | None = None
+    db: Session, *, viewer_id: UUID, chunk_id: UUID, evidence_span_id: UUID | None = None
 ) -> dict[str, object] | None:
     where_evidence = ""
     params: dict[str, object] = {"chunk_id": chunk_id}
@@ -116,6 +117,20 @@ def load_content_chunk_source_map(
     if not rows:
         return None
     first = rows[0]
+    if first["owner_kind"] == "media":
+        if not can_read_media(db, viewer_id, first["owner_id"]):
+            return None
+    elif first["owner_kind"] == "note_block":
+        if (
+            db.execute(
+                text("SELECT user_id FROM note_blocks WHERE id = :id"),
+                {"id": first["owner_id"]},
+            ).scalar_one_or_none()
+            != viewer_id
+        ):
+            return None
+    else:
+        return None
     section_path = [str(item) for item in (first["heading_path"] or []) if str(item).strip()]
     parts = [
         {

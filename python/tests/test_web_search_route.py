@@ -10,7 +10,8 @@ also receives.
 from uuid import UUID
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
+from sqlalchemy.dialects.postgresql import JSONB
 from web_search_tool.types import (
     WebSearchError,
     WebSearchErrorCode,
@@ -31,6 +32,66 @@ pytestmark = pytest.mark.integration
 # is the one persisted and returned by search_web_readonly.
 _RESPONSE_REQUEST_ID = "stub-response-req"
 _ITEM_REQUEST_ID = "stub-item-req"
+
+
+def _source_policy() -> dict[str, object]:
+    return {
+        "version": "source_boundary_policy.v1",
+        "decision": "allowed",
+        "source_domain": "public_web",
+        "mixing_allowed": False,
+        "reason": "web_search_test_policy",
+        "domains_seen": [],
+        "requested_domains": ["public_web"],
+    }
+
+
+def _seed_tool_call(
+    session,
+    *,
+    conversation_id,
+    user_message_id,
+    assistant_message_id,
+    source_domain: str = "public_web",
+    source_policy: dict[str, object] | None = None,
+) -> None:
+    session.execute(
+        text(
+            """
+            INSERT INTO message_tool_calls (
+                conversation_id,
+                user_message_id,
+                assistant_message_id,
+                tool_name,
+                tool_call_index,
+                scope,
+                requested_types,
+                source_domain,
+                source_policy,
+                status
+            )
+            VALUES (
+                :conversation_id,
+                :user_message_id,
+                :assistant_message_id,
+                'web_search',
+                0,
+                'public_web',
+                '["mixed"]'::jsonb,
+                :source_domain,
+                :source_policy,
+                'running'
+            )
+            """
+        ).bindparams(bindparam("source_policy", type_=JSONB)),
+        {
+            "conversation_id": conversation_id,
+            "user_message_id": user_message_id,
+            "assistant_message_id": assistant_message_id,
+            "source_domain": source_domain,
+            "source_policy": source_policy or _source_policy(),
+        },
+    )
 
 
 class _StubWebSearchProvider:
@@ -56,13 +117,13 @@ class _FailingWebSearchProvider:
         raise WebSearchError(WebSearchErrorCode.PROVIDER_DOWN, "down", provider="stub")
 
 
-def _result(rank: int) -> WebSearchResultItem:
+def _result(rank: int, *, snippet: str | None = None) -> WebSearchResultItem:
     return WebSearchResultItem(
         result_ref=f"stub:web:result-{rank}",
         title=f"Stub Result {rank}",
         url=f"https://example.com/{rank}",
         display_url=f"example.com/{rank}",
-        snippet=f"Snippet {rank}",
+        snippet=snippet or f"Snippet {rank}",
         extra_snippets=(),
         published_at=None,
         source_name="Example",
@@ -223,8 +284,16 @@ async def test_chat_execute_web_search_still_persists_snapshots(
             parent_message_id=user_message_id,
         )
 
-    provider = _StubWebSearchProvider((_result(1),))
+    provider = _StubWebSearchProvider(
+        (_result(1, snippet="x" * (WEB_SEARCH_CONTEXT_CHARS + 1)), _result(2))
+    )
     with direct_db.session() as session:
+        _seed_tool_call(
+            session,
+            conversation_id=conversation_id,
+            user_message_id=user_message_id,
+            assistant_message_id=assistant_message_id,
+        )
         run = await execute_web_search(
             session,
             provider=provider,
@@ -251,7 +320,7 @@ async def test_chat_execute_web_search_still_persists_snapshots(
     )
 
     assert run.status == "complete", f"Expected a complete run, got {run.status}"
-    assert _count_snapshots(direct_db, user_id) == 1, (
+    assert _count_snapshots(direct_db, user_id) == 2, (
         "execute_web_search must persist a resource_external_snapshots row per result"
     )
     assert run.provider_request_ids == [_RESPONSE_REQUEST_ID], (
@@ -259,25 +328,158 @@ async def test_chat_execute_web_search_still_persists_snapshots(
         f"the item-level id; got {run.provider_request_ids!r}"
     )
     with direct_db.session() as session:
-        strategy, metadata = session.execute(
+        strategy, metadata, source_domain, source_policy = session.execute(
             text(
                 """
-                SELECT strategy, metadata
-                FROM message_rerank_ledgers
-                WHERE tool_call_id = :tool_call_id
+                SELECT mrl.strategy, mrl.metadata, mtc.source_domain, mtc.source_policy
+                FROM message_rerank_ledgers mrl
+                JOIN message_tool_calls mtc ON mtc.id = mrl.tool_call_id
+                WHERE mrl.tool_call_id = :tool_call_id
                 """
             ),
             {"tool_call_id": run.tool_call_id},
         ).one()
+        selected_rows = session.execute(
+            text(
+                """
+                SELECT
+                    mr.selected AS retrieval_selected,
+                    mr.included_in_prompt AS retrieval_included,
+                    mcl.selected AS ledger_selected,
+                    mcl.included_in_prompt AS ledger_included
+                FROM message_retrievals mr
+                JOIN message_retrieval_candidate_ledgers mcl
+                  ON mcl.retrieval_id = mr.id
+                WHERE mr.tool_call_id = :tool_call_id
+                ORDER BY mcl.ordinal
+                """
+            ),
+            {"tool_call_id": run.tool_call_id},
+        ).all()
+    assert source_domain == "public_web"
+    assert source_policy == _source_policy()
+    assert [tuple(row) for row in selected_rows] == [
+        (False, False, False, False),
+        (True, True, True, True),
+    ]
     assert strategy == WEB_SEARCH_RERANK_STRATEGY
     assert metadata["selection_strategy"] == WEB_SEARCH_RERANK_STRATEGY
     assert metadata["selection_policy_version"] == WEB_SEARCH_RERANK_VERSION
     assert metadata["candidate_limit"] == WEB_SEARCH_LIMIT
     assert metadata["selected_limit"] == WEB_SEARCH_SELECTED_LIMIT
     assert metadata["context_budget_chars"] == WEB_SEARCH_CONTEXT_CHARS
-    assert metadata["selection_reason_counts"] == {"within_context_budget": 1}
-    assert metadata["candidate_rerank_trace"][0]["selection_reason"] == "within_context_budget"
-    assert metadata["candidate_rerank_trace"][0]["selected"] is True
+    assert metadata["selection_reason_counts"] == {
+        "skipped_over_budget": 1,
+        "selected_within_budget": 1,
+    }
+    assert [item["selection_reason"] for item in metadata["candidate_rerank_trace"]] == [
+        "skipped_over_budget",
+        "selected_within_budget",
+    ]
+    assert [item["selected"] for item in metadata["candidate_rerank_trace"]] == [False, True]
+    assert [item["included_in_prompt"] for item in metadata["candidate_rerank_trace"]] == [
+        False,
+        True,
+    ]
+
+
+async def test_chat_execute_web_search_rejects_private_app_source_domain(
+    auth_client, direct_db: DirectSessionManager
+):
+    from nexus.services.agent_tools.web_search import execute_web_search
+
+    user_id = create_test_user_id()
+    assert auth_client.get("/me", headers=auth_headers(user_id)).status_code == 200
+    with direct_db.session() as session:
+        conversation_id = create_test_conversation(session, user_id)
+        user_message_id = create_test_message(session, conversation_id, 1, "user", "Ask")
+        assistant_message_id = create_test_message(
+            session,
+            conversation_id,
+            2,
+            "assistant",
+            "",
+            parent_message_id=user_message_id,
+        )
+
+    direct_db.register_cleanup("conversations", "id", conversation_id)
+    direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+
+    private_policy = {
+        **_source_policy(),
+        "source_domain": "private_app",
+        "reason": "wrong_tool_domain",
+        "requested_domains": ["private_app"],
+    }
+    with direct_db.session() as session:
+        _seed_tool_call(
+            session,
+            conversation_id=conversation_id,
+            user_message_id=user_message_id,
+            assistant_message_id=assistant_message_id,
+            source_domain="private_app",
+            source_policy=private_policy,
+        )
+        with pytest.raises(AssertionError, match="web_search source_domain must be public_web"):
+            await execute_web_search(
+                session,
+                provider=_StubWebSearchProvider((_result(1),)),
+                conversation_id=conversation_id,
+                user_message_id=user_message_id,
+                assistant_message_id=assistant_message_id,
+                query="open web agents",
+                freshness_days=None,
+                tool_call_index=0,
+            )
+    direct_db.register_cleanup("message_tool_calls", "assistant_message_id", assistant_message_id)
+
+
+async def test_chat_execute_web_search_rejects_non_positive_freshness_days(
+    auth_client, direct_db: DirectSessionManager
+):
+    from nexus.services.agent_tools.web_search import execute_web_search
+
+    user_id = create_test_user_id()
+    assert auth_client.get("/me", headers=auth_headers(user_id)).status_code == 200
+    with direct_db.session() as session:
+        conversation_id = create_test_conversation(session, user_id)
+        user_message_id = create_test_message(session, conversation_id, 1, "user", "Ask")
+        assistant_message_id = create_test_message(
+            session,
+            conversation_id,
+            2,
+            "assistant",
+            "",
+            parent_message_id=user_message_id,
+        )
+
+    provider = _StubWebSearchProvider((_result(1),))
+    with direct_db.session() as session:
+        _seed_tool_call(
+            session,
+            conversation_id=conversation_id,
+            user_message_id=user_message_id,
+            assistant_message_id=assistant_message_id,
+        )
+        run = await execute_web_search(
+            session,
+            provider=provider,
+            conversation_id=conversation_id,
+            user_message_id=user_message_id,
+            assistant_message_id=assistant_message_id,
+            query="recent news",
+            freshness_days=0,
+            tool_call_index=0,
+        )
+
+    direct_db.register_cleanup("conversations", "id", conversation_id)
+    direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+    direct_db.register_cleanup("message_tool_calls", "assistant_message_id", assistant_message_id)
+    direct_db.register_cleanup("message_rerank_ledgers", "tool_call_id", run.tool_call_id)
+
+    assert run.status == "error"
+    assert run.error_code == "invalid_request"
+    assert provider.requests == []
 
 
 def test_web_search_route_plumbs_freshness_days_to_provider(auth_client):
@@ -373,6 +575,8 @@ async def test_read_only_projection_matches_chat_tool_projection_field_for_field
         context_chars=0,
         latency_ms=0,
         status="complete",
+        source_domain="public_web",
+        source_policy=_source_policy(),
     )
     event = run.retrieval_result_event()
     chat_projection = event["results"]

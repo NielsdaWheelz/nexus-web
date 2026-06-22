@@ -4,11 +4,11 @@
 .PHONY: help setup dev down logs clean api api-e2e web web-e2e worker migrate migrate-test migrate-down seed seed-real-media-e2e \
 	check check-back type-back check-front check-android check-workflows format format-back fix-front build build-android build-android-release build-icons check-bundle audit \
 	test-unit test test-back-unit test-back-integration test-front-unit test-front-browser \
-	test-android test-migrations test-supabase test-real-media test-provider-runtime test-live-providers test-e2e test-e2e-ui test-csp \
+	test-android test-migrations test-supabase test-real-media test-provider-runtime test-search-retrieval-evals test-search-rerank-live-evals test-live-providers test-e2e test-e2e-ui test-csp \
 	smoke smoke-auth-redirects verify verify-android verify-android-release verify-full \
 	_ensure-node-ingest _ensure-e2e-deps _test-back-db-ready \
 	_test-back-integration-raw _test-migrations-raw _test-provider-runtime-raw \
-	_test-supabase-raw _test-real-media-raw _test-real-media-backend-raw _test-live-providers-raw _test-shared-llm-provider-matrix-raw \
+	_test-supabase-raw _test-real-media-raw _test-real-media-backend-raw _test-search-retrieval-evals-raw _test-search-rerank-live-evals-raw _test-live-providers-raw _test-shared-llm-provider-matrix-raw \
 	_seed-real-media-e2e-raw _test-e2e-raw _test-csp-raw _test-real-media-e2e-raw _test-e2e-ui-raw
 
 -include .env
@@ -76,6 +76,8 @@ help:
 	@echo "  make test-csp           - Strict-CSP Playwright profile (enforced policy)"
 	@echo "  make test-real-media    - Strict deterministic real-media backend + Playwright gates"
 	@echo "  make test-provider-runtime - Non-live checks for pinned shared provider runtime"
+	@echo "  make test-search-retrieval-evals - Offline search retrieval-quality evals"
+	@echo "  make test-search-rerank-live-evals - Opt-in live provider app-search rerank eval"
 	@echo "  make test-live-providers  - Strict live-provider backend gate"
 	@echo "  make verify             - check + build + test"
 	@echo "  make verify-full        - verify + real-media + live-provider + default E2E gates"
@@ -408,6 +410,26 @@ _test-real-media-backend-raw:
 		--basetemp=../test-results/real-media-backend \
 		-m real_media
 
+test-search-retrieval-evals:
+	./scripts/with_test_services.sh make _test-back-db-ready _test-search-retrieval-evals-raw
+
+_test-search-retrieval-evals-raw:
+	make _ensure-node-ingest
+	mkdir -p test-results/search-retrieval-evals
+	cd python && NEXUS_ENV=test uv run pytest -v --tb=short \
+		--basetemp=../test-results/search-retrieval-evals \
+		-m retrieval_eval tests/test_search_retrieval_evals.py
+
+test-search-rerank-live-evals:
+	./scripts/with_test_services.sh ./scripts/with_supabase_services.sh make _test-back-db-ready _test-search-rerank-live-evals-raw
+
+_test-search-rerank-live-evals-raw:
+	make _ensure-node-ingest
+	mkdir -p test-results/search-rerank-live-evals
+	cd python && NEXUS_ENV=local uv run pytest -v --tb=short \
+		--basetemp=../test-results/search-rerank-live-evals \
+		-m search_rerank_live_eval tests/live_providers/test_search_rerank_live_eval.py
+
 test-provider-runtime:
 	make _test-provider-runtime-raw
 
@@ -425,7 +447,7 @@ _test-provider-runtime-raw:
 	cd "$(LLM_CALLING_DIR)" && uv run pytest -q
 
 test-live-providers:
-	./scripts/with_test_services.sh ./scripts/with_supabase_services.sh make _test-back-db-ready _test-live-providers-raw _test-shared-llm-provider-matrix-raw
+	./scripts/with_test_services.sh ./scripts/with_supabase_services.sh make _test-back-db-ready _test-live-providers-raw _test-search-rerank-live-evals-raw _test-shared-llm-provider-matrix-raw
 
 _test-live-providers-raw:
 	make _ensure-node-ingest

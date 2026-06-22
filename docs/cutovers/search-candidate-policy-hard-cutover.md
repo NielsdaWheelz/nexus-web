@@ -21,9 +21,9 @@ The shared search layer already has a wider hybrid substrate:
 - public `MAX_LIMIT = 50`
 - multi-scope union/dedupe in `search_scopes`
 
-But `app_search` builds `SearchQuery(limit=8)`, which caps the visible candidate
-pool before chat-specific selection can do useful work. This conflates two
-different policies:
+Before this cutover, `app_search` built `SearchQuery(limit=8)`, which capped
+the visible candidate pool before chat-specific selection could do useful work.
+That conflated two different policies:
 
 - candidate depth: how much evidence is inspected
 - selected evidence depth: how much evidence is shown to the model
@@ -109,8 +109,9 @@ The first production slice keeps policy deliberately narrow and scope-driven:
 - library, conversation, multi-scope, and global searches -> deep candidate pool
   (`50`)
 - selected evidence remains capped at `6`
-- this slice persisted query-class metadata as `unclassified`; the later
-  agentic-contextual retrieval slice owns the real planner/classifier
+- query-class metadata is now filled by search-owned deterministic policy and
+  run-level planner slices; this document's original `unclassified` milestone is
+  superseded
 - multi-scope persistence uses a bounded `multi_scope:<count>` label plus the
   full resolved scope list in rerank metadata
 - result-type mix metadata is actual candidate output, not the requested kinds

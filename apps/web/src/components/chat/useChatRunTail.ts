@@ -14,6 +14,7 @@ import {
   toChatSSEEvent,
   type SSEEvent,
   type SSEContextRefAddedEvent,
+  type SSEDoneEvent,
 } from "@/lib/api/sse/events";
 import type { SseBackoffConfig } from "@/lib/api/sse-client";
 import { openGenerationRunStream } from "@/lib/api/useGenerationRun";
@@ -55,18 +56,19 @@ function mergeStreamToolCalls(
   existing: MessageToolCall[],
   live: MessageToolCall[],
 ): MessageToolCall[] {
-  const merged = existing.map((call) => {
+  return existing.map((call) => {
     const preview = live.find(
       (item) => item.tool_call_index === call.tool_call_index,
     )?.input_preview;
     return preview ? { ...call, input_preview: preview } : call;
   });
-  for (const item of live) {
-    if (!existing.some((call) => call.tool_call_index === item.tool_call_index)) {
-      merged.push(item);
-    }
-  }
-  return merged;
+}
+
+function doneData(
+  status: TerminalRunStatus,
+  errorCode: string | null,
+): SSEDoneEvent["data"] {
+  return { status, error_code: errorCode };
 }
 
 export function useChatRunTail({
@@ -103,6 +105,9 @@ export function useChatRunTail({
     handleToolCallDelta,
     handleToolCallDone,
     handleToolResult,
+    handlePromptAssembly,
+    handleRetrievalPlan,
+    handleToolLedgerSnapshot,
     handleCitationIndex,
     handleContextRefAdded,
     handleDone,
@@ -284,8 +289,7 @@ export function useChatRunTail({
         if (currentRunIsVisible()) {
           handleDone(
             runData.assistant_message.id,
-            runData.run.status,
-            runData.run.error_code,
+            doneData(runData.run.status, runData.run.error_code),
           );
         }
         notifyDone(runData.run.status, runData.run.error_code);
@@ -320,8 +324,7 @@ export function useChatRunTail({
             if (currentRunIsVisible()) {
               handleDone(
                 currentAssistantId,
-                response.data.run.status,
-                response.data.run.error_code,
+                doneData(response.data.run.status, response.data.run.error_code),
               );
             }
             notifyDone(response.data.run.status, response.data.run.error_code);
@@ -333,6 +336,14 @@ export function useChatRunTail({
           console.error("Failed to reconcile chat run:", err);
           return null;
         }
+      };
+
+      const finishInterrupted = () => {
+        if (currentRunIsVisible()) {
+          handleDone(currentAssistantId, doneData("error", "E_STREAM_INTERRUPTED"));
+        }
+        notifyDone("error", "E_STREAM_INTERRUPTED");
+        finishRun();
       };
 
       const startStream = async (): Promise<void> => {
@@ -391,21 +402,30 @@ export function useChatRunTail({
                   flushDeltas();
                   handleToolResult(currentAssistantId, event.data);
                   break;
+                case "retrieval_plan":
+                  if (!currentRunIsVisible()) break;
+                  handleRetrievalPlan(currentAssistantId, event.data);
+                  break;
+                case "prompt_assembly":
+                  if (!currentRunIsVisible()) break;
+                  handlePromptAssembly(currentAssistantId, event.data);
+                  break;
+                case "tool_ledger_snapshot":
+                  if (!currentRunIsVisible()) break;
+                  handleToolLedgerSnapshot(currentAssistantId, event.data);
+                  break;
                 case "citation_index":
                   if (!currentRunIsVisible()) break;
                   handleCitationIndex(currentAssistantId, event.data);
                   break;
                 case "context_ref_added":
-                  handleContextRefAdded(currentAssistantId, event.data);
+                  if (!currentRunIsVisible()) break;
+                  handleContextRefAdded(currentAssistantId, event.data, event.seq);
                   break;
                 case "done":
                   streamDoneSeen = true;
                   if (currentRunIsVisible()) {
-                    handleDone(
-                      currentAssistantId,
-                      event.data.status,
-                      event.data.error_code,
-                    );
+                    handleDone(currentAssistantId, event.data);
                   }
                   notifyDone(event.data.status, event.data.error_code);
                   break;
@@ -435,23 +455,19 @@ export function useChatRunTail({
               void (async () => {
                 await reconcile();
                 if (runTokensRef.current.get(runId) !== token || finished) return;
-                if (currentRunIsVisible()) {
-                  handleDone(currentAssistantId, "error", "E_STREAM_INTERRUPTED");
-                }
-                notifyDone("error", "E_STREAM_INTERRUPTED");
-                finishRun();
+                finishInterrupted();
               })();
             },
             onComplete: (terminalEventSeen) => {
               // Terminal events still reconcile so the backend-built trust trail wins.
               if (runTokensRef.current.get(runId) !== token) return;
-              if (!terminalEventSeen || !streamDoneSeen) {
-                finishRun();
-                return;
-              }
               void (async () => {
                 await reconcile();
                 if (runTokensRef.current.get(runId) !== token || finished) return;
+                if (!terminalEventSeen || !streamDoneSeen) {
+                  finishInterrupted();
+                  return;
+                }
                 finishRun();
               })();
             },
@@ -470,11 +486,7 @@ export function useChatRunTail({
           console.error("Failed to open chat run stream:", err);
           await reconcile();
           if (runTokensRef.current.get(runId) !== token || finished) return;
-          if (currentRunIsVisible()) {
-            handleDone(currentAssistantId, "error", "E_STREAM_INTERRUPTED");
-          }
-          notifyDone("error", "E_STREAM_INTERRUPTED");
-          finishRun();
+          finishInterrupted();
           return;
         }
 
@@ -495,6 +507,9 @@ export function useChatRunTail({
       handleToolCallDelta,
       handleToolCallDone,
       handleToolResult,
+      handlePromptAssembly,
+      handleRetrievalPlan,
+      handleToolLedgerSnapshot,
       handleCitationIndex,
       handleContextRefAdded,
       flushDeltas,
