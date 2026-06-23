@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import pytest
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from nexus.db.models import (
@@ -17,8 +18,17 @@ from nexus.db.models import (
     ResourceEdge,
 )
 from nexus.errors import ApiErrorCode, NotFoundError
+from nexus.schemas.conversation import (
+    ChatRunToolLedgerSnapshotEventPayload,
+    MessageRerankLedgerOut,
+    MessageRetrievalCandidateLedgerOut,
+)
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.message_trust_trails import build_assistant_trust_trail
+from nexus.services.search.selection import (
+    APP_SEARCH_SELECTION_STRATEGY,
+    APP_SEARCH_SELECTION_VERSION,
+)
 from tests.factories import (
     add_library_member,
     create_test_conversation,
@@ -72,6 +82,264 @@ def _result_ref(media_id: UUID | None = None) -> dict[str, object]:
     }
 
 
+def _source_policy() -> dict[str, object]:
+    return {
+        "version": "source_boundary_policy.v1",
+        "decision": "allowed",
+        "source_domain": "private_app",
+        "mixing_allowed": False,
+        "reason": "single_domain_private_app",
+        "domains_seen": [],
+        "requested_domains": ["private_app"],
+    }
+
+
+def test_candidate_ledger_transport_requires_result_ref_parity() -> None:
+    base = {
+        "id": uuid4(),
+        "tool_call_id": uuid4(),
+        "retrieval_id": None,
+        "ordinal": 0,
+        "result_type": "media",
+        "source_id": "media-1",
+        "score": 0.9,
+        "selected": True,
+        "included_in_prompt": True,
+        "ledger_included_in_prompt": True,
+        "linked_retrieval_included_in_prompt": None,
+        "included_in_prompt_source": "candidate_ledger",
+        "included_in_prompt_reconciled": True,
+        "selection_status": "selected",
+        "selection_reason": "selected_within_budget",
+        "result_ref": _result_ref(),
+        "locator": None,
+        "created_at": datetime.now(UTC),
+    }
+    assert MessageRetrievalCandidateLedgerOut.model_validate(base).source_id == "media-1"
+
+    with pytest.raises(ValidationError):
+        MessageRetrievalCandidateLedgerOut.model_validate({**base, "result_type": "page"})
+    with pytest.raises(ValidationError):
+        MessageRetrievalCandidateLedgerOut.model_validate({**base, "source_id": "media-2"})
+    with pytest.raises(ValidationError):
+        MessageRetrievalCandidateLedgerOut.model_validate(
+            {
+                **base,
+                "locator": {"type": "external_url", "url": "https://example.com"},
+            }
+        )
+
+
+def test_tool_ledger_snapshot_transport_requires_candidate_ref_parity() -> None:
+    tool_call_id = uuid4()
+    candidate = {
+        "id": uuid4(),
+        "tool_call_id": tool_call_id,
+        "retrieval_id": None,
+        "ordinal": 0,
+        "result_type": "media",
+        "source_id": "media-1",
+        "score": 0.9,
+        "selected": True,
+        "included_in_prompt": True,
+        "ledger_included_in_prompt": True,
+        "linked_retrieval_included_in_prompt": None,
+        "included_in_prompt_source": "candidate_ledger",
+        "included_in_prompt_reconciled": True,
+        "selection_status": "selected",
+        "selection_reason": "selected_within_budget",
+        "result_ref": _result_ref(),
+        "locator": None,
+        "created_at": datetime.now(UTC),
+    }
+    snapshot = {
+        "assistant_message_id": uuid4(),
+        "tool_call_id": tool_call_id,
+        "tool_name": "app_search",
+        "tool_call_index": 0,
+        "scope": "all",
+        "requested_types": ["media"],
+        "source_domain": "private_app",
+        "source_policy": _source_policy(),
+        "candidate_ledgers": [candidate],
+        "rerank_ledgers": [],
+    }
+    assert ChatRunToolLedgerSnapshotEventPayload.model_validate(snapshot).tool_name == "app_search"
+
+    with pytest.raises(ValidationError):
+        ChatRunToolLedgerSnapshotEventPayload.model_validate(
+            {
+                **snapshot,
+                "candidate_ledgers": [{**candidate, "source_id": "media-2"}],
+            }
+        )
+
+
+def test_rerank_metadata_transport_is_closed() -> None:
+    base = {
+        "id": uuid4(),
+        "tool_call_id": uuid4(),
+        "strategy": "app_search_provider_rerank",
+        "input_count": 1,
+        "selected_count": 1,
+        "budget_chars": 16000,
+        "selected_chars": 120,
+        "status": "complete",
+        "metadata": {
+            "selection_strategy": "app_search_provider_rerank",
+            "selection_policy_version": "v1",
+            "baseline_strategy": "app_search_deterministic_selection",
+            "candidate_rerank_trace": [
+                {
+                    "from": 0,
+                    "to": 0,
+                    "result_type": "media",
+                    "source_id": "media-1",
+                    "source": "media:media-1",
+                    "section": "section:intro",
+                    "provider_score": 0.9,
+                    "lexical": 1.0,
+                    "phrase": True,
+                    "type_bonus": 0.3,
+                    "citation_quality": 0.1,
+                    "source_penalty": 0.0,
+                    "section_penalty": 0.0,
+                    "selected": True,
+                    "included_in_prompt": True,
+                    "selection_status": "selected",
+                    "selection_reason": "selected_within_budget",
+                }
+            ],
+        },
+        "created_at": datetime.now(UTC),
+    }
+    assert MessageRerankLedgerOut.model_validate(base).metadata["selection_strategy"] == (
+        "app_search_provider_rerank"
+    )
+
+    with pytest.raises(ValidationError):
+        MessageRerankLedgerOut.model_validate(
+            {**base, "metadata": {**base["metadata"], "unknown": True}}
+        )
+    with pytest.raises(ValidationError):
+        MessageRerankLedgerOut.model_validate(
+            {
+                **base,
+                "metadata": {
+                    **base["metadata"],
+                    "candidate_rerank_trace": [
+                        {**base["metadata"]["candidate_rerank_trace"][0], "unknown": True}
+                    ],
+                },
+            }
+        )
+    for guidance_patch in [
+        {"ready_count": 1},
+        {"revision_ids": ["revision-1"]},
+        {"artifact_kinds": ["document_summary"]},
+        {"citation_target": "content_chunk:generated"},
+        {"result_ref": {"type": "content_chunk", "id": "generated"}},
+        {"generated_text": "generated summary"},
+        {"summary": "generated summary"},
+        {"evidence": "generated evidence"},
+    ]:
+        with pytest.raises(ValidationError):
+            MessageRerankLedgerOut.model_validate(
+                {
+                    **base,
+                    "metadata": {
+                        **base["metadata"],
+                        "retrieval_guidance": {
+                            "version": "retrieval_guidance_usage.v1",
+                            "status": "unused",
+                            **guidance_patch,
+                        },
+                    },
+                }
+            )
+    for trace_patch in [
+        {"lexical": "not-a-number"},
+        {"lexical": 1.1},
+        {"phrase": "not-a-bool"},
+        {"provider_score": 1.7},
+        {"provider_score": float("nan")},
+        {"source_penalty": -0.1},
+        {"section_penalty": float("inf")},
+        {"type_bonus": float("inf")},
+        {"selection_score": float("inf")},
+        {"score": -0.1},
+        {"citation_quality": -0.1},
+    ]:
+        with pytest.raises(ValidationError):
+            MessageRerankLedgerOut.model_validate(
+                {
+                    **base,
+                    "metadata": {
+                        **base["metadata"],
+                        "candidate_rerank_trace": [
+                            {
+                                **base["metadata"]["candidate_rerank_trace"][0],
+                                **trace_patch,
+                            }
+                        ],
+                    },
+                }
+            )
+    assert (
+        MessageRerankLedgerOut.model_validate(
+            {
+                **base,
+                "metadata": {
+                    **base["metadata"],
+                    "candidate_rerank_trace": [
+                        {
+                            **base["metadata"]["candidate_rerank_trace"][0],
+                            "type_bonus": -0.05,
+                        }
+                    ],
+                },
+            }
+        ).metadata["candidate_rerank_trace"][0]["type_bonus"]
+        == -0.05
+    )
+    assert (
+        MessageRerankLedgerOut.model_validate(
+            {
+                **base,
+                "metadata": {
+                    **base["metadata"],
+                    "candidate_rerank_trace": [
+                        {
+                            **base["metadata"]["candidate_rerank_trace"][0],
+                            "selection_score": -0.05,
+                        }
+                    ],
+                },
+            }
+        ).metadata["candidate_rerank_trace"][0]["selection_score"]
+        == -0.05
+    )
+
+
+def _retrieval_plan() -> dict[str, object]:
+    return {
+        "version": "chat_retrieval_plan.v1",
+        "route_intent": "private_app_search",
+        "source_domain": "private_app",
+        "mixing_policy": "single_domain",
+        "query_class": "exact_lookup",
+        "allowed_tools": ["app_search", "inspect_resource", "read_resource"],
+        "blocked_tools": ["web_search"],
+        "candidate_tool_sequence": ["app_search", "inspect_resource", "read_resource"],
+        "internal_tool_sequence": [],
+        "reason": "default_private_search_or_context",
+        "context_ref_count": 0,
+        "search_scope_count": 0,
+        "search_scope_uris": [],
+        "budget_policy": "tool_output_budget_from_prompt_assembly",
+    }
+
+
 def _seed_cited_run(
     db_session: Session,
     *,
@@ -101,6 +369,7 @@ def _seed_cited_run(
         model_id=model_id,
         reasoning="medium",
         key_mode="auto",
+        retrieval_plan=_retrieval_plan(),
         started_at=now,
         completed_at=now,
     )
@@ -117,6 +386,8 @@ def _seed_cited_run(
         result_refs=[],
         selected_context_refs=[],
         provider_request_ids=[],
+        source_domain="private_app",
+        source_policy=_source_policy(),
         status="complete",
     )
     db_session.add(tool)
@@ -160,6 +431,61 @@ def _seed_cited_run(
     db_session.add(edge)
     db_session.flush()
     retrieval.cited_edge_id = edge.id
+    db_session.add(
+        MessageRetrievalCandidateLedger(
+            tool_call_id=tool.id,
+            retrieval_id=retrieval.id,
+            ordinal=0,
+            result_type="media",
+            source_id="media-1",
+            score=0.9,
+            selected=True,
+            included_in_prompt=True,
+            selection_status="selected",
+            selection_reason="selected_within_budget",
+            result_ref=result_ref,
+            locator=None,
+        )
+    )
+    db_session.add(
+        MessageRerankLedger(
+            tool_call_id=tool.id,
+            strategy=APP_SEARCH_SELECTION_STRATEGY,
+            input_count=1,
+            selected_count=1,
+            budget_chars=16000,
+            selected_chars=200,
+            status="complete",
+            metadata_={
+                "selection_strategy": APP_SEARCH_SELECTION_STRATEGY,
+                "selection_policy_version": APP_SEARCH_SELECTION_VERSION,
+                "ordering_policy": "hybrid_score_exactness_citation_quality_diversity",
+                "diversity_policy": "source_section_penalty",
+                "budget_policy": "greedy_context_budget",
+                "candidate_limit": 20,
+                "selected_limit": 6,
+                "context_budget_chars": 16000,
+                "query_class": "exact_lookup",
+                "scope": "all",
+                "inclusion_surface": "tool_output",
+                "selection_reason_counts": {"selected_within_budget": 1},
+                "candidate_rerank_trace": [
+                    {
+                        "from": 0,
+                        "to": 0,
+                        "result_type": "media",
+                        "source_id": "media-1",
+                        "score": 0.9,
+                        "reason": "kept_order",
+                        "selected": True,
+                        "included_in_prompt": True,
+                        "selection_status": "selected",
+                        "selection_reason": "selected_within_budget",
+                    }
+                ],
+            },
+        )
+    )
     db_session.add(
         ChatPromptAssembly(
             chat_run_id=run.id,
@@ -251,6 +577,8 @@ def test_candidate_and_rerank_ledgers_are_nested_under_tool_call(
         result_refs=[_result_ref()],
         selected_context_refs=[],
         provider_request_ids=[],
+        source_domain="private_app",
+        source_policy=_source_policy(),
         status="complete",
     )
     db_session.add(tool)
@@ -273,13 +601,40 @@ def test_candidate_and_rerank_ledgers_are_nested_under_tool_call(
     db_session.add(
         MessageRerankLedger(
             tool_call_id=tool.id,
-            strategy="score",
+            strategy=APP_SEARCH_SELECTION_STRATEGY,
             input_count=1,
             selected_count=1,
             budget_chars=4000,
             selected_chars=15,
             status="complete",
-            metadata_={"reason": "top_result"},
+            metadata_={
+                "selection_strategy": APP_SEARCH_SELECTION_STRATEGY,
+                "selection_policy_version": APP_SEARCH_SELECTION_VERSION,
+                "ordering_policy": "hybrid_score_exactness_citation_quality_diversity",
+                "diversity_policy": "source_section_penalty",
+                "budget_policy": "greedy_context_budget",
+                "candidate_limit": 20,
+                "selected_limit": 6,
+                "context_budget_chars": 16000,
+                "query_class": "exact_lookup",
+                "scope": "all",
+                "inclusion_surface": "tool_output",
+                "selection_reason_counts": {"selected": 1},
+                "candidate_rerank_trace": [
+                    {
+                        "from": 0,
+                        "to": 0,
+                        "result_type": "media",
+                        "source_id": "media-1",
+                        "score": 0.9,
+                        "reason": "kept_order",
+                        "selected": True,
+                        "included_in_prompt": True,
+                        "selection_status": "included_in_prompt",
+                        "selection_reason": "selected",
+                    }
+                ],
+            },
         )
     )
     db_session.commit()
@@ -295,7 +650,13 @@ def test_candidate_and_rerank_ledgers_are_nested_under_tool_call(
     assert len(trail.tool_calls[0].candidate_ledgers) == 1
     assert trail.tool_calls[0].candidate_ledgers[0].included_in_prompt is True
     assert len(trail.tool_calls[0].rerank_ledgers) == 1
-    assert trail.tool_calls[0].rerank_ledgers[0].metadata == {"reason": "top_result"}
+    assert trail.tool_calls[0].rerank_ledgers[0].strategy == APP_SEARCH_SELECTION_STRATEGY
+    assert (
+        trail.tool_calls[0]
+        .rerank_ledgers[0]
+        .metadata["candidate_rerank_trace"][0]["selection_reason"]
+        == "selected"
+    )
 
 
 def test_trust_trail_links_run_prompt_retrieval_citation_and_reference(
@@ -335,12 +696,19 @@ def test_trust_trail_links_run_prompt_retrieval_citation_and_reference(
     assert retrieval.cited_edge_id == edge_id
     assert retrieval.citation_number == 1
     assert retrieval.included_in_prompt is True
-    assert retrieval.included_in_prompt_source == "retrieval"
+    assert retrieval.included_in_prompt_source == "tool_output"
+    assert len(tool.candidate_ledgers) == 1
+    assert tool.candidate_ledgers[0].included_in_prompt_source == "tool_output"
+    assert tool.candidate_ledgers[0].selection_reason == "selected_within_budget"
     assert len(trail.citations) == 1
     assert trail.citations[0].citation_edge_id == edge_id
     assert trail.citations[0].retrieval_id == retrieval_id
     assert len(trail.context_refs_added) == 1
     assert trail.context_refs_added[0].citation_edge_id == edge_id
+    assert (
+        trail.context_refs_added[0].activation.href
+        == f"/media/{trail.context_refs_added[0].resource_ref.split(':', 1)[1]}"
+    )
     assert trail.integrity_notices == []
 
 
@@ -396,6 +764,7 @@ def test_integrity_notices_are_deterministic(
         model_id=model_id,
         reasoning="default",
         key_mode="auto",
+        retrieval_plan=_retrieval_plan(),
     )
     db_session.add(run)
     db_session.flush()
@@ -410,6 +779,8 @@ def test_integrity_notices_are_deterministic(
         result_refs=[],
         selected_context_refs=[],
         provider_request_ids=[],
+        source_domain="private_app",
+        source_policy=_source_policy(),
         status="complete",
     )
     db_session.add(tool)

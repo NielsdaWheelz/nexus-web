@@ -631,9 +631,11 @@ jobs:
 
       - name: Upload live-provider traces
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: failure() && steps.live-provider-secrets.outputs.live_ready == 'true'
+        if: always() && steps.live-provider-secrets.outputs.live_ready == 'true'
         with:
           name: live-provider-traces
-          path: test-results/live-providers/
+          path: |
+            test-results/live-providers/
+            test-results/search-rerank-live-evals/
           if-no-files-found: ignore
           retention-days: 14

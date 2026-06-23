@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import re
@@ -14,6 +15,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from nexus.auth.permissions import can_read_media
 from nexus.services import media_intelligence
 from nexus.services.resource_graph import cleanup
 from nexus.services.resource_graph.refs import ResourceRef
@@ -63,6 +65,125 @@ class ContentIndexResult:
     owner: IndexOwner
     status: str
     chunk_count: int
+
+
+def load_content_chunk_source_map(
+    db: Session, *, viewer_id: UUID, chunk_id: UUID, evidence_span_id: UUID | None = None
+) -> dict[str, object] | None:
+    where_evidence = ""
+    params: dict[str, object] = {"chunk_id": chunk_id}
+    if evidence_span_id is not None:
+        where_evidence = "AND es.id = :evidence_span_id"
+        params["evidence_span_id"] = evidence_span_id
+    rows = (
+        db.execute(
+            text(
+                f"""
+            SELECT
+                cc.owner_kind,
+                cc.owner_id,
+                cc.chunk_idx,
+                cc.source_kind,
+                cc.chunk_text,
+                cc.heading_path,
+                cc.summary_locator,
+                es.id AS evidence_span_id,
+                ccp.part_idx,
+                ccp.block_start_offset,
+                ccp.block_end_offset,
+                ccp.chunk_start_offset,
+                ccp.chunk_end_offset,
+                cb.block_idx,
+                cb.block_kind,
+                cb.source_start_offset,
+                cb.heading_path AS block_heading_path
+            FROM content_chunks cc
+            JOIN content_index_states cis
+              ON cis.owner_kind = cc.owner_kind AND cis.owner_id = cc.owner_id
+             AND cis.status = 'ready'
+            JOIN evidence_spans es ON es.id = cc.primary_evidence_span_id
+            JOIN content_chunk_parts ccp ON ccp.chunk_id = cc.id
+            JOIN content_blocks cb ON cb.id = ccp.block_id
+            WHERE cc.id = :chunk_id
+              {where_evidence}
+            ORDER BY ccp.part_idx ASC
+            """
+            ),
+            params,
+        )
+        .mappings()
+        .all()
+    )
+    if not rows:
+        return None
+    first = rows[0]
+    if first["owner_kind"] == "media":
+        if not can_read_media(db, viewer_id, first["owner_id"]):
+            return None
+    elif first["owner_kind"] == "note_block":
+        if (
+            db.execute(
+                text("SELECT user_id FROM note_blocks WHERE id = :id"),
+                {"id": first["owner_id"]},
+            ).scalar_one_or_none()
+            != viewer_id
+        ):
+            return None
+    else:
+        return None
+    section_path = [str(item) for item in (first["heading_path"] or []) if str(item).strip()]
+    parts = [
+        {
+            "part_idx": int(row["part_idx"]),
+            "block_idx": int(row["block_idx"]),
+            "block_kind": str(row["block_kind"]),
+            "chunk_start_offset": int(row["chunk_start_offset"]),
+            "chunk_end_offset": int(row["chunk_end_offset"]),
+            "source_start_offset": int(row["source_start_offset"]) + int(row["block_start_offset"]),
+            "source_end_offset": int(row["source_start_offset"]) + int(row["block_end_offset"]),
+            "heading_path": [
+                str(item) for item in (row["block_heading_path"] or []) if str(item).strip()
+            ],
+        }
+        for row in rows
+    ]
+    revision_payload = {
+        "owner_kind": str(first["owner_kind"]),
+        "owner_id": str(first["owner_id"]),
+        "chunk_idx": int(first["chunk_idx"]),
+        "source_kind": str(first["source_kind"]),
+        "chunk_text": str(first["chunk_text"] or ""),
+        "heading_path": section_path,
+        "summary_locator": dict(first["summary_locator"] or {}),
+        "evidence_span_id": str(first["evidence_span_id"]),
+        "parts": parts,
+    }
+    return {
+        "version": "source_map.v1",
+        "owner": {"kind": str(first["owner_kind"]), "id": str(first["owner_id"])},
+        "source_kind": str(first["source_kind"]),
+        "source_revision": "sha256:"
+        + hashlib.sha256(
+            json.dumps(
+                revision_payload,
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            ).encode("utf-8")
+        ).hexdigest(),
+        "chunk_uri": f"content_chunk:{chunk_id}",
+        "read_uri": f"content_chunk:{chunk_id}",
+        "evidence_uri": f"evidence_span:{first['evidence_span_id']}",
+        "chunk_idx": int(first["chunk_idx"]),
+        "section_path": section_path,
+        "context_header": (
+            f"{first['source_kind']}: {' / '.join(section_path[-3:])}"
+            if section_path
+            else str(first["source_kind"])
+        ),
+        "part_count": len(parts),
+        "parts": parts,
+    }
 
 
 def rebuild_content_index(

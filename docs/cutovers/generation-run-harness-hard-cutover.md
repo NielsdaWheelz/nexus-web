@@ -5,7 +5,7 @@ Status: HISTORICAL SPEC — **Rev 1**, provider-client sections superseded by
 Author: design synthesis, 2026-06-09
 Type: hard cutover — no legacy paths, no fallbacks, no backward compatibility, no compat shims. The current provider-client package is `provider_runtime`, sourced from the owner-controlled `llm-calling` repo and consumed by immutable git revision.
 Migrations: **0145** (`llm_calls` ledger + run-terminal error floor + oracle `interpretation_text` + drops) and **0146** (oracle event-vocabulary normalization).
-Precedents: `library-intelligence-ai-native-consolidation-hard-cutover.md` (run_kit/structured_synthesis extractions; "consolidate by invariant, not table shape" §20.2; render-contract citation unification); `0143` polymorphic `(owner_kind, owner_id)`; `0142` DELETE-then-tighten event CHECK; `search-intent-model-hard-cutover.md` (route-edge 400s, negative gates); `notes-pages-evidence-unification-hard-cutover.md` (substrate rename discipline).
+Precedents: `library-intelligence-ai-native-consolidation-hard-cutover.md` (run_kit/structured_synthesis extractions; "consolidate by invariant, not table shape" §20.2; render-contract citation unification); `0143` polymorphic `(owner_kind, owner_id)`; `0142` DELETE-then-tighten event CHECK; `search/search-intent-model-hard-cutover.md` (route-edge 400s, negative gates); `notes-pages-evidence-unification-hard-cutover.md` (substrate rename discipline).
 
 Provider-client note: this document is retained as incident evidence and the
 original harness design only. Do not implement new provider-client behavior from

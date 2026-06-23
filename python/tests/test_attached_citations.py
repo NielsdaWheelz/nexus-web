@@ -33,7 +33,9 @@ from __future__ import annotations
 from uuid import UUID, uuid4
 
 import pytest
+from sqlalchemy import bindparam
 from sqlalchemy import text as sql_text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
 from nexus.db.models import ChatRun, Fragment, Message, ResourceEdge
@@ -229,22 +231,33 @@ def _insert_read_tool_call(
                 conversation_id, user_message_id, assistant_message_id,
                 tool_name, tool_call_index,
                 scope, requested_types, result_refs, selected_context_refs,
-                provider_request_ids, status
+                provider_request_ids, source_domain, source_policy, status
             )
             VALUES (
                 :conversation_id, :user_message_id, :assistant_message_id,
                 'read_resource', :tool_call_index,
                 'read_resource', '[]'::jsonb, '[]'::jsonb, '[]'::jsonb,
-                '[]'::jsonb, 'complete'
+                '[]'::jsonb, 'private_app',
+                :source_policy,
+                'complete'
             )
             RETURNING id
             """
-        ),
+        ).bindparams(bindparam("source_policy", type_=JSONB)),
         {
             "conversation_id": conversation_id,
             "user_message_id": user_message_id,
             "assistant_message_id": assistant_message_id,
             "tool_call_index": tool_call_index,
+            "source_policy": {
+                "version": "source_boundary_policy.v1",
+                "decision": "allowed",
+                "source_domain": "private_app",
+                "mixing_allowed": False,
+                "reason": "single_domain_private_app",
+                "domains_seen": [],
+                "requested_domains": ["private_app"],
+            },
         },
     ).scalar_one()
 

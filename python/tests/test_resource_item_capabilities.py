@@ -22,6 +22,7 @@ from nexus.services.resource_items.capabilities import (
     resource_can_be_ordered_adjacency_target,
     resource_can_link,
     resource_can_own_ordered_adjacency,
+    resource_can_seed_app_search_expansion,
     resource_citation_result_type,
     resource_expansion_policy,
     resource_inspect_policy,
@@ -95,6 +96,10 @@ def test_read_search_and_citation_capabilities_are_owned_together() -> None:
     assert resource_inspect_policy(_ref("highlight")) == "none"
     assert resource_prompt_render_policy(_ref("highlight")) == "quote"
     assert resource_can_be_app_search_scope(_ref("media")) is True
+    assert resource_can_seed_app_search_expansion(_ref("media")) is True
+    assert resource_can_seed_app_search_expansion(_ref("page")) is True
+    assert resource_can_seed_app_search_expansion(_ref("oracle_reading")) is False
+    assert resource_can_seed_app_search_expansion(_ref("library_intelligence_revision")) is False
     assert expandable_resource_schemes() == (
         "media",
         "page",
@@ -145,8 +150,29 @@ def test_every_resource_scheme_has_full_capability_decisions() -> None:
             assert capability.readable == "body", scheme
             assert capability.prompt_render == "inline_body", scheme
             assert capability.citable_result_type is None, scheme
+            assert capability.app_search_scope is False, scheme
         if capability.inspectable != "none":
             assert capability.readable == "media", scheme
+
+
+def test_generated_retrieval_artifacts_have_no_search_or_citation_identity() -> None:
+    from nexus.schemas.search import ALL_RESULT_TYPES
+
+    generated_artifacts = {
+        "source_map",
+        "source_map.v1",
+        "context_summary",
+        "section_summary",
+        "document_summary",
+        "hierarchy_node",
+        "summary_node",
+    }
+    assert generated_artifacts.isdisjoint(ALL_RESULT_TYPES)
+    assert all(
+        capability.citable_result_type not in generated_artifacts
+        for capability in RESOURCE_ITEM_CAPABILITIES.values()
+    )
+    assert all(scheme not in RESOURCE_ITEM_CAPABILITIES for scheme in generated_artifacts)
 
 
 def test_derived_capability_aliases_are_absent() -> None:

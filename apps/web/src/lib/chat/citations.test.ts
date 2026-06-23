@@ -8,15 +8,18 @@ import {
 
 const validWebCitation = {
   type: "web_result",
-  id: "web-1",
+  id: "11111111-1111-4111-8111-111111111111",
   result_type: "web_result",
-  result_ref: "web-1",
-  source_id: "web-1",
+  result_ref: "11111111-1111-4111-8111-111111111111",
+  source_id: "11111111-1111-4111-8111-111111111111",
   title: "Result",
   url: "https://example.com",
   deep_link: "https://example.com",
   snippet: "Result snippet",
-  context_ref: { type: "web_result", id: "web-1" },
+  context_ref: {
+    type: "web_result",
+    id: "11111111-1111-4111-8111-111111111111",
+  },
   media_id: null,
   media_kind: null,
   score: null,
@@ -88,6 +91,37 @@ describe("citation guards", () => {
         webCitation({
           locator: { type: "web_url", url: "https://example.com" },
         }),
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects web citations with invalid snapshot identity", () => {
+    expect(isWebCitationEventData(webCitation({ source_id: "web-1" }))).toBe(
+      false,
+    );
+    expect(
+      isWebCitationEventData(
+        webCitation({ id: "22222222-2222-4222-8222-222222222222" }),
+      ),
+    ).toBe(false);
+    expect(
+      isWebCitationEventData(
+        webCitation({ result_ref: "22222222-2222-4222-8222-222222222222" }),
+      ),
+    ).toBe(false);
+    expect(
+      isWebCitationEventData(
+        webCitation({
+          context_ref: {
+            type: "web_result",
+            id: "22222222-2222-4222-8222-222222222222",
+          },
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      isWebCitationEventData(
+        webCitation({ locator: { type: "external_url", url: " " } }),
       ),
     ).toBe(false);
   });

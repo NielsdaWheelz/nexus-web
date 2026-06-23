@@ -4,7 +4,11 @@ import type {
   SearchCitationResultType,
   WebCitationEventData,
 } from "@/lib/api/sse/citations";
-import type { ChatToolStatus } from "@/lib/api/sse/events";
+import type {
+  ChatToolSourceDomain,
+  ChatToolStatus,
+  SourceBoundaryPolicy,
+} from "@/lib/api/sse/events";
 import type { RetrievalLocator } from "@/lib/api/sse/locators";
 import type { CitationOut } from "@/lib/conversations/citationOut";
 import type { ResourceActivation } from "@/lib/resources/activation";
@@ -61,6 +65,7 @@ export interface MessageRetrieval {
   tool_call_id?: string;
   tool_call_index?: number | null;
   ordinal?: number;
+  scope: string;
   result_type: SearchCitationResultType | "web_result";
   source_id: string;
   media_id: string | null;
@@ -87,6 +92,7 @@ export interface MessageRetrieval {
     | "retrieval"
     | "candidate_ledger"
     | "prompt_assembly"
+    | "tool_output"
     | "none";
   created_at?: string;
 }
@@ -117,9 +123,12 @@ export interface MessageToolCall {
   result_refs: Array<Record<string, unknown>>;
   selected_context_refs: Array<Record<string, unknown>>;
   provider_request_ids: string[];
+  source_domain?: ChatToolSourceDomain;
+  source_policy?: SourceBoundaryPolicy;
   latency_ms?: number | null;
   result_count?: number;
   selected_count?: number;
+  more_candidates_available?: boolean;
   status: ChatToolStatus;
   error_code?: string | null;
   input_preview?: string;
@@ -142,7 +151,7 @@ export interface MessageRetrievalCandidateLedger {
   included_in_prompt: boolean;
   ledger_included_in_prompt: boolean;
   linked_retrieval_included_in_prompt?: boolean | null;
-  included_in_prompt_source: "candidate_ledger" | "linked_retrieval";
+  included_in_prompt_source: "candidate_ledger" | "linked_retrieval" | "tool_output";
   included_in_prompt_reconciled: boolean;
   selection_status: string;
   selection_reason: string;
@@ -160,8 +169,91 @@ export interface MessageRerankLedger {
   budget_chars?: number | null;
   selected_chars: number;
   status: string;
-  metadata: Record<string, unknown>;
+  metadata: MessageRerankLedgerMetadata;
   created_at: string;
+}
+
+export interface MessageRerankLedgerMetadata {
+  selection_strategy?: string;
+  selection_policy_version?: string;
+  ordering_policy?: string;
+  diversity_policy?: string;
+  budget_policy?: string;
+  baseline_strategy?: string;
+  provider?: string;
+  model?: string;
+  key_mode_used?: string;
+  llm_call_id?: string;
+  llm_call_ids?: string[];
+  provider_request_id?: string;
+  provider_request_ids?: string[];
+  input_tokens?: number | null;
+  output_tokens?: number | null;
+  total_tokens?: number | null;
+  latency_ms?: number;
+  estimated_cost_usd_micros?: number;
+  cost_status?: string;
+  cost_statuses?: string[];
+  candidate_limit?: number;
+  selected_limit?: number;
+  context_budget_chars?: number;
+  scope_count?: number;
+  graph_expanded_scope_count?: number;
+  selected_source_map_count?: number;
+  rerank_input_count?: number;
+  rerank_output_count?: number;
+  query_class?: string;
+  retrieval_mode?: string;
+  policy_reason?: string;
+  rerank_mode?: string;
+  rerank_reason?: string;
+  context_route?: string;
+  context_route_reason?: string;
+  error_code?: string;
+  failure_error_code?: string;
+  private_snippet_policy?: string;
+  private_snippet_policy_version?: string;
+  private_snippet_policy_reason?: string;
+  private_snippet_key_mode_used?: string;
+  scope?: string;
+  inclusion_surface?: string;
+  result_type?: string;
+  graph_expanded_scopes?: string[];
+  resolved_scopes?: string[];
+  result_type_mix?: Record<string, number>;
+  selection_reason_counts?: Record<string, number>;
+  candidate_rerank_trace?: MessageRerankTraceItemMetadata[];
+  retrieval_guidance?: MessageRetrievalGuidanceUsageMetadata;
+}
+
+export interface MessageRerankTraceItemMetadata {
+  from: number;
+  to: number;
+  result_type: string;
+  source_id: string;
+  source?: string;
+  section?: string;
+  rank?: number;
+  score?: number;
+  selection_score?: number;
+  lexical?: number;
+  phrase?: boolean;
+  type_bonus?: number;
+  citation_quality?: number;
+  source_penalty?: number;
+  section_penalty?: number;
+  reason?: string;
+  provider_reason?: string;
+  provider_score?: number;
+  selection_status: string;
+  selection_reason: string;
+  selected: boolean;
+  included_in_prompt: boolean;
+}
+
+export interface MessageRetrievalGuidanceUsageMetadata {
+  version?: string;
+  status?: string;
 }
 
 export interface MessageDocument {
@@ -171,6 +263,48 @@ export interface MessageDocument {
     format: "plain" | "markdown";
     text: string;
   }>;
+}
+
+export type TrustRetrievalToolName =
+  | "app_search"
+  | "web_search"
+  | "read_resource"
+  | "inspect_resource";
+
+export interface TrustRetrievalPlan {
+  version: "chat_retrieval_plan.v1";
+  route_intent:
+    | "no_retrieval"
+    | "clarify_scope"
+    | "answer_from_attached_context"
+    | "private_exact_read"
+    | "private_inspect_then_read"
+    | "private_app_search"
+    | "private_deep_retrieval"
+    | "private_long_context_read"
+    | "public_web_search"
+    | "explicit_private_public_comparison";
+  source_domain: "none" | "private_app" | "public_web" | "mixed";
+  mixing_policy: "no_retrieval" | "single_domain" | "explicit_mixed";
+  query_class:
+    | "no_retrieval"
+    | "attached_context"
+    | "exact_lookup"
+    | "single_source_summary"
+    | "multi_hop_search_read_inspect_question"
+    | "cross_document_synthesis"
+    | "negative_absence_question"
+    | "global_library_question"
+    | "recency_or_conversation_question";
+  allowed_tools: TrustRetrievalToolName[];
+  blocked_tools: TrustRetrievalToolName[];
+  candidate_tool_sequence: TrustRetrievalToolName[];
+  internal_tool_sequence: TrustRetrievalToolName[];
+  reason: string;
+  context_ref_count: number;
+  search_scope_count: number;
+  search_scope_uris: string[];
+  budget_policy: "tool_output_budget_from_prompt_assembly";
 }
 
 export interface AssistantTrustTrail {
@@ -192,6 +326,7 @@ export interface AssistantTrustTrail {
     final_chars: number | null;
     started_at: string | null;
     completed_at: string | null;
+    retrieval_plan: TrustRetrievalPlan | null;
   } | null;
   prompt: {
     id: string;

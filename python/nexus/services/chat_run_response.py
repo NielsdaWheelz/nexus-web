@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from nexus.db.models import ChatRun, ChatRunEvent, Conversation, Message
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas.conversation import (
+    AssistantTrustTrailOut,
     ChatRunOut,
     ChatRunResponse,
     ChatRunStreamActivityOut,
@@ -64,11 +65,16 @@ def build_chat_run_response(db: Session, viewer_id: UUID, run: ChatRun) -> ChatR
         ),
         user_message=user_message_out,
         assistant_message=assistant_message_out,
-        stream_state=_stream_state(db, run, assistant_message.content or ""),
+        stream_state=_stream_state(db, run, assistant_message.content or "", trust_trail),
     )
 
 
-def _stream_state(db: Session, run: ChatRun, assistant_content: str) -> ChatRunStreamStateOut:
+def _stream_state(
+    db: Session,
+    run: ChatRun,
+    assistant_content: str,
+    trust_trail: AssistantTrustTrailOut,
+) -> ChatRunStreamStateOut:
     rows = (
         db.execute(
             select(ChatRunEvent)
@@ -117,7 +123,73 @@ def _stream_state(db: Session, run: ChatRun, assistant_content: str) -> ChatRunS
                 item["tool_name"] = row.payload["tool_name"]
             if isinstance(row.payload.get("input_preview"), str):
                 item["input_preview"] = row.payload["input_preview"]
+        elif row.event_type == "tool_result":
+            index = row.payload.get("tool_call_index")
+            if not isinstance(index, int):
+                folded_event_seq = row.seq
+                continue
+            item = tool_calls_by_index.setdefault(
+                index,
+                {
+                    "id": row.payload.get("tool_call_id"),
+                    "assistant_message_id": row.payload.get("assistant_message_id"),
+                    "tool_name": row.payload.get("tool_name"),
+                    "tool_call_index": index,
+                    "status": row.payload.get("status", "running"),
+                    "input_preview": None,
+                },
+            )
+            item["id"] = row.payload.get("tool_call_id") or item.get("id")
+            item["tool_name"] = row.payload.get("tool_name") or item.get("tool_name")
+            item["status"] = row.payload.get("status", item.get("status", "running"))
+            item["scope"] = row.payload.get("scope", "provider_tool")
+            item["requested_types"] = row.payload.get("types", [])
+            item["result_refs"] = row.payload.get("results", [])
+            item["source_domain"] = row.payload.get("source_domain")
+            item["source_policy"] = row.payload.get("source_policy")
+            item["result_count"] = row.payload.get("result_count") or 0
+            item["selected_count"] = row.payload.get("selected_count") or 0
+            item["provider_request_ids"] = row.payload.get("provider_request_ids") or []
+            item["error_code"] = row.payload.get("error_code")
+            item["latency_ms"] = row.payload.get("latency_ms")
+            item["more_candidates_available"] = (
+                row.payload.get("more_candidates_available") or False
+            )
         folded_event_seq = row.seq
+    for tool in trust_trail.tool_calls:
+        item = tool_calls_by_index.setdefault(
+            tool.tool_call_index,
+            {
+                "input_preview": None,
+            },
+        )
+        input_preview = item.get("input_preview")
+        item.update(
+            {
+                "id": tool.id,
+                "assistant_message_id": trust_trail.assistant_message_id,
+                "tool_name": tool.tool_name,
+                "tool_call_index": tool.tool_call_index,
+                "status": tool.status,
+                "scope": tool.scope,
+                "requested_types": tool.requested_types,
+                "query_hash": tool.query_hash,
+                "latency_ms": tool.latency_ms,
+                "error_code": tool.error_code,
+                "more_candidates_available": tool.more_candidates_available,
+                "result_refs": tool.result_refs,
+                "selected_context_refs": tool.selected_context_refs,
+                "provider_request_ids": tool.provider_request_ids,
+                "source_domain": tool.source_domain,
+                "source_policy": tool.source_policy,
+                "result_count": tool.result_count,
+                "selected_count": tool.selected_count,
+                "retrievals": tool.retrievals,
+                "candidate_ledgers": tool.candidate_ledgers,
+                "rerank_ledgers": tool.rerank_ledgers,
+                "input_preview": input_preview,
+            }
+        )
     terminal = run.status in {"complete", "error", "cancelled"}
     status = (
         "interrupted"

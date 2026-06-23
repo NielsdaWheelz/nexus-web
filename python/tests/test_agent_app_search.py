@@ -1,23 +1,48 @@
 """Agent app-search tool tests."""
 
-from typing import cast
+import asyncio
+from collections import Counter
 from uuid import uuid4
 
 import pytest
 import respx
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
 from nexus.config import clear_settings_cache
-from nexus.errors import ApiErrorCode
+from nexus.errors import ApiError, ApiErrorCode
 from nexus.schemas.search import SearchResponse
+from nexus.services import media_intelligence
 from nexus.services.agent_tools.app_search import (
-    execute_app_search,
+    APP_SEARCH_CONTEXT_CHARS,
+    APP_SEARCH_SELECTED_LIMIT,
+    AppSearchRun,
+    apply_provider_rerank_to_app_search_run,
+    persist_app_search_run,
     render_retrieved_context_blocks,
 )
+from nexus.services.agent_tools.app_search import (
+    execute_app_search as _execute_app_search,
+)
+from nexus.services.api_key_resolver import ResolvedKey
 from nexus.services.note_indexing import rebuild_note_content_index
 from nexus.services.retrieval_citation import RetrievalCitation
+from nexus.services.search import get_search_result
+from nexus.services.search.guidance import unused_guidance_metadata
+from nexus.services.search.llm_rerank import (
+    APP_SEARCH_PROVIDER_RERANK_STRATEGY,
+    APP_SEARCH_PROVIDER_RERANK_VERSION,
+)
+from nexus.services.search.policy import (
+    APP_SEARCH_DEEP_CANDIDATE_LIMIT,
+    APP_SEARCH_SCOPED_CANDIDATE_LIMIT,
+)
 from nexus.services.search.query import SearchQuery
+from nexus.services.search.selection import (
+    APP_SEARCH_SELECTION_STRATEGY,
+    APP_SEARCH_SELECTION_VERSION,
+)
 from tests.factories import (
     add_context_edge,
     create_searchable_media_in_library,
@@ -34,11 +59,340 @@ pytestmark = pytest.mark.integration
 OPENAI_EMBEDDINGS_URL = "https://api.openai.com/v1/embeddings"
 
 
+def _source_policy(
+    source_domain: str = "private_app", reason: str = "test_policy"
+) -> dict[str, object]:
+    return {
+        "version": "source_boundary_policy.v1",
+        "decision": "allowed",
+        "source_domain": source_domain,
+        "mixing_allowed": False,
+        "reason": reason,
+        "domains_seen": [],
+        "requested_domains": [source_domain],
+    }
+
+
+def _seed_tool_call(
+    session: Session,
+    *,
+    conversation_id,
+    user_message_id,
+    assistant_message_id,
+    tool_call_index: int = 0,
+    source_domain: str = "private_app",
+    source_policy: dict[str, object] | None = None,
+    status: str = "running",
+) -> None:
+    existing = session.execute(
+        text(
+            """
+            SELECT id
+            FROM message_tool_calls
+            WHERE assistant_message_id = :assistant_message_id
+              AND tool_call_index = :tool_call_index
+            """
+        ),
+        {"assistant_message_id": assistant_message_id, "tool_call_index": tool_call_index},
+    ).first()
+    if existing is not None:
+        return
+    session.execute(
+        text(
+            """
+            INSERT INTO message_tool_calls (
+                conversation_id,
+                user_message_id,
+                assistant_message_id,
+                tool_name,
+                tool_call_index,
+                scope,
+                requested_types,
+                source_domain,
+                source_policy,
+                status
+            )
+            VALUES (
+                :conversation_id,
+                :user_message_id,
+                :assistant_message_id,
+                'app_search',
+                :tool_call_index,
+                'all',
+                '[]'::jsonb,
+                :source_domain,
+                :source_policy,
+                :status
+            )
+            """
+        ).bindparams(bindparam("source_policy", type_=JSONB)),
+        {
+            "conversation_id": conversation_id,
+            "user_message_id": user_message_id,
+            "assistant_message_id": assistant_message_id,
+            "tool_call_index": tool_call_index,
+            "source_domain": source_domain,
+            "source_policy": source_policy or _source_policy(source_domain),
+            "status": status,
+        },
+    )
+
+
+def execute_app_search(
+    session: Session,
+    *,
+    source_domain: str = "private_app",
+    source_policy: dict[str, object] | None = None,
+    provider_rerank_allowed: bool = False,
+    **kwargs,
+) -> AppSearchRun:
+    _seed_tool_call(
+        session,
+        conversation_id=kwargs["conversation_id"],
+        user_message_id=kwargs["user_message_id"],
+        assistant_message_id=kwargs["assistant_message_id"],
+        tool_call_index=kwargs.get("tool_call_index", 0),
+        source_domain=source_domain,
+        source_policy=source_policy,
+    )
+    return _execute_app_search(
+        session,
+        provider_rerank_allowed=provider_rerank_allowed,
+        **kwargs,
+    )
+
+
+def test_execute_app_search_rejects_public_web_source_domain(
+    db_session: Session,
+    bootstrapped_user,
+) -> None:
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    user_message_id = create_test_message(
+        db_session,
+        conversation_id,
+        seq=1,
+        role="user",
+        content="Find private evidence",
+    )
+    assistant_message_id = create_test_message(
+        db_session,
+        conversation_id,
+        seq=2,
+        role="assistant",
+        content="",
+        status="pending",
+    )
+
+    with pytest.raises(AssertionError, match="app_search source_domain must be private_app"):
+        execute_app_search(
+            db_session,
+            viewer_id=bootstrapped_user,
+            conversation_id=conversation_id,
+            user_message_id=user_message_id,
+            assistant_message_id=assistant_message_id,
+            scopes=[],
+            query="private source",
+            source_domain="public_web",
+            source_policy=_source_policy("public_web"),
+            forced_error="stop before search",
+        )
+
+
+def test_execute_app_search_rejects_non_running_started_tool_call(
+    db_session: Session,
+    bootstrapped_user,
+) -> None:
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    user_message_id = create_test_message(
+        db_session,
+        conversation_id,
+        seq=1,
+        role="user",
+        content="Find private evidence",
+    )
+    assistant_message_id = create_test_message(
+        db_session,
+        conversation_id,
+        seq=2,
+        role="assistant",
+        content="",
+        status="pending",
+    )
+    _seed_tool_call(
+        db_session,
+        conversation_id=conversation_id,
+        user_message_id=user_message_id,
+        assistant_message_id=assistant_message_id,
+        status="complete",
+    )
+
+    with pytest.raises(AssertionError, match="app_search tool call must be running"):
+        execute_app_search(
+            db_session,
+            viewer_id=bootstrapped_user,
+            conversation_id=conversation_id,
+            user_message_id=user_message_id,
+            assistant_message_id=assistant_message_id,
+            scopes=[],
+            query="private source",
+            forced_error="stop before search",
+        )
+
+
+def test_execute_app_search_blank_query_is_typed_error(
+    db_session: Session,
+    bootstrapped_user,
+) -> None:
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    user_message_id = create_test_message(
+        db_session,
+        conversation_id,
+        seq=1,
+        role="user",
+        content="Find private evidence",
+    )
+    assistant_message_id = create_test_message(
+        db_session,
+        conversation_id,
+        seq=2,
+        role="assistant",
+        content="",
+        status="pending",
+    )
+
+    run = execute_app_search(
+        db_session,
+        viewer_id=bootstrapped_user,
+        conversation_id=conversation_id,
+        user_message_id=user_message_id,
+        assistant_message_id=assistant_message_id,
+        scopes=[],
+        query="  ",
+    )
+
+    assert run.status == "error"
+    assert run.error_code == ApiErrorCode.E_INVALID_REQUEST.value
+    assert run.selected_citations == []
+
+
 def _use_openai_embedding_provider(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("NEXUS_ENV", "local")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test-openai")
     monkeypatch.setenv("ENABLE_OPENAI", "true")
     clear_settings_cache()
+
+
+def _media_citation(source_id: str | None = None) -> RetrievalCitation:
+    source_id = source_id or str(uuid4())
+    return RetrievalCitation(
+        result_type="media",
+        source_id=source_id,
+        title=f"Media {source_id}",
+        source_label=None,
+        snippet=f"Snippet {source_id}",
+        deep_link=f"/reader/{source_id}",
+        citation_target=f"media:{source_id}",
+        citation_label=None,
+        locator=None,
+        context_ref={"type": "media", "id": source_id},
+        evidence_span_id=None,
+        media_id=source_id,
+        media_kind=None,
+        score=1.0,
+    )
+
+
+def _page_citation(page_id) -> RetrievalCitation:
+    source_id = str(page_id)
+    return RetrievalCitation(
+        result_type="page",
+        source_id=source_id,
+        title=f"Page {source_id}",
+        source_label=None,
+        snippet=f"Snippet {source_id}",
+        deep_link=f"/pages/{source_id}",
+        citation_target=f"page:{source_id}",
+        citation_label=None,
+        locator=None,
+        context_ref={"type": "page", "id": source_id},
+        evidence_span_id=None,
+        media_id=None,
+        media_kind=None,
+        score=1.0,
+    )
+
+
+def _note_block_citation(note_block_id, *, body_text: str = "") -> RetrievalCitation:
+    source_id = str(note_block_id)
+    locator = {
+        "type": "note_block_offsets",
+        "block_id": source_id,
+        "start_offset": 0,
+        "end_offset": max(1, len(body_text)),
+    }
+    return RetrievalCitation(
+        result_type="note_block",
+        source_id=source_id,
+        title=f"Note {source_id}",
+        source_label=None,
+        snippet=f"Snippet {source_id}",
+        deep_link=f"/notes/{source_id}",
+        citation_target=f"note_block:{source_id}",
+        citation_label=None,
+        locator=locator,
+        context_ref={"type": "note_block", "id": source_id},
+        evidence_span_id=None,
+        media_id=None,
+        media_kind=None,
+        score=1.0,
+        result_ref={"body_text": body_text},
+    )
+
+
+def _create_page(session: Session, user_id, title: str = "Packer page"):
+    page_id = uuid4()
+    session.execute(
+        text("INSERT INTO pages (id, user_id, title) VALUES (:id, :user_id, :title)"),
+        {"id": page_id, "user_id": user_id, "title": title},
+    )
+    return page_id
+
+
+def _create_note_block(session: Session, user_id, body_text: str):
+    note_block_id = uuid4()
+    session.execute(
+        text(
+            """
+            INSERT INTO note_blocks (id, user_id, body_pm_json, body_text)
+            VALUES (:id, :user_id, '{}'::jsonb, :body_text)
+            """
+        ),
+        {"id": note_block_id, "user_id": user_id, "body_text": body_text},
+    )
+    return note_block_id
+
+
+def _create_media_with_ready_summary(
+    session: Session,
+    user_id,
+    library_id,
+    *,
+    title: str,
+    summary_md: str,
+):
+    media_id = create_searchable_media_in_library(session, user_id, library_id, title=title)
+    ref = media_intelligence.ensure_media_unit(session, media_id=media_id)
+    session.execute(
+        text(
+            """
+            UPDATE media_summaries
+            SET status = 'ready', summary_md = :summary_md, model_name = 'test'
+            WHERE id = :summary_id
+            """
+        ),
+        {"summary_id": ref.summary_id, "summary_md": summary_md},
+    )
+    return media_id
 
 
 def test_execute_app_search_persists_retrieval_metadata(
@@ -72,6 +426,7 @@ def test_execute_app_search_persists_retrieval_metadata(
             title="App Search Needle",
         )
 
+        source_policy = _source_policy(reason="caller_owned_app_search_policy")
         run = execute_app_search(
             session,
             viewer_id=user_id,
@@ -80,6 +435,7 @@ def test_execute_app_search_persists_retrieval_metadata(
             assistant_message_id=assistant_message_id,
             scopes=[],
             query="App Search Needle",
+            source_policy=source_policy,
         )
 
         assert run is not None
@@ -91,7 +447,8 @@ def test_execute_app_search_persists_retrieval_metadata(
         tool_row = session.execute(
             text(
                 """
-                SELECT query_hash, result_refs, selected_context_refs
+                SELECT query_hash, result_refs, selected_context_refs,
+                       source_domain, source_policy
                 FROM message_tool_calls
                 WHERE id = :tool_call_id
                 """
@@ -102,15 +459,19 @@ def test_execute_app_search_persists_retrieval_metadata(
         assert tool_row[0] != "App Search Needle"
         assert any(ref["type"] == "media" for ref in tool_row[1])
         assert {"type": "media", "id": str(media_id)} in tool_row[2]
+        assert tool_row.source_domain == "private_app"
+        assert tool_row.source_policy == source_policy
 
         retrieval_rows = session.execute(
             text(
                 """
-                SELECT exact_snippet,
+                SELECT id,
+                       exact_snippet,
                        retrieval_status,
                        included_in_prompt,
                        locator,
-                       result_ref
+                       result_ref,
+                       selected
                 FROM message_retrievals
                 WHERE tool_call_id = :tool_call_id
                   AND scope = 'all'
@@ -120,11 +481,12 @@ def test_execute_app_search_persists_retrieval_metadata(
             {"tool_call_id": run.tool_call_id},
         ).fetchall()
         assert retrieval_rows
-        assert any(row[0] for row in retrieval_rows)
-        assert any(row[1] == "selected" for row in retrieval_rows)
-        assert all(row[2] is False for row in retrieval_rows)
-        assert any(row[3] for row in retrieval_rows)
-        assert all("resolver" not in row[4] for row in retrieval_rows)
+        assert any(row[1] for row in retrieval_rows)
+        assert any(row[2] == "selected" for row in retrieval_rows)
+        assert any(row[3] is True for row in retrieval_rows)
+        assert all(row[3] == row[6] for row in retrieval_rows)
+        assert any(row[4] for row in retrieval_rows)
+        assert all("resolver" not in row[5] for row in retrieval_rows)
 
         content_chunk_row = session.execute(
             text(
@@ -146,7 +508,9 @@ def test_execute_app_search_persists_retrieval_metadata(
                 """
                 SELECT COUNT(*),
                        COUNT(*) FILTER (WHERE selected),
-                       bool_and(result_ref ? 'type')
+                       bool_and(result_ref ? 'type'),
+                       bool_and(included_in_prompt = selected),
+                       array_agg(DISTINCT selection_reason ORDER BY selection_reason)
                 FROM message_retrieval_candidate_ledgers
                 WHERE tool_call_id = :tool_call_id
                 """
@@ -156,23 +520,73 @@ def test_execute_app_search_persists_retrieval_metadata(
         assert ledger_row[0] == len(retrieval_rows)
         assert ledger_row[1] == len(run.selected_citations)
         assert ledger_row[2] is True
+        assert ledger_row[3] is True
+        assert "selected_within_budget" in ledger_row[4]
 
         rerank_row = session.execute(
             text(
                 """
-                SELECT strategy, input_count, selected_count, budget_chars, selected_chars, status
+                SELECT strategy,
+                       input_count,
+                       selected_count,
+                       budget_chars,
+                       selected_chars,
+                       status,
+                       metadata
                 FROM message_rerank_ledgers
                 WHERE tool_call_id = :tool_call_id
                 """
             ),
             {"tool_call_id": run.tool_call_id},
         ).one()
-        assert rerank_row[0] == "prompt_evidence_then_context_budget"
+        assert rerank_row[0] == APP_SEARCH_SELECTION_STRATEGY
         assert rerank_row[1] == len(run.citations)
         assert rerank_row[2] == len(run.selected_citations)
         assert rerank_row[3] > 0
         assert rerank_row[4] == run.context_chars
         assert rerank_row[5] == run.status
+        metadata = dict(rerank_row[6])
+        assert metadata["selection_strategy"] == APP_SEARCH_SELECTION_STRATEGY
+        assert metadata["selection_policy_version"] == APP_SEARCH_SELECTION_VERSION
+        assert metadata["candidate_rerank_trace"]
+        assert len(metadata["candidate_rerank_trace"]) == len(run.citations)
+        assert [item["selection_reason"] for item in metadata["candidate_rerank_trace"]] == (
+            run.selection_reasons
+        )
+        assert [item["selected"] for item in metadata["candidate_rerank_trace"]] == [
+            citation in run.selected_citations for citation in run.citations
+        ]
+        assert {
+            key: value for key, value in metadata.items() if key != "candidate_rerank_trace"
+        } == {
+            "selection_strategy": APP_SEARCH_SELECTION_STRATEGY,
+            "selection_policy_version": APP_SEARCH_SELECTION_VERSION,
+            "ordering_policy": "hybrid_score_exactness_citation_quality_diversity",
+            "diversity_policy": "source_section_penalty",
+            "budget_policy": "greedy_context_budget",
+            "candidate_limit": APP_SEARCH_DEEP_CANDIDATE_LIMIT,
+            "selected_limit": APP_SEARCH_SELECTED_LIMIT,
+            "context_budget_chars": APP_SEARCH_CONTEXT_CHARS,
+            "scope_count": 0,
+            "result_type_mix": dict(Counter(citation.result_type for citation in run.citations)),
+            "query_class": "exact_lookup",
+            "retrieval_mode": "deep",
+            "policy_reason": "global_scope",
+            "rerank_mode": "deterministic",
+            "rerank_reason": "deterministic_baseline",
+            "graph_expanded_scopes": [],
+            "graph_expanded_scope_count": 0,
+            "context_route": "search_fetch_read",
+            "context_route_reason": "default_search_fetch_read",
+            "retrieval_guidance": unused_guidance_metadata(),
+            "selected_source_map_count": sum(
+                1 for citation in run.selected_citations if citation.source_map
+            ),
+            "scope": "all",
+            "resolved_scopes": [],
+            "inclusion_surface": "tool_output",
+            "selection_reason_counts": dict(Counter(run.selection_reasons)),
+        }
 
     direct_db.register_cleanup("fragments", "media_id", media_id)
     direct_db.register_cleanup("library_entries", "media_id", media_id)
@@ -182,6 +596,728 @@ def test_execute_app_search_persists_retrieval_metadata(
     direct_db.register_cleanup("memberships", "library_id", library_id)
     direct_db.register_cleanup("libraries", "id", library_id)
     direct_db.register_cleanup("users", "id", user_id)
+
+
+def test_provider_rerank_route_persists_pending_candidates_without_selected_evidence(
+    db_session: Session,
+    bootstrapped_user,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library_id = create_test_library(db_session, bootstrapped_user, "Provider Rerank Library")
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    user_message_id = create_test_message(
+        db_session,
+        conversation_id,
+        seq=1,
+        role="user",
+        content="inspect then read provider pending needle",
+    )
+    assistant_message_id = create_test_message(
+        db_session,
+        conversation_id,
+        seq=2,
+        role="assistant",
+        content="",
+        status="pending",
+    )
+    media_id = create_searchable_media_in_library(
+        db_session,
+        bootstrapped_user,
+        library_id,
+        title="provider pending needle",
+    )
+    content_chunk_id = db_session.execute(
+        text(
+            """
+            SELECT id
+            FROM content_chunks
+            WHERE owner_kind = 'media' AND owner_id = :media_id
+            ORDER BY chunk_idx ASC
+            LIMIT 1
+            """
+        ),
+        {"media_id": media_id},
+    ).scalar_one()
+    content_chunk_result = get_search_result(
+        db_session,
+        bootstrapped_user,
+        "content_chunk",
+        str(content_chunk_id),
+    )
+    monkeypatch.setattr(
+        "nexus.services.agent_tools.app_search.search",
+        lambda *args, **kwargs: SearchResponse(results=[content_chunk_result]),
+    )
+
+    run = execute_app_search(
+        db_session,
+        viewer_id=bootstrapped_user,
+        conversation_id=conversation_id,
+        user_message_id=user_message_id,
+        assistant_message_id=assistant_message_id,
+        scopes=[],
+        query="inspect then read provider pending needle",
+        provider_rerank_allowed=True,
+    )
+
+    assert run.tool_call_id is not None
+    assert run.status == "running"
+    assert run.rerank_mode == "provider_rerank"
+    assert run.selected_citations == []
+    assert set(run.selection_reasons) == {"skipped_provider_rerank_pending"}
+    row = db_session.execute(
+        text(
+            """
+            SELECT mtc.status,
+                   jsonb_array_length(mtc.selected_context_refs) AS selected_refs,
+                   COUNT(mr.id) FILTER (WHERE mr.selected) AS selected_retrievals,
+                   mrl.strategy,
+                   mrl.status AS rerank_status,
+                   mrl.selected_count,
+                   mrl.metadata
+            FROM message_tool_calls mtc
+            LEFT JOIN message_retrievals mr ON mr.tool_call_id = mtc.id
+            JOIN message_rerank_ledgers mrl ON mrl.tool_call_id = mtc.id
+            WHERE mtc.id = :tool_call_id
+            GROUP BY mtc.id, mrl.id
+            """
+        ),
+        {"tool_call_id": run.tool_call_id},
+    ).one()
+    assert row.status == "running"
+    assert row.selected_refs == 0
+    assert row.selected_retrievals == 0
+    assert row.strategy == APP_SEARCH_PROVIDER_RERANK_STRATEGY
+    assert row.rerank_status == "running"
+    assert row.selected_count == 0
+    assert set(row.metadata["selection_reason_counts"]) == {"skipped_provider_rerank_pending"}
+    content_chunk_citations = [
+        citation for citation in run.citations if citation.result_type == "content_chunk"
+    ]
+    assert content_chunk_citations
+    assert all(
+        citation.source_map is not None and citation.source_map["version"] == "source_map.v1"
+        for citation in content_chunk_citations
+    )
+
+
+def test_provider_rerank_policy_requires_chat_route_permission(
+    db_session: Session,
+    bootstrapped_user,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fail_if_called(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("provider rerank should not run without chat route permission")
+
+    monkeypatch.setattr(
+        "nexus.services.agent_tools.app_search.rerank_app_search_candidates_with_llm",
+        fail_if_called,
+    )
+    before = db_session.execute(
+        text("SELECT count(*) FROM llm_calls WHERE llm_operation = 'search_rerank'")
+    ).scalar_one()
+    library_id = create_test_library(db_session, bootstrapped_user, "Provider Gate Library")
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    user_message_id = create_test_message(
+        db_session,
+        conversation_id,
+        seq=1,
+        role="user",
+        content="inspect then read provider gated needle",
+    )
+    assistant_message_id = create_test_message(
+        db_session,
+        conversation_id,
+        seq=2,
+        role="assistant",
+        content="",
+        status="pending",
+    )
+    create_searchable_media_in_library(
+        db_session,
+        bootstrapped_user,
+        library_id,
+        title="provider gated needle",
+    )
+
+    run = execute_app_search(
+        db_session,
+        viewer_id=bootstrapped_user,
+        conversation_id=conversation_id,
+        user_message_id=user_message_id,
+        assistant_message_id=assistant_message_id,
+        scopes=[],
+        query="inspect then read provider gated needle",
+        provider_rerank_allowed=False,
+    )
+
+    after = db_session.execute(
+        text("SELECT count(*) FROM llm_calls WHERE llm_operation = 'search_rerank'")
+    ).scalar_one()
+    assert run.status == "complete"
+    assert run.rerank_mode == "deterministic"
+    assert run.rerank_reason == "deterministic_baseline"
+    assert run.selection_strategy == APP_SEARCH_SELECTION_STRATEGY
+    assert after == before
+
+
+def test_persist_app_search_run_records_packer_decisions(
+    db_session: Session,
+    bootstrapped_user,
+) -> None:
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    user_message_id = create_test_message(
+        db_session,
+        conversation_id,
+        seq=1,
+        role="user",
+        content="Find evidence",
+    )
+    assistant_message_id = create_test_message(
+        db_session,
+        conversation_id,
+        seq=2,
+        role="assistant",
+        content="",
+        status="pending",
+    )
+    oversized_note_text = "x" * APP_SEARCH_CONTEXT_CHARS
+    skipped_over_budget = _note_block_citation(
+        _create_note_block(db_session, bootstrapped_user, oversized_note_text),
+        body_text=oversized_note_text,
+    )
+    skipped_empty = _page_citation(uuid4())
+    fitting = _page_citation(_create_page(db_session, bootstrapped_user, "Fitting packer page"))
+    skipped_over_budget.selected = True
+    skipped_empty.selected = True
+
+    context_text, context_chars, selected, selection_reasons = render_retrieved_context_blocks(
+        db_session,
+        viewer_id=bootstrapped_user,
+        citations=[skipped_over_budget, skipped_empty, fitting],
+    )
+    assert context_text
+    assert context_chars == len(context_text)
+    assert selected == [fitting]
+    assert selection_reasons == [
+        "skipped_over_budget",
+        "skipped_empty_render",
+        "selected_within_budget",
+    ]
+
+    run = AppSearchRun(
+        conversation_id=conversation_id,
+        user_message_id=user_message_id,
+        assistant_message_id=assistant_message_id,
+        query_hash="synthetic",
+        scope="all",
+        resolved_scopes=[],
+        requested_types=["note_block", "page"],
+        candidate_limit=APP_SEARCH_DEEP_CANDIDATE_LIMIT,
+        scope_count=0,
+        query_class="exact_lookup",
+        retrieval_mode="deep",
+        policy_reason="global_scope",
+        graph_expanded_scopes=[],
+        citations=[skipped_over_budget, skipped_empty, fitting],
+        selected_citations=selected,
+        selection_reasons=selection_reasons,
+        context_text=context_text,
+        context_chars=context_chars,
+        latency_ms=1,
+        status="complete",
+        source_domain="private_app",
+        source_policy=_source_policy(),
+    )
+
+    _seed_tool_call(
+        db_session,
+        conversation_id=conversation_id,
+        user_message_id=user_message_id,
+        assistant_message_id=assistant_message_id,
+    )
+    persist_app_search_run(db_session, run)
+
+    rows = db_session.execute(
+        text(
+            """
+            SELECT mr.selected,
+                   mr.included_in_prompt,
+                   mr.retrieval_status,
+                   mcl.selected,
+                   mcl.included_in_prompt,
+                   mcl.selection_status,
+                   mcl.selection_reason
+            FROM message_retrievals mr
+            JOIN message_retrieval_candidate_ledgers mcl ON mcl.retrieval_id = mr.id
+            WHERE mr.tool_call_id = :tool_call_id
+            ORDER BY mr.ordinal
+            """
+        ),
+        {"tool_call_id": run.tool_call_id},
+    ).fetchall()
+    assert [tuple(row[:7]) for row in rows] == [
+        (
+            False,
+            False,
+            "excluded_by_budget",
+            False,
+            False,
+            "excluded_by_budget",
+            "skipped_over_budget",
+        ),
+        (
+            False,
+            False,
+            "retrieved",
+            False,
+            False,
+            "retrieved",
+            "skipped_empty_render",
+        ),
+        (
+            True,
+            True,
+            "selected",
+            True,
+            True,
+            "selected",
+            "selected_within_budget",
+        ),
+    ]
+
+    rerank = db_session.execute(
+        text(
+            """
+            SELECT strategy, metadata
+            FROM message_rerank_ledgers
+            WHERE tool_call_id = :tool_call_id
+            """
+        ),
+        {"tool_call_id": run.tool_call_id},
+    ).one()
+    assert rerank[0] == APP_SEARCH_SELECTION_STRATEGY
+    metadata = dict(rerank[1])
+    assert [item["selection_reason"] for item in metadata["candidate_rerank_trace"]] == [
+        "skipped_over_budget",
+        "skipped_empty_render",
+        "selected_within_budget",
+    ]
+    assert [item["selection_status"] for item in metadata["candidate_rerank_trace"]] == [
+        "excluded_by_budget",
+        "retrieved",
+        "selected",
+    ]
+    assert [item["selected"] for item in metadata["candidate_rerank_trace"]] == [
+        False,
+        False,
+        True,
+    ]
+    assert {key: value for key, value in metadata.items() if key != "candidate_rerank_trace"} == {
+        "selection_strategy": APP_SEARCH_SELECTION_STRATEGY,
+        "selection_policy_version": APP_SEARCH_SELECTION_VERSION,
+        "ordering_policy": "hybrid_score_exactness_citation_quality_diversity",
+        "diversity_policy": "source_section_penalty",
+        "budget_policy": "greedy_context_budget",
+        "candidate_limit": APP_SEARCH_DEEP_CANDIDATE_LIMIT,
+        "selected_limit": APP_SEARCH_SELECTED_LIMIT,
+        "context_budget_chars": APP_SEARCH_CONTEXT_CHARS,
+        "scope_count": 0,
+        "result_type_mix": {"note_block": 1, "page": 2},
+        "query_class": "exact_lookup",
+        "retrieval_mode": "deep",
+        "policy_reason": "global_scope",
+        "rerank_mode": "deterministic",
+        "rerank_reason": "deterministic_baseline",
+        "graph_expanded_scopes": [],
+        "graph_expanded_scope_count": 0,
+        "context_route": "search_fetch_read",
+        "context_route_reason": "default_search_fetch_read",
+        "retrieval_guidance": unused_guidance_metadata(),
+        "selected_source_map_count": 0,
+        "scope": "all",
+        "resolved_scopes": [],
+        "inclusion_surface": "tool_output",
+        "selection_reason_counts": {
+            "selected_within_budget": 1,
+            "skipped_empty_render": 1,
+            "skipped_over_budget": 1,
+        },
+    }
+    counts = db_session.execute(
+        text(
+            """
+            SELECT
+                (SELECT count(*) FROM message_retrieval_candidate_ledgers WHERE tool_call_id = :id),
+                (SELECT count(*) FROM message_rerank_ledgers WHERE tool_call_id = :id)
+            """
+        ),
+        {"id": run.tool_call_id},
+    ).one()
+    assert tuple(counts) == (3, 1)
+
+
+def test_persist_app_search_run_records_provider_rerank_strategy(
+    db_session: Session,
+    bootstrapped_user,
+) -> None:
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    user_message_id = create_test_message(
+        db_session,
+        conversation_id,
+        seq=1,
+        role="user",
+        content="provider rerank",
+    )
+    assistant_message_id = create_test_message(
+        db_session,
+        conversation_id,
+        seq=2,
+        role="assistant",
+        content="",
+        status="pending",
+    )
+    first = _page_citation(_create_page(db_session, bootstrapped_user, "Provider rerank A"))
+    second = _page_citation(_create_page(db_session, bootstrapped_user, "Provider rerank B"))
+    llm_call_id = str(uuid4())
+    run = AppSearchRun(
+        conversation_id=conversation_id,
+        user_message_id=user_message_id,
+        assistant_message_id=assistant_message_id,
+        query_hash="provider",
+        scope="all",
+        resolved_scopes=[],
+        requested_types=["page"],
+        candidate_limit=APP_SEARCH_DEEP_CANDIDATE_LIMIT,
+        scope_count=0,
+        query_class="cross_document_synthesis",
+        retrieval_mode="deep",
+        policy_reason="global_scope",
+        graph_expanded_scopes=[],
+        citations=[second, first],
+        selected_citations=[second, first],
+        selection_reasons=["selected_within_budget", "selected_within_budget"],
+        context_text="provider reranked context",
+        context_chars=len("provider reranked context"),
+        latency_ms=4,
+        status="complete",
+        source_domain="private_app",
+        source_policy=_source_policy(),
+        rerank_mode="provider_rerank",
+        rerank_reason="multi_hop_deep_retrieval",
+        rerank_trace=[
+            {
+                "from": 1,
+                "to": 0,
+                "result_type": second.result_type,
+                "source_id": second.source_id,
+                "score": second.score,
+                "selection_score": 0.98,
+                "citation_quality": 0.1,
+                "provider_score": 0.98,
+                "provider_reason": "direct_answer",
+                "reason": "provider_direct_answer",
+            },
+            {
+                "from": 0,
+                "to": 1,
+                "result_type": first.result_type,
+                "source_id": first.source_id,
+                "score": first.score,
+                "selection_score": 0.81,
+                "citation_quality": 0.1,
+                "provider_score": 0.81,
+                "provider_reason": "supporting_context",
+                "reason": "provider_supporting_context",
+            },
+        ],
+        selection_strategy=APP_SEARCH_PROVIDER_RERANK_STRATEGY,
+        selection_policy_version=APP_SEARCH_PROVIDER_RERANK_VERSION,
+        selection_metadata={
+            "baseline_strategy": APP_SEARCH_SELECTION_STRATEGY,
+            "provider": "anthropic",
+            "model": "claude-haiku-4-5-20251001",
+            "key_mode_used": "platform",
+            "llm_call_id": llm_call_id,
+            "llm_call_ids": [llm_call_id],
+            "provider_request_id": "req_provider_rerank_1",
+            "provider_request_ids": ["req_provider_rerank_1"],
+            "input_tokens": 17,
+            "output_tokens": 11,
+            "total_tokens": 28,
+            "latency_ms": 123,
+            "estimated_cost_usd_micros": 4,
+            "cost_status": "known",
+            "rerank_input_count": 2,
+            "rerank_output_count": 2,
+            "private_snippet_policy": "allowed",
+            "private_snippet_policy_reason": ("platform_llm_entitlement_allows_private_deep_route"),
+            "ordering_policy": "provider_ordered_candidates",
+        },
+    )
+
+    _seed_tool_call(
+        db_session,
+        conversation_id=conversation_id,
+        user_message_id=user_message_id,
+        assistant_message_id=assistant_message_id,
+    )
+    persist_app_search_run(db_session, run)
+
+    row = db_session.execute(
+        text(
+            """
+            SELECT mrl.strategy, mrl.input_count, mrl.selected_count, mrl.status, mrl.metadata,
+                   mtc.provider_request_ids
+            FROM message_rerank_ledgers mrl
+            JOIN message_tool_calls mtc ON mtc.id = mrl.tool_call_id
+            WHERE mrl.tool_call_id = :tool_call_id
+            """
+        ),
+        {"tool_call_id": run.tool_call_id},
+    ).one()
+    metadata = dict(row[4])
+    assert row[0] == APP_SEARCH_PROVIDER_RERANK_STRATEGY
+    assert row[1] == 2
+    assert row[2] == 2
+    assert row[3] == "complete"
+    assert metadata["selection_strategy"] == APP_SEARCH_PROVIDER_RERANK_STRATEGY
+    assert metadata["selection_policy_version"] == APP_SEARCH_PROVIDER_RERANK_VERSION
+    assert metadata["baseline_strategy"] == APP_SEARCH_SELECTION_STRATEGY
+    assert metadata["ordering_policy"] == "provider_ordered_candidates"
+    assert metadata["provider"] == "anthropic"
+    assert metadata["model"] == "claude-haiku-4-5-20251001"
+    assert metadata["provider_request_id"] == "req_provider_rerank_1"
+    assert metadata["provider_request_ids"] == ["req_provider_rerank_1"]
+    assert metadata["input_tokens"] == 17
+    assert metadata["output_tokens"] == 11
+    assert metadata["total_tokens"] == 28
+    assert metadata["latency_ms"] == 123
+    assert metadata["estimated_cost_usd_micros"] == 4
+    assert row.provider_request_ids == ["req_provider_rerank_1"]
+    assert [item["provider_reason"] for item in metadata["candidate_rerank_trace"]] == [
+        "direct_answer",
+        "supporting_context",
+    ]
+    assert [item["citation_quality"] for item in metadata["candidate_rerank_trace"]] == [
+        0.1,
+        0.1,
+    ]
+    assert [item["selection_reason"] for item in metadata["candidate_rerank_trace"]] == [
+        "selected_within_budget",
+        "selected_within_budget",
+    ]
+
+
+def test_persist_app_search_run_rejects_provider_rerank_completion_without_call_ids(
+    db_session: Session,
+    bootstrapped_user,
+) -> None:
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    user_message_id = create_test_message(
+        db_session,
+        conversation_id,
+        seq=1,
+        role="user",
+        content="provider rerank",
+    )
+    assistant_message_id = create_test_message(
+        db_session,
+        conversation_id,
+        seq=2,
+        role="assistant",
+        content="",
+        status="pending",
+    )
+    citation = _page_citation(_create_page(db_session, bootstrapped_user, "Provider rerank A"))
+    run = AppSearchRun(
+        conversation_id=conversation_id,
+        user_message_id=user_message_id,
+        assistant_message_id=assistant_message_id,
+        query_hash="provider",
+        scope="all",
+        resolved_scopes=[],
+        requested_types=["page"],
+        candidate_limit=APP_SEARCH_DEEP_CANDIDATE_LIMIT,
+        scope_count=0,
+        query_class="cross_document_synthesis",
+        retrieval_mode="deep",
+        policy_reason="global_scope",
+        graph_expanded_scopes=[],
+        citations=[citation],
+        selected_citations=[citation],
+        selection_reasons=["selected_within_budget"],
+        context_text="provider reranked context",
+        context_chars=len("provider reranked context"),
+        latency_ms=4,
+        status="complete",
+        rerank_mode="provider_rerank",
+        rerank_reason="multi_hop_deep_retrieval",
+        selection_strategy=APP_SEARCH_PROVIDER_RERANK_STRATEGY,
+        selection_policy_version=APP_SEARCH_PROVIDER_RERANK_VERSION,
+        selection_metadata={
+            "baseline_strategy": APP_SEARCH_SELECTION_STRATEGY,
+            "provider": "anthropic",
+            "model": "claude-haiku-4-5-20251001",
+            "key_mode_used": "platform",
+            "rerank_input_count": 1,
+            "rerank_output_count": 1,
+            "private_snippet_policy": "allowed",
+            "private_snippet_policy_reason": ("platform_llm_entitlement_allows_private_deep_route"),
+        },
+    )
+    _seed_tool_call(
+        db_session,
+        conversation_id=conversation_id,
+        user_message_id=user_message_id,
+        assistant_message_id=assistant_message_id,
+    )
+
+    with pytest.raises(AssertionError, match="must include llm_call_ids"):
+        persist_app_search_run(db_session, run)
+
+
+def test_provider_rerank_failure_rewrites_app_search_run_without_selected_evidence(
+    db_session: Session,
+    bootstrapped_user,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    user_message_id = create_test_message(
+        db_session,
+        conversation_id,
+        seq=1,
+        role="user",
+        content="provider rerank failure",
+    )
+    assistant_message_id = create_test_message(
+        db_session,
+        conversation_id,
+        seq=2,
+        role="assistant",
+        content="",
+        status="pending",
+    )
+    first = _page_citation(_create_page(db_session, bootstrapped_user, "Provider failure A"))
+    second = _page_citation(_create_page(db_session, bootstrapped_user, "Provider failure B"))
+    llm_call_id = str(uuid4())
+
+    async def fail_rerank(*args, **kwargs):
+        del args, kwargs
+        raise ApiError(
+            ApiErrorCode.E_LLM_TIMEOUT,
+            "Provider reranking failed.",
+            details={
+                "rerank_metadata": {
+                    "llm_call_id": llm_call_id,
+                    "provider_request_id": "req_provider_timeout",
+                    "latency_ms": 91,
+                    "estimated_cost_usd_micros": 0,
+                }
+            },
+        )
+
+    monkeypatch.setattr(
+        "nexus.services.agent_tools.app_search.rerank_app_search_candidates_with_llm",
+        fail_rerank,
+    )
+    run = AppSearchRun(
+        conversation_id=conversation_id,
+        user_message_id=user_message_id,
+        assistant_message_id=assistant_message_id,
+        query_hash="provider-failure",
+        scope="all",
+        resolved_scopes=[],
+        requested_types=["page"],
+        candidate_limit=APP_SEARCH_DEEP_CANDIDATE_LIMIT,
+        scope_count=0,
+        query_class="multi_hop_search_read_inspect_question",
+        retrieval_mode="deep",
+        policy_reason="global_scope",
+        graph_expanded_scopes=[],
+        citations=[first, second],
+        selected_citations=[],
+        selection_reasons=[
+            "skipped_provider_rerank_pending",
+            "skipped_provider_rerank_pending",
+        ],
+        context_text="",
+        context_chars=0,
+        latency_ms=4,
+        status="running",
+        source_domain="private_app",
+        source_policy=_source_policy(),
+        rerank_mode="provider_rerank",
+        rerank_reason="multi_hop_deep_retrieval",
+    )
+
+    _seed_tool_call(
+        db_session,
+        conversation_id=conversation_id,
+        user_message_id=user_message_id,
+        assistant_message_id=assistant_message_id,
+    )
+    asyncio.run(
+        apply_provider_rerank_to_app_search_run(
+            db_session,
+            viewer_id=bootstrapped_user,
+            run=run,
+            query="provider rerank failure",
+            llm_owner=object(),
+            llm=object(),
+            provider="anthropic",
+            model_name="claude-haiku-4-5-20251001",
+            resolved_key=ResolvedKey(
+                api_key="key",
+                mode="platform",
+                provider="anthropic",
+            ),
+            key_mode_requested="auto",
+        )
+    )
+
+    assert run.status == "error"
+    assert run.error_code == "E_LLM_TIMEOUT"
+    assert run.selected_citations == []
+    assert run.context_text == ""
+    assert run.selection_strategy == APP_SEARCH_PROVIDER_RERANK_STRATEGY
+    assert run.selection_metadata["rerank_output_count"] == 0
+    assert run.selection_metadata["llm_call_id"] == llm_call_id
+    assert run.selection_reasons == [
+        "skipped_provider_rerank_failed",
+        "skipped_provider_rerank_failed",
+    ]
+
+    row = db_session.execute(
+        text(
+            """
+            SELECT mtc.status, mtc.error_code, jsonb_array_length(mtc.selected_context_refs),
+                   mtc.provider_request_ids, mrl.strategy, mrl.selected_count, mrl.metadata
+            FROM message_tool_calls mtc
+            JOIN message_rerank_ledgers mrl ON mrl.tool_call_id = mtc.id
+            WHERE mtc.id = :tool_call_id
+            """
+        ),
+        {"tool_call_id": run.tool_call_id},
+    ).one()
+    metadata = dict(row.metadata)
+    assert tuple(row[:6]) == (
+        "error",
+        "E_LLM_TIMEOUT",
+        0,
+        ["req_provider_timeout"],
+        APP_SEARCH_PROVIDER_RERANK_STRATEGY,
+        0,
+    )
+    assert metadata["provider_request_id"] == "req_provider_timeout"
+    assert metadata["llm_call_id"] == llm_call_id
+    assert metadata["latency_ms"] == 91
+    assert metadata["rerank_output_count"] == 0
+    assert all(
+        item["selection_reason"] == "skipped_provider_rerank_failed"
+        for item in metadata["candidate_rerank_trace"]
+    )
 
 
 def test_execute_app_search_prioritizes_prompt_evidence_over_container_rows(
@@ -328,14 +1464,15 @@ def test_execute_app_search_builds_public_filter_query(
     )
     monkeypatch.setattr("nexus.services.agent_tools.app_search.search", fake_search)
 
-    run = execute_app_search(
-        cast(Session, object()),
+    run = _execute_app_search(
+        object(),
         viewer_id=viewer_id,
         conversation_id=conversation_id,
         user_message_id=uuid4(),
         assistant_message_id=uuid4(),
         scopes=[],
         query="attention",
+        provider_rerank_allowed=False,
         kinds=["documents"],
         formats=["pdf"],
         authors=["le-guin"],
@@ -354,6 +1491,457 @@ def test_execute_app_search_builds_public_filter_query(
     assert captured["query"].formats == ("pdf",)
     assert captured["query"].authors == ("le-guin",)
     assert captured["query"].roles == ("author",)
+
+
+def test_render_retrieved_context_blocks_renders_web_result(
+    db_session: Session,
+    bootstrapped_user,
+) -> None:
+    snapshot_id = str(uuid4())
+    citation = RetrievalCitation(
+        result_type="web_result",
+        source_id=snapshot_id,
+        title="Search result",
+        source_label="Example",
+        snippet="Open web evidence",
+        deep_link="https://example.com/research",
+        citation_target=f"external_snapshot:{snapshot_id}",
+        citation_label=None,
+        locator={
+            "type": "external_url",
+            "url": "https://example.com/research",
+            "title": "Search result",
+            "display_url": "example.com/research",
+        },
+        context_ref={"type": "web_result", "id": snapshot_id},
+        evidence_span_id=None,
+        media_id=None,
+        media_kind=None,
+        score=1.0,
+        result_ref={
+            "type": "web_result",
+            "id": snapshot_id,
+            "result_type": "web_result",
+            "result_ref": "provider:1",
+            "source_id": snapshot_id,
+            "title": "Search result",
+            "url": "https://example.com/research",
+            "display_url": "example.com/research",
+            "deep_link": "https://example.com/research",
+            "citation_target": f"external_snapshot:{snapshot_id}",
+            "locator": {
+                "type": "external_url",
+                "url": "https://example.com/research",
+                "title": "Search result",
+                "display_url": "example.com/research",
+            },
+            "snippet": "Open web evidence",
+            "extra_snippets": ["More web evidence"],
+            "published_at": "2026-06-19T00:00:00Z",
+            "source_name": "Example",
+            "rank": 1,
+            "provider": "test",
+            "provider_request_id": "request-1",
+            "context_ref": {"type": "web_result", "id": "external-1"},
+            "media_id": None,
+            "media_kind": None,
+            "score": 1.0,
+            "selected": False,
+        },
+    )
+
+    context_text, context_chars, selected, selection_reasons = render_retrieved_context_blocks(
+        db_session,
+        viewer_id=bootstrapped_user,
+        citations=[citation],
+    )
+
+    assert '<app_search_result type="web_result">' in context_text
+    assert "<url>https://example.com/research</url>" in context_text
+    assert "<excerpt>Open web evidence</excerpt>" in context_text
+    assert "<excerpt>More web evidence</excerpt>" in context_text
+    assert context_chars == len(context_text)
+    assert selected == [citation]
+    assert selection_reasons == ["selected_within_budget"]
+
+
+def test_execute_app_search_uses_moderate_candidate_depth_for_single_media_scope(
+    direct_db: DirectSessionManager,
+) -> None:
+    user_id = create_test_user_id()
+    needle = f"Scoped Candidate Policy {uuid4().hex}"
+
+    with direct_db.session() as session:
+        session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+        library_id = create_test_library(session, user_id, "Scoped Candidate Policy Library")
+        conversation_id = create_test_conversation(session, user_id)
+        user_message_id = create_test_message(
+            session,
+            conversation_id,
+            seq=1,
+            role="user",
+            content=needle,
+        )
+        assistant_message_id = create_test_message(
+            session,
+            conversation_id,
+            seq=2,
+            role="assistant",
+            content="",
+            status="pending",
+        )
+        media_id = create_searchable_media_in_library(
+            session,
+            user_id,
+            library_id,
+            title=needle,
+        )
+        add_context_edge(session, conversation_id, f"media:{media_id}")
+
+        run = execute_app_search(
+            session,
+            viewer_id=user_id,
+            conversation_id=conversation_id,
+            user_message_id=user_message_id,
+            assistant_message_id=assistant_message_id,
+            scopes=[f"media:{media_id}"],
+            query=needle,
+        )
+
+        assert run.status == "complete"
+        assert run.candidate_limit == APP_SEARCH_SCOPED_CANDIDATE_LIMIT
+        assert len(run.selected_citations) <= APP_SEARCH_SELECTED_LIMIT
+        assert run.scope_count == 1
+        assert run.query_class == "scoped_passage_lookup"
+        assert run.retrieval_mode == "fast"
+        assert run.policy_reason == "single_narrow_scope"
+        assert run.context_route == "search_fetch_read"
+
+        metadata = session.execute(
+            text(
+                """
+                SELECT metadata
+                FROM message_rerank_ledgers
+                WHERE tool_call_id = :tool_call_id
+                """
+            ),
+            {"tool_call_id": run.tool_call_id},
+        ).scalar_one()
+        assert metadata["candidate_limit"] == APP_SEARCH_SCOPED_CANDIDATE_LIMIT
+        assert metadata["selected_limit"] == APP_SEARCH_SELECTED_LIMIT
+        assert metadata["query_class"] == "scoped_passage_lookup"
+        assert metadata["policy_reason"] == "single_narrow_scope"
+        assert metadata["context_route"] == "search_fetch_read"
+        assert metadata["resolved_scopes"] == [f"media:{media_id}"]
+
+        summary_run = execute_app_search(
+            session,
+            viewer_id=user_id,
+            conversation_id=conversation_id,
+            user_message_id=user_message_id,
+            assistant_message_id=assistant_message_id,
+            tool_call_index=1,
+            scopes=[f"media:{media_id}"],
+            query="summarize this whole document",
+        )
+
+        assert summary_run.status == "complete"
+        assert summary_run.candidate_limit == APP_SEARCH_SCOPED_CANDIDATE_LIMIT
+        assert any(citation.result_type == "content_chunk" for citation in summary_run.citations)
+        assert summary_run.selected_citations
+        assert summary_run.query_class == "single_source_summary"
+        assert summary_run.retrieval_mode == "fast"
+        assert summary_run.policy_reason == "single_narrow_scope"
+        assert summary_run.context_route == "long_context_candidate"
+        assert summary_run.context_route_reason == "single_media_whole_source_query"
+
+        metadata = session.execute(
+            text(
+                """
+                SELECT metadata
+                FROM message_rerank_ledgers
+                WHERE tool_call_id = :tool_call_id
+                """
+            ),
+            {"tool_call_id": summary_run.tool_call_id},
+        ).scalar_one()
+        assert metadata["candidate_limit"] == APP_SEARCH_SCOPED_CANDIDATE_LIMIT
+        assert metadata["query_class"] == "single_source_summary"
+        assert metadata["retrieval_mode"] == "fast"
+        assert metadata["context_route"] == "long_context_candidate"
+        assert metadata["context_route_reason"] == "single_media_whole_source_query"
+
+        default_scope_summary_run = execute_app_search(
+            session,
+            viewer_id=user_id,
+            conversation_id=conversation_id,
+            user_message_id=user_message_id,
+            assistant_message_id=assistant_message_id,
+            tool_call_index=2,
+            scopes=[],
+            query=f"summarize this whole document {needle}",
+        )
+
+        assert default_scope_summary_run.status == "complete"
+        assert default_scope_summary_run.query_class == "single_source_summary"
+        assert default_scope_summary_run.context_route == "search_fetch_read"
+        assert default_scope_summary_run.context_route_reason == "default_search_fetch_read"
+
+    direct_db.register_cleanup("resource_edges", "source_id", conversation_id)
+    direct_db.register_cleanup("resource_edges", "target_id", media_id)
+    direct_db.register_cleanup("fragments", "media_id", media_id)
+    direct_db.register_cleanup("library_entries", "media_id", media_id)
+    direct_db.register_cleanup("media", "id", media_id)
+    direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+    direct_db.register_cleanup("conversations", "id", conversation_id)
+    direct_db.register_cleanup("memberships", "library_id", library_id)
+    direct_db.register_cleanup("libraries", "id", library_id)
+    direct_db.register_cleanup("users", "id", user_id)
+
+
+def test_execute_app_search_persists_bounded_label_for_long_multi_scope(
+    direct_db: DirectSessionManager,
+) -> None:
+    user_id = create_test_user_id()
+    needle = f"Multi Scope Candidate Policy {uuid4().hex}"
+
+    with direct_db.session() as session:
+        session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+        library_id = create_test_library(session, user_id, "Multi Scope Candidate Policy Library")
+        conversation_id = create_test_conversation(session, user_id)
+        user_message_id = create_test_message(
+            session,
+            conversation_id,
+            seq=1,
+            role="user",
+            content=needle,
+        )
+        assistant_message_id = create_test_message(
+            session,
+            conversation_id,
+            seq=2,
+            role="assistant",
+            content="",
+            status="pending",
+        )
+        media_ids = [
+            create_searchable_media_in_library(
+                session,
+                user_id,
+                library_id,
+                title=needle if index == 0 else f"Multi Scope Filler {index} {uuid4().hex}",
+            )
+            for index in range(6)
+        ]
+        for media_id in media_ids:
+            add_context_edge(session, conversation_id, f"media:{media_id}")
+        resolved_scopes = [f"media:{media_id}" for media_id in media_ids]
+
+        run = execute_app_search(
+            session,
+            viewer_id=user_id,
+            conversation_id=conversation_id,
+            user_message_id=user_message_id,
+            assistant_message_id=assistant_message_id,
+            scopes=resolved_scopes,
+            query=needle,
+        )
+
+        assert run.status == "complete"
+        assert run.scope == "multi_scope:6"
+        assert run.resolved_scopes == resolved_scopes
+        assert run.candidate_limit == APP_SEARCH_DEEP_CANDIDATE_LIMIT
+        assert run.retrieval_mode == "deep"
+        assert run.policy_reason == "multiple_scopes"
+
+        tool_scope, metadata = session.execute(
+            text(
+                """
+                SELECT mtc.scope, mrl.metadata
+                FROM message_tool_calls mtc
+                JOIN message_rerank_ledgers mrl ON mrl.tool_call_id = mtc.id
+                WHERE mtc.id = :tool_call_id
+                """
+            ),
+            {"tool_call_id": run.tool_call_id},
+        ).one()
+        assert tool_scope == "multi_scope:6"
+        assert metadata["scope"] == "multi_scope:6"
+        assert metadata["resolved_scopes"] == resolved_scopes
+        assert metadata["candidate_limit"] == APP_SEARCH_DEEP_CANDIDATE_LIMIT
+
+    direct_db.register_cleanup("resource_edges", "source_id", conversation_id)
+    for media_id in media_ids:
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+    direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+    direct_db.register_cleanup("conversations", "id", conversation_id)
+    direct_db.register_cleanup("memberships", "library_id", library_id)
+    direct_db.register_cleanup("libraries", "id", library_id)
+    direct_db.register_cleanup("users", "id", user_id)
+
+
+def test_execute_app_search_error_preserves_resolved_candidate_policy(
+    direct_db: DirectSessionManager,
+) -> None:
+    user_id = create_test_user_id()
+
+    with direct_db.session() as session:
+        session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+        library_id = create_test_library(session, user_id, "Scoped Error Policy Library")
+        conversation_id = create_test_conversation(session, user_id)
+        user_message_id = create_test_message(
+            session,
+            conversation_id,
+            seq=1,
+            role="user",
+            content="Find scoped evidence",
+        )
+        assistant_message_id = create_test_message(
+            session,
+            conversation_id,
+            seq=2,
+            role="assistant",
+            content="",
+            status="pending",
+        )
+        media_id = create_searchable_media_in_library(
+            session,
+            user_id,
+            library_id,
+            title="Scoped Error Policy Needle",
+        )
+        add_context_edge(session, conversation_id, f"media:{media_id}")
+
+        run = execute_app_search(
+            session,
+            viewer_id=user_id,
+            conversation_id=conversation_id,
+            user_message_id=user_message_id,
+            assistant_message_id=assistant_message_id,
+            scopes=[f"media:{media_id}"],
+            query="Scoped Error Policy Needle",
+            kinds=["not-a-kind"],
+        )
+
+        assert run.status == "error"
+        assert run.scope == f"media:{media_id}"
+        assert run.candidate_limit == APP_SEARCH_SCOPED_CANDIDATE_LIMIT
+        assert run.scope_count == 1
+        assert run.retrieval_mode == "fast"
+        assert run.policy_reason == "single_narrow_scope"
+
+        metadata = session.execute(
+            text(
+                """
+                SELECT metadata
+                FROM message_rerank_ledgers
+                WHERE tool_call_id = :tool_call_id
+                """
+            ),
+            {"tool_call_id": run.tool_call_id},
+        ).scalar_one()
+        assert metadata["scope"] == f"media:{media_id}"
+        assert metadata["candidate_limit"] == APP_SEARCH_SCOPED_CANDIDATE_LIMIT
+        assert metadata["policy_reason"] == "single_narrow_scope"
+        assert metadata["result_type_mix"] == {}
+        assert metadata["resolved_scopes"] == [f"media:{media_id}"]
+        selected_chars = session.execute(
+            text(
+                """
+                SELECT selected_chars
+                FROM message_rerank_ledgers
+                WHERE tool_call_id = :tool_call_id
+                """
+            ),
+            {"tool_call_id": run.tool_call_id},
+        ).scalar_one()
+        assert selected_chars == 0
+
+    direct_db.register_cleanup("resource_edges", "source_id", conversation_id)
+    direct_db.register_cleanup("resource_edges", "target_id", media_id)
+    direct_db.register_cleanup("fragments", "media_id", media_id)
+    direct_db.register_cleanup("library_entries", "media_id", media_id)
+    direct_db.register_cleanup("media", "id", media_id)
+    direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+    direct_db.register_cleanup("conversations", "id", conversation_id)
+    direct_db.register_cleanup("memberships", "library_id", library_id)
+    direct_db.register_cleanup("libraries", "id", library_id)
+    direct_db.register_cleanup("users", "id", user_id)
+
+
+def test_execute_app_search_uses_deep_policy_for_default_conversation_scope(
+    direct_db: DirectSessionManager,
+) -> None:
+    user_id = create_test_user_id()
+    needle = f"Conversation Scope Policy {uuid4().hex}"
+
+    with direct_db.session() as session:
+        session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+        library_id = create_test_library(session, user_id, "Conversation Scope Policy Library")
+        conversation_id = create_test_conversation(session, user_id)
+        user_message_id = create_test_message(
+            session,
+            conversation_id,
+            seq=1,
+            role="user",
+            content=needle,
+        )
+        assistant_message_id = create_test_message(
+            session,
+            conversation_id,
+            seq=2,
+            role="assistant",
+            content="",
+            status="pending",
+        )
+        media_id = create_searchable_media_in_library(
+            session,
+            user_id,
+            library_id,
+            title="Conversation Scope Policy Anchor",
+        )
+        highlight_id, note_block_id = create_test_highlight_note(
+            session,
+            user_id,
+            media_id,
+            body=needle,
+        )
+        add_context_edge(session, conversation_id, f"highlight:{highlight_id}")
+
+        run = execute_app_search(
+            session,
+            viewer_id=user_id,
+            conversation_id=conversation_id,
+            user_message_id=user_message_id,
+            assistant_message_id=assistant_message_id,
+            scopes=[],
+            query=needle,
+            kinds=["notes"],
+        )
+
+        assert run.status == "complete"
+        assert run.scope == f"conversation:{conversation_id}"
+        assert run.resolved_scopes == [f"conversation:{conversation_id}"]
+        assert run.candidate_limit == APP_SEARCH_DEEP_CANDIDATE_LIMIT
+        assert run.retrieval_mode == "deep"
+        assert run.policy_reason == "conversation_scope"
+
+    direct_db.register_cleanup("resource_edges", "source_id", conversation_id)
+    direct_db.register_cleanup("resource_edges", "source_id", highlight_id)
+    direct_db.register_cleanup("resource_edges", "target_id", note_block_id)
+    direct_db.register_cleanup("note_blocks", "id", note_block_id)
+    direct_db.register_cleanup("highlights", "id", highlight_id)
+    direct_db.register_cleanup("fragments", "media_id", media_id)
+    direct_db.register_cleanup("library_entries", "media_id", media_id)
+    direct_db.register_cleanup("media", "id", media_id)
+    direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+    direct_db.register_cleanup("conversations", "id", conversation_id)
+    direct_db.register_cleanup("memberships", "library_id", library_id)
+    direct_db.register_cleanup("libraries", "id", library_id)
+    direct_db.register_cleanup("users", "id", user_id)
+    direct_db.register_cleanup("pages", "user_id", user_id)
 
 
 def test_li_revision_reference_dropped_from_default_scope_resolution(
@@ -556,6 +2144,107 @@ def test_default_scope_resolution_uses_conversation_for_highlight_context(
     )
 
 
+def test_default_app_search_graph_expands_context_for_broad_queries(
+    db_session: Session,
+    bootstrapped_user,
+) -> None:
+    from nexus.services.resource_graph.edges import create_edge
+    from nexus.services.resource_graph.refs import ResourceRef
+    from nexus.services.resource_graph.schemas import EdgeCreate
+
+    needle = f"Graph expansion topic {uuid4().hex}"
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    user_message_id = create_test_message(db_session, conversation_id, seq=1, content=needle)
+    assistant_message_id = create_test_message(
+        db_session,
+        conversation_id,
+        seq=2,
+        role="assistant",
+        content="",
+        status="pending",
+    )
+    library_id = create_test_library(db_session, bootstrapped_user, "Graph Expansion Library")
+    media_id = create_searchable_media_in_library(
+        db_session, bootstrapped_user, library_id, title=needle
+    )
+    page_id = uuid4()
+    note_block_id = uuid4()
+    db_session.execute(
+        text("INSERT INTO pages (id, user_id, title) VALUES (:id, :user_id, 'Graph page')"),
+        {"id": page_id, "user_id": bootstrapped_user},
+    )
+    db_session.execute(
+        text(
+            """
+            INSERT INTO note_blocks (id, user_id, body_pm_json, body_text)
+            VALUES (:id, :user_id, '{"type":"paragraph"}'::jsonb, 'Graph note')
+            """
+        ),
+        {"id": note_block_id, "user_id": bootstrapped_user},
+    )
+    page_ref = ResourceRef(scheme="page", id=page_id)
+    note_ref = ResourceRef(scheme="note_block", id=note_block_id)
+    media_ref = ResourceRef(scheme="media", id=media_id)
+    create_edge(
+        db_session,
+        viewer_id=bootstrapped_user,
+        input=EdgeCreate(
+            source=page_ref,
+            target=note_ref,
+            kind="context",
+            origin="user",
+            source_order_key="0000000001",
+        ),
+    )
+    create_edge(
+        db_session,
+        viewer_id=bootstrapped_user,
+        input=EdgeCreate(source=note_ref, target=media_ref, kind="context", origin="user"),
+    )
+    add_context_edge(db_session, conversation_id, f"page:{page_id}")
+    db_session.commit()
+
+    broad = execute_app_search(
+        db_session,
+        viewer_id=bootstrapped_user,
+        conversation_id=conversation_id,
+        user_message_id=user_message_id,
+        assistant_message_id=assistant_message_id,
+        scopes=[],
+        query=f"compare themes {needle}",
+    )
+    exact = execute_app_search(
+        db_session,
+        viewer_id=bootstrapped_user,
+        conversation_id=conversation_id,
+        user_message_id=user_message_id,
+        assistant_message_id=assistant_message_id,
+        scopes=[],
+        query=needle,
+        tool_call_index=1,
+    )
+
+    assert broad.resolved_scopes == [f"conversation:{conversation_id}", f"media:{media_id}"]
+    assert broad.graph_expanded_scopes == [f"media:{media_id}"]
+    assert broad.scope == "multi_scope:2"
+    assert broad.policy_reason == "multiple_scopes"
+    metadata = db_session.execute(
+        text(
+            """
+            SELECT metadata
+            FROM message_rerank_ledgers
+            WHERE tool_call_id = :tool_call_id
+            """
+        ),
+        {"tool_call_id": broad.tool_call_id},
+    ).scalar_one()
+    assert metadata["graph_expanded_scopes"] == [f"media:{media_id}"]
+    assert metadata["graph_expanded_scope_count"] == 1
+
+    assert exact.resolved_scopes == [f"conversation:{conversation_id}"]
+    assert exact.graph_expanded_scopes == []
+
+
 def test_execute_app_search_error_output_escapes_attribute_quotes(
     db_session: Session,
     bootstrapped_user,
@@ -619,13 +2308,25 @@ def test_execute_app_search_preserves_typed_provider_error_code(
             content="",
             status="pending",
         )
+        # The embeddings-500 error path rolls the session back before
+        # persist_app_search_run runs load_started_tool_source_policy, so the
+        # started tool-call row must be committed before the search runs (an
+        # uncommitted seed would be discarded by that rollback).
+        _seed_tool_call(
+            session,
+            conversation_id=conversation_id,
+            user_message_id=user_message_id,
+            assistant_message_id=assistant_message_id,
+            source_domain="private_app",
+            status="running",
+        )
         session.commit()
 
         respx.post(OPENAI_EMBEDDINGS_URL).respond(
             500,
             json={"error": {"message": "provider unavailable"}},
         )
-        run = execute_app_search(
+        run = _execute_app_search(
             session,
             viewer_id=user_id,
             conversation_id=conversation_id,
@@ -633,6 +2334,7 @@ def test_execute_app_search_preserves_typed_provider_error_code(
             assistant_message_id=assistant_message_id,
             scopes=[],
             query="typed provider failure",
+            provider_rerank_allowed=False,
         )
 
         assert run is not None
@@ -1399,9 +3101,13 @@ def test_render_retrieved_context_requires_matching_current_evidence(
                 """
                 SELECT cc.id,
                        cc.owner_id,
-                       ccp.block_id
+                       ccp.block_id,
+                       cc.primary_evidence_span_id,
+                       es.span_text,
+                       es.citation_label
                 FROM content_chunks cc
                 JOIN content_chunk_parts ccp ON ccp.chunk_id = cc.id
+                JOIN evidence_spans es ON es.id = cc.primary_evidence_span_id
                 WHERE cc.owner_kind = 'media' AND cc.owner_id = :media_id
                 ORDER BY cc.chunk_idx ASC, ccp.part_idx ASC
                 LIMIT 1
@@ -1409,6 +3115,44 @@ def test_render_retrieved_context_requires_matching_current_evidence(
             ),
             {"media_id": media_id},
         ).one()
+        current_citation = RetrievalCitation(
+            result_type="content_chunk",
+            source_id=str(row[0]),
+            title="Evidence Guard Needle",
+            source_label=None,
+            snippet=str(row[4]),
+            deep_link="/media/test",
+            citation_target=f"content_chunk:{row[0]}",
+            citation_label=str(row[5]),
+            locator=None,
+            context_ref={
+                "type": "content_chunk",
+                "id": str(row[0]),
+                "evidence_span_ids": [str(row[3])],
+            },
+            evidence_span_id=str(row[3]),
+            media_id=str(media_id),
+            media_kind="web_article",
+            score=1.0,
+        )
+
+        context_text, context_chars, selected, selection_reasons = render_retrieved_context_blocks(
+            session,
+            viewer_id=user_id,
+            citations=[current_citation],
+        )
+
+        assert '<app_search_result type="content_chunk">' in context_text
+        assert context_chars == len(context_text)
+        assert selected == [current_citation]
+        assert selection_reasons == ["selected_within_budget"]
+        assert current_citation.source_map is not None
+        assert current_citation.source_map["version"] == "source_map.v1"
+        assert current_citation.source_map["context_header"]
+        assert current_citation.source_map["read_uri"] == f"content_chunk:{row[0]}"
+        assert current_citation.source_map["part_count"] >= 1
+        assert "citation_target" not in current_citation.source_map
+
         span_text = "wrong current evidence"
         mismatch_span_id = session.execute(
             text(
@@ -1467,7 +3211,7 @@ def test_render_retrieved_context_requires_matching_current_evidence(
             score=1.0,
         )
 
-        context_text, context_chars, selected = render_retrieved_context_blocks(
+        context_text, context_chars, selected, selection_reasons = render_retrieved_context_blocks(
             session,
             viewer_id=user_id,
             citations=[citation],
@@ -1476,6 +3220,7 @@ def test_render_retrieved_context_requires_matching_current_evidence(
         assert context_text == ""
         assert context_chars == 0
         assert selected == []
+        assert selection_reasons == ["skipped_empty_render"]
 
     direct_db.register_cleanup("fragments", "media_id", media_id)
     direct_db.register_cleanup("library_entries", "media_id", media_id)
@@ -1483,3 +3228,137 @@ def test_render_retrieved_context_requires_matching_current_evidence(
     direct_db.register_cleanup("memberships", "library_id", library_id)
     direct_db.register_cleanup("libraries", "id", library_id)
     direct_db.register_cleanup("users", "id", user_id)
+
+
+def test_render_retrieved_context_skips_oversized_and_empty_candidates(
+    db_session: Session,
+    bootstrapped_user,
+) -> None:
+    oversized_note_text = "x" * APP_SEARCH_CONTEXT_CHARS
+    oversized = _note_block_citation(
+        _create_note_block(db_session, bootstrapped_user, oversized_note_text),
+        body_text=oversized_note_text,
+    )
+    oversized.selected = True
+    empty = _page_citation(uuid4())
+    empty.selected = True
+    fitting = _page_citation(_create_page(db_session, bootstrapped_user, "Fitting render page"))
+
+    context_text, context_chars, selected, selection_reasons = render_retrieved_context_blocks(
+        db_session,
+        viewer_id=bootstrapped_user,
+        citations=[oversized, empty, fitting],
+    )
+
+    assert "Fitting render page" in context_text
+    assert context_chars == len(context_text)
+    assert selected == [fitting]
+    assert fitting.selected is True
+    assert oversized.selected is False
+    assert empty.selected is False
+    assert selection_reasons == [
+        "skipped_over_budget",
+        "skipped_empty_render",
+        "selected_within_budget",
+    ]
+
+
+def test_render_retrieved_context_does_not_forward_generated_media_summary(
+    db_session: Session,
+    bootstrapped_user,
+) -> None:
+    library_id = create_test_library(db_session, bootstrapped_user, "Generated Summary Library")
+    media_id = _create_media_with_ready_summary(
+        db_session,
+        bootstrapped_user,
+        library_id,
+        title="Media with generated summary",
+        summary_md="Generated summary must not become app-search evidence.",
+    )
+    citation = _media_citation(str(media_id))
+
+    context_text, context_chars, selected, selection_reasons = render_retrieved_context_blocks(
+        db_session,
+        viewer_id=bootstrapped_user,
+        citations=[citation],
+    )
+
+    assert "Media with generated summary" in context_text
+    assert "Generated summary must not become app-search evidence" not in context_text
+    assert "<summary>" not in context_text
+    assert context_chars == len(context_text)
+    assert selected == [citation]
+    assert selection_reasons == ["selected_within_budget"]
+
+
+def test_render_retrieved_context_skips_uncitable_candidates(
+    db_session: Session,
+    bootstrapped_user,
+) -> None:
+    page = _page_citation(_create_page(db_session, bootstrapped_user, "Uncitable page"))
+    page.citation_target = None
+
+    context_text, context_chars, selected, selection_reasons = render_retrieved_context_blocks(
+        db_session,
+        viewer_id=bootstrapped_user,
+        citations=[page],
+    )
+
+    assert context_text == ""
+    assert context_chars == 0
+    assert selected == []
+    assert page.selected is False
+    assert selection_reasons == ["skipped_uncitable"]
+
+
+def test_render_retrieved_context_counts_join_separators_against_budget(
+    db_session: Session,
+    bootstrapped_user,
+) -> None:
+    note_wrapper_chars = len(
+        '<app_search_result type="note_block">\n<content></content>\n</app_search_result>'
+    )
+    first = _note_block_citation(
+        _create_note_block(
+            db_session,
+            bootstrapped_user,
+            "x" * (APP_SEARCH_CONTEXT_CHARS - note_wrapper_chars - 1),
+        )
+    )
+    second = _page_citation(_create_page(db_session, bootstrapped_user, "Separator page"))
+
+    context_text, context_chars, selected, selection_reasons = render_retrieved_context_blocks(
+        db_session,
+        viewer_id=bootstrapped_user,
+        citations=[first, second],
+    )
+
+    assert context_chars == len(context_text)
+    assert context_chars == APP_SEARCH_CONTEXT_CHARS - 1
+    assert len(context_text) <= APP_SEARCH_CONTEXT_CHARS
+    assert selected == [first]
+    assert selection_reasons == ["selected_within_budget", "skipped_over_budget"]
+
+
+def test_render_retrieved_context_ledgers_selected_limit(
+    db_session: Session,
+    bootstrapped_user,
+) -> None:
+    citations = [
+        _page_citation(_create_page(db_session, bootstrapped_user, f"Limit page {index}"))
+        for index in range(APP_SEARCH_SELECTED_LIMIT + 1)
+    ]
+
+    context_text, context_chars, selected, selection_reasons = render_retrieved_context_blocks(
+        db_session,
+        viewer_id=bootstrapped_user,
+        citations=citations,
+    )
+
+    assert context_chars == len(context_text)
+    assert len(selected) == APP_SEARCH_SELECTED_LIMIT
+    assert selected == citations[:APP_SEARCH_SELECTED_LIMIT]
+    assert citations[-1].selected is False
+    assert selection_reasons == ["selected_within_budget"] * APP_SEARCH_SELECTED_LIMIT + [
+        "skipped_selected_limit"
+    ]

@@ -3658,6 +3658,9 @@ class ChatRunEventType(str, PyEnum):
     tool_call_delta = "tool_call_delta"
     tool_call_done = "tool_call_done"
     tool_result = "tool_result"
+    retrieval_plan = "retrieval_plan"
+    prompt_assembly = "prompt_assembly"
+    tool_ledger_snapshot = "tool_ledger_snapshot"
     citation_index = "citation_index"
     context_ref_added = "context_ref_added"
     done = "done"
@@ -3852,6 +3855,7 @@ class LLMCall(Base):
     reasoning_effort: Mapped[str] = mapped_column(Text, nullable=False)
     key_mode_requested: Mapped[str] = mapped_column(Text, nullable=False)
     key_mode_used: Mapped[str] = mapped_column(Text, nullable=False)
+    call_status: Mapped[str] = mapped_column(Text, nullable=False)
     input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     total_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -3875,9 +3879,7 @@ class LLMCall(Base):
     )
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1"))
     retry_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
-    terminal_attempt_status: Mapped[str] = mapped_column(
-        Text, nullable=False, server_default=text("'success'")
-    )
+    terminal_attempt_status: Mapped[str] = mapped_column(Text, nullable=False)
     provider_attempts: Mapped[list[dict[str, object]] | None] = mapped_column(
         JSONB(none_as_null=True), nullable=True
     )
@@ -3918,10 +3920,6 @@ class LLMCall(Base):
         CheckConstraint(
             "attempt_count >= 1 AND retry_count >= 0 AND retry_count <= attempt_count - 1",
             name="ck_llm_calls_attempt_counts",
-        ),
-        CheckConstraint(
-            "terminal_attempt_status IN ('success', 'retryable_error', 'terminal_error', 'abandoned')",
-            name="ck_llm_calls_terminal_attempt_status",
         ),
         CheckConstraint(
             "provider_attempts IS NULL OR jsonb_typeof(provider_attempts) = 'array'",
@@ -4222,6 +4220,8 @@ class MessageToolCall(Base):
         nullable=False,
         server_default=text("'[]'::jsonb"),
     )
+    source_domain: Mapped[str] = mapped_column(Text, nullable=False)
+    source_policy: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
     error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -4268,6 +4268,10 @@ class MessageToolCall(Base):
         CheckConstraint(
             "jsonb_typeof(provider_request_ids) = 'array'",
             name="ck_message_tool_calls_provider_request_ids_array",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(source_policy) = 'object'",
+            name="ck_message_tool_calls_source_policy_object",
         ),
         CheckConstraint(
             "latency_ms IS NULL OR latency_ms >= 0",
@@ -4664,6 +4668,7 @@ class ChatRun(Base):
     )
     reasoning: Mapped[str] = mapped_column(Text, nullable=False)
     key_mode: Mapped[str] = mapped_column(Text, nullable=False)
+    retrieval_plan: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
     cancel_requested_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True),
         nullable=True,
@@ -4699,6 +4704,10 @@ class ChatRun(Base):
         CheckConstraint(
             "key_mode IN ('auto', 'byok_only', 'platform_only')",
             name="ck_chat_runs_key_mode",
+        ),
+        CheckConstraint(
+            "retrieval_plan IS NULL OR jsonb_typeof(retrieval_plan) = 'object'",
+            name="ck_chat_runs_retrieval_plan_object",
         ),
         UniqueConstraint(
             "owner_user_id",
@@ -4968,6 +4977,7 @@ class ChatRunEvent(Base):
         CheckConstraint(
             "event_type IN ('meta', 'assistant_activity', 'assistant_text_delta', "
             "'tool_call_start', 'tool_call_delta', 'tool_call_done', 'tool_result', "
+            "'retrieval_plan', 'prompt_assembly', 'tool_ledger_snapshot', "
             "'citation_index', 'context_ref_added', 'done')",
             name="ck_chat_run_events_event_type",
         ),

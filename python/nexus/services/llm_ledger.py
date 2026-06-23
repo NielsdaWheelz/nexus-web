@@ -3,12 +3,12 @@
 ``observed_generate`` / ``observed_generate_stream`` wrap the two ``ModelRuntime``
 call shapes. Each provider call emits ``llm.request.started`` and exactly one of
 ``llm.request.finished`` / ``llm.request.failed`` (one shared field schema), and
-records exactly one ``llm_calls`` row — on success AND failure — with
-``call_seq`` allocated per owner. The row is flushed, not committed: it lives in
-the caller's transaction (run_kit doctrine). Stream consumers that stop early
-must call ``aclose()`` or ``record_abandoned()`` on the returned stream handle
-before their terminal commit. The harness owns this mechanics; surfaces own
-prompts, schemas, and finalization.
+records exactly one ``llm_calls`` row with ``call_seq`` allocated per owner. The
+row is inserted as ``started`` before opening the provider call, then updated to
+``succeeded`` or ``failed``. Stream consumers that stop early must call
+``aclose()`` or ``record_abandoned()`` on the returned stream handle before their
+terminal commit. The harness owns this mechanics; surfaces own prompts, schemas,
+and finalization.
 
 :func:`emit_llm_request_started` owns the ``llm.request.*`` field schema. The
 saved-key probe (``user_keys.test_user_key``) shares this emitter — it logs the
@@ -22,7 +22,7 @@ import asyncio
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Literal, cast
+from typing import Literal, TypedDict, cast
 from uuid import UUID
 
 from provider_runtime import (
@@ -55,6 +55,24 @@ from nexus.services.chat_run_usage import usage_log_fields, usage_provider_json,
 from nexus.services.redact import safe_kv
 
 logger = get_logger(__name__)
+
+
+class _AttemptFields(TypedDict):
+    attempt_count: int
+    retry_count: int
+    terminal_attempt_status: str
+    provider_attempts: list[dict[str, object]] | None
+
+
+class _CostFields(TypedDict):
+    input_cost_usd_micros: int | None
+    output_cost_usd_micros: int | None
+    cache_write_cost_usd_micros: int | None
+    cache_read_cost_usd_micros: int | None
+    reasoning_cost_usd_micros: int | None
+    total_cost_usd_micros: int | None
+    cost_status: str
+    pricing_snapshot: dict[str, object]
 
 
 def _provider_api_key(api_key: str, *, key_mode: str) -> ProviderApiKey:
@@ -100,6 +118,7 @@ async def observed_generate(
         key_mode_requested=key_mode_requested,
         key_mode_used=key_mode_used,
     )
+    call.start(db)
     try:
         response = await llm.generate(
             request,
@@ -134,10 +153,10 @@ def observed_generate_stream(
 ) -> ObservedModelStream:
     """One observed streamed provider call, yielding chunks through unchanged.
 
-    The row is written when the terminal (``done``) chunk is observed — before
-    yielding it, so a consumer that stops iterating there still leaves a row —
-    or, failing that, when the stream raises, ends without a terminal chunk, or
-    the consumer closes the stream handle before terminal.
+    The started row is committed before the provider accepts work. Terminal state
+    is written when the terminal chunk is observed — before yielding it — or,
+    failing that, when the stream raises, ends without a terminal chunk, or the
+    consumer closes the stream handle before terminal.
     """
     call = _begin(
         owner=owner,
@@ -148,15 +167,21 @@ def observed_generate_stream(
         key_mode_requested=key_mode_requested,
         key_mode_used=key_mode_used,
     )
-    return ObservedModelStream(
-        db=db,
-        call=call,
-        source=llm.stream(
+    call.start(db)
+    try:
+        source = llm.stream(
             request,
             key=_provider_api_key(api_key, key_mode=key_mode_used),
             timeout_s=timeout_s,
             cancel=cancel,
-        ),
+        )
+    except Exception as exc:
+        call.record(db, usage=None, provider_request_id=None, exc=exc)
+        raise
+    return ObservedModelStream(
+        db=db,
+        call=call,
+        source=source,
     )
 
 
@@ -373,7 +398,7 @@ def emit_llm_request_started(
     return LlmRequestLog(fields, time.monotonic())
 
 
-@dataclass(frozen=True)
+@dataclass
 class _Call:
     """One started provider call: its telemetry handle + the owner/key-mode the
     ledger row carries beyond the shared ``llm.request.*`` schema."""
@@ -383,6 +408,48 @@ class _Call:
     key_mode_used: str
     request: ModelCall
     log: LlmRequestLog
+    id: UUID | None = None
+    row: LLMCall | None = None
+
+    def start(self, db: Session) -> None:
+        """Persist the started call before the provider accepts work."""
+        if self.id is not None:
+            return
+        fields = self.log.fields
+        cost_fields = _cost_fields(
+            request=self.request,
+            usage=None,
+            streaming=bool(fields["streaming"]),
+        )
+        row = LLMCall(
+            owner_kind=self.owner.kind,
+            owner_id=self.owner.id,
+            call_seq=_next_call_seq(db, self.owner),
+            provider=fields["provider"],
+            provider_route=self.request.model.route or self.request.model.provider,
+            model_name=fields["model_name"],
+            llm_operation=fields["llm_operation"],
+            streaming=fields["streaming"],
+            reasoning_effort=fields["reasoning_effort"],
+            key_mode_requested=self.key_mode_requested,
+            key_mode_used=self.key_mode_used,
+            call_status="started",
+            latency_ms=None,
+            error_class=None,
+            error_detail=None,
+            provider_request_id=None,
+            attempt_count=1,
+            retry_count=0,
+            terminal_attempt_status="started",
+            provider_attempts=None,
+            provider_usage=None,
+            **cost_fields,
+        )
+        db.add(row)
+        db.flush()
+        self.id = row.id
+        self.row = row
+        db.commit()
 
     def record(
         self,
@@ -396,6 +463,7 @@ class _Call:
         attempts: tuple[RetryAttempt, ...] | None = None,
     ) -> None:
         """Emit the terminal telemetry event and flush the one ledger row."""
+        self.start(db)
         if provider_request_id is None and isinstance(exc, ModelCallError):
             provider_request_id = exc.provider_request_id
         if attempts is None and isinstance(exc, ModelCallError):
@@ -409,7 +477,7 @@ class _Call:
                 error_class = (
                     api_error_code_for_model_call(exc.error_code).value
                     if isinstance(exc, ModelCallError)
-                    else type(exc).__name__
+                    else ApiErrorCode.E_LLM_PROVIDER_DOWN.value
                     if exc is not None
                     else "Exception"
                 )
@@ -431,29 +499,35 @@ class _Call:
             usage=usage,
             streaming=bool(fields["streaming"]),
         )
-        db.add(
-            LLMCall(
-                owner_kind=self.owner.kind,
-                owner_id=self.owner.id,
-                call_seq=_next_call_seq(db, self.owner),
-                provider=fields["provider"],
-                provider_route=self.request.model.route or self.request.model.provider,
-                model_name=fields["model_name"],
-                llm_operation=fields["llm_operation"],
-                streaming=fields["streaming"],
-                reasoning_effort=fields["reasoning_effort"],
-                key_mode_requested=self.key_mode_requested,
-                key_mode_used=self.key_mode_used,
-                **usage_tokens(usage),
-                latency_ms=latency_ms,
-                error_class=error_class,
-                error_detail=error_detail,
-                provider_request_id=provider_request_id,
-                **cost_fields,
-                **attempt_fields,
-                provider_usage=usage_provider_json(usage),
-            )
-        )
+        assert self.id is not None
+        row = self.row or db.get(LLMCall, self.id)
+        assert row is not None
+        tokens = usage_tokens(usage)
+        row.call_status = "succeeded" if error_class is None else "failed"
+        row.input_tokens = tokens["input_tokens"]
+        row.output_tokens = tokens["output_tokens"]
+        row.total_tokens = tokens["total_tokens"]
+        row.reasoning_tokens = tokens["reasoning_tokens"]
+        row.cache_write_input_tokens = tokens["cache_write_input_tokens"]
+        row.cache_read_input_tokens = tokens["cache_read_input_tokens"]
+        row.cached_input_tokens = tokens["cached_input_tokens"]
+        row.latency_ms = latency_ms
+        row.error_class = error_class
+        row.error_detail = error_detail
+        row.provider_request_id = provider_request_id
+        row.input_cost_usd_micros = cost_fields["input_cost_usd_micros"]
+        row.output_cost_usd_micros = cost_fields["output_cost_usd_micros"]
+        row.cache_write_cost_usd_micros = cost_fields["cache_write_cost_usd_micros"]
+        row.cache_read_cost_usd_micros = cost_fields["cache_read_cost_usd_micros"]
+        row.reasoning_cost_usd_micros = cost_fields["reasoning_cost_usd_micros"]
+        row.total_cost_usd_micros = cost_fields["total_cost_usd_micros"]
+        row.cost_status = str(cost_fields["cost_status"])
+        row.pricing_snapshot = cost_fields["pricing_snapshot"]
+        row.attempt_count = attempt_fields["attempt_count"]
+        row.retry_count = attempt_fields["retry_count"]
+        row.terminal_attempt_status = str(attempt_fields["terminal_attempt_status"])
+        row.provider_attempts = attempt_fields["provider_attempts"]
+        row.provider_usage = usage_provider_json(usage)
         db.flush()
 
 
@@ -483,7 +557,7 @@ def _attempt_fields(
     *,
     attempts: tuple[RetryAttempt, ...],
     terminal_attempt_status: str,
-) -> dict[str, object]:
+) -> _AttemptFields:
     if not attempts:
         return {
             "attempt_count": 1,
@@ -504,7 +578,7 @@ def _cost_fields(
     request: ModelCall,
     usage: TokenUsage | None,
     streaming: bool,
-) -> dict[str, object]:
+) -> _CostFields:
     capability = DEFAULT_CATALOG.require_capabilities(request.model)
     cache_write_ttl = _effective_cache_write_ttl(
         request,
@@ -555,6 +629,10 @@ def _effective_cache_write_ttl(
 
 
 def _next_call_seq(db: Session, owner: LlmCallOwner) -> int:
+    db.execute(
+        text("SELECT pg_advisory_xact_lock(hashtext(:kind), hashtext(:id))"),
+        {"kind": owner.kind, "id": str(owner.id)},
+    )
     return int(
         db.execute(
             text(

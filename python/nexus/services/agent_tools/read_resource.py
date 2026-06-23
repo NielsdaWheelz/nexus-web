@@ -31,6 +31,7 @@ from xml.sax.saxutils import escape as xml_escape
 
 from sqlalchemy.orm import Session
 
+from nexus.services.agent_tools.handoff import selected_by_app_search
 from nexus.services.chat_quote import render_quote_block
 from nexus.services.media_read_map import (
     READ_DOCUMENT_MAX_CHARS,
@@ -157,11 +158,15 @@ def execute_read_resource(
     *,
     viewer_id: UUID,
     conversation_id: UUID,
+    assistant_message_id: UUID | None = None,
     uri: str,
 ) -> ReadResourceResult:
     """Read the exact text of a referenced resource for a chat turn."""
 
-    if not _readable_in_conversation(db, conversation_id, uri):
+    if not _readable_in_conversation(db, conversation_id, uri) and not (
+        assistant_message_id is not None
+        and selected_by_app_search(db, assistant_message_id=assistant_message_id, uri=uri)
+    ):
         return ReadResourceResult(
             uri=uri,
             status="error",

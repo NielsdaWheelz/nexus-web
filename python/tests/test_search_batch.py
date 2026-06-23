@@ -2,7 +2,7 @@
 
 ``search_scopes`` runs ``base`` against each scope, unions the rows, dedupes by
 ``(result.type, str(result.id))`` keeping the max score, sorts by ``(-score,
-str(id))``, and caps at ``base.limit`` with a default (unpaginated) page. We
+str(id))``, and caps at the shared result limit with a default page. We
 monkeypatch the ``search`` symbol ``batch.py`` imports so ``fake_search`` returns
 canned, scope-keyed responses — no DB, pure merge/sort/cap behavior.
 """
@@ -22,6 +22,7 @@ from nexus.schemas.search import (
     SearchResultOut,
 )
 from nexus.services.search import batch
+from nexus.services.search.constants import MAX_LIMIT
 from nexus.services.search.query import SearchQuery, SearchScope
 
 pytestmark = pytest.mark.unit
@@ -174,6 +175,24 @@ def test_cap_truncates_to_base_limit_and_page_is_default(monkeypatch: pytest.Mon
     assert response.page == SearchPageInfo()
     assert response.page.has_more is False
     assert response.page.next_cursor is None
+
+
+def test_cap_honors_shared_max_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    rows = [(uuid4(), 1.0 - index / 100) for index in range(MAX_LIMIT + 5)]
+
+    def fake_search(db: object, viewer_id: object, query: SearchQuery) -> SearchResponse:
+        if query.scope.kind != "media":
+            raise AssertionError(f"unexpected scope {query.scope!r}")
+        return SearchResponse(results=[_conversation_result(rid, score) for rid, score in rows])
+
+    response = _run(
+        monkeypatch,
+        fake_search,
+        SearchQuery(text="q", limit=MAX_LIMIT + 100),
+        [SearchScope("media", uuid4())],
+    )
+
+    assert len(response.results) == MAX_LIMIT
 
 
 def test_per_scope_scope_is_honored_via_replace(monkeypatch: pytest.MonkeyPatch) -> None:

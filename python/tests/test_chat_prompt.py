@@ -24,6 +24,10 @@ def test_system_prompt_names_resources_and_strict_tools():
     assert 'inspect_resource("media:...")' in prompt
     assert "read_resource(uri)" in prompt
     assert "app_search(query=..., scopes=[...])" in prompt
+    assert "answer from them without app_search" in prompt
+    assert "several focused app_search calls" in prompt
+    assert "Do not mix private app_search evidence with public web_search evidence" in prompt
+    assert "Use web_search only for public web or outside-source discovery" in prompt
     assert "pinned" not in prompt.lower()
 
 

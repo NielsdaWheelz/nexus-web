@@ -2,7 +2,8 @@ import threading
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
+from sqlalchemy.dialects.postgresql import JSONB
 
 from nexus.db.models import ResourceEdge
 from nexus.errors import ApiError, ApiErrorCode, ForbiddenError, NotFoundError
@@ -1453,6 +1454,8 @@ def test_tombstone_rejects_persisted_contributor_refs(db_session):
                 tool_name,
                 tool_call_index,
                 scope,
+                source_domain,
+                source_policy,
                 status
             )
             VALUES (
@@ -1463,15 +1466,26 @@ def test_tombstone_rejects_persisted_contributor_refs(db_session):
                 'app_search',
                 0,
                 'all',
+                'private_app',
+                :source_policy,
                 'complete'
             )
             """
-        ),
+        ).bindparams(bindparam("source_policy", type_=JSONB)),
         {
             "tool_call_id": tool_call_id,
             "conversation_id": conversation_id,
             "user_message_id": user_message_id,
             "assistant_message_id": assistant_message_id,
+            "source_policy": {
+                "version": "source_boundary_policy.v1",
+                "decision": "allowed",
+                "source_domain": "private_app",
+                "mixing_allowed": False,
+                "reason": "single_domain_private_app",
+                "domains_seen": [],
+                "requested_domains": ["private_app"],
+            },
         },
     )
     db_session.execute(

@@ -21,11 +21,122 @@ function isValidSource(value: unknown): value is SearchSourceMetadata {
 
   const source = value as Record<string, unknown>;
   return (
+    hasOnlyKeys(source, [
+      "media_id",
+      "media_kind",
+      "title",
+      "contributors",
+      "published_date",
+      "summary_md",
+    ]) &&
     typeof source.media_id === "string" &&
     typeof source.media_kind === "string" &&
     typeof source.title === "string" &&
-    Array.isArray(source.contributors)
+    Array.isArray(source.contributors) &&
+    (source.published_date === undefined ||
+      source.published_date === null ||
+      typeof source.published_date === "string") &&
+    (source.summary_md === undefined ||
+      source.summary_md === null ||
+      typeof source.summary_md === "string")
   );
+}
+
+function hasOnlyKeys(record: Record<string, unknown>, allowedKeys: readonly string[]) {
+  return Object.keys(record).every((key) => allowedKeys.includes(key));
+}
+
+function hasOnlySearchResultKeys(row: Record<string, unknown>) {
+  const baseKeys = [
+    "type",
+    "id",
+    "score",
+    "snippet",
+    "title",
+    "source_label",
+    "media_id",
+    "media_kind",
+    "resource_ref",
+    "activation",
+    "citation_target",
+    "context_ref",
+  ];
+  switch (row.type) {
+    case "media":
+    case "episode":
+    case "video":
+      return hasOnlyKeys(row, [...baseKeys, "source"]);
+    case "podcast":
+      return hasOnlyKeys(row, [...baseKeys, "contributors"]);
+    case "contributor":
+      return hasOnlyKeys(row, [...baseKeys, "contributor_handle", "contributor"]);
+    case "content_chunk":
+      return hasOnlyKeys(row, [
+        ...baseKeys,
+        "source_kind",
+        "evidence_span_ids",
+        "source",
+        "citation_label",
+        "locator",
+      ]);
+    case "fragment":
+      return hasOnlyKeys(row, [...baseKeys, "source", "citation_label", "locator"]);
+    case "page":
+    case "conversation":
+      return hasOnlyKeys(row, baseKeys);
+    case "note_block":
+      return hasOnlyKeys(row, [
+        ...baseKeys,
+        "body_text",
+        "highlight_excerpt",
+        "locator",
+      ]);
+    case "highlight":
+      return hasOnlyKeys(row, [
+        ...baseKeys,
+        "color",
+        "exact",
+        "source",
+        "citation_label",
+        "locator",
+      ]);
+    case "message":
+      return hasOnlyKeys(row, [...baseKeys, "conversation_id", "seq", "locator"]);
+    case "evidence_span":
+      return hasOnlyKeys(row, [
+        ...baseKeys,
+        "source",
+        "evidence_span_id",
+        "citation_label",
+        "locator",
+      ]);
+    case "reader_apparatus_item":
+      return hasOnlyKeys(row, [
+        ...baseKeys,
+        "source",
+        "apparatus_kind",
+        "locator",
+      ]);
+    case "web_result":
+      return hasOnlyKeys(row, [
+        ...baseKeys,
+        "result_type",
+        "source_id",
+        "result_ref",
+        "url",
+        "display_url",
+        "extra_snippets",
+        "published_at",
+        "source_name",
+        "rank",
+        "provider",
+        "provider_request_id",
+        "locator",
+        "selected",
+      ]);
+    default:
+      return false;
+  }
 }
 
 function resolveSource(
@@ -53,16 +164,17 @@ function locatorMatchesSearchType(
   type: SearchType,
   locator: RetrievalLocator,
 ): boolean {
-  if (
-    type === "content_chunk" ||
-    type === "evidence_span" ||
-    type === "reader_apparatus_item"
-  ) {
+  if (type === "evidence_span") {
     return (
       isMediaRetrievalLocator(locator) || locator.type === "note_block_offsets"
     );
   }
-  if (type === "fragment" || type === "highlight")
+  if (
+    type === "content_chunk" ||
+    type === "fragment" ||
+    type === "highlight" ||
+    type === "reader_apparatus_item"
+  )
     return isMediaRetrievalLocator(locator);
   if (type === "note_block") return locator.type === "note_block_offsets";
   if (type === "message") return locator.type === "message_offsets";
@@ -138,6 +250,9 @@ export function normalizeSearchResult(result: unknown): SearchApiResult | null {
   }
 
   const row = result as Record<string, unknown>;
+  if (!hasOnlySearchResultKeys(row)) {
+    return null;
+  }
   if (typeof row.id !== "string") {
     return null;
   }
@@ -164,6 +279,9 @@ export function normalizeSearchResult(result: unknown): SearchApiResult | null {
     return null;
   }
   const contextRef = row.context_ref as Record<string, unknown>;
+  if (!hasOnlyKeys(contextRef, ["type", "id", "evidence_span_ids", "locator"])) {
+    return null;
+  }
   if (hasLegacyArtifactIdentityKey(row)) {
     return null;
   }
@@ -175,6 +293,7 @@ export function normalizeSearchResult(result: unknown): SearchApiResult | null {
     return null;
   }
   let evidenceSpanIds: string[] | undefined;
+  let contextRefLocator: RetrievalLocator | null | undefined;
   if (contextRef.evidence_span_ids !== undefined) {
     if (
       !Array.isArray(contextRef.evidence_span_ids) ||
@@ -183,6 +302,17 @@ export function normalizeSearchResult(result: unknown): SearchApiResult | null {
       return null;
     }
     evidenceSpanIds = contextRef.evidence_span_ids;
+  }
+  if (contextRef.locator !== undefined && contextRef.locator !== null) {
+    if (
+      !isRetrievalLocator(contextRef.locator) ||
+      !locatorMatchesSearchType(contextRef.type as SearchType, contextRef.locator)
+    ) {
+      return null;
+    }
+    contextRefLocator = contextRef.locator;
+  } else if (contextRef.locator === null) {
+    contextRefLocator = null;
   }
   const base = {
     id: row.id,
@@ -200,6 +330,7 @@ export function normalizeSearchResult(result: unknown): SearchApiResult | null {
       type: contextRef.type as SearchType,
       id: contextRef.id,
       ...(evidenceSpanIds ? { evidence_span_ids: evidenceSpanIds } : {}),
+      ...(contextRefLocator !== undefined ? { locator: contextRefLocator } : {}),
     },
   };
 
@@ -249,7 +380,7 @@ export function normalizeSearchResult(result: unknown): SearchApiResult | null {
     }
     case "podcast": {
       const contributors = normalizeContributorCredits(row.contributors);
-      if (!contributors) {
+      if (!contributors || base.context_ref.type !== "podcast") {
         return null;
       }
       return {
@@ -340,6 +471,9 @@ export function normalizeSearchResult(result: unknown): SearchApiResult | null {
       };
     }
     case "page":
+      if (base.context_ref.type !== "page") {
+        return null;
+      }
       return {
         ...base,
         type: "page",
@@ -348,7 +482,8 @@ export function normalizeSearchResult(result: unknown): SearchApiResult | null {
       if (
         typeof row.body_text !== "string" ||
         !isRetrievalLocator(row.locator) ||
-        !locatorMatchesSearchType("note_block", row.locator)
+        !locatorMatchesSearchType("note_block", row.locator) ||
+        base.context_ref.type !== "note_block"
       ) {
         return null;
       }
@@ -366,7 +501,8 @@ export function normalizeSearchResult(result: unknown): SearchApiResult | null {
         typeof row.exact !== "string" ||
         !isRetrievalLocator(row.locator) ||
         !locatorMatchesSearchType("highlight", row.locator) ||
-        !isValidSource(row.source)
+        !isValidSource(row.source) ||
+        base.context_ref.type !== "highlight"
       ) {
         return null;
       }
@@ -393,7 +529,8 @@ export function normalizeSearchResult(result: unknown): SearchApiResult | null {
         typeof row.conversation_id !== "string" ||
         typeof row.seq !== "number" ||
         !isRetrievalLocator(row.locator) ||
-        !locatorMatchesSearchType("message", row.locator)
+        !locatorMatchesSearchType("message", row.locator) ||
+        base.context_ref.type !== "message"
       ) {
         return null;
       }

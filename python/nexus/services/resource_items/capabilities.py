@@ -371,6 +371,11 @@ def resource_can_be_app_search_scope(ref: ResourceRef) -> bool:
     return capability_for_ref(ref).app_search_scope
 
 
+def resource_can_seed_app_search_expansion(ref: ResourceRef) -> bool:
+    capability = capability_for_ref(ref)
+    return capability.chat_subject != "none" and capability.chat_subject != "generated_output"
+
+
 def resource_can_activate_conversation_search_scope(ref: ResourceRef) -> bool:
     return capability_for_ref(ref).conversation_search_scope
 

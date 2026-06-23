@@ -1,0 +1,269 @@
+{
+  "media_titles": {
+    "exact": "retrieval eval exact {suffix}",
+    "scoped": "retrieval eval scoped {suffix}",
+    "source_summary": "retrieval eval source summary {suffix}",
+    "cross_alpha": "retrieval eval cross alpha {suffix}",
+    "cross_beta": "retrieval eval cross beta {suffix}",
+    "cross_gamma": "retrieval eval cross gamma {suffix}",
+    "cross_delta": "retrieval eval cross delta {suffix}",
+    "cross_epsilon": "retrieval eval cross epsilon {suffix}",
+    "cross_zeta": "retrieval eval cross zeta {suffix}",
+    "cross_eta": "retrieval eval cross eta {suffix}",
+    "cross_theta": "retrieval eval cross theta {suffix}",
+    "cross_iota": "retrieval eval cross iota {suffix}",
+    "cross_kappa": "retrieval eval cross kappa {suffix}",
+    "cross_compare_alpha": "compare retrieval eval cross alpha {suffix}",
+    "cross_compare_beta": "compare retrieval eval cross beta {suffix}",
+    "cross_compare_gamma": "compare retrieval eval cross gamma {suffix}",
+    "cross_compare_delta": "compare retrieval eval cross delta {suffix}",
+    "cross_compare_epsilon": "compare retrieval eval cross epsilon {suffix}",
+    "cross_compare_zeta": "compare retrieval eval cross zeta {suffix}",
+    "cross_compare_eta": "compare retrieval eval cross eta {suffix}",
+    "cross_compare_theta": "compare retrieval eval cross theta {suffix}",
+    "cross_compare_iota": "compare retrieval eval cross iota {suffix}",
+    "cross_compare_kappa": "compare retrieval eval cross kappa {suffix}",
+    "cross_contrast_alpha": "contrast retrieval eval cross alpha {suffix}",
+    "cross_contrast_beta": "contrast retrieval eval cross beta {suffix}",
+    "cross_contrast_gamma": "contrast retrieval eval cross gamma {suffix}",
+    "cross_contrast_delta": "contrast retrieval eval cross delta {suffix}",
+    "cross_contrast_epsilon": "contrast retrieval eval cross epsilon {suffix}",
+    "cross_contrast_zeta": "contrast retrieval eval cross zeta {suffix}",
+    "cross_contrast_eta": "contrast retrieval eval cross eta {suffix}",
+    "cross_contrast_theta": "contrast retrieval eval cross theta {suffix}",
+    "cross_contrast_iota": "contrast retrieval eval cross iota {suffix}",
+    "cross_contrast_kappa": "contrast retrieval eval cross kappa {suffix}",
+    "global": "retrieval eval global {suffix}",
+    "multi_hop": "retrieval eval multi hop {suffix}"
+  },
+  "messages": {
+    "conversation_recency": "retrieval eval conversation recency {suffix}",
+    "multi_hop_message": "retrieval eval multi hop {suffix}"
+  },
+  "cases": [
+    {
+      "id": "exact_media_title",
+      "query": "retrieval eval exact {suffix}",
+      "class": "exact_lookup",
+      "expected_stage": "selected",
+      "min_candidate_recall": 1.0,
+      "min_selected_pack_recall": 1.0,
+      "max_selected_false_positive_count": 3,
+      "kinds": ["documents"],
+      "scope_refs": ["library"],
+      "relevance": [
+        { "media_key": "exact", "grade": 3 }
+      ],
+      "provider_rerank_top_refs": [
+        { "media_key": "exact", "score": 0.99, "reason": "direct_answer" }
+      ]
+    },
+    {
+      "id": "scoped_media_passage",
+      "query": "retrieval eval scoped {suffix}",
+      "class": "scoped_passage_lookup",
+      "expected_stage": "selected",
+      "min_candidate_recall": 1.0,
+      "min_selected_pack_recall": 1.0,
+      "max_selected_false_positive_count": 3,
+      "kinds": ["documents"],
+      "scope_refs": ["media:scoped"],
+      "relevance": [
+        { "media_key": "scoped", "grade": 3 }
+      ],
+      "provider_rerank_top_refs": [
+        { "media_key": "scoped", "score": 0.99, "reason": "direct_answer" }
+      ]
+    },
+    {
+      "id": "single_source_summary",
+      "query": "summarize whole document retrieval eval source summary {suffix}",
+      "class": "single_source_summary",
+      "expected_stage": "selected",
+      "min_candidate_recall": 1.0,
+      "min_selected_pack_recall": 1.0,
+      "max_selected_false_positive_count": 0,
+      "kinds": ["documents"],
+      "scope_refs": ["media:source_summary"],
+      "relevance": [
+        { "media_key": "source_summary", "grade": 3 }
+      ],
+      "provider_rerank_top_refs": [
+        { "media_key": "source_summary", "score": 0.99, "reason": "direct_answer" }
+      ]
+    },
+    {
+      "id": "cross_document_synthesis",
+      "query": "retrieval eval cross {suffix}",
+      "class": "cross_document_synthesis",
+      "expected_stage": "candidate_generation_failure",
+      "min_candidate_recall": 0.0,
+      "min_selected_pack_recall": 0.0,
+      "max_selected_false_positive_count": 6,
+      "kinds": ["documents"],
+      "scope_refs": ["library"],
+      "relevance": [
+        { "media_key": "cross_alpha", "grade": 3 },
+        { "media_key": "cross_beta", "grade": 2 },
+        { "media_key": "cross_gamma", "grade": 2 },
+        { "media_key": "cross_delta", "grade": 2 },
+        { "media_key": "cross_epsilon", "grade": 2 },
+        { "media_key": "cross_zeta", "grade": 2 },
+        { "media_key": "cross_eta", "grade": 2 },
+        { "media_key": "cross_theta", "grade": 2 },
+        { "media_key": "cross_iota", "grade": 2 },
+        { "media_key": "cross_kappa", "grade": 2 }
+      ],
+      "provider_rerank_top_refs": [
+        { "media_key": "cross_alpha", "score": 0.99, "reason": "direct_answer" },
+        { "media_key": "cross_beta", "score": 0.94, "reason": "supporting_context" },
+        { "media_key": "cross_gamma", "score": 0.93, "reason": "supporting_context" },
+        { "media_key": "cross_delta", "score": 0.92, "reason": "supporting_context" },
+        { "media_key": "cross_epsilon", "score": 0.91, "reason": "supporting_context" },
+        { "media_key": "cross_zeta", "score": 0.9, "reason": "supporting_context" },
+        { "media_key": "cross_eta", "score": 0.89, "reason": "supporting_context" },
+        { "media_key": "cross_theta", "score": 0.88, "reason": "supporting_context" },
+        { "media_key": "cross_iota", "score": 0.87, "reason": "supporting_context" },
+        { "media_key": "cross_kappa", "score": 0.86, "reason": "supporting_context" }
+      ]
+    },
+    {
+      "id": "cross_document_compare",
+      "query": "compare retrieval eval cross {suffix}",
+      "class": "cross_document_synthesis",
+      "expected_stage": "evidence_packing_failure",
+      "min_candidate_recall": 1.0,
+      "min_selected_pack_recall": 0.0,
+      "max_selected_false_positive_count": 6,
+      "kinds": ["documents"],
+      "scope_refs": ["library"],
+      "relevance": [
+        { "media_key": "cross_compare_alpha", "grade": 3 },
+        { "media_key": "cross_compare_beta", "grade": 2 },
+        { "media_key": "cross_compare_gamma", "grade": 2 },
+        { "media_key": "cross_compare_delta", "grade": 2 },
+        { "media_key": "cross_compare_epsilon", "grade": 2 },
+        { "media_key": "cross_compare_zeta", "grade": 2 },
+        { "media_key": "cross_compare_eta", "grade": 2 },
+        { "media_key": "cross_compare_theta", "grade": 2 },
+        { "media_key": "cross_compare_iota", "grade": 2 },
+        { "media_key": "cross_compare_kappa", "grade": 2 }
+      ],
+      "provider_rerank_top_refs": [
+        { "media_key": "cross_compare_alpha", "score": 0.99, "reason": "direct_answer" },
+        { "media_key": "cross_compare_beta", "score": 0.94, "reason": "supporting_context" },
+        { "media_key": "cross_compare_gamma", "score": 0.93, "reason": "supporting_context" },
+        { "media_key": "cross_compare_delta", "score": 0.92, "reason": "supporting_context" },
+        { "media_key": "cross_compare_epsilon", "score": 0.91, "reason": "supporting_context" },
+        { "media_key": "cross_compare_zeta", "score": 0.9, "reason": "supporting_context" },
+        { "media_key": "cross_compare_eta", "score": 0.89, "reason": "supporting_context" },
+        { "media_key": "cross_compare_theta", "score": 0.88, "reason": "supporting_context" },
+        { "media_key": "cross_compare_iota", "score": 0.87, "reason": "supporting_context" },
+        { "media_key": "cross_compare_kappa", "score": 0.86, "reason": "supporting_context" }
+      ]
+    },
+    {
+      "id": "cross_document_contrast",
+      "query": "contrast retrieval eval cross {suffix}",
+      "class": "cross_document_synthesis",
+      "expected_stage": "evidence_packing_failure",
+      "min_candidate_recall": 1.0,
+      "min_selected_pack_recall": 0.0,
+      "max_selected_false_positive_count": 6,
+      "kinds": ["documents"],
+      "scope_refs": ["library"],
+      "relevance": [
+        { "media_key": "cross_contrast_alpha", "grade": 3 },
+        { "media_key": "cross_contrast_beta", "grade": 2 },
+        { "media_key": "cross_contrast_gamma", "grade": 2 },
+        { "media_key": "cross_contrast_delta", "grade": 2 },
+        { "media_key": "cross_contrast_epsilon", "grade": 2 },
+        { "media_key": "cross_contrast_zeta", "grade": 2 },
+        { "media_key": "cross_contrast_eta", "grade": 2 },
+        { "media_key": "cross_contrast_theta", "grade": 2 },
+        { "media_key": "cross_contrast_iota", "grade": 2 },
+        { "media_key": "cross_contrast_kappa", "grade": 2 }
+      ],
+      "provider_rerank_top_refs": [
+        { "media_key": "cross_contrast_alpha", "score": 0.99, "reason": "direct_answer" },
+        { "media_key": "cross_contrast_beta", "score": 0.94, "reason": "supporting_context" },
+        { "media_key": "cross_contrast_gamma", "score": 0.93, "reason": "supporting_context" },
+        { "media_key": "cross_contrast_delta", "score": 0.92, "reason": "supporting_context" },
+        { "media_key": "cross_contrast_epsilon", "score": 0.91, "reason": "supporting_context" },
+        { "media_key": "cross_contrast_zeta", "score": 0.9, "reason": "supporting_context" },
+        { "media_key": "cross_contrast_eta", "score": 0.89, "reason": "supporting_context" },
+        { "media_key": "cross_contrast_theta", "score": 0.88, "reason": "supporting_context" },
+        { "media_key": "cross_contrast_iota", "score": 0.87, "reason": "supporting_context" },
+        { "media_key": "cross_contrast_kappa", "score": 0.86, "reason": "supporting_context" }
+      ]
+    },
+    {
+      "id": "global_library_question",
+      "query": "retrieval eval global {suffix}",
+      "class": "global_library_question",
+      "expected_stage": "selected",
+      "min_candidate_recall": 1.0,
+      "min_selected_pack_recall": 1.0,
+      "max_selected_false_positive_count": 3,
+      "kinds": ["documents"],
+      "scope_refs": ["library"],
+      "relevance": [
+        { "media_key": "global", "grade": 3 }
+      ],
+      "provider_rerank_top_refs": [
+        { "media_key": "global", "score": 0.99, "reason": "direct_answer" }
+      ]
+    },
+    {
+      "id": "multi_hop_search_read_inspect",
+      "query": "retrieval eval multi hop {suffix}",
+      "class": "multi_hop_search_read_inspect_question",
+      "expected_stage": "candidate_generation_failure",
+      "min_candidate_recall": 0.6666,
+      "min_selected_pack_recall": 0.6666,
+      "max_selected_false_positive_count": 3,
+      "kinds": ["documents", "conversations"],
+      "scope_refs": ["library"],
+      "relevance": [
+        { "media_key": "multi_hop", "grade": 3 },
+        { "media_key": "cross_eta", "grade": 2 },
+        { "message_key": "multi_hop_message", "grade": 2 }
+      ],
+      "provider_rerank_top_refs": [
+        { "media_key": "multi_hop", "score": 0.99, "reason": "direct_answer" },
+        { "media_key": "cross_eta", "score": 0.88, "reason": "supporting_context" },
+        { "message_key": "multi_hop_message", "score": 0.86, "reason": "supporting_context" }
+      ]
+    },
+    {
+      "id": "negative_absence",
+      "query": "absent {missing_suffix}",
+      "class": "negative_absence_question",
+      "expected_stage": "expected_absence",
+      "min_candidate_recall": null,
+      "min_selected_pack_recall": null,
+      "max_selected_false_positive_count": 2,
+      "kinds": ["documents"],
+      "scope_refs": ["library"],
+      "relevance": [],
+      "provider_rerank_top_refs": []
+    },
+    {
+      "id": "conversation_recency",
+      "query": "retrieval eval conversation recency {suffix}",
+      "class": "recency_or_conversation_question",
+      "expected_stage": "selected",
+      "min_candidate_recall": 1.0,
+      "min_selected_pack_recall": 1.0,
+      "max_selected_false_positive_count": 0,
+      "kinds": ["conversations"],
+      "scope_refs": ["library"],
+      "relevance": [
+        { "message_key": "conversation_recency", "grade": 3 }
+      ],
+      "provider_rerank_top_refs": [
+        { "message_key": "conversation_recency", "score": 0.99, "reason": "direct_answer" }
+      ]
+    }
+  ]
+}

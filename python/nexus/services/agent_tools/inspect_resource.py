@@ -17,6 +17,7 @@ from xml.sax.saxutils import escape as xml_escape
 
 from sqlalchemy.orm import Session
 
+from nexus.services.agent_tools.handoff import selected_by_app_search
 from nexus.services.media_read_map import MediaReadMap, get_media_read_map_for_viewer
 from nexus.services.resource_graph.context import admits_resource_for_conversation_read
 from nexus.services.resource_graph.refs import ResourceRefParseFailure, parse_resource_ref
@@ -28,7 +29,8 @@ INSPECT_RESOURCE_TOOL_DEFINITION: dict[str, Any] = {
     "name": INSPECT_RESOURCE_TOOL_NAME,
     "description": (
         "Map a pinned document into its sections before reading it. Accepts a "
-        "'media:UUID' URI that appears in <resources>. Returns an ordered list of "
+        "'media:UUID' URI that appears in <resources> or was selected by app_search "
+        "in this turn. Returns an ordered list of "
         "sections, each with a label, a short preview, and a read_uri you pass to "
         "read_resource to get that section's exact text. Use this to navigate a long "
         "article, PDF, or transcript, then read the sections you need."
@@ -106,6 +108,7 @@ def execute_inspect_resource(
     *,
     viewer_id: UUID,
     conversation_id: UUID,
+    assistant_message_id: UUID | None = None,
     uri: str,
 ) -> InspectResourceResult:
     """Return the document map for a referenced ``media:`` resource."""
@@ -131,6 +134,9 @@ def execute_inspect_resource(
 
     if not admits_resource_for_conversation_read(
         db, conversation_id=conversation_id, target=parsed
+    ) and not (
+        assistant_message_id is not None
+        and selected_by_app_search(db, assistant_message_id=assistant_message_id, uri=uri)
     ):
         return _error(
             uri,

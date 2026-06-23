@@ -60,7 +60,7 @@ not re-authored at the call site.
   resource item capability policy as the consolidation point for linkable,
   readable, citable, attachable, contextable, searchable, and expandable
   behavior.
-- `docs/cutovers/search-intent-model-hard-cutover.md` makes
+- `docs/cutovers/search/search-intent-model-hard-cutover.md` makes
   `services/search/scope.py` the `scope -> SQL` owner and keeps search
   taxonomy out of feature surfaces.
 - `docs/modules/chat.md` keeps chat request assembly, prompt assembly, retrieval

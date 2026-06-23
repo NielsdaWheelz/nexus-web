@@ -22,6 +22,7 @@ from nexus.db.models import (
     Message,
     MessageRetrieval,
     Model,
+    ResourceEdge,
 )
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.llm_catalog import model_max_context_tokens
@@ -34,6 +35,7 @@ from nexus.services.chat_prompt import (
     validate_prompt_size,
 )
 from nexus.services.chat_quote import render_quote_block
+from nexus.services.chat_retrieval_plan import ChatRetrievalPlan, plan_chat_retrieval
 from nexus.services.prompt_budget import (
     BudgetItem,
     BudgetSelection,
@@ -57,6 +59,7 @@ from nexus.services.resource_graph.resolve import (
     resolve_ref,
 )
 from nexus.services.resource_items.capabilities import (
+    CONVERSATION_CONTEXT_EDGE_ORIGINS,
     resource_can_be_chat_subject,
     resource_citation_result_type,
     resource_prompt_render_policy,
@@ -96,6 +99,7 @@ class AssemblyLedger:
 class ContextAssembly:
     llm_request: ModelCall
     prompt_plan: PromptPlan
+    retrieval_plan: ChatRetrievalPlan
     history: tuple[ModelMessage, ...]
     context_blocks: tuple[str, ...]
     context_types: frozenset[str]
@@ -114,6 +118,7 @@ def assemble_chat_context(
     run: ChatRun,
     model: Model,
     max_output_tokens: int,
+    retrieval_plan: ChatRetrievalPlan,
 ) -> ContextAssembly:
     """Assemble the provider-neutral chat request for a durable chat run."""
 
@@ -150,62 +155,6 @@ def assemble_chat_context(
         cache_policy=CACHE_POLICY_5M,
         privacy_scope="global",
     )
-    mandatory_blocks: list[tuple[str, PromptBlock, Mapping[str, object]]] = []
-
-    subject_block, subject_metadata, subject_uri = _build_subject_block(
-        db,
-        turn_context,
-        viewer_id=run.owner_user_id,
-        conversation_id=conversation.id,
-    )
-    if subject_block is not None:
-        mandatory_blocks.append(("subject", subject_block, subject_metadata))
-
-    reader_selection_block = _build_reader_selection_block(
-        db,
-        turn_context,
-        viewer_id=run.owner_user_id,
-        conversation_id=conversation.id,
-    )
-    if reader_selection_block is not None:
-        mandatory_blocks.append(
-            (
-                "reader_selection",
-                reader_selection_block,
-                {"hint": "reader_selection"},
-            )
-        )
-
-    if user_message.branch_anchor_kind == "assistant_selection":
-        branch_anchor_ref = {
-            "type": "assistant_selection_branch_anchor",
-            "message_id": str(user_message.branch_anchor.get("message_id") or ""),
-            "user_message_id": str(user_message.id),
-            "parent_message_id": str(user_message.parent_message_id),
-        }
-        mandatory_blocks.append(
-            (
-                "branch_anchor",
-                make_prompt_block(
-                    block_id=f"branch_anchor:{user_message.id}",
-                    role="system",
-                    lane="attached_context",
-                    text=_render_branch_anchor_block(user_message.branch_anchor),
-                    source_refs=[branch_anchor_ref],
-                ),
-                branch_anchor_ref,
-            )
-        )
-
-    resources_block, resources_metadata, attached_citations, resource_revision_refs = (
-        _build_resources_block(
-            db,
-            conversation_id=conversation.id,
-            viewer_id=run.owner_user_id,
-            subject_uri=subject_uri,
-        )
-    )
-
     tool_call_events, retrieval_result_events = _load_tool_events(
         db,
         assistant_message_id=run.assistant_message_id,
@@ -232,6 +181,67 @@ def assemble_chat_context(
         model_name=model.model_name,
         reasoning=run.reasoning,
     )
+    include_private_context = retrieval_plan.source_domain in {"private_app", "mixed"}
+    mandatory_blocks: list[tuple[str, PromptBlock, Mapping[str, object]]] = []
+    resources_block = None
+    subject_uri: str | None = None
+    resources_metadata: Mapping[str, object] = {}
+    attached_citations: tuple[RetrievalCitation, ...] = ()
+    resource_revision_refs: tuple[Mapping[str, object], ...] = ()
+    if include_private_context:
+        subject_block, subject_metadata, subject_uri = _build_subject_block(
+            db,
+            turn_context,
+            viewer_id=run.owner_user_id,
+            conversation_id=conversation.id,
+        )
+        if subject_block is not None:
+            mandatory_blocks.append(("subject", subject_block, subject_metadata))
+
+        reader_selection_block = _build_reader_selection_block(
+            db,
+            turn_context,
+            viewer_id=run.owner_user_id,
+            conversation_id=conversation.id,
+        )
+        if reader_selection_block is not None:
+            mandatory_blocks.append(
+                (
+                    "reader_selection",
+                    reader_selection_block,
+                    {"hint": "reader_selection"},
+                )
+            )
+
+        if user_message.branch_anchor_kind == "assistant_selection":
+            branch_anchor_ref = {
+                "type": "assistant_selection_branch_anchor",
+                "message_id": str(user_message.branch_anchor.get("message_id") or ""),
+                "user_message_id": str(user_message.id),
+                "parent_message_id": str(user_message.parent_message_id),
+            }
+            mandatory_blocks.append(
+                (
+                    "branch_anchor",
+                    make_prompt_block(
+                        block_id=f"branch_anchor:{user_message.id}",
+                        role="system",
+                        lane="attached_context",
+                        text=_render_branch_anchor_block(user_message.branch_anchor),
+                        source_refs=[branch_anchor_ref],
+                    ),
+                    branch_anchor_ref,
+                )
+            )
+
+        resources_block, resources_metadata, attached_citations, resource_revision_refs = (
+            _build_resources_block(
+                db,
+                conversation_id=conversation.id,
+                viewer_id=run.owner_user_id,
+                subject_uri=subject_uri,
+            )
+        )
     budget_items: list[BudgetItem] = [
         BudgetItem(
             key=system_block.id,
@@ -246,18 +256,21 @@ def assemble_chat_context(
             mandatory=True,
         ),
     ]
-    for key, block, metadata in mandatory_blocks:
+    route_private_blocks = mandatory_blocks if include_private_context else []
+    for key, block, metadata in route_private_blocks:
         budget_items.append(
             BudgetItem(
                 key=key, lane="attached_context", blocks=(block,), mandatory=True, metadata=metadata
             )
         )
-    if resources_block is not None:
+    route_resources_block = resources_block if include_private_context else None
+    route_attached_citations = attached_citations if include_private_context else ()
+    if route_resources_block is not None:
         budget_items.append(
             BudgetItem(
                 key="resources",
                 lane="attached_context",
-                blocks=(resources_block,),
+                blocks=(route_resources_block,),
                 mandatory=True,
                 metadata=resources_metadata,
             )
@@ -291,18 +304,33 @@ def assemble_chat_context(
 
     selection = allocate_budget(budget_items, budget)
     included_keys = selection.included_keys()
+    included_context_refs: list[Mapping[str, object]] = [
+        metadata for key, _block, metadata in route_private_blocks if key in included_keys
+    ]
+    if "resources" in included_keys:
+        assert route_resources_block is not None
+        included_context_refs.extend(route_resources_block.source_refs)
+        included_context_refs.extend(resource_revision_refs)
     context_blocks = _selected_context_blocks(
         selection,
-        mandatory_blocks=mandatory_blocks,
-        resources_block=resources_block,
+        mandatory_blocks=route_private_blocks,
+        resources_block=route_resources_block,
     )
     selected_history_units = [unit for unit in history_units if unit.key in included_keys]
     history = _history_turns_from_units(selected_history_units)
     stable_blocks = (system_block,)
     dynamic_system_blocks = _dynamic_system_blocks(
-        mandatory_blocks=mandatory_blocks,
-        resources_block=resources_block,
+        mandatory_blocks=route_private_blocks,
+        resources_block=route_resources_block,
         included_keys=included_keys,
+    ) + (
+        make_prompt_block(
+            block_id="chat_retrieval_plan",
+            role="system",
+            lane="system",
+            text=retrieval_plan.prompt_note(),
+            privacy_scope="conversation",
+        ),
     )
     history_blocks = _history_blocks(selected_history_units, selection)
     prompt_plan = build_prompt_plan(
@@ -321,13 +349,6 @@ def assemble_chat_context(
         max_tokens=max_output_tokens,
         reasoning_effort=run.reasoning,
     )
-    included_context_refs: list[Mapping[str, object]] = [
-        metadata for key, _text, metadata in mandatory_blocks if key in included_keys
-    ]
-    # Resources are not a mandatory_block (own BudgetItem); stamp the consumed
-    # revision of each included resource (LI artifacts) into the ledger.
-    if "resources" in included_keys:
-        included_context_refs.extend(resource_revision_refs)
     ledger = _build_ledger(
         selection,
         prompt_plan=prompt_plan,
@@ -339,18 +360,27 @@ def assemble_chat_context(
     return ContextAssembly(
         llm_request=llm_request,
         prompt_plan=prompt_plan,
+        retrieval_plan=retrieval_plan,
         history=tuple(history),
         context_blocks=tuple(context_blocks),
         context_types=frozenset(context_types),
         tool_call_events=tuple(tool_call_events),
         retrieval_result_events=tuple(retrieval_result_events),
         ledger=ledger,
-        attached_citations=attached_citations,
+        attached_citations=route_attached_citations,
     )
 
 
 def persist_prompt_assembly(db: Session, *, run: ChatRun, assembly: ContextAssembly) -> None:
     ledger = assembly.ledger
+    run_plan = db.execute(
+        text("SELECT retrieval_plan FROM chat_runs WHERE id = :run_id"),
+        {"run_id": run.id},
+    ).scalar_one()
+    if run_plan is None:
+        raise AssertionError(f"chat run {run.id} retrieval plan was not persisted")
+    if run_plan != assembly.retrieval_plan.as_json():
+        raise AssertionError(f"chat run {run.id} prompt assembly retrieval plan drifted")
     payload = {
         "chat_run_id": run.id,
         "conversation_id": run.conversation_id,
@@ -373,10 +403,27 @@ def persist_prompt_assembly(db: Session, *, run: ChatRun, assembly: ContextAssem
         "dropped_items": [dict(item) for item in ledger.dropped_items],
         "budget_breakdown": dict(ledger.budget_breakdown),
     }
+    immutable_fields = (
+        "conversation_id",
+        "assistant_message_id",
+        "model_id",
+        "cacheable_input_tokens_estimate",
+        "prompt_block_manifest",
+        "max_context_tokens",
+        "reserved_output_tokens",
+        "reserved_reasoning_tokens",
+        "input_budget_tokens",
+        "estimated_input_tokens",
+        "included_message_ids",
+        "included_retrieval_ids",
+        "included_context_refs",
+        "dropped_items",
+        "budget_breakdown",
+    )
     existing = db.execute(
         text(
-            """
-            SELECT id
+            f"""
+            SELECT {", ".join(immutable_fields)}
             FROM chat_prompt_assemblies
             WHERE chat_run_id = :chat_run_id
             FOR UPDATE
@@ -385,59 +432,213 @@ def persist_prompt_assembly(db: Session, *, run: ChatRun, assembly: ContextAssem
         {"chat_run_id": run.id},
     ).first()
 
-    if existing is None:
-        insert_statement = text(
-            """
-            INSERT INTO chat_prompt_assemblies (
-                chat_run_id,
-                conversation_id,
-                assistant_message_id,
-                model_id,
-                cacheable_input_tokens_estimate,
-                prompt_block_manifest,
-                max_context_tokens,
-                reserved_output_tokens,
-                reserved_reasoning_tokens,
-                input_budget_tokens,
-                estimated_input_tokens,
-                included_message_ids,
-                included_retrieval_ids,
-                included_context_refs,
-                dropped_items,
-                budget_breakdown
-            )
-            VALUES (
-                :chat_run_id,
-                :conversation_id,
-                :assistant_message_id,
-                :model_id,
-                :cacheable_input_tokens_estimate,
-                :prompt_block_manifest,
-                :max_context_tokens,
-                :reserved_output_tokens,
-                :reserved_reasoning_tokens,
-                :input_budget_tokens,
-                :estimated_input_tokens,
-                :included_message_ids,
-                :included_retrieval_ids,
-                :included_context_refs,
-                :dropped_items,
-                :budget_breakdown
-            )
-            """
-        ).bindparams(
-            bindparam("included_message_ids", type_=JSONB),
-            bindparam("included_retrieval_ids", type_=JSONB),
-            bindparam("included_context_refs", type_=JSONB),
-            bindparam("dropped_items", type_=JSONB),
-            bindparam("budget_breakdown", type_=JSONB),
-            bindparam("prompt_block_manifest", type_=JSONB),
-        )
-        result = cast(Any, db.execute(insert_statement, payload))
-        assert result.rowcount == 1  # justify-service-invariant-check: ledger insert is one row.
+    if existing is not None:
+        for field, value in zip(immutable_fields, existing, strict=True):
+            if value != payload[field]:
+                raise AssertionError(f"chat run {run.id} prompt assembly drifted: {field}")
         return
 
+    insert_statement = text(
+        """
+        INSERT INTO chat_prompt_assemblies (
+            chat_run_id,
+            conversation_id,
+            assistant_message_id,
+            model_id,
+            cacheable_input_tokens_estimate,
+            prompt_block_manifest,
+            max_context_tokens,
+            reserved_output_tokens,
+            reserved_reasoning_tokens,
+            input_budget_tokens,
+            estimated_input_tokens,
+            included_message_ids,
+            included_retrieval_ids,
+            included_context_refs,
+            dropped_items,
+            budget_breakdown
+        )
+        VALUES (
+            :chat_run_id,
+            :conversation_id,
+            :assistant_message_id,
+            :model_id,
+            :cacheable_input_tokens_estimate,
+            :prompt_block_manifest,
+            :max_context_tokens,
+            :reserved_output_tokens,
+            :reserved_reasoning_tokens,
+            :input_budget_tokens,
+            :estimated_input_tokens,
+            :included_message_ids,
+            :included_retrieval_ids,
+            :included_context_refs,
+            :dropped_items,
+            :budget_breakdown
+        )
+        """
+    ).bindparams(
+        bindparam("included_message_ids", type_=JSONB),
+        bindparam("included_retrieval_ids", type_=JSONB),
+        bindparam("included_context_refs", type_=JSONB),
+        bindparam("dropped_items", type_=JSONB),
+        bindparam("budget_breakdown", type_=JSONB),
+        bindparam("prompt_block_manifest", type_=JSONB),
+    )
+    result = cast(Any, db.execute(insert_statement, payload))
+    assert result.rowcount == 1  # justify-service-invariant-check: ledger insert is one row.
     return
+
+
+def plan_chat_context_retrieval(
+    db: Session,
+    *,
+    run: ChatRun,
+    conversation: Conversation,
+    user_message: Message,
+    web_search_available: bool,
+) -> ChatRetrievalPlan:
+    if not can_read_conversation(db, run.owner_user_id, conversation.id):
+        raise NotFoundError(ApiErrorCode.E_CONVERSATION_NOT_FOUND, "Conversation not found")
+
+    turn_context = db.get(ChatRunTurnContext, run.id)
+    return plan_chat_retrieval(
+        user_text=user_message.content,
+        context_ref_uris=_context_ref_uris_for_plan(
+            db,
+            viewer_id=run.owner_user_id,
+            conversation_id=conversation.id,
+        ),
+        subject_ref=_subject_uri_for_plan(
+            db,
+            turn_context,
+            conversation_id=conversation.id,
+        ),
+        reader_selection_present=_reader_selection_present_for_plan(
+            db,
+            turn_context,
+            conversation_id=conversation.id,
+        ),
+        web_search_available=web_search_available,
+    )
+
+
+def persist_run_retrieval_plan(
+    db: Session, *, run: ChatRun, retrieval_plan: ChatRetrievalPlan
+) -> None:
+    payload = retrieval_plan.as_json()
+    existing = db.execute(
+        text(
+            """
+            SELECT retrieval_plan
+            FROM chat_runs
+            WHERE id = :run_id
+            FOR UPDATE
+            """
+        ),
+        {"run_id": run.id},
+    ).scalar_one()
+    if existing is not None:
+        if existing != payload:
+            raise AssertionError(f"chat run {run.id} retrieval plan drifted")
+        return
+
+    result = cast(
+        Any,
+        db.execute(
+            text(
+                """
+                UPDATE chat_runs
+                SET retrieval_plan = :retrieval_plan,
+                    updated_at = now()
+                WHERE id = :run_id
+                  AND retrieval_plan IS NULL
+                """
+            ).bindparams(bindparam("retrieval_plan", type_=JSONB)),
+            {"run_id": run.id, "retrieval_plan": payload},
+        ),
+    )
+    assert result.rowcount == 1  # justify-service-invariant-check: one run owns one plan.
+    run.retrieval_plan = payload
+
+
+def _subject_uri_for_plan(
+    db: Session,
+    turn_context: ChatRunTurnContext | None,
+    *,
+    conversation_id: UUID,
+) -> str | None:
+    if turn_context is None or turn_context.subject_id is None:
+        return None
+    assert turn_context.subject_scheme is not None
+    subject = ResourceRef(
+        scheme=cast(ResourceScheme, turn_context.subject_scheme),
+        id=turn_context.subject_id,
+    )
+    if not resource_can_be_chat_subject(subject):
+        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Resource cannot be a chat subject")
+    if not admits_resource_for_conversation_read(
+        db,
+        conversation_id=conversation_id,
+        target=subject,
+    ):
+        raise ApiError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "chat_subject resource_ref must be attached to this conversation",
+        )
+    return subject.uri
+
+
+def _reader_selection_present_for_plan(
+    db: Session,
+    turn_context: ChatRunTurnContext | None,
+    *,
+    conversation_id: UUID,
+) -> bool:
+    if turn_context is None or turn_context.reader_selection_highlight_id is None:
+        return False
+    assert turn_context.reader_selection_media_id is not None
+    highlight_id = turn_context.reader_selection_highlight_id
+    highlight = db.get(Highlight, highlight_id)
+    if highlight is None or highlight.anchor_media_id != turn_context.reader_selection_media_id:
+        return False
+    return admits_resource_for_conversation_read(
+        db,
+        conversation_id=conversation_id,
+        target=ResourceRef(scheme="highlight", id=highlight_id),
+    )
+
+
+def _context_ref_uris_for_plan(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    conversation_id: UUID,
+) -> list[str]:
+    rows = (
+        db.execute(
+            select(ResourceEdge.target_scheme, ResourceEdge.target_id)
+            .where(
+                ResourceEdge.user_id == viewer_id,
+                ResourceEdge.source_scheme == "conversation",
+                ResourceEdge.source_id == conversation_id,
+                ResourceEdge.kind == "context",
+                ResourceEdge.origin.in_(CONVERSATION_CONTEXT_EDGE_ORIGINS),
+                ResourceEdge.ordinal.is_(None),
+            )
+            .order_by(
+                ResourceEdge.source_order_key.asc().nulls_last(),
+                ResourceEdge.created_at.asc(),
+                ResourceEdge.id.asc(),
+            )
+        )
+        .tuples()
+        .all()
+    )
+    return [
+        ResourceRef(scheme=cast(ResourceScheme, scheme), id=target_id).uri
+        for scheme, target_id in rows
+    ]
 
 
 def _build_subject_block(
@@ -783,7 +984,8 @@ def _load_tool_events(
         text(
             """
             SELECT id, assistant_message_id, tool_name, tool_call_index, scope,
-                   requested_types, status, error_code, latency_ms
+                   requested_types, status, error_code, latency_ms,
+                   source_domain, source_policy
             FROM message_tool_calls
             WHERE assistant_message_id = :assistant_message_id
             ORDER BY tool_call_index ASC
@@ -805,6 +1007,8 @@ def _load_tool_events(
                 "status": row[6],
                 "scope": row[4],
                 "types": row[5] or [],
+                "source_domain": row[9],
+                "source_policy": row[10],
             }
         )
         result_events.append(
@@ -818,6 +1022,8 @@ def _load_tool_events(
                 "result_count": len(retrievals),
                 "selected_count": len(selected),
                 "latency_ms": row[8],
+                "source_domain": row[9],
+                "source_policy": row[10],
                 "citations": [retrieval["result_ref"] for retrieval in selected],
             }
         )

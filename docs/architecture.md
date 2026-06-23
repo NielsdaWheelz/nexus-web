@@ -580,10 +580,13 @@ Other identity surfaces:
 
 ### 7.6 Search, retrieval & the embedding pipeline
 
+The durable module contract lives in [`modules/search.md`](modules/search.md).
+
 One core `search(db, viewer, SearchQuery)` (the `services/search/` package) serves
-three surfaces: the in-app search page, the chat `app_search` agent tool (RAG), and
-object-ref resolution for notes. The request is a single typed `SearchQuery` value
-object parsed at the edge; the user-facing taxonomy is **six kinds** (Documents,
+the in-app search page and the chat `app_search` agent tool (RAG). Note object-ref
+resolution is an adjacent object-ref service, not a shared `SearchQuery` caller.
+The search request is a single typed `SearchQuery` value object parsed at the edge;
+the user-facing taxonomy is **six kinds** (Documents,
 Notes, Highlights, Conversations, People, Web) folding the internal result types,
 with operator-backed filter chips (`format:`/`author:`/`role:`/`in:`) — not the raw
 result-type grid. The package owns one concern per module (`kinds`, `query`, `scope`,
@@ -601,12 +604,15 @@ result-type grid. The package owns one concern per module (`kinds`, `query`, `sc
   **UNION** a lexical FTS arm, reranked by a weighted score (lexical hit + semantic
   similarity + recency), filtered by a similarity floor, then resolved through the
   locator resolver. There is no `semantic` flag; the query embedding is built once
-  for any semantic-capable kind regardless of structured filters. For chat, candidates are
-  selected under a context-char budget and every candidate/rerank/selection
-  decision is written to ledger tables; selected rows become `message_retrievals`
-  telemetry rows via the single validated writer
-  `retrieval_citation.insert_retrieval_row` (the cited ones link back to their
-  citation edge through `cited_edge_id`, §7.7).
+  for any semantic-capable kind regardless of structured filters. For chat, search
+  policy chooses a candidate limit, `search/selection.py` applies deterministic
+  exactness/citation-quality/source/section-diversity reranking, selected
+  evidence is packed under a context-char budget, and every
+  candidate/rerank/selection decision is written to ledger tables. Each
+  app-search candidate has a `message_retrievals`
+  telemetry row via the single validated writer
+  `retrieval_citation.insert_retrieval_row`; selected/cited rows link back to
+  their citation edge through `cited_edge_id`, §7.7.
 - **The `ResourceRef` grammar** (`services/resource_graph/refs.py`): a
   `<scheme>:<uuid>` ref over a closed scheme set (`media`, `library`,
   `evidence_span`, `content_chunk`, `highlight`, `page`, `note_block`, `fragment`,
@@ -1208,7 +1214,7 @@ attached-reference citation regression came from breaking this density.
 | Reader/highlights backend | `python/nexus/services/{reader,epub_*,pdf_*,fragment_blocks,highlights}.py` |
 | Chat / conversations | `python/nexus/services/chat_runs.py` + `chat_run_*`, `context_assembler.py`, `conversations.py` |
 | Oracle | `python/nexus/services/oracle.py`, `python/nexus/services/oracle_corpus.py`, `python/nexus/services/oracle_plates.py` |
-| Search / retrieval / indexing | `python/nexus/services/{search,content_indexing,semantic_chunks,retrieval_citation}.py` |
+| Search / retrieval / indexing | [`modules/search.md`](modules/search.md), `python/nexus/services/search/`, `python/nexus/services/{content_indexing,semantic_chunks,retrieval_citation}.py` |
 | Resource graph (edges, refs, citations, connections) | `python/nexus/services/resource_graph/` (`refs`, `resolve`, `edges`, `connections`, `context`, `citations`, `cleanup`) |
 | Agent tools | `python/nexus/services/agent_tools/` |
 | Libraries / contributors / notes | `python/nexus/services/{library_governance,library_entries,library_invitations,default_library_closure,contributors,notes}.py` |

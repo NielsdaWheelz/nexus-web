@@ -58,7 +58,7 @@ instead of authoring another private list.
   substrate.
 - `docs/cutovers/resource-capability-registry-hard-cutover.md` establishes
   `resource_items.capabilities` as the per-scheme capability authority.
-- `docs/cutovers/search-intent-model-hard-cutover.md` establishes
+- `docs/cutovers/search/search-intent-model-hard-cutover.md` establishes
   `services/search/` as the search owner, with one `SearchQuery`, one result
   type authority, one scope owner, and one multi-scope executor.
 - `docs/cutovers/resource-chat-subject-hard-cutover.md` establishes that

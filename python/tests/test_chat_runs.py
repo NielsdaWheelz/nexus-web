@@ -14,6 +14,9 @@ from nexus.config import clear_settings_cache
 from nexus.db.models import (
     ChatRun,
     ChatRunTurnContext,
+    MessageRerankLedger,
+    MessageToolCall,
+    Model,
     NoteBlock,
     ResourceEdge,
     ResourceExternalSnapshot,
@@ -21,20 +24,31 @@ from nexus.db.models import (
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError
 from nexus.schemas.conversation import NoBranchAnchorRequest, chat_run_event_payload_json
 from nexus.services.billing_entitlements import grant_entitlement_override
+from nexus.services.chat_retrieval_plan import plan_chat_retrieval
+from nexus.services.chat_run_event_store import append_run_event
+from nexus.services.chat_run_finalize import finalize_cancelled, finalize_interrupted
 from nexus.services.chat_run_validation import validate_pre_phase
 from nexus.services.chat_runs import (
     _app_search_scopes_from_tool_args,
     _app_search_tool_output,
     _citation_target_ref,
 )
+from nexus.services.context_assembler import (
+    assemble_chat_context,
+    persist_prompt_assembly,
+    persist_run_retrieval_plan,
+    plan_chat_context_retrieval,
+)
 from nexus.services.conversation_branches import persist_active_leaf
 from tests.factories import (
+    add_context_edge,
     create_searchable_media,
     create_test_conversation,
     create_test_library,
     create_test_media_in_library,
     create_test_message,
     create_test_model,
+    create_test_user,
 )
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
@@ -81,6 +95,81 @@ def _create_run_payload(model_id: UUID, **overrides) -> dict:
 
 def _assistant_message_anchor(message_id: UUID) -> dict:
     return {"kind": "assistant_message", "message_id": str(message_id)}
+
+
+def _source_policy(source_domain: str) -> dict[str, object]:
+    return {
+        "version": "source_boundary_policy.v1",
+        "decision": "allowed",
+        "source_domain": source_domain,
+        "mixing_allowed": False,
+        "reason": f"{source_domain}_test_policy",
+        "domains_seen": [],
+        "requested_domains": [source_domain],
+    }
+
+
+def _seed_started_tool_call(
+    session,
+    *,
+    conversation_id: UUID,
+    user_message_id: UUID,
+    assistant_message_id: UUID,
+    tool_call_index: int = 1,
+    tool_name: str = "web_search",
+    source_domain: str = "public_web",
+) -> UUID:
+    existing = (
+        session.query(MessageToolCall)
+        .filter(
+            MessageToolCall.assistant_message_id == assistant_message_id,
+            MessageToolCall.tool_call_index == tool_call_index,
+        )
+        .first()
+    )
+    if existing is not None:
+        return existing.id
+    row = MessageToolCall(
+        conversation_id=conversation_id,
+        user_message_id=user_message_id,
+        assistant_message_id=assistant_message_id,
+        tool_name=tool_name,
+        tool_call_index=tool_call_index,
+        scope="public_web" if tool_name == "web_search" else "all",
+        requested_types=["mixed"] if tool_name == "web_search" else [],
+        result_refs=[],
+        selected_context_refs=[],
+        provider_request_ids=[],
+        source_domain=source_domain,
+        source_policy=_source_policy(source_domain),
+        status="running",
+    )
+    session.add(row)
+    session.flush()
+    return row.id
+
+
+def _seed_started_llm_call(session, run_id: UUID) -> UUID:
+    llm_call_id = uuid4()
+    session.execute(
+        text(
+            """
+            INSERT INTO llm_calls (
+                id, owner_kind, owner_id, call_seq, provider, provider_route,
+                model_name, llm_operation, streaming, reasoning_effort,
+                key_mode_requested, key_mode_used, call_status,
+                terminal_attempt_status, cost_status
+            )
+            VALUES (
+                :id, 'chat_run', :run_id, 1, 'openai', 'openai',
+                'gpt-5-mini', 'chat_send', true, 'none',
+                'auto', 'platform', 'started', 'started', 'missing_usage'
+            )
+            """
+        ),
+        {"id": llm_call_id, "run_id": run_id},
+    )
+    return llm_call_id
 
 
 def _post_chat_run(auth_client, user_id: UUID, payload: dict, idempotency_key: str):
@@ -209,6 +298,39 @@ def test_chat_run_meta_payload_requires_chat_subject_key():
                 "assistant_message_id": str(uuid4()),
                 "model_id": str(uuid4()),
                 "provider": "openai",
+            },
+        )
+
+
+def test_chat_run_retrieval_plan_event_requires_closed_plan():
+    assistant_message_id = uuid4()
+    plan = plan_chat_retrieval(
+        user_text="Compare the attached documents.",
+        context_ref_uris=("media:11111111-1111-4111-8111-111111111111",),
+        subject_ref=None,
+        reader_selection_present=False,
+        web_search_available=True,
+    ).as_json()
+
+    assert chat_run_event_payload_json(
+        "retrieval_plan",
+        {
+            "assistant_message_id": str(assistant_message_id),
+            "retrieval_plan": plan,
+        },
+    ) == {
+        "assistant_message_id": str(assistant_message_id),
+        "retrieval_plan": plan,
+    }
+    with pytest.raises(ValidationError):
+        chat_run_event_payload_json(
+            "retrieval_plan",
+            {
+                "assistant_message_id": str(assistant_message_id),
+                "retrieval_plan": {
+                    **plan,
+                    "candidate_tool_sequence": ["web_search"],
+                },
             },
         )
 
@@ -1141,13 +1263,87 @@ class TestChatRunRequestSchema:
         )
         assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
 
+    def test_chat_run_request_rejects_long_context_route_field(
+        self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        _seed_ai_plus_billing(direct_db, user_id)
+        with direct_db.session() as session:
+            model_id = create_test_model(session)
+        create_resp = auth_client.post("/conversations", headers=auth_headers(user_id))
+        conversation_id = UUID(create_resp.json()["data"]["id"])
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+
+        payload = _create_run_payload(model_id, conversation_id=str(conversation_id))
+        payload["long_context_route"] = {"mode": "auto"}
+
+        response = auth_client.post(
+            "/chat-runs",
+            headers={
+                **auth_headers(user_id),
+                "Idempotency-Key": "chat-run-rejects-long-context-route",
+            },
+            json=payload,
+        )
+        assert response.status_code == 400, (
+            f"Expected long_context_route extra-field to be rejected, got "
+            f"{response.status_code}: {response.text}"
+        )
+        assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
+
+    def test_chat_run_request_rejects_planner_surface_fields(
+        self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        _seed_ai_plus_billing(direct_db, user_id)
+        with direct_db.session() as session:
+            model_id = create_test_model(session)
+        create_resp = auth_client.post("/conversations", headers=auth_headers(user_id))
+        conversation_id = UUID(create_resp.json()["data"]["id"])
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+
+        for field in (
+            "context_route",
+            "retrieval_mode",
+            "route_intent",
+            "source_domain",
+            "source_policy",
+            "mixing_policy",
+            "retrieval_plan",
+            "allowed_tools",
+            "blocked_tools",
+            "candidate_tool_sequence",
+            "internal_tool_sequence",
+            "tool_policy",
+            "web_policy",
+        ):
+            payload = _create_run_payload(model_id, conversation_id=str(conversation_id))
+            payload[field] = "private_app_search"
+            response = auth_client.post(
+                "/chat-runs",
+                headers={
+                    **auth_headers(user_id),
+                    "Idempotency-Key": f"chat-run-rejects-{field}",
+                },
+                json=payload,
+            )
+            assert response.status_code == 400, (
+                f"Expected {field} extra-field to be rejected, got "
+                f"{response.status_code}: {response.text}"
+            )
+            assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
+
 
 class TestChatRunTooling:
     """Tooling and prompt-input contracts for POST /chat-runs."""
 
     def test_app_search_tool_schema_rejects_legacy_scope_alias(self):
         from nexus.services.agent_tools.app_search import APP_SEARCH_TOOL_DEFINITION
+        from nexus.services.agent_tools.inspect_resource import INSPECT_RESOURCE_TOOL_DEFINITION
         from nexus.services.agent_tools.read_resource import READ_RESOURCE_TOOL_DEFINITION
+        from nexus.services.agent_tools.web_search import WEB_SEARCH_TOOL_DEFINITION
 
         assert APP_SEARCH_TOOL_DEFINITION["parameters"]["additionalProperties"] is False
         assert {
@@ -1158,7 +1354,35 @@ class TestChatRunTooling:
             "roles",
             "scopes",
         } <= set(APP_SEARCH_TOOL_DEFINITION["parameters"]["properties"])
-        assert READ_RESOURCE_TOOL_DEFINITION["parameters"]["additionalProperties"] is False
+        assert not {
+            "context_route",
+            "long_context",
+            "route",
+            "routing_policy",
+        } & set(APP_SEARCH_TOOL_DEFINITION["parameters"]["properties"])
+        for definition in (
+            APP_SEARCH_TOOL_DEFINITION,
+            INSPECT_RESOURCE_TOOL_DEFINITION,
+            READ_RESOURCE_TOOL_DEFINITION,
+            WEB_SEARCH_TOOL_DEFINITION,
+        ):
+            assert definition["parameters"]["additionalProperties"] is False
+            assert not {
+                "context_route",
+                "long_context",
+                "route",
+                "route_intent",
+                "source_domain",
+                "source_policy",
+                "mixing_policy",
+                "retrieval_plan",
+                "allowed_tools",
+                "blocked_tools",
+                "candidate_tool_sequence",
+                "internal_tool_sequence",
+                "routing_policy",
+                "web_policy",
+            } & set(definition["parameters"]["properties"])
 
     def test_chat_run_tools_always_registered(
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
@@ -1197,11 +1421,123 @@ class TestChatRunTooling:
                     "scope": "all",
                     "types": [],
                     "filters": {},
+                    "source_domain": "provider_control",
+                    "source_policy": {
+                        "version": "source_boundary_policy.v1",
+                        "decision": "allowed",
+                        "source_domain": "provider_control",
+                        "mixing_allowed": False,
+                        "reason": "provider_control_only",
+                        "domains_seen": [],
+                        "requested_domains": [],
+                    },
                     "result_count": 0,
                     "selected_count": 0,
+                    "retrieval_ids": [],
                     "results": [],
                 }
             )
+
+        with pytest.raises(ValidationError):
+            ChatRunToolResultEventPayload.model_validate(
+                {
+                    **common,
+                    "tool_name": "app_search",
+                    "status": "complete",
+                    "scope": "all",
+                    "types": [],
+                    "filters": {},
+                    "source_domain": "provider_control",
+                    "source_policy": {
+                        "version": "source_boundary_policy.v1",
+                        "decision": "allowed",
+                        "source_domain": "provider_control",
+                        "mixing_allowed": False,
+                        "reason": "provider_control_only",
+                        "domains_seen": [],
+                        "requested_domains": [],
+                    },
+                    "result_count": 0,
+                    "selected_count": 0,
+                    "retrieval_ids": [str(uuid4())],
+                    "results": [],
+                }
+            )
+
+        message_id = str(uuid4())
+        conversation_id = str(uuid4())
+        with pytest.raises(ValidationError):
+            ChatRunToolResultEventPayload.model_validate(
+                {
+                    **common,
+                    "tool_name": "app_search",
+                    "status": "complete",
+                    "scope": "all",
+                    "types": ["message"],
+                    "filters": {},
+                    "source_domain": "provider_control",
+                    "source_policy": {
+                        "version": "source_boundary_policy.v1",
+                        "decision": "allowed",
+                        "source_domain": "provider_control",
+                        "mixing_allowed": False,
+                        "reason": "provider_control_only",
+                        "domains_seen": [],
+                        "requested_domains": [],
+                    },
+                    "result_count": 1,
+                    "selected_count": 1,
+                    "results": [
+                        {
+                            "type": "message",
+                            "id": message_id,
+                            "result_type": "message",
+                            "source_id": message_id,
+                            "conversation_id": conversation_id,
+                            "seq": 1,
+                            "title": "Conversation message #1",
+                            "snippet": "water on the Moon",
+                            "deep_link": f"/conversations/{conversation_id}",
+                            "context_ref": {"type": "message", "id": message_id},
+                            "locator": {
+                                "type": "message_offsets",
+                                "conversation_id": conversation_id,
+                                "message_id": message_id,
+                                "start_offset": 0,
+                                "end_offset": 18,
+                                "message_seq": 1,
+                            },
+                            "selected": True,
+                        }
+                    ],
+                }
+            )
+
+        for key in ("semantic", "content_kinds", "contributor_handles"):
+            with pytest.raises(ValidationError):
+                ChatRunToolResultEventPayload.model_validate(
+                    {
+                        **common,
+                        "tool_name": "app_search",
+                        "status": "complete",
+                        "scope": "all",
+                        "types": [],
+                        "filters": {key: []},
+                        "source_domain": "provider_control",
+                        "source_policy": {
+                            "version": "source_boundary_policy.v1",
+                            "decision": "allowed",
+                            "source_domain": "provider_control",
+                            "mixing_allowed": False,
+                            "reason": "provider_control_only",
+                            "domains_seen": [],
+                            "requested_domains": [],
+                        },
+                        "result_count": 0,
+                        "selected_count": 0,
+                        "results": [],
+                    }
+                )
 
     def test_app_search_singular_scope_is_always_tool_error(self):
         scopes, forced_error = _app_search_scopes_from_tool_args(
@@ -1211,6 +1547,409 @@ class TestChatRunTooling:
         assert scopes == []
         assert forced_error is not None
         assert "singular scope field is invalid" in forced_error
+
+    def test_persist_prompt_assembly_rejects_replay_drift(self, db_session):
+        user_id = create_test_user(db_session)
+        model_id = create_test_model(db_session)
+        conversation_id = create_test_conversation(db_session, user_id)
+        user_message_id = create_test_message(
+            db_session,
+            conversation_id,
+            seq=1,
+            role="user",
+            content="Search my notes.",
+        )
+        assistant_message_id = create_test_message(
+            db_session,
+            conversation_id,
+            seq=2,
+            role="assistant",
+            content="",
+            status="pending",
+            model_id=model_id,
+            parent_message_id=user_message_id,
+        )
+        run = ChatRun(
+            id=uuid4(),
+            owner_user_id=user_id,
+            conversation_id=conversation_id,
+            user_message_id=user_message_id,
+            assistant_message_id=assistant_message_id,
+            idempotency_key="prompt-drift",
+            payload_hash="prompt-drift",
+            status="running",
+            model_id=model_id,
+            reasoning="none",
+            key_mode="auto",
+        )
+        db_session.add(run)
+        db_session.commit()
+
+        def assembly_for(user_text: str, *, estimated_input_tokens: int = 100) -> SimpleNamespace:
+            return SimpleNamespace(
+                retrieval_plan=plan_chat_retrieval(
+                    user_text=user_text,
+                    context_ref_uris=[],
+                    subject_ref=None,
+                    reader_selection_present=False,
+                    web_search_available=True,
+                ),
+                ledger=SimpleNamespace(
+                    cacheable_input_tokens_estimate=0,
+                    prompt_block_manifest={},
+                    max_context_tokens=1000,
+                    reserved_output_tokens=100,
+                    reserved_reasoning_tokens=0,
+                    input_budget_tokens=900,
+                    estimated_input_tokens=estimated_input_tokens,
+                    included_message_ids=(),
+                    included_retrieval_ids=(),
+                    included_context_refs=(),
+                    dropped_items=(),
+                    budget_breakdown={},
+                ),
+            )
+
+        first_assembly = assembly_for("Search my notes.")
+        persist_run_retrieval_plan(
+            db_session,
+            run=run,
+            retrieval_plan=first_assembly.retrieval_plan,
+        )
+        persist_prompt_assembly(db_session, run=run, assembly=first_assembly)
+        db_session.commit()
+
+        with pytest.raises(AssertionError, match="prompt assembly drifted: estimated_input_tokens"):
+            persist_prompt_assembly(
+                db_session,
+                run=run,
+                assembly=assembly_for("Search my notes.", estimated_input_tokens=101),
+            )
+
+        with pytest.raises(AssertionError, match="prompt assembly retrieval plan drifted"):
+            persist_prompt_assembly(
+                db_session,
+                run=run,
+                assembly=assembly_for("Search the web for current news."),
+            )
+
+    def test_finalize_interrupted_repairs_tool_call_rows(self, db_session):
+        user_id = create_test_user(db_session)
+        model_id = create_test_model(db_session)
+        conversation_id = create_test_conversation(db_session, user_id)
+        user_message_id = create_test_message(
+            db_session,
+            conversation_id,
+            seq=1,
+            role="user",
+            content="Search and rerank my notes.",
+        )
+        assistant_message_id = create_test_message(
+            db_session,
+            conversation_id,
+            seq=2,
+            role="assistant",
+            content="",
+            status="pending",
+            model_id=model_id,
+            parent_message_id=user_message_id,
+        )
+        run = ChatRun(
+            id=uuid4(),
+            owner_user_id=user_id,
+            conversation_id=conversation_id,
+            user_message_id=user_message_id,
+            assistant_message_id=assistant_message_id,
+            idempotency_key="interrupted-tool-repair",
+            payload_hash="interrupted-tool-repair",
+            status="running",
+            model_id=model_id,
+            reasoning="none",
+            key_mode="auto",
+        )
+        db_session.add(run)
+        llm_call_id = _seed_started_llm_call(db_session, run.id)
+        pending_tool = MessageToolCall(
+            id=uuid4(),
+            conversation_id=conversation_id,
+            user_message_id=user_message_id,
+            assistant_message_id=assistant_message_id,
+            tool_name="app_search",
+            tool_call_index=2,
+            scope="all",
+            requested_types=[],
+            result_refs=[],
+            selected_context_refs=[],
+            provider_request_ids=[],
+            source_domain="private_app",
+            source_policy=_source_policy("private_app"),
+            status="running",
+        )
+        db_session.add(pending_tool)
+        db_session.add(
+            MessageRerankLedger(
+                tool_call_id=pending_tool.id,
+                strategy="app_search_provider_rerank",
+                input_count=1,
+                selected_count=0,
+                budget_chars=16000,
+                selected_chars=0,
+                status="running",
+                metadata_={"selection_reason_counts": {"skipped_provider_rerank_pending": 1}},
+            )
+        )
+        db_session.flush()
+        append_run_event(
+            db_session,
+            run,
+            "tool_call_done",
+            {
+                "tool_call_id": None,
+                "assistant_message_id": str(assistant_message_id),
+                "tool_name": "web_search",
+                "tool_call_index": 1,
+                "provider_tool_call_id": "call-interrupted-web",
+                "input": {"query": "latest"},
+                "provider_event_seq_start": 3,
+                "provider_event_seq_end": 3,
+            },
+        )
+        db_session.commit()
+
+        finalize_interrupted(db_session, run)
+
+        rows = db_session.execute(
+            text(
+                """
+                SELECT id, tool_call_index, tool_name, status, error_code,
+                       source_domain, source_policy
+                FROM message_tool_calls
+                WHERE assistant_message_id = :assistant_message_id
+                ORDER BY tool_call_index
+                """
+            ),
+            {"assistant_message_id": assistant_message_id},
+        ).fetchall()
+        event_payload = db_session.execute(
+            text(
+                """
+                SELECT payload
+                FROM chat_run_events
+                WHERE run_id = :run_id AND event_type = 'tool_call_done'
+                """
+            ),
+            {"run_id": run.id},
+        ).scalar_one()
+        rerank = db_session.execute(
+            text(
+                """
+                SELECT status, metadata
+                FROM message_rerank_ledgers
+                WHERE tool_call_id = :tool_call_id
+                """
+            ),
+            {"tool_call_id": pending_tool.id},
+        ).one()
+        llm_call = db_session.execute(
+            text(
+                """
+                SELECT call_status, error_class, error_detail, terminal_attempt_status
+                FROM llm_calls
+                WHERE id = :llm_call_id
+                """
+            ),
+            {"llm_call_id": llm_call_id},
+        ).one()
+
+        assert [(row.tool_call_index, row.tool_name, row.status) for row in rows] == [
+            (1, "web_search", "error"),
+            (2, "app_search", "error"),
+        ]
+        assert {row.error_code for row in rows} == {"interrupted_before_tool_result"}
+        assert [row.source_domain for row in rows] == ["public_web", "private_app"]
+        assert [row.source_policy["decision"] for row in rows] == ["blocked", "blocked"]
+        assert [row.source_policy["reason"] for row in rows] == [
+            "provider_stream_interrupted",
+            "provider_stream_interrupted",
+        ]
+        assert event_payload["tool_call_id"] == str(rows[0].id)
+        assert rerank.status == "error"
+        assert rerank.metadata["error_code"] == "interrupted_before_tool_result"
+        assert tuple(llm_call) == (
+            "failed",
+            ApiErrorCode.E_LLM_INTERRUPTED.value,
+            "The model response was interrupted. Please try again.",
+            "abandoned",
+        )
+
+    def test_finalize_cancelled_repairs_unbound_provider_tool_events(self, db_session):
+        user_id = create_test_user(db_session)
+        model_id = create_test_model(db_session)
+        conversation_id = create_test_conversation(db_session, user_id)
+        user_message_id = create_test_message(
+            db_session,
+            conversation_id,
+            seq=1,
+            role="user",
+            content="Search then cancel.",
+        )
+        assistant_message_id = create_test_message(
+            db_session,
+            conversation_id,
+            seq=2,
+            role="assistant",
+            content="",
+            status="pending",
+            model_id=model_id,
+            parent_message_id=user_message_id,
+        )
+        run = ChatRun(
+            id=uuid4(),
+            owner_user_id=user_id,
+            conversation_id=conversation_id,
+            user_message_id=user_message_id,
+            assistant_message_id=assistant_message_id,
+            idempotency_key="cancelled-tool-repair",
+            payload_hash="cancelled-tool-repair",
+            status="running",
+            model_id=model_id,
+            reasoning="none",
+            key_mode="auto",
+        )
+        db_session.add(run)
+        llm_call_id = _seed_started_llm_call(db_session, run.id)
+        append_run_event(
+            db_session,
+            run,
+            "tool_call_done",
+            {
+                "tool_call_id": None,
+                "assistant_message_id": str(assistant_message_id),
+                "tool_name": "web_search",
+                "tool_call_index": 1,
+                "provider_tool_call_id": "call-cancelled-web",
+                "input": {"query": "latest"},
+                "provider_event_seq_start": 3,
+                "provider_event_seq_end": 3,
+            },
+        )
+        db_session.commit()
+
+        finalize_cancelled(db_session, run, None)
+
+        tool = db_session.execute(
+            text(
+                """
+                SELECT id, tool_name, status, error_code, source_domain, source_policy
+                FROM message_tool_calls
+                WHERE assistant_message_id = :assistant_message_id
+                """
+            ),
+            {"assistant_message_id": assistant_message_id},
+        ).one()
+        event_payload = db_session.execute(
+            text(
+                """
+                SELECT payload
+                FROM chat_run_events
+                WHERE run_id = :run_id AND event_type = 'tool_call_done'
+                """
+            ),
+            {"run_id": run.id},
+        ).scalar_one()
+        llm_call = db_session.execute(
+            text(
+                """
+                SELECT call_status, error_class, error_detail, terminal_attempt_status
+                FROM llm_calls
+                WHERE id = :llm_call_id
+                """
+            ),
+            {"llm_call_id": llm_call_id},
+        ).one()
+
+        assert tuple(tool[1:5]) == (
+            "web_search",
+            "error",
+            ApiErrorCode.E_CANCELLED.value,
+            "public_web",
+        )
+        assert tool.source_policy["decision"] == "blocked"
+        assert tool.source_policy["reason"] == "chat_run_cancelled"
+        assert event_payload["tool_call_id"] == str(tool.id)
+        assert tuple(llm_call) == (
+            "failed",
+            ApiErrorCode.E_CANCELLED.value,
+            "Request cancelled.",
+            "terminal_error",
+        )
+
+    def test_public_web_plan_does_not_render_private_context_resources(
+        self, db_session, monkeypatch
+    ):
+        user_id = create_test_user(db_session)
+        model_id = create_test_model(db_session)
+        conversation_id = create_test_conversation(db_session, user_id)
+        user_message_id = create_test_message(
+            db_session,
+            conversation_id,
+            seq=1,
+            role="user",
+            content="Search the web for current news.",
+        )
+        assistant_message_id = create_test_message(
+            db_session,
+            conversation_id,
+            seq=2,
+            role="assistant",
+            content="",
+            status="pending",
+            model_id=model_id,
+            parent_message_id=user_message_id,
+        )
+        add_context_edge(db_session, conversation_id, f"media:{uuid4()}")
+        run = ChatRun(
+            id=uuid4(),
+            owner_user_id=user_id,
+            conversation_id=conversation_id,
+            user_message_id=user_message_id,
+            assistant_message_id=assistant_message_id,
+            idempotency_key="public-web-no-private-render",
+            payload_hash="public-web-no-private-render",
+            status="running",
+            model_id=model_id,
+            reasoning="none",
+            key_mode="auto",
+        )
+        db_session.add(run)
+        db_session.commit()
+
+        def fail_private_render(*args, **kwargs):
+            raise AssertionError("private resources rendered before public-web route gate")
+
+        monkeypatch.setattr(
+            "nexus.services.context_assembler._build_resources_block",
+            fail_private_render,
+        )
+        model = db_session.get(Model, model_id)
+        assert model is not None
+
+        assembly = assemble_chat_context(
+            db_session,
+            run=run,
+            model=model,
+            max_output_tokens=100,
+            retrieval_plan=plan_chat_context_retrieval(
+                db_session,
+                run=run,
+                conversation=run.conversation,
+                user_message=run.user_message,
+                web_search_available=True,
+            ),
+        )
+
+        assert assembly.retrieval_plan.source_domain == "public_web"
+        assert assembly.attached_citations == ()
 
     def test_app_search_scopes_must_be_array_of_strings(self):
         scopes, forced_error = _app_search_scopes_from_tool_args(
@@ -1233,6 +1972,11 @@ class TestChatRunTooling:
 
         assert scopes == []
         assert forced_error == "app_search scopes must be non-empty URI strings"
+
+        scopes, forced_error = _app_search_scopes_from_tool_args({"query": "needle", "scopes": []})
+
+        assert scopes == []
+        assert forced_error == "app_search scopes must be a non-empty array of URI strings"
 
     def test_app_search_scopes_accepts_array_of_strings(self):
         scopes, forced_error = _app_search_scopes_from_tool_args(
@@ -1410,6 +2154,140 @@ class TestChatRunTooling:
 
 
 class TestChatResponseRetry:
+    def test_retry_preserves_resource_chat_subject_meta(
+        self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        _seed_ai_plus_billing(direct_db, user_id)
+        with direct_db.session() as session:
+            model_id = create_test_model(session)
+            library_id = create_test_library(session, user_id, "Retry Synthesis Library")
+            artifact_id = session.execute(
+                text(
+                    """
+                    INSERT INTO library_intelligence_artifacts (library_id, user_id)
+                    VALUES (:library_id, :user_id)
+                    RETURNING id
+                    """
+                ),
+                {"library_id": library_id, "user_id": user_id},
+            ).scalar_one()
+            revision_id = session.execute(
+                text(
+                    """
+                    INSERT INTO library_intelligence_artifact_revisions (
+                        artifact_id, content_md, covered_targets, status, promoted_at
+                    )
+                    VALUES (:artifact_id, 'Retry synthesis body.', '[]'::jsonb, 'ready', now())
+                    RETURNING id
+                    """
+                ),
+                {"artifact_id": artifact_id},
+            ).scalar_one()
+            session.execute(
+                text(
+                    "UPDATE library_intelligence_artifacts "
+                    "SET current_revision_id = :revision_id WHERE id = :artifact_id"
+                ),
+                {"revision_id": revision_id, "artifact_id": artifact_id},
+            )
+            session.commit()
+            artifact_id = UUID(str(artifact_id))
+            revision_id = UUID(str(revision_id))
+        create_resp = auth_client.post("/conversations", headers=auth_headers(user_id))
+        conversation_id = UUID(create_resp.json()["data"]["id"])
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+        direct_db.register_cleanup(
+            "library_intelligence_artifact_revisions", "artifact_id", artifact_id
+        )
+        direct_db.register_cleanup("library_intelligence_artifacts", "id", artifact_id)
+        direct_db.register_cleanup("memberships", "library_id", library_id)
+        direct_db.register_cleanup("libraries", "id", library_id)
+
+        source = _post_chat_run(
+            auth_client,
+            user_id,
+            _create_run_payload(
+                model_id,
+                conversation_id=str(conversation_id),
+                chat_subject={"resource_ref": f"library_intelligence_artifact:{artifact_id}"},
+            ),
+            idempotency_key="chat-run-li-subject-source",
+        )
+        assert source.status_code == 200, f"Expected source run: {source.text}"
+        source_data = source.json()["data"]
+        source_run_id = UUID(source_data["run"]["id"])
+        failed_assistant_id = UUID(source_data["assistant_message"]["id"])
+        _register_run_cleanup(direct_db, source_run_id)
+
+        with direct_db.session() as session:
+            source_meta = session.execute(
+                text(
+                    """
+                    SELECT payload
+                    FROM chat_run_events
+                    WHERE run_id = :run_id AND event_type = 'meta'
+                    """
+                ),
+                {"run_id": source_run_id},
+            ).scalar_one()
+            session.execute(
+                text(
+                    """
+                    UPDATE chat_runs
+                    SET status = 'error',
+                        error_code = 'E_LLM_TIMEOUT',
+                        completed_at = now()
+                    WHERE id = :run_id
+                    """
+                ),
+                {"run_id": source_run_id},
+            )
+            session.execute(
+                text("UPDATE messages SET status = 'error' WHERE id = :message_id"),
+                {"message_id": failed_assistant_id},
+            )
+            session.commit()
+
+        retry = _post_retry(auth_client, user_id, failed_assistant_id, "retry-li-subject")
+
+        assert retry.status_code == 200, f"Expected retry to succeed: {retry.text}"
+        retry_data = retry.json()["data"]
+        retry_run_id = UUID(retry_data["run"]["id"])
+        _register_run_cleanup(direct_db, retry_run_id)
+
+        with direct_db.session() as session:
+            retry_meta = session.execute(
+                text(
+                    """
+                    SELECT payload
+                    FROM chat_run_events
+                    WHERE run_id = :run_id AND event_type = 'meta'
+                    """
+                ),
+                {"run_id": retry_run_id},
+            ).scalar_one()
+            retry_turn_context = session.get(ChatRunTurnContext, retry_run_id)
+
+        assert source_meta["chat_subject"] == {
+            "requested_resource_ref": f"library_intelligence_artifact:{artifact_id}",
+            "resource_ref": f"library_intelligence_revision:{revision_id}",
+            "context_edge_id": source_meta["chat_subject"]["context_edge_id"],
+            "companions": [f"library:{library_id}"],
+        }
+        assert retry_meta["chat_subject"] == source_meta["chat_subject"]
+        assert retry_turn_context is not None
+        assert retry_turn_context.requested_subject_scheme == "library_intelligence_artifact"
+        assert retry_turn_context.requested_subject_id == artifact_id
+        assert retry_turn_context.subject_scheme == "library_intelligence_revision"
+        assert retry_turn_context.subject_id == revision_id
+        assert (
+            str(retry_turn_context.subject_context_edge_id)
+            == source_meta["chat_subject"]["context_edge_id"]
+        )
+
     def test_retry_failed_root_response_creates_new_root_attempt_and_preserves_failure(
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
     ):
@@ -1847,12 +2725,14 @@ class TestCitationEdgeWriteThrough:
                     INSERT INTO message_tool_calls (
                         id, conversation_id, user_message_id, assistant_message_id,
                         tool_name, tool_call_index, query_hash, scope,
-                        requested_types, status
+                        requested_types, source_domain, source_policy, status
                     )
                     VALUES (
                         :tool_call_id, :conversation_id, :user_message_id,
                         :assistant_message_id, 'app_search', 1, 'sha-citation-test',
-                        'all', '["content_chunk"]'::jsonb, 'complete'
+                        'all', '["content_chunk"]'::jsonb, 'private_app',
+                        CAST(:source_policy AS jsonb),
+                        'complete'
                     )
                     """
                 ),
@@ -1861,6 +2741,7 @@ class TestCitationEdgeWriteThrough:
                     "conversation_id": conversation_id,
                     "user_message_id": user_message_id,
                     "assistant_message_id": assistant_message_id,
+                    "source_policy": json.dumps(_source_policy("private_app")),
                 },
             )
             locator = {
@@ -2486,6 +3367,94 @@ class TestCitationEdgeWriteThrough:
                 "source_label": None,
             }
         ]
+        assert payload["selected_count"] == 1
+        assert payload["more_candidates_available"] is False
+
+    def test_app_search_tool_output_includes_read_uri_for_readable_selected_results(self):
+        citation_id = uuid4()
+
+        payload = json.loads(
+            _app_search_tool_output(
+                SimpleNamespace(
+                    selected_citations=[
+                        SimpleNamespace(
+                            citation_target=f"content_chunk:{citation_id}",
+                            title="Readable chunk",
+                            snippet="Exact selected chunk text",
+                            result_type="content_chunk",
+                            source_label="Article",
+                            source_map={
+                                "version": "source_map.v1",
+                                "source_revision": "sha256:abc",
+                                "chunk_uri": f"content_chunk:{citation_id}",
+                                "read_uri": f"content_chunk:{citation_id}",
+                                "evidence_uri": "evidence_span:ignored",
+                                "context_header": "web_article: Heading",
+                                "section_path": ["Heading"],
+                                "part_count": 1,
+                                "parts": [{"not": "included"}],
+                            },
+                        )
+                    ],
+                    citations=[object(), object()],
+                    status="complete",
+                    error_code=None,
+                ),
+                7,
+            )
+        )
+
+        assert payload["results"] == [
+            {
+                "title": "Readable chunk",
+                "snippet": "Exact selected chunk text",
+                "kind": "content_chunk",
+                "source_label": "Article",
+                "read_uri": f"content_chunk:{citation_id}",
+                "source_map": {
+                    "version": "source_map.v1",
+                    "source_revision": "sha256:abc",
+                    "chunk_uri": f"content_chunk:{citation_id}",
+                    "read_uri": f"content_chunk:{citation_id}",
+                    "evidence_uri": "evidence_span:ignored",
+                    "context_header": "web_article: Heading",
+                    "section_path": ["Heading"],
+                    "part_count": 1,
+                },
+                "n": 7,
+            }
+        ]
+        assert payload["total_candidates"] == 2
+        assert payload["selected_count"] == 1
+        assert payload["more_candidates_available"] is True
+
+    def test_app_search_tool_output_includes_long_context_payload(self):
+        payload = json.loads(
+            _app_search_tool_output(
+                SimpleNamespace(
+                    selected_citations=[],
+                    citations=[],
+                    status="complete",
+                    error_code=None,
+                ),
+                1,
+                long_context={
+                    "status": "included",
+                    "uri": "media:11111111-1111-1111-1111-111111111111",
+                    "kind": "full",
+                    "body": "Whole source text.",
+                    "n": 1,
+                },
+            )
+        )
+
+        assert payload["long_context"] == {
+            "status": "included",
+            "uri": "media:11111111-1111-1111-1111-111111111111",
+            "kind": "full",
+            "body": "Whole source text.",
+            "n": 1,
+        }
 
     def test_emit_citation_index_streams_note_block_locator(
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
@@ -2654,13 +3623,22 @@ class TestCitationEdgeWriteThrough:
             requested_domains={"allowed": [], "blocked": []},
             citations=[cited, uncited],
             selected_citations=[cited],
+            selection_reasons=["selected_within_budget", "skipped_selected_limit"],
             context_text="<web_search_result/>",
             context_chars=20,
             latency_ms=5,
             status="complete",
+            source_domain="public_web",
+            source_policy=_source_policy("public_web"),
             tool_call_index=1,
         )
         with direct_db.session() as session:
+            _seed_started_tool_call(
+                session,
+                conversation_id=conversation_id,
+                user_message_id=user_message_id,
+                assistant_message_id=assistant_message_id,
+            )
             persist_web_search_run(session, web_run)
         tool_call_id = web_run.tool_call_id
         assert tool_call_id is not None
@@ -2812,6 +3790,23 @@ class TestCitationEdgeWriteThrough:
         with direct_db.session() as session:
             run = session.get(ChatRunModel, run_id)
             assert run is not None
+            session.execute(
+                text(
+                    """
+                    UPDATE message_tool_calls
+                    SET result_refs = CAST(:result_refs AS jsonb),
+                        selected_context_refs = CAST(:selected_context_refs AS jsonb)
+                    WHERE id = :tool_call_id
+                    """
+                ),
+                {
+                    "tool_call_id": tool_call_id,
+                    "result_refs": json.dumps(
+                        [{"uri": "content_chunk:1"}, {"uri": "content_chunk:2"}]
+                    ),
+                    "selected_context_refs": json.dumps([{"uri": "content_chunk:1"}]),
+                },
+            )
             _record_tool_citations(session, run=run, tool_call_id=tool_call_id, start_ordinal=1)
             session.commit()
 
@@ -2825,6 +3820,7 @@ class TestCitationEdgeWriteThrough:
 
         assert document["blocks"] == [{"type": "text", "format": "markdown", "text": "Answer [1]."}]
         assert len(trail.tool_calls) == 1
+        assert trail.tool_calls[0].more_candidates_available is True
         assert len(trail.tool_calls[0].retrievals) == 1
         retrieval = trail.tool_calls[0].retrievals[0]
         assert retrieval.result_type == "content_chunk"
@@ -2840,6 +3836,168 @@ class TestCitationEdgeWriteThrough:
         assert chip.snapshot is not None and chip.snapshot.title == "Chunk title", (
             f"Chip snapshot renders from the edge snapshot; got {chip.snapshot}"
         )
+
+    def test_tool_output_budget_exclusion_removes_selected_evidence(
+        self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
+    ):
+        from nexus.db.models import ChatRun as ChatRunModel
+        from nexus.services.chat_runs import _mark_unforwarded_tool_batch_excluded_by_budget
+        from nexus.services.message_trust_trails import build_assistant_trust_trail
+
+        (
+            user_id,
+            model_id,
+            conversation_id,
+            media_id,
+            chunk_id,
+            user_message_id,
+            assistant_message_id,
+        ) = self._setup_conversation(auth_client, direct_db)
+        run_id = self._create_chat_run_row(
+            direct_db,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            user_message_id=user_message_id,
+            assistant_message_id=assistant_message_id,
+            model_id=model_id,
+        )
+        tool_call_id = self._seed_tool_call_with_chunk_row(
+            direct_db,
+            conversation_id=conversation_id,
+            user_message_id=user_message_id,
+            assistant_message_id=assistant_message_id,
+            media_id=media_id,
+            chunk_id=chunk_id,
+            selected=True,
+        )
+        self._register_cleanups(
+            direct_db,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            media_id=media_id,
+            run_id=run_id,
+            tool_call_id=tool_call_id,
+        )
+        direct_db.register_cleanup("message_rerank_ledgers", "tool_call_id", tool_call_id)
+
+        with direct_db.session() as session:
+            run = session.get(ChatRunModel, run_id)
+            assert run is not None
+            session.execute(
+                text(
+                    """
+                    INSERT INTO message_rerank_ledgers (
+                        tool_call_id, strategy, input_count, selected_count,
+                        budget_chars, selected_chars, status, metadata
+                    )
+                    VALUES (
+                        :tool_call_id, 'app_search_deterministic_selection', 1, 1,
+                        16000, 123, 'complete', CAST(:metadata AS jsonb)
+                    )
+                    """
+                ),
+                {
+                    "tool_call_id": tool_call_id,
+                    "metadata": json.dumps(
+                        {
+                            "candidate_rerank_trace": [
+                                {
+                                    "from": 0,
+                                    "to": 0,
+                                    "result_type": "content_chunk",
+                                    "source_id": str(chunk_id),
+                                    "selected": True,
+                                    "included_in_prompt": True,
+                                    "selection_status": "included_in_prompt",
+                                    "selection_reason": "selected_within_budget",
+                                }
+                            ],
+                            "selection_reason_counts": {"selected_within_budget": 1},
+                            "inclusion_surface": "tool_output",
+                        }
+                    ),
+                },
+            )
+            session.execute(
+                text(
+                    """
+                    UPDATE message_tool_calls
+                    SET selected_context_refs = CAST(:selected_context_refs AS jsonb)
+                    WHERE id = :tool_call_id
+                    """
+                ),
+                {
+                    "tool_call_id": tool_call_id,
+                    "selected_context_refs": json.dumps([{"uri": f"content_chunk:{chunk_id}"}]),
+                },
+            )
+            _mark_unforwarded_tool_batch_excluded_by_budget(
+                session, run=run, tool_call_ids=[tool_call_id]
+            )
+            session.commit()
+
+        with direct_db.session() as session:
+            row = session.execute(
+                text(
+                    """
+                    SELECT selected, included_in_prompt, retrieval_status,
+                    result_ref->>'selected'
+                    FROM message_retrievals
+                    WHERE tool_call_id = :tool_call_id
+                    """
+                ),
+                {"tool_call_id": tool_call_id},
+            ).one()
+            assert row == (False, False, "excluded_by_budget", "false")
+            rerank = session.execute(
+                text(
+                    """
+                    SELECT selected_count, selected_chars, metadata
+                    FROM message_rerank_ledgers
+                    WHERE tool_call_id = :tool_call_id
+                    """
+                ),
+                {"tool_call_id": tool_call_id},
+            ).one()
+            assert rerank.selected_count == 0
+            assert rerank.selected_chars == 0
+            assert rerank.metadata["selection_reason_counts"] == {"tool_output_budget": 1}
+            assert rerank.metadata["candidate_rerank_trace"] == [
+                {
+                    "from": 0,
+                    "to": 0,
+                    "result_type": "content_chunk",
+                    "source_id": str(chunk_id),
+                    "selected": False,
+                    "included_in_prompt": False,
+                    "selection_status": "excluded_by_budget",
+                    "selection_reason": "tool_output_budget",
+                }
+            ]
+            assert (
+                session.execute(
+                    text(
+                        """
+                    SELECT selected_context_refs
+                    FROM message_tool_calls
+                    WHERE id = :tool_call_id
+                    """
+                    ),
+                    {"tool_call_id": tool_call_id},
+                ).scalar_one()
+                == []
+            )
+            trail = build_assistant_trust_trail(
+                session,
+                viewer_id=user_id,
+                assistant_message_id=assistant_message_id,
+            )
+
+        assert len(trail.tool_calls) == 1
+        assert trail.tool_calls[0].selected_count == 0
+        assert trail.tool_calls[0].retrievals[0].selected is False
+        assert trail.tool_calls[0].retrievals[0].included_in_prompt is False
+        assert trail.integrity_notices == []
 
     def test_build_chat_run_response_rehydrates_assistant_citations(
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
@@ -3020,6 +4178,110 @@ class TestCitationEdgeWriteThrough:
         assert tool.status == "running"
         assert tool.input_preview == '{"query":"nexus"}'
 
+    def test_build_chat_run_response_stream_state_hydrates_persisted_tool_ledgers(
+        self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
+    ):
+        from nexus.db.models import ChatRun as ChatRunModel
+        from nexus.services.agent_tools.web_search import (
+            WebSearchCitation,
+            WebSearchRun,
+            persist_web_search_run,
+        )
+        from nexus.services.chat_run_response import build_chat_run_response
+
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        with direct_db.session() as session:
+            model_id = create_test_model(session)
+            conversation_id = create_test_conversation(session, user_id)
+            user_message_id = create_test_message(session, conversation_id, 1, "user", "Ask")
+            assistant_message_id = create_test_message(
+                session,
+                conversation_id,
+                2,
+                "assistant",
+                "",
+                status="pending",
+                parent_message_id=user_message_id,
+            )
+        run_id = self._create_chat_run_row(
+            direct_db,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            user_message_id=user_message_id,
+            assistant_message_id=assistant_message_id,
+            model_id=model_id,
+        )
+        web_run = WebSearchRun(
+            conversation_id=conversation_id,
+            user_message_id=user_message_id,
+            assistant_message_id=assistant_message_id,
+            query_hash="sha-web",
+            result_type="mixed",
+            requested_freshness_days=None,
+            requested_domains={"allowed": [], "blocked": []},
+            citations=[
+                WebSearchCitation(
+                    result_ref="web:result-1",
+                    title="Web Result 1",
+                    url="https://example.com/1",
+                    display_url="example.com/1",
+                    snippet="Snippet 1",
+                    extra_snippets=(),
+                    published_at=None,
+                    source_name="Example",
+                    rank=1,
+                    provider="brave",
+                    provider_request_id="req-1",
+                    selected=True,
+                )
+            ],
+            selected_citations=[],
+            selection_reasons=["skipped_selected_limit"],
+            context_text="",
+            context_chars=0,
+            latency_ms=5,
+            status="complete",
+            source_domain="public_web",
+            source_policy=_source_policy("public_web"),
+            tool_call_index=1,
+        )
+        with direct_db.session() as session:
+            _seed_started_tool_call(
+                session,
+                conversation_id=conversation_id,
+                user_message_id=user_message_id,
+                assistant_message_id=assistant_message_id,
+            )
+            persist_web_search_run(session, web_run)
+            session.commit()
+        assert web_run.tool_call_id is not None
+        direct_db.register_cleanup(
+            "message_retrieval_candidate_ledgers", "tool_call_id", web_run.tool_call_id
+        )
+        direct_db.register_cleanup("message_rerank_ledgers", "tool_call_id", web_run.tool_call_id)
+        direct_db.register_cleanup("message_retrievals", "tool_call_id", web_run.tool_call_id)
+        direct_db.register_cleanup("message_tool_calls", "id", web_run.tool_call_id)
+        direct_db.register_cleanup("resource_external_snapshots", "user_id", user_id)
+        direct_db.register_cleanup("chat_runs", "id", run_id)
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+
+        with direct_db.session() as session:
+            run = session.get(ChatRunModel, run_id)
+            assert run is not None
+            response = build_chat_run_response(session, user_id, run)
+
+        tool = response.stream_state.tool_calls[0]
+        assert tool.tool_name == "web_search"
+        assert tool.status == "complete"
+        assert tool.latency_ms == 5
+        assert tool.source_domain == "public_web"
+        assert len(tool.retrievals) == 1
+        assert len(tool.candidate_ledgers) == 1
+        assert len(tool.rerank_ledgers) == 1
+        assert tool.rerank_ledgers[0].strategy == "provider_rank_then_context_budget"
+
     def test_messages_http_get_replays_assistant_citations_field_for_field(
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
     ):
@@ -3179,15 +4441,24 @@ class TestCitationEdgeWriteThrough:
                 requested_domains={"allowed": [], "blocked": []},
                 citations=citations,
                 selected_citations=citations,
+                selection_reasons=["selected_within_budget"] * len(citations),
                 context_text="<web_search_result/>",
                 context_chars=20,
                 latency_ms=5,
                 status="complete",
+                source_domain="public_web",
+                source_policy=_source_policy("public_web"),
                 tool_call_index=1,
             )
 
         # Attempt 1: two cited web results → two edges, two snapshots.
         with direct_db.session() as session:
+            _seed_started_tool_call(
+                session,
+                conversation_id=conversation_id,
+                user_message_id=user_message_id,
+                assistant_message_id=assistant_message_id,
+            )
             persist_web_search_run(session, web_run([web_citation(1), web_citation(2)]))
         tool_call_id = self._tool_call_index_1_id(direct_db, assistant_message_id)
         direct_db.register_cleanup("resource_edges", "user_id", user_id)
@@ -3228,8 +4499,18 @@ class TestCitationEdgeWriteThrough:
 
         # Attempt 2 (re-execution): only ONE result this time. The writer prunes
         # the previous telemetry set first, so old citation edges and snapshots
-        # die before the new selected row records its current edge.
+        # die before the new selected row records its current edge. The chat
+        # tool-start path re-arms the existing tool-call row to 'running' before
+        # each re-execution (chat_runs._persist_tool_call_start), so persist's
+        # load_started_tool_source_policy finds a running row to lock.
         with direct_db.session() as session:
+            session.execute(
+                text(
+                    "UPDATE message_tool_calls SET status = 'running', error_code = NULL "
+                    "WHERE id = :tool_call_id"
+                ),
+                {"tool_call_id": tool_call_id},
+            )
             persist_web_search_run(session, web_run([web_citation(1)]))
             run = session.get(ChatRunModel, run_id)
             assert run is not None

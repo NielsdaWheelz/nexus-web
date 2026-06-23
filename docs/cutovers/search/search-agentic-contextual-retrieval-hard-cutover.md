@@ -1,0 +1,299 @@
+# Search Agentic Contextual Retrieval Hard Cutover
+
+**Status:** Planner/read-handoff, chat tool-loop hardening, long-context
+single-media execution, and contextual source-map read model implemented -
+2026-06-20
+
+**Type:** Hard cutover. Add the future-facing retrieval layer only after evals,
+packer correctness, candidate policy, and deterministic selection are in place.
+
+## One-Line
+
+Add deep-retrieval behavior for hard questions: query planning, iterative
+search/inspect/read loops, contextual chunks, hierarchy-aware retrieval,
+graph-assisted expansion, and long-context routing.
+
+## Implemented Slices
+
+- `search/policy.py` owns a deterministic `plan_app_search` decision with
+  query class, candidate limit, retrieval mode, and policy reason.
+- `app_search` persists that plan in the existing rerank ledger metadata instead
+  of recording successful searches as `unclassified`.
+- The compact `app_search` tool output exposes `selected_count`,
+  `more_candidates_available`, and `read_uri` for selected results that
+  `read_resource` can actually read.
+- `read_resource` admits a URI selected by `app_search` in the same assistant
+  message, using existing chat telemetry as the handoff ledger.
+- Chat enforces a run-level aggregate tool-output budget before adding tool
+  results to provider continuation turns.
+- Chat finalizes max-tool-iteration exhaustion as a typed terminal error instead
+  of silently falling through to a complete run.
+- `app_search` ledgers a private `context_route` policy: default
+  `search_fetch_read`, with `long_context_candidate` only for an explicit
+  single-media whole-source query.
+- Chat executes that private long-context route by reading the scoped media
+  through `read_resource`, including the body in the `app_search` tool output
+  under the aggregate tool-output budget, and materializing a normal read
+  citation only when the body is forwarded to the model.
+- The system prompt tells the model to decompose broad comparison, absence, and
+  multi-hop questions into several focused `app_search` calls. Each call remains
+  visible as its own ordered tool call, rerank ledger, and trust-trail entry.
+- The system prompt keeps private `app_search` evidence and public `web_search`
+  evidence separated unless the user explicitly asks to combine saved sources
+  with the web.
+- `content_indexing` exposes deterministic `source_map.v1` read models for
+  content chunks from the existing `content_chunks`, `content_chunk_parts`,
+  `content_blocks`, and `evidence_spans` rows.
+- Selected `content_chunk` results carry compact source-map guidance in
+  `app_search` output and aggregate source-map visibility in rerank metadata.
+  Source maps do not become citation targets.
+- `inspect_resource` admits a `media:` URI selected by `app_search` in the same
+  assistant message, using the same handoff ledger as `read_resource`.
+- `resource_graph.context` exposes graph-derived app-search scope expansion
+  candidates from conversation context refs, with edge metadata and capability /
+  visibility filtering.
+- `app_search` uses that graph read model only for omitted-scope broad, global,
+  absence, and multi-hop query classes, ledgers `graph_expanded_scopes`, and
+  leaves explicit scopes plus exact lookups unexpanded.
+- Trust-trail tool-call read models expose `more_candidates_available` from
+  durable result/selected counts, matching the model-visible `app_search` output.
+- Generated/contextual hierarchy artifacts remain behind negative gates:
+  generated retrieval artifacts have no search-result or citation identity, and
+  source-map eval payloads stay guidance-only.
+
+Deferred by design: generated contextual summaries and hierarchical artifacts.
+
+The remaining hard-cutover specs are split out so this document stays the
+implemented foundation plus context, not a mixed-status mega-spec:
+
+- [`search-run-level-planner-hard-cutover.md`](search-run-level-planner-hard-cutover.md)
+- [`search-source-boundary-policy-hard-cutover.md`](search-source-boundary-policy-hard-cutover.md)
+- [`search-contextual-hierarchy-artifacts-hard-cutover.md`](search-contextual-hierarchy-artifacts-hard-cutover.md)
+- [`search-learned-reranker-hard-cutover.md`](search-learned-reranker-hard-cutover.md)
+
+## Why This Is Last
+
+Agentic and graph/hierarchical retrieval can be powerful, but they are expensive
+and easy to overfit. They should not compensate for a shallow candidate pool or a
+broken packer. This cutover assumes the earlier four cutovers are complete.
+
+## Research Inputs
+
+- OpenAI Deep Research frames deep retrieval as multi-step source discovery,
+  analysis, synthesis, and citation over web, files, MCP, and code tools:
+  `https://openai.com/index/introducing-deep-research/`
+  and
+  `https://developers.openai.com/api/docs/guides/deep-research`
+- OpenAI's Deep Research MCP interface requires a search tool and a fetch tool,
+  matching Nexus's split between `app_search` and `read_resource`:
+  `https://developers.openai.com/api/docs/guides/deep-research`
+- Reasoning Agentic RAG surveys describe the field's move from static pipelines
+  toward dynamic retrieval, planning, self-reflection, and tool use:
+  `https://arxiv.org/html/2506.10408v1`
+- Long-context research suggests a hybrid route: use RAG for cost and focus, but
+  route some questions to long-context modes when needed:
+  `https://arxiv.org/html/2407.16833v1`
+- Gemini long-context docs show that million-token contexts unlock direct-context
+  workflows, while RAG/filtering remain useful strategies:
+  `https://ai.google.dev/gemini-api/docs/long-context`
+- Microsoft LazyGraphRAG argues for blending vector RAG and graph RAG while
+  deferring expensive LLM graph work until query time:
+  `https://www.microsoft.com/en-us/research/blog/lazygraphrag-setting-a-new-standard-for-quality-and-cost/`
+- Recent graph/hierarchical RAG work emphasizes local/global query modes,
+  hierarchical summaries, entity graphs, and stage-specific evaluation:
+  `https://arxiv.org/html/2505.24226v2`
+  `https://arxiv.org/html/2506.05690v2`
+  `https://arxiv.org/html/2503.10150v2`
+  `https://arxiv.org/html/2502.09891v3`
+- NotebookLM's evolution is a product signal: source-grounded chat is moving
+  toward source discovery, agentic actions, generated artifacts, and visible
+  steps, but user reports still show demand for source control and transparency:
+  `https://support.google.com/notebooklm/answer/16179559?hl=en`
+  `https://www.theverge.com/news/642490/google-notebooklm-discover-sources-ai-audio-overviews`
+
+## Scope
+
+Add a deep retrieval mode that can choose among:
+
+- search only
+- search then inspect
+- search then read exact passages
+- query decomposition into several searches
+- scoped source discovery
+- graph/context expansion from existing `ResourceRef` relationships
+- long-context route for explicit single-media whole-source requests
+- deterministic source maps for selected content chunks
+
+This must remain grounded in existing owners:
+
+- Search owns candidate generation and retrieval policy.
+- Chat owns tool orchestration and prompt budgeting.
+- Resource graph owns context/citation edges.
+- Content indexing or a new generated-artifact owner owns contextual and
+  hierarchical index artifacts.
+
+## Query Planner
+
+`plan_app_search` remains the deterministic app-search policy classifier. It
+ledgers query class, candidate depth, retrieval mode, policy reason, and private
+context route for the search tool itself.
+
+The chat-owned run-level planner is implemented separately in
+`search-run-level-planner-hard-cutover.md`. It classifies attached-context,
+private search/read/inspect, long-context, public-web, and explicit
+private/public comparison routes before tool execution. Future work is
+model-based planner expansion and eval reporting, not another per-tool search
+policy.
+
+## Tool Loop Contract
+
+Harden the tool loop as part of deep retrieval:
+
+- aggregate tool-output prompt budget, not only per-tool caps
+- typed state for max-tool-iteration exhaustion
+- "more candidates available" signal in tool output/trust trail
+- clear system-prompt guidance for search vs inspect vs read
+- no hidden uncited evidence path
+- no web/private-source same-run tool-evidence mixing without an explicit
+  policy boundary; the implemented source-boundary slice blocks mixed private
+  app/public web tool batches before adapter execution unless the planner
+  classified an explicit comparison route
+
+OpenAI Deep Research's search/fetch split is the right conceptual shape:
+`app_search` discovers candidates; `read_resource` fetches exact evidence.
+
+## Contextual Indexing
+
+Add contextual chunk headers or summaries only after the deterministic retrieval
+path is measured.
+
+First slice implemented: deterministic `source_map.v1` derives from the current
+content index and attaches section/context guidance to selected `content_chunk`
+results. It is source-derived retrieval guidance, not generated evidence.
+
+Candidate artifacts:
+
+- chunk context header
+- section title/path
+- parent document summary
+- generated source map
+- entity/concept tags
+- section-level summary node
+- document-level summary node
+
+Requirements:
+
+- reindex is deterministic and versioned
+- generated artifacts identify their owner and source revision
+- citation targets remain concrete resources
+- summary nodes can guide retrieval but must not become unsupported citations
+
+## Graph And Hierarchy
+
+Graph/hierarchical retrieval is useful for:
+
+- global questions
+- multi-hop relationships
+- "what themes recur across my library?"
+- "where do sources disagree?"
+- "what should I read next?"
+
+It is less likely to help exact lookup or single passage questions.
+
+Use graph structure as a retrieval guide, not as a substitute for concrete
+evidence. Existing `resource_edges` can support expansion, but `app_search` must
+not query graph rows directly. The graph/context owner should expose typed read
+models for search to consume.
+
+## One-Year / Five-Year / Ten-Year View
+
+One year:
+
+- hybrid sparse+dense retrieval with contextual chunks is table stakes
+- reranking and eval dashboards become default
+- source-grounded agents use search/fetch/read loops
+- long-context routing is used selectively for small corpora or high-stakes deep
+  reads
+
+Five years:
+
+- personal retrieval systems maintain continuously updated source maps,
+  concept graphs, and user-specific ranking signals
+- models plan retrieval as part of reasoning, not as an external pre-step
+- citations carry richer provenance, confidence, and contradiction metadata
+- local/private retrieval and external web research are policy-routed
+
+Ten years:
+
+- retrieval becomes a persistent memory substrate, not a search feature
+- systems maintain living, versioned models of a user's library and projects
+- question answering, reading, note-taking, and research become one evidence
+  operating system
+- context windows are huge, but retrieval still matters for cost, privacy,
+  focus, provenance, and controllable evidence
+
+These are forecasts, not current guarantees. The implementation path should keep
+Nexus adaptable by making retrieval decisions typed, measured, and inspectable.
+
+## Acceptance Criteria
+
+Implemented acceptance:
+
+- Deep mode is opt-in or policy-routed, not the default for every query.
+- App-search planner decisions are ledgered.
+- Search/fetch/read tool use can be evaluated through ordered tool calls,
+  rerank ledgers, retrieval rows, citations, and trust trails.
+- Max tool iterations and aggregate tool budget are typed and tested.
+- Deterministic `source_map.v1` guidance is versioned, owner-bound, and not a
+  citation target.
+- Graph expansion never bypasses `ResourceRef` or capability policy.
+- Citation targets remain concrete, user-activatable resources.
+- Generated retrieval artifacts have no app-search scope, conversation-search
+  scope, search-result identity, or citation identity.
+
+Composed follow-up specs:
+
+- Run-level planner for attached-context/search/read/inspect/web routing:
+  [`search-run-level-planner-hard-cutover.md`](search-run-level-planner-hard-cutover.md).
+- Runtime public/private-source mixing enforcement for same-run tool evidence:
+  [`search-source-boundary-policy-hard-cutover.md`](search-source-boundary-policy-hard-cutover.md).
+- Generated contextual summaries and hierarchical artifacts that reindex
+  deterministically under a generated-artifact owner:
+  [`search-contextual-hierarchy-artifacts-hard-cutover.md`](search-contextual-hierarchy-artifacts-hard-cutover.md).
+- Learned/provider reranking after deterministic eval proof:
+  [`search-learned-reranker-hard-cutover.md`](search-learned-reranker-hard-cutover.md).
+
+## Likely Files
+
+- `python/nexus/services/chat_prompt.py`
+- `python/nexus/services/chat_runs.py`
+- `python/nexus/services/context_assembler.py`
+- `python/nexus/services/agent_tools/app_search.py`
+- `python/nexus/services/agent_tools/read_resource.py`
+- `python/nexus/services/agent_tools/inspect_resource.py`
+- `python/nexus/services/content_indexing.py`
+- `python/nexus/services/search/*`
+- `python/tests/test_chat_runs.py`
+- `python/tests/test_agent_app_search.py`
+- new agentic retrieval eval tests
+
+## Tests To Add
+
+- Planner chooses search/read/inspect for representative query classes.
+- Multi-hop tool sequence stops with a typed state when the cap is reached.
+- Tool-output aggregate budget is enforced.
+- Search result followed by read_resource produces citable exact evidence.
+- Long-context route is selected only under explicit policy.
+- Generated contextual artifacts reindex deterministically. Deferred.
+- Graph expansion respects capability policy and source visibility.
+
+## Verification
+
+Run focused tests:
+
+- retrieval eval harness
+- `python/tests/test_chat_runs.py`
+- `python/tests/test_agent_app_search.py`
+- `python/tests/test_attached_citations.py`
+- `python/tests/test_cutover_negative_gates.py`
+- relevant frontend SSE/trust-trail parser tests

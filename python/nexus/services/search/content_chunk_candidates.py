@@ -134,6 +134,93 @@ def retrieve_content_chunk_candidates(
     ]
 
 
+def ordered_media_content_chunk_ids(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    media_id: UUID,
+    limit: int,
+) -> list[UUID]:
+    rows = db.execute(
+        text(
+            f"""
+            WITH visible_media AS ({visible_media_ids_cte_sql()})
+            SELECT cc.id
+            FROM content_chunks cc
+            JOIN visible_media vm ON vm.media_id = cc.owner_id
+            JOIN content_index_states cis ON cis.owner_kind = cc.owner_kind
+                AND cis.owner_id = cc.owner_id
+                AND cis.status = 'ready'
+            JOIN evidence_spans es ON es.id = cc.primary_evidence_span_id
+                AND es.owner_kind = cc.owner_kind
+                AND es.owner_id = cc.owner_id
+            WHERE cc.owner_kind = 'media'
+              AND cc.owner_id = :media_id
+            ORDER BY cc.chunk_idx ASC, cc.id ASC
+            LIMIT :limit
+            """
+        ),
+        {"viewer_id": viewer_id, "media_id": media_id, "limit": limit},
+    ).scalars()
+    return [UUID(str(chunk_id)) for chunk_id in rows]
+
+
+def has_retrievable_content_chunks(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    scope: SearchScope,
+) -> bool:
+    scope_clause = scope_filter_sql(scope.kind, scope.id, "content_chunk")
+    if isinstance(scope_clause, ScopeUnsupported):
+        return False
+    scope_filter, scope_params = scope_clause
+
+    note_exists = ""
+    note_clause = scope_filter_sql(scope.kind, scope.id, "note_block")
+    if not isinstance(note_clause, ScopeUnsupported):
+        note_scope_filter, note_scope_params = note_clause
+        scope_params = {**scope_params, **note_scope_params}
+        note_exists = f"""
+            OR EXISTS (
+                SELECT 1
+                FROM content_chunks cc
+                JOIN note_blocks nb ON nb.id = cc.owner_id AND cc.owner_kind = 'note_block'
+                    AND nb.user_id = :viewer_id
+                JOIN content_index_states ncis ON ncis.owner_kind = cc.owner_kind
+                    AND ncis.owner_id = cc.owner_id AND ncis.status = 'ready'
+                WHERE btrim(cc.chunk_text) <> ''
+                {note_scope_filter}
+                LIMIT 1
+            )
+        """
+
+    return bool(
+        db.execute(
+            text(
+                f"""
+                WITH visible_media AS ({visible_media_ids_cte_sql()})
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM content_chunks cc
+                    JOIN media m ON m.id = cc.owner_id AND cc.owner_kind = 'media'
+                    JOIN visible_media vm ON vm.media_id = cc.owner_id
+                    JOIN content_index_states mcis ON mcis.owner_kind = cc.owner_kind
+                        AND mcis.owner_id = cc.owner_id AND mcis.status = 'ready'
+                    JOIN evidence_spans es ON es.id = cc.primary_evidence_span_id
+                        AND es.owner_kind = cc.owner_kind AND es.owner_id = cc.owner_id
+                    WHERE btrim(cc.chunk_text) <> ''
+                    {scope_filter}
+                    LIMIT 1
+                )
+                {note_exists}
+                """
+            ),
+            {"viewer_id": viewer_id, **scope_params},
+        ).scalar_one()
+    )
+
+
 def has_searchable_content_chunks(
     db: Session,
     *,

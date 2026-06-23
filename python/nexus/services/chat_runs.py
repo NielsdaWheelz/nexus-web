@@ -11,7 +11,8 @@ import asyncio
 import dataclasses
 import json
 import time
-from collections.abc import AsyncIterator, Mapping
+from collections import Counter
+from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import suppress
 from datetime import UTC, datetime
 from typing import Any, Protocol, cast
@@ -66,6 +67,7 @@ from nexus.schemas.conversation import (
 from nexus.services.agent_tools.app_search import (
     APP_SEARCH_TOOL_DEFINITION,
     APP_SEARCH_TOOL_NAME,
+    apply_provider_rerank_to_app_search_run,
     execute_app_search,
 )
 from nexus.services.agent_tools.inspect_resource import (
@@ -86,6 +88,12 @@ from nexus.services.agent_tools.web_search import (
 from nexus.services.api_key_resolver import (
     get_model_by_id,
     resolve_api_key,
+)
+from nexus.services.chat_retrieval_plan import (
+    CHAT_TOOL_NAMES,
+    evaluate_source_boundary_policy,
+    source_boundary_policy_json,
+    source_domain_for_tool,
 )
 from nexus.services.chat_run_access import (
     get_run_for_owner,
@@ -127,15 +135,19 @@ from nexus.services.chat_run_prompt_tracking import (
 from nexus.services.chat_run_response import build_chat_run_response
 from nexus.services.chat_run_usage import usage_provider_json, usage_tokens
 from nexus.services.chat_run_validation import validate_pre_phase
+from nexus.services.chat_tool_source_policy import validate_tool_source_policy
 from nexus.services.context_assembler import (
     assemble_chat_context,
     persist_prompt_assembly,
+    persist_run_retrieval_plan,
+    plan_chat_context_retrieval,
 )
 from nexus.services.conversation_branches import (
     ensure_branch_metadata,
     persist_active_leaf,
 )
 from nexus.services.llm_ledger import LlmCallOwner, observed_generate_stream
+from nexus.services.message_trust_trails import build_assistant_trust_trail
 from nexus.services.prompt_budget import ContextBudgetError, estimate_tokens
 from nexus.services.rate_limit import get_rate_limiter
 from nexus.services.redact import safe_kv
@@ -163,7 +175,10 @@ from nexus.services.resource_graph.schemas import (
     ConnectionFilters,
     ConnectionQuery,
 )
-from nexus.services.resource_items.capabilities import resource_citation_result_type
+from nexus.services.resource_items.capabilities import (
+    resource_citation_result_type,
+    resource_read_policy,
+)
 from nexus.services.resource_items.chat_subjects import resolve_chat_subject
 from nexus.services.retrieval_citation import (
     RetrievalCitation,
@@ -207,6 +222,8 @@ _CHAT_TOOL_SPECS: tuple[ToolSpec, ...] = (
         parameters=INSPECT_RESOURCE_TOOL_DEFINITION["parameters"],
     ),
 )
+_CHAT_TOOL_NAME_SET = frozenset(CHAT_TOOL_NAMES)
+_CHAT_TOOL_SPECS_BY_NAME = {spec.name: spec for spec in _CHAT_TOOL_SPECS}
 
 
 def _app_search_scopes_from_tool_args(args: Mapping[str, Any]) -> tuple[list[str], str | None]:
@@ -221,6 +238,8 @@ def _app_search_scopes_from_tool_args(args: Mapping[str, Any]) -> tuple[list[str
         return [], None
     if not isinstance(raw_scopes, list):
         return [], "app_search scopes must be an array of URI strings"
+    if not raw_scopes:
+        return [], "app_search scopes must be a non-empty array of URI strings"
 
     scopes: list[str] = []
     for scope in raw_scopes:
@@ -246,8 +265,9 @@ def _app_search_string_array_from_tool_args(
         if not isinstance(item, str):
             return None, f"app_search {key} must be an array of strings"
         value = item.strip()
-        if value:
-            values.append(value)
+        if not value:
+            return None, f"app_search {key} must contain non-empty strings"
+        values.append(value)
     return values, None
 
 
@@ -422,29 +442,116 @@ def _uuid_or_none(raw: object) -> UUID | None:
     return parsed if str(parsed) == raw else None
 
 
-def _app_search_tool_output(run_result: Any, start_ordinal: int) -> str:
+def _app_search_tool_output(
+    run_result: Any,
+    start_ordinal: int,
+    long_context: dict[str, object] | None = None,
+    *,
+    number_results: bool = True,
+) -> str:
     next_ordinal = start_ordinal
     results = []
     for citation in run_result.selected_citations:
+        read_uri = _read_uri_for_search_citation(citation)
         item: dict[str, object] = {
             "title": citation.title,
             "snippet": citation.snippet,
             "kind": citation.result_type,
             "source_label": citation.source_label,
         }
-        if citation.citation_target is not None:
+        if read_uri is not None:
+            item["read_uri"] = read_uri
+        source_map = getattr(citation, "source_map", None)
+        if isinstance(source_map, dict):
+            item["source_map"] = {
+                key: source_map[key]
+                for key in (
+                    "version",
+                    "source_revision",
+                    "chunk_uri",
+                    "read_uri",
+                    "evidence_uri",
+                    "context_header",
+                    "section_path",
+                    "part_count",
+                )
+                if key in source_map
+            }
+        if number_results and citation.citation_target is not None:
             item["n"] = next_ordinal
             next_ordinal += 1
         results.append(item)
-    return json.dumps(
-        {
-            "results": results,
-            "total_candidates": len(run_result.citations),
-            "status": run_result.status,
-            "error_code": run_result.error_code,
-        },
-        default=str,
+    payload: dict[str, object] = {
+        "results": results,
+        "total_candidates": len(run_result.citations),
+        "selected_count": len(run_result.selected_citations),
+        "more_candidates_available": len(run_result.citations) > len(run_result.selected_citations),
+        "status": run_result.status,
+        "error_code": run_result.error_code,
+    }
+    if long_context is not None:
+        payload["long_context"] = long_context
+    return json.dumps(payload, default=str)
+
+
+def _app_search_long_context_read(
+    db: Session, *, run: ChatRun, run_result: Any, route_intent: str
+) -> tuple[dict[str, object], Any] | None:
+    if route_intent != "private_long_context_read":
+        return None
+    if getattr(run_result, "context_route", None) != "long_context_candidate":
+        return None
+    scopes = getattr(run_result, "resolved_scopes", [])
+    if len(scopes) != 1 or not str(scopes[0]).startswith("media:"):
+        return None
+
+    uri = str(scopes[0])
+    result = execute_read_resource(
+        db,
+        viewer_id=run.owner_user_id,
+        conversation_id=run.conversation_id,
+        assistant_message_id=run.assistant_message_id,
+        uri=uri,
     )
+    if result.is_error:
+        return (
+            {
+                "status": "error",
+                "uri": uri,
+                "error_code": result.error_code,
+                "message": result.body,
+            },
+            result,
+        )
+    if result.kind != "full":
+        return (
+            {
+                "status": result.kind,
+                "uri": uri,
+                "kind": result.kind,
+                "message": result.body,
+            },
+            result,
+        )
+    return (
+        {
+            "status": "included",
+            "uri": uri,
+            "kind": result.kind,
+            "body": result.body,
+        },
+        result,
+    )
+
+
+def _read_uri_for_search_citation(citation: Any) -> str | None:
+    target = getattr(citation, "citation_target", None)
+    if not isinstance(target, str):
+        return None
+    parsed = parse_resource_ref(target)
+    if isinstance(parsed, ResourceRefParseFailure):
+        return None
+    return target if resource_read_policy(parsed) in {"body", "media"} else None
 
 
 def _web_search_tool_output(run_result: Any, start_ordinal: int) -> str:
@@ -497,6 +604,24 @@ def _persist_attached_citations(
         return
     if existing is not None:
         tool_call_id = existing[0]
+        db.execute(
+            text(
+                """
+                UPDATE message_tool_calls
+                SET source_domain = 'private_app',
+                    source_policy = :source_policy,
+                    updated_at = now()
+                WHERE id = :tool_call_id
+                """
+            ).bindparams(bindparam("source_policy", type_=JSONB)),
+            {
+                "tool_call_id": tool_call_id,
+                "source_policy": source_boundary_policy_json(
+                    source_domain="private_app",
+                    reason="attached_context",
+                ),
+            },
+        )
     else:
         tool_call_id = db.execute(
             text(
@@ -504,20 +629,26 @@ def _persist_attached_citations(
                 INSERT INTO message_tool_calls (
                     conversation_id, user_message_id, assistant_message_id, tool_name,
                     tool_call_index, scope, requested_types, result_refs,
-                    selected_context_refs, provider_request_ids, status
+                    selected_context_refs, provider_request_ids, source_domain,
+                    source_policy, status
                 )
                 VALUES (
                     :conversation_id, :user_message_id, :assistant_message_id,
                     'attached_resources', 0, 'attached_context', '[]'::jsonb,
-                    '[]'::jsonb, '[]'::jsonb, '[]'::jsonb, 'complete'
+                    '[]'::jsonb, '[]'::jsonb, '[]'::jsonb, 'private_app',
+                    :source_policy, 'complete'
                 )
                 RETURNING id
                 """
-            ),
+            ).bindparams(bindparam("source_policy", type_=JSONB)),
             {
                 "conversation_id": run.conversation_id,
                 "user_message_id": run.user_message_id,
                 "assistant_message_id": run.assistant_message_id,
+                "source_policy": source_boundary_policy_json(
+                    source_domain="private_app",
+                    reason="attached_context",
+                ),
             },
         ).scalar_one()
     for ordinal, citation in enumerate(citations):
@@ -654,6 +785,141 @@ def _clear_message_citations(db: Session, run: ChatRun) -> None:
         _delete_citation_edge(db, viewer_id=run.owner_user_id, edge_id=edge_id)
 
 
+def _mark_unforwarded_tool_batch_excluded_by_budget(
+    db: Session,
+    *,
+    run: ChatRun,
+    tool_call_ids: Sequence[UUID],
+    selection_reason: str = "tool_output_budget",
+) -> None:
+    if not tool_call_ids:
+        return
+    db.execute(
+        text(
+            """
+            UPDATE chat_run_events
+            SET payload = payload || jsonb_build_object(
+                'result_count', 0,
+                'selected_count', 0,
+                'more_candidates_available', false,
+                'results', '[]'::jsonb
+            )
+            WHERE run_id = :run_id
+              AND event_type = 'tool_result'
+              AND payload->>'tool_call_id' = ANY(:tool_call_ids)
+            """
+        ),
+        {"run_id": run.id, "tool_call_ids": [str(tool_call_id) for tool_call_id in tool_call_ids]},
+    )
+    edge_ids = (
+        db.execute(
+            text(
+                """
+                SELECT cited_edge_id
+                FROM message_retrievals
+                WHERE tool_call_id = ANY(:tool_call_ids)
+                  AND cited_edge_id IS NOT NULL
+                """
+            ),
+            {"tool_call_ids": tool_call_ids},
+        )
+        .scalars()
+        .all()
+    )
+    for edge_id in edge_ids:
+        _delete_citation_edge(db, viewer_id=run.owner_user_id, edge_id=edge_id)
+    db.execute(
+        text(
+            """
+            UPDATE message_retrievals
+            SET cited_edge_id = NULL,
+                selected = false,
+                included_in_prompt = false,
+                result_ref = jsonb_set(result_ref, '{selected}', 'false'::jsonb, true),
+                retrieval_status = CASE
+                    WHEN selected THEN 'excluded_by_budget'
+                    ELSE retrieval_status
+                END
+            WHERE tool_call_id = ANY(:tool_call_ids)
+            """
+        ),
+        {"tool_call_ids": tool_call_ids},
+    )
+    db.execute(
+        text(
+            """
+            UPDATE message_retrieval_candidate_ledgers
+            SET selected = false,
+                included_in_prompt = false,
+                selection_status = CASE
+                    WHEN selected THEN 'excluded_by_budget'
+                    ELSE selection_status
+                END,
+                selection_reason = CASE
+                    WHEN selected THEN :selection_reason
+                    ELSE selection_reason
+                END
+            WHERE tool_call_id = ANY(:tool_call_ids)
+            """
+        ),
+        {"tool_call_ids": tool_call_ids, "selection_reason": selection_reason},
+    )
+    db.execute(
+        text(
+            """
+            UPDATE message_tool_calls
+            SET selected_context_refs = '[]'::jsonb
+            WHERE id = ANY(:tool_call_ids)
+              AND tool_name IN ('app_search', 'web_search')
+            """
+        ),
+        {"tool_call_ids": tool_call_ids},
+    )
+    for row in db.execute(
+        text(
+            """
+            SELECT id, metadata
+            FROM message_rerank_ledgers
+            WHERE tool_call_id = ANY(:tool_call_ids)
+            """
+        ),
+        {"tool_call_ids": tool_call_ids},
+    ):
+        metadata = dict(row.metadata or {})
+        trace = []
+        for item in metadata.get("candidate_rerank_trace") or []:
+            if not isinstance(item, dict):
+                continue
+            updated_item = dict(item)
+            if updated_item.get("selected") is True:
+                updated_item["selection_status"] = "excluded_by_budget"
+                updated_item["selection_reason"] = selection_reason
+            updated_item["selected"] = False
+            updated_item["included_in_prompt"] = False
+            trace.append(updated_item)
+        if trace:
+            metadata["candidate_rerank_trace"] = trace
+            metadata["selection_reason_counts"] = dict(
+                Counter(
+                    str(item.get("selection_reason"))
+                    for item in trace
+                    if item.get("selection_reason") is not None
+                )
+            )
+        db.execute(
+            text(
+                """
+                UPDATE message_rerank_ledgers
+                SET selected_count = 0,
+                    selected_chars = 0,
+                    metadata = :metadata
+                WHERE id = :id
+                """
+            ).bindparams(bindparam("metadata", type_=JSONB)),
+            {"id": row.id, "metadata": metadata},
+        )
+
+
 def _persist_read_evidence_citation(
     db: Session,
     *,
@@ -687,8 +953,7 @@ def _persist_read_evidence_citation(
             included_in_prompt=True,
         )
     except (NotFoundError, ValueError):
-        # justify-ignore-error: no resolvable anchor → the read body still
-        # returns, but it is not cited (no row, no `n`).
+        # justify-ignore-error: no resolvable anchor means no citable tool output.
         return None
     _record_tool_citations(db, run=run, tool_call_id=tool_call_id, start_ordinal=start_ordinal)
     return start_ordinal
@@ -702,7 +967,12 @@ def _persist_tool_call_start(
     tool_name: str,
     scope: str,
     requested_types: list[str],
+    source_domain: str,
+    source_policy: Mapping[str, object],
 ) -> UUID:
+    source_policy_payload = validate_tool_source_policy(
+        tool_name=tool_name, source_domain=source_domain, source_policy=source_policy
+    )
     params = {
         "conversation_id": run.conversation_id,
         "user_message_id": run.user_message_id,
@@ -711,6 +981,8 @@ def _persist_tool_call_start(
         "tool_call_index": tool_call_index,
         "scope": scope,
         "requested_types": requested_types,
+        "source_domain": source_domain,
+        "source_policy": source_policy_payload,
     }
     existing = db.execute(
         text(
@@ -740,6 +1012,8 @@ def _persist_tool_call_start(
                     result_refs,
                     selected_context_refs,
                     provider_request_ids,
+                    source_domain,
+                    source_policy,
                     latency_ms,
                     status,
                     error_code
@@ -756,13 +1030,18 @@ def _persist_tool_call_start(
                     '[]'::jsonb,
                     '[]'::jsonb,
                     '[]'::jsonb,
+                    :source_domain,
+                    :source_policy,
                     NULL,
                     'running',
                     NULL
                 )
                 RETURNING id
                 """
-            ).bindparams(bindparam("requested_types", type_=JSONB)),
+            ).bindparams(
+                bindparam("requested_types", type_=JSONB),
+                bindparam("source_policy", type_=JSONB),
+            ),
             params,
         ).scalar_one()
 
@@ -778,13 +1057,18 @@ def _persist_tool_call_start(
                 result_refs = '[]'::jsonb,
                 selected_context_refs = '[]'::jsonb,
                 provider_request_ids = '[]'::jsonb,
+                source_domain = :source_domain,
+                source_policy = :source_policy,
                 latency_ms = NULL,
                 status = 'running',
                 error_code = NULL,
                 updated_at = now()
             WHERE id = :tool_call_id
             """
-        ).bindparams(bindparam("requested_types", type_=JSONB)),
+        ).bindparams(
+            bindparam("requested_types", type_=JSONB),
+            bindparam("source_policy", type_=JSONB),
+        ),
         {**params, "tool_call_id": tool_call_id},
     )
     prune_tool_call_retrievals(db, tool_call_id=tool_call_id)
@@ -841,6 +1125,8 @@ def _tool_start_event(
     scope: str,
     types: list[str],
     filters: dict[str, object],
+    source_domain: str,
+    source_policy: Mapping[str, object],
 ) -> dict[str, object]:
     return {
         "tool_call_id": str(tool_call_id),
@@ -852,6 +1138,8 @@ def _tool_start_event(
         "types": types,
         "filters": filters,
         "error_code": None,
+        "source_domain": source_domain,
+        "source_policy": dict(source_policy),
     }
 
 
@@ -862,12 +1150,17 @@ def _persist_tool_call_trace(
     tool_call_index: int,
     tool_name: str,
     result: Any,
+    source_domain: str,
+    source_policy: Mapping[str, object],
 ) -> UUID:
     """Persist a read_resource / inspect_resource invocation as a message_tool_calls row.
 
     Read evidence may get one message_retrievals row after this parent is
     inserted. Inspect maps and too_large redirects stay trace-only.
     """
+    source_policy_payload = validate_tool_source_policy(
+        tool_name=tool_name, source_domain=source_domain, source_policy=source_policy
+    )
     payload = {
         "uri": result.uri,
         "status": result.status,
@@ -883,6 +1176,8 @@ def _persist_tool_call_trace(
         "payload": json.dumps([payload]),
         "status": "error" if result.is_error else "complete",
         "error_code": result.error_code,
+        "source_domain": source_domain,
+        "source_policy": source_policy_payload,
     }
     existing = db.execute(
         text(
@@ -907,6 +1202,8 @@ def _persist_tool_call_trace(
                     result_refs,
                     selected_context_refs,
                     provider_request_ids,
+                    source_domain,
+                    source_policy,
                     status,
                     error_code
                 )
@@ -920,12 +1217,14 @@ def _persist_tool_call_trace(
                     CAST(:payload AS JSONB),
                     '[]'::jsonb,
                     '[]'::jsonb,
+                    :source_domain,
+                    :source_policy,
                     :status,
                     :error_code
                 )
                 RETURNING id
                 """
-            ),
+            ).bindparams(bindparam("source_policy", type_=JSONB)),
             params,
         ).scalar_one()
 
@@ -939,11 +1238,13 @@ def _persist_tool_call_trace(
                 result_refs = CAST(:payload AS JSONB),
                 selected_context_refs = '[]'::jsonb,
                 provider_request_ids = '[]'::jsonb,
+                source_domain = :source_domain,
+                source_policy = :source_policy,
                 status = :status,
                 error_code = :error_code
             WHERE id = :tool_call_id
             """
-        ),
+        ).bindparams(bindparam("source_policy", type_=JSONB)),
         {**params, "tool_call_id": tool_call_id},
     )
     prune_tool_call_retrievals(db, tool_call_id=tool_call_id)
@@ -957,6 +1258,8 @@ def _tool_trace_event(
     tool_call_index: int,
     tool_name: str,
     result: Any,
+    source_domain: str,
+    source_policy: Mapping[str, object],
 ) -> dict[str, object]:
     return {
         "tool_call_id": str(tool_call_id),
@@ -968,7 +1271,57 @@ def _tool_trace_event(
         "types": [],
         "filters": {"uri": result.uri},
         "error_code": result.error_code,
+        "source_domain": source_domain,
+        "source_policy": dict(source_policy),
     }
+
+
+def _prompt_assembly_event(db: Session, run: ChatRun) -> dict[str, object]:
+    prompt = build_assistant_trust_trail(
+        db,
+        viewer_id=run.owner_user_id,
+        assistant_message_id=run.assistant_message_id,
+    ).prompt
+    if prompt is None:
+        raise AssertionError(f"chat run {run.id} prompt assembly was not persisted")
+    return {
+        "assistant_message_id": str(run.assistant_message_id),
+        "prompt": prompt,
+    }
+
+
+def _retrieval_plan_event(run: ChatRun) -> dict[str, object]:
+    if run.retrieval_plan is None:
+        raise AssertionError(f"chat run {run.id} retrieval plan was not persisted")
+    return {
+        "assistant_message_id": str(run.assistant_message_id),
+        "retrieval_plan": dict(run.retrieval_plan),
+    }
+
+
+def _tool_ledger_snapshot_event(
+    db: Session, run: ChatRun, *, tool_call_id: UUID, tool_call_index: int
+) -> dict[str, object]:
+    trail = build_assistant_trust_trail(
+        db,
+        viewer_id=run.owner_user_id,
+        assistant_message_id=run.assistant_message_id,
+    )
+    for tool in trail.tool_calls:
+        if tool.id == tool_call_id:
+            return {
+                "assistant_message_id": str(run.assistant_message_id),
+                "tool_call_id": str(tool_call_id),
+                "tool_name": tool.tool_name,
+                "tool_call_index": tool_call_index,
+                "scope": tool.scope,
+                "requested_types": tool.requested_types,
+                "source_domain": tool.source_domain,
+                "source_policy": tool.source_policy,
+                "candidate_ledgers": tool.candidate_ledgers,
+                "rerank_ledgers": tool.rerank_ledgers,
+            }
+    raise AssertionError(f"tool call {tool_call_id} ledger snapshot was not persisted")
 
 
 def _emit_citation_index(db: Session, run: ChatRun, content_md: str) -> None:
@@ -1049,13 +1402,29 @@ def _emit_citation_index(db: Session, run: ChatRun, content_md: str) -> None:
     if not edges:
         return
     edge_id_by_ordinal = {edge.ordinal: edge.edge_id for edge in edges}
+    retrieval_by_edge_id = {
+        row.cited_edge_id: (row.id, row.tool_call_id)
+        for row in db.execute(
+            text(
+                """
+                SELECT id, tool_call_id, cited_edge_id
+                FROM message_retrievals
+                WHERE cited_edge_id = ANY(:edge_ids)
+                """
+            ),
+            {"edge_ids": list(edge_id_by_ordinal.values())},
+        )
+    }
     citations = []
     for citation in build_citation_outs(db, viewer_id=run.owner_user_id, source=message_ref):
         edge_id = edge_id_by_ordinal.get(citation.ordinal)
         assert edge_id is not None, f"citation ordinal {citation.ordinal} lost its edge id"
+        retrieval = retrieval_by_edge_id.get(edge_id)
         citations.append(
             {
                 "citation_edge_id": str(edge_id),
+                "retrieval_id": str(retrieval[0]) if retrieval is not None else None,
+                "tool_call_id": str(retrieval[1]) if retrieval is not None else None,
                 "citation": citation.model_dump(mode="json"),
             }
         )
@@ -1306,6 +1675,30 @@ def _parse_chat_subject(chat_subject: ChatSubjectRequest | None) -> ResourceRef 
     return parsed
 
 
+def _retry_chat_subject_payload(
+    db: Session,
+    *,
+    source_run: ChatRun,
+    source_turn_context: ChatRunTurnContext | None,
+) -> dict[str, object] | None:
+    if source_turn_context is None or source_turn_context.subject_id is None:
+        return None
+    payload = db.execute(
+        select(ChatRunEvent.payload)
+        .where(ChatRunEvent.run_id == source_run.id, ChatRunEvent.event_type == "meta")
+        .order_by(ChatRunEvent.seq)
+        .limit(1)
+    ).scalar_one_or_none()
+    if isinstance(payload, dict):
+        chat_subject = payload.get("chat_subject")
+        if isinstance(chat_subject, dict):
+            return dict(chat_subject)
+    raise ApiError(
+        ApiErrorCode.E_RETRY_INVALID_STATE,
+        "Retry source chat_subject metadata not found",
+    )
+
+
 def retry_failed_assistant_response(
     db: Session,
     *,
@@ -1403,6 +1796,11 @@ def retry_failed_assistant_response(
         db.add(run)
         db.flush()
         source_turn_context = db.get(ChatRunTurnContext, source_run.id)
+        chat_subject_payload = _retry_chat_subject_payload(
+            db,
+            source_run=source_run,
+            source_turn_context=source_turn_context,
+        )
         if source_turn_context is not None:
             db.add(
                 ChatRunTurnContext(
@@ -1427,7 +1825,7 @@ def retry_failed_assistant_response(
                 "assistant_message_id": str(assistant_retry_message.id),
                 "model_id": str(model.id),
                 "provider": model.provider,
-                "chat_subject": None,
+                "chat_subject": chat_subject_payload,
             },
         )
         enqueue_job(
@@ -1634,31 +2032,10 @@ async def _execute_chat_run(
         finalize_cancelled(db, run, None)
         return {"status": "cancelled"}
 
-    try:
-        resolved_key = resolve_api_key(db, run.owner_user_id, model.provider, run.key_mode)
-    except ApiError as exc:
-        finalize_error(
-            db,
-            run_id=run.id,
-            error_code=exc.code.value,
-            error_detail=exception_error_detail(exc),
-            assistant_content=ERROR_CODE_TO_MESSAGE.get(exc.code.value, exc.message),
-        )
-        return {"status": "error", "error_code": exc.code.value}
-    except ModelCallError as exc:
-        error_code = api_error_code_for_model_call(exc.error_code).value
-        finalize_error(
-            db,
-            run_id=run.id,
-            error_code=error_code,
-            error_detail=exception_error_detail(exc),
-            assistant_content=ERROR_CODE_TO_MESSAGE["E_LLM_INVALID_KEY"],
-        )
-        return {"status": "error", "error_code": error_code}
-
     rate_limiter = get_rate_limiter()
     rate_limiter.acquire_inflight_slot(run.owner_user_id)
     budget_reserved = False
+    resolved_key = None
     max_output_tokens = _max_output_tokens_for_reasoning(model, run.reasoning)
     try:
         conversation = db.get(Conversation, run.conversation_id)
@@ -1674,8 +2051,41 @@ async def _execute_chat_run(
             return {"status": "error", "error_code": ApiErrorCode.E_CONVERSATION_NOT_FOUND.value}
 
         if is_cancel_requested(db, run.id):
-            finalize_cancelled(db, run, resolved_key)
+            finalize_cancelled(db, run, None)
             return {"status": "cancelled"}
+
+        retrieval_plan = plan_chat_context_retrieval(
+            db,
+            run=run,
+            conversation=conversation,
+            user_message=user_message,
+            web_search_available=web_search_provider is not None,
+        )
+        persist_run_retrieval_plan(db, run=run, retrieval_plan=retrieval_plan)
+        append_run_event(db, run, "retrieval_plan", _retrieval_plan_event(run))
+        db.commit()
+
+        try:
+            resolved_key = resolve_api_key(db, run.owner_user_id, model.provider, run.key_mode)
+        except ApiError as exc:
+            finalize_error(
+                db,
+                run_id=run.id,
+                error_code=exc.code.value,
+                error_detail=exception_error_detail(exc),
+                assistant_content=ERROR_CODE_TO_MESSAGE.get(exc.code.value, exc.message),
+            )
+            return {"status": "error", "error_code": exc.code.value}
+        except ModelCallError as exc:
+            error_code = api_error_code_for_model_call(exc.error_code).value
+            finalize_error(
+                db,
+                run_id=run.id,
+                error_code=error_code,
+                error_detail=exception_error_detail(exc),
+                assistant_content=ERROR_CODE_TO_MESSAGE["E_LLM_INVALID_KEY"],
+            )
+            return {"status": "error", "error_code": error_code}
 
         try:
             assembly = assemble_chat_context(
@@ -1683,10 +2093,12 @@ async def _execute_chat_run(
                 run=run,
                 model=model,
                 max_output_tokens=max_output_tokens,
+                retrieval_plan=retrieval_plan,
             )
             persist_prompt_assembly(db, run=run, assembly=assembly)
             reconcile_prompt_retrievals(db, run=run, assembly=assembly)
             _persist_attached_citations(db, run, assembly.attached_citations)
+            append_run_event(db, run, "prompt_assembly", _prompt_assembly_event(db, run))
             db.commit()
         except ContextBudgetError as exc:
             logger.warning(
@@ -1707,7 +2119,12 @@ async def _execute_chat_run(
             )
             return {"status": "error", "error_code": error_code}
 
-        llm_request = dataclasses.replace(assembly.llm_request, tools=_CHAT_TOOL_SPECS)
+        llm_request = dataclasses.replace(
+            assembly.llm_request,
+            tools=tuple(
+                _CHAT_TOOL_SPECS_BY_NAME[name] for name in assembly.retrieval_plan.allowed_tools
+            ),
+        )
         if resolved_key.mode == "platform":
             est_tokens = (
                 estimate_tokens("\n".join(turn.content for turn in llm_request.messages))
@@ -1729,6 +2146,12 @@ async def _execute_chat_run(
         locally_truncated = False
         citation_n_next = len(assembly.attached_citations) + 1
         tool_call_index_next = 0
+        tool_output_budget_tokens = max(
+            0, assembly.ledger.input_budget_tokens - assembly.ledger.estimated_input_tokens
+        )
+        tool_output_tokens_used = 0
+        tool_output_budget_error: str | None = None
+        forwarded_source_domains: list[str] = []
         stream_error_code: str | None = None
         stream_error_detail: str | None = None
         call_owner = LlmCallOwner(kind="chat_run", id=run.id)
@@ -1793,6 +2216,66 @@ async def _execute_chat_run(
             )
             durable_flush_count += 1
             return "", None, time.monotonic()
+
+        def claim_tool_output(tool_name: str, output: str) -> bool:
+            nonlocal tool_output_budget_error, tool_output_tokens_used
+            output_tokens = estimate_tokens(output)
+            if tool_output_tokens_used + output_tokens > tool_output_budget_tokens:
+                tool_output_budget_error = (
+                    f"aggregate tool output budget exceeded for {tool_name}: "
+                    f"budget_tokens={tool_output_budget_tokens}, "
+                    f"used_tokens={tool_output_tokens_used}, "
+                    f"output_tokens={output_tokens}"
+                )
+                return False
+            tool_output_tokens_used += output_tokens
+            return True
+
+        def finish_cancelled_tool_phase(tool_call_ids: list[UUID]) -> dict[str, str]:
+            if tool_call_ids:
+                _mark_unforwarded_tool_batch_excluded_by_budget(
+                    db,
+                    run=run,
+                    tool_call_ids=tool_call_ids,
+                    selection_reason="cancelled",
+                )
+                db.commit()
+            finalize_cancelled(
+                db,
+                run,
+                resolved_key,
+                usage=usage_provider_json(usage),
+                last_provider_event_seq=last_provider_event_seq,
+            )
+            log_stream_observed(
+                status="cancelled",
+                error_code=ApiErrorCode.E_CANCELLED.value,
+                terminal_cause="cancelled",
+            )
+            return {"status": "cancelled"}
+
+        def mark_forwarded_source_domain(source_domain: str) -> None:
+            if source_domain in {"private_app", "public_web"} and (
+                source_domain not in forwarded_source_domains
+            ):
+                forwarded_source_domains.append(source_domain)
+
+        if assembly.ledger.included_context_refs:
+            mark_forwarded_source_domain("private_app")
+        if assembly.ledger.included_retrieval_ids:
+            for source_domain in db.execute(
+                text(
+                    """
+                    SELECT DISTINCT mtc.source_domain
+                    FROM message_retrievals mr
+                    JOIN message_tool_calls mtc ON mtc.id = mr.tool_call_id
+                    WHERE mr.id = ANY(:retrieval_ids)
+                    ORDER BY mtc.source_domain
+                    """
+                ),
+                {"retrieval_ids": list(assembly.ledger.included_retrieval_ids)},
+            ).scalars():
+                mark_forwarded_source_domain(str(source_domain))
 
         try:
             for _iteration in range(MAX_TOOL_ITERATIONS):
@@ -2139,6 +2622,8 @@ async def _execute_chat_run(
                     break
                 if not iter_terminal:
                     break
+                if is_cancel_requested(db, run.id):
+                    return finish_cancelled_tool_phase([])
                 turns.append(
                     ModelMessage(
                         role="assistant",
@@ -2148,14 +2633,236 @@ async def _execute_chat_run(
                     )
                 )
                 tool_results: list[ToolResult] = []
+                unforwarded_tool_call_ids: list[UUID] = []
+                batch_policy = evaluate_source_boundary_policy(
+                    plan=assembly.retrieval_plan,
+                    pending_tool_names=tuple(tc.name for tc in pending_tool_calls),
+                    domains_seen=tuple(forwarded_source_domains),
+                )
+                if batch_policy.decision == "blocked":
+                    blocked_outputs: list[tuple[str, str, str]] = []
+                    for tc in pending_tool_calls:
+                        tool_call_index_next += 1
+                        source_domain = source_domain_for_tool(tc.name)
+                        source_policy = (
+                            batch_policy.as_json(source_domain=source_domain)
+                            if source_domain != "provider_control"
+                            else source_boundary_policy_json(
+                                source_domain="provider_control",
+                                reason="provider_control_only",
+                                requested_domains=(),
+                            )
+                        )
+                        error_code = (
+                            "source_policy_blocked"
+                            if source_domain != "provider_control"
+                            else "unknown_tool"
+                        )
+                        tool_call_id = _persist_tool_call_start(
+                            db,
+                            run=run,
+                            tool_call_index=tool_call_index_next,
+                            tool_name=tc.name,
+                            scope=(
+                                "source_boundary_policy"
+                                if source_domain != "provider_control"
+                                else "provider_tool"
+                            ),
+                            requested_types=[],
+                            source_domain=source_domain,
+                            source_policy=source_policy,
+                        )
+                        unforwarded_tool_call_ids.append(tool_call_id)
+                        _bind_provider_tool_call_events(
+                            db,
+                            run=run,
+                            tool_call_index=tool_call_index_next,
+                            tool_call_id=tool_call_id,
+                        )
+                        start_event = _tool_start_event(
+                            run=run,
+                            tool_call_id=tool_call_id,
+                            tool_call_index=tool_call_index_next,
+                            tool_name=tc.name,
+                            scope=(
+                                "source_boundary_policy"
+                                if source_domain != "provider_control"
+                                else "provider_tool"
+                            ),
+                            types=[],
+                            filters=(
+                                batch_policy.as_json()
+                                if source_domain != "provider_control"
+                                else {}
+                            ),
+                            source_domain=source_domain,
+                            source_policy=source_policy,
+                        )
+                        append_run_event(db, run, "tool_result", start_event)
+                        _persist_tool_call_error(
+                            db,
+                            tool_call_id=tool_call_id,
+                            error_code=error_code,
+                        )
+                        append_run_event(
+                            db,
+                            run,
+                            "tool_result",
+                            {
+                                **start_event,
+                                "status": "error",
+                                "error_code": error_code,
+                            },
+                        )
+                        output = (
+                            json.dumps(
+                                {
+                                    "error": error_code,
+                                    "tool_name": tc.name,
+                                    "source_policy": source_policy,
+                                },
+                                sort_keys=True,
+                            )
+                            if source_domain != "provider_control"
+                            else f'{{"error":"unknown tool: {tc.name}"}}'
+                        )
+                        blocked_outputs.append((tc.id, tc.name, output))
+                    db.commit()
+                    for call_id, tool_name, output in blocked_outputs:
+                        if not claim_tool_output(tool_name, output):
+                            break
+                        tool_results.append(
+                            ToolResult(call_id=call_id, output=output, is_error=True)
+                        )
+                    if tool_output_budget_error is not None:
+                        error_code = ApiErrorCode.E_LLM_TOOL_OUTPUT_TOO_LARGE.value
+                        _mark_unforwarded_tool_batch_excluded_by_budget(
+                            db, run=run, tool_call_ids=unforwarded_tool_call_ids
+                        )
+                        finalize_error(
+                            db,
+                            run_id=run.id,
+                            error_code=error_code,
+                            error_detail=tool_output_budget_error,
+                            assistant_content=full_content or None,
+                            resolved_key=resolved_key,
+                            usage=usage_provider_json(usage),
+                            last_provider_event_seq=last_provider_event_seq,
+                        )
+                        log_stream_observed(
+                            status="error",
+                            error_code=error_code,
+                            terminal_cause="tool_output_budget",
+                        )
+                        return {"status": "error", "error_code": error_code}
+                    if is_cancel_requested(db, run.id):
+                        return finish_cancelled_tool_phase(unforwarded_tool_call_ids)
+                    db.commit()
+                    turns.append(ModelMessage(role="tool", tool_results=tuple(tool_results)))
+                    continue
+                synthetic_tool_call_index_next = tool_call_index_next + len(pending_tool_calls)
+                processed_tool_count = 0
                 for tc in pending_tool_calls:
+                    if is_cancel_requested(db, run.id):
+                        return finish_cancelled_tool_phase(unforwarded_tool_call_ids)
                     tool_call_index_next += 1
+                    processed_tool_count += 1
+                    source_domain = source_domain_for_tool(tc.name)
+                    source_policy = (
+                        batch_policy.as_json(source_domain=source_domain)
+                        if source_domain != "provider_control"
+                        else source_boundary_policy_json(
+                            source_domain="provider_control",
+                            reason="provider_control_only",
+                            requested_domains=(),
+                        )
+                    )
+                    if (
+                        tc.name in _CHAT_TOOL_NAME_SET
+                        and tc.name not in assembly.retrieval_plan.allowed_tools
+                    ):
+                        error_code = "tool_disallowed_by_retrieval_plan"
+                        source_policy = source_boundary_policy_json(
+                            source_domain=source_domain,
+                            decision="blocked",
+                            reason="retrieval_plan_disallowed",
+                        )
+                        tool_call_id = _persist_tool_call_start(
+                            db,
+                            run=run,
+                            tool_call_index=tool_call_index_next,
+                            tool_name=tc.name,
+                            scope="retrieval_plan",
+                            requested_types=[],
+                            source_domain=source_domain,
+                            source_policy=source_policy,
+                        )
+                        unforwarded_tool_call_ids.append(tool_call_id)
+                        _bind_provider_tool_call_events(
+                            db,
+                            run=run,
+                            tool_call_index=tool_call_index_next,
+                            tool_call_id=tool_call_id,
+                        )
+                        start_event = _tool_start_event(
+                            run=run,
+                            tool_call_id=tool_call_id,
+                            tool_call_index=tool_call_index_next,
+                            tool_name=tc.name,
+                            scope="retrieval_plan",
+                            types=[],
+                            filters={
+                                "route_intent": assembly.retrieval_plan.route_intent,
+                                "allowed_tools": list(assembly.retrieval_plan.allowed_tools),
+                            },
+                            source_domain=source_domain,
+                            source_policy=source_policy,
+                        )
+                        append_run_event(db, run, "tool_result", start_event)
+                        _persist_tool_call_error(
+                            db,
+                            tool_call_id=tool_call_id,
+                            error_code=error_code,
+                        )
+                        append_run_event(
+                            db,
+                            run,
+                            "tool_result",
+                            {
+                                **start_event,
+                                "status": "error",
+                                "error_code": error_code,
+                            },
+                        )
+                        db.commit()
+                        output = json.dumps(
+                            {
+                                "error": error_code,
+                                "tool_name": tc.name,
+                                "route_intent": assembly.retrieval_plan.route_intent,
+                                "allowed_tools": list(assembly.retrieval_plan.allowed_tools),
+                                "blocked_tools": list(assembly.retrieval_plan.blocked_tools),
+                            },
+                            sort_keys=True,
+                        )
+                        if not claim_tool_output(tc.name, output):
+                            break
+                        tool_results.append(ToolResult(call_id=tc.id, output=output, is_error=True))
+                        continue
                     if tc.name == APP_SEARCH_TOOL_NAME:
                         raw_args = tc.arguments or {}
                         args: Mapping[str, Any]
                         if isinstance(raw_args, Mapping):
                             args = raw_args
-                            scopes, forced_error = _app_search_scopes_from_tool_args(args)
+                            if assembly.retrieval_plan.route_intent == "private_long_context_read":
+                                scopes = list(assembly.retrieval_plan.search_scope_uris)
+                                if len(scopes) != 1 or not scopes[0].startswith("media:"):
+                                    raise AssertionError(
+                                        "long-context route requires one media search scope"
+                                    )
+                                forced_error = None
+                            else:
+                                scopes, forced_error = _app_search_scopes_from_tool_args(args)
                             kinds, filter_error = _app_search_string_array_from_tool_args(
                                 args, "kinds"
                             )
@@ -2187,6 +2894,8 @@ async def _execute_chat_run(
                             tool_name=APP_SEARCH_TOOL_NAME,
                             scope="all",
                             requested_types=[],
+                            source_domain=source_domain,
+                            source_policy=source_policy,
                         )
                         _bind_provider_tool_call_events(
                             db,
@@ -2206,9 +2915,18 @@ async def _execute_chat_run(
                                 scope="all",
                                 types=[],
                                 filters={},
+                                source_domain=source_domain,
+                                source_policy=source_policy,
                             ),
                         )
                         db.commit()
+                        app_search_query = ""
+                        if isinstance(args, dict):
+                            query_arg = args.get("query")
+                            if isinstance(query_arg, str) and query_arg.strip():
+                                app_search_query = query_arg
+                            elif forced_error is None:
+                                forced_error = "app_search query must be a non-empty string"
                         run_result = execute_app_search(
                             db,
                             viewer_id=run.owner_user_id,
@@ -2216,7 +2934,10 @@ async def _execute_chat_run(
                             user_message_id=run.user_message_id,
                             assistant_message_id=run.assistant_message_id,
                             scopes=scopes,
-                            query=str(args.get("query") or ""),
+                            query=app_search_query,
+                            provider_rerank_allowed=(
+                                assembly.retrieval_plan.route_intent == "private_deep_retrieval"
+                            ),
                             kinds=kinds,
                             formats=formats,
                             authors=authors,
@@ -2225,12 +2946,89 @@ async def _execute_chat_run(
                             forced_error=forced_error,
                         )
                         assert run_result.tool_call_id is not None
-                        start_n = citation_n_next
-                        citation_n_next = _record_tool_citations(
+                        if run_result.status == "running":
+                            append_run_event(
+                                db,
+                                run,
+                                "tool_ledger_snapshot",
+                                _tool_ledger_snapshot_event(
+                                    db,
+                                    run,
+                                    tool_call_id=run_result.tool_call_id,
+                                    tool_call_index=tool_call_index_next,
+                                ),
+                            )
+                            db.commit()
+                        if assembly.retrieval_plan.route_intent == "private_deep_retrieval":
+                            if is_cancel_requested(db, run.id):
+                                _persist_tool_call_error(
+                                    db,
+                                    tool_call_id=run_result.tool_call_id,
+                                    error_code=ApiErrorCode.E_CANCELLED.value,
+                                )
+                                db.commit()
+                                finalize_cancelled(
+                                    db,
+                                    run,
+                                    resolved_key,
+                                    usage=usage_provider_json(usage),
+                                    last_provider_event_seq=last_provider_event_seq,
+                                )
+                                log_stream_observed(
+                                    status="cancelled",
+                                    error_code=ApiErrorCode.E_CANCELLED.value,
+                                    terminal_cause="cancelled",
+                                )
+                                return {"status": "cancelled"}
+                            run_result = await apply_provider_rerank_to_app_search_run(
+                                db,
+                                viewer_id=run.owner_user_id,
+                                run=run_result,
+                                query=app_search_query,
+                                llm_owner=call_owner,
+                                llm=cast(ModelRuntime, llm_router),
+                                provider=model.provider,
+                                model_name=model.model_name,
+                                resolved_key=resolved_key,
+                                key_mode_requested=run.key_mode,
+                            )
+                            if is_cancel_requested(db, run.id):
+                                cancelled_tool_call_ids = (
+                                    [run_result.tool_call_id]
+                                    if run_result.tool_call_id is not None
+                                    else []
+                                )
+                                _mark_unforwarded_tool_batch_excluded_by_budget(
+                                    db,
+                                    run=run,
+                                    tool_call_ids=cancelled_tool_call_ids,
+                                    selection_reason="cancelled",
+                                )
+                                db.commit()
+                                finalize_cancelled(
+                                    db,
+                                    run,
+                                    resolved_key,
+                                    usage=usage_provider_json(usage),
+                                    last_provider_event_seq=last_provider_event_seq,
+                                )
+                                log_stream_observed(
+                                    status="cancelled",
+                                    error_code=ApiErrorCode.E_CANCELLED.value,
+                                    terminal_cause="cancelled",
+                                )
+                                return {"status": "cancelled"}
+                        assert run_result.tool_call_id is not None
+                        unforwarded_tool_call_ids.append(run_result.tool_call_id)
+                        search_start_n = citation_n_next
+                        long_context_result = _app_search_long_context_read(
                             db,
                             run=run,
-                            tool_call_id=run_result.tool_call_id,
-                            start_ordinal=citation_n_next,
+                            run_result=run_result,
+                            route_intent=assembly.retrieval_plan.route_intent,
+                        )
+                        long_context = (
+                            long_context_result[0] if long_context_result is not None else None
                         )
                         append_run_event(
                             db,
@@ -2241,16 +3039,148 @@ async def _execute_chat_run(
                                 **run_result.retrieval_result_event(),
                                 "status": run_result.status,
                                 "error_code": run_result.error_code,
+                                "source_domain": source_domain,
+                                "source_policy": dict(source_policy),
                             },
+                        )
+                        number_search_results = long_context_result is None
+                        cite_long_context = False
+                        read_result = None
+                        read_tool_call_index = None
+                        if long_context_result is not None:
+                            read_result = long_context_result[1]
+                            synthetic_tool_call_index_next += 1
+                            read_tool_call_index = synthetic_tool_call_index_next
+                            if (
+                                long_context is not None
+                                and long_context.get("status") == "included"
+                                and not read_result.is_error
+                                and read_result.citation_result_type is not None
+                                and read_result.citation_source_id is not None
+                            ):
+                                assert long_context is not None
+                                long_context["n"] = citation_n_next
+                                cite_long_context = True
+                            elif (
+                                long_context is not None
+                                and long_context.get("status") == "included"
+                            ):
+                                long_context = {
+                                    "status": "error",
+                                    "uri": read_result.uri,
+                                    "error_code": "citation_unavailable",
+                                    "message": (
+                                        "Long-context body was not included because "
+                                        "it could not be cited."
+                                    ),
+                                }
+                            elif long_context is not None:
+                                long_context.pop("n", None)
+                        output = _app_search_tool_output(
+                            run_result,
+                            search_start_n,
+                            long_context=long_context,
+                            number_results=number_search_results,
+                        )
+                        if not claim_tool_output(tc.name, output):
+                            break
+                        read_tool_call_id = None
+                        if long_context_result is not None:
+                            assert read_result is not None
+                            assert read_tool_call_index is not None
+                            read_tool_call_id = _persist_tool_call_trace(
+                                db,
+                                run=run,
+                                tool_call_index=read_tool_call_index,
+                                tool_name=READ_RESOURCE_TOOL_NAME,
+                                result=read_result,
+                                source_domain="private_app",
+                                source_policy=source_policy,
+                            )
+                            unforwarded_tool_call_ids.append(read_tool_call_id)
+                            append_run_event(
+                                db,
+                                run,
+                                "tool_result",
+                                _tool_trace_event(
+                                    run=run,
+                                    tool_call_id=read_tool_call_id,
+                                    tool_call_index=read_tool_call_index,
+                                    tool_name=READ_RESOURCE_TOOL_NAME,
+                                    result=read_result,
+                                    source_domain="private_app",
+                                    source_policy=source_policy,
+                                ),
+                            )
+                            if cite_long_context:
+                                read_n = _persist_read_evidence_citation(
+                                    db,
+                                    run=run,
+                                    tool_call_id=read_tool_call_id,
+                                    result=read_result,
+                                    start_ordinal=citation_n_next,
+                                )
+                                if read_n is not None:
+                                    assert long_context is not None
+                                    long_context["n"] = read_n
+                                    citation_n_next += 1
+                                    output = _app_search_tool_output(
+                                        run_result,
+                                        search_start_n,
+                                        long_context=long_context,
+                                        number_results=False,
+                                    )
+                                else:
+                                    assert long_context is not None
+                                    long_context = {
+                                        "status": "error",
+                                        "uri": read_result.uri,
+                                        "error_code": "citation_unavailable",
+                                        "message": (
+                                            "Long-context body was not included because "
+                                            "it could not be cited."
+                                        ),
+                                    }
+                                    output = _app_search_tool_output(
+                                        run_result,
+                                        search_start_n,
+                                        long_context=long_context,
+                                        number_results=False,
+                                    )
+                        if number_search_results:
+                            citation_n_next = _record_tool_citations(
+                                db,
+                                run=run,
+                                tool_call_id=run_result.tool_call_id,
+                                start_ordinal=citation_n_next,
+                            )
+                            output = _app_search_tool_output(
+                                run_result,
+                                search_start_n,
+                                long_context=long_context,
+                                number_results=True,
+                            )
+                        append_run_event(
+                            db,
+                            run,
+                            "tool_ledger_snapshot",
+                            _tool_ledger_snapshot_event(
+                                db,
+                                run,
+                                tool_call_id=run_result.tool_call_id,
+                                tool_call_index=tool_call_index_next,
+                            ),
                         )
                         db.commit()
                         tool_results.append(
                             ToolResult(
                                 call_id=tc.id,
-                                output=_app_search_tool_output(run_result, start_n),
+                                output=output,
                                 is_error=run_result.status == "error",
                             )
                         )
+                        if run_result.status != "error":
+                            mark_forwarded_source_domain(source_domain)
                     elif tc.name == WEB_SEARCH_TOOL_NAME:
                         args = tc.arguments or {}
                         fresh_arg = args.get("freshness_days")
@@ -2267,6 +3197,8 @@ async def _execute_chat_run(
                             tool_name=WEB_SEARCH_TOOL_NAME,
                             scope="public_web",
                             requested_types=["mixed"],
+                            source_domain=source_domain,
+                            source_policy=source_policy,
                         )
                         _bind_provider_tool_call_events(
                             db,
@@ -2286,10 +3218,13 @@ async def _execute_chat_run(
                                 scope="public_web",
                                 types=["mixed"],
                                 filters=web_filters,
+                                source_domain=source_domain,
+                                source_policy=source_policy,
                             ),
                         )
                         db.commit()
                         if web_search_provider is None:
+                            unforwarded_tool_call_ids.append(web_tool_call_id)
                             error_code = "web_search_not_configured"
                             _persist_tool_call_error(
                                 db,
@@ -2309,16 +3244,21 @@ async def _execute_chat_run(
                                         scope="public_web",
                                         types=["mixed"],
                                         filters=web_filters,
+                                        source_domain=source_domain,
+                                        source_policy=source_policy,
                                     ),
                                     "status": "error",
                                     "error_code": error_code,
                                 },
                             )
                             db.commit()
+                            output = '{"error":"web_search is not configured"}'
+                            if not claim_tool_output(tc.name, output):
+                                break
                             tool_results.append(
                                 ToolResult(
                                     call_id=tc.id,
-                                    output='{"error":"web_search is not configured"}',
+                                    output=output,
                                     is_error=True,
                                 )
                             )
@@ -2334,13 +3274,9 @@ async def _execute_chat_run(
                             tool_call_index=tool_call_index_next,
                         )
                         assert run_result.tool_call_id is not None
+                        unforwarded_tool_call_ids.append(run_result.tool_call_id)
                         start_n = citation_n_next
-                        citation_n_next = _record_tool_citations(
-                            db,
-                            run=run,
-                            tool_call_id=run_result.tool_call_id,
-                            start_ordinal=citation_n_next,
-                        )
+                        output = _web_search_tool_output(run_result, start_n)
                         append_run_event(
                             db,
                             run,
@@ -2350,16 +3286,39 @@ async def _execute_chat_run(
                                 **run_result.retrieval_result_event(),
                                 "status": run_result.status,
                                 "error_code": run_result.error_code,
+                                "source_domain": source_domain,
+                                "source_policy": dict(source_policy),
                             },
+                        )
+                        if not claim_tool_output(tc.name, output):
+                            break
+                        citation_n_next = _record_tool_citations(
+                            db,
+                            run=run,
+                            tool_call_id=run_result.tool_call_id,
+                            start_ordinal=citation_n_next,
+                        )
+                        append_run_event(
+                            db,
+                            run,
+                            "tool_ledger_snapshot",
+                            _tool_ledger_snapshot_event(
+                                db,
+                                run,
+                                tool_call_id=run_result.tool_call_id,
+                                tool_call_index=tool_call_index_next,
+                            ),
                         )
                         db.commit()
                         tool_results.append(
                             ToolResult(
                                 call_id=tc.id,
-                                output=_web_search_tool_output(run_result, start_n),
+                                output=output,
                                 is_error=run_result.status == "error",
                             )
                         )
+                        if run_result.status != "error":
+                            mark_forwarded_source_domain(source_domain)
                     elif tc.name == READ_RESOURCE_TOOL_NAME:
                         args = tc.arguments or {}
                         uri = str(args.get("uri") or "")
@@ -2370,6 +3329,8 @@ async def _execute_chat_run(
                             tool_name=READ_RESOURCE_TOOL_NAME,
                             scope="conversation_context",
                             requested_types=[],
+                            source_domain=source_domain,
+                            source_policy=source_policy,
                         )
                         _bind_provider_tool_call_events(
                             db,
@@ -2389,6 +3350,8 @@ async def _execute_chat_run(
                                 scope="conversation_context",
                                 types=[],
                                 filters={"uri": uri},
+                                source_domain=source_domain,
+                                source_policy=source_policy,
                             ),
                         )
                         db.commit()
@@ -2396,24 +3359,29 @@ async def _execute_chat_run(
                             db,
                             viewer_id=run.owner_user_id,
                             conversation_id=run.conversation_id,
+                            assistant_message_id=run.assistant_message_id,
                             uri=uri,
                         )
+                        if is_cancel_requested(db, run.id):
+                            return finish_cancelled_tool_phase([read_tool_call_id])
                         read_tool_call_id = _persist_tool_call_trace(
                             db,
                             run=run,
                             tool_call_index=tool_call_index_next,
                             tool_name=READ_RESOURCE_TOOL_NAME,
                             result=read_result,
+                            source_domain=source_domain,
+                            source_policy=source_policy,
                         )
-                        read_n = _persist_read_evidence_citation(
-                            db,
-                            run=run,
-                            tool_call_id=read_tool_call_id,
-                            result=read_result,
-                            start_ordinal=citation_n_next,
+                        unforwarded_tool_call_ids.append(read_tool_call_id)
+                        read_n = (
+                            citation_n_next
+                            if not read_result.is_error
+                            and read_result.citation_result_type is not None
+                            and read_result.citation_source_id is not None
+                            else None
                         )
-                        if read_n is not None:
-                            citation_n_next += 1
+                        output = read_result.tool_output(n=read_n)
                         append_run_event(
                             db,
                             run,
@@ -2424,16 +3392,34 @@ async def _execute_chat_run(
                                 tool_call_index=tool_call_index_next,
                                 tool_name=READ_RESOURCE_TOOL_NAME,
                                 result=read_result,
+                                source_domain=source_domain,
+                                source_policy=source_policy,
                             ),
                         )
+                        if not claim_tool_output(tc.name, output):
+                            break
+                        read_n = _persist_read_evidence_citation(
+                            db,
+                            run=run,
+                            tool_call_id=read_tool_call_id,
+                            result=read_result,
+                            start_ordinal=citation_n_next,
+                        )
+                        if read_n is not None:
+                            citation_n_next += 1
+                            output = read_result.tool_output(n=read_n)
+                        else:
+                            output = read_result.tool_output()
                         db.commit()
                         tool_results.append(
                             ToolResult(
                                 call_id=tc.id,
-                                output=read_result.tool_output(n=read_n),
+                                output=output,
                                 is_error=read_result.is_error,
                             )
                         )
+                        if not read_result.is_error:
+                            mark_forwarded_source_domain(source_domain)
                     elif tc.name == INSPECT_RESOURCE_TOOL_NAME:
                         args = tc.arguments or {}
                         uri = str(args.get("uri") or "")
@@ -2444,6 +3430,8 @@ async def _execute_chat_run(
                             tool_name=INSPECT_RESOURCE_TOOL_NAME,
                             scope="conversation_context",
                             requested_types=[],
+                            source_domain=source_domain,
+                            source_policy=source_policy,
                         )
                         _bind_provider_tool_call_events(
                             db,
@@ -2463,6 +3451,8 @@ async def _execute_chat_run(
                                 scope="conversation_context",
                                 types=[],
                                 filters={"uri": uri},
+                                source_domain=source_domain,
+                                source_policy=source_policy,
                             ),
                         )
                         db.commit()
@@ -2470,15 +3460,22 @@ async def _execute_chat_run(
                             db,
                             viewer_id=run.owner_user_id,
                             conversation_id=run.conversation_id,
+                            assistant_message_id=run.assistant_message_id,
                             uri=uri,
                         )
+                        if is_cancel_requested(db, run.id):
+                            return finish_cancelled_tool_phase([inspect_tool_call_id])
                         inspect_tool_call_id = _persist_tool_call_trace(
                             db,
                             run=run,
                             tool_call_index=tool_call_index_next,
                             tool_name=INSPECT_RESOURCE_TOOL_NAME,
                             result=inspect_result,
+                            source_domain=source_domain,
+                            source_policy=source_policy,
                         )
+                        unforwarded_tool_call_ids.append(inspect_tool_call_id)
+                        output = inspect_result.tool_output()
                         append_run_event(
                             db,
                             run,
@@ -2489,16 +3486,22 @@ async def _execute_chat_run(
                                 tool_call_index=tool_call_index_next,
                                 tool_name=INSPECT_RESOURCE_TOOL_NAME,
                                 result=inspect_result,
+                                source_domain=source_domain,
+                                source_policy=source_policy,
                             ),
                         )
+                        if not claim_tool_output(tc.name, output):
+                            break
                         db.commit()
                         tool_results.append(
                             ToolResult(
                                 call_id=tc.id,
-                                output=inspect_result.tool_output(),
+                                output=output,
                                 is_error=inspect_result.is_error,
                             )
                         )
+                        if not inspect_result.is_error:
+                            mark_forwarded_source_domain(source_domain)
                     else:
                         error_code = "unknown_tool"
                         tool_call_id = _persist_tool_call_start(
@@ -2508,7 +3511,10 @@ async def _execute_chat_run(
                             tool_name=tc.name,
                             scope="provider_tool",
                             requested_types=[],
+                            source_domain=source_domain,
+                            source_policy=source_policy,
                         )
+                        unforwarded_tool_call_ids.append(tool_call_id)
                         _bind_provider_tool_call_events(
                             db,
                             run=run,
@@ -2527,6 +3533,8 @@ async def _execute_chat_run(
                                 scope="provider_tool",
                                 types=[],
                                 filters={},
+                                source_domain=source_domain,
+                                source_policy=source_policy,
                             ),
                         )
                         _persist_tool_call_error(
@@ -2547,27 +3555,133 @@ async def _execute_chat_run(
                                     scope="provider_tool",
                                     types=[],
                                     filters={},
+                                    source_domain=source_domain,
+                                    source_policy=source_policy,
                                 ),
                                 "status": "error",
                                 "error_code": error_code,
                             },
                         )
                         db.commit()
+                        output = f'{{"error":"unknown tool: {tc.name}"}}'
+                        if not claim_tool_output(tc.name, output):
+                            break
                         tool_results.append(
                             ToolResult(
                                 call_id=tc.id,
-                                output=f'{{"error":"unknown tool: {tc.name}"}}',
+                                output=output,
                                 is_error=True,
                             )
                         )
+                if tool_output_budget_error is not None:
+                    for tc in pending_tool_calls[processed_tool_count:]:
+                        tool_call_index_next += 1
+                        source_domain = source_domain_for_tool(tc.name)
+                        source_policy = (
+                            batch_policy.as_json(source_domain=source_domain)
+                            if source_domain != "provider_control"
+                            else source_boundary_policy_json(
+                                source_domain="provider_control",
+                                reason="provider_control_only",
+                                requested_domains=(),
+                            )
+                        )
+                        tool_call_id = _persist_tool_call_start(
+                            db,
+                            run=run,
+                            tool_call_index=tool_call_index_next,
+                            tool_name=tc.name,
+                            scope="tool_output_budget",
+                            requested_types=[],
+                            source_domain=source_domain,
+                            source_policy=source_policy,
+                        )
+                        unforwarded_tool_call_ids.append(tool_call_id)
+                        _bind_provider_tool_call_events(
+                            db,
+                            run=run,
+                            tool_call_index=tool_call_index_next,
+                            tool_call_id=tool_call_id,
+                        )
+                        start_event = _tool_start_event(
+                            run=run,
+                            tool_call_id=tool_call_id,
+                            tool_call_index=tool_call_index_next,
+                            tool_name=tc.name,
+                            scope="tool_output_budget",
+                            types=[],
+                            filters={"error": "tool_output_budget_exhausted"},
+                            source_domain=source_domain,
+                            source_policy=source_policy,
+                        )
+                        append_run_event(db, run, "tool_result", start_event)
+                        _persist_tool_call_error(
+                            db,
+                            tool_call_id=tool_call_id,
+                            error_code="tool_output_budget_exhausted",
+                        )
+                        append_run_event(
+                            db,
+                            run,
+                            "tool_result",
+                            {
+                                **start_event,
+                                "status": "error",
+                                "error_code": "tool_output_budget_exhausted",
+                            },
+                        )
+                    db.commit()
+                tool_call_index_next = synthetic_tool_call_index_next
+                if tool_output_budget_error is not None:
+                    error_code = ApiErrorCode.E_LLM_TOOL_OUTPUT_TOO_LARGE.value
+                    _mark_unforwarded_tool_batch_excluded_by_budget(
+                        db, run=run, tool_call_ids=unforwarded_tool_call_ids
+                    )
+                    finalize_error(
+                        db,
+                        run_id=run.id,
+                        error_code=error_code,
+                        error_detail=tool_output_budget_error,
+                        assistant_content=full_content or None,
+                        resolved_key=resolved_key,
+                        usage=usage_provider_json(usage),
+                        last_provider_event_seq=last_provider_event_seq,
+                    )
+                    log_stream_observed(
+                        status="error",
+                        error_code=error_code,
+                        terminal_cause="tool_output_budget",
+                    )
+                    return {"status": "error", "error_code": error_code}
+                if is_cancel_requested(db, run.id):
+                    return finish_cancelled_tool_phase(unforwarded_tool_call_ids)
                 db.commit()
                 turns.append(ModelMessage(role="tool", tool_results=tuple(tool_results)))
             else:
+                error_code = ApiErrorCode.E_LLM_TOOL_ITERATIONS_EXCEEDED.value
+                error_detail = f"exceeded max tool iterations: {MAX_TOOL_ITERATIONS}"
                 logger.warning(
                     "chat_run.max_tool_iterations_exceeded",
                     run_id=str(run.id),
                     iterations=MAX_TOOL_ITERATIONS,
+                    error_code=error_code,
                 )
+                finalize_error(
+                    db,
+                    run_id=run.id,
+                    error_code=error_code,
+                    error_detail=error_detail,
+                    assistant_content=full_content or None,
+                    resolved_key=resolved_key,
+                    usage=usage_provider_json(usage),
+                    last_provider_event_seq=last_provider_event_seq,
+                )
+                log_stream_observed(
+                    status="error",
+                    error_code=error_code,
+                    terminal_cause="max_tool_iterations",
+                )
+                return {"status": "error", "error_code": error_code}
         except ModelCallError as llm_error:
             error_code = api_error_code_for_model_call(llm_error.error_code).value
             finalize_error(
@@ -2605,12 +3719,7 @@ async def _execute_chat_run(
             return {"status": "error", "error_code": stream_error_code}
 
         if not terminal_seen and not locally_truncated:
-            finalize_error(
-                db,
-                run_id=run.id,
-                error_code=ApiErrorCode.E_LLM_INTERRUPTED.value,
-                resolved_key=resolved_key,
-            )
+            finalize_interrupted(db, run)
             log_stream_observed(
                 status="error",
                 error_code=ApiErrorCode.E_LLM_INTERRUPTED.value,
@@ -2674,6 +3783,27 @@ async def _execute_chat_run(
         try:
             _emit_citation_index(db, run, full_content)
         except InvalidRequestError as exc:
+            bad_citation_tool_call_ids = (
+                db.execute(
+                    text(
+                        """
+                        SELECT id
+                        FROM message_tool_calls
+                        WHERE assistant_message_id = :assistant_message_id
+                          AND tool_name IN ('app_search', 'web_search')
+                        """
+                    ),
+                    {"assistant_message_id": run.assistant_message_id},
+                )
+                .scalars()
+                .all()
+            )
+            _mark_unforwarded_tool_batch_excluded_by_budget(
+                db,
+                run=run,
+                tool_call_ids=bad_citation_tool_call_ids,
+                selection_reason="citation_validation_failed",
+            )
             _clear_message_citations(db, run)
             finalize_error(
                 db,

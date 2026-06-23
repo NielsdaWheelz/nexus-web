@@ -15,6 +15,7 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from nexus.schemas.search import SearchPageInfo, SearchResponse, SearchResultOut
+from nexus.services.search.constants import MAX_LIMIT
 from nexus.services.search.query import SearchQuery, SearchScope
 from nexus.services.search.service import search
 
@@ -26,6 +27,7 @@ def search_scopes(
     scopes: Sequence[SearchScope],
 ) -> SearchResponse:
     """Run ``base`` against each scope; union, dedupe by (type, id) keeping max score."""
+    limit = min(max(1, base.limit), MAX_LIMIT)
     merged: dict[tuple[str, str], SearchResultOut] = {}
     for scope in scopes:
         response = search(db, viewer_id, replace(base, scope=scope))
@@ -35,4 +37,4 @@ def search_scopes(
             if existing is None or result.score > existing.score:
                 merged[key] = result
     ordered = sorted(merged.values(), key=lambda result: (-result.score, str(result.id)))
-    return SearchResponse(results=ordered[: base.limit], page=SearchPageInfo())
+    return SearchResponse(results=ordered[:limit], page=SearchPageInfo())

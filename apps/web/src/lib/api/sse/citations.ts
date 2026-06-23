@@ -20,6 +20,7 @@ export type SearchCitationResultType =
   | "message"
   | "contributor"
   | "evidence_span"
+  | "reader_apparatus_item"
   | "conversation";
 
 export type RetrievalContextRef =
@@ -47,8 +48,12 @@ const SEARCH_CITATION_RESULT_TYPES = new Set<SearchCitationResultType>([
   "message",
   "contributor",
   "evidence_span",
+  "reader_apparatus_item",
   "conversation",
 ]);
+
+const EXTERNAL_SNAPSHOT_UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function isRetrievalContextRef(
   value: unknown,
@@ -203,6 +208,14 @@ type EvidenceSpanSearchCitationEventData = SearchCitationBase<
   media_id: string;
 };
 
+type ReaderApparatusItemSearchCitationEventData = SearchCitationBase<
+  "reader_apparatus_item",
+  "reader_apparatus_item",
+  MediaRetrievalLocator
+> & {
+  apparatus_kind: string;
+};
+
 type ConversationSearchCitationEventData = SearchCitationBase<
   "conversation",
   "conversation",
@@ -222,6 +235,7 @@ export type SearchCitationEventData =
   | MessageSearchCitationEventData
   | ContributorSearchCitationEventData
   | EvidenceSpanSearchCitationEventData
+  | ReaderApparatusItemSearchCitationEventData
   | ConversationSearchCitationEventData;
 
 export type WebCitationEventData = {
@@ -370,6 +384,16 @@ export function isSearchCitationEventData(
         typeof citation.citation_label === "string" &&
         typeof citation.media_id === "string"
       );
+    case "reader_apparatus_item":
+      return (
+        isSearchCitationBase(
+          citation,
+          "reader_apparatus_item",
+          "reader_apparatus_item",
+          ["apparatus_kind"],
+        ) &&
+        typeof citation.apparatus_kind === "string"
+      );
     case "conversation":
       return isSearchCitationBase(citation, "conversation", "conversation", []);
   }
@@ -419,15 +443,16 @@ function isSearchCitationLocator(
     case "contributor":
     case "conversation":
       return locator === null;
-    case "content_chunk":
     case "evidence_span":
       return (
         isRetrievalLocator(locator) &&
         (isMediaRetrievalLocator(locator) ||
           locator.type === "note_block_offsets")
       );
+    case "content_chunk":
     case "fragment":
     case "highlight":
+    case "reader_apparatus_item":
       return isRetrievalLocator(locator) && isMediaRetrievalLocator(locator);
     case "note_block":
       return (
@@ -480,6 +505,9 @@ export function isWebCitationEventData(
     citation.result_type === "web_result" &&
     typeof citation.result_ref === "string" &&
     typeof citation.source_id === "string" &&
+    EXTERNAL_SNAPSHOT_UUID_RE.test(citation.source_id) &&
+    citation.id === citation.source_id &&
+    citation.result_ref === citation.source_id &&
     typeof citation.title === "string" &&
     typeof citation.url === "string" &&
     (citation.display_url === undefined ||
@@ -509,8 +537,10 @@ export function isWebCitationEventData(
     (citation.rank === undefined || Number.isInteger(citation.rank)) &&
     isRetrievalContextRef(citation.context_ref) &&
     citation.context_ref.type === "web_result" &&
+    citation.context_ref.id === citation.source_id &&
     isRetrievalLocator(citation.locator) &&
     citation.locator.type === "external_url" &&
+    citation.locator.url.trim().length > 0 &&
     citation.media_id === null &&
     citation.media_kind === null &&
     (citation.score === null || typeof citation.score === "number") &&
