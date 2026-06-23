@@ -25,7 +25,7 @@ def test_app_search_guidance_is_disabled_unused_stub() -> None:
     # fail-safe disabled stub — empty query suffix (no ranking influence) and
     # unused-status metadata — until a real generated-guidance owner exists, so it
     # can never silently affect candidate ordering or leak into evidence. See
-    # docs/cutovers/search-contextual-hierarchy-artifacts-hard-cutover.md.
+    # docs/cutovers/search/search-contextual-hierarchy-artifacts-hard-cutover.md.
     guidance = load_app_search_guidance(
         cast(Session, None),
         viewer_id=uuid4(),

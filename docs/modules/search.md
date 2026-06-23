@@ -223,29 +223,29 @@ so they can be evaluated and ledgered independently.
 The initial retrieval-controller foundation was split into five hard cutovers.
 Each cutover should be independently reviewable, testable, and revertible.
 
-1. [`search-retrieval-evals-hard-cutover.md`](../cutovers/search-retrieval-evals-hard-cutover.md)
+1. [`search-retrieval-evals-hard-cutover.md`](../cutovers/search/search-retrieval-evals-hard-cutover.md)
    - Build golden query fixtures and retrieval evals before changing runtime
      behavior.
    - Measure candidate recall, ranking, selected-pack recall, citation precision,
      latency, and cost.
 
-2. [`search-evidence-packer-ledger-hard-cutover.md`](../cutovers/search-evidence-packer-ledger-hard-cutover.md)
+2. [`search-evidence-packer-ledger-hard-cutover.md`](../cutovers/search/search-evidence-packer-ledger-hard-cutover.md)
    - Fix deterministic packer correctness.
    - Skip oversized blocks, continue to later candidates, and ledger every
      selection decision.
 
-3. [`search-candidate-policy-hard-cutover.md`](../cutovers/search-candidate-policy-hard-cutover.md)
+3. [`search-candidate-policy-hard-cutover.md`](../cutovers/search/search-candidate-policy-hard-cutover.md)
    - Separate candidate depth from selected evidence depth.
    - Replace the old single `APP_SEARCH_LIMIT = 8` cap with explicit moderate
      and deep candidate policies through shared `SearchQuery`.
 
-4. [`search-rerank-selection-hard-cutover.md`](../cutovers/search-rerank-selection-hard-cutover.md)
+4. [`search-rerank-selection-hard-cutover.md`](../cutovers/search/search-rerank-selection-hard-cutover.md)
    - First deterministic selector slice implemented before learned/provider
      rerankers.
    - Selects evidence by relevance, exactness, source/section diversity,
      citation quality, and prompt budget.
 
-5. [`search-agentic-contextual-retrieval-hard-cutover.md`](../cutovers/search-agentic-contextual-retrieval-hard-cutover.md)
+5. [`search-agentic-contextual-retrieval-hard-cutover.md`](../cutovers/search/search-agentic-contextual-retrieval-hard-cutover.md)
    - Add deep retrieval after the foundation is measured and stable.
    - Cover query planning, iterative search/inspect/read, contextual chunks,
      hierarchy/graph retrieval, and long-context routing.
@@ -255,22 +255,22 @@ Each cutover should be independently reviewable, testable, and revertible.
 After the foundation, these hard-cutover specs were split out. Some are now
 implemented; each spec owns its exact status and remaining gaps:
 
-1. [`search-run-level-planner-hard-cutover.md`](../cutovers/search-run-level-planner-hard-cutover.md)
+1. [`search-run-level-planner-hard-cutover.md`](../cutovers/search/search-run-level-planner-hard-cutover.md)
    - Implemented chat-owned route planning and plan-before-private-body
      rendering; hardened with a committed `llm_calls.call_status='started'`
      row before chat provider stream open.
 
-2. [`search-source-boundary-policy-hard-cutover.md`](../cutovers/search-source-boundary-policy-hard-cutover.md)
+2. [`search-source-boundary-policy-hard-cutover.md`](../cutovers/search/search-source-boundary-policy-hard-cutover.md)
    - Implemented same-run runtime public/private tool-evidence enforcement;
      remaining boundary is historical-message source classification, if product
      scope expands beyond same-run tool evidence.
 
-3. [`search-contextual-hierarchy-artifacts-hard-cutover.md`](../cutovers/search-contextual-hierarchy-artifacts-hard-cutover.md)
+3. [`search-contextual-hierarchy-artifacts-hard-cutover.md`](../cutovers/search/search-contextual-hierarchy-artifacts-hard-cutover.md)
    - First source-map retrieval slice implemented; remaining work is real
      generated contextual summaries, hierarchy jobs, owner consumption, and
      comparative eval proof.
 
-4. [`search-learned-reranker-hard-cutover.md`](../cutovers/search-learned-reranker-hard-cutover.md)
+4. [`search-learned-reranker-hard-cutover.md`](../cutovers/search/search-learned-reranker-hard-cutover.md)
    - Provider-rerank route implemented behind planner/search policy gates;
      remaining work is default adoption only after live/operator eval proof.
 

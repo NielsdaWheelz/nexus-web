@@ -38,7 +38,7 @@ shape in `resource_edges` or is not a durable connection.
   is superseded by `docs/cutovers/user-graph-tags-hard-cutover.md`.
 - `docs/cutovers/incoming-connections-reader-sidecar-hard-cutover.md` - made
   incoming reader connections a read model over `resource_edges`.
-- `docs/cutovers/search-intent-model-hard-cutover.md` - made
+- `docs/cutovers/search/search-intent-model-hard-cutover.md` - made
   `services/search/scope.py` the single `scope -> SQL` owner.
 - `docs/rules/cleanliness.md` - one owner per concern, no fallback lanes,
   collapse dangerous duplication.
