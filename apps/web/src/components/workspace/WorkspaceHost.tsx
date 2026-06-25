@@ -58,6 +58,10 @@ import {
 } from "@/lib/panes/panePublications";
 import { emitWorkspaceTelemetry } from "@/lib/workspace/telemetry";
 import {
+  paneResourceLocatorKey,
+  resolvePaneRouteIdentity,
+} from "@/lib/panes/paneIdentity";
+import {
   resolvePaneRouteKey,
   resolveWorkspacePaneTitle,
   useWorkspaceHostStore,
@@ -89,6 +93,7 @@ interface WorkspaceHostPane {
   navigation: SurfaceHeaderNavigation;
   bodyMode: PaneBodyMode;
   sizing: EffectivePaneSizing;
+  runtimeSecondaryPane: WorkspaceAttachedSecondaryPaneState | null;
   secondaryPane: WorkspaceAttachedSecondaryPaneState | null;
   secondarySizing: WorkspaceSecondarySizing | null;
   secondaryPublication: PaneSecondaryPublication | null;
@@ -321,16 +326,24 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
 // ---------------------------------------------------------------------------
 
 const PaneContent = memo(function PaneContent({
+  href,
   route,
   routeKey,
 }: {
+  href: string;
   route: ResolvedPaneRoute;
   routeKey: string;
 }) {
+  const routeMountKey = useMemo(() => {
+    const identity = resolvePaneRouteIdentity(href);
+    const resourceKey = paneResourceLocatorKey(identity.resourceLocator);
+    return resourceKey ? `${identity.routeId}:${resourceKey}` : routeKey;
+  }, [href, routeKey]);
+
   return (
     <div className={styles.routeShell}>
-      <PaneRouteErrorBoundary resetKey={routeKey}>
-        <ResolvedPaneRouteView key={routeKey} route={route} />
+      <PaneRouteErrorBoundary resetKey={routeMountKey}>
+        <ResolvedPaneRouteView key={routeMountKey} route={route} />
       </PaneRouteErrorBoundary>
     </div>
   );
@@ -512,16 +525,27 @@ function buildHostPane(input: {
   const { chrome, routeKey, route, title, titleState } = input.descriptor;
 
   const routeWidth = route.definition ?? resolvePaneRouteWidthContract(input.pane.href);
-  const visibleSecondaryPane =
+  const hasVisibleSecondaryMismatch =
     input.secondaryPane?.visibility === "visible" &&
-    (!input.secondaryPublication ||
+    input.secondaryPublication &&
+    (
       input.secondaryPane.groupId !== input.secondaryPublication.groupId ||
       !secondaryPublicationIncludesSurface(
         input.secondaryPublication,
         input.secondaryPane.activeSurfaceId,
-      ))
-      ? null
-      : input.secondaryPane;
+      )
+    );
+  const runtimeSecondaryPane = hasVisibleSecondaryMismatch
+    ? null
+    : input.secondaryPane;
+  const visibleSecondaryPane =
+    input.secondaryPane?.visibility === "visible" &&
+    input.secondaryPublication &&
+    !hasVisibleSecondaryMismatch
+      ? input.secondaryPane
+      : input.secondaryPane?.visibility === "collapsed"
+        ? input.secondaryPane
+        : null;
 
   return {
     paneId: input.pane.id,
@@ -546,6 +570,7 @@ function buildHostPane(input: {
       onForward: () => input.goForwardPane(input.pane.id),
     },
     bodyMode: route.definition?.bodyMode ?? "standard",
+    runtimeSecondaryPane,
     secondaryPane: visibleSecondaryPane,
     sizing: resolveEffectivePaneSizing({
       storedWidthPx: input.pane.primaryWidthPx,
@@ -566,7 +591,7 @@ function buildHostPane(input: {
     fixedChromePublication: input.isMobile ? null : input.fixedChromePublication,
     isActive: input.isActive,
     visibility: input.pane.visibility,
-    content: <PaneContent route={route} routeKey={routeKey} />,
+    content: <PaneContent href={input.pane.href} route={route} routeKey={routeKey} />,
   };
 }
 
@@ -1191,7 +1216,7 @@ function WorkspaceHost() {
                 routeKey={pane.routeKey}
                 resourceItem={pane.resourceItem}
                 resourceStatus={pane.resourceStatus}
-                secondaryPane={pane.secondaryPane}
+                secondaryPane={pane.runtimeSecondaryPane}
                 navigatePane={navigatePane}
                 openPane={openPaneWithPendingSecondary}
                 canGoBack={pane.navigation.canGoBack}

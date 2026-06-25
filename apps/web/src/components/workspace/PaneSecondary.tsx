@@ -17,15 +17,22 @@ export const PaneSecondaryContext = createContext<
 
 export function usePaneSecondary(publication: PaneSecondaryPublication | null): void {
   const setPublication = useContext(PaneSecondaryContext);
-  const lastPublishedRef = useRef<PaneSecondaryPublication | null>(null);
+  const lastPublishedRef = useRef<{
+    setPublication: (publication: PaneSecondaryPublication | null) => void;
+    publication: PaneSecondaryPublication | null;
+  } | null>(null);
   useEffect(() => {
     if (!setPublication) {
       return;
     }
-    if (arePaneSecondaryPublicationsEqual(lastPublishedRef.current, publication)) {
+    const lastPublished = lastPublishedRef.current;
+    if (
+      lastPublished?.setPublication === setPublication &&
+      arePaneSecondaryPublicationsEqual(lastPublished.publication, publication)
+    ) {
       return;
     }
-    lastPublishedRef.current = publication;
+    lastPublishedRef.current = { setPublication, publication };
     setPublication(publication);
   }, [publication, setPublication]);
 

@@ -21,7 +21,7 @@ import {
 import { resolvePaneTransitionWidth } from "@/lib/workspace/paneWidth";
 import { WORKSPACE_DEFAULT_FALLBACK_HREF } from "@/lib/workspace/workspaceHref";
 import type { WorkspacePrimaryMetrics } from "@/lib/workspace/paneSizing";
-import { hasSamePaneRoute } from "@/lib/panes/paneIdentity";
+import { hasSamePaneResource, hasSamePaneRoute } from "@/lib/panes/paneIdentity";
 import { paneRouteAllowsSecondaryGroup } from "@/lib/panes/paneRouteModel";
 
 export type PaneNavigationMode = "replace" | "push";
@@ -111,11 +111,13 @@ export function applyPaneHrefTransition(
   mode: PaneNavigationMode,
   workspacePrimaryMetrics: WorkspacePrimaryMetrics,
   attachedSecondaryPane: WorkspaceAttachedSecondaryPaneState | null,
+  options: { preserveResource?: boolean } = {},
 ): WorkspacePrimaryPaneState {
   if (pane.href === href) {
     return pane;
   }
-  const preserveResource = hasSamePaneRoute(pane.href, href);
+  const preserveResource =
+    options.preserveResource ?? hasSamePaneRoute(pane.href, href);
   const attachedSecondaryPaneId =
     preserveResource &&
     attachedSecondaryPane &&
@@ -215,8 +217,10 @@ export function mergeRestoredWorkspaceWithDeepLink(
     return restored;
   }
 
-  const existingPane = restoredPanes.find((pane) =>
-    hasSamePaneRoute(pane.href, requestedPane.href)
+  const existingPane = restoredPanes.find(
+    (pane) =>
+      hasSamePaneRoute(pane.href, requestedPane.href) ||
+      hasSamePaneResource(pane.href, requestedPane.href),
   );
   if (existingPane) {
     const panes = restoredPanes.map((pane) => {
@@ -229,6 +233,7 @@ export function mergeRestoredWorkspaceWithDeepLink(
         "replace",
         workspacePrimaryMetrics,
         getAttachedSecondaryPane(restored, pane),
+        { preserveResource: true },
       );
       return {
         ...transitioned,

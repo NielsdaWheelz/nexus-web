@@ -222,11 +222,11 @@ describe("messageUpdateReducer", () => {
     })).toBe(state);
   });
 
-  it("apply_tool_call (call phase) adds a running provider tool call", () => {
+  it("apply_tool_call lifecycle patch adds a running provider tool call", () => {
     const next = only({
       type: "apply_tool_call",
       assistantId: "a1",
-      call: { phase: "call", data: { ...toolStart } },
+      call: { kind: "lifecycle", data: { ...toolStart } },
     });
     const trail = next[1].trust_trail;
     expect(trail?.status).toBe("running");
@@ -240,17 +240,17 @@ describe("messageUpdateReducer", () => {
     });
   });
 
-  it("apply_tool_call (delta phase) sets input_preview and preserves requested_types", () => {
+  it("apply_tool_call input patch sets input_preview and preserves requested_types", () => {
     const started = only({
       type: "apply_tool_call",
       assistantId: "a1",
-      call: { phase: "call", data: { ...toolStart } },
+      call: { kind: "lifecycle", data: { ...toolStart } },
     });
     const next = messageUpdateReducer(started, {
       type: "apply_tool_call",
       assistantId: "a1",
       call: {
-        phase: "delta",
+        kind: "input",
         data: { ...toolStart, input_delta: '{"q"', input_preview: '{"q":"x"}' },
       },
     });

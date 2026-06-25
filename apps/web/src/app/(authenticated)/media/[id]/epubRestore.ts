@@ -198,7 +198,7 @@ export function resolveInitialEpubRestoreRequest({
         requestedSection.section_id,
         "initial_url",
         resumeState,
-        null,
+        requestedSection.anchor_id,
       );
     }
   }

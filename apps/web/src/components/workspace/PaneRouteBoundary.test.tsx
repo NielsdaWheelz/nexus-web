@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ActionMenu from "@/components/ui/ActionMenu";
 import { ResourceCache, ResourceCacheContext } from "@/lib/api/resourceCache";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
@@ -97,6 +97,10 @@ function renderIntentBoundary(input: {
 }
 
 describe("PaneRouteBoundary — prefetch-on-intent delegate", () => {
+  beforeEach(() => {
+    preloadPane.mockClear();
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
     preloadPane.mockClear();

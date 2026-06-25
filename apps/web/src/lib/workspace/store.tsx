@@ -49,6 +49,7 @@ import {
   type OpenInAppPaneDetail,
 } from "@/lib/panes/openInAppPane";
 import {
+  hasSamePaneResource,
   hasSamePaneRoute,
   resolvePaneRouteIdentity,
 } from "@/lib/panes/paneIdentity";
@@ -204,6 +205,7 @@ function workspaceReducer(
                 action.mode,
                 workspacePrimaryMetrics,
                 getAttachedSecondaryPane(state, p),
+                { preserveResource: hasSamePaneResource(p.href, action.href) },
               ),
               visibility: action.activate ? "visible" : p.visibility,
             }
@@ -233,7 +235,7 @@ function workspaceReducer(
           return p;
         }
         const attachedSecondaryPane = getAttachedSecondaryPane(state, p);
-        const preserveResource = hasSamePaneRoute(p.href, href);
+        const preserveResource = hasSamePaneResource(p.href, href);
         return {
           ...p,
           href,
@@ -277,7 +279,7 @@ function workspaceReducer(
           return p;
         }
         const attachedSecondaryPane = getAttachedSecondaryPane(state, p);
-        const preserveResource = hasSamePaneRoute(p.href, href);
+        const preserveResource = hasSamePaneResource(p.href, href);
         return {
           ...p,
           href,
@@ -742,6 +744,7 @@ export function WorkspaceStoreProvider({
   >(() => new Map());
   const readyRef = useRef(false);
   const hashFoldedRef = useRef(false);
+  const lastFoldedLocationHashHrefRef = useRef<string | null>(null);
   const pendingTitleHintByRouteKeyRef = useRef<Map<string, string>>(new Map());
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -781,22 +784,82 @@ export function WorkspaceStoreProvider({
   // full href (same resource → preserves the pane, just adds the hash) so it survives
   // the state→URL projection and reaches the reader target — without disturbing the
   // restored layout.
+  const foldLocationHashIntoActivePane = useCallback((options: {
+    requireActivePathMatch?: boolean;
+  } = {}) => {
+    const locationHash = window.location.hash;
+    if (!locationHash) {
+      return;
+    }
+    const locationHref = `${window.location.pathname}${window.location.search}${locationHash}`;
+    if (lastFoldedLocationHashHrefRef.current === locationHref) {
+      return;
+    }
+    const locationWithoutHash = `${window.location.pathname}${window.location.search}`;
+    const state = stateRef.current;
+    const activePane = getWorkspacePrimaryPanes(state).find(
+      (pane) =>
+        pane.id === state.activePrimaryPaneId && pane.visibility === "visible",
+    );
+    const activeHref = activePane ? normalizeWorkspaceHref(activePane.href) : null;
+    const activeWithoutHash = activeHref?.split("#", 1)[0] ?? null;
+    if (!activePane) {
+      return;
+    }
+    if (
+      options.requireActivePathMatch === true &&
+      activeWithoutHash !== locationWithoutHash
+    ) {
+      return;
+    }
+    lastFoldedLocationHashHrefRef.current = locationHref;
+    if (activeHref === locationHref) {
+      return;
+    }
+    dispatch({
+      type: "navigate_pane",
+      paneId: activePane.id,
+      href: locationHref,
+      activate: true,
+      mode: "replace",
+    });
+  }, []);
+
   useEffect(() => {
     if (hashFoldedRef.current) {
       return;
     }
     hashFoldedRef.current = true;
     setMounted(true);
-    if (window.location.hash) {
-      dispatch({
-        type: "navigate_pane",
-        paneId: stateRef.current.activePrimaryPaneId,
-        href: `${window.location.pathname}${window.location.search}${window.location.hash}`,
-        activate: true,
-        mode: "replace",
-      });
+    foldLocationHashIntoActivePane();
+  }, [foldLocationHashIntoActivePane]);
+
+  useEffect(() => {
+    if (!mounted) {
+      return;
     }
-  }, []);
+    foldLocationHashIntoActivePane({ requireActivePathMatch: true });
+  }, [
+    foldLocationHashIntoActivePane,
+    mounted,
+    primaryPanes,
+    state.activePrimaryPaneId,
+  ]);
+
+  useEffect(() => {
+    if (!mounted) {
+      return;
+    }
+    const handleBrowserHashNavigation = () => {
+      foldLocationHashIntoActivePane();
+    };
+    window.addEventListener("hashchange", handleBrowserHashNavigation);
+    window.addEventListener("popstate", handleBrowserHashNavigation);
+    return () => {
+      window.removeEventListener("hashchange", handleBrowserHashNavigation);
+      window.removeEventListener("popstate", handleBrowserHashNavigation);
+    };
+  }, [foldLocationHashIntoActivePane, mounted]);
 
   // --- Event listeners: open-pane events ---
   useEffect(() => {

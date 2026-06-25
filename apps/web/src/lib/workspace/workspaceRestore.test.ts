@@ -319,6 +319,25 @@ describe("mergeRestoredWorkspaceWithDeepLink", () => {
     expect(merged.activePrimaryPaneId).toBe("pane-url-media");
   });
 
+  it("reuses and activates a saved pane for exact-route deep links", () => {
+    const deepLink = workspace({
+      activePrimaryPaneId: "pane-url-notes",
+      primaryPanes: [primary("pane-url-notes", "/notes", { primaryWidthPx: 1280 })],
+    });
+
+    const merged = mergeRestoredWorkspaceWithDeepLink(restored, deepLink, metrics);
+
+    expect(hrefs(merged)).toEqual(["/libraries", "/notes"]);
+    expect(merged.activePrimaryPaneId).toBe("pane-saved-notes");
+    expect(
+      getWorkspacePrimaryPanes(merged).find((item) => item.id === "pane-saved-notes"),
+    ).toMatchObject({
+      href: "/notes",
+      visibility: "visible",
+      primaryWidthPx: 480,
+    });
+  });
+
   it("reuses and activates the saved pane for same-resource deep links", () => {
     const savedWithMedia = workspace({
       activePrimaryPaneId: "pane-saved-libraries",

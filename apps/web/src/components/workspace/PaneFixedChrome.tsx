@@ -19,15 +19,22 @@ export function usePaneFixedChrome(
   publication: PaneFixedChromePublication | null,
 ): void {
   const setPublication = useContext(PaneFixedChromeContext);
-  const lastPublishedRef = useRef<PaneFixedChromePublication | null>(null);
+  const lastPublishedRef = useRef<{
+    setPublication: (publication: PaneFixedChromePublication | null) => void;
+    publication: PaneFixedChromePublication | null;
+  } | null>(null);
   useEffect(() => {
     if (!setPublication) {
       return;
     }
-    if (arePaneFixedChromePublicationsEqual(lastPublishedRef.current, publication)) {
+    const lastPublished = lastPublishedRef.current;
+    if (
+      lastPublished?.setPublication === setPublication &&
+      arePaneFixedChromePublicationsEqual(lastPublished.publication, publication)
+    ) {
       return;
     }
-    lastPublishedRef.current = publication;
+    lastPublishedRef.current = { setPublication, publication };
     setPublication(publication);
   }, [publication, setPublication]);
 

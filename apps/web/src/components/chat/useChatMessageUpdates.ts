@@ -89,7 +89,7 @@ export function useChatMessageUpdates({
       dispatch({
         type: "apply_tool_call",
         assistantId,
-        call: { phase: "call", data },
+        call: { kind: "lifecycle", data },
       });
     },
     [dispatch],
@@ -101,7 +101,7 @@ export function useChatMessageUpdates({
       dispatch({
         type: "apply_tool_call",
         assistantId,
-        call: { phase: "delta", data },
+        call: { kind: "input", data },
       });
     },
     [dispatch, flushDeltas],

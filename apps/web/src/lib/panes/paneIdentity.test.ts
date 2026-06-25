@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   hasSamePaneRoute,
+  hasSamePaneResource,
   resolvePaneRouteIdentity,
 } from "@/lib/panes/paneIdentity";
 
@@ -20,7 +21,7 @@ describe("pane route identity", () => {
     expect(base.routeKey).toBe(`media:/media/${MEDIA_ID_1}`);
     expect(section.routeKey).toBe(`media:/media/${MEDIA_ID_1}?loc=chapter-2`);
     expect(highlight.routeKey).toBe(
-      `media:/media/${MEDIA_ID_1}?highlight=h1#reader`,
+      `media:/media/${MEDIA_ID_1}?highlight=h1`,
     );
     expect(section.resourceLocator).toEqual(base.resourceLocator);
     expect(highlight.resourceLocator).toEqual(base.resourceLocator);
@@ -30,6 +31,9 @@ describe("pane route identity", () => {
     expect(
       hasSamePaneRoute(`/media/${MEDIA_ID_1}`, `/media/${MEDIA_ID_1}?loc=chapter-2`),
     ).toBe(false);
+    expect(
+      hasSamePaneResource(`/media/${MEDIA_ID_1}`, `/media/${MEDIA_ID_1}?loc=chapter-2`),
+    ).toBe(true);
     expect(section.resourceLocator).not.toBeNull();
     expect(base.resourceLocator).toEqual(section.resourceLocator);
   });
@@ -38,6 +42,9 @@ describe("pane route identity", () => {
     const first = resolvePaneRouteIdentity(`/media/${MEDIA_ID_1}?loc=a`);
     const second = resolvePaneRouteIdentity(`/media/${MEDIA_ID_2}?loc=a`);
     expect(first.resourceLocator).not.toEqual(second.resourceLocator);
+    expect(
+      hasSamePaneResource(`/media/${MEDIA_ID_1}?loc=a`, `/media/${MEDIA_ID_2}?loc=a`),
+    ).toBe(false);
   });
 
   it("uses typed resource locators for dynamic resource routes", () => {
@@ -62,6 +69,7 @@ describe("pane route identity", () => {
       resourceLocator: null,
     });
     expect(hasSamePaneRoute("/libraries", "/libraries?filter=recent")).toBe(false);
+    expect(hasSamePaneResource("/libraries", "/libraries?filter=recent")).toBe(false);
   });
 
   it("represents author and daily aliases as product locators", () => {

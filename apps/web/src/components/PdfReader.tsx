@@ -112,6 +112,14 @@ interface PdfTransientPulseHighlight {
   quads: PdfHighlightQuad[];
 }
 
+interface PdfPulseNavigationTarget {
+  key: string;
+  pageNumber: number;
+  quads: PdfHighlightQuad[];
+  highlightId: string | null;
+  transientPulseId: string | null;
+}
+
 export interface PdfReaderControlsState {
   pageNumber: number;
   numPages: number;
@@ -536,6 +544,8 @@ export default function PdfReader({
   );
   const [transientPulseHighlight, setTransientPulseHighlight] =
     useState<PdfTransientPulseHighlight | null>(null);
+  const [pulseNavigationTarget, setPulseNavigationTarget] =
+    useState<PdfPulseNavigationTarget | null>(null);
 
   const viewerContainerRef = useRef<HTMLDivElement>(null);
   const internalContentRef = useRef<HTMLDivElement>(null);
@@ -1851,6 +1861,64 @@ export default function PdfReader({
     scrollToProjectedHighlight,
   });
 
+  const pulseHighlightOverlay = useCallback((target: PdfPulseNavigationTarget) => {
+    if (pulseTimerRef.current != null) {
+      window.clearTimeout(pulseTimerRef.current);
+    }
+
+    const pulseId = target.highlightId ?? target.transientPulseId;
+    if (!pulseId) {
+      return;
+    }
+
+    if (target.transientPulseId) {
+      setTransientPulseHighlight({
+        id: target.transientPulseId,
+        pageNumber: target.pageNumber,
+        quads: target.quads,
+      });
+    }
+    setPulsingHighlightId(pulseId);
+    pulseTimerRef.current = window.setTimeout(() => {
+      pulseTimerRef.current = null;
+      setPulsingHighlightId((current) =>
+        current === pulseId ? null : current,
+      );
+      if (target.transientPulseId) {
+        setTransientPulseHighlight((current) =>
+          current?.id === target.transientPulseId ? null : current,
+        );
+      }
+    }, PDF_PULSE_DURATION_MS);
+  }, []);
+
+  usePdfScrollToTarget({
+    target: useMemo(
+      () =>
+        pulseNavigationTarget
+          ? {
+              key: pulseNavigationTarget.key,
+              pageNumber: pulseNavigationTarget.pageNumber,
+              quads: pulseNavigationTarget.quads,
+            }
+          : null,
+      [pulseNavigationTarget],
+    ),
+    runRef,
+    pageNumberRef,
+    goToPage,
+    scrollToProjectedHighlight,
+    onSettle: useCallback(() => {
+      if (!pulseNavigationTarget) {
+        return;
+      }
+      pulseHighlightOverlay(pulseNavigationTarget);
+      setPulseNavigationTarget((current) =>
+        current?.key === pulseNavigationTarget.key ? null : current,
+      );
+    }, [pulseHighlightOverlay, pulseNavigationTarget]),
+  });
+
   useReaderPulseHighlight(
     useCallback(
       (target) => {
@@ -1861,47 +1929,28 @@ export default function PdfReader({
         const quads = locator.quads as PdfHighlightQuad[];
         const highlightId =
           typeof target.highlightId === "string" ? target.highlightId : null;
-        const pulseOverlaysOnPage = () => {
-          if (pulseTimerRef.current != null) {
-            window.clearTimeout(pulseTimerRef.current);
-          }
-          if (highlightId) {
-            setPulsingHighlightId(highlightId);
-            pulseTimerRef.current = window.setTimeout(() => {
-              pulseTimerRef.current = null;
-              setPulsingHighlightId((current) =>
-                current === highlightId ? null : current,
-              );
-            }, PDF_PULSE_DURATION_MS);
-            return;
-          }
-
-          pulseSequenceRef.current += 1;
-          const pulseId = `reader-pulse-${pulseSequenceRef.current}`;
-          setTransientPulseHighlight({ id: pulseId, pageNumber, quads });
-          setPulsingHighlightId(pulseId);
-          pulseTimerRef.current = window.setTimeout(() => {
-            pulseTimerRef.current = null;
-            setPulsingHighlightId((current) =>
-              current === pulseId ? null : current,
-            );
-            setTransientPulseHighlight((current) =>
-              current?.id === pulseId ? null : current,
-            );
-          }, PDF_PULSE_DURATION_MS);
+        pulseSequenceRef.current += 1;
+        const sequence = pulseSequenceRef.current;
+        const pulseTarget: PdfPulseNavigationTarget = {
+          key: `${highlightId ?? "transient"}:${pageNumber}:${sequence}`,
+          pageNumber,
+          quads,
+          highlightId,
+          transientPulseId: highlightId ? null : `reader-pulse-${sequence}`,
         };
+        if (quads.length > 0) {
+          setPulseNavigationTarget(pulseTarget);
+          return;
+        }
         const navigate = async () => {
           if (pageNumber !== pageNumberRef.current) {
             await goToPage(pageNumber);
           }
-          if (quads.length > 0) {
-            scrollToProjectedHighlight(pageNumber, quads);
-          }
-          window.requestAnimationFrame(pulseOverlaysOnPage);
+          window.requestAnimationFrame(() => pulseHighlightOverlay(pulseTarget));
         };
         void navigate();
       },
-      [goToPage, mediaId, scrollToProjectedHighlight],
+      [goToPage, mediaId, pulseHighlightOverlay],
     ),
   );
 

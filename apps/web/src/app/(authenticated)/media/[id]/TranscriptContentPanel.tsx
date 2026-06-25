@@ -23,6 +23,7 @@ interface TranscriptContentPanelProps {
   activeFragment: TranscriptFragment | null;
   renderedHtml: string;
   evidenceHighlightId?: string | null;
+  evidenceExactText?: string | null;
   evidenceStartMs?: number | null;
   evidenceEndMs?: number | null;
   contentRef: RefObject<HTMLDivElement | null>;
@@ -42,6 +43,7 @@ export default function TranscriptContentPanel({
   activeFragment,
   renderedHtml,
   evidenceHighlightId,
+  evidenceExactText,
   evidenceStartMs,
   evidenceEndMs,
   contentRef,
@@ -156,7 +158,7 @@ export default function TranscriptContentPanel({
               const isActive = entry.fragment.id === activeFragment?.id;
               const segmentStartMs = entry.fragment.t_start_ms;
               const segmentEndMs = entry.fragment.t_end_ms;
-              const hasEvidence = Boolean(
+              const evidenceTimeMatches = Boolean(
                 evidenceHighlightId &&
                   typeof evidenceStartMs === "number" &&
                   typeof segmentStartMs === "number" &&
@@ -164,6 +166,19 @@ export default function TranscriptContentPanel({
                     ? segmentStartMs < evidenceEndMs && segmentEndMs > evidenceStartMs
                     : segmentStartMs === evidenceStartMs),
               );
+              const normalizedEvidenceText =
+                evidenceExactText?.replace(/\s+/g, " ").trim().toLocaleLowerCase() ??
+                "";
+              const normalizedSegmentText = entry.fragment.canonical_text
+                .replace(/\s+/g, " ")
+                .trim()
+                .toLocaleLowerCase();
+              const evidenceTextMatches = Boolean(
+                evidenceHighlightId &&
+                  normalizedEvidenceText &&
+                  normalizedSegmentText.includes(normalizedEvidenceText),
+              );
+              const hasEvidence = evidenceTimeMatches || evidenceTextMatches;
               const segmentLabel = [
                 timestamp ?? "Transcript segment",
                 entry.fragment.speaker_label,

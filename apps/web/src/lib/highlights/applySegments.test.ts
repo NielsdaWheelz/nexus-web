@@ -281,6 +281,39 @@ describe("applyHighlightsToHtml", () => {
       expect(result.html).toContain('data-highlight-anchor="outer"');
       expect(result.html).toContain('data-highlight-anchor="inner"');
     });
+
+    it("renders an evidence highlight that starts at the fragment boundary", () => {
+      const lines = Array.from(
+        { length: 60 },
+        (_, index) =>
+          `section ${String(index + 1).padStart(3, "0")} filler content for linked-items non-pdf alignment behavior.`,
+      );
+      lines[7] =
+        "section 008 includes e2e non-pdf quote target alpha for quote-to-chat.";
+      lines[55] =
+        "section 056 includes e2e non-pdf focus target omega for quote-to-chat.";
+      const html = lines.map((line) => `<p>${line}</p>`).join("");
+      const canonical = lines.join("\n");
+      const quoteStart = canonical.indexOf("e2e non-pdf quote target alpha");
+      const focusStart = canonical.indexOf("e2e non-pdf focus target omega");
+
+      const result = applyHighlightsToHtml(html, canonical, "frag-1", [
+        h("persisted-quote", quoteStart, quoteStart + 31, "yellow"),
+        h("persisted-focus", focusStart, focusStart + 31, "blue"),
+        h(
+          "evidence-span-1",
+          0,
+          Math.min(3311, canonical.length),
+          "blue",
+          "1970-01-01T00:00:00.000Z",
+        ),
+      ]);
+
+      expect(result.validationPassed).toBe(true);
+      expect(result.failedIds).not.toContain("evidence-span-1");
+      expect(result.html).toContain('data-highlight-anchor="evidence-span-1"');
+      expect(result.html).toContain("hl-evidence");
+    });
   });
 
   describe("Failure handling", () => {

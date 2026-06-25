@@ -33,7 +33,10 @@ import type {
   SSEToolResultEvent,
 } from "@/lib/api/sse/events";
 import { selectedPathAfterRun } from "@/lib/conversations/branching";
-import { conversationMessageText } from "@/lib/conversations/types";
+import {
+  conversationMessageText,
+  createRunningAssistantTrustTrail,
+} from "@/lib/conversations/types";
 import type {
   AssistantTrustTrail,
   ChatRunResponse,
@@ -53,16 +56,16 @@ export type RenderToolCallData = SSEToolCallEvent["data"] & {
 };
 
 /**
- * The two provider tool-call phases that share `message_tool_calls` lifecycle but
+ * The two provider tool-call patches that share `message_tool_calls` lifecycle but
  * differ in field handling:
- *   - `call`  (tool_call_start / tool_call_done): resets `requested_types`,
+ *   - `lifecycle` (tool_call_start / tool_call_done): resets `requested_types`,
  *     preserves prior `input_preview`, status defaults to "running".
- *   - `delta` (tool_call_delta): preserves prior `requested_types`, takes the
- *     delta's `input_preview` when present, status is always "running".
+ *   - `input` (tool_call_delta): preserves prior `requested_types`, takes the
+ *     streamed input preview when present, status is always "running".
  */
 export type ToolCallPatch =
-  | { phase: "call"; data: RenderToolCallData }
-  | { phase: "delta"; data: SSEToolCallDeltaEvent["data"] };
+  | { kind: "lifecycle"; data: RenderToolCallData }
+  | { kind: "input"; data: SSEToolCallDeltaEvent["data"] };
 
 export type MessageUpdateAction =
   | { type: "set_all"; messages: ConversationMessage[] }
@@ -127,21 +130,12 @@ function trustTrailFor(
   conversationId = "",
 ): AssistantTrustTrail {
   if (message.trust_trail) return message.trust_trail;
-  return {
-    schema_version: "assistant_trust_trail.v1",
-    assistant_message_id: assistantId,
-    conversation_id: conversationId,
-    chat_run_id: null,
-    status: "running",
-    run: null,
-    prompt: null,
-    tool_calls: [],
-    citations: [],
-    context_refs_added: [],
-    integrity_notices: [],
-    created_at: message.created_at,
-    updated_at: message.updated_at,
-  };
+  return createRunningAssistantTrustTrail({
+    assistantMessageId: assistantId,
+    conversationId,
+    createdAt: message.created_at,
+    updatedAt: message.updated_at,
+  });
 }
 
 function retrievalFromSearchCitation(
@@ -246,12 +240,12 @@ function applyToolCall(
       tool_name: data.tool_name,
       tool_call_index: data.tool_call_index,
       status:
-        patch.phase === "call" ? (patch.data.status ?? "running") : "running",
+        patch.kind === "lifecycle" ? (patch.data.status ?? "running") : "running",
       scope: "provider_tool",
       requested_types:
-        patch.phase === "call" ? [] : (previous?.requested_types ?? []),
+        patch.kind === "lifecycle" ? [] : (previous?.requested_types ?? []),
       input_preview:
-        patch.phase === "delta"
+        patch.kind === "input"
           ? (patch.data.input_preview ?? previous?.input_preview)
           : previous?.input_preview,
       result_refs: previous?.result_refs ?? [],
@@ -267,7 +261,7 @@ function applyToolCall(
       index >= 0
         ? existing.map((call, idx) =>
             idx === index
-              ? patch.phase === "call"
+              ? patch.kind === "lifecycle"
                 ? { ...call, ...nextCall }
                 : nextCall
               : call,

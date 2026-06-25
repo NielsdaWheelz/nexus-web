@@ -305,10 +305,12 @@ No open questions remain.
 
 ## Implementation divergences (as built)
 
-Built in worktree `pane-resource-loader-prefetch` (S0–S6). All green: typecheck 0, lint 0,
-unit 905/906 (the one failure — `workspaceRestore.test.ts` "reuses and activates the saved
-pane for same-resource deep links" — fails identically on untouched `main`, pre-existing and
-out of scope), browser 1168/1168. Gates R1/R2/R6/R7 = 0.
+Built in worktree `pane-resource-loader-prefetch` (S0–S6). Initial verification:
+typecheck 0, lint 0, browser 1168/1168. Gates R1/R2/R6/R7 = 0. The previously
+noted pre-existing `workspaceRestore.test.ts` same-resource deep-link failure is
+closed: restore-time deep-link merging now compares pane resource locators for
+resource-backed pane reuse, while route keys still control normal route
+instances and remounts.
 
 - **D1 — `claim()` split into `peek()` + `consume()` (React-correctness).** The spec's single
   `claim(key)` (return + remove) can't run during render: removal is a mutation, and React

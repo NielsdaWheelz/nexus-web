@@ -54,15 +54,24 @@ vi.mock("@/lib/api/client", async () => {
       }
 
       if (
-        (path === "/api/media/media-1/pdf-highlights?page_number=1" ||
-          path ===
-            "/api/media/media-1/pdf-highlights?page_number=1&mine_only=false") &&
+        path.startsWith("/api/media/media-1/pdf-highlights?") &&
         (init?.method ?? "GET") === "GET"
       ) {
+        const params = new URLSearchParams(path.split("?")[1] ?? "");
+        const pageNumber = Number(params.get("page_number") ?? "1");
         return {
           data: {
-            page_number: 1,
-            highlights: pdfRuntimeState.pageHighlights,
+            page_number: pageNumber,
+            highlights: pdfRuntimeState.pageHighlights.filter(
+              (highlight) =>
+                typeof highlight === "object" &&
+                highlight !== null &&
+                "anchor" in highlight &&
+                typeof highlight.anchor === "object" &&
+                highlight.anchor !== null &&
+                "page_number" in highlight.anchor &&
+                highlight.anchor.page_number === pageNumber,
+            ),
           },
         };
       }
@@ -629,5 +638,46 @@ describe("PdfReader selection chat destinations", () => {
             init?.method === "POST",
         ),
     ).toBe(false);
+  });
+
+  it("uses retrying PDF scroll navigation for cross-page reader pulses", async () => {
+    pdfRuntimeState.numPages = 2;
+    pdfRuntimeState.pageWidths = [600, 600];
+    const quads = [
+      {
+        x1: 70,
+        y1: 60,
+        x2: 230,
+        y2: 60,
+        x3: 230,
+        y3: 80,
+        x4: 70,
+        y4: 80,
+      },
+    ];
+
+    render(<PdfReader mediaId="media-1" />);
+
+    await screen.findByTestId("pdf-page-text-layer-2");
+
+    dispatchReaderPulse({
+      mediaId: "media-1",
+      locator: {
+        type: "pdf_page_geometry",
+        media_id: "media-1",
+        page_number: 2,
+        quads,
+        exact: "[13]",
+      },
+      snippet: "[13]",
+      highlightBehavior: "pulse",
+      focusBehavior: "scroll_into_view",
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Page 2 of 2")).toBeInTheDocument();
+    });
+    const transient = await screen.findByTestId(/^pdf-highlight-reader-pulse-/);
+    expect(transient).toBeInTheDocument();
   });
 });

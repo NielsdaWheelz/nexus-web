@@ -517,6 +517,38 @@ describe("WorkspaceStoreProvider", () => {
     flushWorkspaceSession();
   });
 
+  it("preserves compatible secondarys across same-resource route-instance navigation", async () => {
+    const workspace = await mountWorkspaceStore("/media/11111111-1111-4111-8111-111111111111?loc=chapter-1");
+    const paneId = workspace().state.activePrimaryPaneId;
+
+    act(() => {
+      workspace().requestSecondarySurface(paneId, "reader-highlights");
+    });
+
+    let secondaryPaneId: string | null = null;
+    await waitFor(() => {
+      secondaryPaneId = primaryPanes(workspace().state)[0]?.attachedSecondaryPaneId ?? null;
+      expect(secondaryPaneId).not.toBeNull();
+    });
+
+    act(() => {
+      workspace().navigatePane(paneId, "/media/11111111-1111-4111-8111-111111111111?loc=chapter-2");
+    });
+
+    await waitFor(() => {
+      expect(primaryPanes(workspace().state)[0]?.href).toBe(
+        "/media/11111111-1111-4111-8111-111111111111?loc=chapter-2",
+      );
+      expect(primaryPanes(workspace().state)[0]?.attachedSecondaryPaneId).toBe(
+        secondaryPaneId,
+      );
+      expect(Object.keys(workspace().state.secondaryPanesById)).toContain(
+        secondaryPaneId,
+      );
+    });
+    flushWorkspaceSession();
+  });
+
   it("resets resized width across different resources", async () => {
     const workspace = await mountWorkspaceStore("/libraries");
     const paneId = workspace().state.activePrimaryPaneId;
@@ -1054,6 +1086,29 @@ describe("WorkspaceStoreProvider", () => {
       "/libraries",
       "/media/11111111-1111-4111-8111-111111111111#loc=chapter-2",
     ]);
+    flushWorkspaceSession();
+  });
+
+  it("folds a later client-side URL hash into the matching active pane", async () => {
+    const mediaHref = "/media/11111111-1111-4111-8111-111111111111";
+    const initialState = workspaceState({
+      activePrimaryPaneId: "pane-media",
+      primaryPanes: [pane("pane-media", mediaHref)],
+    });
+    const { workspace } = renderSeeded(initialState, mediaHref);
+
+    await waitFor(() => {
+      expect(activeHref(workspace())).toBe(mediaHref);
+    });
+
+    act(() => {
+      window.history.replaceState(null, "", `${mediaHref}#evidence-span-1`);
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    });
+
+    await waitFor(() => {
+      expect(activeHref(workspace())).toBe(`${mediaHref}#evidence-span-1`);
+    });
     flushWorkspaceSession();
   });
 

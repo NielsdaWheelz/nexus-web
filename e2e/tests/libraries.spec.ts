@@ -15,10 +15,12 @@ async function createLibraryViaUi(
   const nameInput = activePane.getByPlaceholder("New library name...");
   await expect(nameInput).toBeVisible();
   const libraryName = `${prefix} ${Date.now()}-${Math.floor(Math.random() * 10_000)}`;
-  await nameInput.fill(libraryName);
-  await expect(nameInput).toHaveValue(libraryName);
   const createButton = activePane.getByRole("button", { name: /^create$/i });
-  await expect(createButton).toBeEnabled({ timeout: 10_000 });
+  await expect(async () => {
+    await nameInput.fill(libraryName);
+    await expect(nameInput).toHaveValue(libraryName);
+    await expect(createButton).toBeEnabled({ timeout: 1_000 });
+  }).toPass({ timeout: 10_000 });
   const createResponsePromise = page.waitForResponse(
     (response) =>
       new URL(response.url()).pathname === "/api/libraries" &&

@@ -17,6 +17,7 @@ import {
   parseWorkspaceHref,
 } from "@/lib/workspace/workspaceHref";
 import type { ResourceItem } from "@/lib/notes/api";
+import { normalizePaneRouteKeyHref } from "@/lib/panes/paneIdentity";
 import { preloadPane } from "@/lib/panes/paneRenderRegistry";
 import { resolvePaneRoute } from "@/lib/panes/paneRouteTable";
 import type { PaneRuntimeLayout } from "@/lib/workspace/paneSizing";
@@ -150,7 +151,7 @@ function parsePaneHref(href: string): { pathname: string; searchParams: URLSearc
 }
 
 function buildPaneRouteKey(routeId: string, href: string): string {
-  return `${routeId}:${normalizeWorkspaceHref(href) ?? "/"}`;
+  return `${routeId}:${normalizePaneRouteKeyHref(href)}`;
 }
 
 function resourceKeyForItem(resourceItem: ResourceItem | null): string | null {

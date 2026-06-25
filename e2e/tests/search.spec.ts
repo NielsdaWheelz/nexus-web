@@ -154,16 +154,19 @@ test.describe("search", () => {
 
     // Deselecting every kind chip is the explicit-empty case (⇒ no results, not all).
     const kinds = searchPane.getByRole("group", { name: "Result kinds" });
-    for (const label of SEARCH_KIND_LABELS) {
-      const chip = kinds.getByRole("button", {
-        name: label,
-        exact: true,
-        pressed: true,
-      });
-      if ((await chip.count()) > 0) {
-        await chip.click();
+    await expect(async () => {
+      for (const label of SEARCH_KIND_LABELS) {
+        const chip = kinds.getByRole("button", {
+          name: label,
+          exact: true,
+        });
+        await expect(chip).toBeVisible();
+        if ((await chip.getAttribute("aria-pressed")) === "true") {
+          await chip.click();
+        }
+        await expect(chip).toHaveAttribute("aria-pressed", "false");
       }
-    }
+    }).toPass({ timeout: 10_000 });
 
     await searchInput.fill("e2e non-pdf");
 

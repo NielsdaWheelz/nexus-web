@@ -236,6 +236,34 @@ export interface AssistantTrustTrail {
   updated_at: string;
 }
 
+export function createRunningAssistantTrustTrail({
+  assistantMessageId,
+  conversationId = "",
+  createdAt,
+  updatedAt,
+}: {
+  assistantMessageId: string;
+  conversationId?: string;
+  createdAt: string;
+  updatedAt: string;
+}): AssistantTrustTrail {
+  return {
+    schema_version: "assistant_trust_trail.v1",
+    assistant_message_id: assistantMessageId,
+    conversation_id: conversationId,
+    chat_run_id: null,
+    status: "running",
+    run: null,
+    prompt: null,
+    tool_calls: [],
+    citations: [],
+    context_refs_added: [],
+    integrity_notices: [],
+    created_at: createdAt,
+    updated_at: updatedAt,
+  };
+}
+
 export interface ConversationMessage {
   id: string;
   seq: number;

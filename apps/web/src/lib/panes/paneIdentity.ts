@@ -15,6 +15,11 @@ export interface PaneRouteIdentity {
   resourceLocator: PaneResourceLocator | null;
 }
 
+export function normalizePaneRouteKeyHref(href: string): string {
+  const normalizedHref = normalizeWorkspaceHref(href) ?? "/";
+  return normalizedHref.split("#", 1)[0] ?? normalizedHref;
+}
+
 export function resolvePaneRouteIdentity(href: string): PaneRouteIdentity {
   const normalizedHref = normalizeWorkspaceHref(href) ?? "/";
   const route = resolvePaneRouteModel(normalizedHref);
@@ -22,7 +27,7 @@ export function resolvePaneRouteIdentity(href: string): PaneRouteIdentity {
   return {
     href: normalizedHref,
     routeId: route.id,
-    routeKey: `${route.id}:${normalizedHref}`,
+    routeKey: `${route.id}:${normalizePaneRouteKeyHref(normalizedHref)}`,
     resourceLocator,
   };
 }
@@ -31,5 +36,31 @@ export function hasSamePaneRoute(leftHref: string, rightHref: string): boolean {
   return (
     resolvePaneRouteIdentity(leftHref).routeKey ===
     resolvePaneRouteIdentity(rightHref).routeKey
+  );
+}
+
+export function paneResourceLocatorKey(locator: PaneResourceLocator | null): string | null {
+  if (!locator) return null;
+  switch (locator.kind) {
+    case "resource_ref":
+      return `resource_ref:${locator.ref}`;
+    case "contributor_handle":
+      return `contributor_handle:${locator.handle}`;
+    case "daily_note_today":
+      return `daily_note_today:${locator.timeZone}`;
+    case "daily_note_date":
+      return `daily_note_date:${locator.localDate}:${locator.timeZone}`;
+    default: {
+      const _exhaustive: never = locator;
+      return _exhaustive;
+    }
+  }
+}
+
+export function hasSamePaneResource(leftHref: string, rightHref: string): boolean {
+  const leftKey = paneResourceLocatorKey(resolvePaneRouteIdentity(leftHref).resourceLocator);
+  return (
+    leftKey !== null &&
+    leftKey === paneResourceLocatorKey(resolvePaneRouteIdentity(rightHref).resourceLocator)
   );
 }

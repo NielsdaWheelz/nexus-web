@@ -438,19 +438,19 @@ describe("WorkspaceHost pane route lifecycle", () => {
     setPaneHref(MEDIA_HREF_1);
   });
 
-  it("remounts the route body for route-instance location changes", () => {
+  it("preserves the route body for same-resource location changes", () => {
     const { rerender } = render(<WorkspaceHost />);
     const firstInstance = screen.getByTestId("route-body").dataset.instanceId;
 
     setPaneHref(`${MEDIA_HREF_1}?loc=chapter-2`);
     rerender(<WorkspaceHost />);
 
-    expect(screen.getByTestId("route-body")).not.toHaveAttribute(
+    expect(screen.getByTestId("route-body")).toHaveAttribute(
       "data-instance-id",
       firstInstance,
     );
-    expect(hostMocks.mountedBodyIds).toHaveLength(2);
-    expect(hostMocks.unmountedBodyIds).toEqual([Number(firstInstance)]);
+    expect(hostMocks.mountedBodyIds).toHaveLength(1);
+    expect(hostMocks.unmountedBodyIds).toEqual([]);
   });
 
   it("uses desktop canvas mode and renders desktop edge fades", () => {
@@ -660,6 +660,19 @@ function setPaneWithSecondary(secondary: {
   };
 }
 
+function setSecondaryPaneHref(href: string) {
+  hostMocks.store.state = {
+    ...hostMocks.store.state,
+    primaryPanesById: {
+      ...hostMocks.store.state.primaryPanesById,
+      "pane-1": {
+        ...hostMocks.store.state.primaryPanesById["pane-1"]!,
+        href,
+      },
+    },
+  };
+}
+
 describe("WorkspaceHost secondary publication validation", () => {
   beforeEach(() => {
     hostMocks.bodyInstanceId = 0;
@@ -681,7 +694,7 @@ describe("WorkspaceHost secondary publication validation", () => {
     setPaneHref(MEDIA_HREF_1);
   });
 
-  it("does not render or expose a visible secondary without a matching publication", () => {
+  it("does not render a visible secondary without a matching publication", () => {
     setPaneWithSecondary({
       groupId: "reader-tools",
       activeSurfaceId: "reader-highlights",
@@ -695,7 +708,7 @@ describe("WorkspaceHost secondary publication validation", () => {
     expect(shell).toHaveAttribute("data-secondary-width-px", "0");
     expect(screen.getByTestId("route-body")).toHaveAttribute(
       "data-runtime-secondary-id",
-      "none",
+      "secondary-1",
     );
     expect(hostMocks.store.dropSecondaryPane).not.toHaveBeenCalled();
   });
@@ -724,6 +737,80 @@ describe("WorkspaceHost secondary publication validation", () => {
       "secondary-1",
     );
     expect(hostMocks.store.dropSecondaryPane).not.toHaveBeenCalled();
+  });
+
+  it("republishes secondary and fixed chrome when a same-resource route instance changes", async () => {
+    setPaneWithSecondary({
+      groupId: "reader-tools",
+      activeSurfaceId: "reader-highlights",
+    });
+    hostMocks.secondaryPublication = READER_TOOLS_HIGHLIGHTS_ONLY;
+    hostMocks.fixedChromeWidthPx = 48;
+    const { rerender } = render(<WorkspaceHost />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("pane-shell")).toHaveAttribute(
+        "data-secondary-pane-id",
+        "secondary-1",
+      );
+    });
+
+    setSecondaryPaneHref(`${MEDIA_HREF_1}?loc=chapter-2`);
+    rerender(<WorkspaceHost />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("pane-shell")).toHaveAttribute(
+        "data-secondary-pane-id",
+        "secondary-1",
+      );
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("pane-shell")).toHaveAttribute(
+        "data-fixed-chrome-width-px",
+        "48",
+      );
+    });
+    expect(screen.getByTestId("route-body")).toHaveAttribute(
+      "data-runtime-secondary-id",
+      "secondary-1",
+    );
+  });
+
+  it("keeps secondary runtime state during the publication gap for a same-resource route instance", async () => {
+    setPaneWithSecondary({
+      groupId: "reader-tools",
+      activeSurfaceId: "reader-highlights",
+    });
+    hostMocks.secondaryPublication = READER_TOOLS_HIGHLIGHTS_ONLY;
+    const { rerender } = render(<WorkspaceHost />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("pane-shell")).toHaveAttribute(
+        "data-secondary-pane-id",
+        "secondary-1",
+      );
+    });
+
+    hostMocks.secondaryPublication = null;
+    setSecondaryPaneHref(`${MEDIA_HREF_1}?loc=chapter-2`);
+    rerender(<WorkspaceHost />);
+
+    expect(screen.getByTestId("pane-shell")).toHaveAttribute(
+      "data-secondary-pane-id",
+      "none",
+    );
+    expect(screen.getByTestId("pane-shell")).toHaveAttribute(
+      "data-secondary-surfaces",
+      "none",
+    );
+    expect(screen.getByTestId("pane-shell")).toHaveAttribute(
+      "data-secondary-width-px",
+      "0",
+    );
+    expect(screen.getByTestId("route-body")).toHaveAttribute(
+      "data-runtime-secondary-id",
+      "secondary-1",
+    );
   });
 
   it("does not clear and republish secondary or fixed chrome on unrelated host renders", async () => {

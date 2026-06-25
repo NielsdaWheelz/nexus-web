@@ -9,43 +9,18 @@
 import { type CanonicalCursorResult } from "@/lib/highlights/canonicalCursor";
 import { canonicalCpToRawCp } from "@/lib/highlights/canonicalText";
 import { codepointToUtf16 } from "@/lib/highlights/codepoints";
-import { isPositiveFinite } from "@/lib/validation";
+import {
+  getPaneScrollContainer,
+  getPaneScrollTopPaddingPx,
+  isElementInPaneView,
+  scrollElementIntoPaneView,
+} from "@/lib/reader/paneScroll";
 
-const TEXT_ANCHOR_TOP_PADDING_PX = 56;
-
-export function getPaneScrollContainer(
-  contentNode: HTMLElement | null,
-): HTMLElement | null {
-  if (!contentNode) {
-    return null;
-  }
-
-  const paneContent = contentNode.closest<HTMLElement>(
-    '[data-pane-content="true"]',
-  );
-  if (paneContent) {
-    return paneContent;
-  }
-
-  if (typeof document !== "undefined" && document.scrollingElement) {
-    return document.scrollingElement as HTMLElement;
-  }
-  return null;
-}
-
-function getPaneScrollTopPaddingPx(container: HTMLElement): number {
-  if (typeof window === "undefined") {
-    return TEXT_ANCHOR_TOP_PADDING_PX;
-  }
-
-  const parsed = Number.parseFloat(
-    window.getComputedStyle(container).scrollPaddingTop,
-  );
-  if (isPositiveFinite(parsed)) {
-    return parsed;
-  }
-  return TEXT_ANCHOR_TOP_PADDING_PX;
-}
+export {
+  getPaneScrollContainer,
+  isElementInPaneView,
+  scrollElementIntoPaneView,
+};
 
 export function findFirstVisibleCanonicalOffset(
   container: HTMLElement,
@@ -154,7 +129,7 @@ export function scrollToCanonicalTextAnchor(
   }
 
   if (fallbackElement) {
-    fallbackElement.scrollIntoView({ block: "start", behavior: "auto" });
+    scrollElementIntoPaneView(container, fallbackElement);
     return true;
   }
   return false;

@@ -187,6 +187,10 @@ def _parse_new_highlight(
         return VaultFileParseFailure(
             path, content, "Vault new highlight metadata must not include server_updated_at"
         )
+    if metadata.get("selector_kind") != "fragment_offsets":
+        return VaultFileParseFailure(
+            path, content, "Vault highlight metadata has invalid selector_kind"
+        )
     unknown = set(metadata) - {
         "nexus_type",
         "media_handle",

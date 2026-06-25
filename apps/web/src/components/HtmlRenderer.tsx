@@ -17,6 +17,10 @@
 import { memo, useCallback, useEffect, useRef } from "react";
 import { useReaderPulseHighlight } from "@/lib/reader/pulseEvent";
 import type { RetrievalLocator } from "@/lib/api/sse/locators";
+import {
+  getPaneScrollContainer,
+  scrollElementIntoPaneView,
+} from "@/lib/reader/paneScroll";
 import styles from "./HtmlRenderer.module.css";
 
 interface HtmlRendererProps {
@@ -84,7 +88,10 @@ export default memo(function HtmlRenderer({
           target.highlightId,
         );
         for (const candidate of candidates) {
-          candidate.scrollIntoView({ behavior: "smooth", block: "center" });
+          const container = getPaneScrollContainer(candidate);
+          if (container) {
+            scrollElementIntoPaneView(container, candidate, { block: "center" });
+          }
           candidate.classList.add(styles.pulsing);
           window.setTimeout(() => {
             candidate.classList.remove(styles.pulsing);

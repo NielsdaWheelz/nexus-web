@@ -127,6 +127,22 @@ Note.
 """,
         )
     )
+    new_with_pdf_selector = parse_vault_markdown_file(
+        EditableVaultFile(
+            path="Highlights/new-pdf.md",
+            content=f"""---
+nexus_type: "highlight"
+media_handle: "med_{MEDIA_ID.hex}"
+color: "yellow"
+deleted: false
+exact: "quote"
+selector_kind: "pdf_text_quote"
+page: 1
+---
+Note.
+""",
+        )
+    )
     missing_color = parse_vault_markdown_file(
         EditableVaultFile(
             path=f"Highlights/hl_{HIGHLIGHT_ID.hex}.md",
@@ -198,6 +214,8 @@ Note.
     assert new_with_existing_field.message == (
         "Vault new highlight metadata has unknown field exact"
     )
+    assert isinstance(new_with_pdf_selector, VaultFileParseFailure)
+    assert new_with_pdf_selector.message == "Vault highlight metadata has invalid selector_kind"
     assert isinstance(missing_color, VaultFileParseFailure)
     assert missing_color.message == "Vault highlight metadata is missing color"
     assert isinstance(parsed, ExistingHighlightFile)
