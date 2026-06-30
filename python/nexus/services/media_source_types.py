@@ -6,6 +6,7 @@ GENERIC_WEB_URL = "generic_web_url"
 YOUTUBE_VIDEO = "youtube_video"
 VIDEO_TRANSCRIPT = "video_transcript"
 X_AUTHOR_THREAD = "x_author_thread"
+X_POST = "x_post"
 REMOTE_PDF_URL = "remote_pdf_url"
 REMOTE_EPUB_URL = "remote_epub_url"
 BROWSER_ARTICLE_CAPTURE = "browser_article_capture"
@@ -36,6 +37,7 @@ WEB_ARTICLE_ARTIFACT_SOURCE_TYPES = frozenset(
         GENERIC_WEB_URL,
         BROWSER_ARTICLE_CAPTURE,
         X_AUTHOR_THREAD,
+        X_POST,
     }
 )
 NON_REACQUIRABLE_FILE_SOURCE_TYPES = frozenset(

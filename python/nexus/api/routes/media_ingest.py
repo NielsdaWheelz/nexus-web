@@ -72,6 +72,7 @@ def create_captured_article(
         site_name=request_body.site_name,
         published_time=request_body.published_time,
         content_html=request_body.content_html,
+        source_html=request_body.source_html,
         library_ids=request_body.library_ids,
         request_id=getattr(request.state, "request_id", None),
         idempotency_key=request.headers.get("Idempotency-Key"),

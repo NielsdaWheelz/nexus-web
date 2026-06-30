@@ -54,6 +54,7 @@ class ReaderConnectionRowOut(BaseModel):
         "user_link",
         "synapse",
         "system",
+        "document_embed",
         "other",
     ]
     title: str

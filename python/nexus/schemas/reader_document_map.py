@@ -22,8 +22,10 @@ from nexus.schemas.resource_graph import EdgeKind, EdgeOrigin
 from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.services.resource_graph.schemas import ConnectionDirection
 
-ReaderDocumentMapLensId = Literal["contents", "highlights", "citations", "connections", "chat"]
-ReaderDocumentMapStatus = Literal["ready", "empty", "partial", "unsupported", "failed"]
+ReaderDocumentMapLensId = Literal[
+    "contents", "embeds", "highlights", "citations", "connections", "chat"
+]
+ReaderDocumentMapStatus = Literal["ready", "empty", "resolving", "partial", "unsupported", "failed"]
 ReaderDocumentMapTargetStatus = Literal[
     "exact",
     "container",
@@ -96,6 +98,16 @@ class ReaderDocumentMapHighlightItemOut(ReaderDocumentMapItemBaseOut):
     linked_conversation_count: int = Field(ge=0)
 
 
+class ReaderDocumentMapEmbedItemOut(ReaderDocumentMapItemBaseOut):
+    kind: Literal["document_embed"]
+    source_domain: Literal["document_embeds"]
+    document_embed_id: UUID
+    occurrence_key: str
+    provider: str
+    embed_kind: str
+    resolution_status: str
+
+
 class ReaderDocumentMapApparatusItemOut(ReaderDocumentMapItemBaseOut):
     kind: Literal["apparatus"]
     source_domain: Literal["reader_apparatus"]
@@ -129,6 +141,7 @@ class ReaderDocumentMapChatThreadItemOut(ReaderDocumentMapItemBaseOut):
 ReaderDocumentMapItemOut = Annotated[
     ReaderDocumentMapSectionItemOut
     | ReaderDocumentMapHighlightItemOut
+    | ReaderDocumentMapEmbedItemOut
     | ReaderDocumentMapApparatusItemOut
     | ReaderDocumentMapConnectionItemOut
     | ReaderDocumentMapChatThreadItemOut,

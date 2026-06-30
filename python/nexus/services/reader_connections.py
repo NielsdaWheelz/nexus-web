@@ -41,6 +41,7 @@ READER_CONNECTION_ORIGINS: tuple[EdgeOrigin, ...] = (
     "user",
     "synapse",
     "system",
+    "document_embed",
 )
 
 
@@ -294,6 +295,7 @@ def _source_category(
     "user_link",
     "synapse",
     "system",
+    "document_embed",
     "other",
 ]:
     if connection.origin == "citation":
@@ -314,6 +316,8 @@ def _source_category(
         return "synapse"
     if connection.origin == "system":
         return "system"
+    if connection.origin == "document_embed":
+        return "document_embed"
     return "other"
 
 

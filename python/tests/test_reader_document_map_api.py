@@ -34,6 +34,7 @@ def test_document_map_aggregates_reader_evidence(auth_client, direct_db: DirectS
         )
         fragment_id = create_test_fragment(session, media_id, "Claim1\n1. Source note.")
         _seed_heading(session, media_id, fragment_id)
+        _seed_document_embed(session, media_id, fragment_id)
         _register_media_cleanup(direct_db, media_id)
 
         highlight_id, note_block_id = create_test_highlight_note(
@@ -98,6 +99,7 @@ def test_document_map_aggregates_reader_evidence(auth_client, direct_db: DirectS
     assert data["status"] == "ready"
     assert [lens["id"] for lens in data["lenses"]] == [
         "contents",
+        "embeds",
         "highlights",
         "citations",
         "connections",
@@ -105,6 +107,15 @@ def test_document_map_aggregates_reader_evidence(auth_client, direct_db: DirectS
     ]
     items = data["items"]
     assert _item(items, "section:overview")["source_domain"] == "navigation"
+    embed_lens = next(lens for lens in data["lenses"] if lens["id"] == "embeds")
+    assert embed_lens["status"] == "ready"
+    embed = next(item for item in items if item["kind"] == "document_embed")
+    assert embed["source_domain"] == "document_embeds"
+    assert embed["document_embed_id"]
+    assert embed["provider"] == "generic"
+    assert embed["resolution_status"] == "unsupported"
+    assert embed["anchor"]["fragment_id"] == str(fragment_id)
+    assert embed["actions"] == ["activate"]
     highlight = _item(items, f"highlight:{highlight_id}")
     assert highlight["note_block_count"] == 1
     assert highlight["source_domain"] == "highlight"
@@ -135,6 +146,7 @@ def test_document_map_aggregates_reader_evidence(auth_client, direct_db: DirectS
     assert "edge_id" not in chat
     assert {marker["lens_id"] for marker in data["markers"]} >= {
         "contents",
+        "embeds",
         "highlights",
         "citations",
         "connections",
@@ -143,6 +155,57 @@ def test_document_map_aggregates_reader_evidence(auth_client, direct_db: DirectS
     assert data["apparatus"]["items"]
     assert data["chat_threads"][0]["id"] == str(conversation_id)
     assert str(note_block_id)
+
+
+@pytest.mark.parametrize(
+    ("artifact_status", "row_statuses"),
+    [
+        ("empty", []),
+        ("failed", []),
+        ("resolving", ["resolving"]),
+        ("partial", ["resolved", "failed"]),
+        ("ready", ["resolved"]),
+        ("unsupported", []),
+    ],
+)
+def test_document_map_embed_lens_uses_artifact_state_status(
+    auth_client,
+    direct_db: DirectSessionManager,
+    artifact_status: str,
+    row_statuses: list[str],
+):
+    user_id = _bootstrap_user(auth_client, direct_db)
+    with direct_db.session() as session:
+        library_id = get_user_default_library(session, user_id)
+        assert library_id is not None
+        media_id = create_test_media_in_library(
+            session, user_id, library_id, title=f"Embeds {artifact_status}"
+        )
+        fragment_id = create_test_fragment(session, media_id, "Embedded media")
+        _seed_heading(session, media_id, fragment_id)
+        _seed_document_embed_state(session, media_id, artifact_status, row_statuses, fragment_id)
+        replace_media_apparatus(
+            session,
+            media_id=media_id,
+            media_kind="web_article",
+            source_fingerprint_value=source_fingerprint(
+                f"document-map-embeds-{artifact_status}", media_id
+            ),
+            items=[],
+            edges=[],
+            status="empty",
+        )
+        _register_media_cleanup(direct_db, media_id)
+        session.commit()
+
+    response = auth_client.get(
+        f"/media/{media_id}/document-map",
+        headers=auth_headers(user_id),
+    )
+
+    assert response.status_code == 200, response.text
+    embed_lens = next(lens for lens in response.json()["data"]["lenses"] if lens["id"] == "embeds")
+    assert embed_lens["status"] == artifact_status
 
 
 def test_document_map_anchors_content_chunk_summary_locator(auth_client, direct_db):
@@ -262,6 +325,8 @@ def _register_media_cleanup(direct_db: DirectSessionManager, media_id: UUID) -> 
     direct_db.register_cleanup("reader_apparatus_edges", "media_id", media_id)
     direct_db.register_cleanup("reader_apparatus_items", "media_id", media_id)
     direct_db.register_cleanup("reader_apparatus_states", "media_id", media_id)
+    direct_db.register_cleanup("document_embeds", "media_id", media_id)
+    direct_db.register_cleanup("document_embed_artifact_states", "media_id", media_id)
     direct_db.register_cleanup("highlights", "anchor_media_id", media_id)
     direct_db.register_cleanup("fragments", "media_id", media_id)
     direct_db.register_cleanup("library_entries", "media_id", media_id)
@@ -311,6 +376,69 @@ def _seed_heading(session, media_id: UUID, fragment_id: UUID) -> None:
             "metadata": json.dumps({"section_id": "overview", "ordinal": 0, "depth": 1}),
         },
     )
+
+
+def _seed_document_embed(session, media_id: UUID, fragment_id: UUID) -> None:
+    _seed_document_embed_state(session, media_id, "ready", ["unsupported"], fragment_id)
+
+
+def _seed_document_embed_state(
+    session,
+    media_id: UUID,
+    status: str,
+    row_statuses: list[str],
+    fragment_id: UUID,
+) -> None:
+    total_count = len(row_statuses)
+    resolved_count = sum(1 for value in row_statuses if value == "resolved")
+    unsupported_count = sum(1 for value in row_statuses if value == "unsupported")
+    failed_count = sum(1 for value in row_statuses if value == "failed")
+    session.execute(
+        text(
+            """
+            INSERT INTO document_embed_artifact_states (
+                media_id, status, total_count, resolved_count, unsupported_count, failed_count
+            )
+            VALUES (
+                :media_id, :status, :total_count, :resolved_count,
+                :unsupported_count, :failed_count
+            )
+            """
+        ),
+        {
+            "media_id": media_id,
+            "status": status,
+            "total_count": total_count,
+            "resolved_count": resolved_count,
+            "unsupported_count": unsupported_count,
+            "failed_count": failed_count,
+        },
+    )
+    for ordinal, row_status in enumerate(row_statuses):
+        session.execute(
+            text(
+                """
+                INSERT INTO document_embeds (
+                    media_id, fragment_id, ordinal, occurrence_key, provider, embed_kind,
+                    source_shape, resolution_status, placeholder_text,
+                    canonical_start_offset, canonical_end_offset, document_order_key
+                )
+                VALUES (
+                    :media_id, :fragment_id, :ordinal, :occurrence_key, 'generic', 'unknown',
+                    'iframe', :row_status, 'Unsupported embedded content: player.example',
+                    0, 44, :document_order_key
+                )
+                """
+            ),
+            {
+                "media_id": media_id,
+                "fragment_id": fragment_id,
+                "ordinal": ordinal,
+                "occurrence_key": f"embed:document-map:{ordinal}",
+                "row_status": row_status,
+                "document_order_key": f"{ordinal:06d}",
+            },
+        )
 
 
 def _apparatus_item(

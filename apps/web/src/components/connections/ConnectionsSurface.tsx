@@ -93,6 +93,7 @@ const CONNECTION_PANEL_ORIGINS: EdgeOrigin[] = [
   "highlight_note",
   "citation",
   "synapse",
+  "document_embed",
 ];
 const CONNECTION_PANEL_KINDS: EdgeKind[] = [
   "context",

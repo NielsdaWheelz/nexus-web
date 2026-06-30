@@ -13854,12 +13854,178 @@ class TestMigration0167SotaChatStreamingHardCutover:
     def test_0167_downgrade_is_blocked(self):
         reset_test_schema()
         try:
-            assert run_alembic_command("upgrade head").returncode == 0
+            assert run_alembic_command("upgrade 0167").returncode == 0
 
             result = run_alembic_command("downgrade 0166")
 
             assert result.returncode != 0
             combined = (result.stdout or "") + (result.stderr or "")
             assert "Hard cutover: 0167 is not reversible" in combined
+        finally:
+            reset_test_schema()
+
+
+class TestMigration0168WebArticleInlineEmbedsHardCutover:
+    @pytest.fixture(scope="class")
+    def head_engine(self):
+        reset_test_schema()
+        result = run_alembic_command("upgrade head")
+        if result.returncode != 0:
+            pytest.fail(f"Migration upgrade failed: {result.stderr}")
+        engine = create_engine(get_test_database_url())
+        yield engine
+        engine.dispose()
+        reset_test_schema()
+
+    def _constraint_def(self, session, table: str, conname: str) -> str:
+        return session.execute(
+            text(
+                """
+                SELECT pg_get_constraintdef(oid)
+                FROM pg_constraint
+                WHERE conrelid = CAST(:table AS regclass) AND conname = :conname
+                """
+            ),
+            {"table": table, "conname": conname},
+        ).scalar_one()
+
+    def test_0168_creates_document_embed_schema_contract(self, head_engine):
+        with Session(head_engine) as session:
+            assert (
+                session.scalar(text("SELECT to_regclass('public.document_embed_artifact_states')"))
+                is not None
+            )
+            assert session.scalar(text("SELECT to_regclass('public.document_embeds')")) is not None
+
+            columns = session.execute(
+                text(
+                    """
+                    SELECT table_name, column_name, data_type, is_nullable
+                    FROM information_schema.columns
+                    WHERE table_name IN ('document_embed_artifact_states', 'document_embeds')
+                    """
+                )
+            ).fetchall()
+            constraints = session.execute(
+                text(
+                    """
+                    SELECT conrelid::regclass::text AS table_name, conname
+                    FROM pg_constraint
+                    WHERE conrelid IN (
+                        'document_embed_artifact_states'::regclass,
+                        'document_embeds'::regclass,
+                        'resource_edges'::regclass,
+                        'media_source_attempts'::regclass
+                    )
+                    """
+                )
+            ).fetchall()
+            indexes = session.execute(
+                text(
+                    """
+                    SELECT indexname
+                    FROM pg_indexes
+                    WHERE tablename = 'document_embeds'
+                    """
+                )
+            ).fetchall()
+            source_type_def = self._constraint_def(
+                session,
+                "media_source_attempts",
+                "ck_media_source_attempts_source_type",
+            )
+            edge_origin_def = self._constraint_def(
+                session,
+                "resource_edges",
+                "ck_resource_edges_origin",
+            )
+
+        column_by_table: dict[str, set[str]] = {}
+        not_null_columns: set[tuple[str, str]] = set()
+        for table_name, column_name, _data_type, is_nullable in columns:
+            column_by_table.setdefault(table_name, set()).add(column_name)
+            if is_nullable == "NO":
+                not_null_columns.add((table_name, column_name))
+
+        assert {
+            "media_id",
+            "source_attempt_id",
+            "status",
+            "total_count",
+            "resolved_count",
+            "unsupported_count",
+            "failed_count",
+            "diagnostics",
+            "updated_at",
+        }.issubset(column_by_table.get("document_embed_artifact_states", set())), (
+            "document_embed_artifact_states must own aggregate current-artifact state; "
+            f"got {column_by_table.get('document_embed_artifact_states', set())}"
+        )
+        assert {
+            "media_id",
+            "fragment_id",
+            "source_attempt_id",
+            "ordinal",
+            "occurrence_key",
+            "provider",
+            "embed_kind",
+            "source_shape",
+            "resolution_status",
+            "source_url",
+            "canonical_source_url",
+            "provider_target_ref",
+            "target_media_id",
+            "placeholder_text",
+            "canonical_start_offset",
+            "canonical_end_offset",
+            "document_order_key",
+            "diagnostics",
+        }.issubset(column_by_table.get("document_embeds", set())), (
+            "document_embeds must persist typed occurrence, locator, provider, and target state; "
+            f"got {column_by_table.get('document_embeds', set())}"
+        )
+        for table_name, column_name in (
+            ("document_embed_artifact_states", "media_id"),
+            ("document_embed_artifact_states", "status"),
+            ("document_embeds", "media_id"),
+            ("document_embeds", "ordinal"),
+            ("document_embeds", "occurrence_key"),
+            ("document_embeds", "provider"),
+            ("document_embeds", "embed_kind"),
+            ("document_embeds", "resolution_status"),
+            ("document_embeds", "placeholder_text"),
+            ("document_embeds", "document_order_key"),
+        ):
+            assert (table_name, column_name) in not_null_columns, (
+                f"{table_name}.{column_name} must be NOT NULL"
+            )
+
+        constraint_names = {row[1] for row in constraints}
+        assert {
+            "uq_document_embed_artifact_states_media",
+            "uq_document_embeds_media_ordinal",
+            "uq_document_embeds_media_key",
+        }.issubset(constraint_names), (
+            f"0168 must install document embed relational constraints; got {constraint_names}"
+        )
+        assert {
+            "idx_document_embeds_media_order",
+            "idx_document_embeds_fragment_order",
+            "idx_document_embeds_target_media",
+            "idx_document_embeds_resolution",
+        }.issubset({row[0] for row in indexes}), f"document_embeds indexes missing: {indexes}"
+        assert "'x_post'" in source_type_def, source_type_def
+        assert "'document_embed'" in edge_origin_def, edge_origin_def
+
+    def test_0168_downgrade_is_blocked(self):
+        reset_test_schema()
+        try:
+            assert run_alembic_command("upgrade head").returncode == 0
+
+            result = run_alembic_command("downgrade 0167")
+
+            assert result.returncode != 0
+            combined = (result.stdout or "") + (result.stderr or "")
+            assert "Hard cutover: 0168 is not reversible" in combined
         finally:
             reset_test_schema()

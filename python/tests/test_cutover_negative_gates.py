@@ -1617,6 +1617,31 @@ def test_reader_document_map_legacy_product_routes_absent():
 
 
 # =============================================================================
+# Web article inline embeds — backend-owned rows, no DOM rediscovery fallback
+# =============================================================================
+
+
+def test_inline_embed_frontend_does_not_rediscover_raw_provider_dom():
+    hits = _filtered(
+        r"twitter-tweet|querySelector(All)?\([^;\n]*(iframe|blockquote)",
+        _WEB_ROOT,
+        exclude=_FRONTEND_TEST,
+    )
+    assert not hits, f"frontend raw embed DOM discovery remains:\n{_fmt(hits)}"
+
+
+def test_inline_embed_cutover_has_no_oembed_fallback_path():
+    hits = _filtered(
+        r"\boEmbed\b|oembed|publish\.twitter|platform\.twitter\.com/widgets",
+        _PY_ROOT,
+        _WEB_ROOT,
+        _SCRIPTS_ROOT,
+        exclude=_FRONTEND_TEST,
+    )
+    assert not hits, f"inline embed fallback/provider widget path remains:\n{_fmt(hits)}"
+
+
+# =============================================================================
 # Synapse: one origin='synapse' edge writer (synapse spec AC9)
 # =============================================================================
 

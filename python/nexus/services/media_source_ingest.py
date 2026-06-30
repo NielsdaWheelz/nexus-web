@@ -132,6 +132,16 @@ class SystemSourceRepairResult:
     processing_status: str
 
 
+@dataclass(frozen=True)
+class EmbeddedSourceAcceptance:
+    media_id: UUID
+    source_attempt_id: UUID
+    source_type: str
+    source_attempt_status: str
+    processing_status: str
+    needs_enqueue: bool
+
+
 def accept_url_source(
     *,
     db: Session,
@@ -321,6 +331,7 @@ def accept_browser_article_capture(
     viewer_id: UUID,
     url: str,
     content_html: str,
+    source_html: str,
     library_ids: list[UUID],
     title: str | None = None,
     byline: str | None = None,
@@ -334,17 +345,23 @@ def accept_browser_article_capture(
     library_governance.validate_writable_library_destinations(db, viewer_id, library_ids)
     validate_requested_url(url)
     html_bytes = content_html.encode("utf-8")
+    source_html_bytes = source_html.encode("utf-8")
     if len(html_bytes) > WEB_ARTICLE_HTML_MAX_BYTES:
         raise InvalidRequestError(
             ApiErrorCode.E_CAPTURE_TOO_LARGE,
             "Captured article HTML is too large",
+        )
+    if len(source_html_bytes) > WEB_ARTICLE_HTML_MAX_BYTES:
+        raise InvalidRequestError(
+            ApiErrorCode.E_CAPTURE_TOO_LARGE,
+            "Captured article source HTML is too large",
         )
 
     source_type = source_types.BROWSER_ARTICLE_CAPTURE
     intent_key = _intent_key(
         source_type,
         url,
-        len(html_bytes),
+        {"content_size_bytes": len(html_bytes), "source_size_bytes": len(source_html_bytes)},
         library_ids=library_ids,
     )
     clean_idempotency_key = _clean_idempotency_key(idempotency_key)
@@ -388,7 +405,6 @@ def accept_browser_article_capture(
         if published_time and published_time.strip()
         else None,
     )
-    storage_path: str | None = None
     storage_client = get_storage_client()
     db.add(media)
     db.flush()
@@ -416,11 +432,14 @@ def accept_browser_article_capture(
         status=_ATTEMPT_ACCEPTED,
     )
     storage_path = build_source_artifact_storage_path(media.id, attempt.id, "html")
+    source_storage_path = build_source_artifact_storage_path(media.id, attempt.id, "source-html")
     attempt.source_payload = {
         **dict(attempt.source_payload or {}),
         "storage_path": storage_path,
+        "source_storage_path": source_storage_path,
         "content_type": "text/html; charset=utf-8",
         "size_bytes": len(html_bytes),
+        "source_size_bytes": len(source_html_bytes),
     }
     library_entries.assign_libraries_for_media_in_current_transaction(
         db, viewer_id, media.id, library_ids
@@ -429,6 +448,9 @@ def accept_browser_article_capture(
 
     try:
         storage_client.put_object(storage_path, html_bytes, "text/html; charset=utf-8")
+        storage_client.put_object(
+            source_storage_path, source_html_bytes, "text/html; charset=utf-8"
+        )
     except Exception as exc:
         _fail_source_attempt_and_media(
             db,
@@ -469,6 +491,121 @@ def accept_browser_article_capture(
         processing_status=_status_to_str(media.processing_status),
         ingest_enqueued=ingest_enqueued,
     )
+
+
+def accept_embedded_source(
+    *,
+    db: Session,
+    viewer_id: UUID,
+    url: str,
+    parent_media_id: UUID,
+    document_embed_key: str,
+    library_ids: list[UUID],
+    request_id: str | None = None,
+) -> EmbeddedSourceAcceptance:
+    """Create or reuse a child source for a trusted document embed. Flush-only."""
+    validate_requested_url(url)
+    spec = _url_source_spec(url)
+    if spec["source_type"] == source_types.X_AUTHOR_THREAD:
+        post_id = str(spec["provider_target_ref"] or "")
+        spec = {
+            **spec,
+            "source_type": source_types.X_POST,
+            "provider_id": f"post:{post_id}",
+            "source_payload": {"post_id": post_id},
+        }
+    if spec["source_type"] not in {source_types.YOUTUBE_VIDEO, source_types.X_POST}:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Unsupported embedded source provider.",
+        )
+
+    now = datetime.now(UTC)
+    media = _find_reusable_url_media(db, viewer_id, spec)
+    created = media is None
+    if media is None:
+        media = Media(
+            kind=str(spec["kind"]),
+            title=str(spec["title"])[:255],
+            requested_url=url,
+            canonical_url=spec["canonical_url"],
+            canonical_source_url=spec["canonical_source_url"],
+            external_playback_url=spec["external_playback_url"],
+            provider=spec["provider"],
+            provider_id=spec["provider_id"],
+            processing_status=ProcessingStatus.pending,
+            created_by_user_id=viewer_id,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(media)
+        db.flush()
+
+    library_entries.assign_libraries_for_media_in_current_transaction(
+        db, viewer_id, media.id, library_ids
+    )
+    status = _ATTEMPT_ACCEPTED if created else _reused_url_attempt_status(media)
+    source_payload = {
+        "url": url,
+        "kind": spec["kind"],
+        "parent_media_id": str(parent_media_id),
+        "document_embed_key": document_embed_key,
+        **dict(spec["source_payload"]),
+        "library_ids": [str(library_id) for library_id in library_ids],
+    }
+    attempt = _create_attempt(
+        db,
+        media=media,
+        viewer_id=viewer_id,
+        source_type=str(spec["source_type"]),
+        intent_key=_intent_key(
+            spec["source_type"],
+            url,
+            spec["provider_target_ref"],
+            library_ids=library_ids,
+        ),
+        requested_url=url,
+        canonical_source_url=spec["canonical_source_url"],
+        provider=spec["provider"],
+        provider_target_ref=spec["provider_target_ref"],
+        source_payload=source_payload,
+        request_id=request_id,
+        idempotency_key=None,
+        status=status,
+    )
+    if not created and attempt.status in {_ATTEMPT_FAILED, _ATTEMPT_SUCCEEDED}:
+        attempt.finished_at = func.now()
+        if attempt.status == _ATTEMPT_FAILED:
+            attempt.error_code = media.last_error_code
+            attempt.error_message = media.last_error_message
+    return EmbeddedSourceAcceptance(
+        media_id=media.id,
+        source_attempt_id=attempt.id,
+        source_type=attempt.source_type,
+        source_attempt_status=attempt.status,
+        processing_status=_status_to_str(media.processing_status),
+        needs_enqueue=created,
+    )
+
+
+def enqueue_accepted_source_attempt(
+    db: Session,
+    *,
+    media_id: UUID,
+    attempt_id: UUID,
+    actor_user_id: UUID,
+    request_id: str | None,
+) -> bool:
+    enqueued = _enqueue_accepted_attempt(
+        db,
+        media_id=media_id,
+        attempt_id=attempt_id,
+        actor_user_id=actor_user_id,
+        request_id=request_id,
+        failure_stage="extract",
+    )
+    _sync_document_embed_targets(db, media_id)
+    return enqueued
 
 
 def accept_browser_file_capture(
@@ -807,7 +944,7 @@ def run_source_attempt(
     superseded_storage_paths: list[str] = []
     try:
         if attempt.source_type == source_types.GENERIC_WEB_URL:
-            result = _run_generic_web_article(db, media_id, actor_user_id, request_id)
+            result = _run_generic_web_article(db, media_id, attempt, actor_user_id, request_id)
         elif attempt.source_type in {
             source_types.YOUTUBE_VIDEO,
             source_types.VIDEO_TRANSCRIPT,
@@ -815,6 +952,8 @@ def run_source_attempt(
             result = _run_youtube_video(db, media_id, attempt, actor_user_id, request_id)
         elif attempt.source_type == source_types.X_AUTHOR_THREAD:
             result = _run_x_author_thread(db, media_id, attempt, actor_user_id, request_id)
+        elif attempt.source_type == source_types.X_POST:
+            result = _run_x_post(db, media_id, attempt, actor_user_id, request_id)
         elif attempt.source_type in source_types.REMOTE_FILE_SOURCE_TYPES:
             result = _run_remote_file(db, media_id, attempt, request_id)
         elif attempt.source_type == source_types.BROWSER_ARTICLE_CAPTURE:
@@ -843,6 +982,7 @@ def run_source_attempt(
     except Exception as exc:
         db.rollback()
         _finish_failed_attempt(db, attempt_id, media_id, exc)
+        _sync_document_embed_targets(db, media_id)
         error_code, error_message = _source_error_fields(exc)
         return {
             "status": "failed",
@@ -870,6 +1010,7 @@ def run_source_attempt(
     attempt.finished_at = func.now()
     attempt.updated_at = func.now()
     db.commit()
+    _sync_document_embed_targets(db, terminal_media_id)
     _run_post_success_source_actions(
         db,
         media_id=terminal_media_id,
@@ -1398,6 +1539,20 @@ def _find_reusable_url_media(
             .scalars()
             .one_or_none()
         )
+    if spec["source_type"] == source_types.X_POST:
+        provider_id = str(spec["provider_id"] or "")
+        if not provider_id:
+            return None
+        return (
+            db.execute(
+                select(Media).where(
+                    Media.provider == "x",
+                    Media.provider_id == provider_id,
+                )
+            )
+            .scalars()
+            .one_or_none()
+        )
     if spec["source_type"] != source_types.YOUTUBE_VIDEO:
         return None
     media = (
@@ -1518,6 +1673,7 @@ def _prepare_source_requeue_domain_state(
     if attempt.source_type in source_types.WEB_ARTICLE_ARTIFACT_SOURCE_TYPES:
         delete_web_article_artifacts(
             db,
+            owner_user_id=media.created_by_user_id or actor_user_id,
             media_id=media.id,
             include_content_index=True,
         )
@@ -1656,6 +1812,13 @@ def _result_media_id(result: dict[str, object]) -> UUID | None:
         except ValueError:
             return None
     return None
+
+
+def _sync_document_embed_targets(db: Session, media_id: UUID) -> None:
+    from nexus.services.document_embeds import sync_document_embed_targets_for_media
+
+    if sync_document_embed_targets_for_media(db, target_media_id=media_id):
+        db.commit()
 
 
 def _supersede_source_media(
@@ -2054,6 +2217,7 @@ def _enqueue_accepted_attempt(
 def _run_generic_web_article(
     db: Session,
     media_id: UUID,
+    attempt: MediaSourceAttempt,
     actor_user_id: UUID,
     request_id: str | None,
 ) -> dict[str, object]:
@@ -2067,7 +2231,13 @@ def _run_generic_web_article(
         )
     begin_extraction(db, media)
     db.commit()
-    return materialize_web_article_source(db, media_id, actor_user_id, request_id)
+    return materialize_web_article_source(
+        db,
+        media_id,
+        actor_user_id,
+        request_id,
+        source_attempt_id=attempt.id,
+    )
 
 
 def _run_x_author_thread(
@@ -2088,6 +2258,38 @@ def _run_x_author_thread(
     begin_extraction(db, media)
     db.commit()
     return x_ingest.materialize_x_author_thread_media(
+        db,
+        viewer_id=actor_user_id,
+        media=media,
+        post_id=post_id,
+        source_attempt_id=attempt.id,
+        request_id=request_id,
+    )
+
+
+def _run_x_post(
+    db: Session,
+    media_id: UUID,
+    attempt: MediaSourceAttempt,
+    actor_user_id: UUID,
+    request_id: str | None,
+) -> dict[str, object]:
+    from nexus.services import x_ingest
+
+    media = db.execute(select(Media).where(Media.id == media_id).with_for_update()).scalar()
+    if media is None:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+    if media.kind != MediaKind.web_article.value:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_KIND,
+            "X post source attempts must target web_article media.",
+        )
+    post_id = str(attempt.provider_target_ref or attempt.source_payload.get("post_id") or "")
+    if not post_id:
+        raise ApiError(ApiErrorCode.E_INTERNAL, "Missing X post source target.")
+    begin_extraction(db, media)
+    db.commit()
+    return x_ingest.materialize_x_post_media(
         db,
         viewer_id=actor_user_id,
         media=media,
@@ -2220,6 +2422,9 @@ def _run_browser_article_capture(
     storage_path = str(payload.get("storage_path") or "")
     if not storage_path:
         raise ApiError(ApiErrorCode.E_INTERNAL, "Missing browser article source artifact.")
+    source_storage_path = str(payload.get("source_storage_path") or "")
+    if not source_storage_path:
+        raise ApiError(ApiErrorCode.E_INTERNAL, "Missing browser article source markup artifact.")
 
     begin_extraction(db, media)
     db.commit()
@@ -2227,6 +2432,7 @@ def _run_browser_article_capture(
     storage_client = get_storage_client()
     try:
         content_html = b"".join(storage_client.stream_object(storage_path)).decode("utf-8")
+        source_html = b"".join(storage_client.stream_object(source_storage_path)).decode("utf-8")
     except UnicodeDecodeError as exc:
         raise InvalidRequestError(
             ApiErrorCode.E_SANITIZATION_FAILED,
@@ -2241,9 +2447,11 @@ def _run_browser_article_capture(
     try:
         prepared = prepare_web_article_fragment(
             html=content_html,
+            embed_source_html=source_html,
             base_url=str(attempt.requested_url or media.requested_url or ""),
             fragment_idx=0,
             media_title=str(payload.get("title") or media.title or ""),
+            extract_embeds=True,
         )
     except ValueError as exc:
         raise ApiError(
@@ -2262,8 +2470,12 @@ def _run_browser_article_capture(
     if media is None:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
 
+    owner_user_id = attempt.created_by_user_id or media.created_by_user_id
+    if owner_user_id is None:
+        raise ApiError(ApiErrorCode.E_INTERNAL, "Browser article capture is missing an owner.")
     delete_web_article_artifacts(
         db,
+        owner_user_id=owner_user_id,
         media_id=media_id,
         include_content_index=False,
     )
@@ -2277,6 +2489,19 @@ def _run_browser_article_capture(
     db.add(fragment)
     db.flush()
     insert_fragment_blocks(db, fragment.id, prepared.fragment_blocks)
+    from nexus.services.document_embeds import replace_document_embed_artifact
+
+    queued_children = replace_document_embed_artifact(
+        db,
+        owner_user_id=owner_user_id,
+        media_id=media_id,
+        source_attempt_id=attempt.id,
+        fragment_id=fragment.id,
+        document_embeds=prepared.document_embeds,
+        extraction_error_code=prepared.document_embed_extraction_error_code,
+        extraction_error_message=prepared.document_embed_extraction_error_message,
+        request_id=request_id,
+    )
 
     title = str(payload.get("title") or "").strip()
     if title:
@@ -2306,6 +2531,15 @@ def _run_browser_article_capture(
     )
     fragment_id = fragment.id
     db.commit()
+
+    for child_media_id, child_attempt_id in queued_children:
+        enqueue_accepted_source_attempt(
+            db,
+            media_id=child_media_id,
+            attempt_id=child_attempt_id,
+            actor_user_id=owner_user_id,
+            request_id=request_id,
+        )
 
     return {
         "status": "success",

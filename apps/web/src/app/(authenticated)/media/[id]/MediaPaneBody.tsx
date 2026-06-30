@@ -109,6 +109,7 @@ import LibraryMembershipPanel from "@/components/LibraryMembershipPanel";
 import {
   getReaderDocumentMap,
   type ReaderDocumentMap,
+  type ReaderDocumentMapEmbedItem,
   type ReaderDocumentMapLensId,
   type ReaderConnectionRow,
 } from "@/lib/reader/documentMap";
@@ -170,6 +171,11 @@ import {
   canReadMediaDocument,
   type DocumentProcessingStatus,
 } from "@/lib/media/documentReadiness";
+import {
+  renderDocumentEmbedsInHtml,
+  type DocumentEmbed,
+  type DocumentEmbedSummary,
+} from "@/lib/media/documentEmbeds";
 import { useDocumentActions } from "@/lib/media/useDocumentActions";
 import type { MediaActionCapabilities } from "@/lib/media/ingestionClient";
 import { useLibraryMembership } from "@/lib/media/useLibraryMembership";
@@ -188,6 +194,7 @@ import {
   type TranscriptFragment,
   type TranscriptPlaybackSource,
   type TranscriptState,
+  normalizeFragments,
   resolveActiveTranscriptFragment,
 } from "@/lib/media/transcriptView";
 import { usePodcastTrackSeeding } from "@/lib/player/usePodcastTrackSeeding";
@@ -257,6 +264,7 @@ export interface Media extends MediaProcessingSnapshot {
   description?: string | null;
   description_html?: string | null;
   description_text?: string | null;
+  document_embed_summary?: DocumentEmbedSummary | null;
   metadata_enriched_at?: string | null;
   created_at: string;
 }
@@ -319,6 +327,7 @@ interface ActiveContent {
   fragmentId: string;
   htmlSanitized: string;
   canonicalText: string;
+  documentEmbeds: DocumentEmbed[];
 }
 
 interface EpubSectionContent {
@@ -381,6 +390,8 @@ function readerSurfaceForLens(lensId: ReaderDocumentMapLensId) {
   switch (lensId) {
     case "contents":
       return "reader-contents";
+    case "embeds":
+      return "reader-embeds";
     case "highlights":
       return "reader-highlights";
     case "citations":
@@ -920,6 +931,10 @@ export default function MediaPaneBody() {
     fragmentId: string;
     target: ReaderPulseTarget;
   } | null>(null);
+  const pendingDocumentEmbedPulseRef = useRef<{
+    fragmentId: string;
+    occurrenceKey: string;
+  } | null>(null);
   const pendingApparatusPulseRef = useRef<{
     itemId: string;
     locator: RetrievalLocator;
@@ -1164,6 +1179,15 @@ export default function MediaPaneBody() {
         : [],
     [readerDocumentMapResource],
   );
+  const documentMapEmbedItems = useMemo(
+    () =>
+      readerDocumentMapResource.status === "ready"
+        ? readerDocumentMapResource.data.items.filter(
+            (item): item is ReaderDocumentMapEmbedItem => item.kind === "document_embed",
+          )
+        : [],
+    [readerDocumentMapResource],
+  );
   const documentMapConnectionsError =
     readerDocumentMapResource.status === "error"
       ? toFeedback(readerDocumentMapResource.error, {
@@ -1188,6 +1212,7 @@ export default function MediaPaneBody() {
         fragmentId: activeEpubSection.fragment_id,
         htmlSanitized: activeEpubSection.html_sanitized,
         canonicalText: activeEpubSection.canonical_text,
+        documentEmbeds: [],
       };
     }
     const frag = isTranscriptMedia
@@ -1202,6 +1227,10 @@ export default function MediaPaneBody() {
         fragmentId: frag.id,
         htmlSanitized: frag.html_sanitized,
         canonicalText: frag.canonical_text,
+        documentEmbeds:
+          media?.capabilities?.can_read_embeds === true
+            ? frag.document_embeds
+            : [],
       };
     }
     return null;
@@ -1213,6 +1242,7 @@ export default function MediaPaneBody() {
     activeEpubSection,
     activeTranscriptFragment,
     fragments,
+    media?.capabilities?.can_read_embeds,
   ]);
 
   const activeTextSource = useMemo(() => {
@@ -1550,7 +1580,7 @@ export default function MediaPaneBody() {
         `/api/media/${media!.id}/fragments`,
         { signal },
       );
-      return resp.data;
+      return normalizeFragments(resp.data);
     },
   });
 
@@ -2682,7 +2712,20 @@ export default function MediaPaneBody() {
         ...(temporaryTextHighlight ? [temporaryTextHighlight] : []),
       ] as HighlightInput[],
     );
-    return applied.html;
+    return renderDocumentEmbedsInHtml(applied.html, activeContent.documentEmbeds, {
+      card: styles.documentEmbedCard,
+      media: styles.documentEmbedMedia,
+      thumbnail: styles.documentEmbedThumbnail,
+      body: styles.documentEmbedBody,
+      meta: styles.documentEmbedMeta,
+      provider: styles.documentEmbedProvider,
+      state: styles.documentEmbedState,
+      title: styles.documentEmbedTitle,
+      description: styles.documentEmbedDescription,
+      actions: styles.documentEmbedActions,
+      action: styles.documentEmbedAction,
+      actionDisabled: styles.documentEmbedActionDisabled,
+    });
   }, [activeContent, highlights, temporaryTextHighlight]);
 
   useEffect(() => {
@@ -3966,6 +4009,8 @@ export default function MediaPaneBody() {
       : null;
   const defaultDocumentMapSurface = contentsAvailable
     ? "reader-contents"
+    : documentMapEmbedItems.length > 0
+      ? "reader-embeds"
     : showHighlightsPane
       ? "reader-highlights"
       : showApparatusPane
@@ -5032,6 +5077,36 @@ export default function MediaPaneBody() {
     scroll();
   }, []);
 
+  const scrollDocumentEmbedIntoView = useCallback((occurrenceKey: string) => {
+    const root = contentRef.current;
+    if (!root) {
+      return;
+    }
+    const target = root.querySelector<HTMLElement>(
+      `[data-nexus-document-embed-id="${escapeAttrValue(occurrenceKey)}"]`,
+    );
+    const container = target ? getPaneScrollContainer(target) : null;
+    if (!target || !container) {
+      return;
+    }
+    scrollElementIntoPaneView(container, target, { block: "center" });
+    pulseReaderApparatusElement(target);
+  }, []);
+
+  useEffect(() => {
+    const pending = pendingDocumentEmbedPulseRef.current;
+    if (!pending || activeContent?.fragmentId !== pending.fragmentId) {
+      return;
+    }
+    pendingDocumentEmbedPulseRef.current = null;
+    const rafId = window.requestAnimationFrame(() => {
+      scrollDocumentEmbedIntoView(pending.occurrenceKey);
+    });
+    return () => {
+      window.cancelAnimationFrame(rafId);
+    };
+  }, [activeContent?.fragmentId, renderedHtml, scrollDocumentEmbedIntoView]);
+
   // Dispatch a marker pulse once the navigated-to content is active, rendered,
   // and its highlight is in the per-fragment list.
   useEffect(() => {
@@ -5203,6 +5278,34 @@ export default function MediaPaneBody() {
         }
         return;
       }
+      if (lensId === "embeds") {
+        const item =
+          readerDocumentMapResource.status === "ready"
+            ? readerDocumentMapResource.data.items.find((entry) => entry.id === itemId)
+            : null;
+        if (item?.kind !== "document_embed") {
+          return;
+        }
+        const fragmentId = item.anchor?.fragment_id;
+        if (!fragmentId) {
+          return;
+        }
+        if (fragmentId === activeContent?.fragmentId) {
+          scrollDocumentEmbedIntoView(item.occurrence_key);
+          return;
+        }
+        cancelRestoreSession();
+        clearFocus();
+        clearRetainedSelection(false);
+        setHighlights([]);
+        pendingDocumentEmbedPulseRef.current = {
+          fragmentId,
+          occurrenceKey: item.occurrence_key,
+        };
+        setTarget({ kind: "fragment", value: fragmentId, origin: "manual" });
+        paneRouterPush?.(`/media/${id}?fragment=${fragmentId}`);
+        return;
+      }
       if (lensId === "citations") {
         const stableKey = itemId.startsWith("apparatus:")
           ? itemId.slice("apparatus:".length)
@@ -5225,13 +5328,22 @@ export default function MediaPaneBody() {
     [
       handleActivateReaderConnectionTarget,
       handleReaderApparatusRowActivate,
+      activeContent?.fragmentId,
+      cancelRestoreSession,
+      clearFocus,
+      clearRetainedSelection,
+      id,
       isEpub,
       navigateToSection,
       navigateToWebSection,
       onActivateHighlight,
+      paneRouterPush,
       readerApparatusRowByItemId,
       readerConnectionRows,
+      readerDocumentMapResource,
       requestSecondarySurface,
+      scrollDocumentEmbedIntoView,
+      setTarget,
     ],
   );
 
@@ -5425,6 +5537,43 @@ export default function MediaPaneBody() {
     ],
   );
 
+  const readerEmbedsSecondaryBody = useMemo(() => {
+    if (readerDocumentMapResource.status === "loading") {
+      return <div className={styles.readerSecondaryEmpty}>Loading embeds...</div>;
+    }
+    if (readerDocumentMapResource.status === "error") {
+      return <div className={styles.readerSecondaryEmpty}>Embeds are unavailable.</div>;
+    }
+    if (documentMapEmbedItems.length === 0) {
+      return <div className={styles.readerSecondaryEmpty}>No embeds in this document.</div>;
+    }
+    return (
+      <div className={styles.readerEmbedsList} role="list" aria-label="Embeds">
+        {documentMapEmbedItems.map((item) => (
+          <div className={styles.readerEmbedItem} role="listitem" key={item.id}>
+            <div className={styles.readerEmbedMeta}>
+              {item.provider} · {item.resolution_status}
+            </div>
+            <div className={styles.readerEmbedTitle}>{item.title}</div>
+            {item.excerpt ? (
+              <div className={styles.readerEmbedExcerpt}>{item.excerpt}</div>
+            ) : null}
+            {item.actions.includes("activate") ? (
+              <button
+                type="button"
+                className={styles.readerEmbedAction}
+                aria-label={`Show ${item.title} in reader`}
+                onClick={() => activateDocumentMapMarker(item.id, "embeds")}
+              >
+                Show in reader
+              </button>
+            ) : null}
+          </div>
+        ))}
+      </div>
+    );
+  }, [activateDocumentMapMarker, documentMapEmbedItems, readerDocumentMapResource.status]);
+
   const documentMapConnectionsMeasureKey = useMemo(
     () =>
       [
@@ -5481,6 +5630,12 @@ export default function MediaPaneBody() {
             )}
           </div>
         ),
+      });
+    }
+    if (documentMapEmbedItems.length > 0) {
+      surfaces.push({
+        id: "reader-embeds",
+        body: <div className={styles.readerSecondaryBody}>{readerEmbedsSecondaryBody}</div>,
       });
     }
     if (showApparatusPane) {
@@ -5562,6 +5717,7 @@ export default function MediaPaneBody() {
   }, [
     contentsAvailable,
     contentsSurfaceBody,
+    documentMapEmbedItems.length,
     handleOpenFullChat,
     handleReaderSourceActivate,
     highlightsSecondaryBody,
@@ -5570,6 +5726,7 @@ export default function MediaPaneBody() {
     pendingQuoteUri,
     readerApparatusSecondaryBody,
     documentMapConnectionsSecondaryBody,
+    readerEmbedsSecondaryBody,
     secondaryChat,
     showApparatusPane,
     showHighlightsPane,

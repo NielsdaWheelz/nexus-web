@@ -23,5 +23,6 @@ globalThis.__nexusCaptureArticle = function () {
       location.hostname,
     published_time: publishedTime,
     content_html: article.content,
+    source_html: `${document.doctype ? `<!doctype ${document.doctype.name}>` : ""}${document.documentElement.outerHTML}`,
   };
 };

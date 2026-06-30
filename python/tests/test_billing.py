@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.config import clear_settings_cache
+from nexus.config import clear_settings_cache, get_settings
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.services import billing as billing_service
 from nexus.services.billing_entitlements import (
@@ -393,7 +393,7 @@ class TestCheckoutSessions:
         assert portal_calls == [
             {
                 "customer": "cus_existing",
-                "return_url": "http://localhost:3000/settings/billing",
+                "return_url": f"{get_settings().app_public_url.rstrip('/')}/settings/billing",
             }
         ]
 

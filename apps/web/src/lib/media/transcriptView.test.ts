@@ -18,6 +18,7 @@ function buildFragment(
     idx: 0,
     html_sanitized: `<p>${id}</p>`,
     canonical_text: id,
+    document_embeds: [],
     t_start_ms: startMs,
     t_end_ms: endMs,
     speaker_label: null,

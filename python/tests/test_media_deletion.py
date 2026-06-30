@@ -366,6 +366,400 @@ def test_delete_document_hard_deletes_web_article_fragments_and_chunks(
     assert counts == (0, 0, 0, 0, 0)
 
 
+def test_delete_document_hard_deletes_owned_document_embed_rows(
+    auth_client, direct_db: DirectSessionManager
+):
+    user_id = create_test_user_id()
+    default_id = auth_client.get("/me", headers=auth_headers(user_id)).json()["data"][
+        "default_library_id"
+    ]
+    parent_id = uuid4()
+    child_id = uuid4()
+    fragment_id = uuid4()
+    attempt_id = uuid4()
+
+    with direct_db.session() as session:
+        session.execute(
+            text(
+                """
+                INSERT INTO media (id, kind, title, processing_status, created_by_user_id)
+                VALUES
+                  (:parent_id, 'web_article', 'Parent', 'ready_for_reading', :user_id),
+                  (:child_id, 'web_article', 'Child', 'ready_for_reading', :user_id)
+                """
+            ),
+            {"parent_id": parent_id, "child_id": child_id, "user_id": user_id},
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO fragments (id, media_id, idx, html_sanitized, canonical_text)
+                VALUES (:fragment_id, :parent_id, 0, '<p>Parent</p>', 'Parent')
+                """
+            ),
+            {"fragment_id": fragment_id, "parent_id": parent_id},
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO media_source_attempts (
+                    id, media_id, created_by_user_id, source_type, attempt_no, status, intent_key
+                )
+                VALUES (
+                    :attempt_id, :parent_id, :user_id, 'generic_web_url', 1, 'succeeded', :intent_key
+                )
+                """
+            ),
+            {
+                "attempt_id": attempt_id,
+                "parent_id": parent_id,
+                "user_id": user_id,
+                "intent_key": f"embed-parent-delete:{parent_id}",
+            },
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO document_embed_artifact_states (
+                    media_id, source_attempt_id, status, total_count, resolved_count
+                )
+                VALUES (:parent_id, :attempt_id, 'ready', 1, 1)
+                """
+            ),
+            {"parent_id": parent_id, "attempt_id": attempt_id},
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO document_embeds (
+                    media_id, fragment_id, source_attempt_id, ordinal, occurrence_key,
+                    provider, embed_kind, source_shape, resolution_status, target_media_id,
+                    placeholder_text, canonical_start_offset, canonical_end_offset,
+                    document_order_key
+                )
+                VALUES (
+                    :parent_id, :fragment_id, :attempt_id, 0, 'embed:delete-parent',
+                    'x', 'post', 'blockquote', 'resolved', :child_id,
+                    'Embedded X post', 0, 15, '000000'
+                )
+                """
+            ),
+            {
+                "parent_id": parent_id,
+                "fragment_id": fragment_id,
+                "attempt_id": attempt_id,
+                "child_id": child_id,
+            },
+        )
+        session.commit()
+
+    direct_db.register_cleanup("media", "id", parent_id)
+    direct_db.register_cleanup("media", "id", child_id)
+
+    add_response = auth_client.post(
+        f"/libraries/{default_id}/media",
+        json={"media_id": str(parent_id)},
+        headers=auth_headers(user_id),
+    )
+    assert add_response.status_code == 201, add_response.json()
+
+    delete_response = auth_client.delete(f"/media/{parent_id}", headers=auth_headers(user_id))
+
+    assert delete_response.status_code == 200, delete_response.json()
+    assert delete_response.json()["data"]["hard_deleted"] is True
+    with direct_db.session() as session:
+        counts = session.execute(
+            text(
+                """
+                SELECT
+                    (SELECT count(*) FROM media WHERE id = :parent_id),
+                    (SELECT count(*) FROM fragments WHERE media_id = :parent_id),
+                    (SELECT count(*) FROM media_source_attempts WHERE media_id = :parent_id),
+                    (SELECT count(*) FROM document_embeds WHERE media_id = :parent_id),
+                    (SELECT count(*) FROM document_embed_artifact_states WHERE media_id = :parent_id),
+                    (SELECT count(*) FROM media WHERE id = :child_id)
+                """
+            ),
+            {"parent_id": parent_id, "child_id": child_id},
+        ).one()
+    assert counts == (0, 0, 0, 0, 0, 1)
+
+
+def test_delete_document_detaches_document_embed_target_rows(
+    auth_client, direct_db: DirectSessionManager
+):
+    user_id = create_test_user_id()
+    default_id = auth_client.get("/me", headers=auth_headers(user_id)).json()["data"][
+        "default_library_id"
+    ]
+    parent_id = uuid4()
+    child_id = uuid4()
+    fragment_id = uuid4()
+
+    with direct_db.session() as session:
+        session.execute(
+            text(
+                """
+                INSERT INTO media (id, kind, title, processing_status, created_by_user_id)
+                VALUES
+                  (:parent_id, 'web_article', 'Parent', 'ready_for_reading', :user_id),
+                  (:child_id, 'web_article', 'Child', 'ready_for_reading', :user_id)
+                """
+            ),
+            {"parent_id": parent_id, "child_id": child_id, "user_id": user_id},
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO fragments (id, media_id, idx, html_sanitized, canonical_text)
+                VALUES (:fragment_id, :parent_id, 0, '<p>Parent</p>', 'Parent')
+                """
+            ),
+            {"fragment_id": fragment_id, "parent_id": parent_id},
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO document_embed_artifact_states (
+                    media_id, status, total_count, resolved_count
+                )
+                VALUES (:parent_id, 'ready', 1, 1)
+                """
+            ),
+            {"parent_id": parent_id},
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO document_embeds (
+                    media_id, fragment_id, ordinal, occurrence_key, provider, embed_kind,
+                    source_shape, resolution_status, target_media_id, placeholder_text,
+                    canonical_start_offset, canonical_end_offset, document_order_key
+                )
+                VALUES (
+                    :parent_id, :fragment_id, 0, 'embed:delete-child', 'x', 'post',
+                    'blockquote', 'resolved', :child_id, 'Embedded X post', 0, 15, '000000'
+                )
+                """
+            ),
+            {"parent_id": parent_id, "fragment_id": fragment_id, "child_id": child_id},
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO resource_edges (
+                    user_id, kind, origin, source_scheme, source_id, target_scheme, target_id
+                )
+                VALUES (
+                    :user_id, 'context', 'document_embed', 'media', :parent_id, 'media', :child_id
+                )
+                """
+            ),
+            {"user_id": user_id, "parent_id": parent_id, "child_id": child_id},
+        )
+        session.commit()
+
+    direct_db.register_cleanup("media", "id", parent_id)
+    direct_db.register_cleanup("media", "id", child_id)
+
+    for media_id in (parent_id, child_id):
+        add_response = auth_client.post(
+            f"/libraries/{default_id}/media",
+            json={"media_id": str(media_id)},
+            headers=auth_headers(user_id),
+        )
+        assert add_response.status_code == 201, add_response.json()
+
+    delete_response = auth_client.delete(f"/media/{child_id}", headers=auth_headers(user_id))
+
+    assert delete_response.status_code == 200, delete_response.json()
+    assert delete_response.json()["data"]["hard_deleted"] is True
+    with direct_db.session() as session:
+        row = session.execute(
+            text(
+                """
+                SELECT target_media_id, resolution_status, error_code
+                FROM document_embeds
+                WHERE media_id = :parent_id
+                """
+            ),
+            {"parent_id": parent_id},
+        ).one()
+        state = session.execute(
+            text(
+                """
+                SELECT status, total_count, resolved_count, failed_count
+                FROM document_embed_artifact_states
+                WHERE media_id = :parent_id
+                """
+            ),
+            {"parent_id": parent_id},
+        ).one()
+        edge_count = session.scalar(
+            text(
+                """
+                SELECT count(*)
+                FROM resource_edges
+                WHERE origin = 'document_embed'
+                  AND source_id IN (:parent_id, :child_id)
+                  AND target_id IN (:parent_id, :child_id)
+                """
+            ),
+            {"parent_id": parent_id, "child_id": child_id},
+        )
+    assert row == (None, "failed", "E_MEDIA_DELETED")
+    assert state == ("failed", 1, 0, 1)
+    assert edge_count == 0
+
+
+def test_delete_document_hides_shared_document_embed_target_for_owner(
+    auth_client, direct_db: DirectSessionManager
+):
+    user_id = create_test_user_id()
+    other_user_id = create_test_user_id()
+    default_id = auth_client.get("/me", headers=auth_headers(user_id)).json()["data"][
+        "default_library_id"
+    ]
+    other_default_id = auth_client.get("/me", headers=auth_headers(other_user_id)).json()["data"][
+        "default_library_id"
+    ]
+    parent_id = uuid4()
+    child_id = uuid4()
+    fragment_id = uuid4()
+
+    with direct_db.session() as session:
+        session.execute(
+            text(
+                """
+                INSERT INTO media (id, kind, title, processing_status, created_by_user_id)
+                VALUES
+                  (:parent_id, 'web_article', 'Parent', 'ready_for_reading', :user_id),
+                  (:child_id, 'web_article', 'Child', 'ready_for_reading', :user_id)
+                """
+            ),
+            {"parent_id": parent_id, "child_id": child_id, "user_id": user_id},
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO fragments (id, media_id, idx, html_sanitized, canonical_text)
+                VALUES (:fragment_id, :parent_id, 0, '<p>Parent</p>', 'Parent')
+                """
+            ),
+            {"fragment_id": fragment_id, "parent_id": parent_id},
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO document_embed_artifact_states (
+                    media_id, status, total_count, resolved_count
+                )
+                VALUES (:parent_id, 'ready', 1, 1)
+                """
+            ),
+            {"parent_id": parent_id},
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO document_embeds (
+                    media_id, fragment_id, ordinal, occurrence_key, provider, embed_kind,
+                    source_shape, resolution_status, target_media_id, placeholder_text,
+                    canonical_start_offset, canonical_end_offset, document_order_key
+                )
+                VALUES (
+                    :parent_id, :fragment_id, 0, 'embed:hide-child', 'x', 'post',
+                    'blockquote', 'resolved', :child_id, 'Embedded X post', 0, 15, '000000'
+                )
+                """
+            ),
+            {"parent_id": parent_id, "fragment_id": fragment_id, "child_id": child_id},
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO resource_edges (
+                    user_id, kind, origin, source_scheme, source_id, target_scheme, target_id
+                )
+                VALUES (
+                    :user_id, 'context', 'document_embed', 'media', :parent_id, 'media', :child_id
+                )
+                """
+            ),
+            {"user_id": user_id, "parent_id": parent_id, "child_id": child_id},
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO library_entries (library_id, media_id, position)
+                VALUES (:other_default_id, :child_id, 0)
+                """
+            ),
+            {"other_default_id": other_default_id, "child_id": child_id},
+        )
+        session.commit()
+
+    direct_db.register_cleanup("library_entries", "media_id", parent_id)
+    direct_db.register_cleanup("library_entries", "media_id", child_id)
+    direct_db.register_cleanup("media", "id", parent_id)
+    direct_db.register_cleanup("media", "id", child_id)
+    direct_db.register_cleanup("user_media_deletions", "user_id", user_id)
+
+    for media_id in (parent_id, child_id):
+        add_response = auth_client.post(
+            f"/libraries/{default_id}/media",
+            json={"media_id": str(media_id)},
+            headers=auth_headers(user_id),
+        )
+        assert add_response.status_code == 201, add_response.json()
+
+    delete_response = auth_client.delete(f"/media/{child_id}", headers=auth_headers(user_id))
+
+    assert delete_response.status_code == 200, delete_response.json()
+    assert delete_response.json()["data"]["hard_deleted"] is False
+    assert delete_response.json()["data"]["hidden_for_viewer"] is True
+    with direct_db.session() as session:
+        row = session.execute(
+            text(
+                """
+                SELECT target_media_id, resolution_status, error_code
+                FROM document_embeds
+                WHERE media_id = :parent_id
+                """
+            ),
+            {"parent_id": parent_id},
+        ).one()
+        state = session.execute(
+            text(
+                """
+                SELECT status, total_count, resolved_count, failed_count
+                FROM document_embed_artifact_states
+                WHERE media_id = :parent_id
+                """
+            ),
+            {"parent_id": parent_id},
+        ).one()
+        edge_count = session.scalar(
+            text(
+                """
+                SELECT count(*)
+                FROM resource_edges
+                WHERE origin = 'document_embed'
+                  AND source_id = :parent_id
+                  AND target_id = :child_id
+                """
+            ),
+            {"parent_id": parent_id, "child_id": child_id},
+        )
+        child_exists = session.scalar(
+            text("SELECT count(*) FROM media WHERE id = :child_id"), {"child_id": child_id}
+        )
+    assert row == (None, "failed", "E_MEDIA_HIDDEN")
+    assert state == ("failed", 1, 0, 1)
+    assert edge_count == 0
+    assert child_exists == 1
+
+
 def test_source_delete_gcs_orphaned_external_snapshots(
     auth_client, direct_db: DirectSessionManager
 ):

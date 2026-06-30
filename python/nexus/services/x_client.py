@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from time import perf_counter, sleep
 
 import httpx
@@ -17,6 +18,7 @@ from nexus.services.x_types import (
     XPostSnapshot,
     XProviderError,
     XProviderErrorCode,
+    XSinglePostSnapshot,
     XUrlEntity,
     XUserSnapshot,
     canonical_x_post_url,
@@ -48,35 +50,30 @@ _SEARCH_PAGE_SIZE = 100
 _THREAD_SEARCH_SCOPE = "all"
 _RETRYABLE_STATUS = frozenset({408, 429, 500, 502, 503, 504})
 _RETRY_BACKOFF_SECONDS = (0.05, 0.1)
+_POST_LOOKUP_OPERATIONS = frozenset({"lookup_post", "lookup_x_post"})
+
+
+@dataclass(frozen=True)
+class _XApiRequestConfig:
+    base_url: str
+    headers: dict[str, str]
+    deadline: float
 
 
 def fetch_author_thread_snapshot(post_id: str) -> XAuthorThreadSnapshot:
     settings = get_settings()
-    bearer_token = (settings.x_api_bearer_token or "").strip()
-    if not bearer_token:
-        raise XProviderError(
-            XProviderErrorCode.AUTH_REJECTED,
-            "X API bearer token is not configured.",
-            operation="lookup_post",
-        )
-
     max_posts = int(settings.x_api_author_thread_max_posts)
-    deadline = perf_counter() + float(settings.x_api_timeout_seconds)
-    base_url = settings.x_api_base_url.rstrip("/")
-    headers = {
-        "Authorization": f"Bearer {bearer_token}",
-        "User-Agent": "Nexus Media Ingestion/1.0",
-    }
+    config = _api_request_config(operation="lookup_post")
 
     accumulator = _XPayloadAccumulator()
     thread_candidate_ids: set[str] = set()
-    with httpx.Client(trust_env=False, headers=headers) as client:
+    with httpx.Client(trust_env=False, headers=config.headers) as client:
         root_payload = _get_json(
             client,
-            f"{base_url}/tweets/{post_id}",
+            f"{config.base_url}/tweets/{post_id}",
             params=_post_lookup_params(),
             operation="lookup_post",
-            deadline=deadline,
+            deadline=config.deadline,
         )
         accumulator.add(root_payload)
         root = _parse_post(root_payload.get("data"))
@@ -94,7 +91,7 @@ def fetch_author_thread_snapshot(post_id: str) -> XAuthorThreadSnapshot:
             remaining = max_posts - len(thread_candidate_ids)
             search_payload = _get_json(
                 client,
-                f"{base_url}/tweets/search/{_THREAD_SEARCH_SCOPE}",
+                f"{config.base_url}/tweets/search/{_THREAD_SEARCH_SCOPE}",
                 params=_thread_search_params(
                     conversation_id=conversation_id,
                     username=root_author.username,
@@ -102,7 +99,7 @@ def fetch_author_thread_snapshot(post_id: str) -> XAuthorThreadSnapshot:
                     next_token=next_token,
                 ),
                 operation="search_author_thread",
-                deadline=deadline,
+                deadline=config.deadline,
             )
             accumulator.add(search_payload)
             for post in _parse_posts(search_payload.get("data")):
@@ -118,10 +115,10 @@ def fetch_author_thread_snapshot(post_id: str) -> XAuthorThreadSnapshot:
             accumulator.add(
                 _get_json(
                     client,
-                    f"{base_url}/tweets",
+                    f"{config.base_url}/tweets",
                     params={**_post_lookup_params(), "ids": ",".join(chunk)},
                     operation="lookup_quotes",
-                    deadline=deadline,
+                    deadline=config.deadline,
                 )
             )
 
@@ -155,6 +152,54 @@ def fetch_author_thread_snapshot(post_id: str) -> XAuthorThreadSnapshot:
         quoted_posts=quoted_posts,
         users=accumulator.users,
         media=accumulator.media,
+    )
+
+
+def fetch_single_post_snapshot(post_id: str) -> XSinglePostSnapshot:
+    config = _api_request_config(operation="lookup_x_post")
+    accumulator = _XPayloadAccumulator()
+    with httpx.Client(trust_env=False, headers=config.headers) as client:
+        payload = _get_json(
+            client,
+            f"{config.base_url}/tweets/{post_id}",
+            params=_post_lookup_params(),
+            operation="lookup_x_post",
+            deadline=config.deadline,
+        )
+        accumulator.add(payload)
+
+    post = accumulator.posts.get(post_id)
+    if post is None:
+        raise _provider_unavailable("X API returned no post data.", "lookup_x_post")
+    author = accumulator.users.get(post.author_id)
+    if author is None or not normalize_x_username(author.username):
+        raise _provider_unavailable("X API returned no author data.", "lookup_x_post")
+
+    return XSinglePostSnapshot(
+        requested_post_id=post.id,
+        canonical_url=canonical_x_post_url(post.id),
+        post=post,
+        users=accumulator.users,
+        media=accumulator.media,
+    )
+
+
+def _api_request_config(*, operation: str) -> _XApiRequestConfig:
+    settings = get_settings()
+    bearer_token = (settings.x_api_bearer_token or "").strip()
+    if not bearer_token:
+        raise XProviderError(
+            XProviderErrorCode.AUTH_REJECTED,
+            "X API bearer token is not configured.",
+            operation=operation,
+        )
+    return _XApiRequestConfig(
+        base_url=settings.x_api_base_url.rstrip("/"),
+        headers={
+            "Authorization": f"Bearer {bearer_token}",
+            "User-Agent": "Nexus Media Ingestion/1.0",
+        },
+        deadline=perf_counter() + float(settings.x_api_timeout_seconds),
     )
 
 
@@ -278,7 +323,7 @@ def _provider_http_error(response: httpx.Response, operation: str) -> XProviderE
         title == "CreditsDepleted" or (error_type or "").endswith("CreditsDepleted")
     ):
         code = XProviderErrorCode.CREDITS_DEPLETED
-    elif response.status_code == 403 and operation == "lookup_post":
+    elif response.status_code == 403 and operation in _POST_LOOKUP_OPERATIONS:
         code = XProviderErrorCode.POST_UNAVAILABLE
     elif response.status_code in {401, 403}:
         code = XProviderErrorCode.AUTH_REJECTED

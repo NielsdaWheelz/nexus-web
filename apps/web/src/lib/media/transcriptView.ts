@@ -1,12 +1,8 @@
-export interface TranscriptPlaybackSource {
-  kind: "external_audio" | "external_video";
-  stream_url: string;
-  source_url: string;
-  provider?: string | null;
-  provider_video_id?: string | null;
-  watch_url?: string | null;
-  embed_url?: string | null;
-}
+import type { DocumentEmbed } from "@/lib/media/documentEmbeds";
+import { normalizeDocumentEmbeds } from "@/lib/media/documentEmbeds";
+import type { MediaPlaybackSource } from "@/lib/media/playback";
+
+export type TranscriptPlaybackSource = MediaPlaybackSource;
 
 export type TranscriptState =
   | "not_requested"
@@ -50,6 +46,7 @@ export interface Fragment {
   idx: number;
   html_sanitized: string;
   canonical_text: string;
+  document_embeds: DocumentEmbed[];
   t_start_ms?: number | null;
   t_end_ms?: number | null;
   speaker_label?: string | null;
@@ -82,6 +79,13 @@ export function shouldPollTranscriptProvisioning(
   transcriptState: TranscriptState
 ): boolean {
   return transcriptState === "queued" || transcriptState === "running";
+}
+
+export function normalizeFragments(fragments: readonly Fragment[]): Fragment[] {
+  return fragments.map((fragment) => ({
+    ...fragment,
+    document_embeds: normalizeDocumentEmbeds(fragment.document_embeds),
+  }));
 }
 
 export function formatTranscriptTimestampMs(

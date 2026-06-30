@@ -580,7 +580,7 @@ class ResourceEdge(Base):
             """
             origin IN (
                 'user', 'citation', 'system', 'note_body', 'highlight_note',
-                'synapse'
+                'synapse', 'document_embed'
             )
             """,
             name="ck_resource_edges_origin",
@@ -1308,6 +1308,7 @@ class MediaSourceAttempt(Base):
             source_type IN (
                 'generic_web_url',
                 'x_author_thread',
+                'x_post',
                 'youtube_video',
                 'remote_pdf_url',
                 'remote_epub_url',
@@ -1806,6 +1807,121 @@ class Fragment(Base):
 
     # Relationships
     media: Mapped["Media"] = relationship("Media", back_populates="fragments", lazy="joined")
+
+
+class DocumentEmbedArtifactState(Base):
+    """Aggregate inline-embed extraction state for one current readable media artifact."""
+
+    __tablename__ = "document_embed_artifact_states"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    media_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("media.id"), nullable=False
+    )
+    source_attempt_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("media_source_attempts.id"), nullable=True
+    )
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    total_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    resolved_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    unsupported_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    failed_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    extraction_error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    extraction_error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    diagnostics: Mapped[dict[str, object]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
+    )
+
+    __table_args__ = (UniqueConstraint("media_id", name="uq_document_embed_artifact_states_media"),)
+
+
+class DocumentEmbed(Base):
+    """One source-authored inline embed occurrence in the current readable artifact."""
+
+    __tablename__ = "document_embeds"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    media_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("media.id"), nullable=False
+    )
+    fragment_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("fragments.id"), nullable=True
+    )
+    source_attempt_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("media_source_attempts.id"), nullable=True
+    )
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    occurrence_key: Mapped[str] = mapped_column(Text, nullable=False)
+    provider: Mapped[str] = mapped_column(Text, nullable=False)
+    embed_kind: Mapped[str] = mapped_column(Text, nullable=False)
+    source_shape: Mapped[str] = mapped_column(Text, nullable=False)
+    resolution_status: Mapped[str] = mapped_column(Text, nullable=False)
+    source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    canonical_source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    provider_target_ref: Mapped[str | None] = mapped_column(Text, nullable=True)
+    target_media_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("media.id"), nullable=True
+    )
+    title: Mapped[str | None] = mapped_column(Text, nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    thumbnail_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    authored_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    placeholder_text: Mapped[str] = mapped_column(Text, nullable=False)
+    source_start_offset: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    source_end_offset: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    canonical_start_offset: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    canonical_end_offset: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    document_order_key: Mapped[str] = mapped_column(Text, nullable=False)
+    error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    diagnostics: Mapped[dict[str, object]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("media_id", "ordinal", name="uq_document_embeds_media_ordinal"),
+        UniqueConstraint("media_id", "occurrence_key", name="uq_document_embeds_media_key"),
+        Index("idx_document_embeds_media_order", "media_id", "ordinal", "id"),
+        Index(
+            "idx_document_embeds_fragment_order",
+            "fragment_id",
+            "ordinal",
+            "id",
+            postgresql_where=text("fragment_id IS NOT NULL"),
+        ),
+        Index(
+            "idx_document_embeds_target_media",
+            "target_media_id",
+            postgresql_where=text("target_media_id IS NOT NULL"),
+        ),
+        Index(
+            "idx_document_embeds_resolution",
+            "resolution_status",
+            "updated_at",
+            "id",
+            postgresql_where=text("resolution_status IN ('pending', 'resolving', 'failed')"),
+        ),
+    )
 
 
 class LibraryEntry(Base):

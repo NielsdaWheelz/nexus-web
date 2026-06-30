@@ -201,4 +201,5 @@ def derive_capabilities(
         can_retry=can_retry,
         can_refresh_source=can_refresh_source,
         can_retry_metadata=can_retry_metadata,
+        can_read_embeds=is_document and kind == MediaKind.web_article.value,
     )

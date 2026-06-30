@@ -15,6 +15,7 @@ from nexus.db.models import Fragment, Media, MediaKind, ProcessingStatus
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
 from nexus.services.contributor_credits import replace_media_contributor_credits
+from nexus.services.document_embeds import replace_document_embed_artifact
 from nexus.services.fragment_blocks import insert_fragment_blocks
 from nexus.services.media_deletion import (
     delete_document_storage_objects,
@@ -47,6 +48,7 @@ def materialize_web_article_source(
     media_id: UUID,
     actor_user_id: UUID,
     request_id: str | None = None,
+    source_attempt_id: UUID | None = None,
 ) -> dict[str, object]:
     """Materialize a generic web URL under the durable source-ingest owner."""
     return _do_ingest(
@@ -58,6 +60,7 @@ def materialize_web_article_source(
         mark_terminal_media_state=False,
         index_content=False,
         dispatch_metadata_enrichment=False,
+        source_attempt_id=source_attempt_id,
     )
 
 
@@ -66,9 +69,10 @@ def run_ingest_sync(
     media_id: UUID,
     actor_user_id: UUID,
     request_id: str | None = None,
+    source_attempt_id: UUID | None = None,
 ) -> dict[str, object]:
     """Run web article ingestion synchronously with the provided session."""
-    return _do_ingest(db, media_id, actor_user_id, request_id)
+    return _do_ingest(db, media_id, actor_user_id, request_id, source_attempt_id=source_attempt_id)
 
 
 def _do_ingest(
@@ -81,6 +85,7 @@ def _do_ingest(
     mark_terminal_media_state: bool = True,
     index_content: bool = True,
     dispatch_metadata_enrichment: bool = True,
+    source_attempt_id: UUID | None = None,
 ) -> dict[str, object]:
     media = db.get(Media, media_id)
     if media is None:
@@ -188,9 +193,11 @@ def _do_ingest(
     try:
         prepared = prepare_web_article_fragment(
             html=ingest_result.content_html,
+            embed_source_html=ingest_result.source_html,
             base_url=ingest_result.base_url,
             fragment_idx=0,
             media_title=ingest_result.title,
+            extract_embeds=True,
         )
         source_apparatus = (
             prepared
@@ -212,6 +219,7 @@ def _do_ingest(
     now = datetime.now(UTC)
     delete_web_article_artifacts(
         db,
+        owner_user_id=media.created_by_user_id or actor_user_id,
         media_id=media_id,
         include_content_index=False,
     )
@@ -226,6 +234,17 @@ def _do_ingest(
     db.add(fragment)
     db.flush()
     insert_fragment_blocks(db, fragment.id, prepared.fragment_blocks)
+    queued_children = replace_document_embed_artifact(
+        db,
+        owner_user_id=media.created_by_user_id or actor_user_id,
+        media_id=media_id,
+        source_attempt_id=source_attempt_id,
+        fragment_id=fragment.id,
+        document_embeds=prepared.document_embeds,
+        extraction_error_code=prepared.document_embed_extraction_error_code,
+        extraction_error_message=prepared.document_embed_extraction_error_message,
+        request_id=request_id,
+    )
 
     media = db.get(Media, media_id)
     if media is None:
@@ -266,6 +285,18 @@ def _do_ingest(
     fragment_id = fragment.id
     media_language = media.language
     db.commit()
+
+    if queued_children:
+        from nexus.services.media_source_ingest import enqueue_accepted_source_attempt
+
+        for child_media_id, child_attempt_id in queued_children:
+            enqueue_accepted_source_attempt(
+                db,
+                media_id=child_media_id,
+                attempt_id=child_attempt_id,
+                actor_user_id=actor_user_id,
+                request_id=request_id,
+            )
 
     if index_content:
         index_web_article_evidence(

@@ -164,7 +164,14 @@ describe("ConnectionsSurface", () => {
     expect(JSON.parse(String(readB.init?.body))).toMatchObject({
       refs: [`note_block:${BLOCK_B}`],
       filters: {
-        origins: ["user", "note_body", "highlight_note", "citation", "synapse"],
+        origins: [
+          "user",
+          "note_body",
+          "highlight_note",
+          "citation",
+          "synapse",
+          "document_embed",
+        ],
         kinds: ["context", "supports", "contradicts"],
       },
     });

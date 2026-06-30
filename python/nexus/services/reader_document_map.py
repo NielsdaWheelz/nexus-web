@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import can_read_media
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.schemas.highlights import HIGHLIGHT_COLORS
+from nexus.schemas.media import DocumentEmbedOut
 from nexus.schemas.reader import (
     ReaderConnectionAnchorOut,
     ReaderConnectionPageOut,
@@ -25,6 +26,7 @@ from nexus.schemas.reader_document_map import (
     ReaderDocumentMapChatThreadItemOut,
     ReaderDocumentMapConnectionItemOut,
     ReaderDocumentMapDiagnosticsOut,
+    ReaderDocumentMapEmbedItemOut,
     ReaderDocumentMapHighlightItemOut,
     ReaderDocumentMapItemOut,
     ReaderDocumentMapLensId,
@@ -37,7 +39,13 @@ from nexus.schemas.reader_document_map import (
     ReaderDocumentMapStatus,
     ReaderDocumentMapTargetStatus,
 )
-from nexus.services import highlights, reader_apparatus, reader_connections, reader_navigation
+from nexus.services import (
+    document_embeds,
+    highlights,
+    reader_apparatus,
+    reader_connections,
+    reader_navigation,
+)
 from nexus.services.resource_graph import context as conversation_context
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
 from nexus.services.resource_items.routing import resource_activation_for_ref
@@ -122,6 +130,16 @@ def get_reader_document_map(
         limit=limit,
     )
     connection_rows = [*connections.anchored, *connections.unanchored]
+    embed_rows = (
+        document_embeds.list_document_embeds_for_media(db, viewer_id=viewer_id, media_id=media_id)
+        if media_kind == "web_article"
+        else []
+    )
+    embed_summary = (
+        document_embeds.document_embed_summary_for_media(db, media_id=media_id)
+        if media_kind == "web_article"
+        else None
+    )
 
     chat_threads = conversation_context.list_conversations_with_any_edge_to_ref(
         db,
@@ -176,6 +194,48 @@ def get_reader_document_map(
             items.append(item)
             if fraction is not None:
                 markers.append(_marker(item, "contents", fraction, "neutral"))
+
+    for embed in embed_rows:
+        locator = _document_embed_locator(media_id, embed)
+        fraction = _locator_fraction(locator, fragment_ranges, fragment_cursor, page_count)
+        anchor = (
+            _anchor_from_locator(
+                ref=f"media:{media_id}",
+                media_id=media_id,
+                locator=locator,
+                precision="exact",
+                fragment_indexes=fragment_indexes,
+            )
+            if locator
+            else None
+        )
+        item = ReaderDocumentMapEmbedItemOut(
+            id=f"embed:{embed.id}",
+            lens_ids=["embeds"],
+            kind="document_embed",
+            source_domain="document_embeds",
+            title=embed.display.label,
+            subtitle=embed.provider,
+            excerpt=embed.display.description,
+            href=embed.target.href,
+            anchor=anchor,
+            document_order_key=anchor.order_key if anchor else embed.locator.document_order_key,
+            document_fraction=fraction,
+            target_status=cast(ReaderDocumentMapTargetStatus, embed.target.status),
+            provenance={"owner": "document_embeds", "occurrence_key": embed.occurrence_key},
+            actions=["activate"] if anchor else [],
+            document_embed_id=embed.id,
+            occurrence_key=embed.occurrence_key,
+            provider=embed.provider,
+            embed_kind=embed.kind,
+            resolution_status=embed.resolution_status,
+        )
+        items.append(item)
+        if fraction is not None:
+            tone: ReaderDocumentMapMarkerTone = (
+                "warning" if embed.resolution_status in ("failed", "unsupported") else "neutral"
+            )
+            markers.append(_marker(item, "embeds", fraction, tone))
 
     for highlight in media_highlights:
         locator = highlight.anchor.model_dump(mode="json")
@@ -326,6 +386,7 @@ def get_reader_document_map(
     markers.sort(key=lambda marker: marker.position)
     lens_counts = {
         "contents": len(navigation.sections) if navigation is not None else 0,
+        "embeds": len(embed_rows),
         "highlights": len(media_highlights),
         "citations": len(apparatus.items) if apparatus.status in ("ready", "partial") else 0,
         "connections": len(connection_rows),
@@ -344,6 +405,14 @@ def get_reader_document_map(
             "contents",
             "Contents",
             navigation_status,
+            lens_counts,
+            anchored_counts,
+            unanchored_counts,
+        ),
+        _lens(
+            "embeds",
+            "Embeds",
+            cast(ReaderDocumentMapStatus, embed_summary.status if embed_summary else "empty"),
             lens_counts,
             anchored_counts,
             unanchored_counts,
@@ -389,7 +458,9 @@ def get_reader_document_map(
         connections=connections,
         chat_threads=chat_threads,
         diagnostics=ReaderDocumentMapDiagnosticsOut(
-            partial_lenses=[lens.id for lens in lenses if lens.status in ("partial", "failed")]
+            partial_lenses=[
+                lens.id for lens in lenses if lens.status in ("resolving", "partial", "failed")
+            ]
         ),
     )
 
@@ -590,6 +661,22 @@ def _target_status(status: str) -> ReaderDocumentMapTargetStatus:
     if status == "container":
         return "container"
     return "missing"
+
+
+def _document_embed_locator(media_id: UUID, embed: DocumentEmbedOut) -> dict[str, object] | None:
+    if (
+        embed.locator.fragment_id is None
+        or embed.locator.canonical_start_offset is None
+        or embed.locator.canonical_end_offset is None
+    ):
+        return None
+    return {
+        "type": "web_text_offsets",
+        "media_id": str(media_id),
+        "fragment_id": str(embed.locator.fragment_id),
+        "start_offset": embed.locator.canonical_start_offset,
+        "end_offset": embed.locator.canonical_end_offset,
+    }
 
 
 def _connection_target_status(status: str) -> ReaderDocumentMapTargetStatus:

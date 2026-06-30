@@ -128,6 +128,20 @@ EDGE_SHAPE_POLICIES: dict[EdgeOrigin, EdgeShapePolicy] = {
         search_activation="never",
         rendering="suggestion",
     ),
+    "document_embed": EdgeShapePolicy(
+        origin="document_embed",
+        writer="document_embeds child-link sync",
+        allowed_kinds=("context",),
+        source_schemes=("media",),
+        target_schemes=("media",),
+        ordinal="forbidden",
+        snapshot="forbidden",
+        source_order="forbidden",
+        target_order="forbidden",
+        cleanup="replace with current document embeds; delete with parent or child",
+        search_activation="allowlisted_only",
+        rendering="source-authored embedded media",
+    ),
 }
 
 
@@ -266,4 +280,6 @@ def _shape_message(origin: EdgeOrigin) -> str:
         return "Note body edges must start from note_block"
     if origin == "system":
         return "System edges must be conversation context refs"
+    if origin == "document_embed":
+        return "Document embed edges must connect media to media"
     return "Invalid edge shape"

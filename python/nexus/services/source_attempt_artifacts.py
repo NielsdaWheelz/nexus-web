@@ -15,6 +15,7 @@ def source_attempt_storage_paths(source_payload: Mapping[str, Any] | None) -> li
 
     storage_paths: list[str] = []
     _append_storage_path(storage_paths, source_payload.get("storage_path"))
+    _append_storage_path(storage_paths, source_payload.get("source_storage_path"))
     for key in _DERIVED_ARTIFACT_PAYLOAD_KEYS:
         nested = source_payload.get(key)
         if isinstance(nested, Mapping):
@@ -27,6 +28,7 @@ def clone_source_payload_for_new_attempt(
 ) -> dict[str, Any]:
     """Copy source identity for retry/refresh without carrying attempt-local artifacts."""
     payload = dict(source_payload or {})
+    payload.pop("source_storage_path", None)
     for key in _DERIVED_ARTIFACT_PAYLOAD_KEYS:
         payload.pop(key, None)
     return payload

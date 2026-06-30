@@ -626,6 +626,85 @@ def test_create_edge_rejects_unowned_origin_shapes(db_session: Session, bootstra
             create_edge(db_session, viewer_id=bootstrapped_user, input=edge)
 
 
+def test_document_embed_origin_accepts_media_to_media_context_edge(
+    db_session: Session, bootstrapped_user: UUID
+):
+    parent = _media_ref(db_session, bootstrapped_user, title="Parent article")
+    child = _media_ref(db_session, bootstrapped_user, title="Embedded video")
+
+    edge = create_edge(
+        db_session,
+        viewer_id=bootstrapped_user,
+        input=EdgeCreate(
+            source=parent,
+            target=child,
+            kind="context",
+            origin="document_embed",
+        ),
+    )
+
+    assert edge.source == parent
+    assert edge.target == child
+    assert edge.kind == "context"
+    assert edge.origin == "document_embed"
+    assert edge.source_order_key is None
+    assert edge.target_order_key is None
+    assert edge.ordinal is None
+    assert edge.snapshot is None
+
+
+def test_document_embed_origin_rejects_non_media_refs_and_edge_metadata(
+    db_session: Session, bootstrapped_user: UUID
+):
+    parent = _media_ref(db_session, bootstrapped_user, title="Parent article")
+    child = _media_ref(db_session, bootstrapped_user, title="Embedded video")
+    page = _page_ref(db_session, bootstrapped_user)
+
+    invalid_edges = (
+        EdgeCreate(source=parent, target=page, kind="context", origin="document_embed"),
+        EdgeCreate(source=page, target=child, kind="context", origin="document_embed"),
+        EdgeCreate(
+            source=parent,
+            target=child,
+            kind=cast(EdgeKind, "supports"),
+            origin="document_embed",
+        ),
+        EdgeCreate(
+            source=parent,
+            target=child,
+            kind="context",
+            origin="document_embed",
+            source_order_key="0000000001",
+        ),
+        EdgeCreate(
+            source=parent,
+            target=child,
+            kind="context",
+            origin="document_embed",
+            target_order_key="0000000001",
+        ),
+        EdgeCreate(
+            source=parent,
+            target=child,
+            kind="context",
+            origin="document_embed",
+            ordinal=1,
+            snapshot=_SNAPSHOT,
+        ),
+        EdgeCreate(
+            source=parent,
+            target=child,
+            kind="context",
+            origin="document_embed",
+            snapshot=_SNAPSHOT,
+        ),
+    )
+
+    for edge in invalid_edges:
+        with pytest.raises(InvalidRequestError):
+            create_edge(db_session, viewer_id=bootstrapped_user, input=edge)
+
+
 def test_user_ordered_adjacency_allows_shared_target_and_rejects_target_order_key(
     db_session: Session, bootstrapped_user: UUID
 ):

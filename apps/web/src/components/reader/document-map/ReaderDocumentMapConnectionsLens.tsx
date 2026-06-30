@@ -225,6 +225,8 @@ function categoryLabel(category: ReaderConnectionRow["source_category"]): string
       return "Synapse";
     case "system":
       return "System";
+    case "document_embed":
+      return "Embedded media";
     default:
       return "Connection";
   }

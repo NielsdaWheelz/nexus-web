@@ -23,6 +23,7 @@ from nexus.services.default_library_closure import (
     remove_media_from_default_intrinsic,
     remove_media_from_non_default_closure,
 )
+from nexus.services.document_embeds import detach_document_embed_targets_for_owner
 from nexus.services.reader_apparatus import delete_media_apparatus
 from nexus.services.resource_graph import cleanup
 from nexus.services.resource_graph.refs import ResourceRef
@@ -150,6 +151,9 @@ def delete_document_for_viewer(
                     """),
                     {"viewer_id": viewer_id, "media_id": media_id},
                 )
+            detach_document_embed_targets_for_owner(
+                db, owner_user_id=viewer_id, target_media_id=media_id
+            )
             hidden_for_viewer = True
 
     _delete_storage_objects(storage_paths, storage_client)
@@ -347,6 +351,67 @@ def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[s
         for storage_path in source_attempt_storage_paths(source_payload):
             if storage_path not in storage_paths:
                 storage_paths.append(storage_path)
+
+    db.execute(
+        text("DELETE FROM document_embeds WHERE media_id = :media_id"), {"media_id": media_id}
+    )
+    db.execute(
+        text("DELETE FROM document_embed_artifact_states WHERE media_id = :media_id"),
+        {"media_id": media_id},
+    )
+    affected_embed_parent_ids = {
+        row[0]
+        for row in db.execute(
+            text("""
+                UPDATE document_embeds
+                SET target_media_id = NULL,
+                    resolution_status = 'failed',
+                    error_code = COALESCE(error_code, 'E_MEDIA_DELETED'),
+                    error_message = COALESCE(error_message, 'Embedded media target was deleted.'),
+                    updated_at = now()
+                WHERE target_media_id = :media_id
+                RETURNING media_id
+            """),
+            {"media_id": media_id},
+        )
+    }
+    for embed_parent_id in affected_embed_parent_ids:
+        db.execute(
+            text("""
+                WITH counts AS (
+                    SELECT
+                        media_id,
+                        count(*)::integer AS total_count,
+                        count(*) FILTER (WHERE resolution_status = 'resolved')::integer
+                            AS resolved_count,
+                        count(*) FILTER (WHERE resolution_status = 'unsupported')::integer
+                            AS unsupported_count,
+                        count(*) FILTER (WHERE resolution_status = 'failed')::integer
+                            AS failed_count
+                    FROM document_embeds
+                    WHERE media_id = :media_id
+                    GROUP BY media_id
+                )
+                UPDATE document_embed_artifact_states
+                SET total_count = counts.total_count,
+                    resolved_count = counts.resolved_count,
+                    unsupported_count = counts.unsupported_count,
+                    failed_count = counts.failed_count,
+                    status = CASE
+                        WHEN counts.total_count = 0 THEN 'empty'
+                        WHEN counts.resolved_count = counts.total_count THEN 'ready'
+                        WHEN counts.unsupported_count = counts.total_count THEN 'unsupported'
+                        WHEN counts.failed_count = counts.total_count THEN 'failed'
+                        WHEN counts.resolved_count + counts.unsupported_count + counts.failed_count = 0
+                            THEN 'resolving'
+                        ELSE 'partial'
+                    END,
+                    updated_at = now()
+                FROM counts
+                WHERE document_embed_artifact_states.media_id = counts.media_id
+            """),
+            {"media_id": embed_parent_id},
+        )
 
     # Graph cleanup, one call per resource ref this deletion destroys (§9.6,
     # AC12): the media row, its highlights, and its fragments. The media's

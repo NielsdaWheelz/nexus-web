@@ -33,7 +33,10 @@ import type {
   ReaderApparatusItem,
   ReaderApparatusResponse,
 } from "@/lib/reader/apparatus";
-import type { ReaderConnectionPage } from "@/lib/reader/documentMap";
+import type {
+  ReaderConnectionPage,
+  ReaderDocumentMapEmbedItem,
+} from "@/lib/reader/documentMap";
 import MediaPaneBody from "./MediaPaneBody";
 
 const testState = vi.hoisted(() => ({
@@ -46,6 +49,7 @@ const testState = vi.hoisted(() => ({
   renderHtmlInMock: false,
   apparatusResponse: null as ReaderApparatusResponse | null,
   documentMapConnections: null as ReaderConnectionPage | null,
+  documentMapEmbeds: null as ReaderDocumentMapEmbedItem[] | null,
   readerFocusMode: "off" as
     | "off"
     | "distraction_free"
@@ -298,6 +302,7 @@ function mediaResponse() {
       can_search: true,
       can_play: false,
       can_download_file: false,
+      can_read_embeds: testState.mediaKind === "web_article",
     },
   };
 }
@@ -348,6 +353,7 @@ function readerDocumentMapResponse() {
     next_cursor: null,
   };
   const connectionCount = connections.anchored.length + connections.unanchored.length;
+  const embeds = testState.documentMapEmbeds ?? [];
   return {
     media_id: "media-1",
     media_kind: testState.mediaKind,
@@ -378,6 +384,14 @@ function readerDocumentMapResponse() {
         unanchored_count: 0,
       },
       {
+        id: "embeds",
+        label: "Embeds",
+        status: embeds.length > 0 ? "ready" : "empty",
+        item_count: embeds.length,
+        anchored_count: embeds.filter((item) => item.anchor).length,
+        unanchored_count: embeds.filter((item) => !item.anchor).length,
+      },
+      {
         id: "citations",
         label: "Citations",
         status: citationCount > 0 ? apparatus.status : "empty",
@@ -402,7 +416,7 @@ function readerDocumentMapResponse() {
         unanchored_count: 0,
       },
     ],
-    items: [],
+    items: embeds,
     markers: [
       {
         id: "marker:contents:section-1",
@@ -433,8 +447,12 @@ function fragmentResponse() {
   return [
     {
       id: "fragment-1",
+      media_id: "media-1",
+      idx: 0,
       html_sanitized: testState.fragmentHtml,
       canonical_text: testState.fragmentCanonicalText,
+      document_embeds: [],
+      created_at: "2026-01-01T00:00:00Z",
     },
   ];
 }
@@ -732,6 +750,7 @@ describe("MediaPaneBody pane sizing", () => {
     testState.renderHtmlInMock = false;
     testState.apparatusResponse = null;
     testState.documentMapConnections = null;
+    testState.documentMapEmbeds = null;
     testState.readerFocusMode = "off";
     paneShellMocks.usePaneChromeOverride.mockReset();
     paneShellMocks.usePaneMobileChromeController.mockClear();
@@ -904,6 +923,69 @@ describe("MediaPaneBody pane sizing", () => {
         "reader-resource-chat",
       ]);
     });
+  });
+
+  it("publishes an Embeds surface for anchored document-map embed items", async () => {
+    testState.mediaKind = "web_article";
+    testState.fragmentHtml =
+      '<p>Before.</p><figure data-nexus-document-embed-id="embed:000000:youtube:dQw4w9WgXcQ"><figcaption>Embedded video: Launch video</figcaption></figure>';
+    testState.fragmentCanonicalText = "Before.\nEmbedded video: Launch video";
+    testState.documentMapEmbeds = [
+      {
+        id: "embed:embed-1",
+        lens_ids: ["embeds"],
+        kind: "document_embed",
+        source_domain: "document_embeds",
+        title: "Embedded video: Launch video",
+        subtitle: "youtube",
+        excerpt: "Launch video",
+        activation: null,
+        href: "/media/child-1",
+        anchor: {
+          ref: "media:media-1",
+          media_id: "media-1",
+          locator: {
+            type: "web_text_offsets",
+            media_id: "media-1",
+            fragment_id: "fragment-1",
+            start_offset: 8,
+            end_offset: 36,
+          },
+          page_number: null,
+          fragment_id: "fragment-1",
+          highlight_id: null,
+          evidence_span_id: null,
+          order_key: "fragment:0000000000:0000000008",
+          precision: "exact",
+        },
+        document_order_key: "fragment:0000000000:0000000008",
+        document_fraction: 0.5,
+        target_status: "exact",
+        provenance: { owner: "document_embeds" },
+        actions: ["activate"],
+        document_embed_id: "embed-1",
+        occurrence_key: "embed:000000:youtube:dQw4w9WgXcQ",
+        provider: "youtube",
+        embed_kind: "video",
+        resolution_status: "resolved",
+      },
+    ];
+    const { onSetPaneSecondary } = renderMediaPane({
+      renderSecondarySurfaceId: "reader-embeds",
+    });
+
+    await waitFor(() => {
+      const publication = latestSecondaryPublication(onSetPaneSecondary);
+      expect(publication?.surfaces.map((surface) => surface.id)).toContain(
+        "reader-embeds",
+      );
+    });
+
+    expect(await screen.findByRole("list", { name: "Embeds" })).toBeVisible();
+    expect(screen.getByText("Embedded video: Launch video")).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Show Embedded video: Launch video in reader" }),
+    ).toBeVisible();
   });
 
   it("publishes Citations and previews a source-authored marker", async () => {

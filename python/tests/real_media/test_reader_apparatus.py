@@ -100,6 +100,7 @@ def test_real_browser_captured_article_fixture_matches_reader_apparatus_matrix(
             "title": case.title,
             "site_name": "Reader Apparatus Fixtures",
             "content_html": html,
+            "source_html": html,
         },
     )
     assert capture_response.status_code == 202, capture_response.text

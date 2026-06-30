@@ -21,6 +21,8 @@ from starlette.routing import Match
 
 from nexus.api.routes import create_api_router
 from nexus.db.models import (
+    DocumentEmbed,
+    DocumentEmbedArtifactState,
     EpubResource,
     EpubTocNode,
     Fragment,
@@ -868,6 +870,83 @@ class TestGetMediaFragments:
         assert "canonical_text" in fragment
         assert fragment["html_sanitized"] == FIXTURE_HTML_SANITIZED
         assert fragment["canonical_text"] == FIXTURE_CANONICAL_TEXT
+
+    def test_get_media_and_fragments_include_document_embeds(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+
+        with direct_db.session() as session:
+            media_id = create_seeded_media(session)
+            session.add(
+                DocumentEmbedArtifactState(
+                    media_id=media_id,
+                    source_attempt_id=None,
+                    status="ready",
+                    total_count=1,
+                    resolved_count=0,
+                    unsupported_count=1,
+                    failed_count=0,
+                    diagnostics={},
+                )
+            )
+            session.add(
+                DocumentEmbed(
+                    media_id=media_id,
+                    fragment_id=FIXTURE_FRAGMENT_ID,
+                    source_attempt_id=None,
+                    ordinal=0,
+                    occurrence_key="embed:000000:generic:none",
+                    provider="generic",
+                    embed_kind="unknown",
+                    source_shape="iframe",
+                    resolution_status="unsupported",
+                    source_url=None,
+                    canonical_source_url=None,
+                    provider_target_ref=None,
+                    placeholder_text="Unsupported embedded content: player.example.test",
+                    canonical_start_offset=0,
+                    canonical_end_offset=55,
+                    document_order_key="000000",
+                    diagnostics={},
+                )
+            )
+            session.commit()
+
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("document_embed_artifact_states", "media_id", media_id)
+        direct_db.register_cleanup("document_embeds", "media_id", media_id)
+        add_media_to_default_library(auth_client, user_id, media_id)
+
+        media_response = auth_client.get(f"/media/{media_id}", headers=auth_headers(user_id))
+        assert media_response.status_code == 200
+        media_data = media_response.json()["data"]
+        assert media_data["capabilities"]["can_read_embeds"] is True
+        assert media_data["document_embed_summary"] == {
+            "status": "ready",
+            "total_count": 1,
+            "resolved_count": 0,
+            "unsupported_count": 1,
+            "failed_count": 0,
+        }
+
+        response = auth_client.get(f"/media/{media_id}/fragments", headers=auth_headers(user_id))
+        assert response.status_code == 200
+        embed = response.json()["data"][0]["document_embeds"][0]
+        assert embed["occurrence_key"] == "embed:000000:generic:none"
+        assert embed["provider"] == "generic"
+        assert embed["kind"] == "unknown"
+        assert embed["source_url"] == {
+            "status": "absent",
+            "value": None,
+            "error_code": None,
+            "reason": "not_in_source",
+        }
+        assert embed["canonical_url"]["status"] == "absent"
+        assert embed["target"]["status"] == "unsupported"
+        assert embed["display"]["mode"] == "unsupported"
 
     def test_get_fragments_not_found(self, auth_client):
         """Non-existent media returns 404."""
@@ -5259,6 +5338,7 @@ class TestCaptureLibraryIds:
                 "url": url,
                 "title": "Captured Article",
                 "content_html": "<article><p>Readable body.</p></article>",
+                "source_html": "<html><body><article><p>Readable body.</p></article></body></html>",
                 "library_ids": [str(lib_a), str(lib_b)],
             },
         )

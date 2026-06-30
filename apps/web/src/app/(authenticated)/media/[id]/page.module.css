@@ -162,6 +162,118 @@
   gap: var(--space-6);
 }
 
+.documentEmbedCard {
+  display: grid;
+  grid-template-columns: minmax(0, 120px) minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: stretch;
+  margin: var(--space-5) 0;
+  padding: var(--space-3);
+  border: 1px solid var(--reader-border, var(--edge));
+  border-left-width: 3px;
+  border-radius: var(--radius-md);
+  background: var(--reader-bg-secondary, var(--surface-2));
+  color: var(--reader-text, var(--ink));
+}
+
+.documentEmbedCard[data-document-embed-state="resolved"] {
+  border-left-color: var(--reader-accent, var(--accent));
+}
+
+.documentEmbedCard[data-document-embed-state="pending"] {
+  border-left-color: var(--warning);
+}
+
+.documentEmbedCard[data-document-embed-state="unsupported"],
+.documentEmbedCard[data-document-embed-state="failed"] {
+  border-left-color: var(--danger);
+}
+
+.documentEmbedMedia {
+  min-width: 0;
+}
+
+.documentEmbedThumbnail {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 76px;
+  max-height: 112px;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  background: var(--reader-surface, var(--surface-3));
+}
+
+.documentEmbedBody {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: var(--space-2);
+}
+
+.documentEmbedMeta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  color: var(--reader-text-muted, var(--ink-faint));
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
+  text-transform: uppercase;
+}
+
+.documentEmbedProvider,
+.documentEmbedState {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.documentEmbedState {
+  color: var(--reader-text-secondary, var(--ink-muted));
+}
+
+.documentEmbedTitle {
+  color: var(--reader-text, var(--ink));
+  font-size: var(--text-md);
+  line-height: var(--leading-snug);
+}
+
+.documentEmbedDescription {
+  margin: 0;
+  color: var(--reader-text-secondary, var(--ink-muted));
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+
+.documentEmbedActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+
+.documentEmbedAction {
+  color: var(--reader-accent, var(--accent));
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  text-decoration: none;
+}
+
+.documentEmbedAction:hover {
+  text-decoration: underline;
+}
+
+.documentEmbedActionDisabled {
+  color: var(--reader-text-muted, var(--ink-faint));
+  cursor: default;
+}
+
+.documentEmbedActionDisabled:hover {
+  text-decoration: none;
+}
+
 .documentViewport {
   width: 100%;
   height: 100%;
@@ -171,6 +283,16 @@
   overflow: auto;
   overscroll-behavior-y: contain;
   scrollbar-width: thin;
+}
+
+@media (max-width: 640px) {
+  .documentEmbedCard {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .documentEmbedThumbnail {
+    max-height: 180px;
+  }
 }
 
 .readerContentRoot {
@@ -745,4 +867,59 @@
   color: var(--ink-faint);
   font-size: var(--text-sm);
   text-align: center;
+}
+
+.readerEmbedsList {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-3);
+}
+
+.readerEmbedItem {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  border: 1px solid var(--edge-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+}
+
+.readerEmbedMeta {
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
+  text-transform: capitalize;
+}
+
+.readerEmbedTitle {
+  color: var(--ink);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+}
+
+.readerEmbedExcerpt {
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+
+.readerEmbedAction {
+  align-self: flex-start;
+  margin-top: var(--space-1);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--text-sm);
+}
+
+.readerEmbedAction:hover,
+.readerEmbedAction:focus-visible {
+  text-decoration: underline;
 }

@@ -10,6 +10,7 @@ import { assertReaderApparatusResponse } from "@/lib/reader/apparatus";
 
 export type ReaderDocumentMapLensId =
   | "contents"
+  | "embeds"
   | "highlights"
   | "citations"
   | "connections"
@@ -18,7 +19,7 @@ export type ReaderDocumentMapLensId =
 export interface ReaderDocumentMapLens {
   id: ReaderDocumentMapLensId;
   label: string;
-  status: "ready" | "empty" | "partial" | "unsupported" | "failed";
+  status: "ready" | "empty" | "resolving" | "partial" | "unsupported" | "failed";
   item_count: number;
   anchored_count: number;
   unanchored_count: number;
@@ -71,6 +72,7 @@ export interface ReaderConnectionRow {
     | "user_link"
     | "synapse"
     | "system"
+    | "document_embed"
     | "other";
   title: string;
   subtitle: string | null;
@@ -121,6 +123,16 @@ export interface ReaderDocumentMapHighlightItem extends ReaderDocumentMapItemBas
   linked_conversation_count: number;
 }
 
+export interface ReaderDocumentMapEmbedItem extends ReaderDocumentMapItemBase {
+  kind: "document_embed";
+  source_domain: "document_embeds";
+  document_embed_id: string;
+  occurrence_key: string;
+  provider: string;
+  embed_kind: string;
+  resolution_status: string;
+}
+
 export interface ReaderDocumentMapApparatusItem extends ReaderDocumentMapItemBase {
   kind: "apparatus";
   source_domain: "reader_apparatus";
@@ -154,6 +166,7 @@ export interface ReaderDocumentMapChatThreadItem extends ReaderDocumentMapItemBa
 export type ReaderDocumentMapItem =
   | ReaderDocumentMapSectionItem
   | ReaderDocumentMapHighlightItem
+  | ReaderDocumentMapEmbedItem
   | ReaderDocumentMapApparatusItem
   | ReaderDocumentMapConnectionItem
   | ReaderDocumentMapChatThreadItem;

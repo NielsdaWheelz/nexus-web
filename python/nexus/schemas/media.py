@@ -46,6 +46,7 @@ class CapabilitiesOut(BaseModel):
     can_retry: bool = False
     can_refresh_source: bool = False
     can_retry_metadata: bool = False
+    can_read_embeds: bool = False
 
 
 class PlaybackSourceOut(BaseModel):
@@ -58,6 +59,109 @@ class PlaybackSourceOut(BaseModel):
     provider_video_id: str | None = None
     watch_url: str | None = None
     embed_url: str | None = None
+
+
+DocumentEmbedAggregateStatus = Literal[
+    "unsupported",
+    "empty",
+    "resolving",
+    "ready",
+    "partial",
+    "failed",
+]
+
+
+class DocumentEmbedSummaryOut(BaseModel):
+    status: DocumentEmbedAggregateStatus
+    total_count: int = Field(ge=0)
+    resolved_count: int = Field(ge=0)
+    unsupported_count: int = Field(ge=0)
+    failed_count: int = Field(ge=0)
+
+
+class DocumentEmbedTextOut(BaseModel):
+    kind: Literal["present", "absent"]
+    value: str | None = None
+    reason: Literal["not_in_source", "redacted", "not_applicable"] | None = None
+
+
+class DocumentEmbedUrlOut(BaseModel):
+    status: Literal["present", "malformed", "absent"]
+    value: str | None = None
+    error_code: str | None = None
+    reason: Literal["not_in_source", "not_applicable"] | None = None
+
+
+class DocumentEmbedProviderRefOut(BaseModel):
+    kind: Literal["present", "absent"]
+    value: str | None = None
+    reason: Literal["unsupported_provider", "unparseable", "not_applicable"] | None = None
+
+
+class DocumentEmbedLocatorOut(BaseModel):
+    kind: Literal["anchored", "unanchored"]
+    fragment_id: UUID | None = None
+    canonical_start_offset: int | None = Field(default=None, ge=0)
+    canonical_end_offset: int | None = Field(default=None, ge=0)
+    document_order_key: str
+    placeholder_text: str
+
+
+class DocumentEmbedTargetOut(BaseModel):
+    status: Literal[
+        "exact",
+        "container",
+        "missing",
+        "forbidden",
+        "unanchorable",
+        "stale",
+        "unsupported",
+        "partial",
+    ]
+    media_id: UUID | None = None
+    resource_ref: str | None = None
+    href: str | None = None
+    kind: str | None = None
+    title: str | None = None
+    thumbnail_url: str | None = None
+    playback: PlaybackSourceOut | None = None
+
+
+class DocumentEmbedDisplayActionOut(BaseModel):
+    kind: Literal["open_child_media", "open_original", "retry_child", "refresh_parent"]
+    label: str
+    href: str | None = None
+    disabled: bool = False
+
+
+class DocumentEmbedDisplayOut(BaseModel):
+    mode: Literal["resolved", "pending", "unsupported", "failed"]
+    label: str
+    description: str
+    actions: list[DocumentEmbedDisplayActionOut] = Field(default_factory=list)
+
+
+class DocumentEmbedOut(BaseModel):
+    id: UUID
+    media_id: UUID
+    fragment_id: UUID | None = None
+    occurrence_key: str
+    ordinal: int
+    provider: Literal["youtube", "x", "substack", "vimeo", "spotify", "generic", "unknown"]
+    kind: Literal["video", "post", "audio", "link_preview", "unknown"]
+    source_shape: Literal["iframe", "blockquote", "anchor", "video_tag", "provider_json", "unknown"]
+    resolution_status: Literal["pending", "resolving", "resolved", "unsupported", "failed"]
+    source_url: DocumentEmbedUrlOut
+    canonical_url: DocumentEmbedUrlOut
+    provider_target_ref: DocumentEmbedProviderRefOut
+    title: DocumentEmbedTextOut
+    description: DocumentEmbedTextOut
+    thumbnail_url: DocumentEmbedUrlOut
+    authored_text: DocumentEmbedTextOut
+    locator: DocumentEmbedLocatorOut
+    target: DocumentEmbedTargetOut
+    error_code: DocumentEmbedTextOut
+    display: DocumentEmbedDisplayOut
 
 
 class ListeningStateOut(BaseModel):
@@ -100,6 +204,7 @@ class MediaOut(BaseModel):
     episode_state: Literal["unplayed", "in_progress", "played"] | None = None
     chapters: list[PodcastEpisodeChapterOut] = []
     capabilities: CapabilitiesOut
+    document_embed_summary: DocumentEmbedSummaryOut | None = None
     contributors: list[ContributorCreditOut] = Field(default_factory=list)
     published_date: str | None = None
     publisher: str | None = None
@@ -148,6 +253,7 @@ class FragmentOut(BaseModel):
     t_start_ms: int | None = None
     t_end_ms: int | None = None
     speaker_label: str | None = None
+    document_embeds: list[DocumentEmbedOut] = Field(default_factory=list)
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
@@ -181,6 +287,7 @@ class ArticleCaptureRequest(BaseModel):
 
     url: str = Field(min_length=1, max_length=2048)
     content_html: str = Field(min_length=1)
+    source_html: str = Field(min_length=1)
     title: str | None = Field(default=None, max_length=1024)
     byline: str | None = Field(default=None, max_length=1024)
     excerpt: str | None = Field(default=None, max_length=4000)

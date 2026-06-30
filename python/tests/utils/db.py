@@ -350,11 +350,64 @@ class DirectSessionManager:
 
                 if table == "media_source_attempts" and column == "id":
                     session.execute(
+                        text("DELETE FROM document_embeds WHERE source_attempt_id = :value"),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            "DELETE FROM document_embed_artifact_states "
+                            "WHERE source_attempt_id = :value"
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
                         text(
                             """
                             UPDATE external_provider_events
                             SET source_attempt_id = NULL
                             WHERE source_attempt_id = :value
+                            """
+                        ),
+                        {"value": value},
+                    )
+
+                if table == "media_source_attempts" and column == "media_id":
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM document_embeds
+                            WHERE source_attempt_id IN (
+                                SELECT id
+                                FROM media_source_attempts
+                                WHERE media_id = :value
+                            )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM document_embed_artifact_states
+                            WHERE source_attempt_id IN (
+                                SELECT id
+                                FROM media_source_attempts
+                                WHERE media_id = :value
+                            )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            UPDATE external_provider_events
+                            SET source_attempt_id = NULL
+                            WHERE source_attempt_id IN (
+                                SELECT id
+                                FROM media_source_attempts
+                                WHERE media_id = :value
+                            )
                             """
                         ),
                         {"value": value},
@@ -373,6 +426,19 @@ class DirectSessionManager:
                             text(f"DELETE FROM {ra_table} WHERE media_id = :value"),
                             {"value": value},
                         )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM document_embeds
+                            WHERE media_id = :value OR target_media_id = :value
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text("DELETE FROM document_embed_artifact_states WHERE media_id = :value"),
+                        {"value": value},
+                    )
                     session.execute(
                         text(
                             """

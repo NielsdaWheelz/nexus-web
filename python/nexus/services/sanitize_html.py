@@ -84,6 +84,12 @@ READER_APPARATUS_ATTRS = frozenset(
         "data-reader-apparatus-confidence",
     }
 )
+DOCUMENT_EMBED_ATTRS = frozenset(
+    {
+        "data-nexus-document-embed-id",
+        "data-nexus-document-embed-kind",
+    }
+)
 
 # Forbidden URL schemes
 FORBIDDEN_SCHEMES = frozenset({"javascript", "vbscript", "data", "file"})
@@ -98,6 +104,7 @@ def sanitize_html(
     *,
     preserve_anchor_targets: bool = False,
     allow_reader_apparatus_attrs: bool = False,
+    allow_document_embed_attrs: bool = False,
 ) -> str:
     """Sanitize HTML content from web article extraction.
 
@@ -147,6 +154,7 @@ def sanitize_html(
                 base_url,
                 preserve_anchor_targets=preserve_anchor_targets,
                 allow_reader_apparatus_attrs=allow_reader_apparatus_attrs,
+                allow_document_embed_attrs=allow_document_embed_attrs,
             )
 
     # Serialize back to string
@@ -166,6 +174,7 @@ def _sanitize_element(
     *,
     preserve_anchor_targets: bool,
     allow_reader_apparatus_attrs: bool,
+    allow_document_embed_attrs: bool,
 ) -> None:
     """Recursively sanitize an element and its children.
 
@@ -179,6 +188,7 @@ def _sanitize_element(
                 base_url,
                 preserve_anchor_targets=preserve_anchor_targets,
                 allow_reader_apparatus_attrs=allow_reader_apparatus_attrs,
+                allow_document_embed_attrs=allow_document_embed_attrs,
             )
 
     # Check if this element's tag is allowed
@@ -213,6 +223,7 @@ def _sanitize_element(
         base_url,
         preserve_anchor_targets=preserve_anchor_targets,
         allow_reader_apparatus_attrs=allow_reader_apparatus_attrs,
+        allow_document_embed_attrs=allow_document_embed_attrs,
     )
 
 
@@ -223,6 +234,7 @@ def _sanitize_attributes(
     *,
     preserve_anchor_targets: bool,
     allow_reader_apparatus_attrs: bool,
+    allow_document_embed_attrs: bool,
 ) -> None:
     """Sanitize attributes on an element."""
     allowed = ALLOWED_ATTRS.get(tag, set())
@@ -258,6 +270,12 @@ def _sanitize_attributes(
         # Remove disallowed attributes
         if attr_lower in READER_APPARATUS_ATTRS:
             if allow_reader_apparatus_attrs:
+                continue
+            attrs_to_remove.append(attr)
+            continue
+
+        if attr_lower in DOCUMENT_EMBED_ATTRS:
+            if allow_document_embed_attrs and tag in {"figure", "figcaption"}:
                 continue
             attrs_to_remove.append(attr)
             continue

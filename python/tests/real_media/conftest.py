@@ -118,6 +118,7 @@ def capture_nasa_water_article(
             "site_name": "NASA Science",
             "published_time": "2020-11-05T00:00:00Z",
             "content_html": html,
+            "source_html": html,
         },
     )
     assert capture_response.status_code == 202, capture_response.text

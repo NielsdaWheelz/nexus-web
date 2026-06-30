@@ -42,6 +42,7 @@ LIST_CONNECTION_ORIGINS: tuple[EdgeOrigin, ...] = (
     "citation",
     "note_body",
     "highlight_note",
+    "document_embed",
 )
 
 # Deterministic tie-break for ``dominant_kind``: a kind with the most edges wins,

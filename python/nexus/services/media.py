@@ -35,6 +35,10 @@ from nexus.services.capabilities import derive_capabilities, is_text_document_re
 from nexus.services.contributor_credits import (
     load_contributor_credits_for_media,
 )
+from nexus.services.document_embeds import (
+    document_embed_summaries_for_media,
+    list_document_embeds_for_fragments,
+)
 from nexus.services.pdf_readiness import batch_pdf_quote_text_ready
 from nexus.services.playback_source import derive_playback_source
 
@@ -64,6 +68,7 @@ _MEDIA_BASE_SELECT_COLUMNS: tuple[str, ...] = (
           AND msa.source_type IN (
               'generic_web_url',
               'x_author_thread',
+              'x_post',
               'youtube_video',
               'remote_pdf_url',
               'remote_epub_url',
@@ -105,6 +110,7 @@ _MEDIA_BASE_SELECT_COLUMNS: tuple[str, ...] = (
           AND msa.source_type IN (
               'generic_web_url',
               'x_author_thread',
+              'x_post',
               'youtube_video',
               'remote_pdf_url',
               'remote_epub_url',
@@ -293,20 +299,21 @@ def list_media_for_viewer_by_ids(
     pdf_readiness = batch_pdf_quote_text_ready(db, pdf_media_ids) if pdf_media_ids else {}
     contributors_by_media = load_contributor_credits_for_media(db, list(row_by_media_id.keys()))
     chapters_by_media = _load_podcast_episode_chapters_by_ids(db, list(row_by_media_id.keys()))
+    embed_summaries_by_media = document_embed_summaries_for_media(db, list(row_by_media_id.keys()))
 
     media_list: list[MediaOut] = []
     for media_id in ordered_media_ids:
         row = row_by_media_id.get(media_id)
         if row is None:
             continue
-        media_list.append(
-            _media_out_from_row(
-                row=row,
-                contributors=contributors_by_media.get(media_id, []),
-                chapters=chapters_by_media.get(media_id, []),
-                pdf_quote_ready=pdf_readiness.get(media_id, False),
-            )
+        media = _media_out_from_row(
+            row=row,
+            contributors=contributors_by_media.get(media_id, []),
+            chapters=chapters_by_media.get(media_id, []),
+            pdf_quote_ready=pdf_readiness.get(media_id, False),
         )
+        media.document_embed_summary = embed_summaries_by_media.get(media_id)
+        media_list.append(media)
     enrich_media_read_state(db, viewer_id=viewer_id, media_outs=media_list)
     return media_list
 
@@ -715,18 +722,19 @@ def list_visible_media(
     page_media_ids = [UUID(str(row["id"])) for row in page_rows]
     contributors_by_media = load_contributor_credits_for_media(db, page_media_ids)
     chapters_by_media = _load_podcast_episode_chapters_by_ids(db, page_media_ids)
+    embed_summaries_by_media = document_embed_summaries_for_media(db, page_media_ids)
 
     media_list: list[MediaOut] = []
     for row in page_rows:
         media_id = UUID(str(row["id"]))
-        media_list.append(
-            _media_out_from_row(
-                row=row,
-                contributors=contributors_by_media.get(media_id, []),
-                chapters=chapters_by_media.get(media_id, []),
-                pdf_quote_ready=pdf_readiness.get(media_id, False),
-            )
+        media = _media_out_from_row(
+            row=row,
+            contributors=contributors_by_media.get(media_id, []),
+            chapters=chapters_by_media.get(media_id, []),
+            pdf_quote_ready=pdf_readiness.get(media_id, False),
         )
+        media.document_embed_summary = embed_summaries_by_media.get(media_id)
+        media_list.append(media)
 
     enrich_media_read_state(db, viewer_id=viewer_id, media_outs=media_list)
 
@@ -809,7 +817,7 @@ def list_fragments_for_viewer(
         {"media_id": media_id},
     )
 
-    return [
+    fragments = [
         FragmentOut(
             id=row[0],
             media_id=row[1],
@@ -823,6 +831,12 @@ def list_fragments_for_viewer(
         )
         for row in result.fetchall()
     ]
+    embeds_by_fragment = list_document_embeds_for_fragments(
+        db, viewer_id=viewer_id, fragment_ids=[fragment.id for fragment in fragments]
+    )
+    for fragment in fragments:
+        fragment.document_embeds = embeds_by_fragment.get(fragment.id, [])
+    return fragments
 
 
 @dataclass(frozen=True)

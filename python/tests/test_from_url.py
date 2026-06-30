@@ -1346,6 +1346,162 @@ class TestFromUrlSuccess:
 class TestFromUrlXPost:
     """Tests for official X API-backed author-thread ingestion."""
 
+    def test_x_post_source_attempt_materializes_single_post_without_thread_search(
+        self, auth_client, direct_db: DirectSessionManager, remote_http, monkeypatch
+    ):
+        from nexus.services.media_source_ingest import run_source_attempt
+
+        _patch_x_api_settings(monkeypatch)
+        user_id = create_test_user_id()
+        default_library_id = UUID(
+            auth_client.get("/me", headers=auth_headers(user_id)).json()["data"][
+                "default_library_id"
+            ]
+        )
+        media_id = uuid4()
+        source_attempt_id = uuid4()
+        root_route = remote_http.get("https://api.x.com/2/tweets/1212121212").mock(
+            return_value=httpx.Response(200, json=_x_root_payload("1212121212"))
+        )
+        search_route = remote_http.get("https://api.x.com/2/tweets/search/all").mock(
+            return_value=httpx.Response(500, json={})
+        )
+
+        with direct_db.session() as session:
+            session.execute(
+                text("""
+                    INSERT INTO media (
+                        id, kind, title, requested_url, canonical_url,
+                        canonical_source_url, provider, provider_id,
+                        processing_status, created_by_user_id, created_at, updated_at
+                    )
+                    VALUES (
+                        :media_id, 'web_article', 'Embedded X post 1212121212',
+                        'https://x.com/ada/status/1212121212',
+                        NULL,
+                        'https://x.com/i/status/1212121212',
+                        'x', NULL, 'pending', :user_id, now(), now()
+                    )
+                """),
+                {"media_id": media_id, "user_id": user_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO default_library_intrinsics (default_library_id, media_id)
+                    VALUES (:default_library_id, :media_id)
+                """),
+                {"default_library_id": default_library_id, "media_id": media_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO media_source_attempts (
+                        id, media_id, created_by_user_id, source_type, attempt_no,
+                        status, intent_key, requested_url, canonical_source_url,
+                        provider, provider_target_ref, source_payload
+                    )
+                    VALUES (
+                        :source_attempt_id, :media_id, :user_id,
+                        'x_post', 1, 'accepted',
+                        :intent_key,
+                        'https://x.com/ada/status/1212121212',
+                        'https://x.com/i/status/1212121212',
+                        'x', '1212121212',
+                        '{"kind": "embedded_source", "post_id": "1212121212"}'::jsonb
+                    )
+                """),
+                {
+                    "source_attempt_id": source_attempt_id,
+                    "media_id": media_id,
+                    "user_id": user_id,
+                    "intent_key": f"test:x_post:{media_id}",
+                },
+            )
+            session.commit()
+
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("media_source_attempts", "id", source_attempt_id)
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+
+        with direct_db.session() as session:
+            result = run_source_attempt(
+                db=session,
+                media_id=media_id,
+                attempt_id=source_attempt_id,
+                actor_user_id=user_id,
+                request_id="test-x-post",
+            )
+
+        assert result["media_id"] == str(media_id)
+        assert result["processing_status"] == "ready_for_reading"
+        assert root_route.call_count == 1
+        assert search_route.call_count == 0
+        _register_x_provider_event_cleanup(direct_db, "post:1212121212")
+        _register_background_jobs_for_media(direct_db, media_id)
+
+        with direct_db.session() as session:
+            media = session.execute(
+                text("""
+                    SELECT kind, title, requested_url, canonical_url, canonical_source_url,
+                           provider, provider_id, processing_status, publisher, description
+                    FROM media
+                    WHERE id = :media_id
+                """),
+                {"media_id": media_id},
+            ).one()
+            fragment = session.execute(
+                text("""
+                    SELECT html_sanitized, canonical_text
+                    FROM fragments
+                    WHERE media_id = :media_id
+                    ORDER BY idx ASC
+                    LIMIT 1
+                """),
+                {"media_id": media_id},
+            ).one()
+            attempt = session.execute(
+                text("""
+                    SELECT status, error_code
+                    FROM media_source_attempts
+                    WHERE id = :source_attempt_id
+                """),
+                {"source_attempt_id": source_attempt_id},
+            ).one()
+            provider_event = session.execute(
+                text("""
+                    SELECT provider, capability, operation, status, target_ref, source_attempt_id
+                    FROM external_provider_events
+                    WHERE provider = 'x'
+                      AND target_ref = 'post:1212121212'
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                """)
+            ).one()
+
+        assert tuple(media) == (
+            "web_article",
+            "X post by Ada Lovelace",
+            "https://x.com/ada/status/1212121212",
+            "https://x.com/i/status/1212121212",
+            "https://x.com/i/status/1212121212",
+            "x",
+            "post:1212121212",
+            "ready_for_reading",
+            "X",
+            "Opening post from Ada.",
+        )
+        assert "<script" not in fragment[0]
+        assert "Opening post from Ada." in fragment[1]
+        assert tuple(attempt) == ("succeeded", None)
+        assert tuple(provider_event) == (
+            "x",
+            "post",
+            "ingest_x_post",
+            "success",
+            "post:1212121212",
+            source_attempt_id,
+        )
+
     def test_x_post_url_creates_ready_author_thread_web_article(
         self, auth_client, direct_db: DirectSessionManager, remote_http, monkeypatch
     ):
@@ -2392,6 +2548,11 @@ class TestBrowserArticleCapture:
                 url="https://example.com/empty-capture",
                 title="Empty Capture",
                 content_html=(
+                    "<html><head><title>Empty Capture</title>"
+                    "<style>body{display:none}</style></head>"
+                    "<body><script>window.__nexus=1</script></body></html>"
+                ),
+                source_html=(
                     "<html><head><title>Empty Capture</title>"
                     "<style>body{display:none}</style></head>"
                     "<body><script>window.__nexus=1</script></body></html>"

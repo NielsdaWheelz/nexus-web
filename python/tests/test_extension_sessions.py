@@ -70,6 +70,10 @@ class TestExtensionSessions:
                 "<article><h1>Private Access</h1><p>Readable body.</p>"
                 "<script>bad()</script></article>"
             ),
+            "source_html": (
+                "<html><body><article><h1>Private Access</h1><p>Readable body.</p>"
+                "<script>bad()</script></article></body></html>"
+            ),
         }
         fake_storage = FakeStorageClient()
         monkeypatch.setattr(
@@ -147,6 +151,7 @@ class TestExtensionSessions:
                 "url": "https://example.com/articles/private-access",
                 "title": "Private Access",
                 "content_html": "<article><p>Readable body.</p></article>",
+                "source_html": "<html><body><article><p>Readable body.</p></article></body></html>",
             },
         )
 
@@ -180,6 +185,7 @@ class TestExtensionSessions:
                 "url": "https://example.com/articles/revoked",
                 "title": "Revoked",
                 "content_html": "<article><p>Readable body.</p></article>",
+                "source_html": "<html><body><article><p>Readable body.</p></article></body></html>",
             },
         )
         assert capture_response.status_code == 401
@@ -216,6 +222,7 @@ class TestExtensionSessions:
                 "url": "https://example.com/articles/large",
                 "title": "Large Article",
                 "content_html": "<article>" + ("x" * 2_100_000) + "</article>",
+                "source_html": "<html><body><article><p>Readable body.</p></article></body></html>",
             },
         )
 

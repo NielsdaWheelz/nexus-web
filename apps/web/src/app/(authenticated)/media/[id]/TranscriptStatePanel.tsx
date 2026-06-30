@@ -10,6 +10,7 @@ import Button from "@/components/ui/Button";
 import { isAbortError } from "@/lib/errors";
 import {
   canRequestTranscript,
+  normalizeFragments,
   shouldPollTranscriptProvisioning,
   type Fragment,
   type TranscriptCoverage,
@@ -119,7 +120,7 @@ export default function TranscriptStatePanel({
       transcriptCoverage: mediaResponse.data.transcript_coverage,
       capabilities: nextCapabilities,
       lastErrorCode: mediaResponse.data.last_error_code,
-      fragments: fragmentsResponse.data,
+      fragments: normalizeFragments(fragmentsResponse.data),
     });
   }, [mediaId, onTranscriptStateChange]);
 

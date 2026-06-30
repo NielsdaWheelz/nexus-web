@@ -93,6 +93,15 @@ class XAuthorThreadSnapshot:
     media: Mapping[str, XMediaSnapshot]
 
 
+@dataclass(frozen=True)
+class XSinglePostSnapshot:
+    requested_post_id: str
+    canonical_url: str
+    post: XPostSnapshot
+    users: Mapping[str, XUserSnapshot]
+    media: Mapping[str, XMediaSnapshot]
+
+
 def canonical_x_post_url(post_id: str) -> str:
     return f"https://x.com/i/status/{post_id}"
 

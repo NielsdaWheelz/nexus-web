@@ -44,6 +44,12 @@ const PANE_SECONDARY_SURFACE_DEFINITIONS = [
     iconId: "highlighter",
   },
   {
+    id: "reader-embeds",
+    groupId: "reader-tools",
+    title: "Embeds",
+    iconId: "file-text",
+  },
+  {
     id: "reader-apparatus",
     groupId: "reader-tools",
     title: "Citations",

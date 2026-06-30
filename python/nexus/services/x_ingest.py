@@ -33,7 +33,7 @@ from nexus.services.web_article_structure import (
     WEB_ARTICLE_HTML_MAX_BYTES,
     prepare_web_article_fragment,
 )
-from nexus.services.x_client import fetch_author_thread_snapshot
+from nexus.services.x_client import fetch_author_thread_snapshot, fetch_single_post_snapshot
 from nexus.services.x_identity import canonical_x_post_url
 from nexus.services.x_rendering import (
     post_description,
@@ -48,6 +48,7 @@ from nexus.services.x_types import (
     XPostSnapshot,
     XProviderError,
     XProviderErrorCode,
+    XSinglePostSnapshot,
     x_author_thread_provider_id,
     x_post_provider_id,
 )
@@ -83,6 +84,26 @@ def materialize_x_author_thread_media(
 ) -> dict[str, object]:
     """Materialize a previously accepted provisional X media row."""
     return _refresh_x_author_thread_media_for_viewer(
+        db,
+        viewer_id,
+        media=media,
+        post_id=post_id,
+        source_attempt_id=source_attempt_id,
+        request_id=request_id,
+    )
+
+
+def materialize_x_post_media(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    media: Media,
+    post_id: str,
+    source_attempt_id: UUID | None,
+    request_id: str | None,
+) -> dict[str, object]:
+    """Materialize a previously accepted provisional single X post media row."""
+    return _refresh_x_post_media_for_viewer(
         db,
         viewer_id,
         media=media,
@@ -206,6 +227,7 @@ def _refresh_x_author_thread_media_for_viewer(
 
     delete_web_article_artifacts(
         db,
+        owner_user_id=media.created_by_user_id or viewer_id,
         media_id=media.id,
         include_content_index=True,
     )
@@ -286,6 +308,168 @@ def _refresh_x_author_thread_media_for_viewer(
         )
         try_enqueue_metadata_enrichment(db, media_id=target.media_id, request_id=request_id)
     _record_x_provider_success(
+        db,
+        request_id=request_id,
+        source_attempt_id=source_attempt_id,
+        viewer_id=viewer_id,
+        media_id=media.id,
+        target_ref=provider_id,
+        duration_ms=_duration_ms(started_at),
+        snapshot=snapshot,
+    )
+    db.commit()
+
+    return {
+        "media_id": str(media.id),
+        "processing_status": ProcessingStatus.ready_for_reading.value,
+        "ingest_enqueued": False,
+        "idempotency_outcome": "refreshed",
+    }
+
+
+def _refresh_x_post_media_for_viewer(
+    db: Session,
+    viewer_id: UUID,
+    *,
+    media: Media,
+    post_id: str,
+    source_attempt_id: UUID | None = None,
+    request_id: str | None,
+) -> dict[str, object]:
+    started_at = perf_counter()
+    try:
+        snapshot = fetch_single_post_snapshot(post_id)
+    except XProviderError as exc:
+        db.rollback()
+        _record_x_provider_failure(
+            db,
+            error=exc,
+            request_id=request_id,
+            source_attempt_id=source_attempt_id,
+            viewer_id=viewer_id,
+            target_ref=post_id,
+            duration_ms=_duration_ms(started_at),
+            capability="post",
+        )
+        db.commit()
+        raise _api_error_from_x_provider_error(exc) from exc
+
+    provider_id = x_post_provider_id(snapshot.post.id)
+    _lock_x_provider_id(db, provider_id)
+    existing_post_media = (
+        db.query(Media)
+        .filter(Media.provider == "x", Media.provider_id == provider_id, Media.id != media.id)
+        .limit(1)
+        .one_or_none()
+    )
+    source_library_ids = library_entries.admin_non_default_library_ids_for_media(
+        db,
+        viewer_id=viewer_id,
+        media_id=media.id,
+    )
+    if existing_post_media is not None:
+        library_entries.assign_libraries_for_media_in_current_transaction(
+            db,
+            viewer_id,
+            existing_post_media.id,
+            source_library_ids,
+        )
+        _record_x_post_provider_success(
+            db,
+            request_id=request_id,
+            source_attempt_id=source_attempt_id,
+            viewer_id=viewer_id,
+            media_id=existing_post_media.id,
+            target_ref=provider_id,
+            duration_ms=_duration_ms(started_at),
+            snapshot=snapshot,
+        )
+        db.commit()
+        return {
+            "media_id": str(existing_post_media.id),
+            "processing_status": _status_to_str(existing_post_media.processing_status),
+            "ingest_enqueued": False,
+            "idempotency_outcome": "reused",
+        }
+
+    now = datetime.now(UTC)
+    prepared_fragment = _build_x_fragment(
+        media_id=media.id,
+        idx=0,
+        html=render_single_post_html(snapshot.post, users=snapshot.users, media=snapshot.media),
+        base_url=snapshot.canonical_url,
+        created_at=now,
+    )
+
+    delete_web_article_artifacts(
+        db,
+        owner_user_id=media.created_by_user_id or viewer_id,
+        media_id=media.id,
+        include_content_index=True,
+    )
+    media.title = post_title(snapshot.post, snapshot.users)[:255]
+    media.canonical_url = snapshot.canonical_url
+    media.canonical_source_url = snapshot.canonical_url
+    media.provider = "x"
+    media.provider_id = provider_id
+    media.publisher = "X"
+    media.description = post_description(snapshot.post)
+
+    db.add(prepared_fragment.fragment)
+    db.flush()
+    insert_fragment_blocks(
+        db,
+        prepared_fragment.fragment.id,
+        prepared_fragment.fragment_blocks,
+    )
+    author = snapshot.users.get(snapshot.post.author_id)
+    if author is not None:
+        replace_media_contributor_credits(
+            db,
+            media_id=media.id,
+            credits=[
+                {
+                    "name": author.name[:255],
+                    "handle": author.username[:255],
+                    "role": "author",
+                    "source": "x_api_post",
+                    "source_ref": {"media_id": str(media.id), "x_user_id": author.id},
+                }
+            ],
+        )
+    replace_media_apparatus(
+        db,
+        media_id=media.id,
+        media_kind="web_article",
+        source_fingerprint_value=source_fingerprint(
+            "x_post",
+            snapshot.canonical_url,
+            prepared_fragment.fragment.html_sanitized,
+            prepared_fragment.fragment.canonical_text,
+        ),
+        items=attach_fragment_locators(
+            media_id=media.id,
+            fragment_id=prepared_fragment.fragment.id,
+            media_kind="web_article",
+            canonical_text=prepared_fragment.fragment.canonical_text,
+            items=prepared_fragment.apparatus_items,
+        ),
+        edges=prepared_fragment.apparatus_edges,
+    )
+    db.commit()
+
+    index_web_article_evidence(
+        db,
+        media_id=media.id,
+        fragment_id=prepared_fragment.fragment.id,
+        fragments=[prepared_fragment.fragment],
+        reason="x_api_post_refresh",
+        language=media.language,
+        request_id=request_id,
+        log_event="x_api_post_refresh_content_index_failed",
+    )
+    try_enqueue_metadata_enrichment(db, media_id=media.id, request_id=request_id)
+    _record_x_post_provider_success(
         db,
         request_id=request_id,
         source_attempt_id=source_attempt_id,
@@ -520,6 +704,7 @@ def _record_x_provider_failure(
     viewer_id: UUID,
     target_ref: str,
     duration_ms: int,
+    capability: str = "author-thread",
 ) -> None:
     api_error = _api_error_from_x_provider_error(error)
     record_external_provider_event(
@@ -528,7 +713,7 @@ def _record_x_provider_failure(
         source_attempt_id=source_attempt_id,
         viewer_id=viewer_id,
         provider="x",
-        capability="author-thread",
+        capability=capability,
         operation=error.operation,
         target_ref=target_ref,
         status="failure",
@@ -579,6 +764,36 @@ def _record_x_provider_success(
             "canonical_anchor_post_id": snapshot.canonical_anchor_post_id,
             "post_count": len(snapshot.posts),
             "quote_post_count": len(snapshot.quoted_posts),
+        },
+    )
+
+
+def _record_x_post_provider_success(
+    db: Session,
+    *,
+    request_id: str | None,
+    source_attempt_id: UUID | None = None,
+    viewer_id: UUID,
+    media_id: UUID,
+    target_ref: str,
+    duration_ms: int,
+    snapshot: XSinglePostSnapshot,
+) -> None:
+    record_external_provider_event(
+        db,
+        request_id=request_id,
+        source_attempt_id=source_attempt_id,
+        viewer_id=viewer_id,
+        media_id=media_id,
+        provider="x",
+        capability="post",
+        operation="ingest_x_post",
+        target_ref=target_ref,
+        status="success",
+        duration_ms=duration_ms,
+        metadata={
+            "requested_post_id": snapshot.requested_post_id,
+            "canonical_post_id": snapshot.post.id,
         },
     )
 

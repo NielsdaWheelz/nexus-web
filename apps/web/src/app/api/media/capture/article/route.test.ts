@@ -62,6 +62,7 @@ describe("POST /api/media/capture/article", () => {
       site_name: "Example",
       published_time: "2026-04-15T12:00:00Z",
       content_html: "<article>hello</article>",
+      source_html: "<html><body><article>hello</article></body></html>",
     });
 
     const response = await POST(

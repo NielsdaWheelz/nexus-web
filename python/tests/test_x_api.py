@@ -132,6 +132,40 @@ def test_author_thread_fetch_uses_provider_author_not_url_hint(monkeypatch):
     assert snapshot.canonical_anchor_post_id == "1234567890"
 
 
+def test_single_post_fetch_uses_post_lookup_without_thread_search(monkeypatch):
+    _patch_x_api_settings(monkeypatch)
+
+    with respx.mock(assert_all_called=False) as remote:
+        root_route = remote.get("https://api.x.com/2/tweets/1234567890").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "id": "1234567890",
+                        "author_id": "10",
+                        "text": "Embedded post.",
+                        "conversation_id": "1234567890",
+                    },
+                    "includes": {
+                        "users": [
+                            {"id": "10", "name": "Ada Lovelace", "username": "ada"},
+                        ]
+                    },
+                },
+            )
+        )
+        search_route = remote.get("https://api.x.com/2/tweets/search/all")
+
+        snapshot = x_client.fetch_single_post_snapshot("1234567890")
+
+    root_params = dict(root_route.calls.last.request.url.params)
+    assert root_params["user.fields"] == "id,name,username"
+    assert snapshot.requested_post_id == "1234567890"
+    assert snapshot.post.text == "Embedded post."
+    assert snapshot.users["10"].username == "ada"
+    assert search_route.call_count == 0
+
+
 def test_author_thread_fetch_paginates_and_fetches_missing_quotes(monkeypatch):
     _patch_x_api_settings(monkeypatch)
 
