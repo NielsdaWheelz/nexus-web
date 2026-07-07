@@ -406,8 +406,19 @@ describe("ConnectionsSurface", () => {
       <ConnectionsSurface objectRef={{ objectType: "note_block", objectId: BLOCK_A }} />,
     );
 
-    expect(await screen.findByText("Both argue X")).toBeInTheDocument();
+    // The rationale is set in the machine register inline, stamped with its
+    // honest origin (AC-4); the ✦ marker + aria are retained.
+    const rationale = await screen.findByText("Both argue X");
+    // eslint-disable-next-line testing-library/no-node-access -- justify-eslint-override: asserting the rationale is INSIDE a machine-origin element; that ancestor carries a data-provenance attribute, not a role/label
+    expect(rationale.closest("[data-machine-origin]")).toHaveAttribute(
+      "data-machine-origin",
+      "Synapse",
+    );
     expect(screen.getByLabelText("Synapse connection")).toBeInTheDocument();
+    // A non-synapse row shows no machine styling.
+    const bodyLink = screen.getByText("Body link");
+    // eslint-disable-next-line testing-library/no-node-access -- justify-eslint-override: asserting a user-origin row has NO machine-origin ancestor
+    expect(bodyLink.closest("[data-machine-origin]")).toBeNull();
     expect(
       screen.getByRole("button", { name: "Dismiss connection to Resonant page" }),
     ).toBeInTheDocument();

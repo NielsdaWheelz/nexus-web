@@ -15,6 +15,7 @@ import {
 } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
+import MachineText from "@/components/ui/MachineText";
 import { MarkdownMessage } from "@/components/ui/MarkdownMessage";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { apiFetch } from "@/lib/api/client";
@@ -348,13 +349,16 @@ export default function LibraryIntelligencePane({ libraryId }: { libraryId: stri
           title="No dossier has been generated yet."
         />
       ) : hasContent ? (
-        <div className={styles.intelligenceBody}>
+        <MachineText
+          origin={{ label: "Dossier" }}
+          className={styles.intelligenceBody}
+        >
           <MarkdownMessage
             content={displayedContent}
             citations={citations}
             onCitationActivate={activate}
           />
-        </div>
+        </MachineText>
       ) : null}
 
       {artifactId ? (

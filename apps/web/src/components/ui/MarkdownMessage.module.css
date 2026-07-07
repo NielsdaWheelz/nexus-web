@@ -2,7 +2,7 @@
 .markdown {
   font-size: var(--chat-prose-font-size, var(--text-md));
   line-height: var(--chat-prose-line-height, 1.58);
-  color: var(--ink);
+  color: inherit;
   overflow-wrap: normal;
 }
 

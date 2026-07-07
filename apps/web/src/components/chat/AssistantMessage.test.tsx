@@ -68,7 +68,6 @@ describe("AssistantMessage", () => {
         forkOptions={[]}
         onReplyToAssistant={onReplyToAssistant}
         errorLabel="The response failed."
-        timestampLabel="Jun 3"
       />,
     );
 
@@ -106,7 +105,6 @@ describe("AssistantMessage", () => {
         forkOptions={[]}
         onReplyToAssistant={vi.fn()}
         errorLabel="The response failed."
-        timestampLabel="Jun 3"
       />,
     );
 
@@ -340,7 +338,6 @@ describe("AssistantMessage", () => {
         forkOptions={[]}
         onCitationActivate={onCitationActivate}
         errorLabel="The response failed."
-        timestampLabel="Jun 3"
       />,
     );
 
@@ -400,10 +397,33 @@ describe("AssistantMessage", () => {
         message={message}
         forkOptions={[]}
         errorLabel="The response failed."
-        timestampLabel="Jun 3"
       />,
     );
 
     expect(screen.getByRole("status")).toHaveTextContent("Running custom_tool");
+  });
+
+  it("sets the machine register with an ASSISTANT signature and a valid <time> (AC-2)", () => {
+    render(
+      <AssistantMessage
+        message={assistantMessage()}
+        forkOptions={[]}
+        errorLabel="The response failed."
+      />,
+    );
+
+    // The prose is wrapped by the machine owner, stamped with the honest origin.
+    // eslint-disable-next-line testing-library/no-node-access -- justify-eslint-override: asserting the prose renders INSIDE the machine wrapper; the wrapper carries a data-provenance attribute, not a role/label
+    const machine = document.querySelector('[data-machine-origin="Assistant"]');
+    expect(machine).not.toBeNull();
+    expect(machine).toContainElement(screen.getByText("Alpha beta gamma"));
+
+    // Head signature: small-caps origin + a machine-readable <time> (the
+    // "· 12:00 AM" text node is the <time>; its datetime is the ISO instant).
+    expect(screen.getByText("Assistant")).toBeInTheDocument();
+    expect(screen.getByText(/^·/)).toHaveAttribute(
+      "datetime",
+      "2026-06-03T00:00:00Z",
+    );
   });
 });

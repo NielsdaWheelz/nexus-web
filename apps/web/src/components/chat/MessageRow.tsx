@@ -92,7 +92,6 @@ export const MessageRow = memo(function MessageRow({
         <AssistantMessage
           message={message}
           errorLabel={messageErrorLabel}
-          timestampLabel={timestampLabel}
           forkOptions={forkOptions}
           switchableLeafIds={switchableLeafIds}
           onSelectFork={onSelectFork}

@@ -97,8 +97,10 @@
   line-height: var(--chat-prose-line-height);
 }
 
+/* Assistant prose ink now flows from the MachineText wrapper; this class stays
+   only as the answer-ref / selection hook (keep it — AssistantEvidenceDisclosure
+   targets it). */
 .assistantBody {
-  color: var(--ink);
 }
 
 .systemBody {

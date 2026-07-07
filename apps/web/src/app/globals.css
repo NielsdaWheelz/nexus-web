@@ -8,6 +8,11 @@
   --font-serif: ui-serif, Charter, Georgia, "Times New Roman", Times, serif;
   --font-mono: var(--font-jetbrains-mono), ui-monospace, SFMono-Regular, Menlo,
     Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  /* Machine voice — a distinct semantic token over the already-shipped mono
+     stack (see machine-hand-hard-cutover.md D-2). Referenced only through
+     MachineText.module.css. */
+  --font-machine: var(--font-jetbrains-mono), ui-monospace, SFMono-Regular,
+    Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 
   /* Type size scale */
   --text-xs: 0.75rem;
@@ -132,6 +137,10 @@
   --ink: #ededef;
   --ink-muted: #a3a3a8;
   --ink-faint: #6f6f76;
+  /* Machine voice ink + apparatus rail — cooler + a step recessed vs --ink;
+     AAA on --surface-1/--surface-canvas (machine-hand-hard-cutover.md §4.3). */
+  --ink-machine: #c4ccd6;
+  --rail-machine: color-mix(in srgb, var(--ink-machine) 34%, transparent);
   --ink-on-accent: #0e0e10;
   --edge: #2c2c30;
   --edge-subtle: #1f1f23;
@@ -167,6 +176,9 @@
   --ink: #1a1a1c;
   --ink-muted: #525258;
   --ink-faint: #7a7a80;
+  /* Machine voice ink + apparatus rail — cool slate, AAA on light surfaces. */
+  --ink-machine: #3c4a57;
+  --rail-machine: color-mix(in srgb, var(--ink-machine) 30%, transparent);
   --ink-on-accent: #fafaf7;
   --edge: #d4d4cf;
   --edge-subtle: #e8e8e3;
@@ -203,6 +215,9 @@
     --ink: #1a1a1c;
     --ink-muted: #525258;
     --ink-faint: #7a7a80;
+    /* Machine voice ink + apparatus rail — cool slate, AAA on light surfaces. */
+    --ink-machine: #3c4a57;
+    --rail-machine: color-mix(in srgb, var(--ink-machine) 30%, transparent);
     --ink-on-accent: #fafaf7;
     --edge: #d4d4cf;
     --edge-subtle: #e8e8e3;

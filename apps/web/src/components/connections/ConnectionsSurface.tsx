@@ -18,6 +18,7 @@ import {
 import ObjectRefAutocomplete from "@/components/notes/ObjectRefAutocomplete";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
+import MachineText from "@/components/ui/MachineText";
 import Pill from "@/components/ui/Pill";
 import Select from "@/components/ui/Select";
 import { useResource } from "@/lib/api/useResource";
@@ -305,9 +306,14 @@ export default function ConnectionsSurface({
                       {connection.kind}
                     </span>
                     {connection.origin === "synapse" && connection.rationale ? (
-                      <span className={styles.connectionMeta}>
+                      <MachineText
+                        variant="inline"
+                        as="span"
+                        origin={{ label: "Synapse" }}
+                        className={styles.rationale}
+                      >
                         {connection.rationale}
-                      </span>
+                      </MachineText>
                     ) : null}
                   </span>
                 </button>

@@ -114,6 +114,12 @@
   font-size: var(--text-xs);
 }
 
+/* Synapse rationale — inline machine fragment; keep the compact measure and let
+   MachineText own the face + ink (no color here so the machine ink flows). */
+.rationale {
+  font-size: var(--text-xs);
+}
+
 .deleteWrap {
   display: grid;
   gap: var(--space-1);

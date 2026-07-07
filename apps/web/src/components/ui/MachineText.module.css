@@ -1,0 +1,44 @@
+/* The one referencer of --font-machine / --ink-machine / --rail-machine. */
+.machine {
+  font-family: var(--font-machine);
+  color: var(--ink-machine);
+}
+
+.block {
+  display: block;
+  padding-inline-start: var(--space-4);
+  border-inline-start: 2px solid var(--rail-machine);
+}
+
+.inline {
+  display: inline;
+}
+
+/* Control-bleed containment (§4.4 / AC-6): interactive controls nested in a
+   machine block keep the human sans face — only machine prose takes the
+   machine register. The design-system Button inherits its font, so the
+   "wrap content, not components" convention needs this structural backstop.
+   `.trustCode` (a span, not a control) is untouched and stays mono. */
+.block :is(button, input, textarea, select) {
+  font-family: var(--font-sans);
+}
+
+.signature {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  margin-bottom: var(--space-2);
+  font-size: var(--text-xs);
+  font-variant-caps: all-small-caps;
+  letter-spacing: var(--tracking-wider);
+  color: var(--ink-machine);
+}
+
+.origin {
+  font-weight: var(--weight-semibold);
+}
+
+.time {
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}

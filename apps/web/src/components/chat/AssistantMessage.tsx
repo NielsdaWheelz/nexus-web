@@ -4,7 +4,10 @@ import { useCallback } from "react";
 import { GitBranch, Search } from "lucide-react";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
+import MachineText, { type MachineSignatureTime } from "@/components/ui/MachineText";
 import { collapseWhitespace } from "@/lib/collapseWhitespace";
+import { formatDisplayDate } from "@/lib/display/format";
+import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import type {
   BranchDraft,
   ConversationMessage,
@@ -30,7 +33,6 @@ export default function AssistantMessage({
   onReplyToAssistant,
   onCitationActivate,
   errorLabel,
-  timestampLabel,
 }: {
   message: ConversationMessage;
   forkOptions: ForkOption[];
@@ -43,8 +45,8 @@ export default function AssistantMessage({
     event?: React.MouseEvent,
   ) => void;
   errorLabel: string;
-  timestampLabel: string;
 }) {
+  const display = useRenderEnvironment();
   const assistantText = conversationMessageText(message);
   const toolCalls = message.trust_trail?.tool_calls ?? [];
   const canBranchFromAssistant =
@@ -64,6 +66,16 @@ export default function AssistantMessage({
     message.status !== "error" ||
     (assistantText.trim().length > 0 &&
       !isGenericAssistantFailureContent(assistantText));
+  // The head signature carries this turn's time (hh:mm), so AssistantMessage owns
+  // its own formatting — the parent row's label is a month/day string (D-9).
+  const signatureTime = formatDisplayDate(message.created_at, display, {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  // Pair the display time with its ISO instant, or pass neither — the D-9 contract.
+  const signature: MachineSignatureTime = signatureTime
+    ? { timestamp: signatureTime, timestampIso: message.created_at }
+    : {};
 
   const createBranchDraft = useCallback(
     (): BranchDraft => ({
@@ -99,21 +111,23 @@ export default function AssistantMessage({
           </Button>
         </div>
       ) : null}
-      <ToolActivity toolCalls={toolCalls} />
       {message.status === "pending" ? <StreamingGutterCue /> : null}
-      {renderAssistantBody ? (
-        <AssistantEvidenceDisclosure
-          message={message}
-          answerRef={answerRef}
-          onCitationActivate={onCitationActivate}
-        />
-      ) : null}
-      {message.trust_trail ? (
-        <AssistantTrustInspector
-          trustTrail={message.trust_trail}
-          onCitationActivate={onCitationActivate}
-        />
-      ) : null}
+      <MachineText origin={{ label: "Assistant" }} {...signature}>
+        <ToolActivity toolCalls={toolCalls} />
+        {renderAssistantBody ? (
+          <AssistantEvidenceDisclosure
+            message={message}
+            answerRef={answerRef}
+            onCitationActivate={onCitationActivate}
+          />
+        ) : null}
+        {message.trust_trail ? (
+          <AssistantTrustInspector
+            trustTrail={message.trust_trail}
+            onCitationActivate={onCitationActivate}
+          />
+        ) : null}
+      </MachineText>
       {selection ? (
         <AssistantSelectionPopover
           selection={selection}
@@ -142,7 +156,6 @@ export default function AssistantMessage({
           onSelectFork={onSelectFork}
         />
       ) : null}
-      <span className={styles.timestamp}>{timestampLabel}</span>
     </div>
   );
 }
