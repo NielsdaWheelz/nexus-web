@@ -41,11 +41,8 @@ export interface WorkspaceAttachedSecondaryPaneState {
   parentPrimaryPaneId: string;
   groupId: "reader-tools" | "conversation-context" | "library-tools" | "notes-tools";
   activeSurfaceId:
-    | "reader-highlights"
     | "reader-contents"
-    | "reader-apparatus"
-    | "reader-connections"
-    | "reader-resource-chat"
+    | "reader-evidence"
     | "conversation-context-refs"
     | "conversation-forks"
     | "library-intelligence"

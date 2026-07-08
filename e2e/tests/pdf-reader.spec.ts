@@ -5,7 +5,7 @@ import { openAddContentPanel } from "./add-content";
 import { stateChangingApiHeaders } from "./api";
 import { deleteE2eResource, throwE2eCleanupFailures } from "./cleanup";
 import {
-  openHighlightsPane,
+  openEvidencePane,
   readerSecondaryForActivePane,
 } from "./reader";
 import {
@@ -210,13 +210,10 @@ async function expectHighlightRowToBeExpanded(row: Locator): Promise<void> {
 }
 
 async function expectDocChatPendingContext(page: Page, exact: string): Promise<void> {
-  const secondary = readerSecondaryForActivePane(page);
-  await expect(secondary).toBeVisible({ timeout: 10_000 });
+  // Chat now opens a full conversation pane rather than a secondary surface.
+  await expect(page.getByTestId("conversation-pane")).toBeVisible({ timeout: 10_000 });
   await expect(
-    secondary.getByRole("tab", { name: "Chat" }),
-  ).toHaveAttribute("aria-selected", "true");
-  await expect(
-    secondary.getByLabel("Attached to next message"),
+    page.getByLabel("Attached to next message"),
   ).toContainText(exact);
 }
 
@@ -401,8 +398,8 @@ test.describe("pdf reader", () => {
         timeout: 20_000,
       });
 
-      const highlightsPane = await openHighlightsPane(page);
-      const linkedRow = highlightsPane.getByTestId(
+      const evidencePane = await openEvidencePane(page);
+      const linkedRow = evidencePane.getByTestId(
         `anchored-highlight-row-${createdHighlightId}`,
       );
       await expect(linkedRow).toBeVisible({ timeout: 20_000 });
@@ -520,12 +517,12 @@ test.describe("pdf reader", () => {
 
       await gotoSinglePaneWorkspace(page, deviceId, `/media/${mediaId}`);
       await expect(pageIndicator(page, 1, expectedPageCount)).toBeVisible({ timeout: 20_000 });
-      const highlightsPane = await openHighlightsPane(page);
+      const evidencePane = await openEvidencePane(page);
 
-      const onPageRow = highlightsPane.getByTestId(
+      const onPageRow = evidencePane.getByTestId(
         `anchored-highlight-row-${pageOneHighlightId}`,
       );
-      const offPageRow = highlightsPane.getByTestId(
+      const offPageRow = evidencePane.getByTestId(
         `anchored-highlight-row-${pageTwoHighlightId}`,
       );
       await expect(onPageRow).toBeVisible({ timeout: 10_000 });

@@ -74,29 +74,16 @@ test("@real-media desktop selected quote opens doc chat pending context", async 
   ).toBeVisible({ timeout: 5_000 });
   await actions.getByRole("button", { name: "Quote to new chat" }).click();
 
-  const secondary = readerSecondaryForActivePane(page);
-  await expect(secondary).toBeVisible({ timeout: 10_000 });
-  await expect(
-    secondary.getByRole("tab", { name: "Chat" }),
-  ).toHaveAttribute("aria-selected", "true");
-  await expect(
-    secondary.getByRole("region", { name: "Chat detail" }),
-  ).toBeVisible({ timeout: 10_000 });
-  await expect(secondary.getByLabel("Attached to next message")).toContainText(
+  // Chat now opens a full conversation pane via openInNewPane, not a secondary surface.
+  const chatPaneButton = workspacePaneButton(page, /^chat\b/i);
+  await expect
+    .poll(() => chatPaneButton.count(), { intervals: [250], timeout: 10_000 })
+    .toBeGreaterThan(chatPaneCountBefore);
+  const chatPane = page.getByTestId("conversation-pane");
+  await expect(chatPane).toBeVisible({ timeout: 10_000 });
+  await expect(chatPane.getByLabel("Attached to next message")).toContainText(
     selectedText,
   );
-  await expect(
-    secondary.getByRole("textbox", { name: /ask anything/i }),
-  ).toBeVisible({ timeout: 10_000 });
-  // justify-polling: the UI opens reader doc-chat state asynchronously after
-  // command dispatch; Playwright has no event hook for that pane count. The
-  // cadence is 250ms for up to 10s to catch accidental chat-pane creation.
-  await expect
-    .poll(() => workspacePaneButton(page, /^chat\b/i).count(), {
-      intervals: [250],
-      timeout: 10_000,
-    })
-    .toBe(chatPaneCountBefore);
 
   const afterExacts = await existingHighlightExacts(page, fragmentId);
   expect(afterExacts).toContain(selectedText);

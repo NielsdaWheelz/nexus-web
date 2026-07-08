@@ -48,7 +48,7 @@ function OpenInNewPaneOnMount() {
     runtime.openInNewPane(
       MEDIA_HREF_1,
       "Library Row Title",
-      "reader-highlights",
+      "reader-evidence",
     );
   }, [runtime]);
   return null;
@@ -73,8 +73,8 @@ function SecondaryCommandsOnMount() {
     if (!runtime) {
       throw new Error("Pane runtime missing");
     }
-    runtime.requestSecondarySurface("reader-highlights");
-    runtime.setSecondarySurface("reader-resource-chat");
+    runtime.requestSecondarySurface("reader-evidence");
+    runtime.setSecondarySurface("reader-evidence");
     runtime.closeSecondaryPane();
   }, [runtime]);
   return null;
@@ -293,7 +293,7 @@ describe("PaneRuntimeProvider", () => {
       expect(onOpenInNewPane).toHaveBeenCalledWith(
         MEDIA_HREF_1,
         "Library Row Title",
-        "reader-highlights",
+        "reader-evidence",
       );
     });
   });
@@ -523,7 +523,7 @@ describe("PaneRuntimeProvider", () => {
           id: "secondary-1",
           parentPrimaryPaneId: "pane-1",
           groupId: "reader-tools",
-          activeSurfaceId: "reader-highlights",
+          activeSurfaceId: "reader-evidence",
           widthPx: 360,
           visibility: "visible",
         }}
@@ -538,11 +538,11 @@ describe("PaneRuntimeProvider", () => {
     await waitFor(() => {
       expect(onRequestSecondarySurface).toHaveBeenCalledWith(
         "pane-1",
-        "reader-highlights",
+        "reader-evidence",
       );
       expect(onSetSecondarySurface).toHaveBeenCalledWith(
         "secondary-1",
-        "reader-resource-chat",
+        "reader-evidence",
       );
       expect(onCloseSecondaryPane).toHaveBeenCalledWith("secondary-1");
     });

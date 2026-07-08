@@ -389,7 +389,7 @@ describe("PaneShell", () => {
           id: "secondary-a",
           parentPrimaryPaneId: "pane-a",
           groupId: "reader-tools",
-          activeSurfaceId: "reader-highlights",
+          activeSurfaceId: "reader-evidence",
           widthPx: 360,
           visibility: "visible",
         }}
@@ -401,11 +401,11 @@ describe("PaneShell", () => {
         }}
         secondaryPublication={{
           groupId: "reader-tools",
-          defaultSurfaceId: "reader-highlights",
+          defaultSurfaceId: "reader-evidence",
           surfaces: [
             {
-              id: "reader-highlights",
-              body: <div>Highlights secondary</div>,
+              id: "reader-evidence",
+              body: <div>Evidence secondary</div>,
             },
           ],
         }}
@@ -435,15 +435,15 @@ describe("PaneShell", () => {
     const onResizeSecondaryPane = vi.fn();
     const secondaryPublication = {
       groupId: "reader-tools" as const,
-      defaultSurfaceId: "reader-highlights" as const,
+      defaultSurfaceId: "reader-contents" as const,
       surfaces: [
         {
-          id: "reader-highlights" as const,
-          body: <div>Highlights secondary</div>,
+          id: "reader-contents" as const,
+          body: <div>Contents secondary</div>,
         },
         {
-          id: "reader-resource-chat" as const,
-          body: <div>Resource chat secondary</div>,
+          id: "reader-evidence" as const,
+          body: <div>Evidence secondary</div>,
         },
       ],
     };
@@ -484,7 +484,7 @@ describe("PaneShell", () => {
           id: "secondary-a",
           parentPrimaryPaneId: "pane-a",
           groupId: "reader-tools",
-          activeSurfaceId: "reader-resource-chat",
+          activeSurfaceId: "reader-evidence",
           widthPx: 360,
           visibility: "visible",
         }}
@@ -516,7 +516,7 @@ describe("PaneShell", () => {
           id: "secondary-a",
           parentPrimaryPaneId: "pane-a",
           groupId: "reader-tools",
-          activeSurfaceId: "reader-resource-chat",
+          activeSurfaceId: "reader-evidence",
           widthPx: 360,
           visibility: "collapsed",
         }}

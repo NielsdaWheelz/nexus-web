@@ -1,6 +1,26 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { apiFetch } from "@/lib/api/client";
-import { getReaderDocumentMap } from "./documentMap";
+import { getReaderDocumentMap, readerSurfaceForLens } from "./documentMap";
+
+describe("readerSurfaceForLens", () => {
+  it('maps "contents" to reader-contents', () => {
+    expect(readerSurfaceForLens("contents")).toBe("reader-contents");
+  });
+
+  it.each(["highlights", "citations", "connections"] as const)(
+    'maps "%s" to reader-evidence',
+    (lens) => {
+      expect(readerSurfaceForLens(lens)).toBe("reader-evidence");
+    },
+  );
+
+  it.each(["embeds", "chat"] as const)(
+    'maps "%s" to null (no secondary surface)',
+    (lens) => {
+      expect(readerSurfaceForLens(lens)).toBeNull();
+    },
+  );
+});
 
 vi.mock("@/lib/api/client", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api/client")>(

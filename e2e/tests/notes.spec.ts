@@ -11,7 +11,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { stateChangingApiHeaders } from "./api";
 import { deleteE2eResource, throwE2eCleanupFailures } from "./cleanup";
-import { openHighlightsPane } from "./reader";
+import { openEvidencePane } from "./reader";
 import { selectFreshVisibleTextSnippet } from "./selection";
 import {
   activePaneSelector,
@@ -362,7 +362,7 @@ test.describe("notes cutover", () => {
       const contentPane = activeWorkspacePane(page).locator('div[class*="fragments"]');
       await expect(contentPane).toBeVisible({ timeout: 10_000 });
       await scrollHighlightIntoView(contentPane, highlight.id);
-      const highlightsPane = await openHighlightsPane(page);
+      const highlightsPane = await openEvidencePane(page);
       const linkedRow = highlightsPane.locator(`[data-highlight-id="${highlight.id}"]`).first();
       await expect(linkedRow).toBeVisible({ timeout: 20_000 });
       await expect(linkedRow).toContainText(highlight.exact);
@@ -593,7 +593,7 @@ test.describe("notes cutover", () => {
 
       // AC-2: the sidecar highlight row reflects the saved note.
       await scrollHighlightIntoView(contentPane, created.id);
-      const highlightsPane = await openHighlightsPane(page);
+      const highlightsPane = await openEvidencePane(page);
       const row = highlightsPane.locator(`[data-highlight-id="${created.id}"]`).first();
       await expect(row).toBeVisible({ timeout: 20_000 });
       await expect(row).toContainText(noteText);

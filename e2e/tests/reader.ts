@@ -36,14 +36,14 @@ export async function openReaderSecondary(page: Page): Promise<Locator> {
   return secondary;
 }
 
-export async function openHighlightsPane(page: Page): Promise<Locator> {
+export async function openEvidencePane(page: Page): Promise<Locator> {
   const secondary = await openReaderSecondary(page);
-  const highlightsTab = secondary.getByRole("tab", { name: "Highlights" });
-  if ((await highlightsTab.getAttribute("aria-selected")) !== "true") {
-    await highlightsTab.click();
+  const evidenceTab = secondary.getByRole("tab", { name: "Evidence" });
+  if ((await evidenceTab.getAttribute("aria-selected")) !== "true") {
+    await evidenceTab.click();
   }
-  await expect(highlightsTab).toHaveAttribute("aria-selected", "true");
-  return activeWorkspacePane(page).getByTestId("anchored-highlights-container").first();
+  await expect(evidenceTab).toHaveAttribute("aria-selected", "true");
+  return activeWorkspacePane(page).getByTestId("evidence-pane-surface").first();
 }
 
 export async function openMediaInSinglePaneWorkspace(

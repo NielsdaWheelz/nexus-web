@@ -16,9 +16,8 @@ import {
   type MouseEvent,
   type UIEvent,
 } from "react";
-import ResourceChatDetail from "@/components/chat/ResourceChatDetail";
-import ResourceChatTab from "@/components/chat/ResourceChatTab";
-import resourceChatStyles from "@/components/chat/ResourceChatTab.module.css";
+import { startResourceChat } from "@/lib/resources/resourceChat";
+import EvidencePaneSurface from "@/components/reader/document-map/EvidencePaneSurface";
 import type {
   MediaReaderTarget,
   ReaderSourceTarget,
@@ -30,15 +29,12 @@ import {
   type ResourceActivation,
 } from "@/lib/resources/activation";
 import { isMediaRetrievalLocator, isRetrievalLocator } from "@/lib/api/sse/locators";
-import ReaderDocumentMapHighlightsLens from "@/components/reader/document-map/ReaderDocumentMapHighlightsLens";
-import ReaderDocumentMapConnectionsLens from "@/components/reader/document-map/ReaderDocumentMapConnectionsLens";
 import ReaderDocumentMapOverviewRail from "@/components/reader/ReaderDocumentMapOverviewRail";
 import {
   toPdfAnchoredReaderRow,
   toTextAnchoredReaderRow,
 } from "@/components/reader/toAnchoredHighlightRow";
 import type { AnchoredReaderRow } from "@/components/reader/useAnchoredReaderProjection";
-import ReaderDocumentMapCitationsLens from "@/components/reader/document-map/ReaderDocumentMapCitationsLens";
 import { DOCUMENT_MAP_OVERVIEW_RAIL_WIDTH_PX } from "@/lib/workspace/fixedPrimaryChrome";
 import PdfReader, {
   type PdfHighlightNavigationRequest,
@@ -85,7 +81,6 @@ import {
 import { escapeAttrValue } from "@/lib/highlights/escapeAttrValue";
 import { parseRawPdfQuads } from "@/lib/highlights/pdfTypes";
 import { buildQuoteSelector } from "@/lib/highlights/quoteText";
-import type { ReaderSelectionInput } from "@/lib/api/sse/requests";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
 import { selectionToOffsets } from "@/lib/highlights/selectionToOffsets";
 import {
@@ -108,8 +103,8 @@ import ActionMenu, { type ActionMenuOption } from "@/components/ui/ActionMenu";
 import LibraryMembershipPanel from "@/components/LibraryMembershipPanel";
 import {
   getReaderDocumentMap,
+  readerSurfaceForLens,
   type ReaderDocumentMap,
-  type ReaderDocumentMapEmbedItem,
   type ReaderDocumentMapLensId,
   type ReaderConnectionRow,
 } from "@/lib/reader/documentMap";
@@ -385,22 +380,6 @@ const READER_APPARATUS_HOVER_CLASS = "reader-apparatus-hover";
 const READER_APPARATUS_PULSE_CLASS = "reader-apparatus-pulse";
 const READER_APPARATUS_PULSE_MS = 1200;
 
-function readerSurfaceForLens(lensId: ReaderDocumentMapLensId) {
-  switch (lensId) {
-    case "contents":
-      return "reader-contents";
-    case "embeds":
-      return "reader-embeds";
-    case "highlights":
-      return "reader-highlights";
-    case "citations":
-      return "reader-apparatus";
-    case "connections":
-      return "reader-connections";
-    case "chat":
-      return "reader-resource-chat";
-  }
-}
 
 interface ReaderApparatusPreviewState {
   itemId: string;
@@ -897,23 +876,6 @@ export default function MediaPaneBody() {
   const [selection, setSelection] = useState<SelectionState | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [isMismatchDisabled, setIsMismatchDisabled] = useState(false);
-  // A highlight URI parked for "quote to existing chat": the next chat the user
-  // picks (or creates) in the resource-chat list gets this attached as context.
-  const [pendingQuoteUri, setPendingQuoteUri] = useState<string | null>(null);
-  const [pendingQuoteLabel, setPendingQuoteLabel] = useState<string | null>(
-    null,
-  );
-  const [pendingQuoteSelection, setPendingQuoteSelection] =
-    useState<ReaderSelectionInput | null>(null);
-  // When set, the resource-chat secondary surface shows this conversation inline (instead of
-  // the chat list), with a link out to the full conversation pane.
-  const [secondaryChat, setSecondaryChat] = useState<{
-    conversationId: string | null;
-    quoteUri: string | null;
-    quoteLabel: string | null;
-    readerSelection: ReaderSelectionInput | null;
-  } | null>(null);
-  const resourceChatSurfaceActivatedRef = useRef(false);
   const appliedRequestedReaderLocRef = useRef<string | null>(null);
   const selectionSnapshotRef = useRef<SelectionState | null>(null);
   const selectionSnapshotKeyRef = useRef<string | null>(null);
@@ -1030,7 +992,6 @@ export default function MediaPaneBody() {
     : false;
   const readerLayoutKey = `${readerProfile.font_family}:${readerProfile.font_size_px}:${readerProfile.line_height}:${readerProfile.column_width_ch}`;
   const focusModeEnabled = readerProfile.focus_mode !== "off";
-  const showHighlightsPane = canRead && !focusModeEnabled;
   const playbackSource = media?.playback_source ?? null;
   const activeTranscriptFragment = useMemo(() => {
     if (!isTranscriptMedia) {
@@ -1177,15 +1138,6 @@ export default function MediaPaneBody() {
         : [],
     [readerDocumentMapResource],
   );
-  const documentMapEmbedItems = useMemo(
-    () =>
-      readerDocumentMapResource.status === "ready"
-        ? readerDocumentMapResource.data.items.filter(
-            (item): item is ReaderDocumentMapEmbedItem => item.kind === "document_embed",
-          )
-        : [],
-    [readerDocumentMapResource],
-  );
   const documentMapConnectionsError =
     readerDocumentMapResource.status === "error"
       ? toFeedback(readerDocumentMapResource.error, {
@@ -1263,26 +1215,6 @@ export default function MediaPaneBody() {
     return null;
   }, [activeEpubSection?.anchor_id, isEpub, isPdf]);
 
-  const currentReaderApparatusRows = useMemo(
-    () =>
-      readerApparatusRows.filter((row) => {
-        const locator = row.marker.locator ?? row.target?.locator;
-        if (!locator) {
-          return false;
-        }
-        if (
-          locator.type === "web_text_offsets" ||
-          locator.type === "epub_fragment_offsets"
-        ) {
-          return locator.fragment_id === activeContent?.fragmentId;
-        }
-        return locator.type === "pdf_page_geometry";
-      }),
-    [activeContent?.fragmentId, readerApparatusRows],
-  );
-  const showApparatusPane =
-    readerApparatus?.capabilities.has_sidecar_items === true &&
-    readerApparatusRows.length > 0;
   const readerApparatusRowByItemId = useMemo(() => {
     const rowsByItemId = new Map<string, ReaderApparatusRow>();
     for (const row of readerApparatusRows) {
@@ -3348,7 +3280,7 @@ export default function MediaPaneBody() {
     (itemId: string) => {
       const rowId = readerApparatusRowByItemId.get(itemId)?.id ?? itemId;
       setFocusedApparatusItemId(rowId);
-      requestSecondarySurface?.("reader-apparatus");
+      requestSecondarySurface?.("reader-evidence");
       focusReaderApparatusInContent(itemId, false);
     },
     [
@@ -3588,119 +3520,13 @@ export default function MediaPaneBody() {
   );
 
   // ==========================================================================
-  // Chat secondary
+  // Chat verb (opens a full conversation pane)
   // ==========================================================================
 
-  const revealResourceChatSecondary = useCallback(() => {
-    requestSecondarySurface?.("reader-resource-chat");
-  }, [requestSecondarySurface]);
-
-  // Shift+G / button: reveal the resource-chat list, clearing any pending quote or open chat.
-  const openResourceChat = useCallback(() => {
-    setPendingQuoteUri(null);
-    setPendingQuoteLabel(null);
-    setPendingQuoteSelection(null);
-    setSecondaryChat(null);
-    revealResourceChatSecondary();
-  }, [revealResourceChatSecondary]);
-
-  const quoteLabelForHighlightId = useCallback(
-    (highlightId: string): string => {
-      const highlight =
-        mediaHighlights.find((item) => item.id === highlightId) ??
-        highlights.find((item) => item.id === highlightId);
-      if (!highlight) return "Selected quote";
-      const exact = highlight.exact.trim();
-      return exact ? highlight.exact : "Selected quote";
-    },
-    [highlights, mediaHighlights],
-  );
-
-  // Derive the bind-only reader_selection turn anchor from a highlight: its
-  // exact/prefix/suffix passage plus this media + highlight id. The quote is
-  // always a real highlight (quote-to-chat is highlight-first).
-  const readerSelectionForHighlight = useCallback(
-    (highlight: MediaHighlight): ReaderSelectionInput | null => {
-      if (!highlight.exact.trim()) return null;
-      return {
-        ...buildQuoteSelector(highlight),
-        media_id: id,
-        highlight_id: highlight.id,
-      };
-    },
-    [id],
-  );
-
-  const readerSelectionForHighlightId = useCallback(
-    (highlightId: string): ReaderSelectionInput | null => {
-      const highlight =
-        mediaHighlights.find((item) => item.id === highlightId) ??
-        highlights.find((item) => item.id === highlightId);
-      if (!highlight) return null;
-      return readerSelectionForHighlight(highlight);
-    },
-    [highlights, mediaHighlights, readerSelectionForHighlight],
-  );
-
-  // Open an existing conversation inline in the secondary, carrying any pending quote.
-  const openChatInSecondary = useCallback(
-    (conversationId: string) => {
-      const highlightId = pendingQuoteUri?.startsWith("highlight:")
-        ? pendingQuoteUri.slice("highlight:".length)
-        : null;
-      setSecondaryChat({
-        conversationId,
-        quoteUri: pendingQuoteUri,
-        quoteLabel: highlightId
-          ? (pendingQuoteLabel ?? quoteLabelForHighlightId(highlightId))
-          : null,
-        readerSelection: highlightId
-          ? (pendingQuoteSelection ??
-            readerSelectionForHighlightId(highlightId))
-          : null,
-      });
-      setPendingQuoteUri(null);
-      setPendingQuoteLabel(null);
-      setPendingQuoteSelection(null);
-      revealResourceChatSecondary();
-    },
-    [
-      pendingQuoteUri,
-      pendingQuoteLabel,
-      pendingQuoteSelection,
-      quoteLabelForHighlightId,
-      readerSelectionForHighlightId,
-      revealResourceChatSecondary,
-    ],
-  );
-
-  // Start a new (unsent) conversation inline in the secondary, carrying any pending quote.
-  const startChatInSecondary = useCallback(() => {
-    const highlightId = pendingQuoteUri?.startsWith("highlight:")
-      ? pendingQuoteUri.slice("highlight:".length)
-      : null;
-    setSecondaryChat({
-      conversationId: null,
-      quoteUri: pendingQuoteUri,
-      quoteLabel: highlightId
-        ? (pendingQuoteLabel ?? quoteLabelForHighlightId(highlightId))
-        : null,
-      readerSelection: highlightId
-        ? (pendingQuoteSelection ?? readerSelectionForHighlightId(highlightId))
-        : null,
-    });
-    setPendingQuoteUri(null);
-    setPendingQuoteLabel(null);
-    setPendingQuoteSelection(null);
-    revealResourceChatSecondary();
-  }, [
-    pendingQuoteUri,
-    pendingQuoteLabel,
-    pendingQuoteSelection,
-    quoteLabelForHighlightId,
-    readerSelectionForHighlightId,
-    revealResourceChatSecondary,
-  ]);
+  const openChatForMedia = useCallback(async () => {
+    const conversationId = await startResourceChat(`media:${id}`);
+    openInNewPane?.(`/conversations/${conversationId}`, "Chat");
+  }, [id, openInNewPane]);
 
   const handleOpenConversation = useCallback(
     (conversationId: string, title: string) => {
@@ -3786,7 +3612,7 @@ export default function MediaPaneBody() {
         return;
       }
       setFocusedApparatusItemId(row.id);
-      requestSecondarySurface?.("reader-apparatus");
+      requestSecondarySurface?.("reader-evidence");
 
       const activationItem = presentation.canActivateMarker
         ? row.marker
@@ -4002,15 +3828,8 @@ export default function MediaPaneBody() {
     secondaryPane.visibility === "visible"
       ? secondaryPane.activeSurfaceId
       : null;
-  const defaultDocumentMapSurface = contentsAvailable
-    ? "reader-contents"
-    : documentMapEmbedItems.length > 0
-      ? "reader-embeds"
-    : showHighlightsPane
-      ? "reader-highlights"
-      : showApparatusPane
-        ? "reader-apparatus"
-        : "reader-resource-chat";
+  const defaultDocumentMapSurface: "reader-contents" | "reader-evidence" =
+    contentsAvailable ? "reader-contents" : "reader-evidence";
   const documentMapSurfaceActive = activeReaderSecondarySurface !== null;
   const openDocumentMap = useCallback(() => {
     requestSecondarySurface?.(defaultDocumentMapSurface);
@@ -4306,118 +4125,22 @@ export default function MediaPaneBody() {
     [handleDocumentScroll],
   );
 
-  const handleOpenFullChat = useCallback(
-    (conversationId: string) => {
-      const route = `/conversations/${conversationId}`;
-      openInNewPane?.(route, "Chat");
+  const quoteHighlightToChat = useCallback(
+    async (highlightId: string) => {
+      const conversationId = await startResourceChat(`highlight:${highlightId}`);
+      openInNewPane?.(`/conversations/${conversationId}`, "Chat");
     },
     [openInNewPane],
   );
 
-  // Quote a highlight into a brand-new (unsent) conversation in the secondary. The
-  // conversation and context ref are created when the user sends, not now.
-  const quoteHighlightToNewChat = useCallback(
-    (highlightId: string, highlightOverride?: MediaHighlight) => {
-      setSecondaryChat({
-        conversationId: null,
-        quoteUri: `highlight:${highlightId}`,
-        quoteLabel: highlightOverride?.exact.trim()
-          ? highlightOverride.exact
-          : quoteLabelForHighlightId(highlightId),
-        readerSelection: highlightOverride
-          ? readerSelectionForHighlight(highlightOverride)
-          : readerSelectionForHighlightId(highlightId),
-      });
-      revealResourceChatSecondary();
+  const handleDismissSynapse = useCallback(
+    async (edgeId: string) => {
+      const { dismissSynapseEdge } = await import("@/lib/synapse");
+      await dismissSynapseEdge(edgeId);
+      setDocumentMapVersion((v) => v + 1);
     },
-    [
-      quoteLabelForHighlightId,
-      readerSelectionForHighlight,
-      readerSelectionForHighlightId,
-      revealResourceChatSecondary,
-    ],
+    [],
   );
-
-  // Quote a highlight into an existing chat: park the URI and reveal the
-  // resource-chat list so the user can pick which conversation to add it to.
-  const quoteHighlightToExtantChat = useCallback(
-    (highlightId: string, highlightOverride?: MediaHighlight) => {
-      setPendingQuoteUri(`highlight:${highlightId}`);
-      setPendingQuoteLabel(
-        highlightOverride?.exact.trim()
-          ? highlightOverride.exact
-          : quoteLabelForHighlightId(highlightId),
-      );
-      setPendingQuoteSelection(
-        highlightOverride
-          ? readerSelectionForHighlight(highlightOverride)
-          : readerSelectionForHighlightId(highlightId),
-      );
-      revealResourceChatSecondary();
-    },
-    [
-      quoteLabelForHighlightId,
-      readerSelectionForHighlight,
-      readerSelectionForHighlightId,
-      revealResourceChatSecondary,
-    ],
-  );
-
-  // Drop parked resource-chat state only after the resource-chat secondary has actually
-  // been visible once. Surface activation is host-owned and asynchronous; clearing
-  // immediately after a request would discard a pending quote before the
-  // requested secondary can render it.
-  useEffect(() => {
-    const resourceChatVisible = activeReaderSecondarySurface === "reader-resource-chat";
-    if (resourceChatVisible) {
-      resourceChatSurfaceActivatedRef.current = true;
-      return;
-    }
-
-    const hasResourceChatDraft = pendingQuoteUri !== null || secondaryChat !== null;
-    if (!hasResourceChatDraft) {
-      resourceChatSurfaceActivatedRef.current = false;
-      return;
-    }
-
-    if (!resourceChatSurfaceActivatedRef.current) {
-      return;
-    }
-
-    resourceChatSurfaceActivatedRef.current = false;
-    setPendingQuoteUri(null);
-    setPendingQuoteLabel(null);
-    setPendingQuoteSelection(null);
-    setSecondaryChat(null);
-  }, [activeReaderSecondarySurface, pendingQuoteUri, secondaryChat]);
-
-  useEffect(() => {
-    const handleChatShortcut = (event: KeyboardEvent) => {
-      if (
-        event.defaultPrevented ||
-        event.metaKey ||
-        event.ctrlKey ||
-        event.altKey
-      ) {
-        return;
-      }
-      if (event.key.toLowerCase() !== "g") {
-        return;
-      }
-      if (isEditableTarget(event.target)) {
-        return;
-      }
-      if (!event.shiftKey) {
-        return;
-      }
-
-      event.preventDefault();
-      openResourceChat();
-    };
-
-    document.addEventListener("keydown", handleChatShortcut);
-    return () => document.removeEventListener("keydown", handleChatShortcut);
-  }, [openResourceChat]);
 
   const isReflowableReader = canRead && !isPdf;
 
@@ -4446,7 +4169,7 @@ export default function MediaPaneBody() {
         : undefined,
       onOpenChat: media
         ? () => {
-            openResourceChat();
+            void openChatForMedia();
           }
         : undefined,
       onManageLibraries: ({ triggerEl }) => {
@@ -4519,7 +4242,7 @@ export default function MediaPaneBody() {
     isReflowableReader,
     loadLibraryPickerLibraries,
     media,
-    openResourceChat,
+    openChatForMedia,
     openInNewPane,
     readerProfile.theme,
     refreshSourceBusy,
@@ -4590,6 +4313,79 @@ export default function MediaPaneBody() {
     documentMapSurfaceActive,
     requestSecondarySurface,
   ]);
+
+  // G-chord keyboard verbs:
+  //   G (bare)  → toggle Document Map (defaultDocumentMapSurface)
+  //   Shift+G   → chat (opens new pane)
+  //   G c       → chat (opens new pane)
+  //   G e       → Evidence surface
+  useEffect(() => {
+    let chordPendingG = false;
+    let chordTimeoutId: number | null = null;
+
+    const clearChord = () => {
+      chordPendingG = false;
+      if (chordTimeoutId !== null) {
+        window.clearTimeout(chordTimeoutId);
+        chordTimeoutId = null;
+      }
+    };
+
+    const handleGChord = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) {
+        if (chordPendingG) clearChord();
+        return;
+      }
+      if (isEditableTarget(event.target)) {
+        if (chordPendingG) clearChord();
+        return;
+      }
+
+      // Shift+G → chat (legacy shortcut, kept for discoverability)
+      if (event.key.toLowerCase() === "g" && event.shiftKey) {
+        clearChord();
+        event.preventDefault();
+        void openChatForMedia();
+        return;
+      }
+
+      // Bare G → start chord; fire toggleDocumentMap after timeout if no follow-up
+      if (event.key.toLowerCase() === "g" && !event.shiftKey) {
+        event.preventDefault();
+        clearChord();
+        chordPendingG = true;
+        chordTimeoutId = window.setTimeout(() => {
+          chordPendingG = false;
+          chordTimeoutId = null;
+          toggleDocumentMap();
+        }, 500);
+        return;
+      }
+
+      // Chord follow-up keys (only when G is pending)
+      if (chordPendingG) {
+        if (event.key === "c") {
+          event.preventDefault();
+          clearChord();
+          void openChatForMedia();
+        } else if (event.key === "e") {
+          event.preventDefault();
+          clearChord();
+          requestSecondarySurface?.("reader-evidence");
+        } else {
+          // Non-chord key: execute bare-G default immediately and pass through
+          clearChord();
+          toggleDocumentMap();
+        }
+      }
+    };
+
+    document.addEventListener("keydown", handleGChord);
+    return () => {
+      clearChord();
+      document.removeEventListener("keydown", handleGChord);
+    };
+  }, [openChatForMedia, requestSecondarySurface, toggleDocumentMap]);
 
   const documentMapToolbarButton = useMemo(
     () =>
@@ -5186,7 +4982,8 @@ export default function MediaPaneBody() {
 
   const activateDocumentMapMarker = useCallback(
     (itemId: string, lensId: ReaderDocumentMapLensId) => {
-      requestSecondarySurface?.(readerSurfaceForLens(lensId));
+      const surface = readerSurfaceForLens(lensId);
+      if (surface) requestSecondarySurface?.(surface);
       if (lensId === "contents") {
         const sectionId = itemId.startsWith("section:")
           ? itemId.slice("section:".length)
@@ -5271,268 +5068,18 @@ export default function MediaPaneBody() {
     ],
   );
 
-  const anchoredHighlightsMeasureKey = useMemo(
-    () =>
-      [
-        media?.kind ?? "",
-        activeContent?.fragmentId ?? "",
-        activeEpubSection?.section_id ?? "",
-        activeTranscriptFragment?.id ?? "",
-        renderedHtml,
-        readerProfile.font_family,
-        readerProfile.font_size_px,
-        readerProfile.line_height,
-        readerProfile.column_width_ch,
-        readerProfile.theme,
-        readerProfile.hyphenation,
-        pdfRefreshToken,
-        pdfHighlightsPaneState.version,
-        pdfControlsState?.pageNumber ?? "",
-        pdfControlsState?.zoomPercent ?? "",
-        pdfControlsState?.pageRenderEpoch ?? "",
-        anchoredHighlights
-          .map(
-            (highlight) =>
-              `${highlight.id}:${highlight.updated_at}:${highlight.color}:${
-                highlight.linked_note_blocks?.length ?? 0
-              }:${highlight.linked_conversations?.length ?? 0}:${
-                highlight.stable_order_key ?? ""
-              }`,
-          )
-          .join("|"),
-      ].join("||"),
-    [
-      activeContent?.fragmentId,
-      activeEpubSection?.section_id,
-      activeTranscriptFragment?.id,
-      anchoredHighlights,
-      media?.kind,
-      pdfControlsState?.pageNumber,
-      pdfControlsState?.pageRenderEpoch,
-      pdfControlsState?.zoomPercent,
-      pdfHighlightsPaneState.version,
-      pdfRefreshToken,
-      readerProfile.column_width_ch,
-      readerProfile.font_family,
-      readerProfile.font_size_px,
-      readerProfile.hyphenation,
-      readerProfile.line_height,
-      readerProfile.theme,
-      renderedHtml,
-    ],
-  );
 
-  const readerApparatusMeasureKey = useMemo(
-    () =>
-      [
-        media?.kind ?? "",
-        activeContent?.fragmentId ?? "",
-        activeEpubSection?.section_id ?? "",
-        renderedHtml,
-        readerProfile.font_family,
-        readerProfile.font_size_px,
-        readerProfile.line_height,
-        readerProfile.column_width_ch,
-        readerProfile.theme,
-        readerProfile.hyphenation,
-        pdfControlsState?.pageNumber ?? "",
-        pdfControlsState?.zoomPercent ?? "",
-        pdfControlsState?.pageRenderEpoch ?? "",
-        currentReaderApparatusRows
-          .map(
-            (row) =>
-              `${row.id}:${row.marker.locator_status}:${row.target?.locator_status ?? ""}:${row.marker.confidence}:${row.sort_key}`,
-          )
-          .join("|"),
-      ].join("||"),
-    [
-      activeContent?.fragmentId,
-      activeEpubSection?.section_id,
-      currentReaderApparatusRows,
-      media?.kind,
-      pdfControlsState?.pageNumber,
-      pdfControlsState?.pageRenderEpoch,
-      pdfControlsState?.zoomPercent,
-      readerProfile.column_width_ch,
-      readerProfile.font_family,
-      readerProfile.font_size_px,
-      readerProfile.hyphenation,
-      readerProfile.line_height,
-      readerProfile.theme,
-      renderedHtml,
-    ],
-  );
-
-  const readerApparatusSecondaryBody = useMemo(
-    () =>
-      showApparatusPane ? (
-        <ReaderDocumentMapCitationsLens
-          rows={readerApparatusRows}
-          projectRows={currentReaderApparatusRows}
-          capabilities={readerApparatus.capabilities}
-          contentRef={isPdf ? pdfContentRef : contentRef}
-          activeItemId={focusedApparatusItemId}
-          hoveredItemId={hoveredApparatusItemId}
-          onActivateRow={handleReaderApparatusRowActivate}
-          onHoverItem={setHoveredApparatusItemId}
-          measureKey={readerApparatusMeasureKey}
-          isMobile={isMobileViewport}
-          pdfActivePage={isPdf ? (pdfControlsState?.pageNumber ?? null) : null}
-        />
-      ) : null,
-    [
-      contentRef,
-      currentReaderApparatusRows,
-      focusedApparatusItemId,
-      handleReaderApparatusRowActivate,
-      hoveredApparatusItemId,
-      isMobileViewport,
-      isPdf,
-      pdfContentRef,
-      pdfControlsState?.pageNumber,
-      readerApparatus,
-      readerApparatusRows,
-      readerApparatusMeasureKey,
-      showApparatusPane,
-    ],
-  );
-
-  const highlightsSecondaryBody = useMemo(
-    () =>
-      showHighlightsPane ? (
-        <ReaderDocumentMapHighlightsLens
-          title="Visible highlights"
-          description={
-            isPdf
-              ? "Showing highlights visible in the PDF viewport."
-              : isEpub
-                ? "Showing highlights visible in the active section viewport."
-                : "Showing highlights visible in the reader viewport."
-          }
-          pdfActivePage={isPdf ? (pdfControlsState?.pageNumber ?? null) : null}
-          highlights={anchoredHighlights}
-          contentRef={isPdf ? pdfContentRef : contentRef}
-          focusedId={focusState.focusedId}
-          onFocusHighlight={focusHighlight}
-          hoveredId={hoveredHighlightId}
-          onHoverHighlight={setHoveredHighlightId}
-          measureKey={anchoredHighlightsMeasureKey}
-          isMobile={isMobileViewport}
-          isReflowable={!isPdf}
-          isEditingBounds={focusState.editingBounds}
-          canQuoteToChat={media?.capabilities?.can_quote ?? false}
-          onQuoteToNewChat={quoteHighlightToNewChat}
-          onQuoteToExtantChat={quoteHighlightToExtantChat}
-          onColorChange={handleColorChange}
-          onDelete={handleDelete}
-          onStartEditBounds={startEditBounds}
-          onCancelEditBounds={cancelEditBounds}
-          onNoteSave={handleNoteSave}
-          onNoteDelete={handleNoteDelete}
-          onOpenConversation={handleOpenConversation}
-          onOpenNoteLink={handleOpenNoteLink}
-        />
-      ) : null,
-    [
-      anchoredHighlights,
-      anchoredHighlightsMeasureKey,
-      cancelEditBounds,
-      contentRef,
-      focusHighlight,
-      focusState.editingBounds,
-      focusState.focusedId,
-      hoveredHighlightId,
-      handleColorChange,
-      handleDelete,
-      handleNoteDelete,
-      handleNoteSave,
-      handleOpenConversation,
-      handleOpenNoteLink,
-      isEpub,
-      isMobileViewport,
-      isPdf,
-      media?.capabilities?.can_quote,
-      pdfContentRef,
-      pdfControlsState?.pageNumber,
-      quoteHighlightToExtantChat,
-      quoteHighlightToNewChat,
-      showHighlightsPane,
-      startEditBounds,
-    ],
-  );
-
-  const readerEmbedsSecondaryBody = useMemo(() => {
-    if (readerDocumentMapResource.status === "loading") {
-      return <div className={styles.readerSecondaryEmpty}>Loading embeds...</div>;
-    }
-    if (readerDocumentMapResource.status === "error") {
-      return <div className={styles.readerSecondaryEmpty}>Embeds are unavailable.</div>;
-    }
-    if (documentMapEmbedItems.length === 0) {
-      return <div className={styles.readerSecondaryEmpty}>No embeds in this document.</div>;
-    }
-    return (
-      <div className={styles.readerEmbedsList} role="list" aria-label="Embeds">
-        {documentMapEmbedItems.map((item) => (
-          <div className={styles.readerEmbedItem} role="listitem" key={item.id}>
-            <div className={styles.readerEmbedMeta}>
-              {item.provider} · {item.resolution_status}
-            </div>
-            <div className={styles.readerEmbedTitle}>{item.title}</div>
-            {item.excerpt ? (
-              <div className={styles.readerEmbedExcerpt}>{item.excerpt}</div>
-            ) : null}
-            {item.actions.includes("activate") ? (
-              <button
-                type="button"
-                className={styles.readerEmbedAction}
-                aria-label={`Show ${item.title} in reader`}
-                onClick={() => activateDocumentMapMarker(item.id, "embeds")}
-              >
-                Show in reader
-              </button>
-            ) : null}
-          </div>
-        ))}
-      </div>
-    );
-  }, [activateDocumentMapMarker, documentMapEmbedItems, readerDocumentMapResource.status]);
 
   const documentMapConnectionsMeasureKey = useMemo(
     () =>
       [
         id,
+        anchoredHighlights.map((h) => `${h.id}:${h.stable_order_key ?? ""}`).join("|"),
+        readerApparatusRows.map((r) => `${r.id}:${r.sort_key}`).join("|"),
         readerConnectionRows.map((row) => row.id).join("|"),
         isPdf ? (pdfControlsState?.pageRenderEpoch ?? "") : renderedHtml,
       ].join("||"),
-    [id, isPdf, pdfControlsState?.pageRenderEpoch, readerConnectionRows, renderedHtml],
-  );
-
-  const documentMapConnectionsSecondaryBody = useMemo(
-    () => (
-      <ReaderDocumentMapConnectionsLens
-        contentRef={isPdf ? pdfContentRef : contentRef}
-        rows={readerConnectionRows}
-        loading={readerDocumentMapResource.status === "loading"}
-        error={documentMapConnectionsError}
-        onOpenSource={handleOpenReaderConnectionSource}
-        onActivateTarget={handleActivateReaderConnectionTarget}
-        measureKey={documentMapConnectionsMeasureKey}
-        isMobile={isMobileViewport}
-      />
-    ),
-    [
-      contentRef,
-      handleActivateReaderConnectionTarget,
-      handleOpenReaderConnectionSource,
-      isMobileViewport,
-      isPdf,
-      pdfContentRef,
-      readerConnectionRows,
-      documentMapConnectionsError,
-      documentMapConnectionsMeasureKey,
-      readerDocumentMapResource.status,
-    ],
+    [id, anchoredHighlights, readerApparatusRows, readerConnectionRows, isPdf, pdfControlsState?.pageRenderEpoch, renderedHtml],
   );
 
   const readerSecondarySurfaces = useMemo<
@@ -5542,119 +5089,82 @@ export default function MediaPaneBody() {
     if (contentsAvailable) {
       surfaces.push({ id: "reader-contents", body: contentsSurfaceBody });
     }
-    if (showHighlightsPane) {
-      surfaces.push({
-        id: "reader-highlights",
-        body: (
-          <div className={styles.readerSecondaryBody}>
-            {highlightsSecondaryBody ?? (
-              <div className={styles.readerSecondaryEmpty}>
-                Highlights are unavailable for this document.
-              </div>
-            )}
-          </div>
-        ),
-      });
-    }
-    if (documentMapEmbedItems.length > 0) {
-      surfaces.push({
-        id: "reader-embeds",
-        body: <div className={styles.readerSecondaryBody}>{readerEmbedsSecondaryBody}</div>,
-      });
-    }
-    if (showApparatusPane) {
-      surfaces.push({
-        id: "reader-apparatus",
-        body: (
-          <div className={styles.readerSecondaryBody}>
-            {readerApparatusSecondaryBody ?? (
-              <div className={styles.readerSecondaryEmpty}>
-                Citations are unavailable for this context.
-              </div>
-            )}
-          </div>
-        ),
-      });
-    }
     surfaces.push({
-      id: "reader-connections",
+      id: "reader-evidence",
       body: (
         <div className={styles.readerSecondaryBody}>
-          {documentMapConnectionsSecondaryBody}
-        </div>
-      ),
-    });
-    surfaces.push({
-      id: "reader-resource-chat",
-      body: (
-        <div className={styles.readerSecondaryBody}>
-          {secondaryChat ? (
-            <ResourceChatDetail
-              key={`${secondaryChat.conversationId ?? "new"}:${secondaryChat.quoteUri ?? ""}`}
-              conversationId={secondaryChat.conversationId}
-              subjectRef={`media:${id}`}
-              pendingQuoteUri={secondaryChat.quoteUri}
-              pendingQuoteLabel={secondaryChat.quoteLabel}
-              pendingReaderSelection={secondaryChat.readerSelection}
-              onBack={() => setSecondaryChat(null)}
-              onOpenFullChat={(cid) => {
-                setSecondaryChat(null);
-                handleOpenFullChat(cid);
-              }}
-              onReaderSourceActivate={handleReaderSourceActivate}
-            />
-          ) : (
-            <ResourceChatTab
-              className={resourceChatStyles.tab}
-              density="compact"
-              emptyActionLabel="Start new chat about this resource"
-              emptyMessage="No chats use this resource as context yet."
-              listClassName={resourceChatStyles.scrollArea}
-              resourceUri={`media:${id}`}
-              onOpenChat={openChatInSecondary}
-              onStartNewChat={startChatInSecondary}
-            >
-              {pendingQuoteUri ? (
-                <div className={resourceChatStyles.quoteBanner}>
-                  <span className={resourceChatStyles.quoteBannerText}>
-                    Choose a chat to add your quote, or start a new one.
-                  </span>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => {
-                      setPendingQuoteUri(null);
-                      setPendingQuoteLabel(null);
-                      setPendingQuoteSelection(null);
-                    }}
-                  >
-                    Cancel
-                  </Button>
-                </div>
-              ) : null}
-            </ResourceChatTab>
-          )}
+          <EvidencePaneSurface
+            contentRef={isPdf ? pdfContentRef : contentRef}
+            highlights={anchoredHighlights}
+            readerApparatusRows={readerApparatusRows}
+            connectionRows={readerConnectionRows}
+            readerApparatus={readerApparatus}
+            focusedApparatusItemId={focusedApparatusItemId}
+            focusedHighlightId={focusState.focusedId}
+            isReflowable={!isPdf}
+            isEditingBounds={focusState.editingBounds}
+            hoveredId={hoveredHighlightId}
+            canQuoteToChat={media?.capabilities?.can_quote ?? false}
+            loading={readerDocumentMapResource.status === "loading"}
+            error={documentMapConnectionsError}
+            measureKey={documentMapConnectionsMeasureKey}
+            layoutVersion={pdfHighlightsPaneState.version}
+            isMobile={isMobileViewport}
+            onHighlightClick={focusHighlight}
+            onFocusHighlight={focusHighlight}
+            onHoverHighlight={setHoveredHighlightId}
+            onQuoteToChat={quoteHighlightToChat}
+            onColorChange={handleColorChange}
+            onDelete={handleDelete}
+            onStartEditBounds={startEditBounds}
+            onCancelEditBounds={cancelEditBounds}
+            onNoteSave={handleNoteSave}
+            onNoteDelete={handleNoteDelete}
+            onOpenConversation={handleOpenConversation}
+            onOpenNoteLink={handleOpenNoteLink}
+            onApparatusRowActivate={handleReaderApparatusRowActivate}
+            onOpenConnectionSource={handleOpenReaderConnectionSource}
+            onActivateConnectionTarget={handleActivateReaderConnectionTarget}
+            onDismissSynapse={handleDismissSynapse}
+          />
         </div>
       ),
     });
     return surfaces;
   }, [
+    anchoredHighlights,
+    cancelEditBounds,
     contentsAvailable,
+    contentRef,
     contentsSurfaceBody,
-    documentMapEmbedItems.length,
-    handleOpenFullChat,
-    handleReaderSourceActivate,
-    highlightsSecondaryBody,
-    id,
-    openChatInSecondary,
-    pendingQuoteUri,
-    readerApparatusSecondaryBody,
-    documentMapConnectionsSecondaryBody,
-    readerEmbedsSecondaryBody,
-    secondaryChat,
-    showApparatusPane,
-    showHighlightsPane,
-    startChatInSecondary,
+    documentMapConnectionsError,
+    documentMapConnectionsMeasureKey,
+    focusedApparatusItemId,
+    focusHighlight,
+    focusState.editingBounds,
+    focusState.focusedId,
+    handleActivateReaderConnectionTarget,
+    handleColorChange,
+    handleDelete,
+    handleDismissSynapse,
+    handleNoteDelete,
+    handleNoteSave,
+    handleOpenConversation,
+    handleOpenNoteLink,
+    handleOpenReaderConnectionSource,
+    handleReaderApparatusRowActivate,
+    hoveredHighlightId,
+    isMobileViewport,
+    isPdf,
+    media?.capabilities?.can_quote,
+    pdfContentRef,
+    pdfHighlightsPaneState.version,
+    quoteHighlightToChat,
+    readerApparatus,
+    readerApparatusRows,
+    readerConnectionRows,
+    readerDocumentMapResource.status,
+    startEditBounds,
   ]);
 
   const readerSecondaryDescriptor = useMemo<PaneSecondaryPublication>(
@@ -5942,12 +5452,12 @@ export default function MediaPaneBody() {
                   onHighlightTap={handlePdfHighlightTap}
                   onQuoteToNewChat={
                     media?.capabilities?.can_quote
-                      ? quoteHighlightToNewChat
+                      ? (highlightId) => { void quoteHighlightToChat(highlightId); }
                       : undefined
                   }
                   onQuoteToExtantChat={
                     media?.capabilities?.can_quote
-                      ? quoteHighlightToExtantChat
+                      ? (highlightId) => { void quoteHighlightToChat(highlightId); }
                       : undefined
                   }
                   onAddNote={({ quote, anchorRect, creation }) =>
@@ -6066,12 +5576,12 @@ export default function MediaPaneBody() {
             onCreateHighlight={handleCreateHighlight}
             onQuoteToNewChat={
               media?.capabilities?.can_quote
-                ? (highlight) => quoteHighlightToNewChat(highlight.id, highlight)
+                ? (highlight) => { void quoteHighlightToChat(highlight.id); }
                 : undefined
             }
             onQuoteToExtantChat={
               media?.capabilities?.can_quote
-                ? (highlight) => quoteHighlightToExtantChat(highlight.id, highlight)
+                ? (highlight) => { void quoteHighlightToChat(highlight.id); }
                 : undefined
             }
             onAddNote={handleAddNoteToSelection}
@@ -6102,11 +5612,11 @@ export default function MediaPaneBody() {
           }}
           onDelete={() => handleDelete(highlightActionTarget.id)}
           onQuoteToNewChat={() => {
-            quoteHighlightToNewChat(highlightActionTarget.id);
+            void quoteHighlightToChat(highlightActionTarget.id);
             dismissHighlightActions();
           }}
           onQuoteToExistingChat={() => {
-            quoteHighlightToExtantChat(highlightActionTarget.id);
+            void quoteHighlightToChat(highlightActionTarget.id);
             dismissHighlightActions();
           }}
           onToggleEditBounds={() => {

@@ -197,6 +197,22 @@ interface ReaderDocumentMapResponse {
   data: ReaderDocumentMap;
 }
 
+export function readerSurfaceForLens(
+  lensId: ReaderDocumentMapLensId,
+): "reader-contents" | "reader-evidence" | null {
+  switch (lensId) {
+    case "contents":
+      return "reader-contents";
+    case "highlights":
+    case "citations":
+    case "connections":
+      return "reader-evidence";
+    case "embeds":
+    case "chat":
+      return null;
+  }
+}
+
 export async function getReaderDocumentMap(
   mediaId: string,
   options: {

@@ -1657,3 +1657,36 @@ def test_synapse_origin_edges_constructed_only_in_synapse_service():
         "services/resource_graph/policy.py",
     )
     assert not hits, f'origin="synapse" written outside services/synapse.py:\n{_fmt(hits)}'
+
+
+# =============================================================================
+# Reader sidecar consolidation: old surface IDs must be ABSENT from the model
+# (reader-sidecar-consolidation-hard-cutover.md §13)
+# =============================================================================
+
+_PANE_SECONDARY_MODEL = _WEB_ROOT / "lib" / "panes" / "paneSecondaryModel.ts"
+
+
+def test_no_reader_resource_chat_surface():
+    hits = _filtered(r"reader-resource-chat", _PANE_SECONDARY_MODEL)
+    assert not hits, f'"reader-resource-chat" survives in paneSecondaryModel.ts:\n{_fmt(hits)}'
+
+
+def test_no_reader_highlights_surface():
+    hits = _filtered(r"reader-highlights", _PANE_SECONDARY_MODEL)
+    assert not hits, f'"reader-highlights" survives in paneSecondaryModel.ts:\n{_fmt(hits)}'
+
+
+def test_no_reader_embeds_surface():
+    hits = _filtered(r"reader-embeds", _PANE_SECONDARY_MODEL)
+    assert not hits, f'"reader-embeds" survives in paneSecondaryModel.ts:\n{_fmt(hits)}'
+
+
+def test_no_reader_apparatus_surface():
+    hits = _filtered(r"reader-apparatus", _PANE_SECONDARY_MODEL)
+    assert not hits, f'"reader-apparatus" survives in paneSecondaryModel.ts:\n{_fmt(hits)}'
+
+
+def test_no_reader_connections_surface():
+    hits = _filtered(r"reader-connections", _PANE_SECONDARY_MODEL)
+    assert not hits, f'"reader-connections" survives in paneSecondaryModel.ts:\n{_fmt(hits)}'

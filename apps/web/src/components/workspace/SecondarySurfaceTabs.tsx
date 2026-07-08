@@ -4,12 +4,9 @@ import { useRef } from "react";
 import type { ComponentType } from "react";
 import {
   BarChart3,
-  FileText,
   GitBranch,
-  Highlighter,
   Link2,
   ListTree,
-  Quote,
 } from "lucide-react";
 import type { PaneSecondarySurfacePublication } from "@/lib/panes/panePublications";
 import { getSecondarySurfaceDefinition } from "@/lib/panes/paneSecondaryModel";
@@ -24,12 +21,9 @@ const SECONDARY_ICONS: Record<
   ComponentType<{ size?: number; "aria-hidden"?: "true" }>
 > = {
   "bar-chart-3": BarChart3,
-  "file-text": FileText,
   "git-branch": GitBranch,
-  highlighter: Highlighter,
   "link-2": Link2,
   "list-tree": ListTree,
-  quote: Quote,
 };
 
 export function secondarySurfaceTabId(

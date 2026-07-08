@@ -223,10 +223,6 @@ vi.mock("@/components/HtmlRenderer", () => ({
   },
 }));
 
-vi.mock("@/components/reader/document-map/ReaderDocumentMapHighlightsLens", () => ({
-  default: () => <div>Highlights secondary</div>,
-}));
-
 vi.mock("@/components/reader/ReaderDocumentMapOverviewRail", () => ({
   default: ({ onOpenMap }: { onOpenMap: () => void }) => (
     <button type="button" onClick={onOpenMap}>
@@ -537,11 +533,15 @@ async function getChromeOption(id: string): Promise<ActionMenuOption> {
 async function getApparatusSurfaceBody(
   onSetPaneSecondary: ReturnType<typeof vi.fn>,
 ): Promise<ReactNode> {
+  // Wait for document-map fetch so apparatus rows are populated in the publication.
+  await waitFor(() => {
+    expect(apiCallsForPath("/api/media/media-1/document-map")).toHaveLength(1);
+  });
   let body: ReactNode = null;
   await waitFor(() => {
     const publication = latestSecondaryPublication(onSetPaneSecondary);
     body =
-      getPublishedSecondarySurface(publication, "reader-apparatus")?.body ?? null;
+      getPublishedSecondarySurface(publication, "reader-evidence")?.body ?? null;
     expect(body).not.toBeNull();
   });
   return body;
@@ -919,13 +919,12 @@ describe("MediaPaneBody pane sizing", () => {
       });
       expect(publication?.surfaces.map((surface) => surface.id)).toEqual([
         "reader-contents",
-        "reader-connections",
-        "reader-resource-chat",
+        "reader-evidence",
       ]);
     });
   });
 
-  it("publishes an Embeds surface for anchored document-map embed items", async () => {
+  it("does not publish reader-embeds; publishes reader-evidence instead, even with embed items", async () => {
     testState.mediaKind = "web_article";
     testState.fragmentHtml =
       '<p>Before.</p><figure data-nexus-document-embed-id="embed:000000:youtube:dQw4w9WgXcQ"><figcaption>Embedded video: Launch video</figcaption></figure>';
@@ -970,22 +969,27 @@ describe("MediaPaneBody pane sizing", () => {
         resolution_status: "resolved",
       },
     ];
-    const { onSetPaneSecondary } = renderMediaPane({
-      renderSecondarySurfaceId: "reader-embeds",
-    });
+    const { onSetPaneSecondary } = renderMediaPane();
 
     await waitFor(() => {
       const publication = latestSecondaryPublication(onSetPaneSecondary);
-      expect(publication?.surfaces.map((surface) => surface.id)).toContain(
+      expect(publication?.surfaces.map((surface) => surface.id)).not.toContain(
         "reader-embeds",
       );
+      expect(publication?.surfaces.map((surface) => surface.id)).toContain(
+        "reader-evidence",
+      );
     });
+  });
 
-    expect(await screen.findByRole("list", { name: "Embeds" })).toBeVisible();
-    expect(screen.getByText("Embedded video: Launch video")).toBeVisible();
-    expect(
-      screen.getByRole("button", { name: "Show Embedded video: Launch video in reader" }),
-    ).toBeVisible();
+  it("does not publish a reader-resource-chat surface", async () => {
+    const { onSetPaneSecondary } = renderMediaPane();
+    await waitFor(() => {
+      const publication = latestSecondaryPublication(onSetPaneSecondary);
+      expect(publication).not.toBeNull();
+    });
+    const publication = latestSecondaryPublication(onSetPaneSecondary);
+    expect(publication?.surfaces.map((s) => s.id)).not.toContain("reader-resource-chat");
   });
 
   it("publishes Citations and previews a source-authored marker", async () => {
@@ -1072,7 +1076,7 @@ describe("MediaPaneBody pane sizing", () => {
     await waitFor(() => {
       const publication = latestSecondaryPublication(onSetPaneSecondary);
       expect(publication?.surfaces.map((surface) => surface.id)).toContain(
-        "reader-apparatus",
+        "reader-evidence",
       );
     });
 
@@ -1087,7 +1091,7 @@ describe("MediaPaneBody pane sizing", () => {
     fireEvent.click(screen.getByText("1"));
     expect(onRequestSecondarySurface).toHaveBeenCalledWith(
       "pane-1",
-      "reader-apparatus",
+      "reader-evidence",
     );
   });
 
@@ -1123,6 +1127,9 @@ describe("MediaPaneBody pane sizing", () => {
         expect(publication?.surfaces.map((surface) => surface.id)).not.toContain(
           "reader-apparatus",
         );
+        expect(publication?.surfaces.map((surface) => surface.id)).toContain(
+          "reader-evidence",
+        );
       });
     },
   );
@@ -1144,7 +1151,7 @@ describe("MediaPaneBody pane sizing", () => {
         expect(publication).not.toBeNull();
         expect(publication?.groupId).toBe("reader-tools");
         expect(publication?.surfaces.map((surface) => surface.id)).toContain(
-          "reader-apparatus",
+          "reader-evidence",
         );
       });
 
@@ -1152,8 +1159,8 @@ describe("MediaPaneBody pane sizing", () => {
       const view = render(<>{body}</>);
       const surface = within(view.container);
 
-      expect(surface.getByRole("heading", { name: "Citations" })).toBeVisible();
-      const rowButtons = surface.getAllByRole("button");
+      expect(surface.getByRole("heading", { name: "Evidence" })).toBeVisible();
+      const rowButtons = surface.getAllByTestId("evidence-apparatus-row");
       expect(rowButtons).toHaveLength(entry.expectedRowCount);
       for (const needle of entry.bodyNeedles) {
         expect(
@@ -1194,6 +1201,7 @@ describe("MediaPaneBody pane sizing", () => {
 
   it("publishes Citations for target-only margin notes without hover previews", async () => {
     testState.mediaKind = "web_article";
+    testState.isMobileViewport = true;
     testState.renderHtmlInMock = true;
     testState.fragmentHtml =
       '<p>Claim<span data-reader-apparatus-item-id="margin-1">Standalone margin note body.</span></p>';
@@ -1238,12 +1246,12 @@ describe("MediaPaneBody pane sizing", () => {
       edges: [],
       diagnostics: {},
     };
-    const { onRequestSecondarySurface, onSetPaneSecondary } = renderMediaPane();
+    const { onRequestSecondarySurface, onSetPaneSecondary } = renderMediaPane({
+      renderSecondarySurfaceId: "reader-evidence",
+    });
 
-    const body = await getApparatusSurfaceBody(onSetPaneSecondary);
-    render(<>{body}</>);
-
-    expect(screen.getByRole("button", { name: /Margin note/ })).toBeVisible();
+    const marginNoteButton = await screen.findByRole("button", { name: /Margin note/ });
+    expect(marginNoteButton).toBeVisible();
     expect(
       screen.getAllByText("Standalone margin note body.").length,
     ).toBeGreaterThan(1);
@@ -1254,10 +1262,10 @@ describe("MediaPaneBody pane sizing", () => {
     expect(inlineMarginNote).toBeInstanceOf(HTMLElement);
 
     const publicationCountBeforeClick = onSetPaneSecondary.mock.calls.length;
-    fireEvent.click(screen.getByRole("button", { name: /Margin note/ }));
+    fireEvent.click(marginNoteButton);
     expect(onRequestSecondarySurface).toHaveBeenCalledWith(
       "pane-1",
-      "reader-apparatus",
+      "reader-evidence",
     );
     await waitFor(() => {
       expect(onSetPaneSecondary.mock.calls.length).toBeGreaterThan(
@@ -1286,6 +1294,7 @@ describe("MediaPaneBody pane sizing", () => {
   });
 
   it("dispatches a PDF reader pulse when a native-link reference row is activated", async () => {
+    testState.isMobileViewport = true;
     testState.mediaKind = "pdf";
     testState.apparatusResponse = {
       media_id: "media-1",
@@ -1392,16 +1401,16 @@ describe("MediaPaneBody pane sizing", () => {
     const pulseHandler = vi.fn();
     window.addEventListener(READER_PULSE_HIGHLIGHT, pulseHandler);
     try {
-      const { onRequestSecondarySurface, onSetPaneSecondary } =
-        renderMediaPane();
-      const body = await getApparatusSurfaceBody(onSetPaneSecondary);
-      render(<>{body}</>);
+      const { onRequestSecondarySurface } = renderMediaPane({
+        renderSecondarySurfaceId: "reader-evidence",
+      });
 
-      fireEvent.click(screen.getByRole("button", { name: /Reference/ }));
+      const refButton = await screen.findByRole("button", { name: /Reference/ });
+      fireEvent.click(refButton);
 
       expect(onRequestSecondarySurface).toHaveBeenCalledWith(
         "pane-1",
-        "reader-apparatus",
+        "reader-evidence",
       );
       await waitFor(() => {
         expect(pulseHandler).toHaveBeenCalledTimes(1);
@@ -1438,7 +1447,7 @@ describe("MediaPaneBody pane sizing", () => {
     const notePulseHandler = vi.fn();
     window.addEventListener(NOTE_PULSE_HIGHLIGHT, notePulseHandler);
     try {
-      renderMediaPane({ renderSecondarySurfaceId: "reader-connections" });
+      renderMediaPane({ renderSecondarySurfaceId: "reader-evidence" });
 
       fireEvent.click(
         await screen.findByRole("button", {
@@ -1514,7 +1523,7 @@ describe("MediaPaneBody pane sizing", () => {
 
     await waitFor(() => {
       const publication = latestSecondaryPublication(onSetPaneSecondary);
-      expect(publication?.surfaces.some((surface) => surface.id === "reader-highlights")).toBe(
+      expect(publication?.surfaces.some((surface) => surface.id === "reader-evidence")).toBe(
         true,
       );
     });
@@ -1526,7 +1535,7 @@ describe("MediaPaneBody pane sizing", () => {
 
     expect(onRequestSecondarySurface).toHaveBeenCalledWith(
       "pane-1",
-      "reader-highlights",
+      "reader-evidence",
     );
   });
 

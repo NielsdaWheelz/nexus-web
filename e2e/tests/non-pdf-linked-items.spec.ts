@@ -2,7 +2,7 @@ import { test, expect, type Locator, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
-  openHighlightsPane,
+  openEvidencePane,
   readerSecondaryForActivePane,
 } from "./reader";
 import {
@@ -140,12 +140,12 @@ test.describe("non-pdf linked-items", () => {
     const activePane = activeWorkspacePane(page);
     const contentPane = activePane.locator('div[class*="fragments"]');
     await expect(contentPane).toBeVisible({ timeout: 10_000 });
-    const highlightsPane = await openHighlightsPane(page);
+    const evidencePane = await openEvidencePane(page);
 
-    const quoteRow = highlightsPane
+    const quoteRow = evidencePane
       .locator(linkedItemRowByHighlightId(seeded.quote_highlight_id))
       .first();
-    const focusRow = highlightsPane
+    const focusRow = evidencePane
       .locator(linkedItemRowByHighlightId(seeded.focus_highlight_id))
       .first();
 
@@ -178,8 +178,8 @@ test.describe("non-pdf linked-items", () => {
       );
 
     const secondary = readerSecondaryForActivePane(page);
-    await secondary.getByRole("tab", { name: "Highlights" }).click();
-    await expect(secondary.getByRole("tab", { name: "Highlights" })).toHaveAttribute(
+    await secondary.getByRole("tab", { name: "Evidence" }).click();
+    await expect(secondary.getByRole("tab", { name: "Evidence" })).toHaveAttribute(
       "aria-selected",
       "true",
     );

@@ -13,8 +13,8 @@ function readNonPdfSeed(): NonPdfSeed {
   return JSON.parse(readFileSync(seedPath, "utf-8")) as NonPdfSeed;
 }
 
-test.describe("reader pane tabs (references cutover)", () => {
-  test("opens the reader pane and exposes highlights plus reference-backed document chat", async ({
+test.describe("reader pane tabs (evidence cutover)", () => {
+  test("opens the reader pane and exposes exactly two tabs: Contents and Evidence", async ({
     page,
   }, testInfo) => {
     const seed = readNonPdfSeed();
@@ -27,27 +27,22 @@ test.describe("reader pane tabs (references cutover)", () => {
     const secondary = await openReaderSecondary(page);
     const tablist = secondary.getByRole("tablist", { name: "Secondary surfaces" });
     const tabs = tablist.getByRole("tab");
-    const highlightsTab = tablist.getByRole("tab", { name: "Highlights" });
-    const documentChatTab = tablist.getByRole("tab", { name: "Chat" });
-    const connectionsTab = tablist.getByRole("tab", { name: "Connections" });
+    const contentsTab = tablist.getByRole("tab", { name: "Contents" });
+    const evidenceTab = tablist.getByRole("tab", { name: "Evidence" });
 
-    await expect(tabs).toHaveCount(3);
-    await expect(highlightsTab).toBeVisible();
-    await expect(documentChatTab).toBeVisible();
-    await expect(connectionsTab).toBeVisible();
+    await expect(tabs).toHaveCount(2);
+    await expect(contentsTab).toBeVisible();
+    await expect(evidenceTab).toBeVisible();
 
-    for (let index = 0; index < 3; index += 1) {
-      const text = (await tabs.nth(index).innerText()).trim();
-      expect(text).toBe("");
-    }
+    await expect(tablist.getByRole("tab", { name: "Highlights" })).toHaveCount(0);
+    await expect(tablist.getByRole("tab", { name: "Chat" })).toHaveCount(0);
+    await expect(tablist.getByRole("tab", { name: "Citations" })).toHaveCount(0);
+    await expect(tablist.getByRole("tab", { name: "Connections" })).toHaveCount(0);
 
-    await expect(highlightsTab).toHaveAttribute("aria-selected", "true");
-    await documentChatTab.click();
-    await expect(documentChatTab).toHaveAttribute("aria-selected", "true");
-    await expect(
-      secondary.getByRole("button", {
-        name: /Start new chat about this resource|\+ New chat/i,
-      }),
-    ).toBeVisible({ timeout: 10_000 });
+    await evidenceTab.click();
+    await expect(evidenceTab).toHaveAttribute("aria-selected", "true");
+    await expect(secondary.getByTestId("evidence-pane-surface")).toBeVisible({
+      timeout: 10_000,
+    });
   });
 });

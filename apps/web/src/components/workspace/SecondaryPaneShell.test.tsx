@@ -4,17 +4,16 @@ import SecondaryPaneShell from "@/components/workspace/SecondaryPaneShell";
 
 const publication = {
   groupId: "reader-tools" as const,
-  defaultSurfaceId: "reader-highlights" as const,
+  defaultSurfaceId: "reader-evidence" as const,
   surfaces: [
-    { id: "reader-highlights" as const, body: <div>Highlights body</div> },
-    { id: "reader-resource-chat" as const, body: <div>Chat body</div> },
     { id: "reader-contents" as const, body: <div>Contents body</div> },
+    { id: "reader-evidence" as const, body: <div>Evidence body</div> },
   ],
 };
 
 const state = {
   groupId: "reader-tools" as const,
-  activeSurfaceId: "reader-highlights" as const,
+  activeSurfaceId: "reader-contents" as const,
   widthPx: 360,
   visibility: "visible" as const,
 };
@@ -38,16 +37,17 @@ describe("SecondaryPaneShell", () => {
       />,
     );
 
-    const highlightsTab = screen.getByRole("tab", { name: "Highlights" });
-    const chatTab = screen.getByRole("tab", { name: "Chat" });
-    expect(screen.getByRole("tab", { name: "Contents" })).toBeInTheDocument();
-    expect(highlightsTab.id).not.toBe(chatTab.id);
-    expect(highlightsTab.getAttribute("aria-controls")).not.toBe(
-      chatTab.getAttribute("aria-controls"),
+    const contentsTab = screen.getByRole("tab", { name: "Contents" });
+    const evidenceTab = screen.getByRole("tab", { name: "Evidence" });
+    expect(contentsTab).toBeInTheDocument();
+    expect(evidenceTab).toBeInTheDocument();
+    expect(contentsTab.id).not.toBe(evidenceTab.id);
+    expect(contentsTab.getAttribute("aria-controls")).not.toBe(
+      evidenceTab.getAttribute("aria-controls"),
     );
     expect(screen.getByRole("tabpanel")).toHaveAttribute(
       "aria-labelledby",
-      highlightsTab.id,
+      contentsTab.id,
     );
   });
 
@@ -71,15 +71,15 @@ describe("SecondaryPaneShell", () => {
       />,
     );
 
-    fireEvent.keyDown(screen.getByRole("tab", { name: "Highlights" }), {
+    fireEvent.keyDown(screen.getByRole("tab", { name: "Contents" }), {
       key: "ArrowRight",
     });
     expect(onActiveSurfaceChange).toHaveBeenCalledWith(
       "secondary-1",
-      "reader-resource-chat",
+      "reader-evidence",
     );
 
-    const resizeHandle = screen.getByRole("separator", { name: "Resize Highlights" });
+    const resizeHandle = screen.getByRole("separator", { name: "Resize Contents" });
     expect(resizeHandle).toHaveAttribute("aria-controls");
     expect(resizeHandle).toHaveAttribute("aria-orientation", "vertical");
     expect(resizeHandle).toHaveAttribute("aria-valuenow", "360");

@@ -6,10 +6,8 @@ import SecondarySurfaceTabs, {
 } from "@/components/workspace/SecondarySurfaceTabs";
 
 const surfaces = [
-  { id: "reader-highlights" as const, body: <div /> },
   { id: "reader-contents" as const, body: <div /> },
-  { id: "reader-apparatus" as const, body: <div /> },
-  { id: "reader-resource-chat" as const, body: <div /> },
+  { id: "reader-evidence" as const, body: <div /> },
 ];
 
 describe("SecondarySurfaceTabs", () => {
@@ -18,19 +16,19 @@ describe("SecondarySurfaceTabs", () => {
       <SecondarySurfaceTabs
         baseId="base"
         surfaces={surfaces}
-        activeSurfaceId="reader-resource-chat"
+        activeSurfaceId="reader-evidence"
         onSelect={vi.fn()}
       />,
     );
 
-    const highlights = screen.getByRole("tab", { name: "Highlights" });
-    const resourceChat = screen.getByRole("tab", { name: "Chat" });
-    expect(highlights).toHaveAttribute("tabIndex", "-1");
-    expect(resourceChat).toHaveAttribute("tabIndex", "0");
-    expect(highlights.id).toBe(secondarySurfaceTabId("base", "reader-highlights"));
-    expect(highlights).toHaveAttribute(
+    const contents = screen.getByRole("tab", { name: "Contents" });
+    const evidence = screen.getByRole("tab", { name: "Evidence" });
+    expect(contents).toHaveAttribute("tabIndex", "-1");
+    expect(evidence).toHaveAttribute("tabIndex", "0");
+    expect(contents.id).toBe(secondarySurfaceTabId("base", "reader-contents"));
+    expect(contents).toHaveAttribute(
       "aria-controls",
-      secondarySurfacePanelId("base", "reader-highlights"),
+      secondarySurfacePanelId("base", "reader-contents"),
     );
   });
 
@@ -40,16 +38,16 @@ describe("SecondarySurfaceTabs", () => {
       <SecondarySurfaceTabs
         baseId="base"
         surfaces={surfaces}
-        activeSurfaceId="reader-resource-chat"
+        activeSurfaceId="reader-evidence"
         onSelect={onSelect}
       />,
     );
 
-    const resourceChat = screen.getByRole("tab", { name: "Chat" });
-    fireEvent.keyDown(resourceChat, { key: "End" });
-    expect(onSelect).toHaveBeenLastCalledWith("reader-resource-chat");
-    fireEvent.keyDown(resourceChat, { key: "Home" });
-    expect(onSelect).toHaveBeenLastCalledWith("reader-highlights");
+    const evidence = screen.getByRole("tab", { name: "Evidence" });
+    fireEvent.keyDown(evidence, { key: "End" });
+    expect(onSelect).toHaveBeenLastCalledWith("reader-evidence");
+    fireEvent.keyDown(evidence, { key: "Home" });
+    expect(onSelect).toHaveBeenLastCalledWith("reader-contents");
   });
 
   it("wraps around with ArrowLeft from the first surface", () => {
@@ -58,14 +56,14 @@ describe("SecondarySurfaceTabs", () => {
       <SecondarySurfaceTabs
         baseId="base"
         surfaces={surfaces}
-        activeSurfaceId="reader-highlights"
+        activeSurfaceId="reader-contents"
         onSelect={onSelect}
       />,
     );
 
-    fireEvent.keyDown(screen.getByRole("tab", { name: "Highlights" }), {
+    fireEvent.keyDown(screen.getByRole("tab", { name: "Contents" }), {
       key: "ArrowLeft",
     });
-    expect(onSelect).toHaveBeenLastCalledWith("reader-resource-chat");
+    expect(onSelect).toHaveBeenLastCalledWith("reader-evidence");
   });
 });

@@ -8,15 +8,13 @@ import {
   isWorkspaceSecondaryGroupId,
   isWorkspaceSecondarySurfaceId,
   resolveEffectiveSecondarySizing,
+  PANE_SECONDARY_SURFACE_DEFINITIONS,
 } from "@/lib/panes/paneSecondaryModel";
 
 describe("paneSecondaryModel", () => {
   it("maps secondary surfaces to their owning groups", () => {
     expect(getSecondaryGroupForSurface("reader-contents")).toBe("reader-tools");
-    expect(getSecondaryGroupForSurface("reader-highlights")).toBe("reader-tools");
-    expect(getSecondaryGroupForSurface("reader-embeds")).toBe("reader-tools");
-    expect(getSecondaryGroupForSurface("reader-apparatus")).toBe("reader-tools");
-    expect(getSecondaryGroupForSurface("reader-resource-chat")).toBe("reader-tools");
+    expect(getSecondaryGroupForSurface("reader-evidence")).toBe("reader-tools");
     expect(getSecondaryGroupForSurface("conversation-context-refs")).toBe(
       "conversation-context",
     );
@@ -33,20 +31,10 @@ describe("paneSecondaryModel", () => {
       title: "Contents",
       iconId: "list-tree",
     });
-    expect(getSecondarySurfaceDefinition("reader-apparatus")).toMatchObject({
+    expect(getSecondarySurfaceDefinition("reader-evidence")).toMatchObject({
       groupId: "reader-tools",
-      title: "Citations",
-      iconId: "quote",
-    });
-    expect(getSecondarySurfaceDefinition("reader-embeds")).toMatchObject({
-      groupId: "reader-tools",
-      title: "Embeds",
-      iconId: "file-text",
-    });
-    expect(getSecondarySurfaceDefinition("reader-resource-chat")).toMatchObject({
-      groupId: "reader-tools",
-      title: "Chat",
-      iconId: "file-text",
+      title: "Evidence",
+      iconId: "link-2",
     });
     expect(getSecondarySurfaceDefinition("conversation-forks")).toMatchObject({
       groupId: "conversation-context",
@@ -55,11 +43,7 @@ describe("paneSecondaryModel", () => {
     });
     expect(getSecondarySurfaceIdsForGroup("reader-tools")).toEqual([
       "reader-contents",
-      "reader-highlights",
-      "reader-embeds",
-      "reader-apparatus",
-      "reader-connections",
-      "reader-resource-chat",
+      "reader-evidence",
     ]);
     expect(getSecondarySurfaceIdsForGroup("conversation-context")).toEqual([
       "conversation-context-refs",
@@ -101,5 +85,24 @@ describe("paneSecondaryModel", () => {
       widthPx: 420,
       storedWidthCorrectionPx: null,
     });
+  });
+
+  it("does not include removed reader-tools surfaces", () => {
+    const ids = PANE_SECONDARY_SURFACE_DEFINITIONS.map((d) => d.id);
+    expect(ids).not.toContain("reader-highlights");
+    expect(ids).not.toContain("reader-embeds");
+    expect(ids).not.toContain("reader-apparatus");
+    expect(ids).not.toContain("reader-connections");
+    expect(ids).not.toContain("reader-resource-chat");
+  });
+
+  it("reader-tools has exactly two surfaces", () => {
+    const readerTools = PANE_SECONDARY_SURFACE_DEFINITIONS.filter(
+      (d) => d.groupId === "reader-tools",
+    );
+    expect(readerTools).toHaveLength(2);
+    expect(readerTools.map((d) => d.id)).toEqual(
+      expect.arrayContaining(["reader-contents", "reader-evidence"]),
+    );
   });
 });

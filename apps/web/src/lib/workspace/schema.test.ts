@@ -197,7 +197,7 @@ describe("workspace schema", () => {
             id: "secondary-1",
             parentPrimaryPaneId: "pane-1",
             groupId: "reader-tools",
-            activeSurfaceId: "reader-highlights",
+            activeSurfaceId: "reader-evidence",
             widthPx: 9999,
             visibility: "visible",
           },
@@ -210,7 +210,7 @@ describe("workspace schema", () => {
       id: "secondary-1",
       parentPrimaryPaneId: "pane-1",
       groupId: "reader-tools",
-      activeSurfaceId: "reader-highlights",
+      activeSurfaceId: "reader-evidence",
       widthPx: 720,
       visibility: "visible",
     });
@@ -221,6 +221,30 @@ describe("workspace schema", () => {
       state({
         primaryPanes: [
           primary("pane-1", "/libraries", {
+            attachedSecondaryPaneId: "secondary-1",
+          }),
+        ],
+        secondaryPanesById: {
+          "secondary-1": {
+            id: "secondary-1",
+            parentPrimaryPaneId: "pane-1",
+            groupId: "reader-tools",
+            activeSurfaceId: "reader-evidence",
+            widthPx: 320,
+            visibility: "visible",
+          },
+        },
+      }),
+    );
+    expect(getWorkspacePrimaryPanes(current)[0]?.attachedSecondaryPaneId).toBeNull();
+    expect(current.secondaryPanesById).toEqual({});
+  });
+
+  it("drops attached secondary pane with a stale surface ID no longer in the surface registry", () => {
+    const current = sanitize(
+      state({
+        primaryPanes: [
+          primary("pane-1", "/media/1", {
             attachedSecondaryPaneId: "secondary-1",
           }),
         ],

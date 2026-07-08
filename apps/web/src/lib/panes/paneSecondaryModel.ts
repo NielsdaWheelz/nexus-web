@@ -30,7 +30,7 @@ const PANE_SECONDARY_GROUP_BASE = {
 
 export type WorkspaceSecondaryGroupId = keyof typeof PANE_SECONDARY_GROUP_BASE;
 
-const PANE_SECONDARY_SURFACE_DEFINITIONS = [
+export const PANE_SECONDARY_SURFACE_DEFINITIONS = [
   {
     id: "reader-contents",
     groupId: "reader-tools",
@@ -38,34 +38,10 @@ const PANE_SECONDARY_SURFACE_DEFINITIONS = [
     iconId: "list-tree",
   },
   {
-    id: "reader-highlights",
+    id: "reader-evidence",
     groupId: "reader-tools",
-    title: "Highlights",
-    iconId: "highlighter",
-  },
-  {
-    id: "reader-embeds",
-    groupId: "reader-tools",
-    title: "Embeds",
-    iconId: "file-text",
-  },
-  {
-    id: "reader-apparatus",
-    groupId: "reader-tools",
-    title: "Citations",
-    iconId: "quote",
-  },
-  {
-    id: "reader-connections",
-    groupId: "reader-tools",
-    title: "Connections",
+    title: "Evidence",
     iconId: "link-2",
-  },
-  {
-    id: "reader-resource-chat",
-    groupId: "reader-tools",
-    title: "Chat",
-    iconId: "file-text",
   },
   {
     id: "conversation-context-refs",

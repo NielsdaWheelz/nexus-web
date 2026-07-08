@@ -607,18 +607,20 @@ describe("WorkspaceHost pane route lifecycle", () => {
   });
 });
 
-const READER_TOOLS_HIGHLIGHTS_ONLY: PaneSecondaryPublication = {
+const READER_TOOLS_EVIDENCE_ONLY: PaneSecondaryPublication = {
   groupId: "reader-tools",
-  defaultSurfaceId: "reader-highlights",
-  surfaces: [{ id: "reader-highlights", body: <div>Highlights</div> }],
+  defaultSurfaceId: "reader-evidence",
+  surfaces: [{ id: "reader-evidence", body: <div>Evidence</div> }],
 };
+
+const READER_TOOLS_HIGHLIGHTS_ONLY = READER_TOOLS_EVIDENCE_ONLY;
 
 const READER_TOOLS_WITH_DOC_CHAT: PaneSecondaryPublication = {
   groupId: "reader-tools",
-  defaultSurfaceId: "reader-highlights",
+  defaultSurfaceId: "reader-evidence",
   surfaces: [
-    { id: "reader-highlights", body: <div>Highlights</div> },
-    { id: "reader-resource-chat", body: <div>Resource chat</div> },
+    { id: "reader-contents", body: <div>Contents</div> },
+    { id: "reader-evidence", body: <div>Evidence</div> },
   ],
 };
 
@@ -697,7 +699,7 @@ describe("WorkspaceHost secondary publication validation", () => {
   it("does not render a visible secondary without a matching publication", () => {
     setPaneWithSecondary({
       groupId: "reader-tools",
-      activeSurfaceId: "reader-highlights",
+      activeSurfaceId: "reader-evidence",
     });
     hostMocks.secondaryPublication = null;
 
@@ -716,7 +718,7 @@ describe("WorkspaceHost secondary publication validation", () => {
   it("renders and exposes a visible secondary backed by a matching publication", async () => {
     setPaneWithSecondary({
       groupId: "reader-tools",
-      activeSurfaceId: "reader-highlights",
+      activeSurfaceId: "reader-evidence",
     });
     hostMocks.secondaryPublication = READER_TOOLS_HIGHLIGHTS_ONLY;
 
@@ -742,7 +744,7 @@ describe("WorkspaceHost secondary publication validation", () => {
   it("republishes secondary and fixed chrome when a same-resource route instance changes", async () => {
     setPaneWithSecondary({
       groupId: "reader-tools",
-      activeSurfaceId: "reader-highlights",
+      activeSurfaceId: "reader-evidence",
     });
     hostMocks.secondaryPublication = READER_TOOLS_HIGHLIGHTS_ONLY;
     hostMocks.fixedChromeWidthPx = 48;
@@ -779,7 +781,7 @@ describe("WorkspaceHost secondary publication validation", () => {
   it("keeps secondary runtime state during the publication gap for a same-resource route instance", async () => {
     setPaneWithSecondary({
       groupId: "reader-tools",
-      activeSurfaceId: "reader-highlights",
+      activeSurfaceId: "reader-evidence",
     });
     hostMocks.secondaryPublication = READER_TOOLS_HIGHLIGHTS_ONLY;
     const { rerender } = render(<WorkspaceHost />);
@@ -816,7 +818,7 @@ describe("WorkspaceHost secondary publication validation", () => {
   it("does not clear and republish secondary or fixed chrome on unrelated host renders", async () => {
     setPaneWithSecondary({
       groupId: "reader-tools",
-      activeSurfaceId: "reader-highlights",
+      activeSurfaceId: "reader-evidence",
     });
     hostMocks.secondaryPublication = READER_TOOLS_HIGHLIGHTS_ONLY;
     hostMocks.fixedChromeWidthPx = 48;
@@ -826,7 +828,7 @@ describe("WorkspaceHost secondary publication validation", () => {
     await waitFor(() => {
       expect(screen.getByTestId("pane-shell")).toHaveAttribute(
         "data-secondary-surfaces",
-        "reader-highlights",
+        "reader-evidence",
       );
     });
     expect(screen.getByTestId("pane-shell")).toHaveAttribute(
@@ -840,14 +842,14 @@ describe("WorkspaceHost secondary publication validation", () => {
     await new Promise((resolve) => window.setTimeout(resolve, 0));
 
     expect(hostMocks.paneShellSnapshots).toEqual([
-      { fixedChromeWidthPx: 48, secondarySurfaces: "reader-highlights" },
+      { fixedChromeWidthPx: 48, secondarySurfaces: "reader-evidence" },
     ]);
   });
 
   it("drops a persisted secondary when the publication group no longer matches", async () => {
     setPaneWithSecondary({
       groupId: "reader-tools",
-      activeSurfaceId: "reader-highlights",
+      activeSurfaceId: "reader-evidence",
     });
     hostMocks.secondaryPublication = CONVERSATION_CONTEXT_PUBLICATION;
 
@@ -866,16 +868,16 @@ describe("WorkspaceHost secondary publication validation", () => {
   it("repairs a persisted secondary surface to the published default when the active surface is unpublished", async () => {
     setPaneWithSecondary({
       groupId: "reader-tools",
-      activeSurfaceId: "reader-resource-chat",
+      activeSurfaceId: "reader-contents",
     });
-    hostMocks.secondaryPublication = READER_TOOLS_HIGHLIGHTS_ONLY;
+    hostMocks.secondaryPublication = READER_TOOLS_EVIDENCE_ONLY;
 
     render(<WorkspaceHost />);
 
     await waitFor(() => {
       expect(hostMocks.store.setSecondarySurface).toHaveBeenCalledWith(
         "secondary-1",
-        "reader-highlights",
+        "reader-evidence",
       );
     });
     expect(screen.getByTestId("pane-shell")).toHaveAttribute(
@@ -890,7 +892,7 @@ describe("WorkspaceHost secondary publication validation", () => {
     hostMocks.openInNewPaneRequest = {
       href: MEDIA_HREF_1,
       titleHint: "Doc chat",
-      surfaceId: "reader-resource-chat",
+      surfaceId: "reader-evidence",
     };
 
     render(<WorkspaceHost />);
@@ -898,17 +900,17 @@ describe("WorkspaceHost secondary publication validation", () => {
     await waitFor(() => {
       expect(hostMocks.store.requestSecondarySurface).toHaveBeenCalledWith(
         "pane-1",
-        "reader-resource-chat",
+        "reader-evidence",
       );
     });
   });
 
   it("discards a pending cross-pane secondary request when the target publishes without the surface", async () => {
-    hostMocks.secondaryPublication = READER_TOOLS_HIGHLIGHTS_ONLY;
+    hostMocks.secondaryPublication = READER_TOOLS_EVIDENCE_ONLY;
     hostMocks.openInNewPaneRequest = {
       href: MEDIA_HREF_1,
       titleHint: "Doc chat",
-      surfaceId: "reader-resource-chat",
+      surfaceId: "reader-contents",
     };
 
     render(<WorkspaceHost />);
@@ -916,7 +918,7 @@ describe("WorkspaceHost secondary publication validation", () => {
     await waitFor(() => {
       expect(screen.getByTestId("pane-shell")).toHaveAttribute(
         "data-secondary-surfaces",
-        "reader-highlights",
+        "reader-evidence",
       );
     });
     expect(hostMocks.store.requestSecondarySurface).not.toHaveBeenCalled();
@@ -928,7 +930,7 @@ describe("WorkspaceHost secondary publication validation", () => {
     hostMocks.fixedChromeWidthPx = 48;
     setPaneWithSecondary({
       groupId: "reader-tools",
-      activeSurfaceId: "reader-highlights",
+      activeSurfaceId: "reader-evidence",
     });
     hostMocks.secondaryPublication = READER_TOOLS_HIGHLIGHTS_ONLY;
 
