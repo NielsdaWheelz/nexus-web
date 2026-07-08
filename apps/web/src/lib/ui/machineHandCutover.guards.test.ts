@@ -96,9 +96,9 @@ describe("Machine Hand cutover source gates", () => {
     expect(evidenceImporters).toEqual(["src/components/chat/AssistantMessage.tsx"]);
   });
 
-  // §13.4 — the Oracle route group never imports MachineText (N-1).
-  it("keeps MachineText out of the Oracle route group", () => {
-    const offenders = filesUnder("src/app/(oracle)", isNonTestSource).filter(
+  // §13.4 — the Oracle pane tree never imports MachineText (N-1).
+  it("keeps MachineText out of the Oracle pane tree", () => {
+    const offenders = filesUnder("src/app/(authenticated)/oracle", isNonTestSource).filter(
       (path) => sourceText(path).includes("components/ui/MachineText"),
     );
     expect(offenders).toEqual([]);

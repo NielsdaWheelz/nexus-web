@@ -16,6 +16,7 @@ import {
   Palette,
   Search,
   Settings,
+  Sparkles,
   UserCog,
   UserRound,
   type LucideIcon,
@@ -200,6 +201,18 @@ const PANE_ROUTE_META: Record<PaneRouteId, PaneRouteMeta> = {
       title: "Keyboard Shortcuts",
       subtitle: "Customize key bindings for launcher actions.",
     }),
+  },
+  oracle: {
+    icon: Sparkles,
+    getChrome: () => ({ title: "Oracle" }),
+  },
+  oracleAtlas: {
+    icon: Sparkles,
+    getChrome: () => ({ title: "The Atlas" }),
+  },
+  oracleReading: {
+    icon: Sparkles,
+    getChrome: () => ({ title: "Reading" }),
   },
 };
 

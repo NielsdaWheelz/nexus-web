@@ -21,7 +21,7 @@ function toPosix(path) {
 function isAllowedPath(relativePath) {
   return (
     allowedFiles.has(relativePath) ||
-    relativePath.startsWith("src/app/(oracle)/")
+    relativePath.startsWith("src/app/(authenticated)/oracle/")
   );
 }
 

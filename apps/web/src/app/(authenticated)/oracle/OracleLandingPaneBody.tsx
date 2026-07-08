@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useCallback, useState } from "react";
 import {
   FieldFeedback,
@@ -11,14 +10,16 @@ import {
 import { apiFetch } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createRandomId } from "@/lib/createRandomId";
+import { usePaneRouter } from "@/lib/panes/paneRuntime";
 import OracleAlephGrid from "./OracleAlephGrid";
+import OracleThemeWrapper from "./OracleThemeWrapper";
 import type { OracleCreateResponse } from "./types";
 import styles from "./oracle.module.css";
 
 const QUESTION_MAX = 280;
 
 export default function OracleLandingPaneBody() {
-  const router = useRouter();
+  const paneRouter = usePaneRouter();
 
   const [question, setQuestion] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -46,7 +47,7 @@ export default function OracleLandingPaneBody() {
           headers: { "Idempotency-Key": createRandomId("oracle-read") },
           body: JSON.stringify({ question: cleaned }),
         });
-        router.push(`/oracle/${body.data.reading_id}`);
+        paneRouter.push(`/oracle/${body.data.reading_id}`);
       } catch (error) {
         if (handleUnauthenticatedApiError(error)) return;
         setSubmitError(
@@ -57,52 +58,54 @@ export default function OracleLandingPaneBody() {
         setSubmitting(false);
       }
     },
-    [question, router],
+    [question, paneRouter],
   );
 
   const remaining = QUESTION_MAX - question.length;
 
   return (
-    <div className={styles.surface}>
-      <div className={styles.landing}>
-        <div className={styles.epigraph}>Black Forest Oracle</div>
-        <p className={styles.epigraphSub}>
-          Ask one question. The oracle will arrange a plate, three passages,
-          and a reading drawn from public-domain literature and your library.
-        </p>
+    <OracleThemeWrapper>
+      <div className={styles.surface}>
+        <div className={styles.landing}>
+          <div className={styles.epigraph}>Black Forest Oracle</div>
+          <p className={styles.epigraphSub}>
+            Ask one question. The oracle will arrange a plate, three passages,
+            and a reading drawn from public-domain literature and your library.
+          </p>
 
-        <form className={styles.askForm} onSubmit={handleSubmit}>
-          <textarea
-            className={styles.askInput}
-            placeholder="What am I afraid of? What lies on the other side of this threshold?"
-            maxLength={QUESTION_MAX}
-            value={question}
-            onChange={(e) => setQuestion(e.target.value)}
-            rows={3}
-            disabled={submitting}
-            aria-label="Oracle question"
-          />
-          <div className={styles.askMeta}>
-            <span className={styles.askCount} aria-live="polite">
-              {remaining} remaining
-            </span>
-            <button
-              type="submit"
-              className={styles.askSubmit}
-              disabled={submitting || question.trim().length === 0}
-            >
-              {submitting ? "Consulting…" : "Consult the oracle"}
-            </button>
-          </div>
-          <FieldFeedback feedback={submitError} />
-        </form>
+          <form className={styles.askForm} onSubmit={handleSubmit}>
+            <textarea
+              className={styles.askInput}
+              placeholder="What am I afraid of? What lies on the other side of this threshold?"
+              maxLength={QUESTION_MAX}
+              value={question}
+              onChange={(e) => setQuestion(e.target.value)}
+              rows={3}
+              disabled={submitting}
+              aria-label="Oracle question"
+            />
+            <div className={styles.askMeta}>
+              <span className={styles.askCount} aria-live="polite">
+                {remaining} remaining
+              </span>
+              <button
+                type="submit"
+                className={styles.askSubmit}
+                disabled={submitting || question.trim().length === 0}
+              >
+                {submitting ? "Consulting…" : "Consult the oracle"}
+              </button>
+            </div>
+            <FieldFeedback feedback={submitError} />
+          </form>
 
-        <OracleAlephGrid />
+          <OracleAlephGrid />
 
-        <Link className={styles.atlasLink} href="/oracle/atlas">
-          ✦ View as a sky
-        </Link>
+          <Link className={styles.atlasLink} href="/oracle/atlas">
+            ✦ View as a sky
+          </Link>
+        </div>
       </div>
-    </div>
+    </OracleThemeWrapper>
   );
 }

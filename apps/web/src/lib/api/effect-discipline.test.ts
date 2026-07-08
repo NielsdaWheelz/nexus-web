@@ -335,7 +335,6 @@ describe("effect discipline source shape", () => {
       .map((path) => ({ path: repoPath(path), text: readFileSync(path, "utf8") }))
       .filter((source) =>
         source.path.startsWith("src/app/(authenticated)") ||
-        source.path.startsWith("src/app/(oracle)") ||
         source.path.startsWith("src/components") ||
         source.path.startsWith("src/lib"),
       )

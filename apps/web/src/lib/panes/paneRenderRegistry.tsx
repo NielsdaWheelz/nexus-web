@@ -39,6 +39,10 @@ const PANE_LOADERS: Record<PaneRouteId, PaneLoader> = {
     import("@/app/(authenticated)/settings/identities/SettingsIdentitiesPaneBody"),
   settingsKeybindings: () =>
     import("@/app/(authenticated)/settings/keybindings/KeybindingsPaneBody"),
+  oracle: () => import("@/app/(authenticated)/oracle/OracleLandingPaneBody"),
+  oracleAtlas: () => import("@/app/(authenticated)/oracle/atlas/AtlasPaneBody"),
+  oracleReading: () =>
+    import("@/app/(authenticated)/oracle/[readingId]/OracleReadingPaneBody"),
 };
 
 const PANE_BODIES = (Object.keys(PANE_LOADERS) as PaneRouteId[]).reduce(

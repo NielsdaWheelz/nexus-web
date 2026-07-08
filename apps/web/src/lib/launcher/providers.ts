@@ -161,7 +161,7 @@ function folioItems(ctx: LauncherContext): LauncherItem[] {
       keywords: [row.folio_theme ?? "", row.folio_motto ?? "", `folio ${row.folio_number}`],
       sectionId: "recent-folios",
       icon: Sparkles,
-      target: { kind: "href", href: `/oracle/${row.id}`, externalShell: true },
+      target: { kind: "href", href: `/oracle/${row.id}`, externalShell: false },
       source: "oracle",
       rank: {},
       hasActions: true,

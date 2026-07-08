@@ -1,21 +1,9 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
+import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
 import AtlasPaneBody from "./AtlasPaneBody";
 import { placeFolios, projectToScreen } from "./projection";
-
-const { routerPushMock } = vi.hoisted(() => ({
-  routerPushMock: vi.fn(),
-}));
-
-vi.mock("next/navigation", () => ({
-  __esModule: true,
-  default: {},
-  usePathname: () => "/oracle/atlas",
-  useRouter: () => ({
-    push: routerPushMock,
-    replace: vi.fn(),
-  }),
-}));
 
 interface FixtureReading {
   id: string;
@@ -48,10 +36,32 @@ function jsonResponse(body: unknown, init?: ResponseInit): Response {
   });
 }
 
+const href = "/oracle/atlas";
+
+function atlasPane() {
+  return (
+    <PaneRuntimeProvider
+      paneId="pane-1"
+      href={href}
+      routeId="oracleAtlas"
+      routeKey={resolvePaneRouteIdentity(href).routeKey}
+      canGoBack={false}
+      canGoForward={false}
+      onGoBackPane={vi.fn()}
+      onGoForwardPane={vi.fn()}
+      pathParams={{}}
+      onNavigatePane={vi.fn()}
+      onReplacePane={vi.fn()}
+      onOpenInNewPane={vi.fn()}
+    >
+      <AtlasPaneBody />
+    </PaneRuntimeProvider>
+  );
+}
+
 describe("AtlasPaneBody", () => {
   afterEach(() => {
     vi.useRealTimers();
-    routerPushMock.mockReset();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -65,7 +75,7 @@ describe("AtlasPaneBody", () => {
       }),
     );
 
-    render(<AtlasPaneBody />);
+    render(atlasPane());
 
     expect(
       await screen.findByText(
@@ -92,7 +102,7 @@ describe("AtlasPaneBody", () => {
       }),
     );
 
-    render(<AtlasPaneBody />);
+    render(atlasPane());
 
     // The headline updates from "drawing the dome…" to a star count once data arrives.
     expect(await screen.findByText("3 stars")).toBeVisible();
@@ -132,7 +142,7 @@ describe("AtlasPaneBody", () => {
       }),
     );
 
-    render(<AtlasPaneBody />);
+    render(atlasPane());
 
     expect(await screen.findByText("1 star")).toBeVisible();
   });
@@ -150,7 +160,7 @@ describe("AtlasPaneBody", () => {
       }),
     );
 
-    const { unmount } = render(<AtlasPaneBody />);
+    const { unmount } = render(atlasPane());
 
     await waitFor(() => {
       expect(summarySignals).toHaveLength(1);
@@ -163,6 +173,7 @@ describe("AtlasPaneBody", () => {
   });
 
   it("cancels delayed star navigation on unmount", async () => {
+    const navigateMock = vi.fn();
     const readings = [reading({ id: "r1", folio_number: 1 })];
     vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
       new DOMRect(0, 0, 320, 320),
@@ -176,7 +187,25 @@ describe("AtlasPaneBody", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const { unmount } = render(<AtlasPaneBody />);
+    const href = "/oracle/atlas";
+    const { unmount } = render(
+      <PaneRuntimeProvider
+        paneId="pane-1"
+        href={href}
+        routeId="oracleAtlas"
+        routeKey={resolvePaneRouteIdentity(href).routeKey}
+        canGoBack={false}
+        canGoForward={false}
+        onGoBackPane={vi.fn()}
+        onGoForwardPane={vi.fn()}
+        pathParams={{}}
+        onNavigatePane={navigateMock}
+        onReplacePane={vi.fn()}
+        onOpenInNewPane={vi.fn()}
+      >
+        <AtlasPaneBody />
+      </PaneRuntimeProvider>,
+    );
 
     expect(await screen.findByText("1 star")).toBeVisible();
     vi.useFakeTimers();
@@ -195,12 +224,12 @@ describe("AtlasPaneBody", () => {
       "/api/oracle/readings/r1/concordance",
       expect.anything(),
     );
-    expect(routerPushMock).not.toHaveBeenCalled();
+    expect(navigateMock).not.toHaveBeenCalled();
 
     unmount();
     await vi.advanceTimersByTimeAsync(1100);
 
-    expect(routerPushMock).not.toHaveBeenCalled();
+    expect(navigateMock).not.toHaveBeenCalled();
   });
 
   it("aborts stale concordance loads and keeps the latest selected star peers", async () => {
@@ -235,7 +264,7 @@ describe("AtlasPaneBody", () => {
       }),
     );
 
-    render(<AtlasPaneBody />);
+    render(atlasPane());
 
     expect(await screen.findByText("4 stars")).toBeVisible();
     const canvas = screen.getByRole("img", {

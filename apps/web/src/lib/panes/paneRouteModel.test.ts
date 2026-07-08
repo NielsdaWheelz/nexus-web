@@ -68,7 +68,7 @@ describe("pane route model", () => {
   });
 
   it("returns unsupported routes with standard max policy only", () => {
-    for (const href of ["/oracle", "/media", "/pages/a/b"]) {
+    for (const href of ["/media", "/pages/a/b"]) {
       expect(resolvePaneRouteModel(href)).toMatchObject({
         id: "unsupported",
         definition: null,
@@ -78,6 +78,15 @@ describe("pane route model", () => {
         allowsIntrinsicPrimaryWidth: false,
       });
     }
+  });
+
+  it("resolves oracle routes as registered pane routes", () => {
+    expect(resolvePaneRouteModel("/oracle")).toMatchObject({ id: "oracle" });
+    expect(resolvePaneRouteModel("/oracle/atlas")).toMatchObject({ id: "oracleAtlas" });
+    expect(resolvePaneRouteModel("/oracle/some-uuid")).toMatchObject({
+      id: "oracleReading",
+      params: { readingId: "some-uuid" },
+    });
   });
 
   it("declares unique model ids", () => {

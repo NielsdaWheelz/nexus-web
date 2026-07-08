@@ -375,9 +375,9 @@ grep "externalShell.*true" apps/web/src/lib/launcher/providers.ts | grep -i orac
 grep -r "import.*useRouter.*from.*next/navigation" apps/web/src/app/"(authenticated)"/oracle && echo FAIL || echo PASS
 
 # G5: oracle pane body entry points are registered
-grep -q '"oracle"' apps/web/src/lib/panes/paneRenderRegistry.tsx || echo FAIL
-grep -q '"oracleAtlas"' apps/web/src/lib/panes/paneRenderRegistry.tsx || echo FAIL
-grep -q '"oracleReading"' apps/web/src/lib/panes/paneRenderRegistry.tsx || echo FAIL
+grep -q 'oracle:' apps/web/src/lib/panes/paneRenderRegistry.tsx || echo FAIL
+grep -q 'oracleAtlas:' apps/web/src/lib/panes/paneRenderRegistry.tsx || echo FAIL
+grep -q 'oracleReading:' apps/web/src/lib/panes/paneRenderRegistry.tsx || echo FAIL
 
 # G6: oracle fonts declared in root layout with preload:false
 grep -q "EB_Garamond" apps/web/src/app/layout.tsx || echo FAIL

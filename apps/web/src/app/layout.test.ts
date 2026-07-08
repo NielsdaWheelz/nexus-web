@@ -5,6 +5,9 @@ vi.mock("next/font/google", () => {
   return {
     Inter: loadFont,
     JetBrains_Mono: loadFont,
+    EB_Garamond: loadFont,
+    IM_Fell_English: loadFont,
+    UnifrakturMaguntia: loadFont,
   };
 });
 

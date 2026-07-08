@@ -217,11 +217,11 @@ describe("buildLauncherItems — recent items", () => {
 });
 
 // ---------------------------------------------------------------------------
-// (d) recent-folio items → href (externalShell true)
+// (d) recent-folio items → href (externalShell false after shell dissolution)
 // ---------------------------------------------------------------------------
 
 describe("buildLauncherItems — recent folios", () => {
-  it("only includes complete rows (capped at 5), targets /oracle/{id} via externalShell", () => {
+  it("only includes complete rows (capped at 5), targets /oracle/{id} as a pane (externalShell false)", () => {
     const rows: LauncherOracleRow[] = [
       makeOracleRow({ id: "o1", status: "complete", folio_number: 1, folio_theme: "Love" }),
       makeOracleRow({ id: "o2", status: "pending", folio_number: 2, folio_theme: "War" }),
@@ -239,7 +239,7 @@ describe("buildLauncherItems — recent folios", () => {
     expect(items.find((i) => i.id === "oracle-recent-o2")).toBeUndefined(); // pending excluded
 
     const first = items.find((i) => i.id === "oracle-recent-o1")!;
-    expect(first.target).toEqual({ kind: "href", href: "/oracle/o1", externalShell: true });
+    expect(first.target).toEqual({ kind: "href", href: "/oracle/o1", externalShell: false });
   });
 
   it("includes the Roman folio numeral in the title", () => {
@@ -271,11 +271,11 @@ describe("buildLauncherItems — command items", () => {
     expect(appearance.sectionId).toBe("settings");
     expect(appearance.target).toMatchObject({ kind: "href", href: "/settings/appearance" });
 
-    // The oracle destination opts into full-shell navigation.
+    // The oracle destination opens as a pane after shell dissolution.
     expect(items.find((i) => i.id === "oracle")!.target).toMatchObject({
       kind: "href",
       href: "/oracle",
-      externalShell: true,
+      externalShell: false,
     });
   });
 

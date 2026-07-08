@@ -13,7 +13,7 @@ export interface Destination {
   href: string;
   keywords: string[];
   icon?: LucideIcon; // defaults to getPaneRouteIcon(href) at render
-  externalShell?: boolean; // Launcher opens via full-shell navigation (oracle), not a pane
+  externalShell?: boolean;
   slot?: "primary" | "tools" | "account"; // present ⇒ also appears in the nav rail/sheet
   match?: { exact?: string[]; prefix?: string[] }; // nav active-state matching
   signature?: "oracle";
@@ -68,7 +68,7 @@ export const DESTINATIONS: Destination[] = [
     href: "/oracle",
     keywords: ["oracle", "divination", "reading", "folio", "fortune", "sortes", "motto"],
     icon: Sparkles,
-    externalShell: true,
+    externalShell: false,
     slot: "tools",
     signature: "oracle",
     match: { exact: ["/oracle"], prefix: ["/oracle/"] },

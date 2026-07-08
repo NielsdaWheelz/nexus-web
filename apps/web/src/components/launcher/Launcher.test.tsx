@@ -305,15 +305,15 @@ describe("Launcher — prefetch-on-intent", () => {
     expect(preloadPane).not.toHaveBeenCalled();
   });
 
-  it("does not warm a pane for the externalShell Oracle row", async () => {
+  it("warms oracle pane on hover after shell dissolution", async () => {
     await openDialog({ lane: "go" });
 
-    // Oracle is a full-shell destination (externalShell:true) — the launcher must not
-    // warm a pane for it even though it is an href row.
+    // Oracle is now a regular pane destination (externalShell:false) — hovering
+    // it should warm the oracle pane chunk.
     const oracle = await screen.findByRole("option", { name: /Oracle/i });
     fireEvent.mouseMove(oracle);
 
-    expect(preloadPane).not.toHaveBeenCalled();
+    expect(preloadPane).toHaveBeenCalledWith("oracle");
   });
 });
 

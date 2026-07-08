@@ -2,49 +2,83 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildOraclePlateImageSrc } from "@/lib/media/oraclePlateImage";
+import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
+import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
 import OracleConcordance from "../OracleConcordance";
 import OracleReadingPaneBody, { type ReadingDetail } from "./OracleReadingPaneBody";
 
-const streamMocks = vi.hoisted(() => ({
+const mocks = vi.hoisted(() => ({
   fetchStreamToken: vi.fn(),
-  routerPush: vi.fn(),
-  routerReplace: vi.fn(),
   sseClientDirect: vi.fn(() => vi.fn()),
 }));
 
-vi.mock("next/navigation", () => ({
-  __esModule: true,
-  default: {},
-  usePathname: () => "/oracle/reading-1",
-  useRouter: () => ({
-    push: streamMocks.routerPush,
-    replace: streamMocks.routerReplace,
-  }),
-}));
-
 vi.mock("@/lib/api/streamToken", () => ({
-  fetchStreamToken: streamMocks.fetchStreamToken,
+  fetchStreamToken: mocks.fetchStreamToken,
 }));
 
 vi.mock("@/lib/api/sse-client", () => ({
-  sseClientDirect: streamMocks.sseClientDirect,
+  sseClientDirect: mocks.sseClientDirect,
 }));
 
+// requestOpenInAppPane either postMessages to the parent frame or enqueues on
+// window.__nexusPendingPaneOpenQueue when the pane graph is not yet ready.
+// Both paths are checked so the tests are robust to iframe vs. flat context.
+function resolvedOpenHrefs(
+  postMessageSpy: ReturnType<typeof vi.spyOn>,
+): string[] {
+  const msgHrefs = (
+    postMessageSpy.mock.calls as Array<[Record<string, unknown>, ...unknown[]]>
+  )
+    .map(([msg]) => msg?.href)
+    .filter((h): h is string => typeof h === "string");
+  const queue = (
+    (window as unknown as Record<string, unknown>)
+      .__nexusPendingPaneOpenQueue as Array<{ href: string }> | undefined
+  ) ?? [];
+  return [...msgHrefs, ...queue.map((d) => d.href)];
+}
+
+function readingPane(readingId: string) {
+  const href = `/oracle/${readingId}`;
+  return (
+    <PaneRuntimeProvider
+      paneId="pane-1"
+      href={href}
+      routeId="oracleReading"
+      routeKey={resolvePaneRouteIdentity(href).routeKey}
+      canGoBack={false}
+      canGoForward={false}
+      onGoBackPane={vi.fn()}
+      onGoForwardPane={vi.fn()}
+      pathParams={{ readingId }}
+      onNavigatePane={vi.fn()}
+      onReplacePane={vi.fn()}
+      onOpenInNewPane={vi.fn()}
+    >
+      <OracleReadingPaneBody />
+    </PaneRuntimeProvider>
+  );
+}
+
 describe("OracleReadingPaneBody", () => {
+  let postMessageSpy: ReturnType<typeof vi.spyOn>;
+
   beforeEach(() => {
-    streamMocks.fetchStreamToken.mockReset();
-    streamMocks.fetchStreamToken.mockResolvedValue({
+    mocks.fetchStreamToken.mockReset();
+    mocks.fetchStreamToken.mockResolvedValue({
       token: "stream-token-1",
       stream_base_url: "https://stream.example.test",
     });
-    streamMocks.sseClientDirect.mockReset();
-    streamMocks.sseClientDirect.mockReturnValue(vi.fn());
-    streamMocks.routerPush.mockReset();
-    streamMocks.routerReplace.mockReset();
+    mocks.sseClientDirect.mockReset();
+    mocks.sseClientDirect.mockReturnValue(vi.fn());
+    postMessageSpy = vi.spyOn(window.parent ?? window, "postMessage");
   });
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    delete (window as unknown as Record<string, unknown>)
+      .__nexusPendingPaneOpenQueue;
   });
 
   it("clears stale reading state when the reading id changes", async () => {
@@ -68,12 +102,12 @@ describe("OracleReadingPaneBody", () => {
       }),
     );
 
-    const { rerender } = render(<OracleReadingPaneBody readingId="reading-1" />);
+    const { rerender } = render(readingPane("reading-1"));
 
     expect(await screen.findByRole("heading", { name: "What keeps the first lamp lit?" }))
       .toBeVisible();
 
-    rerender(<OracleReadingPaneBody readingId="reading-2" />);
+    rerender(readingPane("reading-2"));
 
     await waitFor(() => {
       expect(
@@ -97,22 +131,29 @@ describe("OracleReadingPaneBody", () => {
   });
 
   it("streams pending readings through the shared SSE client", async () => {
-    render(
-      <OracleReadingPaneBody
-        readingId="reading-1"
-        initialDetail={readingDetail({
-          id: "reading-1",
-          question: "What is still forming?",
-          folioNumber: 1,
-          status: "streaming",
-        })}
-      />,
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (path: string) => {
+        if (path === "/api/oracle/readings/reading-1") {
+          return jsonResponse({
+            data: readingDetail({
+              id: "reading-1",
+              question: "What is still forming?",
+              folioNumber: 1,
+              status: "streaming",
+            }),
+          });
+        }
+        throw new Error(`Unexpected fetch path: ${path}`);
+      }),
     );
 
+    render(readingPane("reading-1"));
+
     await waitFor(() => {
-      expect(streamMocks.sseClientDirect).toHaveBeenCalledTimes(1);
+      expect(mocks.sseClientDirect).toHaveBeenCalledTimes(1);
     });
-    const sseCalls = streamMocks.sseClientDirect.mock.calls as unknown as Array<
+    const sseCalls = mocks.sseClientDirect.mock.calls as unknown as Array<
       [Record<string, unknown>]
     >;
     expect(sseCalls[0]?.[0]).toMatchObject({
@@ -141,7 +182,7 @@ describe("OracleReadingPaneBody", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const { rerender } = render(<OracleReadingPaneBody readingId="reading-1" />);
+    const { rerender } = render(readingPane("reading-1"));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
@@ -154,7 +195,7 @@ describe("OracleReadingPaneBody", () => {
       );
     });
 
-    rerender(<OracleReadingPaneBody readingId="reading-2" />);
+    rerender(readingPane("reading-2"));
     firstDetail.resolve(
       jsonResponse({
         data: readingDetail({
@@ -169,8 +210,8 @@ describe("OracleReadingPaneBody", () => {
     expect(await screen.findByRole("heading", { name: "Where does the second path open?" }))
       .toBeVisible();
     await waitFor(() => {
-      expect(streamMocks.fetchStreamToken).not.toHaveBeenCalled();
-      expect(streamMocks.sseClientDirect).not.toHaveBeenCalled();
+      expect(mocks.fetchStreamToken).not.toHaveBeenCalled();
+      expect(mocks.sseClientDirect).not.toHaveBeenCalled();
     });
   });
 
@@ -201,7 +242,7 @@ describe("OracleReadingPaneBody", () => {
       }),
     );
 
-    render(<OracleReadingPaneBody readingId="reading-1" />);
+    render(readingPane("reading-1"));
 
     const plate = await screen.findByRole("img", {
       name: "Test Engraver, The Test Plate",
@@ -228,7 +269,7 @@ describe("OracleReadingPaneBody", () => {
       }),
     );
 
-    render(<OracleReadingPaneBody readingId="reading-1" />);
+    render(readingPane("reading-1"));
 
     expect(await screen.findByText("The reading could not finish.")).toBeVisible();
     expect(
@@ -267,7 +308,7 @@ describe("OracleReadingPaneBody", () => {
       }),
     );
 
-    render(<OracleReadingPaneBody readingId="reading-1" />);
+    render(readingPane("reading-1"));
 
     expect(await screen.findByText("The reading could not finish.")).toBeVisible();
     expect(
@@ -296,7 +337,7 @@ describe("OracleReadingPaneBody", () => {
       }),
     );
 
-    render(<OracleReadingPaneBody readingId="reading-1" />);
+    render(readingPane("reading-1"));
 
     expect(await screen.findByText("The reading could not finish.")).toBeVisible();
     expect(
@@ -360,14 +401,14 @@ describe("OracleReadingPaneBody", () => {
       }),
     );
 
-    render(<OracleReadingPaneBody readingId="reading-1" />);
+    render(readingPane("reading-1"));
 
     const chip = await screen.findByRole("link", { name: "Open citation 1" });
     expect(chip).toBeInTheDocument();
     expect(chip).toHaveAttribute("href", "/media/media-1#fragment-fragment-1");
     chip.addEventListener("click", (event) => event.preventDefault(), { once: true });
     await userEvent.click(chip);
-    expect(streamMocks.routerPush).toHaveBeenCalledWith("/media/media-1#fragment-fragment-1");
+    expect(resolvedOpenHrefs(postMessageSpy)).toContain("/media/media-1#fragment-fragment-1");
   });
 
   it("renders and opens a note citation chip for note-owned evidence", async () => {
@@ -423,13 +464,13 @@ describe("OracleReadingPaneBody", () => {
       }),
     );
 
-    render(<OracleReadingPaneBody readingId="reading-1" />);
+    render(readingPane("reading-1"));
 
     const chip = await screen.findByRole("link", { name: "Open citation 1" });
     expect(chip).toHaveAttribute("href", "/notes/block-1");
     chip.addEventListener("click", (event) => event.preventDefault(), { once: true });
     await userEvent.click(chip);
-    expect(streamMocks.routerPush).toHaveBeenCalledWith("/notes/block-1");
+    expect(resolvedOpenHrefs(postMessageSpy)).toContain("/notes/block-1");
   });
 
   it("renders and opens an anchor citation chip for a public-domain passage", async () => {
@@ -493,7 +534,7 @@ describe("OracleReadingPaneBody", () => {
       }),
     );
 
-    render(<OracleReadingPaneBody readingId="reading-1" />);
+    render(readingPane("reading-1"));
 
     const chip = await screen.findByRole("link", { name: "Open citation 1" });
     expect(chip).toHaveAttribute("href", "/media/media-9#fragment-fragment-9");
@@ -501,7 +542,7 @@ describe("OracleReadingPaneBody", () => {
       once: true,
     });
     await userEvent.click(chip);
-    expect(streamMocks.routerPush).toHaveBeenCalledWith(
+    expect(resolvedOpenHrefs(postMessageSpy)).toContain(
       "/media/media-9#fragment-fragment-9",
     );
   });
@@ -526,7 +567,7 @@ describe("OracleReadingPaneBody", () => {
       }),
     );
 
-    render(<OracleReadingPaneBody readingId="reading-1" />);
+    render(readingPane("reading-1"));
 
     await userEvent.click(
       await screen.findByRole("button", { name: "Chat about this reading" }),
@@ -555,14 +596,32 @@ describe("OracleReadingPaneBody", () => {
       }),
     );
 
-    const { rerender } = render(
-      <OracleConcordance readingId="reading-1" status="complete" />,
+    const concordanceHref = "/oracle/reading-1";
+    const concordancePane = (status: string) => (
+      <PaneRuntimeProvider
+        paneId="pane-1"
+        href={concordanceHref}
+        routeId="oracleReading"
+        routeKey={resolvePaneRouteIdentity(concordanceHref).routeKey}
+        canGoBack={false}
+        canGoForward={false}
+        onGoBackPane={vi.fn()}
+        onGoForwardPane={vi.fn()}
+        pathParams={{ readingId: "reading-1" }}
+        onNavigatePane={vi.fn()}
+        onReplacePane={vi.fn()}
+        onOpenInNewPane={vi.fn()}
+      >
+        <OracleConcordance readingId="reading-1" status={status} />
+      </PaneRuntimeProvider>
     );
+
+    const { rerender } = render(concordancePane("complete"));
 
     expect(await screen.findByText("Concordance")).toBeInTheDocument();
     expect(screen.getByText("In limine")).toBeInTheDocument();
 
-    rerender(<OracleConcordance readingId="reading-1" status="streaming" />);
+    rerender(concordancePane("streaming"));
 
     expect(screen.queryByText("Concordance")).not.toBeInTheDocument();
     expect(screen.queryByText("In limine")).not.toBeInTheDocument();
@@ -587,15 +646,35 @@ describe("OracleReadingPaneBody", () => {
       }),
     );
 
-    const { rerender } = render(
-      <OracleConcordance readingId="reading-1" status="complete" />,
-    );
+    function concordancePane(readingId: string) {
+      const href = `/oracle/${readingId}`;
+      return (
+        <PaneRuntimeProvider
+          paneId="pane-1"
+          href={href}
+          routeId="oracleReading"
+          routeKey={resolvePaneRouteIdentity(href).routeKey}
+          canGoBack={false}
+          canGoForward={false}
+          onGoBackPane={vi.fn()}
+          onGoForwardPane={vi.fn()}
+          pathParams={{ readingId }}
+          onNavigatePane={vi.fn()}
+          onReplacePane={vi.fn()}
+          onOpenInNewPane={vi.fn()}
+        >
+          <OracleConcordance readingId={readingId} status="complete" />
+        </PaneRuntimeProvider>
+      );
+    }
+
+    const { rerender } = render(concordancePane("reading-1"));
 
     await waitFor(() => {
       expect(signals.reading1).toBeDefined();
     });
 
-    rerender(<OracleConcordance readingId="reading-2" status="complete" />);
+    rerender(concordancePane("reading-2"));
 
     await waitFor(() => {
       expect(signals.reading2).toBeDefined();

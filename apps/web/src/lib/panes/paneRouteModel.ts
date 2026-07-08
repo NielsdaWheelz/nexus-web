@@ -49,7 +49,10 @@ export type PaneRouteId =
   | "settingsKeys"
   | "settingsLocalVault"
   | "settingsIdentities"
-  | "settingsKeybindings";
+  | "settingsKeybindings"
+  | "oracle"
+  | "oracleAtlas"
+  | "oracleReading";
 
 export interface PaneRouteModelDefinition extends PaneWidthContract {
   id: PaneRouteId;
@@ -275,6 +278,32 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
     staticTitle: "Keyboard shortcuts",
     titleMode: "static",
     bodyMode: "standard",
+    ...STANDARD_WIDTH_CONTRACT,
+  }),
+  route({
+    id: "oracle",
+    pattern: ["oracle"],
+    staticTitle: "Oracle",
+    titleMode: "static",
+    bodyMode: "document",
+    ...STANDARD_WIDTH_CONTRACT,
+  }),
+  // oracleAtlas MUST precede oracleReading so the literal "atlas" segment is
+  // matched before the :readingId capture.
+  route({
+    id: "oracleAtlas",
+    pattern: ["oracle", "atlas"],
+    staticTitle: "The Atlas",
+    titleMode: "static",
+    bodyMode: "document",
+    ...STANDARD_WIDTH_CONTRACT,
+  }),
+  route({
+    id: "oracleReading",
+    pattern: ["oracle", ":readingId"],
+    staticTitle: "Reading",
+    titleMode: "static",
+    bodyMode: "document",
     ...STANDARD_WIDTH_CONTRACT,
   }),
 ];

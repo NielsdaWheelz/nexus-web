@@ -1,6 +1,5 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   FeedbackNotice,
@@ -30,11 +29,13 @@ import {
 import { toRoman } from "@/lib/toRoman";
 import { useResource } from "@/lib/api/useResource";
 import { isRecord } from "@/lib/validation";
+import { usePaneParam, usePaneRouter } from "@/lib/panes/paneRuntime";
+import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
 import type { OracleCreateResponse } from "../types";
-import { useStickyHeadline } from "../../OracleShell";
 import BorderFrame from "../BorderFrame";
 import IlluminatedCapital from "../IlluminatedCapital";
 import OracleConcordance from "../OracleConcordance";
+import OracleThemeWrapper from "../OracleThemeWrapper";
 import Sidenote from "./Sidenote";
 import styles from "../oracle.module.css";
 
@@ -398,34 +399,22 @@ function oracleFailureFeedback(errorCode: string | null): FeedbackContent {
   };
 }
 
-export default function OracleReadingPaneBody({
-  readingId,
-  initialDetail = null,
-}: {
-  readingId: string;
-  initialDetail?: ReadingDetail | null;
-}) {
-  const router = useRouter();
-  const [state, setState] = useState<ReadingState>(() =>
-    initialDetail?.id === readingId
-      ? stateFromDetail(initialDetail)
-      : initialState(),
-  );
+export default function OracleReadingPaneBody() {
+  const readingId = usePaneParam("readingId");
+  if (!readingId) throw new Error("OracleReadingPaneBody: readingId param is required");
+
+  const paneRouter = usePaneRouter();
+  const [state, setState] = useState<ReadingState>(initialState);
   const [loadError, setLoadError] = useState<FeedbackContent | null>(null);
   const [retryError, setRetryError] = useState<FeedbackContent | null>(null);
   const [chatError, setChatError] = useState<FeedbackContent | null>(null);
   const [retryingReading, setRetryingReading] = useState(false);
   const [retryNonce, setRetryNonce] = useState(0);
-  const headlineRef = useStickyHeadline(state.folioMotto ?? null);
-  const seededDetail = initialDetail?.id === readingId ? initialDetail : null;
   const detailResource = useResource<ReadingDetail>({
-    cacheKey: seededDetail === null ? `${readingId}:${retryNonce}` : null,
+    cacheKey: `${readingId}:${retryNonce}`,
     load: (signal) => loadReadingDetail(readingId, signal),
   });
   const streamSeed = useMemo(() => {
-    if (seededDetail !== null) {
-      return stateFromDetail(seededDetail);
-    }
     if (
       detailResource.status === "ready" &&
       detailResource.data.id === readingId
@@ -433,7 +422,7 @@ export default function OracleReadingPaneBody({
       return stateFromDetail(detailResource.data);
     }
     return null;
-  }, [detailResource, readingId, seededDetail]);
+  }, [detailResource, readingId]);
 
   const retryLoad = useCallback(() => {
     setLoadError(null);
@@ -454,7 +443,7 @@ export default function OracleReadingPaneBody({
           body: JSON.stringify({ question }),
         },
       );
-      router.push(`/oracle/${body.data.reading_id}`);
+      paneRouter.push(`/oracle/${body.data.reading_id}`);
     } catch (error) {
       if (handleUnauthenticatedApiError(error)) return;
       setRetryError(
@@ -464,16 +453,14 @@ export default function OracleReadingPaneBody({
       );
       setRetryingReading(false);
     }
-  }, [retryingReading, router, state.question]);
+  }, [retryingReading, paneRouter, state.question]);
 
   useEffect(() => {
-    setState(
-      seededDetail !== null ? stateFromDetail(seededDetail) : initialState(),
-    );
+    setState(initialState());
     setLoadError(null);
     setRetryError(null);
     setRetryingReading(false);
-  }, [readingId, retryNonce, seededDetail]);
+  }, [readingId, retryNonce]);
 
   useEffect(() => {
     if (
@@ -524,10 +511,10 @@ export default function OracleReadingPaneBody({
       if (target) dispatchReaderSourceActivation(target);
       activateResource(activation, {
         label: target?.label,
-        navigate: (href) => router.push(href),
+        navigate: (href) => requestOpenInAppPane(href),
       });
     },
-    [router],
+    [],
   );
 
   const openReadingChat = useCallback(async () => {
@@ -536,7 +523,7 @@ export default function OracleReadingPaneBody({
       const conversationId = await startResourceChat(
         `oracle_reading:${readingId}`,
       );
-      router.push(`/conversations/${conversationId}`);
+      requestOpenInAppPane(`/conversations/${conversationId}`);
     } catch (error) {
       if (handleUnauthenticatedApiError(error)) return;
       setChatError(
@@ -545,7 +532,7 @@ export default function OracleReadingPaneBody({
         }),
       );
     }
-  }, [readingId, router]);
+  }, [readingId]);
 
   const showSkeletons =
     state.status === "pending" ||
@@ -561,198 +548,197 @@ export default function OracleReadingPaneBody({
       : null;
 
   return (
-    <div className={styles.surface}>
-      <article className={styles.reading}>
-        <BorderFrame />
+    <OracleThemeWrapper>
+      <div className={styles.surface}>
+        <article className={styles.reading}>
+          <BorderFrame />
 
-        <header className={styles.readingHeader}>
-          <div className={styles.foliumHeader}>
-            <span className={styles.foliumNumber}>
-              {state.folioNumber !== null ? `Folio ${toRoman(state.folioNumber)}` : "Folio"}
-            </span>
-            <span className={styles.foliumDot}>·</span>
-            <span className={styles.foliumTheme}>{state.folioTheme ?? ""}</span>
-          </div>
-          {state.folioMotto !== null && (
-            <div
-              className={styles.foliumMotto}
-              ref={headlineRef as React.RefObject<HTMLDivElement>}
-            >
-              {state.folioMotto}
+          <header className={styles.readingHeader}>
+            <div className={styles.foliumHeader}>
+              <span className={styles.foliumNumber}>
+                {state.folioNumber !== null ? `Folio ${toRoman(state.folioNumber)}` : "Folio"}
+              </span>
+              <span className={styles.foliumDot}>·</span>
+              <span className={styles.foliumTheme}>{state.folioTheme ?? ""}</span>
+            </div>
+            {state.folioMotto !== null && (
+              <div className={styles.foliumMotto}>
+                {state.folioMotto}
+              </div>
+            )}
+            {state.folioMottoGloss !== null && (
+              <div className={styles.foliumGloss}>{state.folioMottoGloss}</div>
+            )}
+            <h1 className={styles.readingQuestion}>
+              {state.question || "…"}
+            </h1>
+            {state.argument !== null && state.argument.length > 0 && (
+              <p className={styles.argument}>{state.argument}</p>
+            )}
+          </header>
+
+          {state.image !== null && (
+            <figure className={styles.plate}>
+              <MediaImage
+                kind="owned"
+                src={state.image.url}
+                alt={`${state.image.artist}, ${state.image.work_title}`}
+                width={state.image.width}
+                height={state.image.height}
+                className={styles.plateImage}
+                priority
+                sizes="(min-width: 768px) 36rem, 100vw"
+              />
+              <figcaption className={styles.plateCaption}>
+                {state.image.attribution_text}
+              </figcaption>
+            </figure>
+          )}
+
+          {showSkeletons && (
+            <div className={styles.skeletons} aria-hidden="true">
+              <div className={styles.skeletonPlate} />
+              <div className={styles.skeletonLine} />
+              <div className={styles.skeletonLine} />
+              <div className={styles.skeletonLine} />
             </div>
           )}
-          {state.folioMottoGloss !== null && (
-            <div className={styles.foliumGloss}>{state.folioMottoGloss}</div>
-          )}
-          <h1 className={styles.readingQuestion}>
-            {state.question || "…"}
-          </h1>
-          {state.argument !== null && state.argument.length > 0 && (
-            <p className={styles.argument}>{state.argument}</p>
-          )}
-        </header>
 
-        {state.image !== null && (
-          <figure className={styles.plate}>
-            <MediaImage
-              kind="owned"
-              src={state.image.url}
-              alt={`${state.image.artist}, ${state.image.work_title}`}
-              width={state.image.width}
-              height={state.image.height}
-              className={styles.plateImage}
-              priority
-              sizes="(min-width: 768px) 36rem, 100vw"
-            />
-            <figcaption className={styles.plateCaption}>
-              {state.image.attribution_text}
-            </figcaption>
-          </figure>
-        )}
-
-        {showSkeletons && (
-          <div className={styles.skeletons} aria-hidden="true">
-            <div className={styles.skeletonPlate} />
-            <div className={styles.skeletonLine} />
-            <div className={styles.skeletonLine} />
-            <div className={styles.skeletonLine} />
-          </div>
-        )}
-
-        {state.passages.map((passage, index) => (
-          <div key={passage.phase}>
-            {index > 0 && <FleuronBreak />}
-            <section className={styles.passageBlock}>
-              <p className={styles.passagePhase}>{PHASE_LABEL[passage.phase]}</p>
-              <div className={styles.passage}>
-                <blockquote className={styles.quote}>
-                  <p>{passage.exact_snippet}</p>
-                </blockquote>
-                <p className={styles.attribution}>
-                  {passage.attribution_text}{" "}
-                  <span className={styles.locator}>{passage.locator_label}</span>
-                  {passage.citation !== null && (
-                    <span className={styles.passageCitation}>
-                      <ReaderCitation
-                        {...toReaderCitationData(passage.citation)}
-                        onActivate={activateCitation}
-                      />
-                    </span>
-                  )}
-                </p>
-                <Sidenote>
-                  <p>{passage.marginalia_text}</p>
-                </Sidenote>
-              </div>
-            </section>
-          </div>
-        ))}
-
-        {interpretationParagraphs.length > 0 && (
-          <>
-            <FleuronBreak />
-            <section className={styles.interpretation}>
-              {interpretationParagraphs.map((paragraph, index) =>
-                index === 0 && paragraph.length > 0 ? (
-                  <p key={index}>
-                    <IlluminatedCapital
-                      letter={paragraph.charAt(0)}
-                      seed={state.question}
-                    />
-                    {paragraph.slice(1)}
+          {state.passages.map((passage, index) => (
+            <div key={passage.phase}>
+              {index > 0 && <FleuronBreak />}
+              <section className={styles.passageBlock}>
+                <p className={styles.passagePhase}>{PHASE_LABEL[passage.phase]}</p>
+                <div className={styles.passage}>
+                  <blockquote className={styles.quote}>
+                    <p>{passage.exact_snippet}</p>
+                  </blockquote>
+                  <p className={styles.attribution}>
+                    {passage.attribution_text}{" "}
+                    <span className={styles.locator}>{passage.locator_label}</span>
+                    {passage.citation !== null && (
+                      <span className={styles.passageCitation}>
+                        <ReaderCitation
+                          {...toReaderCitationData(passage.citation)}
+                          onActivate={activateCitation}
+                        />
+                      </span>
+                    )}
                   </p>
-                ) : (
-                  <p key={index}>{paragraph}</p>
-                ),
+                  <Sidenote>
+                    <p>{passage.marginalia_text}</p>
+                  </Sidenote>
+                </div>
+              </section>
+            </div>
+          ))}
+
+          {interpretationParagraphs.length > 0 && (
+            <>
+              <FleuronBreak />
+              <section className={styles.interpretation}>
+                {interpretationParagraphs.map((paragraph, index) =>
+                  index === 0 && paragraph.length > 0 ? (
+                    <p key={index}>
+                      <IlluminatedCapital
+                        letter={paragraph.charAt(0)}
+                        seed={state.question}
+                      />
+                      {paragraph.slice(1)}
+                    </p>
+                  ) : (
+                    <p key={index}>{paragraph}</p>
+                  ),
+                )}
+              </section>
+            </>
+          )}
+
+          {state.omens.length > 0 && (
+            <>
+              <FleuronBreak />
+              <section className={styles.omens}>
+                <p className={styles.omensLabel}>Omens</p>
+                <ul>
+                  {state.omens.map((line, index) => (
+                    <li key={index}>{line}</li>
+                  ))}
+                </ul>
+              </section>
+            </>
+          )}
+
+          {state.status === "complete" && (
+            <OracleConcordance readingId={readingId} status={state.status} />
+          )}
+
+          {colophonDate !== null && state.status === "complete" && (
+            <>
+              <FleuronBreak />
+              <p className={styles.colophon}>
+                Composed on the {colophonDate}.
+                {state.image !== null && ` Plate after ${state.image.artist}.`}
+                {" "}Set in EB Garamond, IM Fell English, and UnifrakturMaguntia.
+              </p>
+            </>
+          )}
+
+          {state.status === "complete" && (
+            <div className={styles.readingActions}>
+              <button
+                type="button"
+                className={styles.chatAction}
+                onClick={openReadingChat}
+              >
+                Chat about this reading
+              </button>
+              {chatError !== null && (
+                <FeedbackNotice feedback={chatError} className={styles.oracleFeedback} />
               )}
+            </div>
+          )}
+
+          {state.status === "failed" && (
+            <section className={styles.errorPanel}>
+              <FeedbackNotice
+                feedback={oracleFailureFeedback(state.errorCode)}
+                className={styles.oracleFeedback}
+              />
+              {retryError !== null && (
+                <FeedbackNotice feedback={retryError} className={styles.oracleFeedback} />
+              )}
+              <button
+                type="button"
+                className={styles.errorAction}
+                onClick={retryFailedReading}
+                disabled={retryingReading}
+              >
+                {retryingReading ? "Retrying…" : "Retry reading"}
+              </button>
             </section>
-          </>
-        )}
+          )}
 
-        {state.omens.length > 0 && (
-          <>
-            <FleuronBreak />
-            <section className={styles.omens}>
-              <p className={styles.omensLabel}>Omens</p>
-              <ul>
-                {state.omens.map((line, index) => (
-                  <li key={index}>{line}</li>
-                ))}
-              </ul>
+          {loadError !== null && state.status !== "complete" && (
+            <section className={styles.errorPanel}>
+              <FeedbackNotice
+                feedback={{
+                  ...loadError,
+                  title: "The reading was interrupted.",
+                  message: loadError.title,
+                }}
+                className={styles.oracleFeedback}
+              />
+              <button
+                type="button"
+                className={styles.errorAction}
+                onClick={retryLoad}
+              >
+                Retry
+              </button>
             </section>
-          </>
-        )}
-
-        {state.status === "complete" && (
-          <OracleConcordance readingId={readingId} status={state.status} />
-        )}
-
-        {colophonDate !== null && state.status === "complete" && (
-          <>
-            <FleuronBreak />
-            <p className={styles.colophon}>
-              Composed on the {colophonDate}.
-              {state.image !== null && ` Plate after ${state.image.artist}.`}
-              {" "}Set in EB Garamond, IM Fell English, and UnifrakturMaguntia.
-            </p>
-          </>
-        )}
-
-        {state.status === "complete" && (
-          <div className={styles.readingActions}>
-            <button
-              type="button"
-              className={styles.chatAction}
-              onClick={openReadingChat}
-            >
-              Chat about this reading
-            </button>
-            {chatError !== null && (
-              <FeedbackNotice feedback={chatError} className={styles.oracleFeedback} />
-            )}
-          </div>
-        )}
-
-        {state.status === "failed" && (
-          <section className={styles.errorPanel}>
-            <FeedbackNotice
-              feedback={oracleFailureFeedback(state.errorCode)}
-              className={styles.oracleFeedback}
-            />
-            {retryError !== null && (
-              <FeedbackNotice feedback={retryError} className={styles.oracleFeedback} />
-            )}
-            <button
-              type="button"
-              className={styles.errorAction}
-              onClick={retryFailedReading}
-              disabled={retryingReading}
-            >
-              {retryingReading ? "Retrying…" : "Retry reading"}
-            </button>
-          </section>
-        )}
-
-        {loadError !== null && state.status !== "complete" && (
-          <section className={styles.errorPanel}>
-            <FeedbackNotice
-              feedback={{
-                ...loadError,
-                title: "The reading was interrupted.",
-                message: loadError.title,
-              }}
-              className={styles.oracleFeedback}
-            />
-            <button
-              type="button"
-              className={styles.errorAction}
-              onClick={retryLoad}
-            >
-              Retry
-            </button>
-          </section>
-        )}
-      </article>
-    </div>
+          )}
+        </article>
+      </div>
+    </OracleThemeWrapper>
   );
 }

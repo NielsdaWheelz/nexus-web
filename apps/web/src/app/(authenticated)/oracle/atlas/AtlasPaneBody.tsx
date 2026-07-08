@@ -1,13 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FeedbackNotice, toFeedback } from "@/components/feedback/Feedback";
 import { useResource } from "@/lib/api/useResource";
 import { toRoman } from "@/lib/toRoman";
 import { pluralize } from "@/lib/text/pluralize";
-import { useStickyHeadline } from "../../OracleShell";
+import { usePaneRouter } from "@/lib/panes/paneRuntime";
+import OracleThemeWrapper from "../OracleThemeWrapper";
 import styles from "./atlas.module.css";
 import StarLabel from "./StarLabel";
 import {
@@ -241,11 +241,10 @@ function drawConstellation(
 }
 
 export default function AtlasPaneBody() {
-  const router = useRouter();
+  const paneRouter = usePaneRouter();
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [peerIds, setPeerIds] = useState<readonly string[]>([]);
-  const headlineRef = useStickyHeadline("The Atlas");
   const readingsResource = useResource<{ data: OracleSummary[] }>({
     cacheKey: "oracle-readings",
     path: () => "/api/oracle/readings",
@@ -436,7 +435,7 @@ export default function AtlasPaneBody() {
       clearSelectionNavigationTimeout();
       // Already selected → second click navigates to the folio.
       if (selectedIdRef.current === star.id) {
-        router.push(`/oracle/${star.id}`);
+        paneRouter.push(`/oracle/${star.id}`);
         return;
       }
       setSelectedId(star.id);
@@ -447,11 +446,11 @@ export default function AtlasPaneBody() {
       selectionNavigationTimeoutRef.current = window.setTimeout(() => {
         selectionNavigationTimeoutRef.current = null;
         if (selectedIdRef.current === star.id) {
-          router.push(`/oracle/${star.id}`);
+          paneRouter.push(`/oracle/${star.id}`);
         }
       }, SELECTION_LINGER_MS);
     },
-    [clearSelectionNavigationTimeout, router],
+    [clearSelectionNavigationTimeout, paneRouter],
   );
 
   const onPointerDown = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -524,82 +523,84 @@ export default function AtlasPaneBody() {
   const empty = readings !== null && readings.length === 0;
 
   return (
-    <div className={styles.surface}>
-      {selectedId !== null && (
-        <AtlasConcordancePeerLoader
-          key={selectedId}
-          readingId={selectedId}
-          onPeerIds={setPeerIds}
-        />
-      )}
-
-      <div className={styles.headline} ref={headlineRef as React.RefObject<HTMLDivElement>}>
-        <span className={styles.headlineTitle}>The Atlas</span>
-        <span className={styles.headlineDash}>·</span>
-        <span className={styles.headlineSub}>
-          {readings === null
-            ? "drawing the dome…"
-            : empty
-              ? "no stars yet"
-              : pluralize(readings.length, "star")}
-        </span>
-      </div>
-
-      {loadError !== null && (
-        <FeedbackNotice feedback={loadError} className={styles.atlasFeedback} />
-      )}
-
-      {empty ? (
-        <div className={styles.emptyState}>
-          <p className={styles.emptyLine}>
-            No folios consulted yet. Ask the Oracle a question, and your sky
-            will fill with stars.
-          </p>
-          <Link className={styles.emptyAction} href="/oracle">Consult the oracle →</Link>
-        </div>
-      ) : (
-        <div ref={containerRef} className={styles.canvasFrame}>
-          <canvas
-            ref={canvasRef}
-            className={styles.canvas}
-            onPointerDown={onPointerDown}
-            onPointerMove={onPointerMove}
-            onPointerUp={onPointerUp}
-            onPointerCancel={onPointerLeave}
-            onPointerLeave={onPointerLeave}
-            aria-label="A celestial map of consulted oracle folios"
-            role="img"
+    <OracleThemeWrapper>
+      <div className={styles.surface}>
+        {selectedId !== null && (
+          <AtlasConcordancePeerLoader
+            key={selectedId}
+            readingId={selectedId}
+            onPeerIds={setPeerIds}
           />
+        )}
 
-          {/* The corner label fades up when a star is focused — Garamond italic,
-              the marginalia voice. Roman numeral + motto + theme glyph. */}
-          {focused && (
-            <StarLabel focused={focused} selectedId={selectedId} peerIds={peerIds} />
-          )}
-
-          {/* Legend / instructions — present but quiet. */}
-          <div className={styles.legend}>
-            <span>Drag to turn the sky · click a star to trace its constellation</span>
-          </div>
-
-          {/* Accessibility: a screen-readable list of every star.
-              Visually hidden; lets the page be navigated by keyboard. */}
-          <ul className={styles.srStarList}>
-            {stars.map((star) => (
-              <li key={star.id}>
-                <a href={`/oracle/${star.id}`}>
-                  Folio {toRoman(star.folio_number)}
-                  {star.folio_motto ? ` — ${star.folio_motto}` : ""}
-                  {star.folio_theme ? ` (${star.folio_theme})` : ""}
-                </a>
-              </li>
-            ))}
-          </ul>
+        <div className={styles.headline}>
+          <span className={styles.headlineTitle}>The Atlas</span>
+          <span className={styles.headlineDash}>·</span>
+          <span className={styles.headlineSub}>
+            {readings === null
+              ? "drawing the dome…"
+              : empty
+                ? "no stars yet"
+                : pluralize(readings.length, "star")}
+          </span>
         </div>
-      )}
 
-      <Link className={styles.backToAleph} href="/oracle">← Aleph</Link>
-    </div>
+        {loadError !== null && (
+          <FeedbackNotice feedback={loadError} className={styles.atlasFeedback} />
+        )}
+
+        {empty ? (
+          <div className={styles.emptyState}>
+            <p className={styles.emptyLine}>
+              No folios consulted yet. Ask the Oracle a question, and your sky
+              will fill with stars.
+            </p>
+            <Link className={styles.emptyAction} href="/oracle">Consult the oracle →</Link>
+          </div>
+        ) : (
+          <div ref={containerRef} className={styles.canvasFrame}>
+            <canvas
+              ref={canvasRef}
+              className={styles.canvas}
+              onPointerDown={onPointerDown}
+              onPointerMove={onPointerMove}
+              onPointerUp={onPointerUp}
+              onPointerCancel={onPointerLeave}
+              onPointerLeave={onPointerLeave}
+              aria-label="A celestial map of consulted oracle folios"
+              role="img"
+            />
+
+            {/* The corner label fades up when a star is focused — Garamond italic,
+                the marginalia voice. Roman numeral + motto + theme glyph. */}
+            {focused && (
+              <StarLabel focused={focused} selectedId={selectedId} peerIds={peerIds} />
+            )}
+
+            {/* Legend / instructions — present but quiet. */}
+            <div className={styles.legend}>
+              <span>Drag to turn the sky · click a star to trace its constellation</span>
+            </div>
+
+            {/* Accessibility: a screen-readable list of every star.
+                Visually hidden; lets the page be navigated by keyboard. */}
+            <ul className={styles.srStarList}>
+              {stars.map((star) => (
+                <li key={star.id}>
+                  <a href={`/oracle/${star.id}`}>
+                    Folio {toRoman(star.folio_number)}
+                    {star.folio_motto ? ` — ${star.folio_motto}` : ""}
+                    {star.folio_theme ? ` (${star.folio_theme})` : ""}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        <Link className={styles.backToAleph} href="/oracle">← Aleph</Link>
+      </div>
+    </OracleThemeWrapper>
   );
 }
 

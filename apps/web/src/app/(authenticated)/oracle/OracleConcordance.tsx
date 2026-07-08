@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { usePaneRouter } from "@/lib/panes/paneRuntime";
 import { useResource } from "@/lib/api/useResource";
 import { toRoman } from "@/lib/toRoman";
 import styles from "./oracle.module.css";
@@ -43,14 +43,14 @@ export default function OracleConcordance({
   readingId: string;
   status: string;
 }) {
-  const router = useRouter();
+  const paneRouter = usePaneRouter();
   if (status !== "complete") return null;
 
   return (
     <OracleConcordanceEntries
       key={readingId}
       readingId={readingId}
-      onOpen={(id) => router.push(`/oracle/${id}`)}
+      onOpen={(id) => paneRouter.push(`/oracle/${id}`)}
     />
   );
 }

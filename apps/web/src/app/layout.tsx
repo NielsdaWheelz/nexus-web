@@ -1,4 +1,4 @@
-import { Inter, JetBrains_Mono } from "next/font/google";
+import { EB_Garamond, IM_Fell_English, Inter, JetBrains_Mono, UnifrakturMaguntia } from "next/font/google";
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import "pdfjs-dist/web/pdf_viewer.css";
@@ -37,9 +37,10 @@ export const viewport: Viewport = {
 };
 
 // Inter is the body/LCP font on every route, so it is the one font we preload
-// (next/font preloads by default). EB Garamond / IM Fell / Unifraktur are owned
-// by the (oracle) route group and are loaded in its layout, so they only
-// preload on /oracle routes where they are actually render-critical.
+// (next/font preloads by default). EB Garamond / IM Fell / Unifraktur back the
+// oracle pane theme (--font-oracle-*). preload:false keeps the @font-face CSS
+// and font variables in the global sheet without emitting <link rel="preload">
+// on non-oracle routes — font files only download when the oracle pane renders.
 const inter = Inter({
   subsets: ["latin"],
   weight: ["400", "500", "600", "700"],
@@ -59,6 +60,32 @@ const jetbrainsMono = JetBrains_Mono({
   variable: "--font-jetbrains-mono",
 });
 
+const ebGaramond = EB_Garamond({
+  subsets: ["latin"],
+  weight: ["400", "500", "600"],
+  style: ["normal", "italic"],
+  display: "swap",
+  preload: false,
+  variable: "--font-eb-garamond",
+});
+
+const imFellEnglish = IM_Fell_English({
+  subsets: ["latin"],
+  weight: ["400"],
+  style: ["normal", "italic"],
+  display: "swap",
+  preload: false,
+  variable: "--font-im-fell",
+});
+
+const unifrakturMaguntia = UnifrakturMaguntia({
+  subsets: ["latin"],
+  weight: ["400"],
+  display: "swap",
+  preload: false,
+  variable: "--font-unifraktur",
+});
+
 export default async function RootLayout({
   children,
 }: {
@@ -69,7 +96,7 @@ export default async function RootLayout({
     <html
       lang="en"
       data-theme={theme ?? undefined}
-      className={`${inter.variable} ${jetbrainsMono.variable}`}
+      className={`${inter.variable} ${jetbrainsMono.variable} ${ebGaramond.variable} ${imFellEnglish.variable} ${unifrakturMaguntia.variable}`}
     >
       <body>
         <FeedbackProvider>{children}</FeedbackProvider>

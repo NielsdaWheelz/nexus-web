@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { usePaneRouter } from "@/lib/panes/paneRuntime";
 import { FeedbackNotice, toFeedback } from "@/components/feedback/Feedback";
 import { useResource } from "@/lib/api/useResource";
 import MediaImage from "@/components/ui/MediaImage";
@@ -20,7 +20,7 @@ interface OracleSummary {
 }
 
 export default function OracleAlephGrid() {
-  const router = useRouter();
+  const paneRouter = usePaneRouter();
   const readingsResource = useResource<{ data: OracleSummary[] }>({
     cacheKey: "oracle-readings",
     path: () => "/api/oracle/readings",
@@ -71,7 +71,7 @@ export default function OracleAlephGrid() {
             key={row.id}
             type="button"
             className={`${styles.alephCell}${pending ? ` ${styles.alephCellPending}` : ""}`}
-            onClick={() => router.push(`/oracle/${row.id}`)}
+            onClick={() => paneRouter.push(`/oracle/${row.id}`)}
             aria-label={`Folio ${toRoman(row.folio_number)}: ${motto}`}
           >
             {plateSrc !== null && (

@@ -64,11 +64,14 @@ describe("pane route table", () => {
     expect(noteRoute.definition?.secondaryGroups).toContain("notes-tools");
   });
 
-  it("returns the unsupported placeholder for full-screen Oracle routes and redirected /daily routes", () => {
-    expect(resolvePaneRoute("/oracle").id).toBe("unsupported");
-    expect(resolvePaneRoute("/oracle/reading-1").id).toBe("unsupported");
+  it("returns the unsupported placeholder for redirected /daily routes", () => {
     expect(resolvePaneRoute("/daily").id).toBe("unsupported");
     expect(resolvePaneRoute("/daily/2026-05-06").id).toBe("unsupported");
+  });
+
+  it("resolves oracle routes as registered pane routes after shell dissolution", () => {
+    expect(resolvePaneRoute("/oracle").id).toBe("oracle");
+    expect(resolvePaneRoute("/oracle/reading-1").id).toBe("oracleReading");
   });
 
   it("declares max width policy on representative routes", () => {
