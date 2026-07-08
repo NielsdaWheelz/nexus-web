@@ -5,7 +5,6 @@ import { apiFetch } from "@/lib/api/client";
 import { usePaneUrlState } from "@/lib/api/usePaneUrlState";
 import { useResource } from "@/lib/api/useResource";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { pluralize } from "@/lib/text/pluralize";
 import LibraryMembershipPanel from "@/components/LibraryMembershipPanel";
 import ActionMenu from "@/components/ui/ActionMenu";
@@ -38,6 +37,7 @@ import {
   type MemberLibrary,
 } from "@/lib/libraries/client";
 import { useStringIdSet } from "@/lib/useStringIdSet";
+import { dispatchOpenLauncher } from "@/lib/launcher/launcherEvents";
 import styles from "./page.module.css";
 
 const PAGE_SIZE = 100;
@@ -106,8 +106,6 @@ function encodePodcastListState(
 }
 
 export default function PodcastsPaneBody() {
-  const paneRuntime = usePaneRuntime();
-  const openInNewPane = paneRuntime?.openInNewPane;
   const { displayState, setDisplayState } = useCollectionDisplayState("/podcasts");
   const podcastListCodec = useMemo(
     () => ({
@@ -607,7 +605,7 @@ export default function PodcastsPaneBody() {
                 <Button
                   variant="primary"
                   size="md"
-                  onClick={() => openInNewPane?.("/browse?types=podcasts")}
+                  onClick={() => dispatchOpenLauncher({ lane: "browse" })}
                 >
                   Browse
                 </Button>
@@ -647,7 +645,7 @@ export default function PodcastsPaneBody() {
                   variant="ghost"
                   size="sm"
                   className={styles.inlineButton}
-                  onClick={() => openInNewPane?.("/browse?types=podcasts")}
+                  onClick={() => dispatchOpenLauncher({ lane: "browse" })}
                 >
                   Browse podcasts
                 </Button>

@@ -27,7 +27,6 @@ const BINDABLE_ACTIONS: BindableAction[] = [
   { id: "open-launcher", label: "Open launcher" },
   { id: "libraries", label: "Go to Libraries" },
   { id: "authors", label: "Go to Authors" },
-  { id: "browse", label: "Go to Browse" },
   { id: "podcasts", label: "Go to Podcasts" },
   { id: "chats", label: "Go to Chats" },
   { id: "notes", label: "Go to Notes" },

@@ -95,7 +95,6 @@ describe("universal launcher cutover source gates (§14)", () => {
     const hrefs = [
       "/libraries",
       "/authors",
-      "/browse",
       "/podcasts",
       "/notes",
       "/daily",

@@ -32,31 +32,6 @@ def _record_selection(auth_client, user_id, **overrides):
 
 
 class TestPaletteSelections:
-    def test_post_records_supported_href_target_and_normalized_query(self, auth_client):
-        user_id = create_test_user_id()
-        _bootstrap_user(auth_client, user_id)
-
-        response = _record_selection(
-            auth_client,
-            user_id,
-            query="  System   Search  ",
-            target_key="/browse",
-            target_href="/browse?q=  systems   thinking  &types=videos,podcasts#results",
-            title_snapshot="  Browse   systems  ",
-            source="search",
-        )
-
-        assert response.status_code == 200
-        data = response.json()["data"]
-        assert data["query_normalized"] == "system search"
-        assert data["target_key"] == "/browse?q=systems+thinking&types=podcasts%2Cvideos"
-        assert data["target_kind"] == "href"
-        assert data["target_href"] == "/browse?q=systems+thinking&types=podcasts%2Cvideos"
-        assert data["title_snapshot"] == "Browse systems"
-        assert data["source"] == "search"
-        assert data["use_count"] == 1
-        assert data["last_used_at"]
-
     def test_post_updates_existing_query_target_row_and_caps_timestamp_history(
         self, auth_client, direct_db: DirectSessionManager
     ):

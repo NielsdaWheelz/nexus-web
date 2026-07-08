@@ -283,7 +283,7 @@ describe("mergeRestoredWorkspaceWithDeepLink", () => {
       primaryPanes: [
         primary("pane-saved-libraries", "/libraries", {
           primaryWidthPx: 640,
-          history: { back: ["/browse"], forward: [] },
+          history: { back: ["/notes"], forward: [] },
         }),
       ],
     });
@@ -300,7 +300,7 @@ describe("mergeRestoredWorkspaceWithDeepLink", () => {
         id: "pane-url-libraries",
         href: "/libraries",
         primaryWidthPx: 640,
-        history: { back: ["/browse"], forward: [] },
+        history: { back: ["/notes"], forward: [] },
       }),
     ]);
   });

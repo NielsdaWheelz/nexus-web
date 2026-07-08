@@ -9,7 +9,7 @@ import {
 } from "./providers";
 import { parseLauncherInput, type LauncherInput } from "./parseLauncherInput";
 import type { LauncherLane } from "./model";
-import type { BrowseResult } from "@/app/(authenticated)/browse/browseState";
+import type { BrowseResult } from "@/lib/browse/types";
 import type { SearchResultRowViewModel } from "@/lib/search/types";
 
 // ---------------------------------------------------------------------------
@@ -561,11 +561,11 @@ describe("buildLauncherItems — see-all item", () => {
 });
 
 // ---------------------------------------------------------------------------
-// (n) browse-web item → href in browse-results (pin:last)
+// (n) browse-web item → set-lane target in browse-results (pin:last)
 // ---------------------------------------------------------------------------
 
 describe("buildLauncherItems — browse-web item", () => {
-  it("is present with a /browse?q= href and pin:last when text.length >= 2 and no url", () => {
+  it("is present with a set-lane target and pin:last when text.length >= 2 and no url", () => {
     const items = buildLauncherItems(ctx({ input: makeInput("quantum") }));
     const browseWeb = items.find((i) => i.id === "browse-web")!;
 
@@ -573,9 +573,7 @@ describe("buildLauncherItems — browse-web item", () => {
     expect(browseWeb.sectionId).toBe("browse-results");
     expect(browseWeb.source).toBe("browse");
     expect(browseWeb.pin).toBe("last");
-    expect(browseWeb.target).toMatchObject({ kind: "href", externalShell: false });
-    expect((browseWeb.target as { href: string }).href).toContain("/browse?");
-    expect((browseWeb.target as { href: string }).href).toContain("q=quantum");
+    expect(browseWeb.target).toEqual({ kind: "set-lane", lane: "browse", query: "quantum" });
   });
 });
 

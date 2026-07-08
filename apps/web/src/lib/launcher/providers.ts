@@ -20,7 +20,7 @@ import {
   Upload,
   Video,
 } from "lucide-react";
-import type { BrowseResult } from "@/app/(authenticated)/browse/browseState";
+import type { BrowseResult } from "@/lib/browse/types";
 import { isAndroidShellRestrictedRouteId } from "@/lib/androidShell";
 import { formatKeyCombo } from "@/lib/keybindings";
 import { DESTINATIONS } from "@/lib/navigation/destinations";
@@ -388,7 +388,7 @@ function browseWebItem(ctx: LauncherContext): LauncherItem[] {
       keywords: [],
       sectionId: "browse-results",
       icon: Globe,
-      target: { kind: "href", href: `/browse?${new URLSearchParams({ q: text })}`, externalShell: false },
+      target: { kind: "set-lane", lane: "browse", query: text },
       source: "browse",
       rank: {},
       pin: "last",

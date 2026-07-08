@@ -16,11 +16,6 @@ describe("resolveActiveDestinationId", () => {
     expect(resolve("/libraries/123")).toBe("libraries");
   });
 
-  it("matches browse exactly but not by prefix (no prefix declared)", () => {
-    expect(resolve("/browse")).toBe("browse");
-    expect(resolve("/browse/x")).toBeNull();
-  });
-
   it("matches podcasts by prefix and exact", () => {
     expect(resolve("/podcasts/abc")).toBe("podcasts");
     expect(resolve("/podcasts")).toBe("podcasts");

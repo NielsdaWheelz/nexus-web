@@ -268,12 +268,6 @@ class TestBrowseProviderConfiguration:
                 YOUTUBE_DATA_API_KEY="",
             )
 
-    def test_staging_requires_x_api_bearer_token(self):
-        with pytest.raises(ValidationError, match="X_API_BEARER_TOKEN"):
-            _make_deploy_settings(
-                X_API_BEARER_TOKEN="",
-            )
-
     def test_youtube_transcript_timeout_must_be_positive(self):
         with pytest.raises(ValidationError, match="YOUTUBE_TRANSCRIPT_TIMEOUT_SECONDS"):
             _make_settings(YOUTUBE_TRANSCRIPT_TIMEOUT_SECONDS=0)

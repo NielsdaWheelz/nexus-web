@@ -6,14 +6,14 @@
  */
 
 import type { ComponentType } from "react";
-import type { BrowseResult } from "@/app/(authenticated)/browse/browseState";
+import type { BrowseResult } from "@/lib/browse/types";
 import type { ResourceActivation } from "@/lib/resources/activation";
 
 export type LauncherLane =
   | "all" // blended default — show all interpretations
   | "open" // existing resources: context, open tabs, recents, folios
   | "search" // in-library search (shared SearchQuery)
-  | "browse" // external discovery (/browse + web)
+  | "browse" // external discovery (/api/browse + /api/web/search)
   | "add" // add URL / upload file / import OPML
   | "create" // create note / page
   | "ask" // ask AI
@@ -102,7 +102,8 @@ export type LauncherActionTarget =
   | { kind: "create-page" } // create an empty page then open it
   | { kind: "copy-link"; href: string }
   | { kind: "pane-open"; paneId: string } // activate, restoring if minimized
-  | { kind: "pane-close"; paneId: string };
+  | { kind: "pane-close"; paneId: string }
+  | { kind: "set-lane"; lane: LauncherLane; query?: string }; // switch lane in-place (controller intercepts, never dispatched)
 
 // Panel targets: the controller intercepts these to push an embedded page (not dispatch).
 export type LauncherPanelTarget =

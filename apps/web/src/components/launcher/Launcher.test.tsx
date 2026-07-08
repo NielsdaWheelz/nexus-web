@@ -316,3 +316,58 @@ describe("Launcher — prefetch-on-intent", () => {
     expect(preloadPane).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// set-lane: selecting "Browse the web for X" switches lane in-place (spec §14)
+// ---------------------------------------------------------------------------
+
+describe("Launcher — set-lane target", () => {
+  it("selecting 'Browse the web for X' switches to the browse lane with the query seeded, Launcher stays open", async () => {
+    await openDialog();
+    const input = screen.getByRole("combobox", { name: "Search, add, or ask" });
+
+    await userEvent.click(input);
+    await userEvent.type(input, "quantum");
+
+    const browseRow = await screen.findByRole("option", { name: /Browse the web for "quantum"/i });
+    fireEvent.click(browseRow);
+
+    // The dialog stays open — set-lane never closes the launcher.
+    expect(screen.getByRole("dialog", { name: "Launcher" })).toBeInTheDocument();
+    // The Browse lane chip is now active.
+    expect(laneChip("Browse")).toHaveAttribute("aria-pressed", "true");
+    // The query is preserved in the input.
+    expect(screen.getByRole("combobox", { name: "Search, add, or ask" })).toHaveValue("quantum");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// URL-param lane seed: ?launcher=1&lane=<x>&q=<q> (spec §14)
+// ---------------------------------------------------------------------------
+
+describe("Launcher — URL-param lane seed", () => {
+  it("opens on the browse lane with the query seeded when ?launcher=1&lane=browse&q=kafka", async () => {
+    window.history.replaceState({}, "", "/?launcher=1&lane=browse&q=kafka");
+    renderLauncher();
+
+    // The controller's mount effect fires and opens the dialog automatically.
+    const dialog = await screen.findByRole("dialog", { name: "Launcher" });
+    expect(dialog).toBeInTheDocument();
+    expect(laneChip("Browse")).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("combobox", { name: "Search, add, or ask" })).toHaveValue("kafka");
+  });
+
+  it("falls back to the blended (all) view when ?lane=invalid", async () => {
+    window.history.replaceState({}, "", "/?launcher=1&lane=invalid&q=foo");
+    renderLauncher();
+
+    await screen.findByRole("dialog", { name: "Launcher" });
+    // No lane chip pressed — falls back to 'all'.
+    const group = screen.getByRole("group", { name: "Lanes" });
+    const chips = within(group).getAllByRole("button");
+    for (const chip of chips) {
+      expect(chip).toHaveAttribute("aria-pressed", "false");
+    }
+    expect(screen.getByRole("combobox", { name: "Search, add, or ask" })).toHaveValue("foo");
+  });
+});

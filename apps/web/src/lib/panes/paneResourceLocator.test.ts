@@ -70,7 +70,6 @@ describe("pane resource locator", () => {
       "/libraries",
       "/conversations",
       "/conversations/new",
-      "/browse",
       "/podcasts",
       "/search",
       "/authors",

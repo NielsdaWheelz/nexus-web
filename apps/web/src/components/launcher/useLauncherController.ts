@@ -42,7 +42,7 @@ import type { SearchResultRowViewModel } from "@/lib/search/types";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import { getWorkspacePrimaryPanes } from "@/lib/workspace/schema";
 import { resolveWorkspacePaneTitle, useWorkspaceStore } from "@/lib/workspace/store";
-import type { BrowseResponse, BrowseResult } from "@/app/(authenticated)/browse/browseState";
+import type { BrowseResponse, BrowseResult } from "@/lib/browse/types";
 
 interface LauncherHistoryResponse {
   data: { recent: LauncherRecentRow[]; frecency_boosts: Record<string, number> };
@@ -187,7 +187,7 @@ export function useLauncherController(): LauncherController {
   );
   const searchResults = searchFetch.data?.rows ?? EMPTY_SEARCH;
 
-  // Inline external discovery (/browse + /web/search) is the `browse` lane only; `all` shows
+  // Inline external discovery (/api/browse + /api/web/search) is the `browse` lane only; `all` shows
   // just the pinned "Browse the web" deep-link row, so it never hits external providers.
   const browseEnabled = open && lane === "browse" && input.text.length >= 2;
   const browseFetch = useDebouncedFetch(
@@ -364,11 +364,25 @@ export function useLauncherController(): LauncherController {
         setPage({ kind: "create" });
         return;
       }
+      if (target.kind === "set-lane") {
+        userMovedRef.current = false;
+        setPage({ kind: "root" });
+        const sigil = LANE_SIGIL[target.lane];
+        if (sigil) {
+          setLaneOverride(null);
+          setQueryState(sigil + (target.query ?? input.text));
+        } else {
+          setLaneOverride(target.lane === "all" ? null : target.lane);
+          setQueryState(target.query ?? input.text);
+        }
+        // stay open — do NOT call setOpen(false)
+        return;
+      }
       setOpen(false);
       logSelection(item);
       void dispatchTarget(target, dispatchCtx).catch(fail);
     },
-    [dispatchCtx, logSelection, fail],
+    [dispatchCtx, logSelection, fail, input.text],
   );
 
   // Panels (AddPanel/CreatePanel) open their post-action pane through the one dispatch
@@ -476,10 +490,17 @@ export function useLauncherController(): LauncherController {
       userMovedRef.current = true;
       setActiveIdState(cmd);
     }
-    setOpen(true);
+    const laneParam = params.get("lane");
+    const validLanes: LauncherLane[] = ["all", "open", "search", "browse", "add", "create", "ask", "go"];
+    const seedLane = laneParam && (validLanes as string[]).includes(laneParam)
+      ? (laneParam as LauncherLane)
+      : null;
+    if (seedLane && seedLane !== "all") setLaneOverride(seedLane);
     params.delete("launcher");
     params.delete("q");
     params.delete("cmd");
+    params.delete("lane");
+    setOpen(true);
     const qs = params.toString();
     window.history.replaceState(
       {},

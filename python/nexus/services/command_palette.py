@@ -1,7 +1,7 @@
 """Command palette usage-history service."""
 
 from datetime import UTC, datetime, timedelta
-from urllib.parse import parse_qsl, urlencode, urlsplit
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from sqlalchemy import func, select
@@ -23,7 +23,6 @@ MAX_TARGET_KEY_LENGTH = 240
 MAX_TITLE_SNAPSHOT_LENGTH = 120
 MAX_VISIT_TIMESTAMPS = 10
 TARGET_ONLY_QUERY_WEIGHT = 0.35
-BROWSE_VISIBLE_TYPES = ("podcasts", "podcast_episodes", "videos", "documents")
 
 
 def get_history_for_viewer(
@@ -323,8 +322,6 @@ def _canonicalize_target_href(href: str) -> str:
     if len(segments) == 1:
         if segments[0] == "libraries":
             return "/libraries"
-        if segments[0] == "browse":
-            return _canonicalize_browse_target_href(parsed)
         if segments[0] == "podcasts":
             return "/podcasts"
         if segments[0] == "conversations":
@@ -390,66 +387,3 @@ def _canonicalize_target_href(href: str) -> str:
         return f"/oracle/{segments[1]}"
 
     raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Unsupported palette target")
-
-
-def _canonicalize_browse_target_href(parsed_result) -> str:
-    browse_query: str | None = None
-    visible_type_tokens: list[str] = []
-    saw_visible_types = False
-
-    for key, value in parse_qsl(parsed_result.query, keep_blank_values=True):
-        if key == "type":
-            raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Unsupported palette target")
-        if key == "q":
-            browse_query = value
-            continue
-        if key == "types":
-            saw_visible_types = True
-            visible_type_tokens.extend(part.strip() for part in value.split(","))
-
-    normalized_query = _normalize_browse_query(browse_query)
-    normalized_visible_types = _normalize_browse_visible_types(
-        visible_type_tokens,
-        explicit=saw_visible_types,
-    )
-
-    canonical_params: list[tuple[str, str]] = []
-    if normalized_query is not None:
-        canonical_params.append(("q", normalized_query))
-    if normalized_visible_types is not None:
-        canonical_params.append(("types", ",".join(normalized_visible_types)))
-
-    if not canonical_params:
-        return "/browse"
-    return f"/browse?{urlencode(canonical_params)}"
-
-
-def _normalize_browse_query(query: str | None) -> str | None:
-    if query is None:
-        return None
-    collapsed_query = " ".join(query.split()).strip()
-    return collapsed_query or None
-
-
-def _normalize_browse_visible_types(
-    raw_types: list[str],
-    *,
-    explicit: bool,
-) -> tuple[str, ...] | None:
-    if not explicit:
-        return None
-
-    seen_types: set[str] = set()
-    for raw_type in raw_types:
-        if not raw_type:
-            continue
-        if raw_type not in BROWSE_VISIBLE_TYPES:
-            raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Unsupported palette target")
-        seen_types.add(raw_type)
-
-    ordered_types = tuple(
-        browse_type for browse_type in BROWSE_VISIBLE_TYPES if browse_type in seen_types
-    )
-    if len(ordered_types) == len(BROWSE_VISIBLE_TYPES):
-        return None
-    return ordered_types

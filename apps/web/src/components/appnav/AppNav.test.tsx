@@ -98,19 +98,8 @@ describe("AppNav (desktop rail)", () => {
 
     // Active pane is /libraries → exactly the Libraries link is current.
     expect(screen.getByRole("link", { name: "Libraries" })).toHaveAttribute("aria-current", "page");
-    expect(screen.getByRole("link", { name: "Browse" })).not.toHaveAttribute("aria-current");
+    expect(screen.queryByRole("link", { name: "Browse" })).toBeNull();
     expect(screen.getByRole("link", { name: "Oracle" })).toBeInTheDocument();
-  });
-
-  it("moves aria-current when a destination click navigates the active pane", () => {
-    renderNav();
-
-    // A real store-driven navigation: clicking Browse drives navigatePane, the
-    // active pane's href becomes /browse, and AppNav recomputes the active id.
-    fireEvent.click(screen.getByRole("link", { name: "Browse" }));
-
-    expect(screen.getByRole("link", { name: "Browse" })).toHaveAttribute("aria-current", "page");
-    expect(screen.getByRole("link", { name: "Libraries" })).not.toHaveAttribute("aria-current");
   });
 
   it("persists collapse and keeps every nav link accessibly named while collapsed", () => {

@@ -652,15 +652,9 @@ class Settings(BaseSettings):
                     )
                     self.podcasts_enabled = False
         if self.nexus_env in (Environment.STAGING, Environment.PROD):
-            missing_browse_provider_settings: list[str] = []
             if not self.youtube_data_api_key:
-                missing_browse_provider_settings.append("YOUTUBE_DATA_API_KEY")
-            if not self.x_api_bearer_token:
-                missing_browse_provider_settings.append("X_API_BEARER_TOKEN")
-            if missing_browse_provider_settings:
                 raise ValueError(
-                    "Browse providers are missing required credentials: "
-                    f"{', '.join(missing_browse_provider_settings)}"
+                    "Browse providers are missing required credentials: YOUTUBE_DATA_API_KEY"
                 )
         if self.ingest_reconcile_schedule_seconds < 0:
             raise ValueError("INGEST_RECONCILE_SCHEDULE_SECONDS must be >= 0.")

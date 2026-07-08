@@ -165,7 +165,6 @@ describe("paneWarm integration (warm → open, real fetch boundary)", () => {
     expect(paneResourceLoaders.conversations).toBeDefined();
 
     const excluded: Array<{ href: string; id: string }> = [
-      { href: "/browse", id: "browse" },
       { href: "/search", id: "search" },
       { href: conversationDetailHref, id: "conversation" },
     ];

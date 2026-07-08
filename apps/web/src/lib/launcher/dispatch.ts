@@ -197,6 +197,10 @@ export async function dispatchTarget(
     case "pane-close":
       ctx.closePane(target.paneId);
       return;
+    case "set-lane":
+      // The controller intercepts set-lane before dispatch is called; this case
+      // exists only for TypeScript exhaustiveness.
+      return;
     default: {
       const exhaustive: never = target;
       return exhaustive;

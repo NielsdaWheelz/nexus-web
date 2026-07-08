@@ -12,7 +12,6 @@ const settingRow = ["Setting", "Row"].join("");
 const standardPaneBodies = [
   "src/app/(authenticated)/authors/AuthorsPaneBody.tsx",
   "src/app/(authenticated)/authors/[handle]/AuthorPaneBody.tsx",
-  "src/app/(authenticated)/browse/BrowsePaneBody.tsx",
   "src/app/(authenticated)/conversations/ConversationsPaneBody.tsx",
   "src/app/(authenticated)/libraries/LibrariesPaneBody.tsx",
   "src/app/(authenticated)/libraries/[id]/LibraryPaneBody.tsx",
@@ -95,33 +94,6 @@ describe("pane surface/resource row cutover source gates", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("keeps Browse off div-button rows and migrated list class hooks", () => {
-    const browsePane = sourceText("src/app/(authenticated)/browse/BrowsePaneBody.tsx");
-    expect(browsePane).toContain("useOptimisticAction");
-    expect(browsePane).not.toContain("useStringIdSet");
-
-    expect(sourceText("src/lib/collections/useCollectionDisplayState.ts")).toContain(
-      "usePaneUrlState",
-    );
-    expect(sourceText("src/app/(authenticated)/authors/AuthorsPaneBody.tsx")).toContain(
-      "useDebouncedValue",
-    );
-
-    const offenders = sourceFiles(join(APP_ROOT, "src/app/(authenticated)/browse"))
-      .filter((path) => sourceText(path).includes('role="button"'));
-
-    expect(offenders).toEqual([]);
-
-    const migratedClassOffenders = sourceFiles(join(APP_ROOT, "src/app")).filter(
-      (path) => {
-        const text = sourceText(path);
-        return text.includes("styles.resultRows") || text.includes("styles.pageList");
-      },
-    );
-
-    expect(migratedClassOffenders).toEqual([]);
-  });
-
   it("keeps new primitives below pane runtime and domain layers", () => {
     const forbiddenImport =
       /from\s+["']@\/(app|components\/workspace|lib\/(api|conversations|libraries|media|notes|panes|resources|search|workspace))/;
@@ -200,6 +172,16 @@ describe("pane surface/resource row cutover source gates", () => {
     expect(listOriginsMatch?.[1]).toBeDefined();
     expect(listOriginsMatch?.[1]).not.toContain('"synapse"');
     expect(listOriginsMatch?.[1]).not.toContain('"system"');
+  });
+
+  it("has no legacy resultRows/pageList class hooks remaining in src/app", () => {
+    // These CSS module hooks lived in the deleted BrowsePaneBody; the guard stays
+    // as a forward-looking regression check even though Browse is gone.
+    const offenders = sourceFiles(join(APP_ROOT, "src/app")).filter((p) => {
+      const t = sourceText(p);
+      return t.includes("styles.resultRows") || t.includes("styles.pageList");
+    });
+    expect(offenders).toEqual([]);
   });
 
   it("keeps View Transition ownership scoped and reduced-motion guarded", () => {

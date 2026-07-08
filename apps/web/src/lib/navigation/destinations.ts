@@ -39,13 +39,6 @@ export const DESTINATIONS: Destination[] = [
     match: { exact: ["/authors"], prefix: ["/authors/"] },
   },
   {
-    id: "browse",
-    label: "Browse",
-    href: "/browse",
-    keywords: ["discover", "podcasts", "videos", "documents"],
-    slot: "primary",
-  },
-  {
     id: "podcasts",
     label: "Podcasts",
     href: "/podcasts",

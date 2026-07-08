@@ -4,7 +4,6 @@ import type { ReactNode } from "react";
 import {
   BookOpen,
   CalendarDays,
-  Compass,
   CreditCard,
   FileText,
   FolderOpen,
@@ -90,13 +89,6 @@ const PANE_ROUTE_META: Record<PaneRouteId, PaneRouteMeta> = {
     getChrome: () => ({
       title: "Chat",
       subtitle: "Conversation transcript and composer.",
-    }),
-  },
-  browse: {
-    icon: Compass,
-    getChrome: () => ({
-      title: "Browse",
-      subtitle: "Search globally for podcasts, episodes, videos, and documents.",
     }),
   },
   podcasts: {

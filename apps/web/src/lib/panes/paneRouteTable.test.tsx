@@ -123,7 +123,6 @@ describe("pane route table", () => {
       "/conversations",
       "/conversations/new",
       "/conversations/conversation-1",
-      "/browse",
       "/podcasts",
       "/podcasts/podcast-1",
       "/search",

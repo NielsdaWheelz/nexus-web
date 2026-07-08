@@ -18,7 +18,6 @@ const PANE_LOADERS: Record<PaneRouteId, PaneLoader> = {
   conversations: () => import("@/app/(authenticated)/conversations/ConversationsPaneBody"),
   conversationNew: () => import("@/components/chat/Conversation"),
   conversation: () => import("@/components/chat/Conversation"),
-  browse: () => import("@/app/(authenticated)/browse/BrowsePaneBody"),
   podcasts: () => import("@/app/(authenticated)/podcasts/PodcastsPaneBody"),
   podcastDetail: () => import("@/app/(authenticated)/podcasts/[podcastId]/PodcastDetailPaneBody"),
   search: () => import("@/app/(authenticated)/search/SearchPaneBody"),

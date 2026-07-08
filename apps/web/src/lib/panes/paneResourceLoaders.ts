@@ -37,7 +37,7 @@ export interface PaneResourceLoader {
 // (cacheKey embeds the editor saveScope), conversation (streaming, multi-fetch
 // snapshot), podcastDetail / podcasts (cacheKey embeds mutable filter/sort/search UI
 // state), settingsIdentities (Supabase server action, no FastAPI path),
-// settingsLocalVault (client-only File System data), browse / search (query-driven,
+// settingsLocalVault (client-only File System data), search (query-driven,
 // no route-keyed primary). Intent still warms their chunk; only the data is skipped.
 export const paneResourceLoaders: Partial<Record<PaneRouteId, PaneResourceLoader>> = {
   libraries: {

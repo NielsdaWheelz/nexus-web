@@ -16,7 +16,7 @@ const DEVICE_COOKIE_NAME = "nx_device";
 const WORKSPACE_SESSION_PATH = "/api/me/workspace-session";
 const WORKSPACE_DEFAULT_FALLBACK_HREF = "/libraries";
 const EXPLICIT_FALLBACK_HISTORY: WorkspacePaneHistory = {
-  back: ["/browse"],
+  back: ["/notes"],
   forward: [],
 };
 const WORKSPACE_SESSION_SEED_ATTEMPTS = 3;

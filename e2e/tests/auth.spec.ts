@@ -114,7 +114,7 @@ test.describe("authentication", () => {
 
     await page.goto("/login?next=%2Fbrowse");
     await runGitHubProviderRoundTrip(page);
-    await expect(page).toHaveURL(/\/browse/);
+    await expect(page).toHaveURL(/lane=browse/);
     await expect(page.getByRole("link", { name: /libraries/i })).toBeVisible();
 
     const cookies = await context.cookies();

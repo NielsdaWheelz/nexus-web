@@ -33,7 +33,6 @@ export type PaneRouteId =
   | "conversations"
   | "conversationNew"
   | "conversation"
-  | "browse"
   | "podcasts"
   | "podcastDetail"
   | "search"
@@ -140,14 +139,6 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
     titleMode: "dynamic",
     bodyMode: "contained",
     secondaryGroups: ["conversation-context"],
-    ...STANDARD_WIDTH_CONTRACT,
-  }),
-  route({
-    id: "browse",
-    pattern: ["browse"],
-    staticTitle: "Browse",
-    titleMode: "static",
-    bodyMode: "standard",
     ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
