@@ -151,6 +151,7 @@ interface LibraryPodcastListEntry extends LibraryEntryBase {
 type LibraryEntry = LibraryMediaListEntry | LibraryPodcastListEntry;
 
 interface LibraryPageInfo {
+  has_more: boolean;
   next_cursor: string | null;
 }
 
@@ -266,9 +267,24 @@ export default function LibraryPaneBody() {
 
   const libraryPanelEntryIdRef = useRef<string | null>(null);
 
+  const entryLoadMoreAbortRef = useRef<AbortController | null>(null);
+  const entryLoadMoreGenerationRef = useRef(0);
+  const cancelEntryLoadMore = useCallback(() => {
+    entryLoadMoreGenerationRef.current += 1;
+    entryLoadMoreAbortRef.current?.abort();
+    entryLoadMoreAbortRef.current = null;
+    setManualLoadingMore(false);
+    setResonanceLoadingMore(false);
+  }, []);
+  useEffect(() => () => entryLoadMoreAbortRef.current?.abort(), []);
+  useEffect(() => {
+    cancelEntryLoadMore();
+  }, [cancelEntryLoadMore, id]);
+
   const { clear: clearRemovedEntryIds } = removedEntryIds;
   useEffect(() => {
     if (libraryResource.status === "ready") {
+      cancelEntryLoadMore();
       setLibrary(libraryResource.data.library);
       setEntries(libraryResource.data.entries);
       setEntryCursor(libraryResource.data.entriesPage.next_cursor);
@@ -280,6 +296,7 @@ export default function LibraryPaneBody() {
     }
 
     if (libraryResource.status === "error") {
+      cancelEntryLoadMore();
       if (
         isApiError(libraryResource.error) &&
         libraryResource.error.status === 404
@@ -298,7 +315,7 @@ export default function LibraryPaneBody() {
       setManualLoadingMore(false);
       setManualLoadMoreError(null);
     }
-  }, [clearRemovedEntryIds, id, libraryResource, router]);
+  }, [cancelEntryLoadMore, clearRemovedEntryIds, id, libraryResource, router]);
 
   useEffect(() => {
     if (sort !== "resonance") {
@@ -315,9 +332,6 @@ export default function LibraryPaneBody() {
     setResonanceCursor(resonanceFetch.data.page.next_cursor);
     setResonanceLoadMoreError(null);
   }, [resonanceFetch.data, sort]);
-
-  const entryLoadMoreAbortRef = useRef<AbortController | null>(null);
-  useEffect(() => () => entryLoadMoreAbortRef.current?.abort(), []);
 
   const closeLibraryPanel = useCallback(() => {
     libraryPanelRequestIdRef.current += 1;
@@ -802,17 +816,22 @@ export default function LibraryPaneBody() {
       }
       if (requestedSort === "resonance") {
         if (resonanceLoadingMore) return;
-        setResonanceLoadingMore(true);
-        setResonanceLoadMoreError(null);
       } else {
         if (manualLoadingMore) return;
-        setManualLoadingMore(true);
-        setManualLoadMoreError(null);
       }
 
       entryLoadMoreAbortRef.current?.abort();
+      const generation = entryLoadMoreGenerationRef.current + 1;
+      entryLoadMoreGenerationRef.current = generation;
       const controller = new AbortController();
       entryLoadMoreAbortRef.current = controller;
+      setManualLoadingMore(requestedSort === "manual");
+      setResonanceLoadingMore(requestedSort === "resonance");
+      if (requestedSort === "resonance") {
+        setResonanceLoadMoreError(null);
+      } else {
+        setManualLoadMoreError(null);
+      }
       void apiFetch<LibraryEntryPage>(
         libraryEntriesResource.clientPath({
           id,
@@ -822,7 +841,9 @@ export default function LibraryPaneBody() {
         { signal: controller.signal },
       )
         .then((page) => {
-          if (controller.signal.aborted) return;
+          if (controller.signal.aborted || generation !== entryLoadMoreGenerationRef.current) {
+            return;
+          }
           if (requestedSort === "resonance") {
             setResonanceEntries((current) => appendUniqueEntries(current, page.data));
             setResonanceCursor(page.page.next_cursor);
@@ -832,7 +853,13 @@ export default function LibraryPaneBody() {
           }
         })
         .catch((err: unknown) => {
-          if (isAbortError(err) || controller.signal.aborted) return;
+          if (
+            isAbortError(err) ||
+            controller.signal.aborted ||
+            generation !== entryLoadMoreGenerationRef.current
+          ) {
+            return;
+          }
           if (handleUnauthenticatedApiError(err)) return;
           const feedbackContent = toFeedback(err, {
             fallback:
@@ -847,7 +874,9 @@ export default function LibraryPaneBody() {
           }
         })
         .finally(() => {
-          if (controller.signal.aborted) return;
+          if (controller.signal.aborted || generation !== entryLoadMoreGenerationRef.current) {
+            return;
+          }
           if (requestedSort === "resonance") {
             setResonanceLoadingMore(false);
           } else {

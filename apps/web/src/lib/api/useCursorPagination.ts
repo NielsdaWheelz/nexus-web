@@ -8,7 +8,7 @@ import { isAbortError } from "@/lib/errors";
 
 export interface CursorPage<T> {
   data: T[];
-  page: { next_cursor: string | null };
+  page: { has_more: boolean; next_cursor: string | null };
 }
 
 // One owner for the "page 1 via useResource, then append more pages by cursor"
@@ -37,7 +37,6 @@ export function useCursorPagination<T>(args: {
   // Reset appended pages when page 1 changes identity (new firstPage.data ref).
   const seenRef = useRef<CursorPage<T> | null>(null);
   const firstDataIsCurrent = firstData !== null && seenRef.current === firstData;
-  const effectiveAppended = firstDataIsCurrent ? appended : [];
   const effectiveCursor =
     firstData === null
       ? null
@@ -48,8 +47,8 @@ export function useCursorPagination<T>(args: {
     if (firstData === null) {
       return [];
     }
-    return [...firstData.data, ...effectiveAppended];
-  }, [effectiveAppended, firstData]);
+    return [...firstData.data, ...(firstDataIsCurrent ? appended : [])];
+  }, [appended, firstData, firstDataIsCurrent]);
 
   useEffect(() => {
     if (firstData === null || seenRef.current === firstData) {
@@ -69,15 +68,25 @@ export function useCursorPagination<T>(args: {
   buildRef.current = buildMoreHref;
 
   const abortRef = useRef<AbortController | null>(null);
+  const generationRef = useRef(0);
   useEffect(() => () => abortRef.current?.abort(), []);
+
+  useEffect(() => {
+    generationRef.current += 1;
+    abortRef.current?.abort();
+    abortRef.current = null;
+    loadingRef.current = false;
+  }, [firstData]);
 
   const loadMore = useCallback(() => {
     const next = cursorRef.current;
     if (next === null || loadingRef.current) return;
+    const generation = generationRef.current;
     loadingRef.current = true;
     setLoadingMore(true);
     setMoreError(null);
     const controller = new AbortController();
+    abortRef.current?.abort();
     abortRef.current = controller;
     void (async () => {
       try {
@@ -85,11 +94,13 @@ export function useCursorPagination<T>(args: {
           buildRef.current(next) as ApiPath,
           { signal: controller.signal },
         );
-        if (controller.signal.aborted) return;
+        if (controller.signal.aborted || generation !== generationRef.current) return;
         setAppended((prev) => [...prev, ...page.data]);
         setCursor(page.page.next_cursor);
       } catch (err) {
-        if (isAbortError(err) || controller.signal.aborted) return;
+        if (isAbortError(err) || controller.signal.aborted || generation !== generationRef.current) {
+          return;
+        }
         if (handleUnauthenticatedApiError(err)) return;
         setMoreError(
           isApiError(err)
@@ -101,7 +112,7 @@ export function useCursorPagination<T>(args: {
               ),
         );
       } finally {
-        if (!controller.signal.aborted) {
+        if (!controller.signal.aborted && generation === generationRef.current) {
           loadingRef.current = false;
           setLoadingMore(false);
         }

@@ -228,7 +228,7 @@ class Page(Base):
     )
     user_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("users.id"),
+        ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
     )
     title: Mapped[str] = mapped_column(Text, nullable=False)
@@ -2092,7 +2092,7 @@ class LibraryEntry(Base):
     )
     library_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("libraries.id"),
+        ForeignKey("libraries.id", ondelete="CASCADE"),
         nullable=False,
     )
     media_id: Mapped[UUID | None] = mapped_column(
@@ -2142,6 +2142,79 @@ class LibraryEntry(Base):
     library: Mapped["Library"] = relationship("Library", back_populates="library_entries")
     media: Mapped["Media | None"] = relationship("Media", back_populates="library_entries")
     podcast: Mapped["Podcast | None"] = relationship("Podcast", back_populates="library_entries")
+
+
+class LibraryEntryPageSnapshot(Base):
+    """Short-lived stable ordered entry sequence for cursor paging."""
+
+    __tablename__ = "library_entry_page_snapshots"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    viewer_user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=False,
+    )
+    library_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("libraries.id"),
+        nullable=False,
+    )
+    sort: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    expires_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+
+    __table_args__ = (
+        Index("ix_library_entry_page_snapshots_expires_at", "expires_at"),
+        Index(
+            "ix_library_entry_page_snapshots_scope",
+            "viewer_user_id",
+            "library_id",
+            "sort",
+            "created_at",
+        ),
+    )
+
+    items: Mapped[list["LibraryEntryPageSnapshotItem"]] = relationship(
+        "LibraryEntryPageSnapshotItem",
+        back_populates="snapshot",
+        order_by=lambda: LibraryEntryPageSnapshotItem.ordinal,
+    )
+
+
+class LibraryEntryPageSnapshotItem(Base):
+    """One entry id at one ordinal in a stable library-entry page snapshot."""
+
+    __tablename__ = "library_entry_page_snapshot_items"
+
+    snapshot_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("library_entry_page_snapshots.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    ordinal: Mapped[int] = mapped_column(Integer, primary_key=True)
+    entry_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "snapshot_id",
+            "entry_id",
+            name="uq_library_entry_page_snapshot_items_entry",
+        ),
+    )
+
+    snapshot: Mapped["LibraryEntryPageSnapshot"] = relationship(
+        "LibraryEntryPageSnapshot",
+        back_populates="items",
+    )
 
 
 class LibraryIntelligenceArtifact(Base):

@@ -75,7 +75,7 @@ function seededSystemLibraryWithMutableMedia() {
         },
       },
     ],
-    entriesPage: { next_cursor: null },
+    entriesPage: { has_more: false, next_cursor: null },
   };
 }
 
@@ -106,6 +106,7 @@ function fetchInputPathWithSearch(input: unknown): string {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -130,7 +131,7 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
         [LIBRARY_ID]: {
           library: seededLibrary(),
           entries: [],
-          entriesPage: { next_cursor: null },
+          entriesPage: { has_more: false, next_cursor: null },
         },
       },
       children: <LibraryPaneBody />,
@@ -211,7 +212,7 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       ) {
         return Response.json({
           data: [seededMediaEntry("entry-2", "media-2", "Second Page Work")],
-          page: { next_cursor: null },
+          page: { has_more: false, next_cursor: null },
         });
       }
       return new Response("{}", {
@@ -227,7 +228,7 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
         [LIBRARY_ID]: {
           library: seededLibrary(),
           entries: [seededMediaEntry("entry-1", "media-1", "First Page Work")],
-          entriesPage: { next_cursor: "cursor-2" },
+          entriesPage: { has_more: true, next_cursor: "cursor-2" },
         },
       },
       children: <LibraryPaneBody />,
@@ -239,6 +240,53 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
     expect(await screen.findByText("Second Page Work")).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith(
       `/api/libraries/${LIBRARY_ID}/entries?cursor=cursor-2`,
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
+
+  it("loads another page of resonance-sorted library entries", async () => {
+    const user = userEvent.setup();
+    const fetchMock = stubFetch(async (input) => {
+      const path = fetchInputPathWithSearch(input);
+      if (path === `/api/libraries/${LIBRARY_ID}/entries?sort=resonance`) {
+        return Response.json({
+          data: [seededMediaEntry("entry-r1", "media-r1", "First Resonance Work")],
+          page: { has_more: true, next_cursor: "cursor-r2" },
+        });
+      }
+      if (
+        path ===
+        `/api/libraries/${LIBRARY_ID}/entries?sort=resonance&cursor=cursor-r2`
+      ) {
+        return Response.json({
+          data: [seededMediaEntry("entry-r2", "media-r2", "Second Resonance Work")],
+          page: { has_more: false, next_cursor: null },
+        });
+      }
+      return new Response("{}", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    renderHydratedPane({
+      href: `/libraries/${LIBRARY_ID}?sort=resonance`,
+      resources: {
+        [LIBRARY_ID]: {
+          library: seededLibrary(),
+          entries: [seededMediaEntry("entry-1", "media-1", "Manual Work")],
+          entriesPage: { has_more: false, next_cursor: null },
+        },
+      },
+      children: <LibraryPaneBody />,
+    });
+
+    expect(await screen.findByText("First Resonance Work")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Load more entries" }));
+
+    expect(await screen.findByText("Second Resonance Work")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith(
+      `/api/libraries/${LIBRARY_ID}/entries?sort=resonance&cursor=cursor-r2`,
       expect.objectContaining({ method: "GET" }),
     );
   });

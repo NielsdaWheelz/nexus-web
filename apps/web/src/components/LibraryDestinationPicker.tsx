@@ -49,9 +49,13 @@ export default function LibraryDestinationPicker({
   const optionId = (rowId: string) => `${id}-option-${rowId}`;
   const inputRef = useRef<HTMLInputElement>(null);
   const requestIdRef = useRef(0);
+  const loadMoreAbortRef = useRef<AbortController | null>(null);
   const composingRef = useRef(false);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const normalizedQuery = useMemo(() => query.trim().toLowerCase(), [query]);
+  const normalizedQueryRef = useRef(normalizedQuery);
+  normalizedQueryRef.current = normalizedQuery;
   const [results, setResults] = useState<LibraryDestination[]>([]);
   const [resultsQuery, setResultsQuery] = useState("");
   const [loading, setLoading] = useState(false);
@@ -70,17 +74,22 @@ export default function LibraryDestinationPicker({
     if (disabled) setOpen(false);
   }, [disabled]);
 
+  useEffect(() => () => loadMoreAbortRef.current?.abort(), []);
+
   useEffect(() => {
-    if (!open || disabled) return;
     const requestId = ++requestIdRef.current;
+    loadMoreAbortRef.current?.abort();
+    loadMoreAbortRef.current = null;
+    setLoadingMore(false);
+    if (!open || disabled) return;
     const controller = new AbortController();
-    const requestedQuery = query.trim().toLowerCase();
+    const requestedQuery = normalizedQuery;
     const timer = window.setTimeout(() => {
       setLoading(true);
       setError(null);
       setMoreError(null);
       void searchWritableLibraryDestinations({
-        q: query,
+        q: requestedQuery,
         limit: 25,
         signal: controller.signal,
       })
@@ -105,25 +114,41 @@ export default function LibraryDestinationPicker({
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [disabled, open, query]);
+  }, [disabled, normalizedQuery, open]);
 
   async function loadMoreResults() {
     if (disabled || loadingMore || nextCursor === null) return;
+    const requestId = requestIdRef.current;
+    const requestedQuery = resultsQuery;
+    const controller = new AbortController();
+    loadMoreAbortRef.current?.abort();
+    loadMoreAbortRef.current = controller;
     setLoadingMore(true);
     setMoreError(null);
     try {
       const page = await searchWritableLibraryDestinations({
-        q: resultsQuery,
+        q: requestedQuery,
         cursor: nextCursor,
         limit: 25,
+        signal: controller.signal,
       });
+      if (
+        controller.signal.aborted ||
+        requestId !== requestIdRef.current ||
+        requestedQuery !== normalizedQueryRef.current
+      ) {
+        return;
+      }
       setResults((current) => uniqueDestinations([...current, ...page.data]));
       setNextCursor(page.page.next_cursor);
     } catch (err) {
+      if (controller.signal.aborted || requestId !== requestIdRef.current) return;
       if (handleUnauthenticatedApiError(err)) return;
       setMoreError(err instanceof Error ? err.message : "Could not load more libraries");
     } finally {
-      setLoadingMore(false);
+      if (!controller.signal.aborted && requestId === requestIdRef.current) {
+        setLoadingMore(false);
+      }
     }
   }
 

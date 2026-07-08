@@ -10,7 +10,7 @@ describe("library client", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       Response.json({
         data: [],
-        page: { next_cursor: null },
+        page: { has_more: false, next_cursor: null },
       }),
     );
 
@@ -41,7 +41,7 @@ describe("library client", () => {
             updated_at: "2026-06-04T00:00:00Z",
           },
         ],
-        page: { next_cursor: null },
+        page: { has_more: false, next_cursor: null },
       }),
     );
 
@@ -80,7 +80,7 @@ describe("library client", () => {
               updated_at: "2026-06-04T00:00:00Z",
             },
           ],
-          page: { next_cursor: "cursor-2" },
+          page: { has_more: true, next_cursor: "cursor-2" },
         }),
       )
       .mockResolvedValueOnce(
@@ -97,7 +97,7 @@ describe("library client", () => {
               updated_at: "2026-06-05T00:00:00Z",
             },
           ],
-          page: { next_cursor: null },
+          page: { has_more: false, next_cursor: null },
         }),
       );
 
@@ -111,7 +111,7 @@ describe("library client", () => {
     );
     expect(fetchSpy).toHaveBeenNthCalledWith(
       2,
-      "/api/libraries?limit=1&cursor=cursor-2",
+      "/api/libraries?cursor=cursor-2&limit=1",
       expect.objectContaining({ method: "GET" }),
     );
   });

@@ -1,6 +1,7 @@
 "use client";
 
 import { apiFetch } from "@/lib/api/client";
+import { librariesResource } from "@/lib/api/resource";
 
 export interface LibraryDestination {
   id: string;
@@ -13,6 +14,7 @@ export interface LibraryDestination {
 export interface LibraryDestinationPage {
   data: LibraryDestination[];
   page: {
+    has_more: boolean;
     next_cursor: string | null;
   };
 }
@@ -26,6 +28,7 @@ export interface MemberLibrary extends LibraryDestination {
 interface MemberLibrariesResponse {
   data: MemberLibrary[];
   page: {
+    has_more: boolean;
     next_cursor: string | null;
   };
 }
@@ -64,10 +67,12 @@ export async function listMemberLibraries({
   const libraries: MemberLibrary[] = [];
   let cursor: string | null = null;
   do {
-    const params = new URLSearchParams({ limit: String(limit) });
-    if (cursor) params.set("cursor", cursor);
-    const response = await apiFetch<MemberLibrariesResponse>(
-      `/api/libraries?${params.toString()}`,
+    const response: MemberLibrariesResponse = await apiFetch<MemberLibrariesResponse>(
+      librariesResource.clientPath({
+        refreshVersion: 0,
+        limit,
+        cursor: cursor ?? undefined,
+      }),
       { signal },
     );
     remember(response.data);

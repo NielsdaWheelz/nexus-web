@@ -73,7 +73,7 @@ function parseJsonBody(init: RequestInit | undefined): Record<string, unknown> {
 }
 
 function destinationPage(data: LibraryDestination[], nextCursor: string | null = null) {
-  return { data, page: { next_cursor: nextCursor } };
+  return { data, page: { has_more: nextCursor !== null, next_cursor: nextCursor } };
 }
 
 function installLibraryFetch({
@@ -225,6 +225,40 @@ describe("LibraryDestinationPicker", () => {
     expect(pathFor(secondCall[0])).toBe(
       "/api/libraries/writable-destinations?cursor=cursor-2&limit=25",
     );
+  });
+
+  it("ignores a stale load-more page after the search query changes", async () => {
+    const deferred = deferredResponse();
+    const fetchMock = installLibraryFetch({
+      search: (url) => {
+        if (url.searchParams.get("cursor") === "cursor-2") {
+          return deferred.promise;
+        }
+        if (url.searchParams.get("q") === "zz") {
+          return jsonResponse(destinationPage([]));
+        }
+        return jsonResponse(destinationPage([research], "cursor-2"));
+      },
+    });
+
+    render(<Harness />);
+
+    const input = screen.getByRole("combobox", { name: "Libraries" });
+    fireEvent.focus(input);
+    await waitForSearchCallCount(fetchMock);
+    expect(await screen.findByRole("option", { name: "Research" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("option", { name: "Load more libraries" }));
+    await waitForSearchCallCount(fetchMock, 2);
+    fireEvent.change(input, { target: { value: "zz" } });
+    await waitForSearchCallCount(fetchMock, 3);
+
+    await act(async () => {
+      deferred.resolve?.(jsonResponse(destinationPage([archive])));
+      await deferred.promise;
+    });
+
+    expect(screen.queryByRole("option", { name: "Archive" })).not.toBeInTheDocument();
   });
 
   it("supports keyboard selection with aria-activedescendant", async () => {

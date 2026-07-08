@@ -19,8 +19,16 @@ const apiFetchMock = vi.mocked(apiFetch);
 function readyPage(data: string[], cursor: string | null): AsyncResource<CursorPage<string>> {
   return {
     status: "ready",
-    data: { data, page: { next_cursor: cursor } },
+    data: { data, page: { has_more: cursor !== null, next_cursor: cursor } },
   };
+}
+
+function deferredPage() {
+  let resolve: ((value: CursorPage<string>) => void) | undefined;
+  const promise = new Promise<CursorPage<string>>((promiseResolve) => {
+    resolve = promiseResolve;
+  });
+  return { promise, resolve: resolve! };
 }
 
 describe("useCursorPagination", () => {
@@ -31,7 +39,7 @@ describe("useCursorPagination", () => {
   it("appends cursor pages and resets appended state when page one changes", async () => {
     apiFetchMock.mockResolvedValueOnce({
       data: ["second"],
-      page: { next_cursor: null },
+      page: { has_more: false, next_cursor: null },
     });
 
     const { result, rerender } = renderHook(
@@ -61,5 +69,39 @@ describe("useCursorPagination", () => {
     expect(result.current.hasMore).toBe(true);
     expect(result.current.loadingMore).toBe(false);
     expect(result.current.error).toBeNull();
+  });
+
+  it("ignores a stale load-more response after page one changes", async () => {
+    const deferred = deferredPage();
+    apiFetchMock.mockReturnValueOnce(deferred.promise);
+
+    const { result, rerender } = renderHook(
+      ({ firstPage }) =>
+        useCursorPagination({
+          firstPage,
+          buildMoreHref: (cursor) => `/api/things?cursor=${cursor}`,
+        }),
+      { initialProps: { firstPage: readyPage(["first"], "cursor-1") } },
+    );
+
+    act(() => {
+      result.current.loadMore();
+    });
+
+    rerender({ firstPage: readyPage(["replacement"], "cursor-2") });
+
+    await act(async () => {
+      deferred.resolve({
+        data: ["stale"],
+        page: { has_more: false, next_cursor: null },
+      });
+      await deferred.promise;
+    });
+
+    await waitFor(() => {
+      expect(result.current.items).toEqual(["replacement"]);
+    });
+    expect(result.current.hasMore).toBe(true);
+    expect(result.current.loadingMore).toBe(false);
   });
 });

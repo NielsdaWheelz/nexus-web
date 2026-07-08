@@ -142,7 +142,10 @@ afterEach(() => {
 describe("loadWorkspaceBootstrap", () => {
   it("seeds the libraries pane resource keyed exactly as its useResource reads it", async () => {
     requestHeaders.set(REQUEST_PATH_HEADER, "/libraries");
-    const librariesEnvelope = { data: [{ id: "lib-1" }], page: { next_cursor: null } };
+    const librariesEnvelope = {
+      data: [{ id: "lib-1" }],
+      page: { has_more: false, next_cursor: null },
+    };
     respondWith({
       "/me/reader-profile": PROFILE_OK,
       "/libraries": librariesEnvelope,
@@ -157,7 +160,10 @@ describe("loadWorkspaceBootstrap", () => {
   it("falls back to the default href and runs that route's loader when no request-path header is present", async () => {
     // No REQUEST_PATH_HEADER set — bootstrap must use the default fallback href,
     // which resolves to the libraries pane (a prefetched route).
-    const librariesEnvelope = { data: [{ id: "lib-1" }], page: { next_cursor: null } };
+    const librariesEnvelope = {
+      data: [{ id: "lib-1" }],
+      page: { has_more: false, next_cursor: null },
+    };
     respondWith({
       "/me/reader-profile": PROFILE_OK,
       "/libraries": librariesEnvelope,
@@ -235,7 +241,10 @@ describe("loadWorkspaceBootstrap", () => {
     respondWith({
       "/me/reader-profile": PROFILE_OK,
       "/libraries/lib-1": { data: library },
-      "/libraries/lib-1/entries": { data: [entry], page: { next_cursor: null } },
+      "/libraries/lib-1/entries": {
+        data: [entry],
+        page: { has_more: false, next_cursor: null },
+      },
     });
 
     const result = await loadWorkspaceBootstrap(false);
@@ -243,7 +252,7 @@ describe("loadWorkspaceBootstrap", () => {
     expect(result.resources["lib-1"]).toEqual({
       library,
       entries: [entry],
-      entriesPage: { next_cursor: null },
+      entriesPage: { has_more: false, next_cursor: null },
     });
   });
 
@@ -359,7 +368,7 @@ describe("loadWorkspaceBootstrap", () => {
     const profile = { ...DEFAULT_READER_PROFILE, theme: "dark" as const };
     respondWith({
       "/me/reader-profile": { data: profile },
-      "/libraries": { data: [], page: { next_cursor: null } },
+      "/libraries": { data: [], page: { has_more: false, next_cursor: null } },
     });
 
     const result = await loadWorkspaceBootstrap(false);
@@ -373,7 +382,7 @@ describe("loadWorkspaceBootstrap", () => {
       if (path === "/me/reader-profile") {
         throw new Error("profile 504");
       }
-      return { data: [], page: { next_cursor: null } };
+      return { data: [], page: { has_more: false, next_cursor: null } };
     });
 
     const result = await loadWorkspaceBootstrap(false);
@@ -399,7 +408,7 @@ describe("loadWorkspaceBootstrap", () => {
     requestHeaders.set(REQUEST_PATH_HEADER, "/libraries");
     respondWith({
       "/me/reader-profile": PROFILE_OK,
-      "/libraries": { data: [], page: { next_cursor: null } },
+      "/libraries": { data: [], page: { has_more: false, next_cursor: null } },
     });
 
     await loadWorkspaceBootstrap(false);
@@ -435,7 +444,10 @@ describe("loadWorkspaceBootstrap", () => {
       ],
     });
     const media = { kind: "epub", capabilities: { can_read: true } };
-    const librariesEnvelope = { data: [{ id: "lib-1" }], page: { next_cursor: null } };
+    const librariesEnvelope = {
+      data: [{ id: "lib-1" }],
+      page: { has_more: false, next_cursor: null },
+    };
     respondWith({
       "/me/reader-profile": PROFILE_OK,
       "/me/workspace-session?device_id=dev-1": sessionEnvelope({ own: ownState }),
@@ -468,7 +480,10 @@ describe("loadWorkspaceBootstrap", () => {
       ],
     });
     const media = { kind: "epub", capabilities: { can_read: true } };
-    const librariesEnvelope = { data: [{ id: "lib-1" }], page: { next_cursor: null } };
+    const librariesEnvelope = {
+      data: [{ id: "lib-1" }],
+      page: { has_more: false, next_cursor: null },
+    };
     let librariesCalls = 0;
     respondWithFn((path) => {
       if (path === "/me/reader-profile") {
@@ -517,7 +532,7 @@ describe("loadWorkspaceBootstrap", () => {
         own: null,
         mostRecentElsewhere: elsewhere,
       }),
-      "/libraries": { data: [], page: { next_cursor: null } },
+      "/libraries": { data: [], page: { has_more: false, next_cursor: null } },
       "/media/789": { data: media },
     });
 
@@ -615,7 +630,7 @@ describe("loadWorkspaceBootstrap", () => {
     respondWith({
       "/me/reader-profile": PROFILE_OK,
       "/me/workspace-session?device_id=dev-1": sessionEnvelope({ own: ownState }),
-      "/libraries": { data: [], page: { next_cursor: null } },
+      "/libraries": { data: [], page: { has_more: false, next_cursor: null } },
       "/billing/account": { data: { billing_plan_tier: "free" } },
     });
 
