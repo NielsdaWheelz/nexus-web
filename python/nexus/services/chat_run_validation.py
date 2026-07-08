@@ -47,6 +47,37 @@ def validate_pre_phase(
     key_mode: str,
     use_platform_key: bool,
 ) -> Model:
+    model = validate_model_pre_phase(
+        db,
+        viewer_id=viewer_id,
+        content=content,
+        model_id=model_id,
+        reasoning=reasoning,
+        key_mode=key_mode,
+        use_platform_key=use_platform_key,
+    )
+    _validate_parent_anchor_for_existing_conversation(
+        db,
+        viewer_id,
+        conversation_id,
+        parent_message_id,
+        branch_anchor,
+    )
+    _validate_reader_selection(db, viewer_id, conversation_id, reader_selection, chat_subject)
+
+    return model
+
+
+def validate_model_pre_phase(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    content: str,
+    model_id: UUID,
+    reasoning: str,
+    key_mode: str,
+    use_platform_key: bool,
+) -> Model:
     if len(content) > MAX_MESSAGE_CONTENT_LENGTH:
         raise ApiError(
             ApiErrorCode.E_MESSAGE_TOO_LONG,
@@ -78,15 +109,6 @@ def validate_pre_phase(
     rate_limiter.check_concurrent_limit(viewer_id)
     if use_platform_key:
         rate_limiter.check_token_budget(viewer_id)
-    _validate_parent_anchor_for_existing_conversation(
-        db,
-        viewer_id,
-        conversation_id,
-        parent_message_id,
-        branch_anchor,
-    )
-    _validate_reader_selection(db, viewer_id, conversation_id, reader_selection, chat_subject)
-
     return model
 
 

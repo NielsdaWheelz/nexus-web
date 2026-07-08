@@ -31,7 +31,7 @@ DEFAULT_WORKER_ALLOWED_JOB_KINDS = (
     "library_intelligence_artifact_generate,media_unit_build,note_reindex_job,"
     "podcast_sync_subscription_job,podcast_reindex_semantic_job,"
     "backfill_default_library_closure_job,oracle_reading_generate,synapse_scan,"
-    "dawn_write_job"
+    "dawn_write_job,contributor_reconciliation"
 )
 
 

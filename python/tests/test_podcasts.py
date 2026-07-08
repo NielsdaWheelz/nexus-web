@@ -5625,7 +5625,7 @@ class TestPodcastSubscriptionLifecycleClosure:
 
         # (b) the position order matches the canonical list_library_entries order.
         with direct_db.session() as session:
-            canonical_entries = list_library_entries(
+            canonical_entries, _page = list_library_entries(
                 session,
                 viewer_id=user_id,
                 library_id=affected_library_id,

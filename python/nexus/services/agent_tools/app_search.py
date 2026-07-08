@@ -95,41 +95,49 @@ APP_SEARCH_TOOL_DEFINITION: dict[str, Any] = {
         "properties": {
             "query": {"type": "string"},
             "kinds": {
-                "type": "array",
+                "type": ["array", "null"],
                 "items": {"type": "string", "enum": list(SEARCH_KINDS)},
                 "description": (
                     "Optional user-facing kinds to search: documents, notes, "
-                    "highlights, conversations, people, web."
+                    "highlights, conversations, people, web. Use null or [] for no filter."
                 ),
             },
             "formats": {
-                "type": "array",
+                "type": ["array", "null"],
                 "items": {"type": "string", "enum": list(SEARCH_FORMATS)},
                 "description": (
-                    "Optional document formats: article, pdf, epub, video, episode, podcast."
+                    "Optional document formats: article, pdf, epub, video, episode, "
+                    "podcast. Use null or [] for no format filter."
                 ),
             },
             "authors": {
-                "type": "array",
+                "type": ["array", "null"],
                 "items": {"type": "string"},
-                "description": "Optional contributor handles to filter credited content.",
+                "description": (
+                    "Optional contributor handles to filter credited content. "
+                    "Use null or [] for no author filter."
+                ),
             },
             "roles": {
-                "type": "array",
+                "type": ["array", "null"],
                 "items": {"type": "string", "enum": sorted(CONTRIBUTOR_ROLES)},
-                "description": "Optional contributor roles to filter credited content.",
+                "description": (
+                    "Optional contributor roles to filter credited content. "
+                    "Use null or [] for no role filter."
+                ),
             },
             "scopes": {
-                "type": "array",
+                "type": ["array", "null"],
                 "items": {"type": "string"},
                 "description": (
                     f"Optional URI scopes ({APP_SEARCH_SCOPE_HINT}) "
                     "from this conversation's context refs. Defaults to all "
-                    "search-scope context refs."
+                    "search-scope context refs. Use null or [] for conversation-default "
+                    "scopes."
                 ),
             },
         },
-        "required": ["query"],
+        "required": ["query", "kinds", "formats", "authors", "roles", "scopes"],
         "additionalProperties": False,
     },
 }
@@ -189,6 +197,13 @@ class InvalidScopeError(Exception):
     """Raised when a caller-supplied scope URI is not a valid conversation context ref."""
 
 
+def _non_empty_filter(values: Sequence[str] | None) -> list[str] | None:
+    if values is None:
+        return None
+    normalized = list(values)
+    return normalized or None
+
+
 def execute_app_search(
     db: Session,
     *,
@@ -206,13 +221,17 @@ def execute_app_search(
     forced_error: str | None = None,
 ) -> AppSearchRun:
     """Run app search for a chat turn and persist tool/retrieval metadata."""
+    kinds_filter = _non_empty_filter(kinds)
+    formats_filter = _non_empty_filter(formats)
+    authors_filter = _non_empty_filter(authors)
+    roles_filter = _non_empty_filter(roles)
     filters: dict[str, Any] = {
         key: list(values)
         for key, values in (
-            ("kinds", kinds),
-            ("formats", formats),
-            ("authors", authors),
-            ("roles", roles),
+            ("kinds", kinds_filter),
+            ("formats", formats_filter),
+            ("authors", authors_filter),
+            ("roles", roles_filter),
         )
         if values is not None
     }
@@ -230,10 +249,10 @@ def execute_app_search(
             raise InvalidScopeError(forced_error)
         base_query = build_search_query(
             text=query,
-            raw_kinds=None if kinds is None else list(kinds),
-            raw_formats=None if formats is None else list(formats),
-            raw_authors=None if authors is None else list(authors),
-            raw_roles=None if roles is None else list(roles),
+            raw_kinds=kinds_filter,
+            raw_formats=formats_filter,
+            raw_authors=authors_filter,
+            raw_roles=roles_filter,
             scope=scope_from_uri("all"),
             cursor=None,
             limit=APP_SEARCH_LIMIT,

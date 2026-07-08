@@ -9,6 +9,16 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 ContributorKind = Literal["person", "organization", "group", "unknown"]
 ContributorStatus = Literal["unverified", "verified", "tombstoned", "merged"]
+ContributorReconciliationStatus = Literal["pending", "accepted", "rejected", "stale"]
+ContributorReconciliationMatcher = Literal["deterministic"]
+ContributorReconciliationSignal = Literal[
+    "same_display_name",
+    "same_kind",
+    "same_sort_name",
+    "shared_alias",
+    "shared_confirmed_alias",
+    "shared_work",
+]
 ContributorAliasKind = Literal[
     "display",
     "credited",
@@ -282,6 +292,92 @@ class ContributorMergeRequest(BaseModel):
     )
 
     model_config = ConfigDict(str_strip_whitespace=True, populate_by_name=True, extra="forbid")
+
+
+class ContributorReconciliationContributorOut(BaseModel):
+    handle: str
+    href: str
+    display_name: str = Field(serialization_alias="displayName")
+    sort_name: str = Field(serialization_alias="sortName")
+    kind: ContributorKind
+    status: ContributorStatus
+    disambiguation: str | None = None
+    work_count: int = Field(serialization_alias="workCount")
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+
+class ContributorReconciliationEvidenceOut(BaseModel):
+    matcher: ContributorReconciliationMatcher
+    algorithm_version: str = Field(serialization_alias="algorithmVersion")
+    reason: str
+    score: int
+    signals: list[ContributorReconciliationSignal] = Field(default_factory=list)
+    shared_aliases: list[str] = Field(
+        default_factory=list,
+        serialization_alias="sharedAliases",
+    )
+    shared_confirmed_aliases: list[str] = Field(
+        default_factory=list,
+        serialization_alias="sharedConfirmedAliases",
+    )
+    shared_work_count: int = Field(serialization_alias="sharedWorkCount")
+    source_handle: str = Field(serialization_alias="sourceHandle")
+    target_handle: str = Field(serialization_alias="targetHandle")
+    source_work_count: int = Field(serialization_alias="sourceWorkCount")
+    target_work_count: int = Field(serialization_alias="targetWorkCount")
+    source_confirmed_alias_count: int = Field(
+        serialization_alias="sourceConfirmedAliasCount"
+    )
+    target_confirmed_alias_count: int = Field(
+        serialization_alias="targetConfirmedAliasCount"
+    )
+    source_strong_external_id_count: int = Field(
+        serialization_alias="sourceStrongExternalIdCount"
+    )
+    target_strong_external_id_count: int = Field(
+        serialization_alias="targetStrongExternalIdCount"
+    )
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+
+class ContributorReconciliationCandidateOut(BaseModel):
+    id: UUID
+    run_id: UUID = Field(serialization_alias="runId")
+    status: ContributorReconciliationStatus
+    score: int
+    source_contributor: ContributorReconciliationContributorOut = Field(
+        serialization_alias="sourceContributor"
+    )
+    target_contributor: ContributorReconciliationContributorOut = Field(
+        serialization_alias="targetContributor"
+    )
+    evidence: ContributorReconciliationEvidenceOut
+    decided_by_user_id: UUID | None = Field(None, serialization_alias="decidedByUserId")
+    created_at: datetime = Field(serialization_alias="createdAt")
+    updated_at: datetime = Field(serialization_alias="updatedAt")
+    decided_at: datetime | None = Field(None, serialization_alias="decidedAt")
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+
+class ContributorReconciliationRunOut(BaseModel):
+    id: UUID
+    algorithm_version: str = Field(serialization_alias="algorithmVersion")
+    candidate_count: int = Field(serialization_alias="candidateCount")
+    evaluated_pair_count: int = Field(serialization_alias="evaluatedPairCount")
+    actor_user_id: UUID | None = Field(None, serialization_alias="actorUserId")
+    created_at: datetime = Field(serialization_alias="createdAt")
+    candidates: list[ContributorReconciliationCandidateOut] = Field(default_factory=list)
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+
+class ContributorReconciliationCandidatesPage(BaseModel):
+    candidates: list[ContributorReconciliationCandidateOut] = Field(default_factory=list)
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
 
 class FacetCount(BaseModel):

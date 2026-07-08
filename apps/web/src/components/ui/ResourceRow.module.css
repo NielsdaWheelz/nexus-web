@@ -4,6 +4,7 @@
   container-type: inline-size;
   display: flex;
   min-width: 0;
+  max-width: 100%;
   flex-wrap: wrap;
   gap: var(--space-3);
   align-items: stretch;
@@ -36,6 +37,7 @@
 .primary {
   display: flex;
   min-width: 0;
+  max-width: 100%;
   flex: 1;
   gap: var(--space-3);
   align-items: flex-start;
@@ -77,12 +79,15 @@ button.primary:disabled {
 
 .eyebrow {
   display: flex;
+  min-width: 0;
+  max-width: 100%;
   flex-wrap: wrap;
   gap: var(--space-2);
   align-items: center;
 }
 
 .title {
+  min-width: 0;
   color: var(--ink);
   font-size: var(--text-base);
   font-weight: var(--weight-semibold);
@@ -92,6 +97,7 @@ button.primary:disabled {
 }
 
 .description {
+  min-width: 0;
   color: var(--ink-muted);
   font-size: var(--text-sm);
   line-height: var(--leading-normal);
@@ -99,6 +105,7 @@ button.primary:disabled {
 }
 
 .meta {
+  min-width: 0;
   color: var(--ink-faint);
   font-size: var(--text-sm);
   font-variant-numeric: tabular-nums;
@@ -115,6 +122,7 @@ button.primary:disabled {
 .side {
   display: flex;
   min-width: 0;
+  max-width: 100%;
   flex: none;
   align-items: center;
   flex-wrap: wrap;
@@ -124,6 +132,7 @@ button.primary:disabled {
 .secondary {
   display: flex;
   min-width: 0;
+  max-width: 100%;
   align-items: center;
   gap: var(--space-2);
 }
@@ -131,17 +140,25 @@ button.primary:disabled {
 .contributors {
   display: flex;
   min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
   justify-content: flex-end;
 }
 
 .actions {
   display: flex;
   min-width: 0;
+  max-width: 100%;
   flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
   gap: var(--space-1);
   transition: opacity var(--duration-fast) var(--ease-glide);
+}
+
+.actions > * {
+  min-width: 0;
+  max-width: 100%;
 }
 
 /* Reveal-on-hover only where hover exists; always shown on touch. Keyboard
@@ -165,20 +182,60 @@ button.primary:disabled {
 }
 
 @container (max-width: 520px) {
-  .main,
-  .side {
+  .primary {
+    gap: var(--space-2);
+  }
+
+  .leading [data-view-transition-part="thumb"] {
+    --resource-thumb-size: 32px;
+    border-radius: var(--radius-sm);
+  }
+
+  .title,
+  .meta {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+  }
+
+  .title {
+    -webkit-line-clamp: 2;
+  }
+
+  .meta {
+    -webkit-line-clamp: 1;
+  }
+
+  .main {
     flex-basis: 100%;
   }
 
   .side {
-    flex-direction: column;
-    align-items: stretch;
+    flex: 1 1 100%;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-1) var(--space-2);
   }
 
   .actions,
   .secondary,
   .contributors {
-    width: 100%;
+    width: auto;
+  }
+
+  .secondary {
+    flex: 0 1 auto;
+  }
+
+  .contributors {
+    flex: 1 1 min(14rem, 100%);
     justify-content: flex-start;
+  }
+
+  .actions {
+    flex: 0 1 auto;
+    justify-content: flex-end;
+    margin-left: auto;
   }
 }

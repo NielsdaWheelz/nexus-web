@@ -219,6 +219,7 @@ def conversation_to_out(
 def message_to_out(
     message: Message,
     can_retry_response: bool = False,
+    can_resend_response: bool = False,
     citations: list[CitationOut] | None = None,
     trust_trail: AssistantTrustTrailOut | None = None,
 ) -> MessageOut:
@@ -242,6 +243,7 @@ def message_to_out(
         status=message.status,
         error_code=message.error_code,
         can_retry_response=can_retry_response,
+        can_resend_response=can_resend_response,
         created_at=message.created_at,
         updated_at=message.updated_at,
     )
@@ -266,6 +268,29 @@ def retryable_assistant_message_ids(
             ChatRun.error_code.in_(CHAT_RESPONSE_RETRYABLE_ERROR_CODES),
             Message.role == "assistant",
             Message.status == "error",
+        )
+    )
+    return set(rows)
+
+
+def resendable_assistant_message_ids(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    assistant_message_ids: Sequence[UUID],
+) -> set[UUID]:
+    if not assistant_message_ids:
+        return set()
+
+    rows = db.scalars(
+        select(ChatRun.assistant_message_id)
+        .join(Message, Message.id == ChatRun.assistant_message_id)
+        .where(
+            ChatRun.owner_user_id == viewer_id,
+            ChatRun.assistant_message_id.in_(assistant_message_ids),
+            ChatRun.status.in_(("error", "cancelled")),
+            Message.role == "assistant",
+            Message.status.in_(("error", "cancelled")),
         )
     )
     return set(rows)
@@ -656,6 +681,11 @@ def list_messages(
         viewer_id=viewer_id,
         assistant_message_ids=message_ids,
     )
+    resendable_message_ids = resendable_assistant_message_ids(
+        db,
+        viewer_id=viewer_id,
+        assistant_message_ids=message_ids,
+    )
     messages: list[MessageOut] = []
     for row in rows:
         trust_trail = trust_trails[row[0]] if row[2] == "assistant" else None
@@ -672,6 +702,7 @@ def list_messages(
                 status=row[4],
                 error_code=row[5],
                 can_retry_response=row[0] in retryable_message_ids,
+                can_resend_response=row[0] in resendable_message_ids,
                 created_at=row[6],
                 updated_at=row[7],
                 trust_trail=trust_trail,

@@ -3,6 +3,7 @@
 import json
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
@@ -56,6 +57,29 @@ def _require_chat_runs_schema(engine: Engine) -> None:
     missing = {"chat_runs", "chat_run_events"} - tables
     if missing:
         pytest.fail(f"chat-runs schema missing: {', '.join(sorted(missing))}")
+
+
+def _assert_openai_strict_schema(schema: dict[str, Any], path: str = "$") -> None:
+    schema_type = schema.get("type")
+    is_object = schema_type == "object" or (
+        isinstance(schema_type, list) and "object" in schema_type
+    )
+    if is_object or "properties" in schema:
+        properties = schema.get("properties")
+        assert isinstance(properties, dict), f"{path} object schema must declare properties"
+        assert schema.get("additionalProperties") is False, (
+            f"{path} must set additionalProperties=false"
+        )
+        assert schema.get("required") == list(properties), (
+            f"{path} required must exactly match properties in schema order"
+        )
+        for key, property_schema in properties.items():
+            assert isinstance(property_schema, dict), f"{path}.properties.{key} must be an object"
+            _assert_openai_strict_schema(property_schema, f"{path}.properties.{key}")
+
+    items = schema.get("items")
+    if isinstance(items, dict):
+        _assert_openai_strict_schema(items, f"{path}.items")
 
 
 @pytest.fixture
@@ -174,6 +198,13 @@ def _create_failed_chat_run(
 def _post_retry(auth_client, user_id: UUID, assistant_message_id: UUID, idempotency_key: str):
     return auth_client.post(
         f"/messages/{assistant_message_id}/retry",
+        headers={**auth_headers(user_id), "Idempotency-Key": idempotency_key},
+    )
+
+
+def _post_resend(auth_client, user_id: UUID, assistant_message_id: UUID, idempotency_key: str):
+    return auth_client.post(
+        f"/messages/{assistant_message_id}/resend",
         headers={**auth_headers(user_id), "Idempotency-Key": idempotency_key},
     )
 
@@ -1146,11 +1177,26 @@ class TestChatRunRequestSchema:
 class TestChatRunTooling:
     """Tooling and prompt-input contracts for POST /chat-runs."""
 
-    def test_app_search_tool_schema_rejects_legacy_scope_alias(self):
+    def test_chat_tool_schemas_are_openai_strict_compatible(self):
         from nexus.services.agent_tools.app_search import APP_SEARCH_TOOL_DEFINITION
+        from nexus.services.agent_tools.inspect_resource import INSPECT_RESOURCE_TOOL_DEFINITION
         from nexus.services.agent_tools.read_resource import READ_RESOURCE_TOOL_DEFINITION
+        from nexus.services.agent_tools.web_search import WEB_SEARCH_TOOL_DEFINITION
+        from nexus.services.chat_runs import _CHAT_TOOL_SPECS
 
-        assert APP_SEARCH_TOOL_DEFINITION["parameters"]["additionalProperties"] is False
+        definitions = {
+            APP_SEARCH_TOOL_DEFINITION["name"]: APP_SEARCH_TOOL_DEFINITION,
+            WEB_SEARCH_TOOL_DEFINITION["name"]: WEB_SEARCH_TOOL_DEFINITION,
+            READ_RESOURCE_TOOL_DEFINITION["name"]: READ_RESOURCE_TOOL_DEFINITION,
+            INSPECT_RESOURCE_TOOL_DEFINITION["name"]: INSPECT_RESOURCE_TOOL_DEFINITION,
+        }
+        assert {tool.name for tool in _CHAT_TOOL_SPECS} == set(definitions)
+        for tool in _CHAT_TOOL_SPECS:
+            assert tool.strict is True
+            assert tool.parameters == definitions[tool.name]["parameters"]
+            _assert_openai_strict_schema(tool.parameters, path=f"$.tools.{tool.name}")
+
+        app_props = APP_SEARCH_TOOL_DEFINITION["parameters"]["properties"]
         assert {
             "query",
             "kinds",
@@ -1158,8 +1204,28 @@ class TestChatRunTooling:
             "authors",
             "roles",
             "scopes",
-        } <= set(APP_SEARCH_TOOL_DEFINITION["parameters"]["properties"])
-        assert READ_RESOURCE_TOOL_DEFINITION["parameters"]["additionalProperties"] is False
+        } == set(app_props)
+        for key in ("kinds", "formats", "authors", "roles", "scopes"):
+            assert app_props[key]["type"] == ["array", "null"]
+
+        web_props = WEB_SEARCH_TOOL_DEFINITION["parameters"]["properties"]
+        assert WEB_SEARCH_TOOL_DEFINITION["parameters"]["required"] == [
+            "query",
+            "freshness_days",
+        ]
+        assert web_props["freshness_days"]["type"] == ["integer", "null"]
+
+    def test_app_search_tool_empty_filter_arrays_are_omitted(self):
+        from nexus.services.chat_runs import _app_search_string_array_from_tool_args
+
+        assert _app_search_string_array_from_tool_args({"kinds": []}, "kinds") == (
+            None,
+            None,
+        )
+        assert _app_search_string_array_from_tool_args({"kinds": ["  "]}, "kinds") == (
+            None,
+            None,
+        )
 
     def test_chat_run_tools_always_registered(
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
@@ -1735,8 +1801,11 @@ class TestChatResponseRetry:
         assert listed.status_code == 200, f"Expected messages list: {listed.text}"
         messages = listed.json()["data"]
         retryable = {row["id"]: row["can_retry_response"] for row in messages}
+        resendable = {row["id"]: row["can_resend_response"] for row in messages}
         assert retryable[str(source_user_id)] is False
         assert retryable[str(failed_assistant_id)] is True
+        assert resendable[str(source_user_id)] is False
+        assert resendable[str(failed_assistant_id)] is True
         direct_db.register_cleanup("conversations", "id", conversation_id)
         direct_db.register_cleanup("messages", "conversation_id", conversation_id)
 
@@ -1780,6 +1849,232 @@ class TestChatResponseRetry:
         assert response.json()["error"]["code"] == "E_RETRY_NOT_ALLOWED"
         direct_db.register_cleanup("conversations", "id", conversation_id)
         direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+
+    def test_retry_and_resend_recheck_current_model_availability(
+        self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        _seed_ai_plus_billing(direct_db, user_id)
+        with direct_db.session() as session:
+            model_id = create_test_model(session)
+            conversation_id = create_test_conversation(session, user_id)
+            retry_user_id = create_test_message(session, conversation_id, 1, "user", "Retry?")
+            retry_assistant_id = create_test_message(
+                session,
+                conversation_id,
+                2,
+                "assistant",
+                "Timed out.",
+                status="error",
+                model_id=model_id,
+                parent_message_id=retry_user_id,
+            )
+            resend_user_id = create_test_message(
+                session, conversation_id, 3, "user", "Bad request?"
+            )
+            resend_assistant_id = create_test_message(
+                session,
+                conversation_id,
+                4,
+                "assistant",
+                "The request was rejected by the model provider.",
+                status="error",
+                model_id=model_id,
+                parent_message_id=resend_user_id,
+            )
+        _create_failed_chat_run(
+            direct_db,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            model_id=model_id,
+            user_message_id=retry_user_id,
+            assistant_message_id=retry_assistant_id,
+            idempotency_key="retry-unavailable-source",
+        )
+        _create_failed_chat_run(
+            direct_db,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            model_id=model_id,
+            user_message_id=resend_user_id,
+            assistant_message_id=resend_assistant_id,
+            idempotency_key="resend-unavailable-source",
+            error_code="E_LLM_BAD_REQUEST",
+        )
+        with direct_db.session() as session:
+            session.execute(
+                text("UPDATE models SET is_available = false WHERE id = :model_id"),
+                {"model_id": model_id},
+            )
+            run_count_before = session.execute(
+                text("SELECT COUNT(*) FROM chat_runs WHERE conversation_id = :conversation_id"),
+                {"conversation_id": conversation_id},
+            ).scalar_one()
+            session.commit()
+
+        try:
+            retry_response = _post_retry(
+                auth_client, user_id, retry_assistant_id, "retry-unavailable"
+            )
+            resend_response = _post_resend(
+                auth_client, user_id, resend_assistant_id, "resend-unavailable"
+            )
+
+            assert retry_response.status_code == 400
+            assert retry_response.json()["error"]["code"] == "E_MODEL_NOT_AVAILABLE"
+            assert resend_response.status_code == 400
+            assert resend_response.json()["error"]["code"] == "E_MODEL_NOT_AVAILABLE"
+            with direct_db.session() as session:
+                run_count_after = session.execute(
+                    text(
+                        "SELECT COUNT(*) FROM chat_runs WHERE conversation_id = :conversation_id"
+                    ),
+                    {"conversation_id": conversation_id},
+                ).scalar_one()
+            assert run_count_after == run_count_before
+        finally:
+            with direct_db.session() as session:
+                session.execute(
+                    text("UPDATE models SET is_available = true WHERE id = :model_id"),
+                    {"model_id": model_id},
+                )
+                session.commit()
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+
+    def test_resend_nonretryable_failed_root_response_creates_new_attempt(
+        self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        _seed_ai_plus_billing(direct_db, user_id)
+        with direct_db.session() as session:
+            model_id = create_test_model(session)
+            conversation_id = create_test_conversation(session, user_id)
+            source_user_id = create_test_message(
+                session, conversation_id, 1, "user", "Bad request?"
+            )
+            failed_assistant_id = create_test_message(
+                session,
+                conversation_id,
+                2,
+                "assistant",
+                "The request was rejected by the model provider.",
+                status="error",
+                model_id=model_id,
+                parent_message_id=source_user_id,
+            )
+        _create_failed_chat_run(
+            direct_db,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            model_id=model_id,
+            user_message_id=source_user_id,
+            assistant_message_id=failed_assistant_id,
+            idempotency_key="failed-resend-source",
+            error_code="E_LLM_BAD_REQUEST",
+        )
+
+        response = _post_resend(auth_client, user_id, failed_assistant_id, "resend-bad-request")
+
+        assert response.status_code == 200, f"Expected resend to succeed: {response.text}"
+        data = response.json()["data"]
+        resend_run_id = UUID(data["run"]["id"])
+        resend_user_id = UUID(data["user_message"]["id"])
+        resend_assistant_id = UUID(data["assistant_message"]["id"])
+        _register_run_cleanup(direct_db, resend_run_id, conversation_id)
+
+        assert data["run"]["status"] == "queued"
+        assert data["run"]["model_id"] == str(model_id)
+        assert data["user_message"]["message_document"]["blocks"][0]["text"] == "Bad request?"
+        assert data["user_message"]["parent_message_id"] is None
+        assert data["assistant_message"]["status"] == "pending"
+        assert data["assistant_message"]["parent_message_id"] == str(resend_user_id)
+
+        with direct_db.session() as session:
+            failed_status = session.execute(
+                text("SELECT status FROM messages WHERE id = :message_id"),
+                {"message_id": failed_assistant_id},
+            ).scalar_one()
+            active_leaf_id = session.execute(
+                text(
+                    """
+                    SELECT active_leaf_message_id
+                    FROM conversation_active_paths
+                    WHERE conversation_id = :conversation_id
+                      AND viewer_user_id = :viewer_user_id
+                    """
+                ),
+                {"conversation_id": conversation_id, "viewer_user_id": user_id},
+            ).scalar_one()
+            job_count = session.execute(
+                text(
+                    """
+                    SELECT COUNT(*)
+                    FROM background_jobs
+                    WHERE kind = 'chat_run'
+                      AND payload->>'run_id' = :run_id
+                    """
+                ),
+                {"run_id": str(resend_run_id)},
+            ).scalar_one()
+
+        assert failed_status == "error"
+        assert active_leaf_id == resend_assistant_id
+        assert job_count == 1
+
+    def test_resend_cancelled_response_creates_new_attempt(
+        self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        _seed_ai_plus_billing(direct_db, user_id)
+        with direct_db.session() as session:
+            model_id = create_test_model(session)
+            conversation_id = create_test_conversation(session, user_id)
+            source_user_id = create_test_message(session, conversation_id, 1, "user", "Again?")
+            cancelled_assistant_id = create_test_message(
+                session,
+                conversation_id,
+                2,
+                "assistant",
+                "Request cancelled.",
+                status="cancelled",
+                model_id=model_id,
+                parent_message_id=source_user_id,
+            )
+            run_id = uuid4()
+            session.add(
+                ChatRun(
+                    id=run_id,
+                    owner_user_id=user_id,
+                    conversation_id=conversation_id,
+                    user_message_id=source_user_id,
+                    assistant_message_id=cancelled_assistant_id,
+                    idempotency_key="cancelled-resend-source",
+                    payload_hash="cancelled-resend-source-payload",
+                    status="cancelled",
+                    model_id=model_id,
+                    reasoning="none",
+                    key_mode="auto",
+                    completed_at=datetime.now(UTC),
+                )
+            )
+            session.commit()
+
+        response = _post_resend(
+            auth_client, user_id, cancelled_assistant_id, "resend-cancelled"
+        )
+
+        assert response.status_code == 200, f"Expected cancelled resend: {response.text}"
+        data = response.json()["data"]
+        resend_run_id = UUID(data["run"]["id"])
+        _register_run_cleanup(direct_db, resend_run_id, conversation_id)
+        direct_db.register_cleanup("chat_runs", "id", run_id)
+        assert data["run"]["status"] == "queued"
+        assert data["user_message"]["message_document"]["blocks"][0]["text"] == "Again?"
+        assert data["assistant_message"]["status"] == "pending"
 
 
 class TestCitationEdgeWriteThrough:

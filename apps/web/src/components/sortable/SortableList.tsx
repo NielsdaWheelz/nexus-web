@@ -1,6 +1,12 @@
 "use client";
 
-import { useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import {
+  useMemo,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
+} from "react";
 import {
   DndContext,
   DragOverlay,
@@ -56,14 +62,20 @@ interface SortableListProps<T> {
 interface SortableListItemProps<T> {
   item: T;
   id: string;
+  index: number;
+  items: T[];
   renderItem: (props: SortableListRenderItemProps<T>) => ReactNode;
+  onReorder: (nextItems: T[]) => void;
   className?: string;
 }
 
 function SortableListItem<T>({
   item,
   id,
+  index,
+  items,
   renderItem,
+  onReorder,
   className,
 }: SortableListItemProps<T>) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging, isOver } =
@@ -74,6 +86,32 @@ function SortableListItem<T>({
     transform: CSS.Transform.toString(transform),
     transition,
   };
+  const handleKeyDown = (event: ReactKeyboardEvent<HTMLElement>) => {
+    listeners?.onKeyDown?.(event);
+    if (
+      event.defaultPrevented ||
+      event.altKey ||
+      event.ctrlKey ||
+      event.metaKey
+    ) {
+      return;
+    }
+
+    const direction =
+      event.key === "ArrowDown" ? 1 : event.key === "ArrowUp" ? -1 : 0;
+    if (direction === 0) {
+      return;
+    }
+
+    const nextIndex = index + direction;
+    if (nextIndex < 0 || nextIndex >= items.length) {
+      return;
+    }
+
+    event.preventDefault();
+    onReorder(arrayMove(items, index, nextIndex));
+  };
+
   return (
     <li
       ref={setNodeRef}
@@ -88,7 +126,7 @@ function SortableListItem<T>({
         isOver,
         handleProps: {
           attributes,
-          listeners,
+          listeners: { ...listeners, onKeyDown: handleKeyDown },
         },
       })}
     </li>
@@ -144,13 +182,16 @@ export default function SortableList<T>({
     setActiveItemId(null);
   };
 
-  const sortableItems = items.map((item) => {
+  const sortableItems = items.map((item, index) => {
     const id = getItemId(item);
     return (
       <SortableListItem
         key={id}
         id={id}
+        index={index}
         item={item}
+        items={items}
+        onReorder={onReorder}
         renderItem={renderItem}
         className={itemClassName}
       />

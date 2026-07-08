@@ -43,6 +43,64 @@ export interface ContributorExternalId {
   source?: string | null;
 }
 
+export type ContributorReconciliationStatus = "pending" | "accepted" | "rejected" | "stale";
+export type ContributorReconciliationMatcher = "deterministic";
+export type ContributorReconciliationSignal =
+  | "same_display_name"
+  | "same_kind"
+  | "same_sort_name"
+  | "shared_alias"
+  | "shared_confirmed_alias"
+  | "shared_work";
+
+export interface ContributorReconciliationContributor {
+  handle: string;
+  href: string;
+  display_name: string;
+  sort_name: string;
+  kind: string;
+  status: string;
+  disambiguation?: string | null;
+  work_count: number;
+}
+
+export interface ContributorReconciliationEvidence {
+  matcher: ContributorReconciliationMatcher;
+  algorithm_version: string;
+  reason: string;
+  score: number;
+  signals: ContributorReconciliationSignal[];
+  shared_aliases: string[];
+  shared_confirmed_aliases: string[];
+  shared_work_count: number;
+  source_handle: string;
+  target_handle: string;
+  source_work_count: number;
+  target_work_count: number;
+  source_confirmed_alias_count: number;
+  target_confirmed_alias_count: number;
+  source_strong_external_id_count: number;
+  target_strong_external_id_count: number;
+}
+
+export interface ContributorReconciliationCandidate {
+  id: string;
+  run_id: string;
+  status: ContributorReconciliationStatus;
+  score: number;
+  source_contributor: ContributorReconciliationContributor;
+  target_contributor: ContributorReconciliationContributor;
+  evidence: ContributorReconciliationEvidence;
+  decided_by_user_id?: string | null;
+  created_at: string;
+  updated_at: string;
+  decided_at?: string | null;
+}
+
+export interface ContributorReconciliationCandidatesPage {
+  candidates: ContributorReconciliationCandidate[];
+}
+
 export interface ContributorWork {
   object_type: string;
   object_id: string | number;

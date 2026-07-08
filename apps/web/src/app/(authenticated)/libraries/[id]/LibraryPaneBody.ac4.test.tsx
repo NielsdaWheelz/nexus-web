@@ -75,10 +75,38 @@ function seededSystemLibraryWithMutableMedia() {
         },
       },
     ],
+    entriesPage: { has_more: false, next_cursor: null },
   };
 }
 
+function seededMediaEntry(id: string, mediaId: string, title: string) {
+  return {
+    id,
+    kind: "media",
+    position: 0,
+    created_at: "2026-01-01T00:00:00Z",
+    media: {
+      id: mediaId,
+      kind: "web_article",
+      title,
+      contributors: [],
+      published_date: null,
+      publisher: null,
+      canonical_source_url: null,
+      processing_status: "ready_for_reading",
+      capabilities: {},
+    },
+  };
+}
+
+function fetchInputPathWithSearch(input: unknown): string {
+  const raw = input instanceof Request ? input.url : String(input);
+  const url = new URL(raw, "http://localhost");
+  return `${url.pathname}${url.search}`;
+}
+
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -99,7 +127,13 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
     const href = `/libraries/${LIBRARY_ID}`;
     const { onSetPaneTitle } = renderHydratedPane({
       href,
-      resources: { [LIBRARY_ID]: { library: seededLibrary(), entries: [] } },
+      resources: {
+        [LIBRARY_ID]: {
+          library: seededLibrary(),
+          entries: [],
+          entriesPage: { has_more: false, next_cursor: null },
+        },
+      },
       children: <LibraryPaneBody />,
     });
 
@@ -167,5 +201,93 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
     expect(
       screen.queryByRole("menuitem", { name: "Delete document" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("loads another page of library entries", async () => {
+    const user = userEvent.setup();
+    const fetchMock = stubFetch(async (input) => {
+      if (
+        fetchInputPathWithSearch(input) ===
+        `/api/libraries/${LIBRARY_ID}/entries?cursor=cursor-2`
+      ) {
+        return Response.json({
+          data: [seededMediaEntry("entry-2", "media-2", "Second Page Work")],
+          page: { has_more: false, next_cursor: null },
+        });
+      }
+      return new Response("{}", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    const href = `/libraries/${LIBRARY_ID}`;
+    renderHydratedPane({
+      href,
+      resources: {
+        [LIBRARY_ID]: {
+          library: seededLibrary(),
+          entries: [seededMediaEntry("entry-1", "media-1", "First Page Work")],
+          entriesPage: { has_more: true, next_cursor: "cursor-2" },
+        },
+      },
+      children: <LibraryPaneBody />,
+    });
+
+    expect(await screen.findByText("First Page Work")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Load more entries" }));
+
+    expect(await screen.findByText("Second Page Work")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith(
+      `/api/libraries/${LIBRARY_ID}/entries?cursor=cursor-2`,
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
+
+  it("loads another page of resonance-sorted library entries", async () => {
+    const user = userEvent.setup();
+    const fetchMock = stubFetch(async (input) => {
+      const path = fetchInputPathWithSearch(input);
+      if (path === `/api/libraries/${LIBRARY_ID}/entries?sort=resonance`) {
+        return Response.json({
+          data: [seededMediaEntry("entry-r1", "media-r1", "First Resonance Work")],
+          page: { has_more: true, next_cursor: "cursor-r2" },
+        });
+      }
+      if (
+        path ===
+        `/api/libraries/${LIBRARY_ID}/entries?sort=resonance&cursor=cursor-r2`
+      ) {
+        return Response.json({
+          data: [seededMediaEntry("entry-r2", "media-r2", "Second Resonance Work")],
+          page: { has_more: false, next_cursor: null },
+        });
+      }
+      return new Response("{}", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    renderHydratedPane({
+      href: `/libraries/${LIBRARY_ID}?sort=resonance`,
+      resources: {
+        [LIBRARY_ID]: {
+          library: seededLibrary(),
+          entries: [seededMediaEntry("entry-1", "media-1", "Manual Work")],
+          entriesPage: { has_more: false, next_cursor: null },
+        },
+      },
+      children: <LibraryPaneBody />,
+    });
+
+    expect(await screen.findByText("First Resonance Work")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Load more entries" }));
+
+    expect(await screen.findByText("Second Resonance Work")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith(
+      `/api/libraries/${LIBRARY_ID}/entries?sort=resonance&cursor=cursor-r2`,
+      expect.objectContaining({ method: "GET" }),
+    );
   });
 });

@@ -6,7 +6,7 @@ import base64
 import hashlib
 import json
 import re
-from collections.abc import Collection, Sequence
+from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, cast
 from uuid import UUID, uuid4
@@ -62,6 +62,7 @@ from nexus.services.resource_graph.refs import ResourceRef
 
 ACTIVE_STATUSES = ("unverified", "verified")
 CONTRIBUTOR_CURATOR_ROLES = frozenset({"admin", "contributor_curator"})
+MergeContributorTransactionHook = Callable[[Session, Contributor, Contributor], None]
 
 
 def get_contributor_by_handle(
@@ -925,6 +926,7 @@ def merge_contributor(
     actor_roles: Collection[str] = frozenset(),
     contributor_handle: str,
     request: ContributorMergeRequest,
+    on_merge_transaction: MergeContributorTransactionHook | None = None,
 ) -> ContributorOut:
     """Redirect a duplicate contributor (source, from the path handle) into a survivor (target).
 
@@ -943,6 +945,8 @@ def merge_contributor(
         target = _load_contributor_for_merge(db, request.target_handle)
         if source.id == target.id:
             raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Cannot merge a contributor into itself")
+        if on_merge_transaction is not None:
+            on_merge_transaction(db, source, target)
 
         ids = {"source_id": source.id, "target_id": target.id}
         merged_duplicate_credits = len(

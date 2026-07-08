@@ -14,12 +14,13 @@ dynamic routes (/libraries/{library_id}) to prevent UUID path capture.
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
-from nexus.responses import ok
+from nexus.errors import ApiErrorCode, InvalidRequestError
+from nexus.responses import ok, ok_page
 from nexus.schemas.library import (
     AddMediaRequest,
     AddPodcastRequest,
@@ -27,6 +28,7 @@ from nexus.schemas.library import (
     CreateLibraryRequest,
     LibraryEntryOrderRequest,
     LibraryInvitationStatusValue,
+    LibraryPageInfo,
     TransferLibraryOwnershipRequest,
     UpdateLibraryMemberRequest,
     UpdateLibraryRequest,
@@ -110,14 +112,17 @@ def revoke_library_invite(
 def list_libraries(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
+    cursor: str | None = Query(default=None, description="Pagination cursor"),
     limit: int = Query(default=100, ge=1, description="Maximum results (clamped to 200)"),
 ) -> dict:
     """List all libraries the viewer is a member of.
 
     Returns libraries ordered by created_at ASC, id ASC.
     """
-    result = library_governance.list_libraries(db, viewer.user_id, limit=limit)
-    return ok(result)
+    result, page = library_governance.list_libraries(
+        db, viewer.user_id, cursor=cursor, limit=limit
+    )
+    return ok_page(result, page)
 
 
 @router.get("/libraries/writable-destinations")
@@ -135,7 +140,10 @@ def list_writable_library_destinations(
         cursor=cursor,
         limit=limit,
     )
-    return {"data": result, "page": {"next_cursor": next_cursor}}
+    return ok_page(
+        result,
+        LibraryPageInfo(has_more=next_cursor is not None, next_cursor=next_cursor),
+    )
 
 
 @router.post("/libraries", status_code=201)
@@ -319,11 +327,12 @@ def transfer_library_ownership(
 
 @router.get("/libraries/{library_id}/entries")
 def list_library_entries(
+    request: Request,
     library_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
     limit: int = Query(default=100, ge=1, description="Maximum results (clamped to 200)"),
-    offset: int = Query(default=0, ge=0),
+    cursor: str | None = Query(default=None, description="Pagination cursor"),
     sort: Annotated[
         library_entries.LibraryEntrySort,
         Query(description="Entry ordering: 'position' (default) or 'resonance'"),
@@ -342,16 +351,21 @@ def list_library_entries(
     orders by entry position ASC; ``sort='resonance'`` applies the deterministic
     recency + connection-count score (no request-time LLM).
     """
-    result = library_entries.list_library_entries(
+    if "offset" in request.query_params:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "offset pagination is not supported for library entries",
+        )
+    result, page = library_entries.list_library_entries(
         db,
         viewer.user_id,
         library_id,
         limit=limit,
-        offset=offset,
+        cursor=cursor,
         sort=sort,
         viewer_timezone=viewer_tz,
     )
-    return ok(result)
+    return ok_page(result, page)
 
 
 @router.patch("/libraries/{library_id}/entries/reorder")

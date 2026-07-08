@@ -8,12 +8,23 @@ export interface ResourceDescriptor<TParams> {
 
 export type NoResourceParams = Record<string, never>;
 
-interface RefreshableResourceParams {
+export interface RefreshableResourceParams {
   refreshVersion: number;
+}
+
+export interface LibraryListResourceParams extends RefreshableResourceParams {
+  cursor?: string;
+  limit?: number;
 }
 
 interface IdResourceParams {
   id: string;
+}
+
+export interface LibraryEntriesResourceParams extends IdResourceParams {
+  sort?: "position" | "resonance";
+  cursor?: string;
+  limit?: number;
 }
 
 interface ContributorResourceParams {
@@ -35,6 +46,12 @@ export interface ContributorDirectoryResourceParams {
   statuses?: string[];
   sort?: "works" | "name";
   cursor?: string;
+  limit?: number;
+}
+
+export interface ContributorReconciliationCandidatesResourceParams {
+  contributorHandle?: string;
+  status?: "pending" | "accepted" | "rejected" | "stale";
   limit?: number;
 }
 
@@ -74,10 +91,39 @@ function contributorDirectorySuffix(params: ContributorDirectoryResourceParams):
   return suffix ? `?${suffix}` : "";
 }
 
-export const librariesResource: ResourceDescriptor<RefreshableResourceParams> = {
-  cacheKey: ({ refreshVersion }) => `libraries:${refreshVersion}`,
-  serverPath: () => "/libraries",
-  clientPath: () => "/api/libraries",
+function contributorReconciliationCandidatesSuffix(
+  params: ContributorReconciliationCandidatesResourceParams
+): string {
+  const query = new URLSearchParams();
+  const contributorHandle = params.contributorHandle?.trim();
+  if (contributorHandle) query.set("contributor_handle", contributorHandle);
+  if (params.status) query.set("status", params.status);
+  if (params.limit !== undefined) query.set("limit", String(params.limit));
+  const suffix = query.toString();
+  return suffix ? `?${suffix}` : "";
+}
+
+function libraryListSuffix(params: LibraryListResourceParams): string {
+  const query = new URLSearchParams();
+  if (params.cursor) query.set("cursor", params.cursor);
+  if (params.limit !== undefined) query.set("limit", String(params.limit));
+  const suffix = query.toString();
+  return suffix ? `?${suffix}` : "";
+}
+
+function libraryEntriesSuffix(params: LibraryEntriesResourceParams): string {
+  const query = new URLSearchParams();
+  if (params.sort === "resonance") query.set("sort", "resonance");
+  if (params.cursor) query.set("cursor", params.cursor);
+  if (params.limit !== undefined) query.set("limit", String(params.limit));
+  const suffix = query.toString();
+  return suffix ? `?${suffix}` : "";
+}
+
+export const librariesResource: ResourceDescriptor<LibraryListResourceParams> = {
+  cacheKey: (params) => `libraries:${params.refreshVersion}${libraryListSuffix(params)}`,
+  serverPath: (params) => `/libraries${libraryListSuffix(params)}`,
+  clientPath: (params) => `/api/libraries${libraryListSuffix(params)}`,
 };
 
 export const libraryResource: ResourceDescriptor<IdResourceParams> = {
@@ -86,10 +132,11 @@ export const libraryResource: ResourceDescriptor<IdResourceParams> = {
   clientPath: ({ id }) => `/api/libraries/${encoded(id)}`,
 };
 
-export const libraryEntriesResource: ResourceDescriptor<IdResourceParams> = {
-  cacheKey: ({ id }) => `library:${id}:entries`,
-  serverPath: ({ id }) => `/libraries/${encoded(id)}/entries`,
-  clientPath: ({ id }) => `/api/libraries/${encoded(id)}/entries`,
+export const libraryEntriesResource: ResourceDescriptor<LibraryEntriesResourceParams> = {
+  cacheKey: (params) => `library:${params.id}:entries${libraryEntriesSuffix(params)}`,
+  serverPath: (params) => `/libraries/${encoded(params.id)}/entries${libraryEntriesSuffix(params)}`,
+  clientPath: (params) =>
+    `/api/libraries/${encoded(params.id)}/entries${libraryEntriesSuffix(params)}`,
 };
 
 export const mediaResource: ResourceDescriptor<IdResourceParams> = {
@@ -128,6 +175,16 @@ export const contributorDirectoryResource: ResourceDescriptor<ContributorDirecto
   serverPath: (params) => `/contributors/directory${contributorDirectorySuffix(params)}`,
   clientPath: (params) => `/api/contributors/directory${contributorDirectorySuffix(params)}`,
 };
+
+export const contributorReconciliationCandidatesResource: ResourceDescriptor<ContributorReconciliationCandidatesResourceParams> =
+  {
+    cacheKey: (params) =>
+      `contributors:reconciliation-candidates${contributorReconciliationCandidatesSuffix(params)}`,
+    serverPath: (params) =>
+      `/contributors/reconciliation-candidates${contributorReconciliationCandidatesSuffix(params)}`,
+    clientPath: (params) =>
+      `/api/contributors/reconciliation-candidates${contributorReconciliationCandidatesSuffix(params)}`,
+  };
 
 export const notePagesResource: ResourceDescriptor<NoResourceParams> = {
   cacheKey: () => "notes:pages",

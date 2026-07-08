@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback } from "react";
-import { GitBranch, Search } from "lucide-react";
+import { GitBranch, RefreshCcw, Search } from "lucide-react";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import MachineText, { type MachineSignatureTime } from "@/components/ui/MachineText";
@@ -33,6 +33,9 @@ export default function AssistantMessage({
   onReplyToAssistant,
   onCitationActivate,
   errorLabel,
+  resendAssistantMessageId,
+  resending,
+  onResendAssistantResponse,
 }: {
   message: ConversationMessage;
   forkOptions: ForkOption[];
@@ -45,12 +48,21 @@ export default function AssistantMessage({
     event?: React.MouseEvent,
   ) => void;
   errorLabel: string;
+  resendAssistantMessageId?: string;
+  resending?: boolean;
+  onResendAssistantResponse?: (assistantMessageId: string) => void;
 }) {
   const display = useRenderEnvironment();
   const assistantText = conversationMessageText(message);
   const toolCalls = message.trust_trail?.tool_calls ?? [];
   const canBranchFromAssistant =
     message.status === "complete" && Boolean(onReplyToAssistant);
+  const canResendAssistant =
+    Boolean(resendAssistantMessageId) && Boolean(onResendAssistantResponse);
+  const resendAssistant = () => {
+    if (!resendAssistantMessageId) return;
+    onResendAssistantResponse?.(resendAssistantMessageId);
+  };
   const {
     answerRef,
     selection,
@@ -98,17 +110,31 @@ export default function AssistantMessage({
       onMouseUp={captureSelection}
       onKeyUp={captureSelection}
     >
-      {canBranchFromAssistant ? (
+      {canBranchFromAssistant || canResendAssistant ? (
         <div className={styles.messageActions}>
-          <Button
-            variant="ghost"
-            size="sm"
-            leadingIcon={<GitBranch size={14} aria-hidden="true" />}
-            onClick={() => onReplyToAssistant?.(createBranchDraft())}
-            aria-label="Fork from this answer"
-          >
-            Fork
-          </Button>
+          {canBranchFromAssistant ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              leadingIcon={<GitBranch size={14} aria-hidden="true" />}
+              onClick={() => onReplyToAssistant?.(createBranchDraft())}
+              aria-label="Fork from this answer"
+            >
+              Fork
+            </Button>
+          ) : null}
+          {canResendAssistant ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              leadingIcon={<RefreshCcw size={14} aria-hidden="true" />}
+              loading={resending}
+              onClick={resendAssistant}
+              aria-label="Resend response"
+            >
+              Resend
+            </Button>
+          ) : null}
         </div>
       ) : null}
       {message.status === "pending" ? <StreamingGutterCue /> : null}

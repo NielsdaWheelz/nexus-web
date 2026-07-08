@@ -159,6 +159,65 @@ describe("ChatSurface", () => {
     expect(screen.getAllByRole("alert")).toHaveLength(2);
   });
 
+  it("puts resend actions on terminal nonretryable assistant messages", () => {
+    const onResendAssistantResponse = vi.fn();
+    const messages: ConversationMessage[] = [
+      userMessage("user-1", 1, "Try this"),
+      {
+        ...assistantMessage("assistant-1", 2, "", "user-1"),
+        status: "error",
+        error_code: "E_LLM_BAD_REQUEST",
+        can_retry_response: false,
+        can_resend_response: true,
+      },
+      userMessage("user-2", 3, "Try that"),
+      {
+        ...assistantMessage("assistant-2", 4, "", "user-2"),
+        status: "error",
+        error_code: "E_INTERNAL",
+        can_retry_response: true,
+      },
+    ];
+
+    render(
+      <ChatSurface
+        messages={messages}
+        onResendAssistantResponse={onResendAssistantResponse}
+        composer={<textarea aria-label="Message" />}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Resend response" }));
+
+    expect(onResendAssistantResponse).toHaveBeenCalledWith("assistant-1");
+    expect(screen.queryByRole("button", { name: "Retry response" })).toBeNull();
+  });
+
+  it("does not infer resend for client-side stream interruption rows", () => {
+    const onResendAssistantResponse = vi.fn();
+    const messages: ConversationMessage[] = [
+      userMessage("user-1", 1, "Try this"),
+      {
+        ...assistantMessage("assistant-1", 2, "", "user-1"),
+        status: "error",
+        error_code: "E_STREAM_INTERRUPTED",
+        can_retry_response: false,
+      },
+    ];
+
+    render(
+      <ChatSurface
+        messages={messages}
+        onResendAssistantResponse={onResendAssistantResponse}
+        composer={<textarea aria-label="Message" />}
+      />,
+    );
+
+    expect(screen.getByText("The connection was interrupted. Reload to continue."))
+      .toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Resend response" })).toBeNull();
+  });
+
   it("renders inline fork previews and supports keyboard fork selection", () => {
     const onSelectFork = vi.fn();
     const messages: ConversationMessage[] = [

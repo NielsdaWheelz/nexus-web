@@ -9,6 +9,7 @@ from provider_runtime.types import (
     ModelCall,
     ModelStreamEvent,
     ProviderArtifact,
+    RetryAttempt,
     TokenUsage,
     ToolCall,
 )
@@ -895,7 +896,8 @@ def _fetch_llm_calls(direct_db: DirectSessionManager, run_id: UUID):
             text(
                 """
                 SELECT call_seq, streaming, llm_operation, provider_request_id,
-                       key_mode_requested, key_mode_used, error_class, error_detail
+                       key_mode_requested, key_mode_used, error_class, error_detail,
+                       provider_attempts
                 FROM llm_calls
                 WHERE owner_kind = 'chat_run' AND owner_id = :run_id
                 ORDER BY call_seq ASC
@@ -1054,6 +1056,82 @@ async def test_llm_error_stamps_run_error_code_and_detail(
     (call_row,) = _fetch_llm_calls(direct_db, run_id)
     assert call_row.error_class == "E_LLM_RATE_LIMIT"
     assert call_row.error_detail == "ModelCallError: slow down"
+
+
+@pytest.mark.integration
+async def test_provider_bad_request_stamps_nonretryable_chat_error_and_ledger_attempt(
+    auth_client, direct_db: DirectSessionManager, chat_runs_schema
+):
+    run_id = _create_run_for_executor(auth_client, direct_db)
+
+    router = _RaisingStreamRouter(
+        ModelCallError(
+            ModelCallErrorCode.BAD_REQUEST,
+            "openai HTTP 400",
+            provider="openai",
+            status_code=400,
+            provider_request_id="req_bad_schema",
+            retryable=False,
+            safe_body_snippet='{"message":"Invalid schema for function app_search"}',
+            attempts=(
+                RetryAttempt(
+                    attempt_number=1,
+                    max_attempts=2,
+                    status="terminal_error",
+                    error_code=ModelCallErrorCode.BAD_REQUEST.value,
+                    status_code=400,
+                    retryable=False,
+                    provider_request_id="req_bad_schema",
+                    safe_body_snippet='{"message":"Invalid schema for function app_search"}',
+                ),
+            ),
+        )
+    )
+    with direct_db.session() as session:
+        result = await execute_chat_run(session, run_id=run_id, llm_router=router)
+
+    assert result == {"status": "error", "error_code": "E_LLM_BAD_REQUEST"}
+    run_row = _fetch_run_error(direct_db, run_id)
+    assert run_row.error_code == "E_LLM_BAD_REQUEST"
+    assert run_row.error_detail == (
+        "ModelCallError: openai HTTP 400 (provider_request_id=req_bad_schema)"
+    )
+
+    with direct_db.session() as session:
+        message_row = session.execute(
+            text(
+                """
+                SELECT m.status, m.error_code, m.content
+                FROM chat_runs cr
+                JOIN messages m ON m.id = cr.assistant_message_id
+                WHERE cr.id = :run_id
+                """
+            ),
+            {"run_id": run_id},
+        ).one()
+    assert message_row.status == "error"
+    assert message_row.error_code == "E_LLM_BAD_REQUEST"
+    assert message_row.content == ERROR_CODE_TO_MESSAGE["E_LLM_BAD_REQUEST"]
+
+    (call_row,) = _fetch_llm_calls(direct_db, run_id)
+    assert call_row.error_class == "E_LLM_BAD_REQUEST"
+    assert call_row.error_detail == (
+        "ModelCallError: openai HTTP 400 (provider_request_id=req_bad_schema)"
+    )
+    assert call_row.provider_request_id == "req_bad_schema"
+    assert call_row.provider_attempts == [
+        {
+            "attempt_number": 1,
+            "max_attempts": 2,
+            "status": "terminal_error",
+            "streamed_output_started": False,
+            "error_code": "bad_request",
+            "status_code": 400,
+            "retryable": False,
+            "provider_request_id": "req_bad_schema",
+            "safe_body_snippet": '{"message":"Invalid schema for function app_search"}',
+        }
+    ]
 
 
 @pytest.mark.integration

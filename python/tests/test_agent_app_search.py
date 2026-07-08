@@ -356,6 +356,49 @@ def test_execute_app_search_builds_public_filter_query(
     assert captured["query"].roles == ("author",)
 
 
+def test_execute_app_search_treats_empty_filter_arrays_as_omitted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    viewer_id = uuid4()
+    conversation_id = uuid4()
+    captured: dict[str, SearchQuery] = {}
+
+    def fake_search(db: Session, viewer_id, query: SearchQuery) -> SearchResponse:
+        captured["query"] = query
+        return SearchResponse()
+
+    monkeypatch.setattr(
+        "nexus.services.agent_tools.app_search._resolve_scope_uris",
+        lambda *args, **kwargs: [],
+    )
+    monkeypatch.setattr(
+        "nexus.services.agent_tools.app_search.persist_app_search_run",
+        lambda db, run: None,
+    )
+    monkeypatch.setattr("nexus.services.agent_tools.app_search.search", fake_search)
+
+    run = execute_app_search(
+        cast(Session, object()),
+        viewer_id=viewer_id,
+        conversation_id=conversation_id,
+        user_message_id=uuid4(),
+        assistant_message_id=uuid4(),
+        scopes=[],
+        query="attention",
+        kinds=[],
+        formats=[],
+        authors=[],
+        roles=[],
+    )
+
+    assert run.status == "complete"
+    assert run.filters == {}
+    assert captured["query"].requested_kinds is None
+    assert captured["query"].formats == ()
+    assert captured["query"].authors == ()
+    assert captured["query"].roles == ()
+
+
 def test_li_revision_reference_dropped_from_default_scope_resolution(
     db_session: Session,
     bootstrapped_user,

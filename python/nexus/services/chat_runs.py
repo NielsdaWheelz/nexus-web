@@ -84,7 +84,9 @@ from nexus.services.api_key_resolver import (
 )
 from nexus.services.chat_run_access import (
     get_run_for_owner,
+    load_resendable_assistant_message,
     load_retryable_failed_assistant_message,
+    load_source_run_for_resend,
     load_source_run_for_retry,
 )
 from nexus.services.chat_run_citations import (
@@ -112,6 +114,7 @@ from nexus.services.chat_run_finalize import (
 )
 from nexus.services.chat_run_idempotency import (
     compute_payload_hash,
+    compute_resend_payload_hash,
     compute_retry_payload_hash,
     get_run_by_idempotency_key,
     lock_idempotency_key,
@@ -137,7 +140,7 @@ from nexus.services.chat_run_tools import (
     web_search_tool_output,
 )
 from nexus.services.chat_run_usage import usage_provider_json, usage_tokens
-from nexus.services.chat_run_validation import validate_pre_phase
+from nexus.services.chat_run_validation import validate_model_pre_phase, validate_pre_phase
 from nexus.services.context_assembler import (
     assemble_chat_context,
     persist_prompt_assembly,
@@ -236,7 +239,7 @@ def _app_search_string_array_from_tool_args(
         value = item.strip()
         if value:
             values.append(value)
-    return values, None
+    return (values or None), None
 
 
 class ChatRunModelRuntime(Protocol):
@@ -260,6 +263,26 @@ def _max_output_tokens_for_reasoning(model: Model, reasoning: str) -> int:
     if reasoning_reserve > 0:
         return min(REASONING_OUTPUT_TOKENS, max_context_tokens)
     return min(DEFAULT_OUTPUT_TOKENS, max_context_tokens)
+
+
+def _uses_platform_key_for_preflight(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    model: Model,
+    key_mode: str,
+) -> bool:
+    try:
+        resolved = resolve_api_key(db, viewer_id, model.provider, key_mode)
+        return resolved.mode == "platform"
+    except ApiError as exc:
+        if exc.code != ApiErrorCode.E_MODEL_NOT_AVAILABLE:
+            raise
+        return False
+    except ModelCallError:
+        # justify-ignore-error: the validator resolves again and returns the
+        # user-facing E_LLM_NO_KEY; this probe only decides token-budget scope.
+        return False
 
 
 def create_chat_run(
@@ -307,18 +330,12 @@ def create_chat_run(
     model = get_model_by_id(db, model_id)
     if model is None:
         raise ApiError(ApiErrorCode.E_MODEL_NOT_AVAILABLE, "Model not found")
-
-    try:
-        resolved = resolve_api_key(db, viewer_id, model.provider, key_mode)
-        use_platform_key = resolved.mode == "platform"
-    except ApiError as exc:
-        if exc.code != ApiErrorCode.E_MODEL_NOT_AVAILABLE:
-            raise
-        use_platform_key = False
-    except ModelCallError:
-        # justify-ignore-error: BYOK probe may fail when the user has no key
-        # yet; treat as "no platform key in use" and continue pre-validation.
-        use_platform_key = False
+    use_platform_key = _uses_platform_key_for_preflight(
+        db,
+        viewer_id=viewer_id,
+        model=model,
+        key_mode=key_mode,
+    )
 
     validate_pre_phase(
         db,
@@ -497,6 +514,21 @@ def retry_failed_assistant_response(
         model = db.get(Model, source_run.model_id)
         if model is None:
             raise ApiError(ApiErrorCode.E_MODEL_NOT_AVAILABLE, "Model not found")
+        use_platform_key = _uses_platform_key_for_preflight(
+            db,
+            viewer_id=viewer_id,
+            model=model,
+            key_mode=source_run.key_mode,
+        )
+        model = validate_model_pre_phase(
+            db,
+            viewer_id=viewer_id,
+            content=source_user_message.content,
+            model_id=source_run.model_id,
+            reasoning=source_run.reasoning,
+            key_mode=source_run.key_mode,
+            use_platform_key=use_platform_key,
+        )
 
         user_message = Message(
             conversation_id=source_run.conversation_id,
@@ -575,6 +607,158 @@ def retry_failed_assistant_response(
                 "conversation_id": str(source_run.conversation_id),
                 "user_message_id": str(user_message.id),
                 "assistant_message_id": str(assistant_retry_message.id),
+                "model_id": str(model.id),
+                "provider": model.provider,
+                "chat_subject": None,
+            }
+        )
+        enqueue_job(
+            db,
+            kind="chat_run",
+            payload={"run_id": str(run.id)},
+            priority=50,
+            max_attempts=3,
+            dedupe_key=f"chat_run:{run.id}",
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+    return build_chat_run_response(db, viewer_id, run)
+
+
+def resend_assistant_response(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    assistant_message_id: UUID,
+    idempotency_key: str | None,
+) -> ChatRunResponse:
+    normalized_key = normalize_idempotency_key(idempotency_key)
+    try:
+        lock_idempotency_key(db, viewer_id, normalized_key)
+        assistant_message = load_resendable_assistant_message(
+            db,
+            viewer_id=viewer_id,
+            assistant_message_id=assistant_message_id,
+        )
+        source_run = load_source_run_for_resend(
+            db,
+            viewer_id=viewer_id,
+            assistant_message=assistant_message,
+        )
+        source_user_message = db.get(Message, source_run.user_message_id)
+        if source_user_message is None or source_user_message.role != "user":
+            raise ApiError(ApiErrorCode.E_RETRY_INVALID_STATE, "Resend source prompt not found")
+        payload_hash = compute_resend_payload_hash(
+            source_assistant_message_id=assistant_message_id,
+            source_run=source_run,
+            source_user_message=source_user_message,
+        )
+
+        existing = get_run_by_idempotency_key(db, viewer_id, normalized_key)
+        if existing is not None:
+            raise_if_payload_mismatch(existing, payload_hash, viewer_id, normalized_key)
+            db.commit()
+            return build_chat_run_response(db, viewer_id, existing)
+
+        model = db.get(Model, source_run.model_id)
+        if model is None:
+            raise ApiError(ApiErrorCode.E_MODEL_NOT_AVAILABLE, "Model not found")
+        use_platform_key = _uses_platform_key_for_preflight(
+            db,
+            viewer_id=viewer_id,
+            model=model,
+            key_mode=source_run.key_mode,
+        )
+        model = validate_model_pre_phase(
+            db,
+            viewer_id=viewer_id,
+            content=source_user_message.content,
+            model_id=source_run.model_id,
+            reasoning=source_run.reasoning,
+            key_mode=source_run.key_mode,
+            use_platform_key=use_platform_key,
+        )
+
+        user_message = Message(
+            conversation_id=source_run.conversation_id,
+            seq=assign_next_message_seq(db, source_run.conversation_id),
+            role="user",
+            content=source_user_message.content,
+            message_document=message_document("user", source_user_message.content),
+            status="complete",
+            parent_message_id=source_user_message.parent_message_id,
+            branch_root_message_id=source_user_message.branch_root_message_id,
+            branch_anchor_kind=source_user_message.branch_anchor_kind,
+            branch_anchor=dict(source_user_message.branch_anchor or {}),
+        )
+        db.add(user_message)
+        db.flush()
+        if user_message.parent_message_id is not None:
+            ensure_branch_metadata(
+                db,
+                conversation_id=source_run.conversation_id,
+                branch_user_message_id=user_message.id,
+            )
+
+        assistant_resend_message = Message(
+            conversation_id=source_run.conversation_id,
+            seq=assign_next_message_seq(db, source_run.conversation_id),
+            role="assistant",
+            content="",
+            message_document=message_document("assistant", ""),
+            status="pending",
+            model_id=source_run.model_id,
+            parent_message_id=user_message.id,
+            branch_root_message_id=user_message.branch_root_message_id,
+            branch_anchor_kind="none",
+            branch_anchor={},
+        )
+        db.add(assistant_resend_message)
+        db.flush()
+        persist_active_leaf(
+            db,
+            viewer_id=viewer_id,
+            conversation_id=source_run.conversation_id,
+            active_leaf_message_id=assistant_resend_message.id,
+        )
+
+        run = ChatRun(
+            owner_user_id=viewer_id,
+            conversation_id=source_run.conversation_id,
+            user_message_id=user_message.id,
+            assistant_message_id=assistant_resend_message.id,
+            idempotency_key=normalized_key,
+            payload_hash=payload_hash,
+            status="queued",
+            model_id=source_run.model_id,
+            reasoning=source_run.reasoning,
+            key_mode=source_run.key_mode,
+        )
+        db.add(run)
+        db.flush()
+        source_turn_context = db.get(ChatRunTurnContext, source_run.id)
+        if source_turn_context is not None:
+            db.add(
+                ChatRunTurnContext(
+                    chat_run_id=run.id,
+                    requested_subject_scheme=source_turn_context.requested_subject_scheme,
+                    requested_subject_id=source_turn_context.requested_subject_id,
+                    subject_scheme=source_turn_context.subject_scheme,
+                    subject_id=source_turn_context.subject_id,
+                    subject_context_edge_id=source_turn_context.subject_context_edge_id,
+                    reader_selection_media_id=source_turn_context.reader_selection_media_id,
+                    reader_selection_highlight_id=source_turn_context.reader_selection_highlight_id,
+                )
+            )
+        ChatRunEventEmitter(db, run).meta(
+            {
+                "run_id": str(run.id),
+                "conversation_id": str(source_run.conversation_id),
+                "user_message_id": str(user_message.id),
+                "assistant_message_id": str(assistant_resend_message.id),
                 "model_id": str(model.id),
                 "provider": model.provider,
                 "chat_subject": None,

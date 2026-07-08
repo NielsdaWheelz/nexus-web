@@ -138,6 +138,8 @@ interface UseConversation {
   // retry
   retryingAssistantMessageIds: StringIdSet;
   retryAssistantResponse: (assistantMessageId: string) => Promise<void>;
+  resendingAssistantMessageIds: StringIdSet;
+  resendAssistantResponse: (assistantMessageId: string) => Promise<void>;
 
   // branching (present only when options.branching === true)
   branch?: UseConversationBranch;
@@ -190,6 +192,7 @@ export function useConversation(
   const [branchDraft, setBranchDraft] = useState<BranchDraft | null>(null);
 
   const retryingAssistantMessageIds = useStringIdSet();
+  const resendingAssistantMessageIds = useStringIdSet();
 
   // Conversations created on first send are seeded optimistically; their
   // initial route adoption must not refetch history. Existing conversations
@@ -486,10 +489,12 @@ export function useConversation(
     selectedPathIdsRef.current = new Set();
     attachedRefsRef.current = { id: null, uris: new Set() };
     retryingAssistantMessageIds.clear();
+    resendingAssistantMessageIds.clear();
   }, [
     abortAll,
     conversationId,
     initialConversationId,
+    resendingAssistantMessageIds,
     retryingAssistantMessageIds,
   ]);
 
@@ -707,6 +712,30 @@ export function useConversation(
     [onChatRunCreated, retryingAssistantMessageIds],
   );
 
+  const resendAssistantResponse = useCallback(
+    async (assistantMessageId: string) => {
+      if (resendingAssistantMessageIds.has(assistantMessageId)) return;
+      resendingAssistantMessageIds.add(assistantMessageId);
+      setError(null);
+      try {
+        const response = await apiFetch<ChatRunResponse>(
+          `/api/messages/${assistantMessageId}/resend`,
+          {
+            method: "POST",
+            headers: { "Idempotency-Key": createRandomId() },
+          },
+        );
+        onChatRunCreated(response.data);
+      } catch (err) {
+        if (handleUnauthenticatedApiError(err)) return;
+        setError(toFeedback(err, { fallback: "Failed to resend response" }));
+      } finally {
+        resendingAssistantMessageIds.remove(assistantMessageId);
+      }
+    },
+    [onChatRunCreated, resendingAssistantMessageIds],
+  );
+
   // --------------------------------------------------------------------------
   // Branch operations
   // --------------------------------------------------------------------------
@@ -904,6 +933,8 @@ export function useConversation(
     cancelActiveRun,
     retryingAssistantMessageIds,
     retryAssistantResponse,
+    resendingAssistantMessageIds,
+    resendAssistantResponse,
     branch,
     scrollRef,
   };

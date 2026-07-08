@@ -116,6 +116,42 @@ popover; the mobile path presents through the shared `MobileSheet` primitive
 Branch drafts win over plain continuation replies. Plain continuation replies become
 `assistant_message` anchors. Fresh first turns send `{ kind: "none" }`.
 
+## Retry vs Resend
+
+Chat has two explicit recovery operations for terminal assistant rows:
+
+- `POST /messages/{assistant_message_id}/retry` is the narrow retry operation.
+  It accepts only failed assistant messages whose source run ended in `error`
+  with a retryable chat error code (`E_INTERNAL`, transient LLM/provider/rate
+  limiter failures, or `E_LLM_INTERRUPTED`). It preserves the original prompt,
+  model, reasoning, key mode, branch metadata, and turn context, but creates a
+  new user/assistant pair and a new queued `chat_run`; it never mutates the
+  failed assistant row.
+- `POST /messages/{assistant_message_id}/resend` is the broad resend operation.
+  It accepts failed or `cancelled` assistant messages whose source run is
+  terminal `error` or `cancelled`, including nonretryable provider rejections
+  such as `E_LLM_BAD_REQUEST`. It reconstructs the same send into a new
+  user/assistant pair and queued run with the original run settings and turn
+  context.
+
+Use retry for transient failures that the product already classifies as
+retryable. Use resend after an operator or deploy fix for terminal nonretryable
+failures, and for explicit cancellations the user wants to run again. OpenAI
+400s caused by strict tool or structured-output schema incompatibilities are
+resend recovery cases after the provider-runtime/schema fix is deployed; the old
+assistant message remains a terminal diagnostic artifact.
+
+The backend owns these row capabilities: `can_retry_response` and
+`can_resend_response` are serialized on `MessageOut` after checking the
+persisted source run. The frontend must not infer resendability from local
+terminal UI state alone; client-side stream interruptions still tell the user to
+reload/reconcile rather than cloning a run that may not be terminal in the DB.
+
+Both operations are idempotent under their `Idempotency-Key` and operation
+payload. Replaying the same key returns the existing replacement run; reusing a
+key for a different failed/cancelled assistant message or operation is a replay
+mismatch.
+
 ## Branch Drafts And Anchors
 
 `BranchDraft` is a composer mode, not an API request type. It identifies the parent assistant

@@ -83,6 +83,13 @@ class LibraryOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class LibraryPageInfo(BaseModel):
+    has_more: bool = False
+    next_cursor: str | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class LibraryDestinationOut(BaseModel):
     id: UUID
     name: str

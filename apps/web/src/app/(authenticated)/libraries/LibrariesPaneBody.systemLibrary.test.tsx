@@ -55,6 +55,7 @@ describe("LibrariesPaneBody (system library protection)", () => {
               can_edit_entries: true,
             },
           ],
+          page: { has_more: false, next_cursor: null },
         },
       },
       children: <LibrariesPaneBody />,

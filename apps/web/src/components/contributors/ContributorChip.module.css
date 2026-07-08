@@ -1,0 +1,34 @@
+.chip {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+  align-items: center;
+  gap: var(--space-1);
+  overflow: hidden;
+  border: 1px solid var(--edge-subtle);
+  border-radius: var(--radius-full);
+  padding: 2px var(--space-2);
+  background: var(--surface-2);
+  color: var(--ink);
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+a.chip:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+
+.label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.role {
+  flex: none;
+  color: var(--ink-muted);
+}

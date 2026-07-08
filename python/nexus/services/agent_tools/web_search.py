@@ -84,12 +84,13 @@ WEB_SEARCH_TOOL_DEFINITION: dict[str, Any] = {
         "properties": {
             "query": {"type": "string"},
             "freshness_days": {
-                "type": "integer",
-                "description": "Limit results to the last N days. Omit for no limit.",
-                "nullable": True,
+                "type": ["integer", "null"],
+                "minimum": 1,
+                "description": "Limit results to the last N days. Use null for no limit.",
             },
         },
-        "required": ["query"],
+        "required": ["query", "freshness_days"],
+        "additionalProperties": False,
     },
 }
 

@@ -1,8 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiFetch } from "@/lib/api/client";
-import { librariesResource as librariesResourceDescriptor } from "@/lib/api/resource";
+import {
+  librariesResource as librariesResourceDescriptor,
+  type LibraryListResourceParams,
+} from "@/lib/api/resource";
+import { useCursorPagination, type CursorPage } from "@/lib/api/useCursorPagination";
 import { useResource } from "@/lib/api/useResource";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
@@ -12,6 +16,7 @@ import {
 } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
+import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
 import CollectionView from "@/components/collections/CollectionView";
 import CollectionDisplayControls from "@/components/collections/CollectionDisplayControls";
 import SectionOpener from "@/components/ui/SectionOpener";
@@ -57,19 +62,27 @@ export default function LibrariesPaneBody() {
   } = useHydrationPreservedInput();
   const [creating, setCreating] = useState(false);
   const librariesResource = useResource<
-    { data: Library[] },
-    { refreshVersion: number }
+    CursorPage<Library>,
+    LibraryListResourceParams
   >({
     descriptor: librariesResourceDescriptor,
     params: { refreshVersion: librariesRefreshVersion },
   });
-  const resourceLibraries =
+  const paginatedLibraries = useCursorPagination<Library>({
+    firstPage: librariesResource,
+    buildMoreHref: (cursor) =>
+      librariesResourceDescriptor.clientPath({
+        refreshVersion: librariesRefreshVersion,
+        cursor,
+      }),
+  });
+  const readyLibraries =
     librariesResource.status === "ready" ? librariesResource.data.data : null;
-  const libraries = localLibraries ?? resourceLibraries ?? [];
+  const libraries = localLibraries ?? readyLibraries ?? [];
   const status =
-    libraries.length > 0 || librariesResource.status === "ready"
+    libraries.length > 0 || paginatedLibraries.status === "ready"
       ? "ready"
-      : librariesResource.status === "error"
+      : paginatedLibraries.status === "error"
         ? "error"
         : "loading";
 
@@ -89,13 +102,37 @@ export default function LibrariesPaneBody() {
 
   useEffect(() => {
     if (librariesResource.status === "ready") {
-      setLocalLibraries(librariesResource.data.data);
+      setLocalLibraries(readyLibraries);
     }
-  }, [librariesResource]);
+  }, [librariesResource.status, readyLibraries]);
+
+  const paginatedLibrarySignature = useMemo(
+    () => paginatedLibraries.items.map((library) => library.id).join("\u001f"),
+    [paginatedLibraries.items],
+  );
+
+  useEffect(() => {
+    if (paginatedLibraries.status !== "ready" || paginatedLibraries.items.length === 0) {
+      return;
+    }
+    setLocalLibraries((current) => {
+      if (current === null) {
+        return paginatedLibraries.items;
+      }
+      const currentById = new Map(current.map((library) => [library.id, library]));
+      const merged = paginatedLibraries.items.map((library) => currentById.get(library.id) ?? library);
+      for (const library of current) {
+        if (!paginatedLibraries.items.some((item) => item.id === library.id)) {
+          merged.push(library);
+        }
+      }
+      return merged;
+    });
+  }, [paginatedLibraries.status, paginatedLibrarySignature, paginatedLibraries.items]);
 
   const loadError =
-    librariesResource.status === "error"
-      ? toFeedback(librariesResource.error, {
+    paginatedLibraries.error !== null
+      ? toFeedback(paginatedLibraries.error, {
           fallback: "Failed to load libraries",
         })
       : null;
@@ -130,7 +167,7 @@ export default function LibrariesPaneBody() {
         method: "DELETE",
       });
       setLocalLibraries((current) =>
-        (current ?? resourceLibraries ?? []).filter((item) => item.id !== library.id),
+        (current ?? readyLibraries ?? []).filter((item) => item.id !== library.id),
       );
       refreshLibraries();
     } catch (err) {
@@ -176,13 +213,13 @@ export default function LibrariesPaneBody() {
       });
       setEditLibrary((prev) => (prev ? { ...prev, name } : null));
       setLocalLibraries((current) =>
-        (current ?? resourceLibraries ?? []).map((library) =>
+        (current ?? readyLibraries ?? []).map((library) =>
           library.id === editLibrary.id ? { ...library, name } : library,
         ),
       );
       refreshLibraries();
     },
-    [editLibrary, refreshLibraries, resourceLibraries],
+    [editLibrary, refreshLibraries, readyLibraries],
   );
 
   const handleUpdateMemberRole = useCallback(
@@ -265,10 +302,10 @@ export default function LibrariesPaneBody() {
     });
     closeEditDialog();
     setLocalLibraries((current) =>
-      (current ?? resourceLibraries ?? []).filter((library) => library.id !== editLibrary.id),
+      (current ?? readyLibraries ?? []).filter((library) => library.id !== editLibrary.id),
     );
     refreshLibraries();
-  }, [editLibrary, closeEditDialog, refreshLibraries, resourceLibraries]);
+  }, [editLibrary, closeEditDialog, refreshLibraries, readyLibraries]);
 
   /* ---- Edit dialog library data ---- */
 
@@ -306,8 +343,16 @@ export default function LibrariesPaneBody() {
           />
         }
         footer={
-          status === "ready" && loadError ? (
-            <FeedbackNotice feedback={loadError} />
+          status === "ready" ? (
+            <>
+              {loadError ? <FeedbackNotice feedback={loadError} /> : null}
+              <LoadMoreFooter
+                hasMore={paginatedLibraries.hasMore}
+                loading={paginatedLibraries.loadingMore}
+                onLoadMore={paginatedLibraries.loadMore}
+                label="Load more libraries"
+              />
+            </>
           ) : null
         }
         toolbar={

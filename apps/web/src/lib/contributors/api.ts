@@ -1,12 +1,16 @@
 import { type ApiPath, apiFetch } from "@/lib/api/client";
 import {
   contributorDirectoryResource,
+  contributorReconciliationCandidatesResource,
   type ContributorDirectoryResourceParams,
+  type ContributorReconciliationCandidatesResourceParams,
   contributorResource,
   contributorWorksResource,
 } from "@/lib/api/resource";
 import type {
   ContributorDirectoryPage,
+  ContributorReconciliationCandidatesPage,
+  ContributorReconciliationCandidate,
   ContributorSummary,
   ContributorWork,
 } from "@/lib/contributors/types";
@@ -25,6 +29,10 @@ interface ContributorWorksResponse {
   data: {
     works: ContributorWork[];
   };
+}
+
+interface ContributorReconciliationCandidatesResponse {
+  data: ContributorReconciliationCandidatesPage;
 }
 
 interface ContributorWorksFilters {
@@ -83,6 +91,16 @@ export async function fetchContributorWorks(
   return Array.isArray(response.data.works) ? response.data.works : [];
 }
 
+export async function fetchContributorReconciliationCandidates(
+  params: ContributorReconciliationCandidatesResourceParams
+): Promise<ContributorReconciliationCandidatesPage> {
+  const response = await apiFetch<ContributorReconciliationCandidatesResponse>(
+    contributorReconciliationCandidatesResource.clientPath(params),
+    { cache: "no-store" }
+  );
+  return response.data;
+}
+
 async function contributorMutation(
   path: ApiPath,
   init: RequestInit
@@ -99,6 +117,25 @@ export async function mergeContributor(
     method: "POST",
     body: JSON.stringify({ target_handle: targetHandle }),
   });
+}
+
+export async function acceptContributorReconciliationCandidate(
+  candidateId: string
+): Promise<ContributorSummary> {
+  return contributorMutation(
+    `/api/contributors/reconciliation-candidates/${encodeURIComponent(candidateId)}/accept`,
+    { method: "POST" }
+  );
+}
+
+export async function rejectContributorReconciliationCandidate(
+  candidateId: string
+): Promise<ContributorReconciliationCandidate> {
+  const response = await apiFetch<{ data: ContributorReconciliationCandidate }>(
+    `/api/contributors/reconciliation-candidates/${encodeURIComponent(candidateId)}/reject`,
+    { method: "POST" }
+  );
+  return response.data;
 }
 
 export async function tombstoneContributor(handle: string): Promise<ContributorSummary> {

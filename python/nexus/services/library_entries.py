@@ -7,10 +7,12 @@ The visibility readers in `auth/permissions.py` and the search/object modules re
 the table under an explicit allowlist (see the cutover spec).
 """
 
+import base64
+import json
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime, time
-from typing import Literal, assert_never
+from datetime import UTC, datetime, time, timedelta
+from typing import Any, Literal, assert_never
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -25,6 +27,7 @@ from nexus.schemas.library import (
     LibraryEntryKind,
     LibraryEntryOrderRequest,
     LibraryEntryOut,
+    LibraryPageInfo,
     LibraryPodcastOut,
     LibraryPodcastSubscriptionOut,
 )
@@ -38,6 +41,8 @@ from nexus.services.contributor_credits import load_contributor_credits_for_podc
 _ENTRY_ORDER = "position ASC, created_at DESC, id DESC"
 _ENTRY_COLUMNS = "id, library_id, media_id, podcast_id, created_at, position"
 _TARGET_COLUMN: dict[LibraryEntryKind, str] = {"media": "media_id", "podcast": "podcast_id"}
+_ENTRY_PAGE_SNAPSHOT_TTL = timedelta(minutes=15)
+_ENTRY_PAGE_SNAPSHOT_BATCH_SIZE = 200
 
 # The orderings GET /libraries/{id}/entries supports (spec S5). "position" is the
 # default and keeps EXACTLY `_ENTRY_ORDER`; "resonance" applies the deterministic
@@ -231,23 +236,26 @@ _MOST_RECENT_ACTIVITY_SQL = f"""
     )
 """
 
-# Deterministic resonance ORDER BY: weighted recency-decay + log1p(connection_count),
+# Deterministic resonance score: weighted recency-decay + log1p(connection_count),
 # highest first, with `id DESC` as the stable tiebreak so identical input yields one
-# fixed order. `now()` is the DB's authoritative clock (database.md). An entry with no
-# engagement/connection/published signal decays from its created_at.
-_RESONANCE_ORDER = f"""
+# fixed order. The caller binds `:resonance_as_of`; cursor pagination reuses the same
+# timestamp across pages so a load-more sequence cannot reshuffle underneath itself.
+_RESONANCE_SCORE_SQL = f"""
     (
         {_RESONANCE_RECENCY_WEIGHT} * power(
             0.5,
             GREATEST(
-                EXTRACT(EPOCH FROM (now() - {_MOST_RECENT_ACTIVITY_SQL})) / 86400.0,
+                EXTRACT(EPOCH FROM (:resonance_as_of - {_MOST_RECENT_ACTIVITY_SQL})) / 86400.0,
                 0.0
             ) / {_RESONANCE_RECENCY_HALF_LIFE_DAYS}
         )
         + {_RESONANCE_CONNECTION_WEIGHT} * ln(1.0 + {_CONNECTION_COUNT_SQL})
         + {_RESONANCE_SHARED_AUTHOR_WEIGHT} * {_SHARED_AUTHOR_HITS_SQL}
         + {_RESONANCE_SIMILARITY_WEIGHT} * {_SIMILARITY_SQL}
-    ) DESC,
+    )
+"""
+_RESONANCE_ORDER = f"""
+    {_RESONANCE_SCORE_SQL} DESC,
     le.id DESC
 """
 
@@ -920,15 +928,224 @@ def remove_user_podcast_subscription_libraries(
     )
 
 
+def _encode_entry_cursor(
+    sort: LibraryEntrySort,
+    *,
+    viewer_id: UUID,
+    library_id: UUID,
+    snapshot_id: UUID,
+    offset: int,
+) -> str:
+    payload = {
+        "k": "library_entries:snapshot",
+        "viewer_id": str(viewer_id),
+        "library_id": str(library_id),
+        "sort": sort,
+        "snapshot_id": str(snapshot_id),
+        "offset": offset,
+    }
+    encoded = base64.urlsafe_b64encode(json.dumps(payload).encode("utf-8")).decode("ascii")
+    return encoded.rstrip("=")
+
+
+def _decode_entry_cursor(
+    cursor: str, expected_sort: LibraryEntrySort, *, viewer_id: UUID, library_id: UUID
+) -> tuple[UUID, int]:
+    try:
+        padded = cursor + "=" * (-len(cursor) % 4)
+        payload: dict[str, Any] = json.loads(base64.urlsafe_b64decode(padded).decode("utf-8"))
+        if (
+            payload.get("k") != "library_entries:snapshot"
+            or payload.get("sort") != expected_sort
+            or UUID(str(payload["viewer_id"])) != viewer_id
+            or UUID(str(payload["library_id"])) != library_id
+        ):
+            raise ValueError
+        offset = int(payload["offset"])
+        if offset < 0:
+            raise ValueError
+        return UUID(str(payload["snapshot_id"])), offset
+    except Exception:
+        # justify-ignore-error: malformed cursor input is an expected API error path.
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor") from None
+
+
+def _delete_expired_entry_page_snapshots(db: Session) -> None:
+    db.execute(
+        text("""
+        WITH expired AS (
+            SELECT id
+            FROM library_entry_page_snapshots
+            WHERE expires_at <= now()
+        ),
+        deleted_items AS (
+            DELETE FROM library_entry_page_snapshot_items item
+            USING expired
+            WHERE item.snapshot_id = expired.id
+            RETURNING item.snapshot_id
+        )
+        DELETE FROM library_entry_page_snapshots snapshot
+        USING expired
+        WHERE snapshot.id = expired.id
+        """)
+    )
+
+
+def _create_entry_page_snapshot(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    library_id: UUID,
+    sort: LibraryEntrySort,
+    entry_ids: Sequence[UUID],
+) -> UUID:
+    _delete_expired_entry_page_snapshots(db)
+    snapshot_id = db.execute(
+        text("""
+        INSERT INTO library_entry_page_snapshots (
+            viewer_user_id,
+            library_id,
+            sort,
+            expires_at
+        )
+        VALUES (
+            :viewer_id,
+            :library_id,
+            :sort,
+            now() + (:ttl_seconds * interval '1 second')
+        )
+        RETURNING id
+        """),
+        {
+            "viewer_id": viewer_id,
+            "library_id": library_id,
+            "sort": sort,
+            "ttl_seconds": int(_ENTRY_PAGE_SNAPSHOT_TTL.total_seconds()),
+        },
+    ).scalar_one()
+    db.execute(
+        text("""
+        INSERT INTO library_entry_page_snapshot_items (snapshot_id, ordinal, entry_id)
+        SELECT
+            :snapshot_id,
+            ordinal::integer - 1,
+            entry_id
+        FROM unnest(CAST(:entry_ids AS uuid[])) WITH ORDINALITY AS entries(entry_id, ordinal)
+        """),
+        {"snapshot_id": snapshot_id, "entry_ids": list(entry_ids)},
+    )
+    return UUID(str(snapshot_id))
+
+
+def _assert_entry_page_snapshot(
+    db: Session,
+    *,
+    snapshot_id: UUID,
+    viewer_id: UUID,
+    library_id: UUID,
+    sort: LibraryEntrySort,
+) -> None:
+    row = db.execute(
+        text("""
+        SELECT 1
+        FROM library_entry_page_snapshots
+        WHERE id = :snapshot_id
+          AND viewer_user_id = :viewer_id
+          AND library_id = :library_id
+          AND sort = :sort
+          AND expires_at > now()
+        """),
+        {
+            "snapshot_id": snapshot_id,
+            "viewer_id": viewer_id,
+            "library_id": library_id,
+            "sort": sort,
+        },
+    ).fetchone()
+    if row is None:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor")
+
+
+def _page_entry_snapshot(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    library_id: UUID,
+    snapshot_id: UUID,
+    offset: int,
+    limit: int,
+    sort: LibraryEntrySort,
+    viewer_timezone: str,
+) -> tuple[list[LibraryEntryOut], LibraryPageInfo]:
+    _assert_entry_page_snapshot(
+        db,
+        snapshot_id=snapshot_id,
+        viewer_id=viewer_id,
+        library_id=library_id,
+        sort=sort,
+    )
+    collected: list[LibraryEntryOut] = []
+    ordinals_by_entry_id: dict[UUID, int] = {}
+    next_offset = offset
+    batch_size = max(_ENTRY_PAGE_SNAPSHOT_BATCH_SIZE, limit + 1)
+    while len(collected) <= limit:
+        rows = (
+            db.execute(
+                text(f"""
+                SELECT {_ENTRY_COLUMNS}, item.ordinal
+                FROM library_entry_page_snapshot_items item
+                JOIN library_entries le
+                  ON le.id = item.entry_id AND le.library_id = :library_id
+                WHERE item.snapshot_id = :snapshot_id
+                  AND item.ordinal >= :offset
+                ORDER BY item.ordinal ASC
+                LIMIT :batch_size
+                """),
+                {
+                    "snapshot_id": snapshot_id,
+                    "library_id": library_id,
+                    "offset": next_offset,
+                    "batch_size": batch_size,
+                },
+            )
+            .mappings()
+            .all()
+        )
+        if not rows:
+            break
+        ordinals_by_entry_id.update({UUID(str(row["id"])): int(row["ordinal"]) for row in rows})
+        collected.extend(_hydrate_entries(db, viewer_id, rows, viewer_timezone=viewer_timezone))
+        next_offset = int(rows[-1]["ordinal"]) + 1
+        if len(rows) < batch_size:
+            break
+
+    page_entries = collected[:limit]
+    has_more = len(collected) > limit
+    next_cursor = None
+    if has_more and page_entries:
+        next_cursor = _encode_entry_cursor(
+            sort,
+            viewer_id=viewer_id,
+            library_id=library_id,
+            snapshot_id=snapshot_id,
+            offset=ordinals_by_entry_id[page_entries[-1].id] + 1,
+        )
+    return (
+        page_entries,
+        LibraryPageInfo(has_more=has_more, next_cursor=next_cursor),
+    )
+
+
 def list_library_entries(
     db: Session,
     viewer_id: UUID,
     library_id: UUID,
+    *,
     limit: int = 100,
-    offset: int = 0,
+    cursor: str | None = None,
     sort: LibraryEntrySort = "position",
     viewer_timezone: str = "UTC",
-) -> list[LibraryEntryOut]:
+) -> tuple[list[LibraryEntryOut], LibraryPageInfo]:
     """List a library's ordered, hydrated entries. Member-only.
 
     ``sort="position"`` (default) keeps EXACTLY the canonical `_ENTRY_ORDER`;
@@ -937,8 +1154,6 @@ def list_library_entries(
     """
     if limit <= 0:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Limit must be positive")
-    if offset < 0:
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Offset must be non-negative")
     _start_of_today(viewer_timezone)
     limit = min(limit, 200)
 
@@ -949,36 +1164,91 @@ def list_library_entries(
     if member is None:
         raise NotFoundError(ApiErrorCode.E_LIBRARY_NOT_FOUND, "Library not found")
 
-    params: dict[str, object] = {"library_id": library_id, "limit": limit, "offset": offset}
+    if cursor is not None:
+        snapshot_id, offset = _decode_entry_cursor(
+            cursor,
+            sort,
+            viewer_id=viewer_id,
+            library_id=library_id,
+        )
+        return _page_entry_snapshot(
+            db,
+            viewer_id=viewer_id,
+            library_id=library_id,
+            snapshot_id=snapshot_id,
+            offset=offset,
+            limit=limit,
+            sort=sort,
+            viewer_timezone=viewer_timezone,
+        )
+
+    params: dict[str, object] = {"library_id": library_id}
     if sort == "resonance":
         # Lazy import: connection_summaries -> resolve -> library_entries is an
         # import cycle, so the S4 origin owner is read at call time, not import.
         from nexus.services.resource_graph.connection_summaries import LIST_CONNECTION_ORIGINS
         from nexus.services.semantic_chunks import transcript_embedding_dimensions
 
-        order_by = _RESONANCE_ORDER
         params["viewer_id"] = viewer_id
         params["resonance_origins"] = list(LIST_CONNECTION_ORIGINS)
         params["embedding_dims"] = transcript_embedding_dimensions()
+        params["resonance_as_of"] = db.execute(text("SELECT now()")).scalar_one()
+        rows = (
+            db.execute(
+                text(f"""
+                WITH scored AS (
+                    SELECT {_ENTRY_COLUMNS}, {_RESONANCE_SCORE_SQL} AS resonance_score
+                    FROM library_entries le
+                    WHERE le.library_id = :library_id
+                )
+                SELECT {_ENTRY_COLUMNS}, resonance_score
+                FROM scored
+                ORDER BY resonance_score DESC, id DESC
+            """),
+                params,
+            )
+            .mappings()
+            .all()
+        )
     elif sort == "position":
-        order_by = _ENTRY_ORDER
+        rows = (
+            db.execute(
+                text(f"""
+                SELECT {_ENTRY_COLUMNS} FROM library_entries le
+                WHERE le.library_id = :library_id
+                ORDER BY {_ENTRY_ORDER}
+            """),
+                params,
+            )
+            .mappings()
+            .all()
+        )
     else:
         assert_never(sort)
 
-    rows = (
-        db.execute(
-            text(f"""
-            SELECT {_ENTRY_COLUMNS} FROM library_entries le
-            WHERE le.library_id = :library_id
-            ORDER BY {order_by}
-            LIMIT :limit OFFSET :offset
-        """),
-            params,
+    hydrated_entries = _hydrate_entries(db, viewer_id, rows, viewer_timezone=viewer_timezone)
+    page_entries = hydrated_entries[:limit]
+    next_cursor = None
+    if len(hydrated_entries) > limit:
+        with transaction(db):
+            snapshot_id = _create_entry_page_snapshot(
+                db,
+                viewer_id=viewer_id,
+                library_id=library_id,
+                sort=sort,
+                entry_ids=[entry.id for entry in hydrated_entries],
+            )
+        next_cursor = _encode_entry_cursor(
+            sort,
+            viewer_id=viewer_id,
+            library_id=library_id,
+            snapshot_id=snapshot_id,
+            offset=limit,
         )
-        .mappings()
-        .all()
+    return (
+        page_entries,
+        LibraryPageInfo(has_more=next_cursor is not None, next_cursor=next_cursor),
     )
-    return _hydrate_entries(db, viewer_id, rows, viewer_timezone=viewer_timezone)
 
 
 def reorder_entries(
@@ -1022,9 +1292,14 @@ def reorder_entries(
             {"entry_ids": requested_ids, "library_id": library_id},
         )
 
-    return list_library_entries(
-        db, viewer_id, library_id, limit=min(max(len(requested_ids), 1), 200), offset=0
+    entries, _page = list_library_entries(
+        db,
+        viewer_id,
+        library_id,
+        limit=min(max(len(requested_ids), 1), 200),
+        sort="position",
     )
+    return entries
 
 
 # ---------------------------------------------------------------------------

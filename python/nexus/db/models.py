@@ -228,7 +228,7 @@ class Page(Base):
     )
     user_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("users.id"),
+        ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
     )
     title: Mapped[str] = mapped_column(Text, nullable=False)
@@ -1766,6 +1766,162 @@ class ContributorIdentityEvent(Base):
     )
 
 
+class ContributorReconciliationRun(Base):
+    """One deterministic contributor-dedupe candidate generation pass."""
+
+    __tablename__ = "contributor_reconciliation_runs"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    actor_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=True,
+    )
+    algorithm_version: Mapped[str] = mapped_column(Text, nullable=False)
+    candidate_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    evaluated_pair_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    candidates: Mapped[list["ContributorReconciliationCandidate"]] = relationship(
+        "ContributorReconciliationCandidate",
+        back_populates="run",
+        order_by=lambda: [
+            ContributorReconciliationCandidate.score.desc(),
+            ContributorReconciliationCandidate.id.asc(),
+        ],
+    )
+
+
+class ContributorReconciliationCandidate(Base):
+    """A suggested duplicate pair for manual contributor reconciliation."""
+
+    __tablename__ = "contributor_reconciliation_candidates"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    run_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("contributor_reconciliation_runs.id"),
+        nullable=False,
+    )
+    contributor_a_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("contributors.id"),
+        nullable=False,
+    )
+    contributor_b_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("contributors.id"),
+        nullable=False,
+    )
+    proposed_source_contributor_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("contributors.id"),
+        nullable=False,
+    )
+    proposed_target_contributor_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("contributors.id"),
+        nullable=False,
+    )
+    source_snapshot_handle: Mapped[str] = mapped_column(Text, nullable=False)
+    source_snapshot_display_name: Mapped[str] = mapped_column(Text, nullable=False)
+    source_snapshot_sort_name: Mapped[str] = mapped_column(Text, nullable=False)
+    source_snapshot_kind: Mapped[str] = mapped_column(Text, nullable=False)
+    source_snapshot_status: Mapped[str] = mapped_column(Text, nullable=False)
+    source_snapshot_disambiguation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_snapshot_work_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    target_snapshot_handle: Mapped[str] = mapped_column(Text, nullable=False)
+    target_snapshot_display_name: Mapped[str] = mapped_column(Text, nullable=False)
+    target_snapshot_sort_name: Mapped[str] = mapped_column(Text, nullable=False)
+    target_snapshot_kind: Mapped[str] = mapped_column(Text, nullable=False)
+    target_snapshot_status: Mapped[str] = mapped_column(Text, nullable=False)
+    target_snapshot_disambiguation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    target_snapshot_work_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
+    score: Mapped[int] = mapped_column(Integer, nullable=False)
+    evidence: Mapped[dict[str, object]] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text("'{}'::jsonb"),
+    )
+    decided_by_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=True,
+    )
+    decided_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "run_id",
+            "contributor_a_id",
+            "contributor_b_id",
+            name="uq_contributor_reconciliation_candidates_run_pair",
+        ),
+        Index(
+            "ix_contributor_reconciliation_candidates_run_status_score",
+            "run_id",
+            "status",
+            "score",
+        ),
+        Index(
+            "ix_contributor_reconciliation_candidates_a_status_score",
+            "contributor_a_id",
+            "status",
+            "score",
+        ),
+        Index(
+            "ix_contributor_reconciliation_candidates_b_status_score",
+            "contributor_b_id",
+            "status",
+            "score",
+        ),
+    )
+
+    run: Mapped["ContributorReconciliationRun"] = relationship(
+        "ContributorReconciliationRun",
+        back_populates="candidates",
+    )
+    contributor_a: Mapped["Contributor"] = relationship(
+        "Contributor",
+        foreign_keys=[contributor_a_id],
+    )
+    contributor_b: Mapped["Contributor"] = relationship(
+        "Contributor",
+        foreign_keys=[contributor_b_id],
+    )
+    proposed_source_contributor: Mapped["Contributor"] = relationship(
+        "Contributor",
+        foreign_keys=[proposed_source_contributor_id],
+    )
+    proposed_target_contributor: Mapped["Contributor"] = relationship(
+        "Contributor",
+        foreign_keys=[proposed_target_contributor_id],
+    )
+
+
 class MediaFile(Base):
     """Media file storage metadata (0..1 per media).
 
@@ -1961,7 +2117,7 @@ class LibraryEntry(Base):
     )
     library_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("libraries.id"),
+        ForeignKey("libraries.id", ondelete="CASCADE"),
         nullable=False,
     )
     media_id: Mapped[UUID | None] = mapped_column(
@@ -2011,6 +2167,79 @@ class LibraryEntry(Base):
     library: Mapped["Library"] = relationship("Library", back_populates="library_entries")
     media: Mapped["Media | None"] = relationship("Media", back_populates="library_entries")
     podcast: Mapped["Podcast | None"] = relationship("Podcast", back_populates="library_entries")
+
+
+class LibraryEntryPageSnapshot(Base):
+    """Short-lived stable ordered entry sequence for cursor paging."""
+
+    __tablename__ = "library_entry_page_snapshots"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    viewer_user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=False,
+    )
+    library_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("libraries.id"),
+        nullable=False,
+    )
+    sort: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    expires_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+
+    __table_args__ = (
+        Index("ix_library_entry_page_snapshots_expires_at", "expires_at"),
+        Index(
+            "ix_library_entry_page_snapshots_scope",
+            "viewer_user_id",
+            "library_id",
+            "sort",
+            "created_at",
+        ),
+    )
+
+    items: Mapped[list["LibraryEntryPageSnapshotItem"]] = relationship(
+        "LibraryEntryPageSnapshotItem",
+        back_populates="snapshot",
+        order_by=lambda: LibraryEntryPageSnapshotItem.ordinal,
+    )
+
+
+class LibraryEntryPageSnapshotItem(Base):
+    """One entry id at one ordinal in a stable library-entry page snapshot."""
+
+    __tablename__ = "library_entry_page_snapshot_items"
+
+    snapshot_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("library_entry_page_snapshots.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    ordinal: Mapped[int] = mapped_column(Integer, primary_key=True)
+    entry_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "snapshot_id",
+            "entry_id",
+            name="uq_library_entry_page_snapshot_items_entry",
+        ),
+    )
+
+    snapshot: Mapped["LibraryEntryPageSnapshot"] = relationship(
+        "LibraryEntryPageSnapshot",
+        back_populates="items",
+    )
 
 
 class LibraryIntelligenceArtifact(Base):

@@ -28,6 +28,12 @@ const ROW_CONTROL_SELECTOR = [
   '[tabindex]:not([tabindex="-1"])',
 ].join(",");
 
+function usesNativeArrowKeys(element: HTMLElement | null): boolean {
+  if (!element) return false;
+  if (element.isContentEditable) return true;
+  return ["INPUT", "SELECT", "TEXTAREA"].includes(element.tagName);
+}
+
 export function useCollectionKeyboard() {
   const containerRef = useRef<HTMLUListElement>(null);
   const typeahead = useRef({ buffer: "", at: 0 });
@@ -108,9 +114,34 @@ export function useCollectionKeyboard() {
         const row = active?.closest(ROW_SELECTOR);
         if (!row || !containerRef.current?.contains(row)) return;
         const primary = row.querySelector<HTMLElement>(ROW_FOCUSABLE_SELECTOR);
-        if (event.key === "Escape" || event.key === "ArrowLeft") {
+        if (event.key === "Escape") {
           event.preventDefault();
           primary?.focus();
+          return;
+        }
+        if (
+          (event.key === "ArrowLeft" || event.key === "ArrowRight") &&
+          !usesNativeArrowKeys(active)
+        ) {
+          const controls = rowControls(row);
+          const controlIndex = active ? controls.indexOf(active) : -1;
+          if (event.key === "ArrowLeft") {
+            event.preventDefault();
+            if (controlIndex > 0) {
+              controls[controlIndex - 1]?.focus();
+            } else {
+              primary?.focus();
+            }
+            return;
+          }
+          const nextControl = controls[controlIndex + 1];
+          if (nextControl) {
+            event.preventDefault();
+            nextControl.focus();
+            if (nextControl.matches(ROW_ACTION_TRIGGER_SELECTOR)) {
+              nextControl.click();
+            }
+          }
           return;
         }
         return;

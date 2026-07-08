@@ -79,6 +79,39 @@ def compute_retry_payload_hash(
     return hashlib.sha256(encoded.encode()).hexdigest()
 
 
+def compute_resend_payload_hash(
+    *,
+    source_assistant_message_id: UUID,
+    source_run: ChatRun,
+    source_user_message: Message,
+) -> str:
+    payload = {
+        "operation": "chat_response_resend",
+        "source_assistant_message_id": str(source_assistant_message_id),
+        "source_run_id": str(source_run.id),
+        "source_conversation_id": str(source_run.conversation_id),
+        "source_user_message_id": str(source_user_message.id),
+        "source_user_parent_message_id": (
+            str(source_user_message.parent_message_id)
+            if source_user_message.parent_message_id is not None
+            else None
+        ),
+        "source_user_branch_root_message_id": (
+            str(source_user_message.branch_root_message_id)
+            if source_user_message.branch_root_message_id is not None
+            else None
+        ),
+        "source_user_branch_anchor_kind": source_user_message.branch_anchor_kind,
+        "source_user_branch_anchor": source_user_message.branch_anchor or {},
+        "source_prompt_content": source_user_message.content,
+        "source_model_id": str(source_run.model_id),
+        "source_reasoning": source_run.reasoning,
+        "source_key_mode": source_run.key_mode,
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(encoded.encode()).hexdigest()
+
+
 def normalize_idempotency_key(idempotency_key: str | None) -> str:
     normalized_key = (idempotency_key or "").strip()
     if not normalized_key:

@@ -21,6 +21,7 @@ from nexus.services.conversations import (
     conversation_to_out,
     get_message_count,
     message_to_out,
+    resendable_assistant_message_ids,
     retryable_assistant_message_ids,
 )
 from nexus.services.message_trust_trails import build_assistant_trust_trail
@@ -39,9 +40,15 @@ def build_chat_run_response(db: Session, viewer_id: UUID, run: ChatRun) -> ChatR
         viewer_id=viewer_id,
         assistant_message_ids=message_ids,
     )
+    resendable_message_ids = resendable_assistant_message_ids(
+        db,
+        viewer_id=viewer_id,
+        assistant_message_ids=message_ids,
+    )
     user_message_out = message_to_out(
         user_message,
         can_retry_response=user_message.id in retryable_message_ids,
+        can_resend_response=user_message.id in resendable_message_ids,
     )
     trust_trail = build_assistant_trust_trail(
         db,
@@ -51,6 +58,7 @@ def build_chat_run_response(db: Session, viewer_id: UUID, run: ChatRun) -> ChatR
     assistant_message_out = message_to_out(
         assistant_message,
         can_retry_response=assistant_message.id in retryable_message_ids,
+        can_resend_response=assistant_message.id in resendable_message_ids,
         trust_trail=trust_trail,
         citations=[trust_citation.citation for trust_citation in trust_trail.citations],
     )

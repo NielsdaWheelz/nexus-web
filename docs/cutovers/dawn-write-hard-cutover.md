@@ -78,7 +78,7 @@ The result: the machine worked overnight and said nothing. The daily note page i
 
 | Concern | Sole owner | Notes |
 |---|---|---|
-| Artifact storage | `dawn_writes` table (migration 0169) | One row per `(user_id, local_date)` |
+| Artifact storage | `dawn_writes` table (migration 0171) | One row per `(user_id, local_date)` |
 | Job scheduling | `dawn_write_job` in `jobs/registry.py` | Periodic via `DAWN_WRITE_SCHEDULE_SECONDS` |
 | Generation logic | `services/dawn_write.py` | Data assembly + LLM call |
 | Worker task body | `tasks/dawn_write.py` | `run_llm_task` envelope |
@@ -202,7 +202,7 @@ CREATE INDEX ix_dawn_writes_user ON dawn_writes (user_id);
 
 No `ON DELETE CASCADE` (house doctrine; explicit cleanup if user is deleted). `dismissed_at` NULL means not yet dismissed; set once, never unset. No `ON CONFLICT` upserts (house doctrine); the generation sweep checks for existence before writing.
 
-### 5.2 Migration: `0169_dawn_write_artifact.py`
+### 5.2 Migration: `0171_dawn_write_artifact.py`
 
 `down_revision = "0168"`.
 
@@ -458,7 +458,7 @@ Deliberate non-deletion: `DailyNotePaneBody.tsx` itself survives until sibling #
 Each independently buildable; later slices depend on earlier ones.
 
 **S0 — Migration + ORM model.**
-Create `0169_dawn_write_artifact.py`, add `DawnWrite` to `db/models.py`, widen `ck_llm_calls_owner_kind` in models.py, widen `LlmCallOwner.kind` Literal in `services/llm_ledger.py` to add `"dawn_write"`.
+Create `0171_dawn_write_artifact.py`, add `DawnWrite` to `db/models.py`, widen `ck_llm_calls_owner_kind` in models.py, widen `LlmCallOwner.kind` Literal in `services/llm_ledger.py` to add `"dawn_write"`.
 *Verify:* `bun run test:migrations` green; model imports without error; `pyright` on `db/models.py` and `services/llm_ledger.py` 0.
 
 **S1 — Backend service (`services/dawn_write.py`) + public accessor.**
@@ -500,7 +500,7 @@ Add `dawnWriteResource` `useResource` fetch. Render `{dawnWrite && <DawnWriteBlo
 - **AC-9.** The dismiss button in `DawnWriteBlock` is in `--font-sans` (control-bleed containment: it is outside `MachineText`).
 - **AC-10.** `DAWN_WRITE_ENABLED=false` makes the job handler return immediately without querying the DB or calling the LLM.
 - **AC-11.** `DEFAULT_WORKER_ALLOWED_JOB_KINDS` in `config.py`, `env-prod-worker.example`, and `sync-env.sh` SAFE allowlist all include `dawn_write_job`. `test_config.py:test_default_worker_allowlist_matches_registry_and_user_facing_jobs` passes.
-- **AC-12.** The `ck_llm_calls_owner_kind` CHECK includes `'dawn_write'` (enforced by migration 0169 and mirrored in `db/models.py`).
+- **AC-12.** The `ck_llm_calls_owner_kind` CHECK includes `'dawn_write'` (enforced by migration 0171 and mirrored in `db/models.py`).
 
 ---
 
@@ -569,7 +569,7 @@ Implemented in `python/tests/test_dawn_write_guards.py` (backend, node-unit styl
 ## 15. Files (touched / created / deleted)
 
 **Created:**
-- `migrations/alembic/versions/0169_dawn_write_artifact.py`
+- `migrations/alembic/versions/0171_dawn_write_artifact.py`
 - `python/nexus/services/dawn_write.py`
 - `python/nexus/tasks/dawn_write.py`
 - `python/tests/services/test_dawn_write.py`
@@ -584,7 +584,7 @@ Implemented in `python/tests/test_dawn_write_guards.py` (backend, node-unit styl
 
 **Modified:**
 - `python/nexus/db/models.py` — add `DawnWrite` ORM class; widen `ck_llm_calls_owner_kind` string constant.
-- `python/nexus/services/llm_ledger.py` — widen `LlmCallOwner.kind` Literal to add `"dawn_write"` (parallel to the `ck_llm_calls_owner_kind` widen in migration 0169; pyright rejects any `LlmCallOwner(kind="dawn_write", ...)` call until this line is updated).
+- `python/nexus/services/llm_ledger.py` — widen `LlmCallOwner.kind` Literal to add `"dawn_write"` (parallel to the `ck_llm_calls_owner_kind` widen in migration 0171; pyright rejects any `LlmCallOwner(kind="dawn_write", ...)` call until this line is updated).
 - `python/nexus/services/library_intelligence.py` — add thin public accessor `is_artifact_stale(db, *, library_id, current_revision_id) -> bool` wrapping `_compute_freshness`; cross-module callers (dawn_write.py) must use this, not `_compute_freshness` directly.
 - `python/nexus/jobs/registry.py` — add `dawn_write_job` `JobDefinition` + `_run_dawn_write_sweep` handler.
 - `python/nexus/config.py` — add `dawn_write_schedule_seconds: int = Field(default=3600, alias="DAWN_WRITE_SCHEDULE_SECONDS")`; add `dawn_write_enabled: bool = Field(default=True, alias="DAWN_WRITE_ENABLED")`; append `"dawn_write_job"` to the `DEFAULT_WORKER_ALLOWED_JOB_KINDS` tuple at line 29.

@@ -17,16 +17,20 @@ import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import Select from "@/components/ui/Select";
 import ContributorPicker from "@/components/contributors/ContributorPicker";
+import ContributorReconciliationCandidates from "@/components/contributors/ContributorReconciliationCandidates";
 import { AUTHOR_WORKS_LIMIT, contributorResource } from "@/lib/api/resource";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
+  acceptContributorReconciliationCandidate,
   addContributorAlias,
   addContributorExternalId,
   deleteContributorAlias,
   deleteContributorExternalId,
   fetchContributor,
+  fetchContributorReconciliationCandidates,
   fetchContributorWorks,
   mergeContributor,
+  rejectContributorReconciliationCandidate,
   tombstoneContributor,
 } from "@/lib/contributors/api";
 import { clientResourceFetcher } from "@/lib/api/resourceTransport.client";
@@ -35,6 +39,7 @@ import { paneResourceLoaders } from "@/lib/panes/paneResourceLoaders";
 import type {
   ContributorAlias,
   ContributorExternalId,
+  ContributorReconciliationCandidate,
   ContributorSummary,
   ContributorWork,
 } from "@/lib/contributors/types";
@@ -108,11 +113,24 @@ export default function AuthorPaneBody() {
   const [queryFilter, setQueryFilter] = useState("");
   const [mergeOpen, setMergeOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [busyCandidate, setBusyCandidate] = useState<{
+    id: string;
+    action: "accept" | "reject";
+  } | null>(null);
+  const [reconciliationCandidates, setReconciliationCandidates] = useState<
+    ContributorReconciliationCandidate[]
+  >([]);
+  const [reconciliationStatus, setReconciliationStatus] = useState<
+    "loading" | "error" | "ready"
+  >("loading");
+  const [reconciliationError, setReconciliationError] =
+    useState<FeedbackContent | null>(null);
   const [aliasDraft, setAliasDraft] = useState("");
   const [authorityDraft, setAuthorityDraft] = useState("");
   const [externalKeyDraft, setExternalKeyDraft] = useState("");
   const lastWorksRequestKeyRef = useRef<string | null>(null);
   const worksRequestIdRef = useRef(0);
+  const reconciliationRequestIdRef = useRef(0);
   const mergeCardRef = useRef<HTMLDivElement>(null);
   const loading =
     !!handle && !error && (data === null || data.contributor.handle !== handle);
@@ -149,9 +167,35 @@ export default function AuthorPaneBody() {
             }
           : current,
       );
+      void refreshReconciliationCandidates(targetHandle);
     } catch (reloadError) {
       if (handleUnauthenticatedApiError(reloadError)) return;
       setError(toFeedback(reloadError, { fallback: "Failed to refresh author" }));
+    }
+  }
+
+  async function refreshReconciliationCandidates(targetHandle: string): Promise<void> {
+    const requestId = reconciliationRequestIdRef.current + 1;
+    reconciliationRequestIdRef.current = requestId;
+    setReconciliationStatus("loading");
+    setReconciliationError(null);
+    try {
+      const reconciliationPage = await fetchContributorReconciliationCandidates({
+        contributorHandle: targetHandle,
+        status: "pending",
+        limit: 20,
+      });
+      if (requestId !== reconciliationRequestIdRef.current) return;
+      setReconciliationCandidates(reconciliationPage.candidates);
+      setReconciliationStatus("ready");
+    } catch (loadError) {
+      if (handleUnauthenticatedApiError(loadError)) return;
+      if (requestId !== reconciliationRequestIdRef.current) return;
+      setReconciliationCandidates([]);
+      setReconciliationStatus("error");
+      setReconciliationError(
+        toFeedback(loadError, { fallback: "Failed to load duplicate suggestions" }),
+      );
     }
   }
 
@@ -187,6 +231,53 @@ export default function AuthorPaneBody() {
       setError(toFeedback(mergeError, { fallback: "Failed to merge author" }));
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function handleAcceptCandidate(
+    candidate: ContributorReconciliationCandidate,
+  ): Promise<void> {
+    setBusy(true);
+    setBusyCandidate({ id: candidate.id, action: "accept" });
+    setError(null);
+    try {
+      const survivor = await acceptContributorReconciliationCandidate(candidate.id);
+      setReconciliationCandidates((current) =>
+        current.filter((item) => item.id !== candidate.id),
+      );
+      if (data?.contributor.handle === survivor.handle) {
+        await reload();
+      } else {
+        paneRouter.push(`/authors/${encodeURIComponent(survivor.handle)}`);
+      }
+    } catch (acceptError) {
+      if (handleUnauthenticatedApiError(acceptError)) return;
+      setError(toFeedback(acceptError, { fallback: "Failed to accept duplicate suggestion" }));
+    } finally {
+      setBusyCandidate(null);
+      setBusy(false);
+    }
+  }
+
+  async function handleRejectCandidate(
+    candidate: ContributorReconciliationCandidate,
+  ): Promise<void> {
+    setBusyCandidate({ id: candidate.id, action: "reject" });
+    setReconciliationError(null);
+    try {
+      await rejectContributorReconciliationCandidate(candidate.id);
+      setReconciliationCandidates((current) =>
+        current.filter((item) => item.id !== candidate.id),
+      );
+      setReconciliationStatus("ready");
+    } catch (rejectError) {
+      if (handleUnauthenticatedApiError(rejectError)) return;
+      setReconciliationStatus("error");
+      setReconciliationError(
+        toFeedback(rejectError, { fallback: "Failed to reject duplicate suggestion" }),
+      );
+    } finally {
+      setBusyCandidate(null);
     }
   }
 
@@ -230,11 +321,16 @@ export default function AuthorPaneBody() {
     setKindFilter("");
     setQueryFilter("");
     setMergeOpen(false);
+    setBusyCandidate(null);
+    setReconciliationCandidates([]);
+    setReconciliationStatus(handle ? "loading" : "ready");
+    setReconciliationError(null);
     setAliasDraft("");
     setAuthorityDraft("");
     setExternalKeyDraft("");
     lastWorksRequestKeyRef.current = null;
     worksRequestIdRef.current += 1;
+    reconciliationRequestIdRef.current += 1;
     setError(
       handle ? null : { severity: "error", title: "Author handle is missing" },
     );
@@ -258,6 +354,13 @@ export default function AuthorPaneBody() {
       setData(null);
     }
   }, [initialAuthor]);
+
+  useEffect(() => {
+    if (!data?.contributor.handle) {
+      return;
+    }
+    void refreshReconciliationCandidates(data.contributor.handle);
+  }, [data?.contributor.handle]);
 
   useEffect(() => {
     if (!handle || !data || data.contributor.handle !== handle) {
@@ -406,6 +509,20 @@ export default function AuthorPaneBody() {
           </header>
 
           {/* split UI deferred */}
+          {reconciliationStatus !== "ready" || reconciliationCandidates.length > 0 ? (
+            <ContributorReconciliationCandidates
+              title="Possible Duplicates"
+              status={reconciliationStatus}
+              candidates={reconciliationCandidates}
+              error={reconciliationError}
+              busyCandidate={busyCandidate}
+              emptyTitle="No duplicate suggestions"
+              emptyMessage="No contributor duplicates are pending review."
+              onAccept={(candidate) => void handleAcceptCandidate(candidate)}
+              onReject={(candidate) => void handleRejectCandidate(candidate)}
+            />
+          ) : null}
+
           <div className={styles.identityDetails}>
             <section>
               <h2>Aliases</h2>

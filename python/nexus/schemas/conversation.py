@@ -133,6 +133,7 @@ class MessageOut(BaseModel):
     status: str  # "pending" | "complete" | "error" | "cancelled"
     error_code: str | None = None
     can_retry_response: bool = False
+    can_resend_response: bool = False
     created_at: datetime
     updated_at: datetime
 
