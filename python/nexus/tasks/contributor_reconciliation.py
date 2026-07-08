@@ -22,20 +22,24 @@ def contributor_reconciliation(
 ) -> dict[str, object]:
     db = get_session_factory()()
     try:
-        if scope == "media" and media_id is not None:
+        if scope == "media":
+            if media_id is None:
+                raise ValueError("contributor_reconciliation media scope requires media_id")
             result = refresh_contributor_reconciliation_for_media(
                 db,
                 media_id=UUID(media_id),
                 reason=reason,
             )
-        elif scope == "podcast" and podcast_id is not None:
+        elif scope == "podcast":
+            if podcast_id is None:
+                raise ValueError("contributor_reconciliation podcast scope requires podcast_id")
             result = refresh_contributor_reconciliation_for_podcast(
                 db,
                 podcast_id=UUID(podcast_id),
                 reason=reason,
             )
         else:
-            return {"status": "skipped", "reason": "unsupported_scope"}
+            raise ValueError(f"Unsupported contributor_reconciliation scope: {scope}")
         logger.info(
             "contributor_reconciliation_completed",
             scope=scope,

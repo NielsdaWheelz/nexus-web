@@ -45,9 +45,6 @@ from nexus.services import (
     media_source_types as source_types,
 )
 from nexus.services.contributor_credits import replace_media_contributor_credits
-from nexus.services.contributor_reconciliation import (
-    try_enqueue_contributor_reconciliation_for_media,
-)
 from nexus.services.file_ingest_validation import (
     has_valid_file_signature,
     validate_file_ingest_request,
@@ -2859,14 +2856,6 @@ def _run_post_success_source_actions(
     if bool(result.get("metadata_enrichment")):
         if try_enqueue_metadata_enrichment(db, media_id=media_id, request_id=request_id):
             db.commit()
-
-    if try_enqueue_contributor_reconciliation_for_media(
-        db,
-        media_id=media_id,
-        reason="source_ingest",
-        request_id=request_id,
-    ):
-        db.commit()
 
 
 def _fail_latest_attempt_for_media(db: Session, media_id: UUID, exc: Exception) -> None:

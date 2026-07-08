@@ -150,7 +150,7 @@ def test_reconciliation_proposes_same_name_visible_duplicates(db_session):
     assert handles == {first_handle, second_handle}
     assert candidate.status == "pending"
     assert candidate.score >= 55
-    assert candidate.evidence["matcher"] == "deterministic"
+    assert candidate.evidence.matcher == "deterministic"
 
 
 @pytest.mark.integration

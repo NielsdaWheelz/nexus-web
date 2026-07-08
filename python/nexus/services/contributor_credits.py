@@ -10,6 +10,7 @@ from sqlalchemy import bindparam, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
+from nexus.jobs.queue import enqueue_job
 from nexus.schemas.contributors import (
     ContributorCreditOut,
     ContributorResolutionStatus,
@@ -45,6 +46,7 @@ MACHINE_DERIVED_MEDIA_AUTHOR_CREDIT_SOURCES = frozenset(
         "youtube_metadata",
     }
 )
+CONTRIBUTOR_RECONCILIATION_JOB_KIND = "contributor_reconciliation"
 
 
 def replace_media_contributor_credits(
@@ -54,7 +56,12 @@ def replace_media_contributor_credits(
     credits: list[dict[str, Any]],
     source: str | None = None,
 ) -> None:
-    _replace_credits(db, "media_id", media_id, credits, source=source)
+    if _replace_credits(db, "media_id", media_id, credits, source=source):
+        _enqueue_contributor_reconciliation_for_media(
+            db,
+            media_id=media_id,
+            reason=_reconciliation_reason(source),
+        )
 
 
 def replace_machine_derived_media_author_credits(
@@ -137,6 +144,7 @@ def replace_machine_derived_media_author_credits(
             "preserved_sources": sorted(PRESERVED_MEDIA_AUTHOR_CREDIT_SOURCES),
         },
     )
+    touched = bool(existing_rows or credits)
     if credits:
         _insert_credits(
             db,
@@ -145,6 +153,12 @@ def replace_machine_derived_media_author_credits(
             credits,
             source_filter=normalized_source,
             previous_contributors=previous_contributors,
+        )
+    if touched:
+        _enqueue_contributor_reconciliation_for_media(
+            db,
+            media_id=media_id,
+            reason=_reconciliation_reason(normalized_source),
         )
 
 
@@ -155,7 +169,12 @@ def replace_podcast_contributor_credits(
     credits: list[dict[str, Any]],
     source: str | None = None,
 ) -> None:
-    _replace_credits(db, "podcast_id", podcast_id, credits, source=source)
+    if _replace_credits(db, "podcast_id", podcast_id, credits, source=source):
+        _enqueue_contributor_reconciliation_for_podcast(
+            db,
+            podcast_id=podcast_id,
+            reason=_reconciliation_reason(source),
+        )
 
 
 def replace_gutenberg_contributor_credits(
@@ -325,13 +344,13 @@ def _replace_credits(
     credits: list[dict[str, Any]],
     *,
     source: str | None,
-) -> None:
+) -> bool:
     source_filter = _normalize_credit_source(source) if source is not None else None
     replacement_sources = (
         [source_filter] if source_filter is not None else _replacement_sources(credits)
     )
     if not replacement_sources:
-        return
+        return False
     existing_rows = db.execute(
         text(
             f"""
@@ -375,6 +394,7 @@ def _replace_credits(
         if remaining != 0:
             raise RuntimeError("Unexpected contributor credit delete count")
 
+    touched = bool(existing_ids or credits)
     _insert_credits(
         db,
         target_column,
@@ -383,6 +403,7 @@ def _replace_credits(
         source_filter=source_filter,
         previous_contributors=previous_contributors,
     )
+    return touched
 
 
 def _previous_contributors_by_source_name(
@@ -510,6 +531,48 @@ def _replacement_sources(credits: list[dict[str, Any]]) -> list[str]:
 
 def _normalize_credit_source(value: Any) -> str:
     return str(value or "local").strip() or "local"
+
+
+def _reconciliation_reason(source: str | None) -> str:
+    return f"contributor_credit_replace:{_normalize_credit_source(source)}"
+
+
+def _enqueue_contributor_reconciliation_for_media(
+    db: Session,
+    *,
+    media_id: UUID,
+    reason: str,
+) -> None:
+    enqueue_job(
+        db,
+        kind=CONTRIBUTOR_RECONCILIATION_JOB_KIND,
+        payload={
+            "scope": "media",
+            "media_id": str(media_id),
+            "reason": reason,
+            "request_id": None,
+        },
+        max_attempts=3,
+    )
+
+
+def _enqueue_contributor_reconciliation_for_podcast(
+    db: Session,
+    *,
+    podcast_id: UUID,
+    reason: str,
+) -> None:
+    enqueue_job(
+        db,
+        kind=CONTRIBUTOR_RECONCILIATION_JOB_KIND,
+        payload={
+            "scope": "podcast",
+            "podcast_id": str(podcast_id),
+            "reason": reason,
+            "request_id": None,
+        },
+        max_attempts=3,
+    )
 
 
 def _source_ref(credit: dict[str, Any]) -> dict[str, Any]:

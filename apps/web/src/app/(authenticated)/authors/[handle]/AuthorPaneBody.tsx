@@ -59,7 +59,6 @@ interface ContributorPaneData {
   contributor: ContributorSummary;
   aliases: ContributorAlias[];
   externalIds: ContributorExternalId[];
-  reconciliationCandidates: ContributorReconciliationCandidate[];
   works: ContributorWork[];
   workFilterOptions: ContributorWork[];
 }
@@ -116,11 +115,20 @@ export default function AuthorPaneBody() {
     id: string;
     action: "accept" | "reject";
   } | null>(null);
+  const [reconciliationCandidates, setReconciliationCandidates] = useState<
+    ContributorReconciliationCandidate[]
+  >([]);
+  const [reconciliationStatus, setReconciliationStatus] = useState<
+    "loading" | "error" | "ready"
+  >("loading");
+  const [reconciliationError, setReconciliationError] =
+    useState<FeedbackContent | null>(null);
   const [aliasDraft, setAliasDraft] = useState("");
   const [authorityDraft, setAuthorityDraft] = useState("");
   const [externalKeyDraft, setExternalKeyDraft] = useState("");
   const lastWorksRequestKeyRef = useRef<string | null>(null);
   const worksRequestIdRef = useRef(0);
+  const reconciliationRequestIdRef = useRef(0);
   const mergeCardRef = useRef<HTMLDivElement>(null);
   const loading =
     !!handle && !error && (data === null || data.contributor.handle !== handle);
@@ -137,18 +145,13 @@ export default function AuthorPaneBody() {
     if (!data) return;
     const targetHandle = data.contributor.handle;
     try {
-      const [contributorResponse, works, reconciliationPage] = await Promise.all([
+      const [contributorResponse, works] = await Promise.all([
         fetchContributor(targetHandle),
         fetchContributorWorks(targetHandle, {
           role: roleFilter,
           contentKind: kindFilter,
           query: queryFilter,
           limit: AUTHOR_WORKS_LIMIT,
-        }),
-        fetchContributorReconciliationCandidates({
-          contributorHandle: targetHandle,
-          status: "pending",
-          limit: 20,
         }),
       ]);
       setData((current) =>
@@ -158,14 +161,39 @@ export default function AuthorPaneBody() {
               contributor: contributorResponse,
               aliases: contributorResponse.aliases ?? [],
               externalIds: contributorResponse.external_ids ?? [],
-              reconciliationCandidates: reconciliationPage.candidates,
               works,
             }
           : current,
       );
+      void refreshReconciliationCandidates(targetHandle);
     } catch (reloadError) {
       if (handleUnauthenticatedApiError(reloadError)) return;
       setError(toFeedback(reloadError, { fallback: "Failed to refresh author" }));
+    }
+  }
+
+  async function refreshReconciliationCandidates(targetHandle: string): Promise<void> {
+    const requestId = reconciliationRequestIdRef.current + 1;
+    reconciliationRequestIdRef.current = requestId;
+    setReconciliationStatus("loading");
+    setReconciliationError(null);
+    try {
+      const reconciliationPage = await fetchContributorReconciliationCandidates({
+        contributorHandle: targetHandle,
+        status: "pending",
+        limit: 20,
+      });
+      if (requestId !== reconciliationRequestIdRef.current) return;
+      setReconciliationCandidates(reconciliationPage.candidates);
+      setReconciliationStatus("ready");
+    } catch (loadError) {
+      if (handleUnauthenticatedApiError(loadError)) return;
+      if (requestId !== reconciliationRequestIdRef.current) return;
+      setReconciliationCandidates([]);
+      setReconciliationStatus("error");
+      setReconciliationError(
+        toFeedback(loadError, { fallback: "Failed to load duplicate suggestions" }),
+      );
     }
   }
 
@@ -212,7 +240,14 @@ export default function AuthorPaneBody() {
     setError(null);
     try {
       const survivor = await acceptContributorReconciliationCandidate(candidate.id);
-      paneRouter.push(`/authors/${encodeURIComponent(survivor.handle)}`);
+      setReconciliationCandidates((current) =>
+        current.filter((item) => item.id !== candidate.id),
+      );
+      if (data?.contributor.handle === survivor.handle) {
+        await reload();
+      } else {
+        paneRouter.push(`/authors/${encodeURIComponent(survivor.handle)}`);
+      }
     } catch (acceptError) {
       if (handleUnauthenticatedApiError(acceptError)) return;
       setError(toFeedback(acceptError, { fallback: "Failed to accept duplicate suggestion" }));
@@ -226,11 +261,22 @@ export default function AuthorPaneBody() {
     candidate: ContributorReconciliationCandidate,
   ): Promise<void> {
     setBusyCandidate({ id: candidate.id, action: "reject" });
-    await runMutation(
-      () => rejectContributorReconciliationCandidate(candidate.id),
-      "Failed to reject duplicate suggestion",
-    );
-    setBusyCandidate(null);
+    setReconciliationError(null);
+    try {
+      await rejectContributorReconciliationCandidate(candidate.id);
+      setReconciliationCandidates((current) =>
+        current.filter((item) => item.id !== candidate.id),
+      );
+      setReconciliationStatus("ready");
+    } catch (rejectError) {
+      if (handleUnauthenticatedApiError(rejectError)) return;
+      setReconciliationStatus("error");
+      setReconciliationError(
+        toFeedback(rejectError, { fallback: "Failed to reject duplicate suggestion" }),
+      );
+    } finally {
+      setBusyCandidate(null);
+    }
   }
 
   async function handleAddAlias(): Promise<void> {
@@ -274,11 +320,15 @@ export default function AuthorPaneBody() {
     setQueryFilter("");
     setMergeOpen(false);
     setBusyCandidate(null);
+    setReconciliationCandidates([]);
+    setReconciliationStatus(handle ? "loading" : "ready");
+    setReconciliationError(null);
     setAliasDraft("");
     setAuthorityDraft("");
     setExternalKeyDraft("");
     lastWorksRequestKeyRef.current = null;
     worksRequestIdRef.current += 1;
+    reconciliationRequestIdRef.current += 1;
     setError(
       handle ? null : { severity: "error", title: "Author handle is missing" },
     );
@@ -293,10 +343,7 @@ export default function AuthorPaneBody() {
         "",
         "",
       );
-      setData({
-        ...initialAuthor.data,
-        reconciliationCandidates: initialAuthor.data.reconciliationCandidates ?? [],
-      });
+      setData(initialAuthor.data);
       setError(null);
     } else if (initialAuthor.status === "error") {
       setError(
@@ -305,6 +352,13 @@ export default function AuthorPaneBody() {
       setData(null);
     }
   }, [initialAuthor]);
+
+  useEffect(() => {
+    if (!data?.contributor.handle) {
+      return;
+    }
+    void refreshReconciliationCandidates(data.contributor.handle);
+  }, [data?.contributor.handle]);
 
   useEffect(() => {
     if (!handle || !data || data.contributor.handle !== handle) {
@@ -439,11 +493,12 @@ export default function AuthorPaneBody() {
           </header>
 
           {/* split UI deferred */}
-          {data.reconciliationCandidates.length > 0 ? (
+          {reconciliationStatus !== "ready" || reconciliationCandidates.length > 0 ? (
             <ContributorReconciliationCandidates
               title="Possible Duplicates"
-              status="ready"
-              candidates={data.reconciliationCandidates}
+              status={reconciliationStatus}
+              candidates={reconciliationCandidates}
+              error={reconciliationError}
               busyCandidate={busyCandidate}
               emptyTitle="No duplicate suggestions"
               emptyMessage="No contributor duplicates are pending review."

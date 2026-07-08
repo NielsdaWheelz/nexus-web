@@ -1,7 +1,6 @@
 import {
   AUTHOR_WORKS_LIMIT,
   billingAccountResource,
-  contributorReconciliationCandidatesResource,
   contributorResource,
   contributorWorksResource,
   conversationsInitialResource,
@@ -78,7 +77,7 @@ export const paneResourceLoaders: Partial<Record<PaneRouteId, PaneResourceLoader
   author: {
     cacheKey: (p) => contributorResource.cacheKey({ handle: p.handle }),
     load: async (request, p) => {
-      const [contributorEnv, worksEnv, reconciliationEnv] = await Promise.all([
+      const [contributorEnv, worksEnv] = await Promise.all([
         request<
           { handle: string },
           { data: { aliases?: unknown[]; external_ids?: unknown[] } }
@@ -87,25 +86,13 @@ export const paneResourceLoaders: Partial<Record<PaneRouteId, PaneResourceLoader
           contributorWorksResource,
           { handle: p.handle, limit: AUTHOR_WORKS_LIMIT },
         ),
-        request<
-          { contributorHandle: string; status: "pending"; limit: number },
-          { data: { candidates?: unknown[] } }
-        >(contributorReconciliationCandidatesResource, {
-          contributorHandle: p.handle,
-          status: "pending",
-          limit: 20,
-        }),
       ]);
       const contributor = contributorEnv.data;
       const works = Array.isArray(worksEnv.data.works) ? worksEnv.data.works : [];
-      const reconciliationCandidates = Array.isArray(reconciliationEnv.data.candidates)
-        ? reconciliationEnv.data.candidates
-        : [];
       return {
         contributor,
         aliases: contributor.aliases ?? [],
         externalIds: contributor.external_ids ?? [],
-        reconciliationCandidates,
         works,
         workFilterOptions: works,
       };

@@ -1810,6 +1810,20 @@ class ContributorReconciliationCandidate(Base):
         ForeignKey("contributors.id"),
         nullable=False,
     )
+    source_snapshot_handle: Mapped[str] = mapped_column(Text, nullable=False)
+    source_snapshot_display_name: Mapped[str] = mapped_column(Text, nullable=False)
+    source_snapshot_sort_name: Mapped[str] = mapped_column(Text, nullable=False)
+    source_snapshot_kind: Mapped[str] = mapped_column(Text, nullable=False)
+    source_snapshot_status: Mapped[str] = mapped_column(Text, nullable=False)
+    source_snapshot_disambiguation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_snapshot_work_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    target_snapshot_handle: Mapped[str] = mapped_column(Text, nullable=False)
+    target_snapshot_display_name: Mapped[str] = mapped_column(Text, nullable=False)
+    target_snapshot_sort_name: Mapped[str] = mapped_column(Text, nullable=False)
+    target_snapshot_kind: Mapped[str] = mapped_column(Text, nullable=False)
+    target_snapshot_status: Mapped[str] = mapped_column(Text, nullable=False)
+    target_snapshot_disambiguation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    target_snapshot_work_count: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
     score: Mapped[int] = mapped_column(Integer, nullable=False)
     evidence: Mapped[dict[str, object]] = mapped_column(
@@ -1835,14 +1849,6 @@ class ContributorReconciliationCandidate(Base):
     )
 
     __table_args__ = (
-        CheckConstraint(
-            "status IN ('pending', 'accepted', 'rejected', 'stale')",
-            name="ck_contributor_reconciliation_candidates_status",
-        ),
-        CheckConstraint(
-            "jsonb_typeof(evidence) = 'object'",
-            name="ck_contributor_reconciliation_candidates_evidence",
-        ),
         UniqueConstraint(
             "run_id",
             "contributor_a_id",
@@ -1866,13 +1872,6 @@ class ContributorReconciliationCandidate(Base):
             "contributor_b_id",
             "status",
             "score",
-        ),
-        Index(
-            "uq_contributor_reconciliation_candidates_pending_pair",
-            "contributor_a_id",
-            "contributor_b_id",
-            unique=True,
-            postgresql_where=text("status = 'pending'"),
         ),
     )
 

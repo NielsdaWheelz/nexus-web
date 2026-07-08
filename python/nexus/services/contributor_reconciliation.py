@@ -17,19 +17,17 @@ from uuid import UUID
 from sqlalchemy import bindparam, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import visible_contributor_ids_cte_sql
 from nexus.db.retries import retry_serializable
 from nexus.errors import ApiError, ApiErrorCode, ForbiddenError, NotFoundError
-from nexus.jobs.queue import enqueue_job
-from nexus.logging import get_logger
 from nexus.schemas.contributors import (
     ContributorMergeRequest,
     ContributorOut,
     ContributorReconciliationCandidateOut,
     ContributorReconciliationContributorOut,
+    ContributorReconciliationEvidenceOut,
     ContributorReconciliationRunOut,
 )
 from nexus.services import contributors as contributors_service
@@ -39,9 +37,6 @@ from nexus.services.contributor_taxonomy import (
     normalize_contributor_name,
 )
 
-logger = get_logger(__name__)
-
-RECONCILIATION_JOB_KIND = "contributor_reconciliation"
 RECONCILIATION_ALGORITHM_VERSION = "contributor_reconciliation_v2"
 VISIBLE_CANDIDATE_STATUSES = frozenset({"pending", "accepted", "rejected", "stale"})
 MIN_CANDIDATE_SCORE = 65
@@ -55,6 +50,7 @@ class _ContributorProfile:
     handle: str
     display_name: str
     sort_name: str
+    disambiguation: str | None
     normalized_display_name: str
     normalized_sort_name: str
     kind: str
@@ -63,6 +59,17 @@ class _ContributorProfile:
     work_count: int
     confirmed_alias_count: int
     strong_external_id_count: int
+
+
+@dataclass(frozen=True)
+class _CandidateContributorSnapshot:
+    handle: str
+    display_name: str
+    sort_name: str
+    kind: str
+    status: str
+    disambiguation: str | None
+    work_count: int
 
 
 @dataclass
@@ -78,76 +85,10 @@ class _ScoredCandidate:
     contributor_b_id: UUID
     proposed_source_id: UUID
     proposed_target_id: UUID
+    source_snapshot: _CandidateContributorSnapshot
+    target_snapshot: _CandidateContributorSnapshot
     score: int
-    evidence: dict[str, object]
-
-
-def try_enqueue_contributor_reconciliation_for_media(
-    db: Session,
-    *,
-    media_id: UUID | str,
-    reason: str,
-    request_id: str | None,
-) -> bool:
-    """Best-effort proposal refresh dispatch for a media item's contributors."""
-
-    media_ref = str(media_id)
-    try:
-        with db.begin_nested():
-            enqueue_job(
-                db,
-                kind=RECONCILIATION_JOB_KIND,
-                payload={
-                    "scope": "media",
-                    "media_id": media_ref,
-                    "reason": reason,
-                    "request_id": request_id,
-                },
-                max_attempts=3,
-            )
-        return True
-    except SQLAlchemyError as exc:
-        logger.warning(
-            "contributor_reconciliation_enqueue_failed",
-            media_id=media_ref,
-            reason=reason,
-            error=str(exc),
-        )
-        return False
-
-
-def try_enqueue_contributor_reconciliation_for_podcast(
-    db: Session,
-    *,
-    podcast_id: UUID | str,
-    reason: str,
-    request_id: str | None,
-) -> bool:
-    """Best-effort proposal refresh dispatch for a podcast's contributors."""
-
-    podcast_ref = str(podcast_id)
-    try:
-        with db.begin_nested():
-            enqueue_job(
-                db,
-                kind=RECONCILIATION_JOB_KIND,
-                payload={
-                    "scope": "podcast",
-                    "podcast_id": podcast_ref,
-                    "reason": reason,
-                    "request_id": request_id,
-                },
-                max_attempts=3,
-            )
-        return True
-    except SQLAlchemyError as exc:
-        logger.warning(
-            "contributor_reconciliation_enqueue_failed",
-            podcast_id=podcast_ref,
-            reason=reason,
-            error=str(exc),
-        )
-        return False
+    evidence: ContributorReconciliationEvidenceOut
 
 
 def generate_contributor_reconciliation_run_for_media(
@@ -216,7 +157,7 @@ def generate_contributor_reconciliation_run_for_contributors(
             candidate_count=len(candidates),
             evaluated_pair_count=evaluated_pair_count,
         )
-        _stale_existing_pending_candidates(db, candidates=candidates)
+        _stale_existing_pending_candidates(db, anchor_ids=anchor_ids)
         _insert_candidates(db, run_id=run_id, candidates=candidates)
         db.commit()
         return _load_run(db, run_id, include_candidates=True)
@@ -344,8 +285,7 @@ def list_contributor_reconciliation_candidates(
         db.execute(
             text(
                 f"""
-                WITH visible_contributors AS ({visible_contributor_ids_cte_sql()}),
-                     work_counts AS ({_work_counts_sql()})
+                WITH visible_contributors AS ({visible_contributor_ids_cte_sql()})
                 SELECT
                     cand.id,
                     cand.run_id,
@@ -356,35 +296,41 @@ def list_contributor_reconciliation_candidates(
                     cand.created_at,
                     cand.updated_at,
                     cand.decided_at,
-                    src.handle AS source_handle,
-                    src.display_name AS source_display_name,
-                    src.sort_name AS source_sort_name,
-                    src.kind AS source_kind,
-                    src.status AS source_status,
-                    src.disambiguation AS source_disambiguation,
-                    COALESCE(src_counts.work_count, 0) AS source_work_count,
-                    tgt.handle AS target_handle,
-                    tgt.display_name AS target_display_name,
-                    tgt.sort_name AS target_sort_name,
-                    tgt.kind AS target_kind,
-                    tgt.status AS target_status,
-                    tgt.disambiguation AS target_disambiguation,
-                    COALESCE(tgt_counts.work_count, 0) AS target_work_count
+                    cand.source_snapshot_handle AS source_handle,
+                    cand.source_snapshot_display_name AS source_display_name,
+                    cand.source_snapshot_sort_name AS source_sort_name,
+                    cand.source_snapshot_kind AS source_kind,
+                    cand.source_snapshot_status AS source_status,
+                    cand.source_snapshot_disambiguation AS source_disambiguation,
+                    cand.source_snapshot_work_count AS source_work_count,
+                    cand.target_snapshot_handle AS target_handle,
+                    cand.target_snapshot_display_name AS target_display_name,
+                    cand.target_snapshot_sort_name AS target_sort_name,
+                    cand.target_snapshot_kind AS target_kind,
+                    cand.target_snapshot_status AS target_status,
+                    cand.target_snapshot_disambiguation AS target_disambiguation,
+                    cand.target_snapshot_work_count AS target_work_count
                 FROM contributor_reconciliation_candidates cand
-                JOIN contributors src ON src.id = cand.proposed_source_contributor_id
-                JOIN contributors tgt ON tgt.id = cand.proposed_target_contributor_id
-                JOIN visible_contributors visible_src ON visible_src.contributor_id = src.id
-                JOIN visible_contributors visible_tgt ON visible_tgt.contributor_id = tgt.id
-                LEFT JOIN work_counts src_counts ON src_counts.contributor_id = src.id
-                LEFT JOIN work_counts tgt_counts ON tgt_counts.contributor_id = tgt.id
+                JOIN contributors src_live ON src_live.id = cand.proposed_source_contributor_id
+                JOIN contributors tgt_live ON tgt_live.id = cand.proposed_target_contributor_id
+                JOIN contributors pair_a ON pair_a.id = cand.contributor_a_id
+                JOIN contributors pair_b ON pair_b.id = cand.contributor_b_id
+                JOIN visible_contributors visible_src
+                  ON visible_src.contributor_id =
+                     COALESCE(src_live.merged_into_contributor_id, src_live.id)
+                JOIN visible_contributors visible_tgt
+                  ON visible_tgt.contributor_id =
+                     COALESCE(tgt_live.merged_into_contributor_id, tgt_live.id)
                 WHERE (:run_id IS NULL OR cand.run_id = :run_id)
                   AND cand.status = :status
-                  AND src.status IN ('unverified', 'verified')
-                  AND tgt.status IN ('unverified', 'verified')
                   AND (
                         :contributor_id IS NULL
                         OR cand.contributor_a_id = :contributor_id
                         OR cand.contributor_b_id = :contributor_id
+                        OR COALESCE(pair_a.merged_into_contributor_id, pair_a.id)
+                           = :contributor_id
+                        OR COALESCE(pair_b.merged_into_contributor_id, pair_b.id)
+                           = :contributor_id
                       )
                 ORDER BY cand.score DESC, cand.updated_at DESC, cand.id ASC
                 LIMIT :limit
@@ -415,73 +361,101 @@ def accept_contributor_reconciliation_candidate(
     candidate_id: UUID,
 ) -> ContributorOut:
     _require_contributor_curator(actor_roles)
-    source_handle, target_handle, source_id, target_id = _pending_candidate_direction(
+    source_handle, target_handle, _source_id, _target_id = _pending_candidate_direction(
         db,
         candidate_id,
     )
-    merged = contributors_service.merge_contributor(
+
+    return contributors_service.merge_contributor(
         db,
         actor_user_id=actor_user_id,
         actor_roles=actor_roles,
         contributor_handle=source_handle,
         request=ContributorMergeRequest(target_handle=target_handle),
+        on_merge_transaction=lambda txn_db, source, target: _accept_candidate_in_merge_transaction(
+            txn_db,
+            candidate_id=candidate_id,
+            actor_user_id=actor_user_id,
+            source_id=source.id,
+            target_id=target.id,
+        ),
     )
 
-    def _txn() -> None:
-        row = db.execute(
+
+def _accept_candidate_in_merge_transaction(
+    db: Session,
+    *,
+    candidate_id: UUID,
+    actor_user_id: UUID,
+    source_id: UUID,
+    target_id: UUID,
+) -> None:
+    row = (
+        db.execute(
             text(
                 """
-                SELECT id
+                SELECT
+                    proposed_source_contributor_id,
+                    proposed_target_contributor_id
                 FROM contributor_reconciliation_candidates
                 WHERE id = :candidate_id
+                  AND status = 'pending'
+                FOR UPDATE
                 """
             ),
             {"candidate_id": candidate_id},
-        ).mappings().one_or_none()
-        if row is None:
-            raise NotFoundError(
-                ApiErrorCode.E_NOT_FOUND,
-                "Contributor reconciliation candidate not found",
-            )
-        db.execute(
-            text(
-                """
-                UPDATE contributor_reconciliation_candidates
-                SET status = 'accepted',
-                    decided_by_user_id = :actor_user_id,
-                    decided_at = now(),
-                    updated_at = now()
-                WHERE id = :candidate_id
-                """
-            ),
-            {"candidate_id": candidate_id, "actor_user_id": actor_user_id},
         )
-        db.execute(
-            text(
-                """
-                UPDATE contributor_reconciliation_candidates
-                SET status = 'stale',
-                    updated_at = now()
-                WHERE id != :candidate_id
-                  AND status = 'pending'
-                  AND (
-                        contributor_a_id IN (:source_id, :target_id)
-                        OR contributor_b_id IN (:source_id, :target_id)
-                        OR proposed_source_contributor_id IN (:source_id, :target_id)
-                        OR proposed_target_contributor_id IN (:source_id, :target_id)
-                      )
-                """
-            ),
-            {
-                "candidate_id": candidate_id,
-                "source_id": source_id,
-                "target_id": target_id,
-            },
+        .mappings()
+        .one_or_none()
+    )
+    if row is None:
+        raise NotFoundError(
+            ApiErrorCode.E_NOT_FOUND,
+            "Pending contributor reconciliation candidate not found",
         )
-        db.commit()
-
-    retry_serializable(db, "accept_contributor_reconciliation_candidate", _txn)
-    return merged
+    if row["proposed_source_contributor_id"] != source_id or (
+        row["proposed_target_contributor_id"] != target_id
+    ):
+        raise ApiError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Contributor reconciliation candidate no longer matches merge direction",
+        )
+    db.execute(
+        text(
+            """
+            UPDATE contributor_reconciliation_candidates
+            SET status = 'accepted',
+                decided_by_user_id = :actor_user_id,
+                decided_at = now(),
+                updated_at = now()
+            WHERE id = :candidate_id
+              AND status = 'pending'
+            """
+        ),
+        {"candidate_id": candidate_id, "actor_user_id": actor_user_id},
+    )
+    db.execute(
+        text(
+            """
+            UPDATE contributor_reconciliation_candidates
+            SET status = 'stale',
+                updated_at = now()
+            WHERE id != :candidate_id
+              AND status = 'pending'
+              AND (
+                    contributor_a_id IN (:source_id, :target_id)
+                    OR contributor_b_id IN (:source_id, :target_id)
+                    OR proposed_source_contributor_id IN (:source_id, :target_id)
+                    OR proposed_target_contributor_id IN (:source_id, :target_id)
+                  )
+            """
+        ),
+        {
+            "candidate_id": candidate_id,
+            "source_id": source_id,
+            "target_id": target_id,
+        },
+    )
 
 
 def reject_contributor_reconciliation_candidate(
@@ -501,6 +475,7 @@ def reject_contributor_reconciliation_candidate(
                 FROM contributor_reconciliation_candidates
                 WHERE id = :candidate_id
                   AND status = 'pending'
+                FOR UPDATE
                 """
             ),
             {"candidate_id": candidate_id},
@@ -519,6 +494,7 @@ def reject_contributor_reconciliation_candidate(
                     decided_at = now(),
                     updated_at = now()
                 WHERE id = :candidate_id
+                  AND status = 'pending'
                 """
             ),
             {"candidate_id": candidate_id, "actor_user_id": actor_user_id},
@@ -528,7 +504,7 @@ def reject_contributor_reconciliation_candidate(
     retry_serializable(db, "reject_contributor_reconciliation_candidate", _txn)
     row = db.execute(
         text(
-            f"""
+            """
             SELECT
                 cand.id,
                 cand.run_id,
@@ -539,25 +515,21 @@ def reject_contributor_reconciliation_candidate(
                 cand.created_at,
                 cand.updated_at,
                 cand.decided_at,
-                src.handle AS source_handle,
-                src.display_name AS source_display_name,
-                src.sort_name AS source_sort_name,
-                src.kind AS source_kind,
-                src.status AS source_status,
-                src.disambiguation AS source_disambiguation,
-                COALESCE(src_counts.work_count, 0) AS source_work_count,
-                tgt.handle AS target_handle,
-                tgt.display_name AS target_display_name,
-                tgt.sort_name AS target_sort_name,
-                tgt.kind AS target_kind,
-                tgt.status AS target_status,
-                tgt.disambiguation AS target_disambiguation,
-                COALESCE(tgt_counts.work_count, 0) AS target_work_count
+                cand.source_snapshot_handle AS source_handle,
+                cand.source_snapshot_display_name AS source_display_name,
+                cand.source_snapshot_sort_name AS source_sort_name,
+                cand.source_snapshot_kind AS source_kind,
+                cand.source_snapshot_status AS source_status,
+                cand.source_snapshot_disambiguation AS source_disambiguation,
+                cand.source_snapshot_work_count AS source_work_count,
+                cand.target_snapshot_handle AS target_handle,
+                cand.target_snapshot_display_name AS target_display_name,
+                cand.target_snapshot_sort_name AS target_sort_name,
+                cand.target_snapshot_kind AS target_kind,
+                cand.target_snapshot_status AS target_status,
+                cand.target_snapshot_disambiguation AS target_disambiguation,
+                cand.target_snapshot_work_count AS target_work_count
             FROM contributor_reconciliation_candidates cand
-            JOIN contributors src ON src.id = cand.proposed_source_contributor_id
-            JOIN contributors tgt ON tgt.id = cand.proposed_target_contributor_id
-            LEFT JOIN ({_work_counts_sql()}) src_counts ON src_counts.contributor_id = src.id
-            LEFT JOIN ({_work_counts_sql()}) tgt_counts ON tgt_counts.contributor_id = tgt.id
             WHERE cand.id = :candidate_id
             """
         ),
@@ -648,6 +620,8 @@ def _compute_candidates(
                 contributor_b_id=pair[1],
                 proposed_source_id=source.id,
                 proposed_target_id=target.id,
+                source_snapshot=_snapshot_for_profile(source),
+                target_snapshot=_snapshot_for_profile(target),
                 score=score,
                 evidence=_candidate_evidence(
                     reason=reason,
@@ -668,6 +642,18 @@ def _compute_candidates(
         )
     )
     return candidates, evaluated_pair_count
+
+
+def _snapshot_for_profile(profile: _ContributorProfile) -> _CandidateContributorSnapshot:
+    return _CandidateContributorSnapshot(
+        handle=profile.handle,
+        display_name=profile.display_name,
+        sort_name=profile.sort_name,
+        kind=profile.kind,
+        status=profile.status,
+        disambiguation=profile.disambiguation,
+        work_count=profile.work_count,
+    )
 
 
 def _rejected_pairs(db: Session) -> set[tuple[UUID, UUID]]:
@@ -754,6 +740,7 @@ def _load_profiles(db: Session) -> dict[UUID, _ContributorProfile]:
                     c.handle,
                     c.display_name,
                     c.sort_name,
+                    c.disambiguation,
                     c.kind,
                     c.status,
                     c.created_at,
@@ -783,6 +770,7 @@ def _load_profiles(db: Session) -> dict[UUID, _ContributorProfile]:
             handle=row["handle"],
             display_name=row["display_name"],
             sort_name=row["sort_name"],
+            disambiguation=row["disambiguation"],
             normalized_display_name=normalize_contributor_name(row["display_name"]),
             normalized_sort_name=normalize_contributor_name(row["sort_name"]),
             kind=row["kind"],
@@ -894,7 +882,7 @@ def _candidate_evidence(
     target: _ContributorProfile,
     accumulator: _PairAccumulator,
     score: int,
-) -> dict[str, object]:
+) -> ContributorReconciliationEvidenceOut:
     signals: list[str] = []
     if accumulator.shared_aliases:
         signals.append("shared_alias")
@@ -908,25 +896,24 @@ def _candidate_evidence(
         signals.append("same_sort_name")
     if source.kind == target.kind:
         signals.append("same_kind")
-    return {
-        "matcher": "deterministic",
-        "algorithm_version": RECONCILIATION_ALGORITHM_VERSION,
-        "reason": reason,
-        "score": score,
-        "signals": signals,
-        "shared_aliases": sorted(accumulator.shared_aliases),
-        "shared_confirmed_aliases": sorted(accumulator.shared_confirmed_aliases),
-        "shared_work_count": len(accumulator.shared_work_keys),
-        "shared_work_keys": sorted(accumulator.shared_work_keys)[:5],
-        "source_handle": source.handle,
-        "target_handle": target.handle,
-        "source_work_count": source.work_count,
-        "target_work_count": target.work_count,
-        "source_confirmed_alias_count": source.confirmed_alias_count,
-        "target_confirmed_alias_count": target.confirmed_alias_count,
-        "source_strong_external_id_count": source.strong_external_id_count,
-        "target_strong_external_id_count": target.strong_external_id_count,
-    }
+    return ContributorReconciliationEvidenceOut(
+        matcher="deterministic",
+        algorithm_version=RECONCILIATION_ALGORITHM_VERSION,
+        reason=reason,
+        score=score,
+        signals=signals,
+        shared_aliases=sorted(accumulator.shared_aliases),
+        shared_confirmed_aliases=sorted(accumulator.shared_confirmed_aliases),
+        shared_work_count=len(accumulator.shared_work_keys),
+        source_handle=source.handle,
+        target_handle=target.handle,
+        source_work_count=source.work_count,
+        target_work_count=target.work_count,
+        source_confirmed_alias_count=source.confirmed_alias_count,
+        target_confirmed_alias_count=target.confirmed_alias_count,
+        source_strong_external_id_count=source.strong_external_id_count,
+        target_strong_external_id_count=target.strong_external_id_count,
+    )
 
 
 def _insert_run(
@@ -981,6 +968,20 @@ def _insert_candidates(
                 contributor_b_id,
                 proposed_source_contributor_id,
                 proposed_target_contributor_id,
+                source_snapshot_handle,
+                source_snapshot_display_name,
+                source_snapshot_sort_name,
+                source_snapshot_kind,
+                source_snapshot_status,
+                source_snapshot_disambiguation,
+                source_snapshot_work_count,
+                target_snapshot_handle,
+                target_snapshot_display_name,
+                target_snapshot_sort_name,
+                target_snapshot_kind,
+                target_snapshot_status,
+                target_snapshot_disambiguation,
+                target_snapshot_work_count,
                 status,
                 score,
                 evidence
@@ -991,6 +992,20 @@ def _insert_candidates(
                 :contributor_b_id,
                 :proposed_source_contributor_id,
                 :proposed_target_contributor_id,
+                :source_snapshot_handle,
+                :source_snapshot_display_name,
+                :source_snapshot_sort_name,
+                :source_snapshot_kind,
+                :source_snapshot_status,
+                :source_snapshot_disambiguation,
+                :source_snapshot_work_count,
+                :target_snapshot_handle,
+                :target_snapshot_display_name,
+                :target_snapshot_sort_name,
+                :target_snapshot_kind,
+                :target_snapshot_status,
+                :target_snapshot_disambiguation,
+                :target_snapshot_work_count,
                 'pending',
                 :score,
                 :evidence
@@ -1004,8 +1019,22 @@ def _insert_candidates(
                 "contributor_b_id": candidate.contributor_b_id,
                 "proposed_source_contributor_id": candidate.proposed_source_id,
                 "proposed_target_contributor_id": candidate.proposed_target_id,
+                "source_snapshot_handle": candidate.source_snapshot.handle,
+                "source_snapshot_display_name": candidate.source_snapshot.display_name,
+                "source_snapshot_sort_name": candidate.source_snapshot.sort_name,
+                "source_snapshot_kind": candidate.source_snapshot.kind,
+                "source_snapshot_status": candidate.source_snapshot.status,
+                "source_snapshot_disambiguation": candidate.source_snapshot.disambiguation,
+                "source_snapshot_work_count": candidate.source_snapshot.work_count,
+                "target_snapshot_handle": candidate.target_snapshot.handle,
+                "target_snapshot_display_name": candidate.target_snapshot.display_name,
+                "target_snapshot_sort_name": candidate.target_snapshot.sort_name,
+                "target_snapshot_kind": candidate.target_snapshot.kind,
+                "target_snapshot_status": candidate.target_snapshot.status,
+                "target_snapshot_disambiguation": candidate.target_snapshot.disambiguation,
+                "target_snapshot_work_count": candidate.target_snapshot.work_count,
                 "score": candidate.score,
-                "evidence": candidate.evidence,
+                "evidence": candidate.evidence.model_dump(mode="json"),
             }
             for candidate in candidates
         ],
@@ -1015,9 +1044,9 @@ def _insert_candidates(
 def _stale_existing_pending_candidates(
     db: Session,
     *,
-    candidates: Sequence[_ScoredCandidate],
+    anchor_ids: Sequence[UUID],
 ) -> None:
-    if not candidates:
+    if not anchor_ids:
         return
     db.execute(
         text(
@@ -1026,26 +1055,13 @@ def _stale_existing_pending_candidates(
             SET status = 'stale',
                 updated_at = now()
             WHERE existing.status = 'pending'
-              AND (existing.contributor_a_id, existing.contributor_b_id) IN (
-                    SELECT
-                        CAST(incoming.contributor_a_id AS uuid),
-                        CAST(incoming.contributor_b_id AS uuid)
-                    FROM jsonb_to_recordset(CAST(:pairs AS jsonb)) AS incoming(
-                        contributor_a_id text,
-                        contributor_b_id text
-                    )
+              AND (
+                    existing.contributor_a_id = ANY(:anchor_ids)
+                    OR existing.contributor_b_id = ANY(:anchor_ids)
               )
             """
-        ).bindparams(bindparam("pairs", type_=JSONB)),
-        {
-            "pairs": [
-                {
-                    "contributor_a_id": str(candidate.contributor_a_id),
-                    "contributor_b_id": str(candidate.contributor_b_id),
-                }
-                for candidate in candidates
-            ],
-        },
+        ),
+        {"anchor_ids": list(anchor_ids)},
     )
 
 
@@ -1104,8 +1120,7 @@ def _list_candidates_for_run(
     rows = (
         db.execute(
             text(
-                f"""
-                WITH work_counts AS ({_work_counts_sql()})
+                """
                 SELECT
                     cand.id,
                     cand.run_id,
@@ -1116,25 +1131,21 @@ def _list_candidates_for_run(
                     cand.created_at,
                     cand.updated_at,
                     cand.decided_at,
-                    src.handle AS source_handle,
-                    src.display_name AS source_display_name,
-                    src.sort_name AS source_sort_name,
-                    src.kind AS source_kind,
-                    src.status AS source_status,
-                    src.disambiguation AS source_disambiguation,
-                    COALESCE(src_counts.work_count, 0) AS source_work_count,
-                    tgt.handle AS target_handle,
-                    tgt.display_name AS target_display_name,
-                    tgt.sort_name AS target_sort_name,
-                    tgt.kind AS target_kind,
-                    tgt.status AS target_status,
-                    tgt.disambiguation AS target_disambiguation,
-                    COALESCE(tgt_counts.work_count, 0) AS target_work_count
+                    cand.source_snapshot_handle AS source_handle,
+                    cand.source_snapshot_display_name AS source_display_name,
+                    cand.source_snapshot_sort_name AS source_sort_name,
+                    cand.source_snapshot_kind AS source_kind,
+                    cand.source_snapshot_status AS source_status,
+                    cand.source_snapshot_disambiguation AS source_disambiguation,
+                    cand.source_snapshot_work_count AS source_work_count,
+                    cand.target_snapshot_handle AS target_handle,
+                    cand.target_snapshot_display_name AS target_display_name,
+                    cand.target_snapshot_sort_name AS target_sort_name,
+                    cand.target_snapshot_kind AS target_kind,
+                    cand.target_snapshot_status AS target_status,
+                    cand.target_snapshot_disambiguation AS target_disambiguation,
+                    cand.target_snapshot_work_count AS target_work_count
                 FROM contributor_reconciliation_candidates cand
-                JOIN contributors src ON src.id = cand.proposed_source_contributor_id
-                JOIN contributors tgt ON tgt.id = cand.proposed_target_contributor_id
-                LEFT JOIN work_counts src_counts ON src_counts.contributor_id = src.id
-                LEFT JOIN work_counts tgt_counts ON tgt_counts.contributor_id = tgt.id
                 WHERE cand.run_id = :run_id
                 ORDER BY cand.score DESC, cand.id ASC
                 """
@@ -1184,7 +1195,7 @@ def _candidate_out(row: Mapping[str, Any]) -> ContributorReconciliationCandidate
             disambiguation=row["target_disambiguation"],
             work_count=int(row["target_work_count"] or 0),
         ),
-        evidence=dict(row["evidence"] or {}),
+        evidence=ContributorReconciliationEvidenceOut.model_validate(row["evidence"] or {}),
         decided_by_user_id=row["decided_by_user_id"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
@@ -1197,6 +1208,13 @@ def _visible_contributor_id_for_handle(
     viewer_id: UUID,
     contributor_handle: str,
 ) -> UUID:
+    canonical_ids = contributors_service.resolve_canonical_contributor_ids(
+        db,
+        [contributor_handle],
+    )
+    if not canonical_ids:
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Contributor not found")
+    canonical_id = canonical_ids[0]
     row = (
         db.execute(
             text(
@@ -1205,11 +1223,11 @@ def _visible_contributor_id_for_handle(
                 SELECT c.id
                 FROM contributors c
                 JOIN visible_contributors visible ON visible.contributor_id = c.id
-                WHERE c.handle = :contributor_handle
+                WHERE c.id = :contributor_id
                   AND c.status IN ('unverified', 'verified')
                 """
             ),
-            {"viewer_id": viewer_id, "contributor_handle": contributor_handle},
+            {"viewer_id": viewer_id, "contributor_id": canonical_id},
         )
         .mappings()
         .one_or_none()

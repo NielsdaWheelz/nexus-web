@@ -429,6 +429,7 @@ def _run_contributor_reconciliation(*, payload: Mapping[str, Any]) -> Mapping[st
     return contributor_reconciliation(
         scope=str(payload.get("scope", "media")),
         media_id=_optional_str(payload.get("media_id")),
+        podcast_id=_optional_str(payload.get("podcast_id")),
         reason=str(payload.get("reason", "unspecified")),
         request_id=_optional_str(payload.get("request_id")),
     )

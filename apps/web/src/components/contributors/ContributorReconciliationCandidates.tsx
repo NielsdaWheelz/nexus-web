@@ -157,22 +157,18 @@ function toneForStatus(
 }
 
 function signalLabels(candidate: ContributorReconciliationCandidate): string[] {
-  const signals = candidate.evidence["signals"];
-  if (!Array.isArray(signals)) return [];
-  return signals
-    .map((signal) => (typeof signal === "string" ? humanize(signal) : ""))
+  return candidate.evidence.signals
+    .map((signal) => humanize(signal))
     .filter((signal) => signal.length > 0);
 }
 
 function sharedNames(candidate: ContributorReconciliationCandidate): string[] {
-  const values =
-    candidate.evidence["shared_names"] ??
-    candidate.evidence["shared_aliases"] ??
-    candidate.evidence["shared_confirmed_aliases"];
-  if (!Array.isArray(values)) return [];
-  return values
-    .map((value) => (typeof value === "string" ? value : ""))
-    .filter((value) => value.length > 0);
+  return Array.from(
+    new Set([
+      ...candidate.evidence.shared_confirmed_aliases,
+      ...candidate.evidence.shared_aliases,
+    ]),
+  ).filter((value) => value.length > 0);
 }
 
 function humanize(value: string): string {

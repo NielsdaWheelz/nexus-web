@@ -25,9 +25,6 @@ from nexus.errors import (
 from nexus.logging import get_logger
 from nexus.services.api_key_resolver import resolve_api_key, update_user_key_status
 from nexus.services.chat_run_usage import usage_tokens
-from nexus.services.contributor_reconciliation import (
-    try_enqueue_contributor_reconciliation_for_media,
-)
 from nexus.services.llm_ledger import LlmCallOwner, observed_generate
 from nexus.services.metadata_dispatch import try_enqueue_metadata_enrichment
 from nexus.services.metadata_enrichment import (
@@ -302,15 +299,6 @@ def enrich_metadata(
             if resolved.mode == "byok":
                 update_user_key_status(db, resolved.user_key_id, "valid")
             db.commit()
-
-            if "authors" in merge_result.accepted_fields:
-                if try_enqueue_contributor_reconciliation_for_media(
-                    db,
-                    media_id=media.id,
-                    reason="metadata_enrichment",
-                    request_id=request_id,
-                ):
-                    db.commit()
 
             if budget_reserved:
                 actual_tokens = usage_tokens(response.usage)["total_tokens"]

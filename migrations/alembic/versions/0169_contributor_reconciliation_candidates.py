@@ -34,6 +34,20 @@ def upgrade() -> None:
             contributor_b_id uuid NOT NULL REFERENCES contributors(id),
             proposed_source_contributor_id uuid NOT NULL REFERENCES contributors(id),
             proposed_target_contributor_id uuid NOT NULL REFERENCES contributors(id),
+            source_snapshot_handle text NOT NULL,
+            source_snapshot_display_name text NOT NULL,
+            source_snapshot_sort_name text NOT NULL,
+            source_snapshot_kind text NOT NULL,
+            source_snapshot_status text NOT NULL,
+            source_snapshot_disambiguation text,
+            source_snapshot_work_count integer NOT NULL,
+            target_snapshot_handle text NOT NULL,
+            target_snapshot_display_name text NOT NULL,
+            target_snapshot_sort_name text NOT NULL,
+            target_snapshot_kind text NOT NULL,
+            target_snapshot_status text NOT NULL,
+            target_snapshot_disambiguation text,
+            target_snapshot_work_count integer NOT NULL,
             status text NOT NULL DEFAULT 'pending',
             score integer NOT NULL,
             evidence jsonb NOT NULL DEFAULT '{}'::jsonb,
@@ -41,12 +55,6 @@ def upgrade() -> None:
             decided_at timestamptz,
             created_at timestamptz NOT NULL DEFAULT now(),
             updated_at timestamptz NOT NULL DEFAULT now(),
-            CONSTRAINT ck_contributor_reconciliation_candidates_status CHECK (
-                status IN ('pending', 'accepted', 'rejected', 'stale')
-            ),
-            CONSTRAINT ck_contributor_reconciliation_candidates_evidence CHECK (
-                jsonb_typeof(evidence) = 'object'
-            ),
             CONSTRAINT uq_contributor_reconciliation_candidates_run_pair UNIQUE (
                 run_id,
                 contributor_a_id,
@@ -69,11 +77,6 @@ def upgrade() -> None:
         "contributor_reconciliation_candidates",
         ["contributor_b_id", "status", "score"],
     )
-    op.execute("""
-        CREATE UNIQUE INDEX uq_contributor_reconciliation_candidates_pending_pair
-        ON contributor_reconciliation_candidates (contributor_a_id, contributor_b_id)
-        WHERE status = 'pending'
-    """)
 
 
 def downgrade() -> None:

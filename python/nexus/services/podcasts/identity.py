@@ -19,9 +19,6 @@ from nexus.schemas.podcast import (
     PodcastSubscribeRequest,
 )
 from nexus.services.contributor_credits import replace_podcast_contributor_credits
-from nexus.services.contributor_reconciliation import (
-    try_enqueue_contributor_reconciliation_for_podcast,
-)
 from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
 
 from .provider import PODCAST_PROVIDER
@@ -216,12 +213,6 @@ def replace_podcast_contributors_from_body(
         podcast_id=podcast_id,
         credits=[credit.model_dump(mode="json") for credit in body.contributors],
         source=PODCAST_PROVIDER,
-    )
-    try_enqueue_contributor_reconciliation_for_podcast(
-        db,
-        podcast_id=podcast_id,
-        reason="podcast_identity",
-        request_id=None,
     )
 
 

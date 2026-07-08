@@ -252,8 +252,8 @@ describe("AuthorPaneBody", () => {
     render(authorPane("source-author", { onNavigatePane }));
 
     expect(await screen.findByRole("heading", { name: "Possible Duplicates" })).toBeVisible();
-    expect(screen.getByText("Target Author")).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Accept merge" }));
+    expect(await screen.findByText("Target Author")).toBeVisible();
+    fireEvent.click(await screen.findByRole("button", { name: "Accept merge" }));
 
     await waitFor(() => {
       expect(acceptedCandidateId).toBe("candidate-1");
@@ -263,6 +263,79 @@ describe("AuthorPaneBody", () => {
         undefined,
       );
     });
+  });
+
+  it("refreshes in place when accepting a duplicate suggestion on the survivor page", async () => {
+    const candidate = reconciliationCandidate("candidate-1", "source-author", "target-author");
+    let accepted = false;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (path: string, init?: RequestInit) => {
+        const url = requestUrl(path);
+        if (url.pathname === "/api/contributors/target-author") {
+          return jsonResponse({ data: contributor("target-author", "Target Author") });
+        }
+        if (url.pathname === "/api/contributors/target-author/works") {
+          return jsonResponse({ data: { works: [] } });
+        }
+        if (isReconciliationRequest(url, "target-author")) {
+          return jsonResponse({ data: { candidates: accepted ? [] : [candidate] } });
+        }
+        if (
+          url.pathname === "/api/contributors/reconciliation-candidates/candidate-1/accept" &&
+          init?.method === "POST"
+        ) {
+          accepted = true;
+          return jsonResponse({ data: contributor("target-author", "Target Author") });
+        }
+        throw new Error(`Unexpected fetch path: ${path}`);
+      }),
+    );
+
+    const onNavigatePane = vi.fn();
+    render(authorPane("target-author", { onNavigatePane }));
+
+    expect(await screen.findByRole("heading", { name: "Possible Duplicates" })).toBeVisible();
+    fireEvent.click(await screen.findByRole("button", { name: "Accept merge" }));
+
+    await waitFor(() => {
+      expect(onNavigatePane).not.toHaveBeenCalled();
+      expect(screen.queryByText("Source Author")).not.toBeInTheDocument();
+    });
+  });
+
+  it("keeps the author pane visible when duplicate suggestions fail", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (path: string) => {
+        const url = requestUrl(path);
+        if (url.pathname === "/api/contributors/stable-author") {
+          return jsonResponse({ data: contributor("stable-author", "Stable Author") });
+        }
+        if (url.pathname === "/api/contributors/stable-author/works") {
+          return jsonResponse({
+            data: {
+              works: [work({ route: "/media/stable", title: "Stable Work", role: "author" })],
+            },
+          });
+        }
+        if (isReconciliationRequest(url, "stable-author")) {
+          return new Response(
+            JSON.stringify({
+              error: { code: "E_INTERNAL", message: "suggestions unavailable" },
+            }),
+            { status: 500, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        throw new Error(`Unexpected fetch path: ${path}`);
+      }),
+    );
+
+    render(authorPane("stable-author"));
+
+    expect(await screen.findByRole("heading", { name: "Stable Author" })).toBeVisible();
+    expect(screen.getByRole("link", { name: /Stable Work/ })).toBeVisible();
+    expect(await screen.findByText("Failed to load duplicate suggestions")).toBeVisible();
   });
 
   it("links the search pivot to the contributor handle", async () => {
@@ -399,8 +472,21 @@ function reconciliationCandidate(id: string, sourceHandle: string, targetHandle:
     },
     evidence: {
       matcher: "deterministic",
-      shared_names: ["source author"],
-      signals: ["shared_normalized_name"],
+      algorithm_version: "contributor_reconciliation_v2",
+      reason: "test",
+      score: 82,
+      signals: ["shared_alias"],
+      shared_aliases: ["source author"],
+      shared_confirmed_aliases: [],
+      shared_work_count: 1,
+      source_handle: sourceHandle,
+      target_handle: targetHandle,
+      source_work_count: 1,
+      target_work_count: 2,
+      source_confirmed_alias_count: 0,
+      target_confirmed_alias_count: 0,
+      source_strong_external_id_count: 0,
+      target_strong_external_id_count: 0,
     },
     created_at: "2026-07-07T00:00:00Z",
     updated_at: "2026-07-07T00:00:00Z",
