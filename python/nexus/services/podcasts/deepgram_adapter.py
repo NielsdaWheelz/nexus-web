@@ -106,6 +106,77 @@ class DeepgramClient:
 
         return fallback_result
 
+    def transcribe_raw_audio(self, audio_bytes: bytes, content_type: str) -> TranscriptionResult:
+        """Transcribe raw audio bytes via Deepgram /v1/listen.
+
+        Posts the bytes directly as the request body with the given Content-Type.
+        Uses the same params as the non-diarized URL path (no diarization for short
+        clips). No fixture path — callers must mock the adapter in tests.
+        """
+        if not self.api_key:
+            return _transcription_failure_result(
+                ApiErrorCode.E_TRANSCRIPTION_FAILED.value,
+                "Transcription provider credentials are not configured",
+            )
+
+        request_url = f"{self.base_url.rstrip('/')}{_DEEPGRAM_LISTEN_PATH}"
+        try:
+            response = httpx.post(
+                request_url,
+                headers={
+                    "Authorization": f"Token {self.api_key}",
+                    "Content-Type": content_type,
+                },
+                params={
+                    "model": self.model,
+                    "smart_format": "true",
+                    "punctuate": "true",
+                    "language": "en",
+                },
+                content=audio_bytes,
+                timeout=self.timeout_seconds,
+            )
+            response.raise_for_status()
+            payload = response.json()
+        except httpx.TimeoutException:
+            return _transcription_failure_result(
+                ApiErrorCode.E_TRANSCRIPTION_TIMEOUT.value,
+                "Transcription timed out",
+            )
+        except httpx.HTTPStatusError as exc:
+            code = (
+                ApiErrorCode.E_TRANSCRIPTION_TIMEOUT.value
+                if exc.response.status_code in {408, 504}
+                else ApiErrorCode.E_TRANSCRIPTION_FAILED.value
+            )
+            logger.warning(
+                "walknote_transcription_provider_http_error",
+                content_type=content_type,
+                byte_count=len(audio_bytes),
+                status_code=exc.response.status_code,
+            )
+            return _transcription_failure_result(code, "Transcription failed")
+        except (httpx.HTTPError, ValueError) as exc:
+            logger.warning(
+                "walknote_transcription_provider_request_failed",
+                content_type=content_type,
+                byte_count=len(audio_bytes),
+                error=str(exc),
+            )
+            return _transcription_failure_result(
+                ApiErrorCode.E_TRANSCRIPTION_FAILED.value,
+                "Transcription failed",
+            )
+
+        segments = _extract_deepgram_segments(payload)
+        if not segments:
+            return _transcription_failure_result(
+                ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value,
+                "Transcript unavailable",
+            )
+
+        return TranscriptionResult(status="completed", segments=segments)
+
     def _transcribe_real_media_fixture(self, audio_url: str) -> TranscriptionResult:
         expected_url = "https://www.nasa.gov/wp-content/uploads/2023/07/ep239_crew-4.mp3"
         if audio_url != expected_url:

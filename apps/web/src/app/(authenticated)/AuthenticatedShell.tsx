@@ -10,6 +10,7 @@ import LocalVaultAutoSync from "./LocalVaultAutoSync";
 import SessionRefresher from "@/lib/auth/SessionRefresher";
 import UnauthenticatedApiBoundary from "@/lib/auth/UnauthenticatedApiBoundary";
 import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
+import { WalknoteSessionProvider } from "@/lib/walknotes/walknoteSession";
 import { ReaderProvider } from "@/lib/reader/ReaderContext";
 import { KeybindingsProvider } from "@/lib/keybindingsProvider";
 import { RenderEnvironmentProvider } from "@/lib/renderEnvironment/provider";
@@ -92,8 +93,10 @@ function AuthenticatedWorkspace({ initialState }: { initialState: WorkspaceState
             <AppNav />
             <main className={styles.main}>
               <GlobalPlayerProvider>
-                <WorkspaceHost />
-                <GlobalPlayerFooter />
+                <WalknoteSessionProvider>
+                  <WorkspaceHost />
+                  <GlobalPlayerFooter />
+                </WalknoteSessionProvider>
               </GlobalPlayerProvider>
             </main>
           </div>

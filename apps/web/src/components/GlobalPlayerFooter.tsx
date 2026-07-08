@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { formatClock } from "@/lib/formatClock";
 import { useDismissOnOutsideOrEscape } from "@/lib/ui/useDismissOnOutsideOrEscape";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
@@ -19,12 +19,19 @@ import {
   normalizeVolumeBoostLevel,
   type AudioEffectsVolumeBoost,
 } from "@/lib/player/audioEffects";
+import { useBillingAccount } from "@/lib/billing/useBillingAccount";
+import { useWalknoteSession } from "@/lib/walknotes/walknoteSession";
+import { useVoiceRecorder } from "@/lib/walknotes/useVoiceRecorder";
+import { transcribeAudio } from "@/lib/walknotes/transcribeAudio";
 import MediaImage from "@/components/ui/MediaImage";
 import MobileSheet from "@/components/ui/MobileSheet";
 import GlobalPlayerQueuePanel from "@/components/GlobalPlayerQueuePanel";
+import WalknoteReviewPanel from "@/components/walknotes/WalknoteReviewPanel";
 import Button from "@/components/ui/Button";
 import Select from "@/components/ui/Select";
 import styles from "./GlobalPlayerFooter.module.css";
+
+const MARK_HOLD_THRESHOLD_MS = 500;
 
 const VOLUME_BOOST_OPTIONS: Array<{ value: AudioEffectsVolumeBoost; label: string }> = [
   { value: "off", label: "Off" },
@@ -165,9 +172,13 @@ export default function GlobalPlayerFooter() {
   const [effectsOpen, setEffectsOpen] = useState(false);
   const [mobileExpanded, setMobileExpanded] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  const [walknoteReviewOpen, setWalknoteReviewOpen] = useState(false);
   const morePopoverRef = useRef<HTMLDivElement>(null);
   const moreButtonRef = useRef<HTMLButtonElement>(null);
   const miniExpandButtonRef = useRef<HTMLButtonElement>(null);
+  const markButtonDesktopRef = useRef<HTMLButtonElement>(null);
+  const markButtonMobileRef = useRef<HTMLButtonElement>(null);
+
   const {
     track,
     bindAudioElement,
@@ -201,6 +212,21 @@ export default function GlobalPlayerFooter() {
   } = useGlobalPlayer();
   const trackMediaId = track?.media_id ?? null;
 
+  const { account } = useBillingAccount();
+  const canTranscribe = account?.can_transcribe ?? false;
+
+  const { waypoints, addWaypoint, updateWaypointVoice } = useWalknoteSession();
+  const waypointCount = waypoints.length;
+
+  const voiceRecorder = useVoiceRecorder();
+  const [isRecording, setIsRecording] = useState(false);
+  const [liveStatus, setLiveStatus] = useState("");
+
+  const holdTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const holdFiredRef = useRef(false);
+  const recordingWaypointIdRef = useRef<string | null>(null);
+  const pointerDownCaptureRef = useRef<{ mediaId: string; posMs: number } | null>(null);
+
   useEffect(() => {
     if (!queueOpen || !trackMediaId) {
       return;
@@ -221,6 +247,118 @@ export default function GlobalPlayerFooter() {
       setMoreOpen(false);
     },
   });
+
+  const handleMarkPointerDown = useCallback(
+    (event: React.PointerEvent<HTMLButtonElement>) => {
+      if (!track) return;
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId);
+      } catch {
+        // setPointerCapture may throw in test environments without an active pointer
+      }
+
+      const posMs = Math.floor(currentTimeSeconds * 1000);
+      const mediaId = track.media_id;
+      pointerDownCaptureRef.current = { mediaId, posMs };
+      holdFiredRef.current = false;
+
+      if (holdTimerRef.current !== null) {
+        clearTimeout(holdTimerRef.current);
+      }
+
+      holdTimerRef.current = setTimeout(() => {
+        holdFiredRef.current = true;
+        holdTimerRef.current = null;
+
+        if (!canTranscribe) {
+          // voice disabled — no recording but continue to tap on release
+          return;
+        }
+
+        const waypointId = addWaypoint(mediaId, posMs);
+        recordingWaypointIdRef.current = waypointId;
+        updateWaypointVoice(waypointId, "recording");
+        setIsRecording(true);
+        setLiveStatus("Recording");
+
+        void voiceRecorder.start().catch(() => {
+          if (recordingWaypointIdRef.current === waypointId) {
+            updateWaypointVoice(waypointId, "failed");
+            setIsRecording(false);
+            recordingWaypointIdRef.current = null;
+            setLiveStatus("Transcription failed");
+          }
+        });
+      }, MARK_HOLD_THRESHOLD_MS);
+    },
+    [track, currentTimeSeconds, canTranscribe, addWaypoint, updateWaypointVoice, voiceRecorder]
+  );
+
+  const handleMarkPointerUp = useCallback(() => {
+    if (!holdFiredRef.current) {
+      // Tap path
+      if (holdTimerRef.current !== null) {
+        clearTimeout(holdTimerRef.current);
+        holdTimerRef.current = null;
+      }
+      const capture = pointerDownCaptureRef.current;
+      if (capture) {
+        addWaypoint(capture.mediaId, capture.posMs);
+      }
+      return;
+    }
+
+    // Hold path — check if we started recording
+    const waypointId = recordingWaypointIdRef.current;
+    if (!waypointId) {
+      // Hold fired but recording was disabled (canTranscribe=false); fall back to tap-only
+      const capture = pointerDownCaptureRef.current;
+      if (capture) addWaypoint(capture.mediaId, capture.posMs);
+      return;
+    }
+    if (!isRecording) return;
+
+    recordingWaypointIdRef.current = null;
+    setIsRecording(false);
+
+    void (async () => {
+      try {
+        const { blob } = await voiceRecorder.stop();
+        updateWaypointVoice(waypointId, "transcribing");
+        setLiveStatus("Transcribing");
+        const text = await transcribeAudio(blob);
+        updateWaypointVoice(waypointId, "done", text);
+        setLiveStatus("");
+      } catch {
+        updateWaypointVoice(waypointId, "failed");
+        setLiveStatus("Transcription failed");
+      }
+    })();
+  }, [isRecording, voiceRecorder, addWaypoint, updateWaypointVoice]);
+
+  const handleMarkPointerCancel = useCallback(() => {
+    if (holdTimerRef.current !== null) {
+      clearTimeout(holdTimerRef.current);
+      holdTimerRef.current = null;
+    }
+    // If recording was started, stop silently (no waypoint without a valid stop)
+    if (isRecording && recordingWaypointIdRef.current) {
+      const waypointId = recordingWaypointIdRef.current;
+      recordingWaypointIdRef.current = null;
+      setIsRecording(false);
+      void voiceRecorder.stop().then(({ blob }) => {
+        updateWaypointVoice(waypointId, "transcribing");
+        setLiveStatus("Transcribing");
+        return transcribeAudio(blob);
+      }).then((text) => {
+        updateWaypointVoice(waypointId, "done", text);
+        setLiveStatus("");
+      }).catch(() => {
+        updateWaypointVoice(waypointId, "failed");
+        setLiveStatus("Transcription failed");
+      });
+    }
+  }, [isRecording, voiceRecorder, updateWaypointVoice]);
 
   if (!track) {
     return null;
@@ -260,6 +398,8 @@ export default function GlobalPlayerFooter() {
     setMoreOpen(false);
     setQueueOpen(true);
   };
+  const getWalknoteReviewReturnFocusTarget = () =>
+    isMobile ? markButtonMobileRef.current : markButtonDesktopRef.current;
 
   return (
     <footer
@@ -268,6 +408,15 @@ export default function GlobalPlayerFooter() {
       aria-label="Global player footer"
       data-mobile-view={isMobile ? (mobileExpanded ? "expanded" : "minibar") : undefined}
     >
+      {/* Aria-live region for walknote status announcements */}
+      <span
+        role="status"
+        aria-live="polite"
+        className={styles.srOnly}
+      >
+        {liveStatus}
+      </span>
+
       {isMobile ? (
         <>
           {/* Mini progress bar at top edge */}
@@ -381,6 +530,31 @@ export default function GlobalPlayerFooter() {
               aria-label="Forward 30 seconds"
             >
               30s ►►
+            </Button>
+
+            <Button
+              ref={markButtonDesktopRef}
+              variant="secondary"
+              size="sm"
+              className={styles.transportButton}
+              aria-label="Mark waypoint"
+              data-recording={isRecording ? "true" : "false"}
+              onPointerDown={handleMarkPointerDown}
+              onPointerUp={handleMarkPointerUp}
+              onPointerCancel={handleMarkPointerCancel}
+            >
+              Mark
+            </Button>
+
+            <Button
+              variant="secondary"
+              size="sm"
+              className={styles.queueButton}
+              onClick={() => setWalknoteReviewOpen(true)}
+              aria-label={`Review waypoints (${waypointCount})`}
+            >
+              Waypoints
+              <span className={styles.queueBadge} aria-hidden="true">{waypointCount}</span>
             </Button>
 
             <div className={styles.seekArea}>
@@ -696,6 +870,31 @@ export default function GlobalPlayerFooter() {
               Queue
               <span className={styles.queueBadge}>{upcomingQueueCount}</span>
             </Button>
+
+            <Button
+              ref={markButtonMobileRef}
+              variant="secondary"
+              size="sm"
+              className={styles.transportButton}
+              aria-label="Mark waypoint"
+              data-recording={isRecording ? "true" : "false"}
+              onPointerDown={handleMarkPointerDown}
+              onPointerUp={handleMarkPointerUp}
+              onPointerCancel={handleMarkPointerCancel}
+            >
+              Mark
+            </Button>
+
+            <Button
+              variant="secondary"
+              size="sm"
+              className={styles.queueButton}
+              onClick={() => setWalknoteReviewOpen(true)}
+              aria-label={`Review waypoints (${waypointCount})`}
+            >
+              Waypoints
+              <span className={styles.queueBadge} aria-hidden="true">{waypointCount}</span>
+            </Button>
           </div>
 
           {effectsOpen && (
@@ -722,6 +921,16 @@ export default function GlobalPlayerFooter() {
         <GlobalPlayerQueuePanel
           onClose={() => setQueueOpen(false)}
           returnFocusFallback={getQueueReturnFocusTarget}
+        />
+      )}
+
+      {walknoteReviewOpen && (
+        <WalknoteReviewPanel
+          onClose={() => setWalknoteReviewOpen(false)}
+          returnFocusFallback={getWalknoteReviewReturnFocusTarget}
+          onMaterializeComplete={(n) =>
+            setLiveStatus(n === 1 ? "1 highlight created" : `${n} highlights created`)
+          }
         />
       )}
     </footer>

@@ -12,6 +12,8 @@ const RAW_FETCH_FILES = new Set([
   "src/lib/auth/internal-fetch.ts",
   "src/lib/media/ingestionClient.ts",
   "src/lib/supabase/client-config.ts",
+  // transcribeAudio uses raw fetch to send multipart FormData without Content-Type override
+  "src/lib/walknotes/transcribeAudio.ts",
 ]);
 
 type Source = {

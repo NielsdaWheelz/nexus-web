@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const API_ROUTE_COUNT = 144;
+const API_ROUTE_COUNT = 145;
 const EXTENSION_PROXY_ROUTES = new Set([
   "src/app/api/extension/session/route.ts",
   "src/app/api/media/capture/article/route.ts",
@@ -11,6 +11,7 @@ const EXTENSION_PROXY_ROUTES = new Set([
 ]);
 const REQUIRED_PROXY_ROUTES = new Set([
   "src/app/api/resource-items/locators/resolve/route.ts",
+  "src/app/api/walknotes/transcribe/route.ts",
 ]);
 // Routes that intentionally are NOT FastAPI proxies. The CSP violation sink must accept
 // unauthenticated browser report POSTs (CSP reports are sent without credentials, including

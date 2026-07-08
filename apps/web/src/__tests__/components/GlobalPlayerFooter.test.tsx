@@ -3,7 +3,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import GlobalPlayerFooter from "@/components/GlobalPlayerFooter";
 import { GlobalPlayerProvider, useGlobalPlayer } from "@/lib/player/globalPlayer";
+import { WalknoteSessionProvider } from "@/lib/walknotes/walknoteSession";
 import { setAudioMetrics, setViewportWidth } from "../helpers/audio";
+
+// Stub sessionStorage for WalknoteSessionProvider
+function makeSessionStorage() {
+  const store = new Map<string, string>();
+  return {
+    getItem: vi.fn((key: string) => store.get(key) ?? null),
+    setItem: vi.fn((key: string, value: string) => {
+      store.set(key, value);
+    }),
+    removeItem: vi.fn((key: string) => { store.delete(key); }),
+    clear: vi.fn(() => store.clear()),
+  };
+}
 
 const PODCAST_CHAPTERS = [
   {
@@ -362,5 +376,73 @@ describe("GlobalPlayerFooter mobile expanded sheet a11y", () => {
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Expand player" })).toHaveFocus(),
     );
+  });
+});
+
+describe("GlobalPlayerFooter walknote Mark button", () => {
+  let fakeState: unknown = null;
+
+  beforeEach(() => {
+    setViewportWidth(1280);
+    window.localStorage.clear();
+    fakeState = null;
+    vi.stubGlobal("sessionStorage", makeSessionStorage());
+    vi.spyOn(history, "pushState").mockImplementation((state) => { fakeState = state; });
+    vi.spyOn(history, "replaceState").mockImplementation((state) => { fakeState = state; });
+    vi.spyOn(history, "back").mockImplementation(() => { fakeState = null; });
+    vi.spyOn(history, "state", "get").mockImplementation(() => fakeState);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    document.body.style.overflow = "";
+  });
+
+  function mountDesktopFooter() {
+    render(
+      <GlobalPlayerProvider>
+        <WalknoteSessionProvider>
+          <RouteA />
+          <GlobalPlayerFooter />
+        </WalknoteSessionProvider>
+      </GlobalPlayerProvider>
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Load episode" }));
+  }
+
+  it("shows Mark waypoint button when track is loaded", async () => {
+    mountDesktopFooter();
+    expect(await screen.findByRole("button", { name: "Mark waypoint" })).toBeInTheDocument();
+  });
+
+  it("tap on Mark increments the waypoint count in the review button aria-label", async () => {
+    mountDesktopFooter();
+
+    const markButton = await screen.findByRole("button", { name: "Mark waypoint" });
+
+    // Simulate a tap: pointerdown then pointerup before hold threshold
+    fireEvent.pointerDown(markButton);
+    fireEvent.pointerUp(markButton);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Review waypoints (1)" })).toBeInTheDocument();
+    });
+  });
+
+  it("review button opens the walknote review panel", async () => {
+    mountDesktopFooter();
+
+    const markButton = await screen.findByRole("button", { name: "Mark waypoint" });
+    fireEvent.pointerDown(markButton);
+    fireEvent.pointerUp(markButton);
+
+    await waitFor(() => {
+      screen.getByRole("button", { name: "Review waypoints (1)" });
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Review waypoints (1)" }));
+
+    expect(await screen.findByRole("dialog", { name: "Waypoints" })).toBeInTheDocument();
   });
 });

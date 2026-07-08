@@ -47,6 +47,21 @@ function getListeningStateCalls(
   ) as Array<[string, RequestInit?]>;
 }
 
+// Returns 204 for listening-state calls and a minimal billing response for billing calls,
+// so that useBillingAccount does not crash when GlobalPlayerFooter renders.
+function makeFetchMock() {
+  return vi.spyOn(window, "fetch").mockImplementation(async (input) => {
+    const url = String(input);
+    if (url.includes("/api/billing/")) {
+      return new Response(
+        JSON.stringify({ data: { can_transcribe: false, can_use_platform_llm: false } }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    }
+    return new Response(null, { status: 204 });
+  });
+}
+
 function Harness() {
   const { setTrack } = useGlobalPlayer();
   return (
@@ -108,9 +123,7 @@ describe("GlobalPlayer listening-state persistence", () => {
   });
 
   it("writes at most every 15 seconds during playback and flushes on pause", async () => {
-    const fetchSpy = vi
-      .spyOn(window, "fetch")
-      .mockResolvedValue(new Response(null, { status: 204 }));
+    const fetchSpy = makeFetchMock();
     const intervalHarness = installIntervalHarness();
 
     render(<App />);
@@ -140,9 +153,7 @@ describe("GlobalPlayer listening-state persistence", () => {
   });
 
   it("flushes on track switch and page unload", async () => {
-    const fetchSpy = vi
-      .spyOn(window, "fetch")
-      .mockResolvedValue(new Response(null, { status: 204 }));
+    const fetchSpy = makeFetchMock();
 
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: "Load episode A" }));
