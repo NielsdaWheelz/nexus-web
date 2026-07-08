@@ -23,6 +23,7 @@ import {
 import Button from "@/components/ui/Button";
 import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
+import SectionOpener from "@/components/ui/SectionOpener";
 import Pill from "@/components/ui/Pill";
 import Toggle from "@/components/ui/Toggle";
 import styles from "./page.module.css";
@@ -217,7 +218,7 @@ export default function SettingsLocalVaultPaneBody() {
 
   if (androidShell) {
     return (
-      <PaneSurface>
+      <PaneSurface opener={<SectionOpener heading="Local Vault" />}>
         <PaneSection>
           <FeedbackNotice severity="info">
             Local Vault is not available in the Android app. Use a supported desktop browser to
@@ -230,7 +231,7 @@ export default function SettingsLocalVaultPaneBody() {
 
   if (!supported) {
     return (
-      <PaneSurface>
+      <PaneSurface opener={<SectionOpener heading="Local Vault" />}>
         <PaneSection>
           <FeedbackNotice severity="error">
             This browser cannot connect a writable local folder. Use a supported desktop browser.
@@ -241,7 +242,7 @@ export default function SettingsLocalVaultPaneBody() {
   }
 
   return (
-    <PaneSurface>
+    <PaneSurface opener={<SectionOpener heading="Local Vault" />}>
       <PaneSection>
         <div className={styles.content}>
         <div className={styles.statusRow}>

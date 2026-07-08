@@ -11,6 +11,7 @@ import {
 import Button from "@/components/ui/Button";
 import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
+import SectionOpener from "@/components/ui/SectionOpener";
 import Pill from "@/components/ui/Pill";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { planLabel } from "@/lib/billing/planLabel";
@@ -209,7 +210,7 @@ export default function SettingsBillingPaneBody() {
   }, [account?.can_manage_billing, billingEnabled]);
 
   return (
-    <PaneSurface>
+    <PaneSurface opener={<SectionOpener heading="Billing" />}>
       <PaneSection>
         <div className={styles.content}>
         {loading && <PaneLoadingState />}

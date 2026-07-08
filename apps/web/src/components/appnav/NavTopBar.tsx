@@ -4,6 +4,7 @@ import { useRef } from "react";
 import { ChevronLeft, ChevronRight, Command, Plus } from "lucide-react";
 import AsterismMark from "@/components/AsterismMark";
 import ActionMenu from "@/components/ui/ActionMenu";
+import RunningHead from "@/components/ui/RunningHead";
 import { useMobileChrome } from "@/lib/workspace/mobileChrome";
 import { pluralize } from "@/lib/text/pluralize";
 import styles from "./AppNav.module.css";
@@ -59,7 +60,13 @@ export default function NavTopBar({
         <ChevronRight size={20} aria-hidden="true" />
       </button>
 
-      <span className={styles.topBarTitle}>{paneChrome?.title}</span>
+      <div className={styles.topBarTitle}>
+        <RunningHead
+          standingHead={paneChrome?.standingHead ?? ""}
+          folio={paneChrome?.folio}
+          folioPending={paneChrome?.folioPending}
+        />
+      </div>
 
       <button
         type="button"

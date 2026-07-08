@@ -88,7 +88,8 @@ describe("SettingsBillingPaneBody", () => {
 
     render(<SettingsBillingPaneBody />);
 
-    expect(screen.queryByRole("heading", { name: "Billing" })).not.toBeInTheDocument();
+    // The section opener now renders the surface title as the body <h1>.
+    expect(screen.getByRole("heading", { name: "Billing" })).toBeInTheDocument();
     expect(screen.getAllByText("Free")).toHaveLength(3);
     expect(screen.getByText("AI tokens")).toBeInTheDocument();
     expect(screen.getByText("Transcription")).toBeInTheDocument();

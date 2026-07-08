@@ -5,6 +5,7 @@ import { Keyboard } from "lucide-react";
 import CollectionView from "@/components/collections/CollectionView";
 import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
+import SectionOpener from "@/components/ui/SectionOpener";
 import Button from "@/components/ui/Button";
 import { presentSettingsRow } from "@/lib/collections/presenters/settings";
 import {
@@ -100,7 +101,7 @@ export default function KeybindingsPaneBody() {
     : null;
 
   return (
-    <PaneSurface>
+    <PaneSurface opener={<SectionOpener heading="Keyboard Shortcuts" />}>
       <PaneSection
         actions={
           <Button variant="ghost" size="sm" onClick={resetAll}>

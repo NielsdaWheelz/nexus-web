@@ -24,13 +24,6 @@
   min-width: 0;
 }
 
-.name {
-  margin: 0;
-  color: var(--ink);
-  font-size: var(--text-xl);
-  line-height: var(--leading-tight);
-}
-
 .identityMeta {
   display: flex;
   flex-wrap: wrap;

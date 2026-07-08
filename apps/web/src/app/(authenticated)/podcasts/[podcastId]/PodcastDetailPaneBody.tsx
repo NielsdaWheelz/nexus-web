@@ -28,6 +28,7 @@ import PodcastSubscriptionSettingsModal from "../PodcastSubscriptionSettingsModa
 import LibraryDestinationPicker from "@/components/LibraryDestinationPicker";
 import LibraryMembershipPanel from "@/components/LibraryMembershipPanel";
 import PaneSection from "@/components/ui/PaneSection";
+import SectionOpener from "@/components/ui/SectionOpener";
 import {
   FeedbackNotice,
   toFeedback,
@@ -791,6 +792,9 @@ export default function PodcastDetailPaneBody() {
     onUnsubscribe: unsubscribePodcast,
   });
 
+  // Podcast detail is a document-mode pane; the podcast title is the section
+  // opener's display line (the sole <h1>, §7.6) and the explicit episode-count
+  // folio wins over the auto-derived title folio (§7.5).
   usePaneChromeOverride({
     actions: isMobileViewport ? (
       <Button
@@ -805,6 +809,8 @@ export default function PodcastDetailPaneBody() {
       </Button>
     ) : undefined,
     options: paneOptions,
+    folio: { kind: "count", value: episodes.length, unit: "episode" },
+    folioPending: loading,
   });
 
   const podcastLibraryCount = podcastLibraries.filter(
@@ -872,6 +878,11 @@ export default function PodcastDetailPaneBody() {
       <div className={styles.splitLayout}>
         <div className={styles.primaryColumn}>
           <div className={styles.primaryScroll}>
+            <SectionOpener
+              heading={detail?.podcast.title ?? "Podcast"}
+              scale="title"
+              pending={loading}
+            />
             <div className={styles.headerActions}>
               <Link href="/podcasts" className={styles.navLink}>
                 Podcasts

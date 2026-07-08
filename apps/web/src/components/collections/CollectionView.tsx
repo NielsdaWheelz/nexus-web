@@ -30,6 +30,7 @@ export default function CollectionView({
   density,
   status,
   ariaLabel,
+  opener,
   toolbar,
   notice,
   error,
@@ -46,6 +47,7 @@ export default function CollectionView({
   density: CollectionDensity;
   status: "loading" | "error" | "ready";
   ariaLabel: string;
+  opener?: ReactNode;
   toolbar?: ReactNode;
   notice?: ReactNode;
   error?: ReactNode;
@@ -181,6 +183,7 @@ export default function CollectionView({
   if (!surface) {
     return (
       <>
+        {opener}
         {toolbar}
         {notice}
         {body}
@@ -190,7 +193,12 @@ export default function CollectionView({
   }
 
   return (
-    <PaneSurface toolbar={toolbar} state={notice} footer={status === "ready" ? footer : undefined}>
+    <PaneSurface
+      opener={opener}
+      toolbar={toolbar}
+      state={notice}
+      footer={status === "ready" ? footer : undefined}
+    >
       {body}
     </PaneSurface>
   );

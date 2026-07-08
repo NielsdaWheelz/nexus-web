@@ -1,0 +1,62 @@
+.runningHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-width: 0;
+  flex: 1;
+}
+
+.standing {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-xs);
+  line-height: var(--leading-tight);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-widest);
+  font-weight: var(--weight-medium);
+  color: var(--ink-muted);
+  /* Progressive enhancement where the font carries the feature; the
+     uppercase + tracking above is the robust baseline. */
+  font-variant-caps: all-small-caps;
+}
+
+.folio {
+  flex-shrink: 0;
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: var(--tracking-wide);
+  color: var(--ink-faint);
+}
+
+.folioSkeleton {
+  display: inline-block;
+  width: 64px;
+  height: 0.75em;
+  border-radius: var(--radius-xs);
+  background: var(--surface-3);
+  animation: running-head-pulse 1800ms ease-in-out infinite;
+}
+
+@keyframes running-head-pulse {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .folioSkeleton {
+    animation: none;
+  }
+}

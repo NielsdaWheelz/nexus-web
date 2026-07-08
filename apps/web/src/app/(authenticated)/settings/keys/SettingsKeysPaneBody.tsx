@@ -27,6 +27,7 @@ import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
+import SectionOpener from "@/components/ui/SectionOpener";
 import Pill from "@/components/ui/Pill";
 import { formatDisplayDate } from "@/lib/display/format";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
@@ -225,6 +226,7 @@ export default function SettingsKeysPaneBody() {
 
   return (
     <PaneSurface
+      opener={<SectionOpener heading="API Keys" />}
       state={
         loading || error || formError || formSuccess ? (
           <div className={styles.messages}>

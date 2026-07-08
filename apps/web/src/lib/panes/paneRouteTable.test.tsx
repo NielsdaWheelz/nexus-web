@@ -11,14 +11,12 @@ const PAGE_ID = "11111111-1111-4111-8111-111111111111";
 const BLOCK_ID = "22222222-2222-4222-8222-222222222222";
 
 describe("pane route table", () => {
-  it("uses broad search copy for evidence-backed search", () => {
+  it("resolves the search route to its chrome title", () => {
     const route = resolvePaneRoute("/search");
     const chrome = route.definition?.getChrome?.({ href: "/search", params: {} });
 
     expect(route.id).toBe("search");
-    expect(chrome?.subtitle).toBe(
-      "Search across authors, media, podcasts, evidence, notes, and chat."
-    );
+    expect(chrome?.title).toBe("Search");
   });
 
   it("resolves author routes with contributor handle locators", () => {

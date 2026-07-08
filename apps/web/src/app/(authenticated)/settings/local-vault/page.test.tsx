@@ -97,7 +97,8 @@ describe("SettingsLocalVaultPaneBody", () => {
     const user = userEvent.setup();
     renderLocalVault();
 
-    expect(screen.queryByRole("heading", { name: "Local Vault" })).not.toBeInTheDocument();
+    // The section opener now renders the surface title as the body <h1>.
+    expect(screen.getByRole("heading", { name: "Local Vault" })).toBeInTheDocument();
     await user.click(await screen.findByRole("button", { name: /connect folder/i }));
     expect(mockPickVaultDirectory).toHaveBeenCalledOnce();
     expect(mockSaveVaultDirectoryHandle).toHaveBeenCalledOnce();

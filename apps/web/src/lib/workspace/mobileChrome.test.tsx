@@ -98,7 +98,7 @@ function PaneSwitchConsumer() {
   const setPane = (paneId: string) =>
     setPaneChrome({
       paneId,
-      title: paneId,
+      standingHead: paneId,
       navigation: { canGoBack: false, canGoForward: false, onBack: () => {}, onForward: () => {} },
       options: [],
     });

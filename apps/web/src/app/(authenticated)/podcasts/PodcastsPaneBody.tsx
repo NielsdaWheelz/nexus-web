@@ -14,6 +14,8 @@ import Select from "@/components/ui/Select";
 import PaneToolbar from "@/components/ui/PaneToolbar";
 import CollectionView from "@/components/collections/CollectionView";
 import CollectionDisplayControls from "@/components/collections/CollectionDisplayControls";
+import SectionOpener from "@/components/ui/SectionOpener";
+import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
 import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
 import { presentPodcast } from "@/lib/collections/presenters/podcast";
 import { useCollectionDisplayState } from "@/lib/collections/useCollectionDisplayState";
@@ -434,6 +436,10 @@ export default function PodcastsPaneBody() {
   );
 
   const activeCount = rows.length;
+  usePaneChromeOverride({
+    folio: { kind: "count", value: activeCount, unit: "show" },
+    folioPending: loading,
+  });
   const settingsRow =
     settingsModal.podcastId !== null
       ? (rows.find((row) => row.podcast_id === settingsModal.podcastId) ?? null)
@@ -505,6 +511,7 @@ export default function PodcastsPaneBody() {
         density={displayState.density}
         status={loading ? "loading" : "ready"}
         ariaLabel="Followed podcasts"
+        opener={<SectionOpener heading="Podcasts" />}
         toolbar={
           <PaneToolbar
             search={

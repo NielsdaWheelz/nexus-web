@@ -7,6 +7,8 @@ import Input from "@/components/ui/Input";
 import { FeedbackNotice, toFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
 import CollectionView from "@/components/collections/CollectionView";
 import CollectionDisplayControls from "@/components/collections/CollectionDisplayControls";
+import SectionOpener from "@/components/ui/SectionOpener";
+import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
 import { notePagesResource, type NoResourceParams } from "@/lib/api/resource";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { usePaneRouter, useSetPaneTitle } from "@/lib/panes/paneRuntime";
@@ -47,6 +49,10 @@ export default function NotesPaneBody() {
   const loading = pagesResource.status === "loading" && pages.length === 0;
 
   useSetPaneTitle("Notes");
+  usePaneChromeOverride({
+    folio: { kind: "count", value: pages.length, unit: "page" },
+    folioPending: loading,
+  });
 
   useEffect(() => {
     if (pagesResource.status === "ready") {
@@ -93,6 +99,7 @@ export default function NotesPaneBody() {
       density={displayState.density}
       status={loading ? "loading" : "ready"}
       ariaLabel="Notes"
+      opener={<SectionOpener heading="Notes" />}
       notice={feedback ? <FeedbackNotice feedback={feedback} /> : undefined}
       empty={feedback ? undefined : <FeedbackNotice severity="neutral">No pages yet.</FeedbackNotice>}
       toolbar={

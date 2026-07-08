@@ -79,6 +79,57 @@ describe("PaneShell", () => {
     expect(onResizePrimaryPane).toHaveBeenCalledWith("pane-a", 1400);
   });
 
+  it("wears a running head and auto-derives a document-mode title folio (D-8)", () => {
+    render(
+      <PaneShell
+        paneId="pane-a"
+        href="/media/media-1"
+        title="Designing Data-Intensive Applications"
+        navigation={disabledNavigation}
+        sizing={paneSizing({ widthPx: 700, minWidthPx: 684, maxWidthPx: 2400 })}
+        bodyMode="document"
+        onResizePrimaryPane={() => {}}
+      >
+        <div>Body content</div>
+      </PaneShell>
+    );
+
+    // Standing head derives from the route (media → LIBRARIES section) — unique.
+    expect(screen.getByText("Libraries")).toBeInTheDocument();
+    // The folio auto-derives the title for document panes, and the legacy chrome
+    // heading is gone, so the title renders exactly once — as the running-head folio.
+    expect(
+      screen.getByText("Designing Data-Intensive Applications"),
+    ).toBeInTheDocument();
+    // The resize handle keeps the resolved pane title, not the standing head.
+    expect(
+      screen.getByRole("separator", {
+        name: "Resize pane Designing Data-Intensive Applications",
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows the section standing head without a folio for a standard list route", () => {
+    render(
+      <PaneShell
+        paneId="pane-a"
+        href="/libraries"
+        title="Libraries"
+        navigation={disabledNavigation}
+        sizing={paneSizing({ widthPx: 560, minWidthPx: 320, maxWidthPx: 1400 })}
+        bodyMode="standard"
+        onResizePrimaryPane={() => {}}
+      >
+        <div>Body content</div>
+      </PaneShell>
+    );
+
+    // Standard list routes derive no folio (kind none) until a body publishes
+    // one, so the only "Libraries" text is the running-head standing head — no
+    // derived folio text and no legacy chrome title.
+    expect(screen.getByText("Libraries")).toBeInTheDocument();
+  });
+
   it("forwards pane Back and Forward controls", () => {
     const navigation = {
       canGoBack: true,
@@ -218,7 +269,7 @@ describe("PaneShell", () => {
 
     expect(screen.getByText("Override toolbar")).toBeInTheDocument();
     expect(screen.getByText("Override action")).toBeInTheDocument();
-    expect(screen.getByText("Override meta")).toBeInTheDocument();
+    expect(screen.getByText("Override folio")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Options" })).toBeInTheDocument();
 
     rerender(
@@ -240,7 +291,7 @@ describe("PaneShell", () => {
     expect(screen.getByText("Default action")).toBeInTheDocument();
     expect(screen.queryByText("Override toolbar")).not.toBeInTheDocument();
     expect(screen.queryByText("Override action")).not.toBeInTheDocument();
-    expect(screen.queryByText("Override meta")).not.toBeInTheDocument();
+    expect(screen.queryByText("Override folio")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Options" })).toBeInTheDocument();
   });
 
@@ -262,7 +313,7 @@ describe("PaneShell", () => {
 
     expect(screen.getByText("Override toolbar")).toBeInTheDocument();
     expect(screen.getByText("Override action")).toBeInTheDocument();
-    expect(screen.getByText("Override meta")).toBeInTheDocument();
+    expect(screen.getByText("Override folio")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Options" })).toBeInTheDocument();
 
     rerender(
@@ -284,7 +335,7 @@ describe("PaneShell", () => {
     expect(screen.getByText("Default action")).toBeInTheDocument();
     expect(screen.queryByText("Override toolbar")).not.toBeInTheDocument();
     expect(screen.queryByText("Override action")).not.toBeInTheDocument();
-    expect(screen.queryByText("Override meta")).not.toBeInTheDocument();
+    expect(screen.queryByText("Override folio")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Options" })).toBeInTheDocument();
   });
 
@@ -484,7 +535,7 @@ function ChromeOverrideProbe({ shouldOverride }: { shouldOverride: boolean }) {
       ? {
           toolbar: <div>Override toolbar</div>,
           actions: <button type="button">Override action</button>,
-          meta: <div>Override meta</div>,
+          folio: { kind: "title", value: "Override folio" },
           options: [
             {
               id: "override-option",

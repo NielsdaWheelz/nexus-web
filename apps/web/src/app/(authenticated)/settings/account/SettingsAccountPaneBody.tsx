@@ -18,6 +18,7 @@ import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
+import SectionOpener from "@/components/ui/SectionOpener";
 import {
   DISPLAY_NAME_CHANGE_FAILURE_MESSAGE,
   DISPLAY_NAME_CHANGE_SUCCESS_MESSAGE,
@@ -149,7 +150,7 @@ export default function SettingsAccountPaneBody() {
   );
 
   return (
-    <PaneSurface>
+    <PaneSurface opener={<SectionOpener heading="Account" />}>
       <PaneSection title="Email">
         <form className={styles.form} onSubmit={handleEmailSubmit}>
           {emailFeedback ? <FeedbackNotice feedback={emailFeedback} /> : null}

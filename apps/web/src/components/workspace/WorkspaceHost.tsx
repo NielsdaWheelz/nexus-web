@@ -86,7 +86,6 @@ interface WorkspaceHostPane {
   resourceStatus: PaneResourceStatus;
   title: string;
   titleState: "resolved" | "pending";
-  subtitle?: React.ReactNode;
   toolbar?: React.ReactNode;
   actions?: React.ReactNode;
   options?: ActionMenuOption[];
@@ -560,7 +559,6 @@ function buildHostPane(input: {
         : input.resourceStatus,
     title,
     titleState,
-    subtitle: chrome?.subtitle,
     toolbar: chrome?.toolbar,
     actions: chrome?.actions,
     navigation: {
@@ -1232,7 +1230,6 @@ function WorkspaceHost() {
                   href={pane.href}
                   title={pane.title}
                   titlePending={pane.titleState === "pending"}
-                  subtitle={pane.subtitle}
                   toolbar={pane.toolbar}
                   actions={pane.actions}
                   options={pane.options}

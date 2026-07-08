@@ -15,6 +15,8 @@ import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import CollectionView from "@/components/collections/CollectionView";
 import CollectionDisplayControls from "@/components/collections/CollectionDisplayControls";
+import SectionOpener from "@/components/ui/SectionOpener";
+import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
 import PaneToolbar from "@/components/ui/PaneToolbar";
 import { presentLibrary } from "@/lib/collections/presenters/library";
 import { useCollectionDisplayState } from "@/lib/collections/useCollectionDisplayState";
@@ -72,6 +74,11 @@ export default function LibrariesPaneBody() {
       : librariesResource.status === "error"
         ? "error"
         : "loading";
+
+  usePaneChromeOverride({
+    folio: { kind: "count", value: libraries.length, unit: "library" },
+    folioPending: status === "loading",
+  });
 
   const refreshLibraries = useCallback(() => {
     setLibrariesRefreshVersion((version) => version + 1);
@@ -297,6 +304,7 @@ export default function LibrariesPaneBody() {
         density={displayState.density}
         status={status}
         ariaLabel="Libraries"
+        opener={<SectionOpener heading="Libraries" />}
         notice={feedback ? <FeedbackNotice feedback={feedback} /> : undefined}
         error={loadError ? <FeedbackNotice feedback={loadError} /> : undefined}
         empty={

@@ -39,7 +39,6 @@ export default function PodcastSummaryCard({
           </span>
         )}
         <div className={styles.summaryCopy}>
-          <h2 className={styles.summaryTitle}>{detail.podcast.title}</h2>
           <ContributorCreditList
             credits={detail.podcast.contributors}
             className={styles.summaryByline}

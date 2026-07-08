@@ -10,6 +10,8 @@ import { useStringIdSet } from "@/lib/useStringIdSet";
 import { FeedbackNotice, toFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
 import CollectionView from "@/components/collections/CollectionView";
 import CollectionDisplayControls from "@/components/collections/CollectionDisplayControls";
+import SectionOpener from "@/components/ui/SectionOpener";
+import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
 import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
 import PaneToolbar from "@/components/ui/PaneToolbar";
 import { presentConversation } from "@/lib/collections/presenters/conversation";
@@ -53,6 +55,11 @@ export default function ConversationsPaneBody() {
 
   const loadError = error ? toFeedback(error, { fallback: "Failed to load conversations" }) : null;
 
+  usePaneChromeOverride({
+    folio: { kind: "count", value: rows.length, unit: "chat" },
+    folioPending: status === "loading",
+  });
+
   return (
     <CollectionView
       rows={rows}
@@ -60,6 +67,7 @@ export default function ConversationsPaneBody() {
       density={displayState.density}
       status={status}
       ariaLabel="Conversations"
+      opener={<SectionOpener heading="Chats" />}
       toolbar={
         <PaneToolbar
           controls={

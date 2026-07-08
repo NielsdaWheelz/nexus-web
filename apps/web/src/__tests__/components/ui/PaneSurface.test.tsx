@@ -55,6 +55,28 @@ describe("PaneSurface", () => {
     expect(screen.getByText("0")).toBeInTheDocument();
     expect(screen.queryByText("No rows.")).toBeNull();
   });
+
+  it("renders the opener unconditionally, alongside the empty state", () => {
+    render(
+      <PaneSurface
+        opener={<div>Section opener</div>}
+        empty={<FeedbackNotice severity="neutral">No rows.</FeedbackNotice>}
+      />,
+    );
+
+    expect(screen.getByText("Section opener")).toBeInTheDocument();
+    expect(screen.getByText("No rows.")).toBeInTheDocument();
+  });
+
+  it("treats an empty fragment as no content so the empty state survives", () => {
+    render(
+      <PaneSurface empty={<FeedbackNotice severity="neutral">No rows.</FeedbackNotice>}>
+        <></>
+      </PaneSurface>,
+    );
+
+    expect(screen.getByText("No rows.")).toBeInTheDocument();
+  });
 });
 
 describe("PaneSection", () => {

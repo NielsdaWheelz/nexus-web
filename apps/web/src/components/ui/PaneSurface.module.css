@@ -8,12 +8,20 @@
   padding: var(--space-4);
 }
 
+.opener,
 .toolbar,
 .state,
 .content,
 .empty,
 .footer {
   min-width: 0;
+}
+
+/* rule→toolbar air: the flex column gap is var(--space-4); the opener adds
+   var(--space-2) so the section opener's hairline rule clears the toolbar by
+   var(--space-6) (§7.8 binding (g)) without widening the other slot gaps. */
+.opener {
+  margin-block-end: var(--space-2);
 }
 
 .toolbar,

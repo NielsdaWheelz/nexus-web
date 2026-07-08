@@ -193,13 +193,6 @@
   gap: 8px;
 }
 
-.summaryTitle {
-  margin: 0;
-  font-size: clamp(var(--text-lg), 2vw, var(--text-2xl));
-  line-height: var(--leading-tight);
-  color: var(--ink);
-}
-
 .summaryByline {
   margin: 0;
   color: var(--ink-muted);

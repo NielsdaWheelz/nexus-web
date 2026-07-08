@@ -36,7 +36,6 @@ import {
 // authenticated-shell-first-paint-and-pane-splitting.md (R4).
 export interface PaneChromeDescriptor {
   title: string;
-  subtitle?: ReactNode;
   toolbar?: ReactNode;
   actions?: ReactNode;
 }
@@ -60,10 +59,7 @@ export interface ResolvedPaneRoute {
 const PANE_ROUTE_META: Record<PaneRouteId, PaneRouteMeta> = {
   libraries: {
     icon: Library,
-    getChrome: () => ({
-      title: "Libraries",
-      subtitle: "Mixed collections for podcasts and media.",
-    }),
+    getChrome: () => ({ title: "Libraries" }),
   },
   library: {
     icon: Library,
@@ -75,10 +71,7 @@ const PANE_ROUTE_META: Record<PaneRouteId, PaneRouteMeta> = {
   },
   conversations: {
     icon: MessageSquare,
-    getChrome: () => ({
-      title: "Chats",
-      subtitle: "Recent conversations with quick-open and delete actions.",
-    }),
+    getChrome: () => ({ title: "Chats" }),
   },
   conversationNew: {
     icon: MessageSquare,
@@ -86,17 +79,11 @@ const PANE_ROUTE_META: Record<PaneRouteId, PaneRouteMeta> = {
   },
   conversation: {
     icon: MessageSquare,
-    getChrome: () => ({
-      title: "Chat",
-      subtitle: "Conversation transcript and composer.",
-    }),
+    getChrome: () => ({ title: "Chat" }),
   },
   podcasts: {
     icon: Mic,
-    getChrome: () => ({
-      title: "Podcasts",
-      subtitle: "Followed shows, library membership, and subscription controls.",
-    }),
+    getChrome: () => ({ title: "Podcasts" }),
   },
   podcastDetail: {
     icon: Mic,
@@ -104,17 +91,11 @@ const PANE_ROUTE_META: Record<PaneRouteId, PaneRouteMeta> = {
   },
   search: {
     icon: Search,
-    getChrome: () => ({
-      title: "Search",
-      subtitle: "Search across authors, media, podcasts, evidence, notes, and chat.",
-    }),
+    getChrome: () => ({ title: "Search" }),
   },
   authors: {
     icon: UserRound,
-    getChrome: () => ({
-      title: "Authors",
-      subtitle: "Everyone credited across your library.",
-    }),
+    getChrome: () => ({ title: "Authors" }),
   },
   author: {
     icon: UserRound,
@@ -134,73 +115,39 @@ const PANE_ROUTE_META: Record<PaneRouteId, PaneRouteMeta> = {
   },
   settings: {
     icon: Settings,
-    getChrome: () => ({
-      title: "Settings",
-      subtitle: "Account-level controls and integration configuration.",
-    }),
+    getChrome: () => ({ title: "Settings" }),
   },
   settingsAccount: {
     icon: UserCog,
-    getChrome: () => ({
-      title: "Account",
-      subtitle: "Email and profile settings for this account.",
-    }),
+    getChrome: () => ({ title: "Account" }),
   },
   settingsBilling: {
     icon: CreditCard,
-    getChrome: () => ({
-      title: "Billing",
-      subtitle: "Plan, usage, and Stripe subscription management.",
-    }),
+    getChrome: () => ({ title: "Billing" }),
   },
   settingsReader: {
     icon: BookOpen,
-    getChrome: () => ({
-      title: "Reader",
-      subtitle: "Typography, layout, and display preferences for reading.",
-    }),
+    getChrome: () => ({ title: "Reader" }),
   },
   settingsAppearance: {
     icon: Palette,
-    getChrome: () => ({
-      title: "Appearance",
-      subtitle: "Light, dark, or follow your operating system.",
-    }),
+    getChrome: () => ({ title: "Appearance" }),
   },
   settingsKeys: {
     icon: KeyRound,
-    getChrome: () => ({
-      title: "API Keys",
-      subtitle: "Connect provider keys without storing plaintext in the browser.",
-    }),
+    getChrome: () => ({ title: "API Keys" }),
   },
   settingsLocalVault: {
     icon: FolderOpen,
-    getChrome: (ctx) =>
-      ctx.androidShell
-        ? {
-            title: "Local Vault",
-            subtitle:
-              "Not available in the Android app. Use a supported desktop browser for Local Vault.",
-          }
-        : {
-            title: "Local Vault",
-            subtitle: "Connect a real local folder and sync Markdown highlights and pages.",
-          },
+    getChrome: () => ({ title: "Local Vault" }),
   },
   settingsIdentities: {
     icon: Link2,
-    getChrome: () => ({
-      title: "Linked Identities",
-      subtitle: "Manage Google and GitHub identities linked to this account.",
-    }),
+    getChrome: () => ({ title: "Linked Identities" }),
   },
   settingsKeybindings: {
     icon: Keyboard,
-    getChrome: () => ({
-      title: "Keyboard Shortcuts",
-      subtitle: "Customize key bindings for launcher actions.",
-    }),
+    getChrome: () => ({ title: "Keyboard Shortcuts" }),
   },
   oracle: {
     icon: Sparkles,

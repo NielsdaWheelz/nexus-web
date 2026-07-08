@@ -8,6 +8,8 @@ import {
 } from "@/components/feedback/Feedback";
 import CollectionView from "@/components/collections/CollectionView";
 import CollectionDisplayControls from "@/components/collections/CollectionDisplayControls";
+import SectionOpener from "@/components/ui/SectionOpener";
+import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
 import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
 import PaneToolbar from "@/components/ui/PaneToolbar";
 import Button from "@/components/ui/Button";
@@ -202,6 +204,11 @@ export default function AuthorsPaneBody() {
         }
       : null;
 
+  usePaneChromeOverride({
+    folio: { kind: "count", value: entries.length, unit: "author" },
+    folioPending: status === "loading",
+  });
+
   return (
     <CollectionView
       rows={entries.map(presentContributor)}
@@ -209,6 +216,7 @@ export default function AuthorsPaneBody() {
       density={displayState.density}
       status={status}
       ariaLabel="Authors"
+      opener={<SectionOpener heading="Authors" />}
       toolbar={
         <PaneToolbar
           search={

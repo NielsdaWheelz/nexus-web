@@ -17,34 +17,33 @@ function navigation(
 }
 
 describe("SurfaceHeader", () => {
-  it("renders title and options menu", async () => {
+  it("renders the running head standing head + folio and the options menu", async () => {
     const user = userEvent.setup();
     const onDelete = vi.fn();
 
     render(
       <SurfaceHeader
-        title="The Pragmatic Programmer"
-        subtitle="pdf"
+        standingHead="Libraries"
+        folio={{ kind: "count", value: 37, unit: "source" }}
         navigation={navigation()}
         options={[{ id: "delete", label: "Delete", onSelect: onDelete, tone: "danger" }]}
       />
     );
 
-    expect(screen.getByRole("heading", { name: "The Pragmatic Programmer" })).toBeInTheDocument();
-    expect(screen.getByText("pdf")).toBeInTheDocument();
+    expect(screen.getByText("Libraries")).toBeInTheDocument();
+    expect(screen.getByText("37 sources")).toBeInTheDocument();
+    // The standing head is a supplementary label, not the page heading.
+    expect(screen.queryByRole("heading")).toBeNull();
 
     await user.click(screen.getByRole("button", { name: "Options" }));
     await user.click(screen.getByRole("menuitem", { name: "Delete" }));
     expect(onDelete).toHaveBeenCalledTimes(1);
   });
 
-  it("marks pending titles busy while keeping an accessible name", () => {
-    render(<SurfaceHeader title="Media" titlePending navigation={navigation()} />);
+  it("exposes an accessible loading label while the folio resolves", () => {
+    render(<SurfaceHeader standingHead="Libraries" folioPending navigation={navigation()} />);
 
-    expect(screen.getByRole("heading", { name: "Media" })).toHaveAttribute(
-      "aria-busy",
-      "true",
-    );
+    expect(screen.getByText("Loading…")).toBeInTheDocument();
   });
 
   it("loops tab focus inside the options menu", async () => {
@@ -52,7 +51,7 @@ describe("SurfaceHeader", () => {
 
     render(
       <SurfaceHeader
-        title="Reader"
+        standingHead="Libraries"
         navigation={navigation()}
         options={[
           { id: "open", label: "Open source", onSelect: vi.fn() },
@@ -88,7 +87,7 @@ describe("SurfaceHeader", () => {
 
     render(
       <SurfaceHeader
-        title="Reader"
+        standingHead="Libraries"
         navigation={navigation()}
         options={[
           {
@@ -117,7 +116,7 @@ describe("SurfaceHeader", () => {
 
     render(
       <SurfaceHeader
-        title="Reader"
+        standingHead="Libraries"
         navigation={navigation({
           canGoBack: true,
           canGoForward: false,

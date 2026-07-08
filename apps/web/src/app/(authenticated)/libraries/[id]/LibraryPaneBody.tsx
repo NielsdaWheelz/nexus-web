@@ -46,6 +46,7 @@ import { fetchPodcastLibraries } from "@/app/(authenticated)/podcasts/podcastSub
 import LibraryIntelligencePane from "./LibraryIntelligencePane";
 import Button from "@/components/ui/Button";
 import PaneSurface from "@/components/ui/PaneSurface";
+import SectionOpener from "@/components/ui/SectionOpener";
 import CollectionView from "@/components/collections/CollectionView";
 import CollectionDisplayControls from "@/components/collections/CollectionDisplayControls";
 import PaneSection from "@/components/ui/PaneSection";
@@ -794,7 +795,14 @@ export default function LibraryPaneBody() {
       ]
     : [];
 
-  usePaneChromeOverride({ options: paneOptions });
+  const entryFolioCount = entries.filter(
+    (entry) => !removedEntryIds.ids.has(entry.id),
+  ).length;
+  usePaneChromeOverride({
+    options: paneOptions,
+    folio: { kind: "count", value: entryFolioCount, unit: "entry" },
+    folioPending: loading,
+  });
   const secondaryDescriptor = useMemo(
     () =>
       currentLibrary
@@ -918,6 +926,7 @@ export default function LibraryPaneBody() {
         }}
       />
       <PaneSurface
+        opener={<SectionOpener heading={currentLibrary.name} scale="title" />}
         toolbar={
           visibleEntries.length > 0 ? (
             <PaneToolbar

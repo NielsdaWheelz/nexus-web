@@ -11,6 +11,7 @@ import {
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
+import SectionOpener from "@/components/ui/SectionOpener";
 import Select from "@/components/ui/Select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/Tabs";
 import Toggle from "@/components/ui/Toggle";
@@ -43,7 +44,7 @@ export default function SettingsReaderPaneBody() {
   }, []);
 
   return (
-    <PaneSurface>
+    <PaneSurface opener={<SectionOpener heading="Reader" />}>
       <PaneSection title="Appearance">
         {error && <FeedbackNotice severity="error">{error}</FeedbackNotice>}
 

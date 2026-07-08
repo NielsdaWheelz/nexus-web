@@ -25,7 +25,12 @@ import SecondaryPaneShell from "@/components/workspace/SecondaryPaneShell";
 import { useResizeHandle } from "@/components/workspace/useResizeHandle";
 import { useMobileChrome } from "@/lib/workspace/mobileChrome";
 import { copyText } from "@/lib/ui/copyText";
-import type { PaneBodyMode } from "@/lib/panes/paneRouteModel";
+import type { Folio } from "@/lib/ui/folio";
+import { standingHeadForRoute } from "@/lib/navigation/standingHead";
+import {
+  resolvePaneRouteModel,
+  type PaneBodyMode,
+} from "@/lib/panes/paneRouteModel";
 import type { EffectivePaneSizing } from "@/lib/workspace/paneSizing";
 import type {
   WorkspaceSecondarySizing,
@@ -35,7 +40,7 @@ import type { WorkspaceAttachedSecondaryPaneState } from "@/lib/workspace/schema
 import styles from "./PaneShell.module.css";
 
 // ---------------------------------------------------------------------------
-// Chrome override — lets body components push toolbar/options/meta into the
+// Chrome override — lets body components push toolbar/options/folio into the
 // PaneShell chrome without routing through the workspace store.
 // ---------------------------------------------------------------------------
 
@@ -43,7 +48,8 @@ export interface PaneChromeOverrides {
   toolbar?: React.ReactNode;
   actions?: React.ReactNode;
   options?: ActionMenuOption[];
-  meta?: React.ReactNode;
+  folio?: Folio;
+  folioPending?: boolean;
 }
 
 const EMPTY_PANE_CHROME_OVERRIDES: PaneChromeOverrides = {};
@@ -60,8 +66,31 @@ function arePaneChromeOverridesEqual(
     left.toolbar === right.toolbar &&
     left.actions === right.actions &&
     areActionMenuOptionsEqual(left.options, right.options) &&
-    left.meta === right.meta
+    areFoliosEqual(left.folio, right.folio) &&
+    left.folioPending === right.folioPending
   );
+}
+
+function areFoliosEqual(
+  left: Folio | undefined,
+  right: Folio | undefined,
+): boolean {
+  if (left === right) return true;
+  if (!left || !right || left.kind !== right.kind) return false;
+  switch (left.kind) {
+    case "count":
+      return (
+        right.kind === "count" &&
+        left.value === right.value &&
+        left.unit === right.unit
+      );
+    case "date":
+      return right.kind === "date" && left.iso === right.iso;
+    case "title":
+      return right.kind === "title" && left.value === right.value;
+    case "none":
+      return true;
+  }
 }
 
 function areActionMenuOptionsEqual(
@@ -92,17 +121,17 @@ const noopSetActiveSecondarySurface = () => {};
 
 /**
  * Call from a body component rendered inside PaneShell to push toolbar,
- * options, meta, or actions into the pane chrome.
+ * options, folio, or actions into the pane chrome.
  */
 export function usePaneChromeOverride(overrides: PaneChromeOverrides): void {
   const setOverrides = useContext(PaneChromeOverrideContext);
-  const { actions, meta, options, toolbar } = overrides;
+  const { actions, folio, folioPending, options, toolbar } = overrides;
   const lastPublishedRef = useRef<PaneChromeOverrides | null>(null);
   useEffect(() => {
     if (!setOverrides) {
       return;
     }
-    const next = { actions, meta, options, toolbar };
+    const next = { actions, folio, folioPending, options, toolbar };
     if (
       lastPublishedRef.current &&
       arePaneChromeOverridesEqual(lastPublishedRef.current, next)
@@ -111,7 +140,7 @@ export function usePaneChromeOverride(overrides: PaneChromeOverrides): void {
     }
     lastPublishedRef.current = next;
     setOverrides(next);
-  }, [actions, meta, options, setOverrides, toolbar]);
+  }, [actions, folio, folioPending, options, setOverrides, toolbar]);
 
   useEffect(() => {
     if (!setOverrides) {
@@ -145,9 +174,10 @@ type PaneShellStyle = CSSProperties & {
 interface PaneShellProps {
   paneId: string;
   href?: string;
+  // Retained for the resize-handle aria-label and the document-mode folio
+  // auto-derive (D-8); no longer forwarded to the chrome header as a title.
   title: string;
   titlePending?: boolean;
-  subtitle?: React.ReactNode;
   toolbar?: React.ReactNode;
   actions?: React.ReactNode;
   options?: ActionMenuOption[];
@@ -176,7 +206,6 @@ export default function PaneShell({
   href = "/",
   title,
   titlePending,
-  subtitle,
   toolbar,
   actions,
   options,
@@ -219,6 +248,31 @@ export default function PaneShell({
   const effectiveActions = chromeOverrides.actions ?? actions;
   const effectiveOptions = chromeOverrides.options ?? options;
   const mobileChromeHidden = isMobile && hidden;
+
+  // Running head: the section standing head derives from the route; the folio
+  // comes from a body override, else auto-derives a title folio for document
+  // (reader) panes from the resolved pane title — one owner, no per-body edit
+  // (D-8). An explicit override always wins (e.g. a detail surface publishing a
+  // count).
+  const standingHead = useMemo(() => {
+    const routeId = resolvePaneRouteModel(href).id;
+    return routeId === "unsupported" ? "" : standingHeadForRoute(routeId);
+  }, [href]);
+  const overrideFolio = chromeOverrides.folio;
+  const folio = useMemo<Folio>(
+    () =>
+      overrideFolio ??
+      (bodyMode === "document"
+        ? { kind: "title", value: title }
+        : { kind: "none" }),
+    [overrideFolio, bodyMode, title],
+  );
+  const folioPending =
+    overrideFolio != null
+      ? chromeOverrides.folioPending ?? false
+      : bodyMode === "document"
+        ? titlePending ?? false
+        : false;
 
   // Measure the mobile toolbar bar so document readers can reserve top space.
   useLayoutEffect(() => {
@@ -265,12 +319,23 @@ export default function PaneShell({
     if (!isMobile) return;
     setPaneChrome({
       paneId,
-      title,
+      standingHead,
+      folio,
+      folioPending,
       navigation,
       options: paneMenuOptions,
     });
     return () => setPaneChrome(null);
-  }, [isMobile, paneId, title, navigation, paneMenuOptions, setPaneChrome]);
+  }, [
+    isMobile,
+    paneId,
+    standingHead,
+    folio,
+    folioPending,
+    navigation,
+    paneMenuOptions,
+    setPaneChrome,
+  ]);
 
   const shellClass = mobileChromeHidden
     ? `${styles.paneShell} ${styles.mobileChromeHidden}`
@@ -369,10 +434,9 @@ export default function PaneShell({
         >
           {!isMobile ? (
             <SurfaceHeader
-              title={title}
-              titlePending={titlePending}
-              subtitle={subtitle}
-              meta={chromeOverrides.meta}
+              standingHead={standingHead}
+              folio={folio}
+              folioPending={folioPending}
               options={paneMenuOptions}
               actions={effectiveActions}
               navigation={navigation}

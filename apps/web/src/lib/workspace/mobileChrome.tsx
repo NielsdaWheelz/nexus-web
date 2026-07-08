@@ -13,6 +13,7 @@ import {
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import type { ActionMenuOption } from "@/components/ui/ActionMenu";
 import type { SurfaceHeaderNavigation } from "@/components/ui/SurfaceHeader";
+import type { Folio } from "@/lib/ui/folio";
 
 export type PaneMobileChromeLockReason =
   | "reader-restore"
@@ -35,7 +36,9 @@ export interface PaneMobileChromeController {
 /** The active pane's chrome, published by the mounted PaneShell for the mobile top bar. */
 export interface MobilePaneChrome {
   paneId: string;
-  title: ReactNode;
+  standingHead: string;
+  folio?: Folio;
+  folioPending?: boolean;
   navigation: SurfaceHeaderNavigation;
   options: ActionMenuOption[];
 }

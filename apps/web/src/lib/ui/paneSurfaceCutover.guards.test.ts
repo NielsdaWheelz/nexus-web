@@ -102,6 +102,8 @@ describe("pane surface/resource row cutover source gates", () => {
       "src/components/ui/PaneSection.tsx",
       "src/components/ui/ResourceList.tsx",
       "src/components/ui/ResourceRow.tsx",
+      "src/components/ui/RunningHead.tsx",
+      "src/components/ui/SectionOpener.tsx",
     ].filter((path) => forbiddenImport.test(sourceText(path)));
 
     expect(offenders).toEqual([]);
@@ -172,6 +174,51 @@ describe("pane surface/resource row cutover source gates", () => {
     expect(listOriginsMatch?.[1]).toBeDefined();
     expect(listOriginsMatch?.[1]).not.toContain('"synapse"');
     expect(listOriginsMatch?.[1]).not.toContain('"system"');
+  });
+
+  it("keeps the running-journal furniture cutover intact (§13 gates)", () => {
+    // SurfaceHeader no longer owns a free-form title/subtitle/meta/headingLevel.
+    const surfaceHeader = sourceText("src/components/ui/SurfaceHeader.tsx");
+    expect(surfaceHeader).not.toMatch(/title:|subtitle:|meta:|headingLevel/);
+
+    // No `meta` chrome override survives in PaneShell (code or comments).
+    const paneShell = sourceText("src/components/workspace/PaneShell.tsx");
+    expect(paneShell).not.toMatch(/\bmeta\b/);
+
+    // The primitives stay domain-free.
+    const domainImport =
+      /@\/lib\/panes\/paneRouteModel|@\/lib\/navigation\/destinations|@\/components\/workspace|@\/lib\/api/;
+    expect(sourceText("src/components/ui/RunningHead.tsx")).not.toMatch(domainImport);
+    expect(sourceText("src/components/ui/SectionOpener.tsx")).not.toMatch(domainImport);
+
+    // The folio is typed, never free-form children.
+    const folio = sourceText("src/lib/ui/folio.ts");
+    expect(folio).not.toMatch(/ReactNode|children/);
+
+    // The section opener uses the real display ladder; nothing is centered.
+    expect(sourceText("src/components/ui/SectionOpener.module.css")).toContain(
+      "var(--text-display-1)",
+    );
+    for (const css of [
+      "src/components/ui/SectionOpener.module.css",
+      "src/components/ui/RunningHead.module.css",
+      "src/components/ui/SurfaceHeader.module.css",
+    ]) {
+      expect(sourceText(css)).not.toMatch(/text-align:\s*center/);
+    }
+
+    // No standing-head literal leaks into a pane body — it must derive.
+    const standingHeadLiteral =
+      /standingHead=[{"'](?:LIBRARIES|AUTHORS|PODCASTS|NOTES|CHATS|SEARCH|SETTINGS)/;
+    const literalOffenders = sourceFiles(join(APP_ROOT, "src/app")).filter((path) =>
+      standingHeadLiteral.test(sourceText(path)),
+    );
+    expect(literalOffenders).toEqual([]);
+
+    // No dead BROWSE/TODAY standing head after siblings #6/#7.
+    expect(sourceText("src/lib/navigation/standingHead.ts")).not.toMatch(
+      /"BROWSE"|"TODAY"|standingHead.*Browse|standingHead.*Today/,
+    );
   });
 
   it("has no legacy resultRows/pageList class hooks remaining in src/app", () => {

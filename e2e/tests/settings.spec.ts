@@ -1,7 +1,9 @@
 import { test, expect, type Page } from "@playwright/test";
 
 test.describe("settings", () => {
-  const settingsChrome = (page: Page) => page.getByTestId("pane-shell-chrome");
+  // The surface title now renders as the section opener <h1> in the pane body
+  // (running-journal cutover); the chrome carries only the running head.
+  const settingsChrome = (page: Page) => page.getByTestId("pane-shell-body");
 
   test("view settings", async ({ page }) => {
     await page.goto("/settings/keys");

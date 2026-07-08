@@ -8,6 +8,8 @@ import {
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import PaneSurface from "@/components/ui/PaneSurface";
+import SectionOpener from "@/components/ui/SectionOpener";
+import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
 import CollectionView from "@/components/collections/CollectionView";
 import CollectionDisplayControls from "@/components/collections/CollectionDisplayControls";
 import Pill from "@/components/ui/Pill";
@@ -325,8 +327,23 @@ export default function AuthorPaneBody() {
   const formerlyHandle =
     data && handle && handle !== data.contributor.handle ? handle : null;
 
+  // The author name is the section opener's display line (the sole <h1>, §7.6);
+  // the bespoke identity block below keeps avatar + metadata + actions. The
+  // running head carries the AUTHORS standing head + a works folio.
+  usePaneChromeOverride({
+    folio: { kind: "count", value: visibleWorks.length, unit: "work" },
+    folioPending: loading,
+  });
+
   return (
     <PaneSurface
+      opener={
+        <SectionOpener
+          heading={data?.contributor.display_name ?? "Author"}
+          scale="title"
+          pending={loading}
+        />
+      }
       state={
         loading || (error && !data) ? (
           <>
@@ -343,7 +360,6 @@ export default function AuthorPaneBody() {
               <UserRound size={24} />
             </div>
             <div className={styles.identity}>
-              <h1 className={styles.name}>{data.contributor.display_name}</h1>
               <div className={styles.identityMeta}>
                 {data.contributor.sort_name ? (
                   <span>{data.contributor.sort_name}</span>

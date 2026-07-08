@@ -212,7 +212,6 @@ import {
   upsertHighlightSorted,
   type HighlightLinkedNoteBlock,
 } from "@/lib/highlights/api";
-import ContributorCreditList from "@/components/contributors/ContributorCreditList";
 import type { ContributorCredit } from "@/lib/contributors/types";
 import ResourceThumb from "@/components/ui/ResourceThumb";
 import { buildCompactMediaPaneTitle } from "./mediaFormatting";
@@ -680,8 +679,7 @@ export default function MediaPaneBody() {
   const metadataRetryBaselineRef = useRef<MetadataRetryBaseline | null>(null);
   const [metadataRetryPollsRemaining, setMetadataRetryPollsRemaining] =
     useState(0);
-  const [metadataRetryPollExhausted, setMetadataRetryPollExhausted] =
-    useState(false);
+  const [, setMetadataRetryPollExhausted] = useState(false);
   useSetPaneTitle(
     loading ? null : (buildCompactMediaPaneTitle(media) ?? "Media"),
   );
@@ -1555,10 +1553,7 @@ export default function MediaPaneBody() {
     [id],
   );
 
-  const {
-    snapshot: processingSnapshot,
-    connectionState: processingConnectionState,
-  } = useMediaProcessingStatus(
+  const { snapshot: processingSnapshot } = useMediaProcessingStatus(
     media?.id ?? null,
     media?.processing_status ?? "",
   );
@@ -4425,78 +4420,6 @@ export default function MediaPaneBody() {
   }, [openResourceChat]);
 
   const isReflowableReader = canRead && !isPdf;
-  const mediaHeaderMeta = useMemo(
-    () => (
-      <div className={styles.metadata}>
-        <span className={styles.kind}>{media?.kind}</span>
-        <ContributorCreditList
-          credits={media?.contributors}
-          className={styles.authorMeta}
-          maxVisible={2}
-          showRole
-        />
-        {media?.canonical_source_url ? (
-          <a
-            href={media.canonical_source_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className={styles.sourceLink}
-          >
-            View Source ↗
-          </a>
-        ) : null}
-        {metadataRetryPollsRemaining > 0 ? (
-          <Pill tone="info">Checking metadata...</Pill>
-        ) : metadataRetryPollExhausted ? (
-          <Pill tone="warning">Still checking metadata. Refresh later.</Pill>
-        ) : null}
-        {processingConnectionState === "error" ? (
-          <Pill tone="warning">Reconnecting...</Pill>
-        ) : null}
-        {media &&
-        media.processing_status === "ready_for_reading" &&
-        media.failure_stage === "metadata" ? (
-          media.capabilities?.can_retry_metadata ? (
-            <button
-              type="button"
-              onClick={() => {
-                void handleRetryMetadata();
-              }}
-              disabled={retryMetadataBusy}
-              style={{
-                background: "none",
-                border: "none",
-                padding: 0,
-                cursor: retryMetadataBusy ? "default" : "pointer",
-              }}
-            >
-              <Pill tone="warning">
-                {retryMetadataBusy
-                  ? "Re-enriching metadata..."
-                  : `Metadata enrichment failed${
-                      media.last_error_code ? `: ${media.last_error_code}` : ""
-                    } - Re-enrich?`}
-              </Pill>
-            </button>
-          ) : (
-            <Pill tone="warning">
-              {media.last_error_code
-                ? `Metadata enrichment failed: ${media.last_error_code}`
-                : "Metadata enrichment failed"}
-            </Pill>
-          )
-        ) : null}
-      </div>
-    ),
-    [
-      handleRetryMetadata,
-      media,
-      metadataRetryPollsRemaining,
-      metadataRetryPollExhausted,
-      processingConnectionState,
-      retryMetadataBusy,
-    ],
-  );
 
   const mediaHeaderOptions = useMemo(() => {
     const options = mediaResourceOptions({
@@ -4837,13 +4760,14 @@ export default function MediaPaneBody() {
     () => ({
       toolbar: mediaToolbar,
       options: mediaHeaderOptions,
-      meta: mediaHeaderMeta,
     }),
-    [mediaHeaderMeta, mediaHeaderOptions, mediaToolbar],
+    [mediaHeaderOptions, mediaToolbar],
   );
 
   // ==========================================================================
-  // Chrome override — push toolbar/options/meta/actions into PaneShell
+  // Chrome override — push toolbar/options into PaneShell. The reader's title
+  // rides the chrome running head as an auto-derived folio (document-mode);
+  // no free-form meta node (running-journal cutover).
   // ==========================================================================
 
   usePaneChromeOverride(paneChromeOverrides);

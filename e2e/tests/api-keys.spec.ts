@@ -6,7 +6,9 @@ interface ApiKey {
 }
 
 test.describe("api keys", () => {
-  const settingsChrome = (page: Page) => page.getByTestId("pane-shell-chrome");
+  // The surface title now renders as the section opener <h1> in the pane body
+  // (running-journal cutover); the chrome carries only the running head.
+  const settingsChrome = (page: Page) => page.getByTestId("pane-shell-body");
 
   async function currentMaskedFingerprint(page: Page, provider: string): Promise<string> {
     const response = await page.request.get("/api/keys");

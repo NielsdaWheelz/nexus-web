@@ -20,6 +20,8 @@ import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
 import ActionMenu from "@/components/ui/ActionMenu";
 import CollectionView from "@/components/collections/CollectionView";
 import CollectionDisplayControls from "@/components/collections/CollectionDisplayControls";
+import SectionOpener from "@/components/ui/SectionOpener";
+import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
 import ContributorFilter from "@/components/contributors/ContributorFilter";
 import KindChips from "@/components/search/KindChips";
 import AppliedFilters, {
@@ -321,6 +323,14 @@ export default function SearchPaneBody() {
 
   const rows = useMemo(() => results.map(presentSearchResult), [results]);
 
+  usePaneChromeOverride({
+    folio:
+      rows.length > 0
+        ? { kind: "count", value: rows.length, unit: "result" }
+        : { kind: "none" },
+    folioPending: searching,
+  });
+
   const notice =
     error || searching ? (
       <>
@@ -353,6 +363,7 @@ export default function SearchPaneBody() {
       density={displayState.density}
       status="ready"
       ariaLabel="Search results"
+      opener={<SectionOpener heading="Search" />}
       toolbar={
         <div className={styles.searchForm}>
           <Input

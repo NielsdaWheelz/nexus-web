@@ -1,0 +1,79 @@
+.opener {
+  display: flex;
+  flex-direction: column;
+  padding-block-start: var(--space-8);
+  padding-block-end: var(--space-5);
+  border-bottom: var(--stroke-hairline) solid var(--edge-subtle);
+}
+
+.headingRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.display {
+  margin: 0;
+  min-width: 0;
+  line-height: var(--leading-tight);
+  letter-spacing: var(--tracking-tight);
+  font-weight: var(--weight-bold);
+  color: var(--ink);
+}
+
+.display[data-scale="display"] {
+  font-size: var(--text-display-1);
+}
+
+.display[data-scale="title"] {
+  font-size: var(--text-3xl);
+}
+
+.actions {
+  flex-shrink: 0;
+}
+
+.standfirst {
+  margin: var(--space-2) 0 0;
+  max-width: 60ch;
+  font-family: var(--font-serif);
+  font-size: var(--text-md);
+  line-height: var(--leading-normal);
+  color: var(--ink-muted);
+}
+
+.headingSkeleton {
+  display: inline-block;
+  width: 12rem;
+  max-width: 100%;
+  height: 0.8em;
+  border-radius: var(--radius-sm);
+  background: var(--surface-3);
+  animation: section-opener-pulse 1800ms ease-in-out infinite;
+}
+
+@keyframes section-opener-pulse {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+/* Container step-down: keep the display line legible on narrow panes (phone
+   widths, split panes). A full per-pane container query is an S4 refinement. */
+@media (max-width: 34rem) {
+  .display[data-scale="display"] {
+    font-size: var(--text-2xl);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .headingSkeleton {
+    animation: none;
+  }
+}
