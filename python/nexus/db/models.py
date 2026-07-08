@@ -1741,6 +1741,163 @@ class ContributorIdentityEvent(Base):
     )
 
 
+class ContributorReconciliationRun(Base):
+    """One deterministic contributor-dedupe candidate generation pass."""
+
+    __tablename__ = "contributor_reconciliation_runs"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    actor_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=True,
+    )
+    algorithm_version: Mapped[str] = mapped_column(Text, nullable=False)
+    candidate_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    evaluated_pair_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    candidates: Mapped[list["ContributorReconciliationCandidate"]] = relationship(
+        "ContributorReconciliationCandidate",
+        back_populates="run",
+        order_by=lambda: [
+            ContributorReconciliationCandidate.score.desc(),
+            ContributorReconciliationCandidate.id.asc(),
+        ],
+    )
+
+
+class ContributorReconciliationCandidate(Base):
+    """A suggested duplicate pair for manual contributor reconciliation."""
+
+    __tablename__ = "contributor_reconciliation_candidates"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    run_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("contributor_reconciliation_runs.id"),
+        nullable=False,
+    )
+    contributor_a_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("contributors.id"),
+        nullable=False,
+    )
+    contributor_b_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("contributors.id"),
+        nullable=False,
+    )
+    proposed_source_contributor_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("contributors.id"),
+        nullable=False,
+    )
+    proposed_target_contributor_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("contributors.id"),
+        nullable=False,
+    )
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
+    score: Mapped[int] = mapped_column(Integer, nullable=False)
+    evidence: Mapped[dict[str, object]] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text("'{}'::jsonb"),
+    )
+    decided_by_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=True,
+    )
+    decided_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'accepted', 'rejected', 'stale')",
+            name="ck_contributor_reconciliation_candidates_status",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(evidence) = 'object'",
+            name="ck_contributor_reconciliation_candidates_evidence",
+        ),
+        UniqueConstraint(
+            "run_id",
+            "contributor_a_id",
+            "contributor_b_id",
+            name="uq_contributor_reconciliation_candidates_run_pair",
+        ),
+        Index(
+            "ix_contributor_reconciliation_candidates_run_status_score",
+            "run_id",
+            "status",
+            "score",
+        ),
+        Index(
+            "ix_contributor_reconciliation_candidates_a_status_score",
+            "contributor_a_id",
+            "status",
+            "score",
+        ),
+        Index(
+            "ix_contributor_reconciliation_candidates_b_status_score",
+            "contributor_b_id",
+            "status",
+            "score",
+        ),
+        Index(
+            "uq_contributor_reconciliation_candidates_pending_pair",
+            "contributor_a_id",
+            "contributor_b_id",
+            unique=True,
+            postgresql_where=text("status = 'pending'"),
+        ),
+    )
+
+    run: Mapped["ContributorReconciliationRun"] = relationship(
+        "ContributorReconciliationRun",
+        back_populates="candidates",
+    )
+    contributor_a: Mapped["Contributor"] = relationship(
+        "Contributor",
+        foreign_keys=[contributor_a_id],
+    )
+    contributor_b: Mapped["Contributor"] = relationship(
+        "Contributor",
+        foreign_keys=[contributor_b_id],
+    )
+    proposed_source_contributor: Mapped["Contributor"] = relationship(
+        "Contributor",
+        foreign_keys=[proposed_source_contributor_id],
+    )
+    proposed_target_contributor: Mapped["Contributor"] = relationship(
+        "Contributor",
+        foreign_keys=[proposed_target_contributor_id],
+    )
+
+
 class MediaFile(Base):
     """Media file storage metadata (0..1 per media).
 

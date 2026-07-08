@@ -9,6 +9,7 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 ContributorKind = Literal["person", "organization", "group", "unknown"]
 ContributorStatus = Literal["unverified", "verified", "tombstoned", "merged"]
+ContributorReconciliationStatus = Literal["pending", "accepted", "rejected", "stale"]
 ContributorAliasKind = Literal[
     "display",
     "credited",
@@ -282,6 +283,57 @@ class ContributorMergeRequest(BaseModel):
     )
 
     model_config = ConfigDict(str_strip_whitespace=True, populate_by_name=True, extra="forbid")
+
+
+class ContributorReconciliationContributorOut(BaseModel):
+    handle: str
+    href: str
+    display_name: str = Field(serialization_alias="displayName")
+    sort_name: str = Field(serialization_alias="sortName")
+    kind: ContributorKind
+    status: ContributorStatus
+    disambiguation: str | None = None
+    work_count: int = Field(serialization_alias="workCount")
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+
+class ContributorReconciliationCandidateOut(BaseModel):
+    id: UUID
+    run_id: UUID = Field(serialization_alias="runId")
+    status: ContributorReconciliationStatus
+    score: int
+    source_contributor: ContributorReconciliationContributorOut = Field(
+        serialization_alias="sourceContributor"
+    )
+    target_contributor: ContributorReconciliationContributorOut = Field(
+        serialization_alias="targetContributor"
+    )
+    evidence: dict[str, Any]
+    decided_by_user_id: UUID | None = Field(None, serialization_alias="decidedByUserId")
+    created_at: datetime = Field(serialization_alias="createdAt")
+    updated_at: datetime = Field(serialization_alias="updatedAt")
+    decided_at: datetime | None = Field(None, serialization_alias="decidedAt")
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+
+class ContributorReconciliationRunOut(BaseModel):
+    id: UUID
+    algorithm_version: str = Field(serialization_alias="algorithmVersion")
+    candidate_count: int = Field(serialization_alias="candidateCount")
+    evaluated_pair_count: int = Field(serialization_alias="evaluatedPairCount")
+    actor_user_id: UUID | None = Field(None, serialization_alias="actorUserId")
+    created_at: datetime = Field(serialization_alias="createdAt")
+    candidates: list[ContributorReconciliationCandidateOut] = Field(default_factory=list)
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+
+class ContributorReconciliationCandidatesPage(BaseModel):
+    candidates: list[ContributorReconciliationCandidateOut] = Field(default_factory=list)
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
 
 class FacetCount(BaseModel):

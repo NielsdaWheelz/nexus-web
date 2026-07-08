@@ -18,6 +18,9 @@ from nexus.services.contributor_credits import (
     load_contributor_credits_for_podcasts,
     replace_media_contributor_credits,
 )
+from nexus.services.contributor_reconciliation import (
+    try_enqueue_contributor_reconciliation_for_media,
+)
 from nexus.services.library_entries import assign_libraries_for_media_in_current_transaction
 from nexus.services.rss_transcript_fetch import fetch_rss_transcript
 from nexus.services.transcript_segments import normalize_transcript_segments
@@ -56,6 +59,7 @@ def sync_subscription_ingest(
     reused_episode_count = 0
     ingested_media_ids: list[UUID] = []
     enrichment_media_ids: set[UUID] = set()
+    reconciliation_media_ids: set[UUID] = set()
     chapter_sync_rows: list[tuple[UUID, list[dict[str, Any]] | None]] = []
     transcript_sync_rows: list[dict[str, Any]] = []
     subscription_library_rows = db.execute(
@@ -186,7 +190,9 @@ def sync_subscription_ingest(
                     for sort_order, name in enumerate(author_names)
                 ],
             )
-            if not author_names:
+            if author_names:
+                reconciliation_media_ids.add(media_id)
+            else:
                 enrichment_media_ids.add(media_id)
             reused_episode_count += 1
         else:
@@ -314,7 +320,9 @@ def sync_subscription_ingest(
                     for sort_order, name in enumerate(author_names)
                 ],
             )
-            if not author_names:
+            if author_names:
+                reconciliation_media_ids.add(media_id)
+            else:
                 enrichment_media_ids.add(media_id)
             assign_libraries_for_media_in_current_transaction(
                 db, viewer_id, media_id, subscription_library_ids
@@ -452,6 +460,14 @@ def sync_subscription_ingest(
                 media_id=str(media_id),
                 error=str(exc),
             )
+
+    for media_id in reconciliation_media_ids:
+        try_enqueue_contributor_reconciliation_for_media(
+            db,
+            media_id=media_id,
+            reason="podcast_subscription_sync",
+            request_id=None,
+        )
 
     return ingested_episode_count, reused_episode_count
 

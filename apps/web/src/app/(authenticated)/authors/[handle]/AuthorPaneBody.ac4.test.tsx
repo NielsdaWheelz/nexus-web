@@ -38,6 +38,7 @@ describe("AuthorPaneBody (AC-4 hydration hit)", () => {
           },
           aliases: [],
           externalIds: [],
+          reconciliationCandidates: [],
           works: [
             {
               object_type: "media",

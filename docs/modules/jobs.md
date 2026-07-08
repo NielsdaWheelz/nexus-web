@@ -91,6 +91,12 @@ allowlist literal still lives in runtime/env owners (`config.py`,
 `deploy/env/env-prod-worker*`, and `sync-env.sh`); tests read those owners rather
 than copy the literal again.
 
+`contributor_reconciliation` is user-facing because it materializes duplicate
+author proposals the user can accept or reject in the author surface. Source
+ingest, metadata enrichment, podcast identity writes, and podcast episode syncs
+enqueue it after contributor-credit writes so the proposal table follows the
+authority file instead of becoming a separate dedupe system.
+
 ## SERIALIZABLE retries (`db/retries.py`)
 
 `retry_serializable(db, label, op, *, retries=3)` is the one owner of the

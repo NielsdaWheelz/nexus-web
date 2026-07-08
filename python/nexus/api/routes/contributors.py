@@ -14,8 +14,10 @@ from nexus.schemas.contributors import (
     ContributorAliasCreateRequest,
     ContributorExternalIdCreateRequest,
     ContributorMergeRequest,
+    ContributorReconciliationCandidatesPage,
     ContributorSplitRequest,
 )
+from nexus.services import contributor_reconciliation as reconciliation_service
 from nexus.services import contributors as contributors_service
 
 router = APIRouter(prefix="/contributors", tags=["contributors"])
@@ -69,6 +71,54 @@ def list_contributor_directory(
         limit=limit,
     )
     return ok(page)
+
+
+@router.get("/reconciliation-candidates")
+def list_reconciliation_candidates(
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+    contributor_handle: str | None = Query(default=None, max_length=200),
+    status: Literal["pending", "accepted", "rejected", "stale"] = Query(default="pending"),
+    limit: int = Query(default=20, ge=1, le=100),
+) -> dict:
+    candidates = reconciliation_service.list_contributor_reconciliation_candidates(
+        db,
+        viewer_id=viewer.user_id,
+        contributor_handle=contributor_handle,
+        status=status,
+        limit=limit,
+    )
+    return ok(ContributorReconciliationCandidatesPage(candidates=candidates))
+
+
+@router.post("/reconciliation-candidates/{candidate_id}/accept", status_code=201)
+def accept_reconciliation_candidate(
+    candidate_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    contributor = reconciliation_service.accept_contributor_reconciliation_candidate(
+        db,
+        actor_user_id=viewer.user_id,
+        actor_roles=viewer.roles,
+        candidate_id=candidate_id,
+    )
+    return ok(contributor)
+
+
+@router.post("/reconciliation-candidates/{candidate_id}/reject")
+def reject_reconciliation_candidate(
+    candidate_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    candidate = reconciliation_service.reject_contributor_reconciliation_candidate(
+        db,
+        actor_user_id=viewer.user_id,
+        actor_roles=viewer.roles,
+        candidate_id=candidate_id,
+    )
+    return ok(candidate)
 
 
 @router.get("/{contributor_handle}")

@@ -34,11 +34,17 @@ describe("AuthorPaneBody", () => {
             },
           });
         }
+        if (isReconciliationRequest(url, "first-author")) {
+          return jsonResponse({ data: { candidates: [] } });
+        }
         if (url.pathname === "/api/contributors/second-author") {
           return secondContributor.promise;
         }
         if (url.pathname === "/api/contributors/second-author/works") {
           return secondWorks.promise;
+        }
+        if (isReconciliationRequest(url, "second-author")) {
+          return jsonResponse({ data: { candidates: [] } });
         }
         throw new Error(`Unexpected fetch path: ${path}`);
       }),
@@ -126,6 +132,9 @@ describe("AuthorPaneBody", () => {
             },
           });
         }
+        if (isReconciliationRequest(url, "filter-author")) {
+          return jsonResponse({ data: { candidates: [] } });
+        }
         throw new Error(`Unexpected fetch path: ${path}`);
       }),
     );
@@ -170,6 +179,9 @@ describe("AuthorPaneBody", () => {
         if (url.pathname === "/api/contributors/source-author/works") {
           return jsonResponse({ data: { works: [] } });
         }
+        if (isReconciliationRequest(url, "source-author")) {
+          return jsonResponse({ data: { candidates: [] } });
+        }
         if (url.pathname === "/api/contributors" && init?.method !== "POST") {
           return jsonResponse({
             data: { contributors: [contributor("target-author", "Target Author")] },
@@ -209,6 +221,50 @@ describe("AuthorPaneBody", () => {
     expect(dialog).not.toBeInTheDocument();
   });
 
+  it("accepts a duplicate suggestion through the reconciliation endpoint", async () => {
+    const candidate = reconciliationCandidate("candidate-1", "source-author", "target-author");
+    let acceptedCandidateId: string | null = null;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (path: string, init?: RequestInit) => {
+        const url = requestUrl(path);
+        if (url.pathname === "/api/contributors/source-author") {
+          return jsonResponse({ data: contributor("source-author", "Source Author") });
+        }
+        if (url.pathname === "/api/contributors/source-author/works") {
+          return jsonResponse({ data: { works: [] } });
+        }
+        if (isReconciliationRequest(url, "source-author")) {
+          return jsonResponse({ data: { candidates: [candidate] } });
+        }
+        if (
+          url.pathname === "/api/contributors/reconciliation-candidates/candidate-1/accept" &&
+          init?.method === "POST"
+        ) {
+          acceptedCandidateId = "candidate-1";
+          return jsonResponse({ data: contributor("target-author", "Target Author") });
+        }
+        throw new Error(`Unexpected fetch path: ${path}`);
+      }),
+    );
+
+    const onNavigatePane = vi.fn();
+    render(authorPane("source-author", { onNavigatePane }));
+
+    expect(await screen.findByRole("heading", { name: "Possible Duplicates" })).toBeVisible();
+    expect(screen.getByText("Target Author")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Accept merge" }));
+
+    await waitFor(() => {
+      expect(acceptedCandidateId).toBe("candidate-1");
+      expect(onNavigatePane).toHaveBeenCalledWith(
+        "pane-1",
+        "/authors/target-author",
+        undefined,
+      );
+    });
+  });
+
   it("links the search pivot to the contributor handle", async () => {
     vi.stubGlobal(
       "fetch",
@@ -219,6 +275,9 @@ describe("AuthorPaneBody", () => {
         }
         if (url.pathname === "/api/contributors/pivot-author/works") {
           return jsonResponse({ data: { works: [] } });
+        }
+        if (isReconciliationRequest(url, "pivot-author")) {
+          return jsonResponse({ data: { candidates: [] } });
         }
         throw new Error(`Unexpected fetch path: ${path}`);
       }),
@@ -243,6 +302,9 @@ describe("AuthorPaneBody", () => {
         }
         if (url.pathname === "/api/contributors/old-handle/works") {
           return jsonResponse({ data: { works: [] } });
+        }
+        if (isReconciliationRequest(url, "old-handle")) {
+          return jsonResponse({ data: { candidates: [] } });
         }
         throw new Error(`Unexpected fetch path: ${path}`);
       }),
@@ -297,6 +359,13 @@ function requestUrl(path: string): URL {
   return new URL(path, "https://nexus.test");
 }
 
+function isReconciliationRequest(url: URL, handle: string): boolean {
+  return (
+    url.pathname === "/api/contributors/reconciliation-candidates" &&
+    url.searchParams.get("contributor_handle") === handle
+  );
+}
+
 function work(input: { route: string; title: string; role: string; contentKind?: string }) {
   return {
     object_type: "media",
@@ -310,6 +379,32 @@ function work(input: { route: string; title: string; role: string; contentKind?:
     publisher: null,
     description: null,
     source: "local",
+  };
+}
+
+function reconciliationCandidate(id: string, sourceHandle: string, targetHandle: string) {
+  return {
+    id,
+    status: "pending",
+    score: 82,
+    source_contributor: {
+      ...contributor(sourceHandle, "Source Author"),
+      href: `/authors/${sourceHandle}`,
+      work_count: 1,
+    },
+    target_contributor: {
+      ...contributor(targetHandle, "Target Author"),
+      href: `/authors/${targetHandle}`,
+      work_count: 2,
+    },
+    evidence: {
+      matcher: "deterministic",
+      shared_names: ["source author"],
+      signals: ["shared_normalized_name"],
+    },
+    created_at: "2026-07-07T00:00:00Z",
+    updated_at: "2026-07-07T00:00:00Z",
+    decided_at: null,
   };
 }
 

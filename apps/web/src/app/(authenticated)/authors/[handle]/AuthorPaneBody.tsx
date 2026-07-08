@@ -15,16 +15,20 @@ import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import Select from "@/components/ui/Select";
 import ContributorPicker from "@/components/contributors/ContributorPicker";
+import ContributorReconciliationCandidates from "@/components/contributors/ContributorReconciliationCandidates";
 import { AUTHOR_WORKS_LIMIT, contributorResource } from "@/lib/api/resource";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
+  acceptContributorReconciliationCandidate,
   addContributorAlias,
   addContributorExternalId,
   deleteContributorAlias,
   deleteContributorExternalId,
   fetchContributor,
+  fetchContributorReconciliationCandidates,
   fetchContributorWorks,
   mergeContributor,
+  rejectContributorReconciliationCandidate,
   tombstoneContributor,
 } from "@/lib/contributors/api";
 import { clientResourceFetcher } from "@/lib/api/resourceTransport.client";
@@ -33,6 +37,7 @@ import { paneResourceLoaders } from "@/lib/panes/paneResourceLoaders";
 import type {
   ContributorAlias,
   ContributorExternalId,
+  ContributorReconciliationCandidate,
   ContributorSummary,
   ContributorWork,
 } from "@/lib/contributors/types";
@@ -54,6 +59,7 @@ interface ContributorPaneData {
   contributor: ContributorSummary;
   aliases: ContributorAlias[];
   externalIds: ContributorExternalId[];
+  reconciliationCandidates: ContributorReconciliationCandidate[];
   works: ContributorWork[];
   workFilterOptions: ContributorWork[];
 }
@@ -106,6 +112,10 @@ export default function AuthorPaneBody() {
   const [queryFilter, setQueryFilter] = useState("");
   const [mergeOpen, setMergeOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [busyCandidate, setBusyCandidate] = useState<{
+    id: string;
+    action: "accept" | "reject";
+  } | null>(null);
   const [aliasDraft, setAliasDraft] = useState("");
   const [authorityDraft, setAuthorityDraft] = useState("");
   const [externalKeyDraft, setExternalKeyDraft] = useState("");
@@ -127,13 +137,18 @@ export default function AuthorPaneBody() {
     if (!data) return;
     const targetHandle = data.contributor.handle;
     try {
-      const [contributorResponse, works] = await Promise.all([
+      const [contributorResponse, works, reconciliationPage] = await Promise.all([
         fetchContributor(targetHandle),
         fetchContributorWorks(targetHandle, {
           role: roleFilter,
           contentKind: kindFilter,
           query: queryFilter,
           limit: AUTHOR_WORKS_LIMIT,
+        }),
+        fetchContributorReconciliationCandidates({
+          contributorHandle: targetHandle,
+          status: "pending",
+          limit: 20,
         }),
       ]);
       setData((current) =>
@@ -143,6 +158,7 @@ export default function AuthorPaneBody() {
               contributor: contributorResponse,
               aliases: contributorResponse.aliases ?? [],
               externalIds: contributorResponse.external_ids ?? [],
+              reconciliationCandidates: reconciliationPage.candidates,
               works,
             }
           : current,
@@ -188,6 +204,35 @@ export default function AuthorPaneBody() {
     }
   }
 
+  async function handleAcceptCandidate(
+    candidate: ContributorReconciliationCandidate,
+  ): Promise<void> {
+    setBusy(true);
+    setBusyCandidate({ id: candidate.id, action: "accept" });
+    setError(null);
+    try {
+      const survivor = await acceptContributorReconciliationCandidate(candidate.id);
+      paneRouter.push(`/authors/${encodeURIComponent(survivor.handle)}`);
+    } catch (acceptError) {
+      if (handleUnauthenticatedApiError(acceptError)) return;
+      setError(toFeedback(acceptError, { fallback: "Failed to accept duplicate suggestion" }));
+    } finally {
+      setBusyCandidate(null);
+      setBusy(false);
+    }
+  }
+
+  async function handleRejectCandidate(
+    candidate: ContributorReconciliationCandidate,
+  ): Promise<void> {
+    setBusyCandidate({ id: candidate.id, action: "reject" });
+    await runMutation(
+      () => rejectContributorReconciliationCandidate(candidate.id),
+      "Failed to reject duplicate suggestion",
+    );
+    setBusyCandidate(null);
+  }
+
   async function handleAddAlias(): Promise<void> {
     if (!data) return;
     const alias = aliasDraft.trim();
@@ -228,6 +273,7 @@ export default function AuthorPaneBody() {
     setKindFilter("");
     setQueryFilter("");
     setMergeOpen(false);
+    setBusyCandidate(null);
     setAliasDraft("");
     setAuthorityDraft("");
     setExternalKeyDraft("");
@@ -247,7 +293,10 @@ export default function AuthorPaneBody() {
         "",
         "",
       );
-      setData(initialAuthor.data);
+      setData({
+        ...initialAuthor.data,
+        reconciliationCandidates: initialAuthor.data.reconciliationCandidates ?? [],
+      });
       setError(null);
     } else if (initialAuthor.status === "error") {
       setError(
@@ -390,6 +439,19 @@ export default function AuthorPaneBody() {
           </header>
 
           {/* split UI deferred */}
+          {data.reconciliationCandidates.length > 0 ? (
+            <ContributorReconciliationCandidates
+              title="Possible Duplicates"
+              status="ready"
+              candidates={data.reconciliationCandidates}
+              busyCandidate={busyCandidate}
+              emptyTitle="No duplicate suggestions"
+              emptyMessage="No contributor duplicates are pending review."
+              onAccept={(candidate) => void handleAcceptCandidate(candidate)}
+              onReject={(candidate) => void handleRejectCandidate(candidate)}
+            />
+          ) : null}
+
           <div className={styles.identityDetails}>
             <section>
               <h2>Aliases</h2>

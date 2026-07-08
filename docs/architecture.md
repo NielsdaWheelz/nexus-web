@@ -510,7 +510,13 @@ Task catalog (each is a thin handler in `tasks/` that wraps a service):
 (periodic), `reconcile_stale_ingest_media_job` (periodic),
 `sync_gutenberg_catalog_job` (periodic), `prune_background_jobs_job`
 (periodic), `purge_expired_auth_handoff_codes` (periodic),
-`backfill_default_library_closure_job`.
+`backfill_default_library_closure_job`, `contributor_reconciliation`.
+
+Contributor reconciliation is the dedupe proposal layer for author identity. It
+runs after source ingest, metadata enrichment, podcast identity writes, and
+podcast episode syncs; persists scored duplicate candidates with deterministic
+evidence; and accepts proposals only by calling the contributor merge contract.
+Rejecting a pair suppresses future pending proposals for that pair.
 
 > Gotcha: only `enrich_metadata` and `media_unit_build` declare
 > `failed_result_statuses`. Other ingest tasks that *return* `{"status":"failed"}`

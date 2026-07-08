@@ -51,6 +51,7 @@ USER_FACING_JOB_KINDS = (
     "backfill_default_library_closure_job",
     "oracle_reading_generate",
     "synapse_scan",
+    "contributor_reconciliation",
 )
 
 
@@ -236,6 +237,13 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             lease_seconds=300,
             failed_result_statuses=("failed",),
         ),
+        "contributor_reconciliation": JobDefinition(
+            kind="contributor_reconciliation",
+            handler=_run_contributor_reconciliation,
+            max_attempts=3,
+            retry_delays_seconds=(60, 300, 900),
+            lease_seconds=300,
+        ),
     }
 
 
@@ -412,6 +420,17 @@ def _run_synapse_scan(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None
         user_id=str(payload["user_id"]),
         ref=str(payload["ref"]),
         reason=str(payload.get("reason", "manual")),
+    )
+
+
+def _run_contributor_reconciliation(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    from nexus.tasks.contributor_reconciliation import contributor_reconciliation
+
+    return contributor_reconciliation(
+        scope=str(payload.get("scope", "media")),
+        media_id=_optional_str(payload.get("media_id")),
+        reason=str(payload.get("reason", "unspecified")),
+        request_id=_optional_str(payload.get("request_id")),
     )
 
 

@@ -38,6 +38,12 @@ export interface ContributorDirectoryResourceParams {
   limit?: number;
 }
 
+export interface ContributorReconciliationCandidatesResourceParams {
+  contributorHandle?: string;
+  status?: "pending" | "accepted" | "rejected" | "stale";
+  limit?: number;
+}
+
 interface NoteBlockResourceParams {
   blockId: string;
 }
@@ -69,6 +75,18 @@ function contributorDirectorySuffix(params: ContributorDirectoryResourceParams):
   if (params.statuses?.length) query.set("statuses", params.statuses.join(","));
   if (params.sort) query.set("sort", params.sort);
   if (params.cursor) query.set("cursor", params.cursor);
+  if (params.limit !== undefined) query.set("limit", String(params.limit));
+  const suffix = query.toString();
+  return suffix ? `?${suffix}` : "";
+}
+
+function contributorReconciliationCandidatesSuffix(
+  params: ContributorReconciliationCandidatesResourceParams
+): string {
+  const query = new URLSearchParams();
+  const contributorHandle = params.contributorHandle?.trim();
+  if (contributorHandle) query.set("contributor_handle", contributorHandle);
+  if (params.status) query.set("status", params.status);
   if (params.limit !== undefined) query.set("limit", String(params.limit));
   const suffix = query.toString();
   return suffix ? `?${suffix}` : "";
@@ -128,6 +146,16 @@ export const contributorDirectoryResource: ResourceDescriptor<ContributorDirecto
   serverPath: (params) => `/contributors/directory${contributorDirectorySuffix(params)}`,
   clientPath: (params) => `/api/contributors/directory${contributorDirectorySuffix(params)}`,
 };
+
+export const contributorReconciliationCandidatesResource: ResourceDescriptor<ContributorReconciliationCandidatesResourceParams> =
+  {
+    cacheKey: (params) =>
+      `contributors:reconciliation-candidates${contributorReconciliationCandidatesSuffix(params)}`,
+    serverPath: (params) =>
+      `/contributors/reconciliation-candidates${contributorReconciliationCandidatesSuffix(params)}`,
+    clientPath: (params) =>
+      `/api/contributors/reconciliation-candidates${contributorReconciliationCandidatesSuffix(params)}`,
+  };
 
 export const notePagesResource: ResourceDescriptor<NoResourceParams> = {
   cacheKey: () => "notes:pages",

@@ -18,6 +18,12 @@ from nexus.errors import ApiError, ApiErrorCode, ForbiddenError, NotFoundError
 from nexus.schemas.contributors import ContributorMergeRequest
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.contributor_credits import replace_media_contributor_credits
+from nexus.services.contributor_reconciliation import (
+    accept_contributor_reconciliation_candidate,
+    list_contributor_reconciliation_candidates,
+    refresh_contributor_reconciliation_for_media,
+    reject_contributor_reconciliation_candidate,
+)
 from nexus.services.contributor_taxonomy import normalize_contributor_name
 from nexus.services.contributors import (
     get_contributor_by_handle,
@@ -71,6 +77,200 @@ def _mint_contributor(db_session, *, display_name, source="manual", role="author
     )
     contributor_id, handle, _credit_id = _credit_contributor(db_session, media_id)
     return contributor_id, handle, media_id, library_id, viewer_id
+
+
+def _mint_contributor_for_viewer(
+    db_session,
+    *,
+    viewer_id,
+    library_id,
+    display_name,
+    source="test_provider",
+):
+    media_id = create_test_media_in_library(
+        db_session,
+        viewer_id,
+        library_id,
+        title=f"{display_name} Work {uuid4()}",
+    )
+    replace_media_contributor_credits(
+        db_session,
+        media_id=media_id,
+        credits=[{"name": display_name, "role": "author", "source": source}],
+    )
+    contributor_id, handle, _credit_id = _credit_contributor(db_session, media_id)
+    return contributor_id, handle, media_id
+
+
+# ---------------------------------------------------------------------------
+# contributor reconciliation candidates
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_reconciliation_proposes_same_name_visible_duplicates(db_session):
+    viewer_id = uuid4()
+    library_id = ensure_user_and_default_library(db_session, viewer_id)
+    display_name = f"Duplicate Author {uuid4()}"
+    first_id, first_handle, first_media = _mint_contributor_for_viewer(
+        db_session,
+        viewer_id=viewer_id,
+        library_id=library_id,
+        display_name=display_name,
+        source="web_article_byline",
+    )
+    second_id, second_handle, _second_media = _mint_contributor_for_viewer(
+        db_session,
+        viewer_id=viewer_id,
+        library_id=library_id,
+        display_name=display_name,
+        source="metadata_enrichment",
+    )
+    assert first_id != second_id
+
+    result = refresh_contributor_reconciliation_for_media(
+        db_session,
+        media_id=first_media,
+        reason="test",
+    )
+    assert result["status"] == "success"
+
+    candidates = list_contributor_reconciliation_candidates(
+        db_session,
+        viewer_id=viewer_id,
+        contributor_handle=first_handle,
+    )
+
+    assert len(candidates) == 1
+    candidate = candidates[0]
+    handles = {
+        candidate.source_contributor.handle,
+        candidate.target_contributor.handle,
+    }
+    assert handles == {first_handle, second_handle}
+    assert candidate.status == "pending"
+    assert candidate.score >= 55
+    assert candidate.evidence["matcher"] == "deterministic"
+
+
+@pytest.mark.integration
+def test_accepting_reconciliation_candidate_merges_through_identity_boundary(db_session):
+    actor_user_id = uuid4()
+    library_id = ensure_user_and_default_library(db_session, actor_user_id)
+    display_name = f"Merge Candidate {uuid4()}"
+    _first_id, _first_handle, first_media = _mint_contributor_for_viewer(
+        db_session,
+        viewer_id=actor_user_id,
+        library_id=library_id,
+        display_name=display_name,
+        source="web_article_byline",
+    )
+    _second_id, _second_handle, _second_media = _mint_contributor_for_viewer(
+        db_session,
+        viewer_id=actor_user_id,
+        library_id=library_id,
+        display_name=display_name,
+        source="metadata_enrichment",
+    )
+    refresh_contributor_reconciliation_for_media(
+        db_session,
+        media_id=first_media,
+        reason="test",
+    )
+    candidate = list_contributor_reconciliation_candidates(
+        db_session,
+        viewer_id=actor_user_id,
+    )[0]
+
+    survivor = accept_contributor_reconciliation_candidate(
+        db_session,
+        actor_user_id=actor_user_id,
+        actor_roles=CURATOR_ROLES,
+        candidate_id=candidate.id,
+    )
+
+    assert survivor.handle == candidate.target_contributor.handle
+    source_status = db_session.execute(
+        text("SELECT status FROM contributors WHERE handle = :handle"),
+        {"handle": candidate.source_contributor.handle},
+    ).scalar_one()
+    candidate_status = db_session.execute(
+        text("SELECT status FROM contributor_reconciliation_candidates WHERE id = :id"),
+        {"id": candidate.id},
+    ).scalar_one()
+    event_count = db_session.execute(
+        text(
+            """
+            SELECT count(*)
+            FROM contributor_identity_events
+            WHERE event_type = 'merge'
+              AND source_contributor_id = (
+                  SELECT id FROM contributors WHERE handle = :source_handle
+              )
+              AND target_contributor_id = (
+                  SELECT id FROM contributors WHERE handle = :target_handle
+              )
+            """
+        ),
+        {
+            "source_handle": candidate.source_contributor.handle,
+            "target_handle": candidate.target_contributor.handle,
+        },
+    ).scalar_one()
+    assert source_status == "merged"
+    assert candidate_status == "accepted"
+    assert event_count == 1
+
+
+@pytest.mark.integration
+def test_rejected_reconciliation_candidate_does_not_regenerate_pending(db_session):
+    actor_user_id = uuid4()
+    library_id = ensure_user_and_default_library(db_session, actor_user_id)
+    display_name = f"Rejected Candidate {uuid4()}"
+    _first_id, first_handle, first_media = _mint_contributor_for_viewer(
+        db_session,
+        viewer_id=actor_user_id,
+        library_id=library_id,
+        display_name=display_name,
+        source="web_article_byline",
+    )
+    _second_id, _second_handle, _second_media = _mint_contributor_for_viewer(
+        db_session,
+        viewer_id=actor_user_id,
+        library_id=library_id,
+        display_name=display_name,
+        source="metadata_enrichment",
+    )
+    refresh_contributor_reconciliation_for_media(
+        db_session,
+        media_id=first_media,
+        reason="test",
+    )
+    candidate = list_contributor_reconciliation_candidates(
+        db_session,
+        viewer_id=actor_user_id,
+        contributor_handle=first_handle,
+    )[0]
+
+    rejected = reject_contributor_reconciliation_candidate(
+        db_session,
+        actor_user_id=actor_user_id,
+        actor_roles=CURATOR_ROLES,
+        candidate_id=candidate.id,
+    )
+    refresh_contributor_reconciliation_for_media(
+        db_session,
+        media_id=first_media,
+        reason="test",
+    )
+
+    pending = list_contributor_reconciliation_candidates(
+        db_session,
+        viewer_id=actor_user_id,
+        contributor_handle=first_handle,
+    )
+    assert rejected.status == "rejected"
+    assert pending == []
 
 
 # ---------------------------------------------------------------------------
