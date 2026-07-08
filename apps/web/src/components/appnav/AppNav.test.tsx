@@ -160,6 +160,13 @@ describe("AppNav (desktop rail)", () => {
     expect(await screen.findByRole("menuitem", { name: "Settings" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Sign Out" })).toBeInTheDocument();
   });
+
+  it("rail ::before has no grain background-image (feTurbulence removed)", () => {
+    renderNav();
+    const rail = screen.getByRole("navigation", { name: "Primary" });
+    const style = getComputedStyle(rail, "::before");
+    expect(style.backgroundImage).not.toContain("feTurbulence");
+  });
 });
 
 describe("AppNav (mobile sheet)", () => {

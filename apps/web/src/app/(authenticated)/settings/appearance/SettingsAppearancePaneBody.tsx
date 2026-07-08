@@ -41,8 +41,8 @@ export default function SettingsAppearancePaneBody() {
               checked={selection === "light"}
               onChange={() => handleChange("light")}
             />
-            <span className={styles.optionLabel}>Light</span>
-            <span className={styles.optionHint}>Cream paper, dark ink.</span>
+            <span className={styles.optionLabel}>Study</span>
+            <span className={styles.optionHint}>Warm paper, dark ink — day.</span>
           </label>
           <label className={styles.option}>
             <input
@@ -52,8 +52,8 @@ export default function SettingsAppearancePaneBody() {
               checked={selection === "dark"}
               onChange={() => handleChange("dark")}
             />
-            <span className={styles.optionLabel}>Dark</span>
-            <span className={styles.optionHint}>Near-black canvas, warm ink.</span>
+            <span className={styles.optionLabel}>Press</span>
+            <span className={styles.optionHint}>Near-black canvas, warm ink — night.</span>
           </label>
           <label className={styles.option}>
             <input

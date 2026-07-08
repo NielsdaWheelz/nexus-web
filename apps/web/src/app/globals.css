@@ -162,11 +162,17 @@
   --palette-glass-bg: color-mix(in srgb, var(--surface-1) 82%, transparent);
   --palette-glass-ring: rgba(255, 255, 255, 0.08);
   --palette-glass-glow: rgba(255, 255, 255, 0.06);
+  /* Two Rooms — Press-specific typography + grain */
+  --stroke-hairline: 1.5px;
+  --body-font-size: var(--text-md);      /* 1rem — optical size up for reversed type */
+  --tracking-body: 0.008em;              /* tracking open a hair to counter halation */
+  --canvas-grain-opacity: 0.035;
+  --canvas-grain-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 
 /* === Light-mode override (explicit user choice) === */
 [data-theme="light"] {
-  --surface-canvas: #fafaf7;
+  --surface-canvas: #faf8f3;
   --surface-1: #ffffff;
   --surface-2: #f4f4f0;
   --surface-3: #ededea;
@@ -200,12 +206,18 @@
   --palette-glass-bg: color-mix(in srgb, var(--surface-1) 90%, transparent);
   --palette-glass-ring: rgba(20, 20, 30, 0.1);
   --palette-glass-glow: rgba(255, 255, 255, 0.5);
+  /* Two Rooms — Study-specific typography + grain */
+  --stroke-hairline: 1px;
+  --body-font-size: var(--text-base);    /* 0.9375rem — paper-tuned optical size */
+  --tracking-body: 0;
+  --canvas-grain-opacity: 0;
+  --canvas-grain-image: none;
 }
 
 /* === System-preference fallback when no explicit theme is set === */
 @media (prefers-color-scheme: light) {
   :root:not([data-theme]) {
-    --surface-canvas: #fafaf7;
+    --surface-canvas: #faf8f3;
     --surface-1: #ffffff;
     --surface-2: #f4f4f0;
     --surface-3: #ededea;
@@ -239,6 +251,12 @@
     --palette-glass-bg: color-mix(in srgb, var(--surface-1) 90%, transparent);
     --palette-glass-ring: rgba(20, 20, 30, 0.1);
     --palette-glass-glow: rgba(255, 255, 255, 0.5);
+    /* Two Rooms — Study-specific typography + grain */
+    --stroke-hairline: 1px;
+    --body-font-size: var(--text-base);    /* 0.9375rem — paper-tuned optical size */
+    --tracking-body: 0;
+    --canvas-grain-opacity: 0;
+    --canvas-grain-image: none;
   }
 }
 
@@ -295,12 +313,25 @@ body {
   margin: 0;
   padding: 0;
   font-family: var(--font-sans);
-  font-size: var(--text-base);
+  font-size: var(--body-font-size);         /* per-room: Study 0.9375rem, Press 1rem */
+  letter-spacing: var(--tracking-body);     /* per-room: Study 0, Press 0.008em */
   line-height: var(--leading-relaxed);
   color: var(--ink);
   background-color: var(--surface-canvas);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  isolation: isolate;                       /* stacking context for ::before grain */
+}
+
+/* Canvas grain — Press only (--canvas-grain-opacity: 0 in Study) */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+  opacity: var(--canvas-grain-opacity, 0);
+  background-image: var(--canvas-grain-image, none);
 }
 
 a {
