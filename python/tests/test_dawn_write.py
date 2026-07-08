@@ -203,7 +203,7 @@ class TestGenerateDawnWrite:
 
     def test_skips_when_signals_empty(self, db_session: Session, bootstrapped_user: UUID) -> None:
         fake_llm = MagicMock()
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             generate_dawn_write(
                 db_session,
                 user_id=bootstrapped_user,
@@ -247,7 +247,7 @@ class TestGenerateDawnWrite:
         # test asserts on is written inside the real observed_generate path.
         fake_router = MagicMock()
         fake_router.generate = AsyncMock(return_value=fake_response)
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             generate_dawn_write(
                 db_session,
                 user_id=bootstrapped_user,
@@ -290,7 +290,7 @@ class TestGenerateDawnWrite:
         _seed_highlight(db_session, bootstrapped_user, media_id)
 
         fake_llm = MagicMock()
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             generate_dawn_write(
                 db_session,
                 user_id=bootstrapped_user,

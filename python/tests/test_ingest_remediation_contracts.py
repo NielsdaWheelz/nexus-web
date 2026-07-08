@@ -26,6 +26,7 @@ def test_registry_job_kinds_match_task_catalog_contract():
         "backfill_default_library_closure_job",
         "oracle_reading_generate",
         "synapse_scan",
+        "dawn_write_job",
     }
     actual_kinds = set(get_default_registry().keys())
     assert actual_kinds == expected_kinds, (
