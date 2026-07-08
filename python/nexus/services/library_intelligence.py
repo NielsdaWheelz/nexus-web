@@ -231,6 +231,18 @@ def _compute_freshness(
     return "stale", len(changed)
 
 
+def is_artifact_stale(db: Session, *, library_id: UUID, current_revision_id: UUID) -> bool:
+    """Return True when the artifact's covered sources no longer match the live library.
+
+    Public accessor for cross-module callers (e.g. dawn_write). Wraps
+    ``_compute_freshness``; callers must not call ``_compute_freshness`` directly.
+    """
+    status, _ = _compute_freshness(
+        db, library_id=library_id, current_revision_id=current_revision_id
+    )
+    return status == "stale"
+
+
 def _live_media_fingerprints(db: Session, *, library_id: UUID) -> dict[str, str | None]:
     """The current expanded-media -> content_fingerprint map for this library.
 

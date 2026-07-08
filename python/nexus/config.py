@@ -30,7 +30,8 @@ DEFAULT_WORKER_ALLOWED_JOB_KINDS = (
     "ingest_media_source,enrich_metadata,chat_run,"
     "library_intelligence_artifact_generate,media_unit_build,note_reindex_job,"
     "podcast_sync_subscription_job,podcast_reindex_semantic_job,"
-    "backfill_default_library_closure_job,oracle_reading_generate,synapse_scan"
+    "backfill_default_library_closure_job,oracle_reading_generate,synapse_scan,"
+    "dawn_write_job"
 )
 
 
@@ -409,6 +410,10 @@ class Settings(BaseSettings):
     # Synapse resonance engine: SYNAPSE_ENABLED=false turns every scan trigger
     # into a no-op (synapse spec G6).
     synapse_enabled: bool = Field(default=True, alias="SYNAPSE_ENABLED")
+
+    # Dawn write: DAWN_WRITE_ENABLED=false makes the sweep job a no-op.
+    dawn_write_enabled: bool = Field(default=True, alias="DAWN_WRITE_ENABLED")
+    dawn_write_schedule_seconds: int = Field(default=3600, alias="DAWN_WRITE_SCHEDULE_SECONDS")
 
     # Stream token auth.
     # HS256 signing key for short-lived stream tokens (base64-encoded 32+ bytes)

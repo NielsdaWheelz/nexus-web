@@ -292,6 +292,31 @@ class DailyNotePage(Base):
     )
 
 
+class DawnWrite(Base):
+    """Current-only machine-generated morning block for one user + local date."""
+
+    __tablename__ = "dawn_writes"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
+    )
+    local_date: Mapped[date] = mapped_column(Date, nullable=False)
+    body_md: Mapped[str] = mapped_column(Text, nullable=False)
+    generated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
+    )
+    dismissed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "local_date", name="uq_dawn_writes_user_date"),
+        CheckConstraint("char_length(body_md) >= 1", name="ck_dawn_writes_body_nonempty"),
+        Index("ix_dawn_writes_user", "user_id"),
+    )
+
+
 class NoteBlock(Base):
     """Body-only note resource."""
 
@@ -4009,7 +4034,7 @@ class LLMCall(Base):
     __table_args__ = (
         CheckConstraint(
             "owner_kind IN ('chat_run', 'oracle_reading', 'li_revision', "
-            "'media_summary', 'media_enrichment', 'synapse_scan')",
+            "'media_summary', 'media_enrichment', 'synapse_scan', 'dawn_write')",
             name="ck_llm_calls_owner_kind",
         ),
         CheckConstraint("call_seq >= 1", name="ck_llm_calls_call_seq_positive"),

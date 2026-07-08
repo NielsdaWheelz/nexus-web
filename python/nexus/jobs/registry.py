@@ -236,6 +236,18 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             lease_seconds=300,
             failed_result_statuses=("failed",),
         ),
+        "dawn_write_job": JobDefinition(
+            kind="dawn_write_job",
+            handler=_run_dawn_write_sweep,
+            max_attempts=1,
+            retry_delays_seconds=(0,),
+            lease_seconds=300,
+            periodic_interval_seconds=(
+                int(settings.dawn_write_schedule_seconds)
+                if settings.dawn_write_schedule_seconds > 0
+                else None
+            ),
+        ),
     }
 
 
@@ -413,6 +425,12 @@ def _run_synapse_scan(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None
         ref=str(payload["ref"]),
         reason=str(payload.get("reason", "manual")),
     )
+
+
+def _run_dawn_write_sweep(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    from nexus.tasks.dawn_write import dawn_write_sweep
+
+    return dawn_write_sweep()
 
 
 def _optional_str(value: Any) -> str | None:

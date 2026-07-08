@@ -208,6 +208,26 @@ class TestWorkerMaintenanceConfiguration:
             f"production workers would never claim them: {sorted(missing)}"
         )
 
+    def test_dawn_write_job_in_all_allowlists(self):
+        """Guard 4 (§13): dawn_write_job must be in all three deploy allowlist locations
+        to avoid the known deploy incident class (allowlist mismatch)."""
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[2]
+        config_src = (root / "python" / "nexus" / "config.py").read_text()
+        worker_example = (root / "deploy" / "env" / "env-prod-worker.example").read_text()
+        sync_env = (root / "deploy" / "hetzner" / "sync-env.sh").read_text()
+
+        assert "dawn_write_job" in config_src, (
+            "DEFAULT_WORKER_ALLOWED_JOB_KINDS in config.py is missing 'dawn_write_job'"
+        )
+        assert "dawn_write_job" in worker_example, (
+            "env-prod-worker.example WORKER_ALLOWED_JOB_KINDS is missing 'dawn_write_job'"
+        )
+        assert "dawn_write_job" in sync_env, (
+            "sync-env.sh SAFE_WORKER_ALLOWED_JOB_KINDS is missing 'dawn_write_job'"
+        )
+
     def test_zero_schedule_values_are_valid_disabled_state(self):
         settings = _make_settings(
             PODCAST_ACTIVE_POLL_SCHEDULE_SECONDS=0,

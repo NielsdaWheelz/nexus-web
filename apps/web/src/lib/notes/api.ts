@@ -1,4 +1,4 @@
-import { apiFetch } from "@/lib/api/client";
+import { apiFetch, type ApiPath } from "@/lib/api/client";
 import { noteBlockResource } from "@/lib/api/resource";
 import {
   normalizeBlock,
@@ -433,6 +433,29 @@ export async function fetchNoteBlock(blockId: string): Promise<NoteBlock> {
     },
   );
   return normalizeBlock(requiredRecord(response.data, "note block"));
+}
+
+export interface DawnWrite {
+  id: string;
+  body_md: string;
+  generated_at: string;
+  dismissed_at: string | null;
+}
+
+// GET /api/notes/dawn-write?local_date=... → { write: DawnWrite | null }
+export async function fetchDawnWrite(localDate: string): Promise<DawnWrite | null> {
+  const params = new URLSearchParams({ local_date: localDate });
+  const response = await apiFetch<{ write: DawnWrite | null }>(
+    `/api/notes/dawn-write?${params}`,
+    { cache: "no-store" },
+  );
+  return response.write;
+}
+
+export async function dismissDawnWrite(writeId: string): Promise<void> {
+  await apiFetch(`/api/notes/dawn-write/${writeId}/dismiss` as ApiPath, {
+    method: "POST",
+  });
 }
 
 export async function saveNoteBody(

@@ -13,8 +13,9 @@ const APP_ROOT = process.cwd();
 const OWNER_MODULE_CSS = "src/components/ui/MachineText.module.css";
 const MACHINE_TOKENS = ["--font-machine", "--ink-machine", "--rail-machine"];
 const MARKDOWN_IMPORTERS = [
-  "src/components/library/LibraryBriefArtifact.tsx",
   "src/components/chat/AssistantEvidenceDisclosure.tsx",
+  "src/components/library/LibraryBriefArtifact.tsx",
+  "src/components/notes/DawnWriteBlock.tsx",
 ];
 
 function sourceText(path: string): string {
@@ -89,7 +90,7 @@ describe("Machine Hand cutover source gates", () => {
     // AssistantEvidenceDisclosure (which imports MarkdownMessage directly) is
     // rendered ONLY by AssistantMessage — the wrapper that owns the register.
     const evidenceImporters = filesUnder("src", isNonTestSource)
-      .filter((path) => path !== MARKDOWN_IMPORTERS[1])
+      .filter((path) => path !== "src/components/chat/AssistantEvidenceDisclosure.tsx")
       .filter((path) =>
         /from\s+["'][^"']*\/AssistantEvidenceDisclosure["']/.test(sourceText(path)),
       );

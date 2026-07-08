@@ -73,6 +73,7 @@ class LlmCallOwner:
         "media_summary",
         "media_enrichment",
         "synapse_scan",
+        "dawn_write",
     ]
     id: UUID
 

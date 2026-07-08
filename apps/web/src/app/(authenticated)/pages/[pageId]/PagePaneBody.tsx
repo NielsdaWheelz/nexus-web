@@ -45,12 +45,15 @@ import {
 } from "@/lib/notes/prosemirror/schema";
 import {
   fetchDailyNotePage,
+  fetchDawnWrite,
   fetchNoteBlock,
   fetchNotePage,
   saveResourceSurface,
+  type DawnWrite,
   type NotePage,
   type SaveResourceSurfaceInput,
 } from "@/lib/notes/api";
+import DawnWriteBlock from "@/components/notes/DawnWriteBlock";
 import { shiftLocalDate } from "@/lib/localDate";
 import type { NoteBlock } from "@/lib/notes/normalize";
 import {
@@ -709,6 +712,16 @@ export default function PagePaneBody({
   );
   usePaneChromeOverride({ options: paneOptions });
 
+  // Dawn write: fetch for daily note pages only (not focused-block views).
+  // cacheKey is null until the page loads and confirms a dailyNote — the fetch
+  // never blocks the editor or the early-return loading path.
+  const dawnWriteResource = useResource<DawnWrite | null>({
+    cacheKey: dailyLocalDate && !focusBlockId ? `dawn-write:${dailyLocalDate}` : null,
+    load: () => fetchDawnWrite(dailyLocalDate!),
+  });
+  const dawnWrite =
+    dawnWriteResource.status === "ready" ? dawnWriteResource.data : null;
+
   const backlinkObjectRef = useMemo(
     () => ({
       objectType: focusBlockId ? ("note_block" as const) : ("page" as const),
@@ -721,7 +734,9 @@ export default function PagePaneBody({
   if (!page || !initialDoc) return <PaneLoadingState />;
 
   return (
-    <div className={styles.editorShell} ref={shellRef}>
+    <>
+      {dawnWrite && <DawnWriteBlock write={dawnWrite} />}
+      <div className={styles.editorShell} ref={shellRef}>
       <input
         ref={titleInputRef}
         className={styles.titleInput}
@@ -756,6 +771,7 @@ export default function PagePaneBody({
       />
       <ConnectionsSurface objectRef={backlinkObjectRef} onOpenRoute={openRoute} />
     </div>
+    </>
   );
 }
 

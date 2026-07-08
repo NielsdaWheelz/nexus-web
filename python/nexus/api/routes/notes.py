@@ -1,13 +1,17 @@
 """Notes API routes."""
 
-from datetime import date
+from datetime import UTC, date, datetime
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Response
+from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
+from nexus.config import get_settings
+from nexus.db.models import DawnWrite
 from nexus.db.session import get_db
 from nexus.responses import ok, success_response
 from nexus.schemas.notes import (
@@ -18,6 +22,13 @@ from nexus.schemas.notes import (
 from nexus.services import notes as notes_service
 
 router = APIRouter(prefix="/notes", tags=["notes"])
+
+
+class DawnWriteOut(BaseModel):
+    id: UUID
+    body_md: str
+    generated_at: datetime
+    dismissed_at: datetime | None
 
 
 @router.get("/pages")
@@ -121,3 +132,47 @@ def get_note_block(
 ) -> dict:
     block = notes_service.get_note_block(db, viewer.user_id, block_id)
     return ok(block, by_alias=True)
+
+
+@router.get("/dawn-write")
+def get_dawn_write(
+    local_date: Annotated[date, Query(alias="local_date")],
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    """Return today's dawn write for the authenticated user, or null when none exists.
+
+    The envelope is always {"write": ...} — never a 404.
+    DAWN_WRITE_ENABLED=false returns {"write": null} without querying.
+    """
+    if not get_settings().dawn_write_enabled:
+        return {"write": None}
+    row = db.scalar(
+        select(DawnWrite).where(
+            DawnWrite.user_id == viewer.user_id,
+            DawnWrite.local_date == local_date,
+        )
+    )
+    if row is None:
+        return {"write": None}
+    return {"write": DawnWriteOut.model_validate(row, from_attributes=True).model_dump(mode="json")}
+
+
+@router.post("/dawn-write/{write_id}/dismiss", status_code=204)
+def dismiss_dawn_write(
+    write_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> Response:
+    """Permanently dismiss a dawn write. Idempotent — returns 204 even if already dismissed."""
+    row = db.scalar(
+        select(DawnWrite).where(
+            DawnWrite.id == write_id,
+            DawnWrite.user_id == viewer.user_id,
+            DawnWrite.dismissed_at.is_(None),
+        )
+    )
+    if row is not None:
+        row.dismissed_at = datetime.now(tz=UTC)
+        db.commit()
+    return Response(status_code=204)

@@ -482,6 +482,99 @@ describe("PagePaneBody daily-note chrome options", () => {
   });
 });
 
+describe("PagePaneBody dawn write integration", () => {
+  const PAGE_ID = "55555555-5555-4555-8555-555555555555";
+  const BLOCK_ID = "66666666-6666-4666-8666-666666666666";
+  const LOCAL_DATE = "2026-07-08";
+
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+
+  const dailyPage: NotePage = {
+    ...activationPage(PAGE_ID, BLOCK_ID),
+    dailyNote: { localDate: LOCAL_DATE },
+  };
+
+  const dawnWriteFixture = {
+    id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+    body_md: "Three highlights from *Sources of the Self*.",
+    generated_at: "2026-07-08T06:14:00.000Z",
+    dismissed_at: null,
+  };
+
+  function dawnWriteFetch(write: unknown, input: RequestInfo | URL): Response {
+    const url = new URL(String(input), "http://localhost");
+    if (url.pathname === "/api/notes/dawn-write") {
+      return jsonResponse({ write });
+    }
+    return defaultPageFetch(input);
+  }
+
+  afterEach(() => {
+    fetchSpy?.mockRestore();
+    window.localStorage.clear();
+  });
+
+  it("renders dawn write block above the page body when write exists", async () => {
+    fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async (input) => dawnWriteFetch(dawnWriteFixture, input));
+
+    renderPagePane(PAGE_ID, dailyPage);
+
+    // Page body loads
+    await screen.findByRole("textbox", { name: "Page title" });
+    // Dawn write block appears
+    expect(await screen.findByTestId("dawn-write-block")).toBeInTheDocument();
+    expect(screen.getByTestId("dawn-write-block")).toHaveTextContent("Sources of the Self");
+  });
+
+  it("renders no dawn write block when the API returns null", async () => {
+    fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async (input) => dawnWriteFetch(null, input));
+
+    renderPagePane(PAGE_ID, dailyPage);
+
+    await screen.findByRole("textbox", { name: "Page title" });
+    expect(screen.queryByTestId("dawn-write-block")).not.toBeInTheDocument();
+  });
+
+  it("renders the page normally when the dawn write fetch fails", async () => {
+    fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/api/notes/dawn-write") {
+        return new Response(JSON.stringify({ error: { code: "E_SERVER", message: "Internal error" } }), {
+          status: 500,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return defaultPageFetch(input);
+    });
+
+    renderPagePane(PAGE_ID, dailyPage);
+
+    await screen.findByRole("textbox", { name: "Page title" });
+    // Dawn write error is silently swallowed — block is absent, page loads fine
+    expect(screen.queryByTestId("dawn-write-block")).not.toBeInTheDocument();
+  });
+
+  it("renders no dawn write block for a non-daily page", async () => {
+    fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async (input) => dawnWriteFetch(dawnWriteFixture, input));
+
+    const nonDailyPage: NotePage = {
+      ...activationPage(PAGE_ID, BLOCK_ID),
+      dailyNote: null,
+    };
+
+    renderPagePane(PAGE_ID, nonDailyPage);
+
+    await screen.findByRole("textbox", { name: "Page title" });
+    expect(screen.queryByTestId("dawn-write-block")).not.toBeInTheDocument();
+  });
+});
+
 function citedBlock(): HTMLElement {
   return screen.getByRole("listitem");
 }
