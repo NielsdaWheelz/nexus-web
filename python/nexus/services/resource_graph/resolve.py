@@ -138,6 +138,82 @@ def missing_resolved_resource(uri: str) -> ResolvedResource:
     )
 
 
+def covering_evidence_span_for_highlight(
+    db: Session, *, viewer_id: UUID, highlight_id: UUID
+) -> ResourceRef | None:
+    """Best-effort resolve a highlight to the evidence_span covering its anchor.
+
+    Bridges the two coordinate systems — highlights anchor in fragment-offset /
+    PDF-page-geometry space; evidence_spans anchor in content-block space —
+    through the content-chunk ``summary_locator`` layer that already reconciles
+    them (§4.7). Returns ``None`` when no chunk covers the anchor, so the caller
+    falls back to ``media`` grain (D8). Bounded to the highlight's own anchor
+    media; the highlight's own visibility is the caller's (P-6).
+    """
+    row = (
+        db.execute(
+            text(
+                """
+                SELECT h.anchor_media_id, h.anchor_kind,
+                       hfa.fragment_id, hfa.start_offset,
+                       hpa.page_number
+                FROM highlights h
+                LEFT JOIN highlight_fragment_anchors hfa ON hfa.highlight_id = h.id
+                LEFT JOIN highlight_pdf_anchors hpa ON hpa.highlight_id = h.id
+                WHERE h.id = :highlight_id AND h.user_id = :viewer_id
+                """
+            ),
+            {"highlight_id": highlight_id, "viewer_id": viewer_id},
+        )
+        .mappings()
+        .first()
+    )
+    if row is None or row["anchor_media_id"] is None:
+        return None
+    media_id = row["anchor_media_id"]
+    if row["anchor_kind"] == "fragment_offsets" and row["fragment_id"] is not None:
+        span_id = db.scalar(
+            text(
+                """
+                SELECT cc.primary_evidence_span_id
+                FROM content_chunks cc
+                WHERE cc.owner_kind = 'media' AND cc.owner_id = :media_id
+                  AND cc.summary_locator->>'fragment_id' = :fragment_id
+                  AND (cc.summary_locator->>'start_offset')::int <= :offset
+                  AND (cc.summary_locator->>'end_offset')::int >= :offset
+                  AND cc.primary_evidence_span_id IS NOT NULL
+                ORDER BY cc.chunk_idx
+                LIMIT 1
+                """
+            ),
+            {
+                "media_id": media_id,
+                "fragment_id": str(row["fragment_id"]),
+                "offset": int(row["start_offset"]),
+            },
+        )
+    elif row["anchor_kind"] == "pdf_page_geometry" and row["page_number"] is not None:
+        span_id = db.scalar(
+            text(
+                """
+                SELECT cc.primary_evidence_span_id
+                FROM content_chunks cc
+                WHERE cc.owner_kind = 'media' AND cc.owner_id = :media_id
+                  AND (cc.summary_locator->>'page_number')::int = :page_number
+                  AND cc.primary_evidence_span_id IS NOT NULL
+                ORDER BY cc.chunk_idx
+                LIMIT 1
+                """
+            ),
+            {"media_id": media_id, "page_number": int(row["page_number"])},
+        )
+    else:
+        return None
+    if span_id is None:
+        return None
+    return ResourceRef(scheme="evidence_span", id=span_id)
+
+
 # ---------- per-scheme loading ------------------------------------------------
 
 

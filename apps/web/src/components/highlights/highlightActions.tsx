@@ -1,4 +1,11 @@
-import { MessageSquarePlus, MessagesSquare, NotebookPen, TextSelect, Trash2 } from "lucide-react";
+import {
+  MessageSquarePlus,
+  MessagesSquare,
+  NotebookPen,
+  Quote,
+  TextSelect,
+  Trash2,
+} from "lucide-react";
 import type { ActionMenuOption } from "@/components/ui/ActionMenu";
 import HighlightColorPicker from "@/components/highlights/HighlightColorPicker";
 import type { AnchoredReaderRow } from "@/components/reader/useAnchoredReaderProjection";
@@ -40,6 +47,7 @@ export function buildHighlightActions({
   handlers: {
     onSelectColor: (color: HighlightColor) => void;
     onAddNote?: () => void;
+    onCite?: () => void;
     onQuoteToNewChat: () => void;
     onQuoteToExistingChat: () => void;
     onToggleEditBounds: () => void;
@@ -80,6 +88,18 @@ export function buildHighlightActions({
       icon: <NotebookPen size={14} aria-hidden="true" />,
       disabled: !isExisting && state.changingColor,
       onSelect: handlers.onAddNote,
+    });
+  }
+
+  if (handlers.onCite) {
+    // Cite mints a cross-document footnote (§4.5); available on both an existing
+    // highlight and a bare selection (create-then-annotate, like the note verb).
+    options.push({
+      id: "cite",
+      label: "Cite a passage…",
+      icon: <Quote size={14} aria-hidden="true" />,
+      disabled: !isExisting && state.changingColor,
+      onSelect: handlers.onCite,
     });
   }
 

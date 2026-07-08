@@ -35,7 +35,7 @@ def test_every_origin_has_one_policy_entry() -> None:
 def test_edge_shape_policy_constants_are_explicit() -> None:
     assert SEARCH_SCOPE_EDGE_KIND == "context"
     assert SYNAPSE_SOURCE_SCHEMES == ("media", "page", "note_block", "highlight")
-    assert SYNAPSE_TARGET_SCHEMES == ("media", "note_block")
+    assert SYNAPSE_TARGET_SCHEMES == ("media", "note_block", "evidence_span")
 
 
 def test_policy_rejects_unowned_origin_shapes() -> None:

@@ -923,3 +923,14 @@
 .readerEmbedAction:focus-visible {
   text-decoration: underline;
 }
+
+/* Cite picker overlay — a light scrim centering the scoped passage picker. */
+.citePickerOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--overlay-scrim);
+}

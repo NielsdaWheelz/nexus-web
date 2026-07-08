@@ -384,6 +384,28 @@ def _targets(edges: list[EdgeOut]) -> set[str]:
     return {edge.target.uri for edge in edges}
 
 
+def _work_targets(db: Session, edges: list[EdgeOut]) -> set[str]:
+    """Edge targets normalized to containing-work grain.
+
+    Synapse now writes ``evidence_span``-grain targets for content-chunk hits
+    (§4.2); collapsing each span to its owner ``media`` keeps the inter-work
+    diversity assertions grain-agnostic. ``media``/``note_block`` targets keep
+    their own uri.
+    """
+    out: set[str] = set()
+    for edge in edges:
+        target = edge.target
+        if target.scheme == "evidence_span":
+            owner = db.scalar(
+                text("SELECT owner_id FROM evidence_spans WHERE id = :id AND owner_kind = 'media'"),
+                {"id": target.id},
+            )
+            out.add(f"media:{owner}" if owner is not None else target.uri)
+        else:
+            out.add(target.uri)
+    return out
+
+
 def _scan_job_rows(db: Session, user_id: UUID, ref: ResourceRef) -> list[dict]:
     return [
         dict(row)
@@ -446,8 +468,13 @@ class TestRunSynapseScan:
 
         assert status == "ok"
         edges = _synapse_edges(db_session, user_id=user_id, ref=ref)
-        assert _targets(edges) == {f"media:{alpha_id}", f"media:{beta_id}"}, (
-            f"expected both resonant media and never the kin anchor; got {_targets(edges)}"
+        assert _work_targets(db_session, edges) == {f"media:{alpha_id}", f"media:{beta_id}"}, (
+            f"expected both resonant media and never the kin anchor; "
+            f"got {_work_targets(db_session, edges)}"
+        )
+        # Passage grain: content-chunk hits map to evidence_span targets (§4.2).
+        assert all(edge.target.scheme == "evidence_span" for edge in edges), (
+            f"content-chunk resonance is span-grain; got {[e.target.uri for e in edges]}"
         )
         for edge in edges:
             assert edge.origin == "synapse"
@@ -515,8 +542,9 @@ class TestRunSynapseScan:
 
         assert status == "ok"
         edges = _synapse_edges(db_session, user_id=user_id, ref=ref)
-        assert _targets(edges) == {f"media:{other_id}"}, (
-            f"a media never resonates with its own chunks' media; got {_targets(edges)}"
+        assert _work_targets(db_session, edges) == {f"media:{other_id}"}, (
+            f"a media never resonates with its own chunks' media; "
+            f"got {_work_targets(db_session, edges)}"
         )
         [edge] = edges
         assert edge.snapshot is not None
@@ -610,7 +638,9 @@ class TestRunSynapseScan:
 
         first = _scan(db_session, user_id=user_id, ref=ref, router=_SynapseRouter())
         assert first == "ok"
-        assert _targets(_synapse_edges(db_session, user_id=user_id, ref=ref)) == {
+        assert _work_targets(
+            db_session, _synapse_edges(db_session, user_id=user_id, ref=ref)
+        ) == {
             f"note_block:{other_block}",
             f"media:{alpha_id}",
             f"media:{beta_id}",
@@ -619,7 +649,7 @@ class TestRunSynapseScan:
         second = _scan(db_session, user_id=user_id, ref=ref, router=_SynapseRouter(marker="Alpha"))
 
         assert second == "ok"
-        targets = _targets(_synapse_edges(db_session, user_id=user_id, ref=ref))
+        targets = _work_targets(db_session, _synapse_edges(db_session, user_id=user_id, ref=ref))
         assert targets == {f"media:{alpha_id}"}, (
             f"replace-set must drop stale targets and keep picked ones (AC2); got {targets}"
         )
@@ -686,7 +716,9 @@ class TestRunSynapseScan:
         status = _scan(db_session, user_id=user_id, ref=ref, router=_SynapseRouter())
 
         assert status == "ok"
-        targets = _targets(_synapse_edges(db_session, user_id=user_id, ref=ref))
+        targets = _work_targets(db_session, _synapse_edges(db_session, user_id=user_id, ref=ref))
+        # Cross-grain exclusion (F-04): the user-connected media:alpha blocks its
+        # own evidence-span children, so only beta's span survives.
         assert targets == {f"media:{beta_id}"}, (
             f"a pair already user-connected must not be re-proposed (AC4); got {targets}"
         )
@@ -733,6 +765,37 @@ class TestRunSynapseScan:
         assert reverse_targets == {f"note_block:{sibling_block}"}, (
             f"suppression must hold in both directions (AC3); got {reverse_targets}"
         )
+
+    def test_dismiss_span_edge_suppresses_owner_media_pair(self, db_session: Session) -> None:
+        # AC6 / S2: dismissing a span-grain synapse gloss writes a media-pair
+        # suppression; a re-scan proposes no span of that work.
+        user_id, ref, _anchor_id, alpha_id, beta_id = _seed_highlight_corpus(db_session)
+        router = _SynapseRouter(rationale="Shares the spooky-action claim.")
+        assert _scan(db_session, user_id=user_id, ref=ref, router=router) == "ok"
+        edges = _synapse_edges(db_session, user_id=user_id, ref=ref)
+        assert _work_targets(db_session, edges) == {f"media:{alpha_id}", f"media:{beta_id}"}
+        alpha_edge = next(
+            edge
+            for edge in edges
+            if edge.target.scheme == "evidence_span"
+            and db_session.scalar(
+                text("SELECT owner_id FROM evidence_spans WHERE id = :id"),
+                {"id": edge.target.id},
+            )
+            == alpha_id
+        )
+
+        dismiss_synapse_edge(db_session, viewer_id=user_id, edge_id=alpha_edge.id)
+
+        [suppression] = _suppression_rows(db_session, user_id)
+        assert suppression.target_scheme == "media", "dismissal normalizes span→media (D4)"
+        assert suppression.target_id == alpha_id
+        assert (suppression.source_scheme, suppression.source_id) == (ref.scheme, ref.id)
+        # Re-scan proposes no span of the dismissed work — only beta survives.
+        assert _scan(db_session, user_id=user_id, ref=ref, router=router) == "ok"
+        assert _work_targets(
+            db_session, _synapse_edges(db_session, user_id=user_id, ref=ref)
+        ) == {f"media:{beta_id}"}, "a dismissed work's spans stay silenced (AC6)"
 
     def test_mid_scan_dismiss_wins_over_the_scan(self, db_session: Session) -> None:
         user_id = _seed_user(db_session)

@@ -14,6 +14,12 @@
   --font-machine: var(--font-jetbrains-mono), ui-monospace, SFMono-Regular,
     Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 
+  /* Reader margin geometry — the reader column measure and the inline margin
+     gutter width. The wide-viewport MarginRail renders only when the pane's
+     available width ≥ (--reader-measure + --reader-margin-width) (§4.4). */
+  --reader-measure: 65ch;
+  --reader-margin-width: 19rem;
+
   /* Type size scale */
   --text-xs: 0.75rem;
   --text-sm: 0.8125rem;

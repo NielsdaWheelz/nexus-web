@@ -24,7 +24,7 @@ SchemeSet = tuple[ResourceScheme, ...] | Literal["any"]
 
 SEARCH_SCOPE_EDGE_KIND: EdgeKind = "context"
 SYNAPSE_SOURCE_SCHEMES: tuple[ResourceScheme, ...] = ("media", "page", "note_block", "highlight")
-SYNAPSE_TARGET_SCHEMES: tuple[ResourceScheme, ...] = ("media", "note_block")
+SYNAPSE_TARGET_SCHEMES: tuple[ResourceScheme, ...] = ("media", "note_block", "evidence_span")
 
 
 @dataclass(frozen=True, slots=True)

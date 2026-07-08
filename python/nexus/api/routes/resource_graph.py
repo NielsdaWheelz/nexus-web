@@ -177,6 +177,20 @@ def create_edge(
     """
     source = _parse_ref_or_400(body.source_ref)
     target = _parse_ref_or_400(body.target_ref)
+    # Stance (Take a Side): a stance edge from a highlight to its own anchor media
+    # is upgraded to the covering evidence_span when one resolves (span-preferred,
+    # media-fallback — D-5/D-8). The margin has no BE endpoint of its own (N-5), so
+    # this best-effort passage-grain upgrade rides the one user-edge writer.
+    if (
+        body.kind in ("supports", "contradicts")
+        and source.scheme == "highlight"
+        and target.scheme == "media"
+    ):
+        span = resolve_service.covering_evidence_span_for_highlight(
+            db, viewer_id=viewer.user_id, highlight_id=source.id
+        )
+        if span is not None:
+            target = span
     edge = edges_service.create_edge(
         db,
         viewer_id=viewer.user_id,

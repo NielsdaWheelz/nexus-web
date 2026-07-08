@@ -16,6 +16,7 @@ import {
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import HighlightActionBar from "@/components/highlights/HighlightActionBar";
+import type { HighlightActionTarget } from "@/components/highlights/highlightActions";
 import HighlightNoteEditor from "@/components/notes/HighlightNoteEditor";
 import type { HighlightLinkedNoteBlock } from "@/lib/highlights/api";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
@@ -30,6 +31,8 @@ import {
   type ReaderApparatusRow,
 } from "@/lib/reader/apparatus";
 import type { ReaderConnectionRow } from "@/lib/reader/documentMap";
+import { anchoredRowFromConnection } from "@/lib/reader/marginItems";
+import type { EvidenceFilters } from "@/lib/reader/useEvidenceFilters";
 import { parseRawPdfQuads } from "@/lib/highlights/pdfTypes";
 import { useStringIdSet } from "@/lib/useStringIdSet";
 import AnchoredSidecarSurface from "../AnchoredSidecarSurface";
@@ -39,14 +42,6 @@ import styles from "./EvidencePaneSurface.module.css";
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-
-export type EvidenceRowKind = "highlight" | "apparatus" | "connection";
-
-export interface EvidenceFilterState {
-  highlight: boolean;
-  apparatus: boolean;
-  connection: boolean;
-}
 
 type EvidenceRow =
   | { kind: "highlight"; id: string; data: AnchoredReaderRow }
@@ -65,6 +60,7 @@ type EvidenceRow =
 
 export interface EvidencePaneSurfaceProps {
   contentRef: RefObject<HTMLElement | null>;
+  filters: EvidenceFilters;
   highlights: AnchoredReaderRow[];
   readerApparatusRows: ReaderApparatusRow[];
   connectionRows: ReaderConnectionRow[];
@@ -84,6 +80,7 @@ export interface EvidencePaneSurfaceProps {
   onFocusHighlight: (highlightId: string) => void;
   onHoverHighlight: (highlightId: string | null) => void;
   onQuoteToChat: (highlightId: string) => void;
+  onCite: (target: HighlightActionTarget) => void;
   onColorChange: (highlightId: string, color: HighlightColor) => Promise<void>;
   onDelete: (highlightId: string) => Promise<void>;
   onStartEditBounds: () => void;
@@ -115,6 +112,7 @@ export interface EvidencePaneSurfaceProps {
 
 export default function EvidencePaneSurface({
   contentRef,
+  filters,
   highlights,
   readerApparatusRows,
   connectionRows,
@@ -134,6 +132,7 @@ export default function EvidencePaneSurface({
   onFocusHighlight,
   onHoverHighlight,
   onQuoteToChat,
+  onCite,
   onColorChange,
   onDelete,
   onStartEditBounds,
@@ -147,15 +146,7 @@ export default function EvidencePaneSurface({
   onActivateConnectionTarget,
   onDismissSynapse,
 }: EvidencePaneSurfaceProps) {
-  const [filter, setFilter] = useState<EvidenceFilterState>({
-    highlight: true,
-    apparatus: true,
-    connection: true,
-  });
-
-  const toggleFilter = useCallback((kind: EvidenceRowKind) => {
-    setFilter((prev) => ({ ...prev, [kind]: !prev[kind] }));
-  }, []);
+  const { filter, toggleFilter } = filters;
 
   const noteLayoutTimerRef = useRef<number | null>(null);
   const [noteLayoutVersion, setNoteLayoutVersion] = useState(0);
@@ -237,7 +228,7 @@ export default function EvidencePaneSurface({
 
     if (filter.connection) {
       for (const row of connectionRows) {
-        const anchor = toAnchoredConnectionRow(row);
+        const anchor = anchoredRowFromConnection(row);
         merged.push({ kind: "connection", id: row.id, data: row, anchor });
       }
     }
@@ -318,6 +309,7 @@ export default function EvidencePaneSurface({
                 isReflowable={isReflowable}
                 isEditingBounds={isFocused && isEditingBounds}
                 onSelectColor={(color) => onColorChange(highlight.id, color)}
+                onCite={() => onCite({ kind: "existing", highlight })}
                 onDelete={() => onDelete(highlight.id)}
                 onQuoteToNewChat={() => onQuoteToChat(highlight.id)}
                 onQuoteToExistingChat={() => onQuoteToChat(highlight.id)}
@@ -528,6 +520,7 @@ export default function EvidencePaneSurface({
       onActivateConnectionTarget,
       onApparatusRowActivate,
       onCancelEditBounds,
+      onCite,
       onColorChange,
       onDelete,
       onDismissSynapse,
@@ -638,43 +631,6 @@ function toAnchoredApparatusRow(row: ReaderApparatusRow): AnchoredReaderRow | nu
       page_number: locator.page_number,
       quads,
       stable_order_key: row.sort_key,
-    };
-  }
-  return null;
-}
-
-function toAnchoredConnectionRow(row: ReaderConnectionRow): AnchoredReaderRow | null {
-  const locator = row.anchor?.locator;
-  if (!locator) return null;
-  const exact = row.excerpt ?? row.title;
-  if (locator.type === "pdf_page_geometry") {
-    const quads = parseRawPdfQuads(locator.quads);
-    if (quads.length === 0 || typeof locator.page_number !== "number") return null;
-    return {
-      id: row.id,
-      exact,
-      color: "blue",
-      page_number: locator.page_number,
-      quads,
-      stable_order_key: row.anchor?.order_key ?? row.id,
-    };
-  }
-  if (
-    (locator.type === "web_text_offsets" || locator.type === "epub_fragment_offsets") &&
-    typeof locator.fragment_id === "string" &&
-    typeof locator.start_offset === "number" &&
-    typeof locator.end_offset === "number"
-  ) {
-    return {
-      id: row.id,
-      exact,
-      color: "blue",
-      anchor: {
-        fragment_id: locator.fragment_id,
-        start_offset: locator.start_offset,
-        end_offset: locator.end_offset,
-      },
-      stable_order_key: row.anchor?.order_key ?? row.id,
     };
   }
   return null;

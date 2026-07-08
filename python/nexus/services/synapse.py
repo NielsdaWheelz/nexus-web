@@ -91,6 +91,10 @@ SYNAPSE_PROVIDER = "anthropic"
 SYNAPSE_MODEL_NAME = "claude-haiku-4-5-20251001"
 SYNAPSE_CANDIDATE_LIMIT = 12
 SYNAPSE_MAX_CONNECTIONS = 4
+# Span-grain dedup lets one text-rich work fill every slot with its own spans;
+# two spans of a book is passage grain, four is monologue (D9). Keyed on the
+# candidate's owner media.
+SYNAPSE_MAX_CONNECTIONS_PER_WORK = 2
 SYNAPSE_MAX_OUTPUT_TOKENS = 1000
 SYNAPSE_LLM_TIMEOUT_SECONDS = 45
 SYNAPSE_QUERY_CHAR_BUDGET = 800
@@ -313,7 +317,7 @@ async def run_synapse_scan(
         survivors = [
             (connection, candidate)
             for connection, candidate in survivors
-            if candidate.target not in recheck_excluded
+            if _candidate_exclusion_ref(candidate) not in recheck_excluded
         ]
         written = replace_edges_for_origin(
             db,
@@ -361,13 +365,25 @@ def dismiss_synapse_edge(db: Session, *, viewer_id: UUID, edge_id: UUID) -> None
         raise ConflictError(
             ApiErrorCode.E_RETRY_INVALID_STATE, "Only synapse edges can be dismissed"
         )
+    # Suppression stays media-pair grain (D4): dismissing one span silences the
+    # whole work-pair. Normalize an evidence_span target to its owner media so a
+    # re-scan's media-grain exclusion (via _candidate_exclusion_ref) blocks every
+    # span of that work.
+    target = edge.target
+    if target.scheme == "evidence_span":
+        owner_media_id = db.scalar(
+            text("SELECT owner_id FROM evidence_spans WHERE id = :id AND owner_kind = 'media'"),
+            {"id": target.id},
+        )
+        if owner_media_id is not None:
+            target = ResourceRef(scheme="media", id=owner_media_id)
     existing = db.execute(
         select(SynapseSuppression.user_id).where(
             SynapseSuppression.user_id == viewer_id,
             SynapseSuppression.source_scheme == edge.source.scheme,
             SynapseSuppression.source_id == edge.source.id,
-            SynapseSuppression.target_scheme == edge.target.scheme,
-            SynapseSuppression.target_id == edge.target.id,
+            SynapseSuppression.target_scheme == target.scheme,
+            SynapseSuppression.target_id == target.id,
         )
     ).scalar_one_or_none()
     if existing is None:  # SELECT-then-insert (database.md: no ON CONFLICT)
@@ -378,8 +394,8 @@ def dismiss_synapse_edge(db: Session, *, viewer_id: UUID, edge_id: UUID) -> None
                         user_id=viewer_id,
                         source_scheme=edge.source.scheme,
                         source_id=edge.source.id,
-                        target_scheme=edge.target.scheme,
-                        target_id=edge.target.id,
+                        target_scheme=target.scheme,
+                        target_id=target.id,
                     )
                 )
                 db.flush()
@@ -483,11 +499,29 @@ def _highlight_dossier(db: Session, *, user_id: UUID, highlight_id: UUID) -> _Do
 
 @dataclass(frozen=True)
 class _SynapseCandidate:
-    """One judged object: an object-grain target plus its display fields (D3)."""
+    """One judged object: a span/object-grain target plus its display fields (D3).
+
+    ``owner_media_id`` is the containing media for span/media targets (``None``
+    for note-block targets); exclusion and the per-work diversity cap compare at
+    this containing-work grain, not the span target ref (F-04, §4.2).
+    """
 
     target: ResourceRef
     label: str
     snippet: str
+    owner_media_id: UUID | None = None
+
+
+def _candidate_exclusion_ref(candidate: _SynapseCandidate) -> ResourceRef:
+    """The containing-work-grain ref an exclusion set compares against.
+
+    ``_excluded_refs`` collects self/kin/connected/suppressed at ``media``/
+    ``note_block`` grain; a span candidate must be tested by its owner media, or
+    a suppressed/connected work would not block its evidence-span children.
+    """
+    if candidate.owner_media_id is not None:
+        return ResourceRef(scheme="media", id=candidate.owner_media_id)
+    return candidate.target
 
 
 def _excluded_refs(
@@ -551,22 +585,34 @@ def _map_candidates(
     *,
     excluded: set[ResourceRef],
 ) -> list[_SynapseCandidate]:
-    """Map retrieval hits to deduped object-grain candidates, best score first.
+    """Map retrieval hits to deduped candidates, best score first.
 
-    ``content_chunk`` hits collapse to their ``media``; ``note_block`` hits
-    stay block-grain (D3). Results arrive score-sorted, so the first hit per
-    target keeps the best snippet.
+    ``content_chunk`` hits map to their chunk's ``evidence_span`` (passage grain,
+    §4.2), falling back to ``media`` when the chunk carries no span; ``note_block``
+    hits stay block-grain (D3). Results arrive score-sorted, so the first hit per
+    target keeps the best snippet. Two chunks of one work dedupe to distinct spans
+    (distinct sidenotes), capped at ``SYNAPSE_MAX_CONNECTIONS_PER_WORK`` per work
+    (D9) so a text-rich work cannot fill every slot.
     """
     candidates: list[_SynapseCandidate] = []
     seen: set[ResourceRef] = set()
+    per_work: dict[UUID, int] = {}
     for result in results:
         if isinstance(result, SearchResultContentChunkOut):
+            span_id = result.evidence_span_ids[0] if result.evidence_span_ids else None
+            owner_media_id = result.source.media_id
+            target = (
+                ResourceRef(scheme="evidence_span", id=span_id)
+                if span_id is not None
+                else ResourceRef(scheme="media", id=owner_media_id)
+            )
             candidate = _SynapseCandidate(
-                target=ResourceRef(scheme="media", id=result.source.media_id),
+                target=target,
                 label=result.source.title,
                 # Chunk snippets carry ts_headline <b>…</b> markup — noise to
                 # the judge.
                 snippet=result.snippet.replace("<b>", "").replace("</b>", ""),
+                owner_media_id=owner_media_id,
             )
         elif isinstance(result, SearchResultNoteBlockOut):
             body = result.body_text.strip()
@@ -578,8 +624,12 @@ def _map_candidates(
             )
         else:
             continue
-        if candidate.target in excluded or candidate.target in seen:
+        if _candidate_exclusion_ref(candidate) in excluded or candidate.target in seen:
             continue
+        if candidate.owner_media_id is not None:
+            if per_work.get(candidate.owner_media_id, 0) >= SYNAPSE_MAX_CONNECTIONS_PER_WORK:
+                continue
+            per_work[candidate.owner_media_id] = per_work.get(candidate.owner_media_id, 0) + 1
         seen.add(candidate.target)
         candidates.append(candidate)
     return candidates[:SYNAPSE_CANDIDATE_LIMIT]

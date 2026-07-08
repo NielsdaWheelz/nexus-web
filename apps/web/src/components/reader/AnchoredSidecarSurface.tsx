@@ -16,6 +16,7 @@ import {
   useAnchoredReaderProjection,
   type AnchoredReaderRow,
 } from "./useAnchoredReaderProjection";
+import { stackAnchoredRows } from "@/lib/reader/marginItems";
 import styles from "./AnchoredSidecarSurface.module.css";
 
 const ROW_GAP = 4;
@@ -98,24 +99,25 @@ export default function AnchoredSidecarSurface<T>({
     const baseline =
       scrollParent.getBoundingClientRect().top -
       containerRef.current.getBoundingClientRect().top;
+    // Pre-sort by order key; stackAnchoredRows stable-sorts by desiredTop so
+    // equal tops keep the order-key tiebreak (the geometry core is shared, F3).
     const orderById = new Map(orderedRows.map((row, index) => [row.id, index]));
     const positioned = projections
       .map((projection) => ({
         id: projection.row.id,
         desiredTop: projection.rect.top - viewportState.scrollTop + baseline,
       }))
-      .sort((left, right) => {
-        if (left.desiredTop !== right.desiredTop) return left.desiredTop - right.desiredTop;
-        return (orderById.get(left.id) ?? 0) - (orderById.get(right.id) ?? 0);
-      });
+      .sort((left, right) => (orderById.get(left.id) ?? 0) - (orderById.get(right.id) ?? 0));
 
-    let previousBottom = -ROW_GAP;
-    const nextAlignedRows: Array<{ id: string; top: number }> = [];
-    for (const row of positioned) {
-      const top = Math.max(0, row.desiredTop, previousBottom + ROW_GAP);
-      nextAlignedRows.push({ id: row.id, top });
-      previousBottom = top + (rowHeights.get(row.id) ?? rowHeight);
-    }
+    const { alignedRows: nextAlignedRows, overflowCount: nextOverflowCount } = stackAnchoredRows(
+      positioned,
+      {
+        rowHeights,
+        rowHeight,
+        gap: ROW_GAP,
+        containerHeight: containerRef.current.clientHeight,
+      },
+    );
     setAlignedRows((previous) => {
       if (previous.length !== nextAlignedRows.length) return nextAlignedRows;
       for (let index = 0; index < previous.length; index += 1) {
@@ -128,13 +130,6 @@ export default function AnchoredSidecarSurface<T>({
       }
       return previous;
     });
-
-    let nextOverflowCount = 0;
-    for (const row of nextAlignedRows) {
-      if (row.top + (rowHeights.get(row.id) ?? rowHeight) > containerRef.current.clientHeight) {
-        nextOverflowCount += 1;
-      }
-    }
     setOverflowCount(nextOverflowCount);
   }, [
     contentRef,

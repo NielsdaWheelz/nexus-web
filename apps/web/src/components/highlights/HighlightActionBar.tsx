@@ -19,6 +19,7 @@ type ExistingProps = {
   isEditingBounds: boolean;
   onSelectColor: (color: HighlightColor) => Promise<void>;
   onAddNote?: () => void;
+  onCite?: () => void;
   onDelete: () => Promise<void>;
   onQuoteToNewChat: () => void;
   onQuoteToExistingChat: () => void;
@@ -34,6 +35,7 @@ type SelectionProps = {
   busy: boolean;
   onSelectColor: (color: HighlightColor) => void;
   onAddNote?: () => void;
+  onCite?: () => void;
   onQuoteToNewChat: () => void;
   onQuoteToExistingChat: () => void;
   className?: string;
@@ -64,6 +66,7 @@ function SelectionActionBar(props: SelectionProps) {
     handlers: {
       onSelectColor: props.onSelectColor,
       onAddNote: props.onAddNote,
+      onCite: props.onCite,
       onQuoteToNewChat: props.onQuoteToNewChat,
       onQuoteToExistingChat: props.onQuoteToExistingChat,
       onToggleEditBounds: () => {},
@@ -115,6 +118,7 @@ function ExistingActionBar(props: ExistingProps) {
     handlers: {
       onSelectColor: (color) => void selectColor(color),
       onAddNote: props.onAddNote,
+      onCite: props.onCite,
       onQuoteToNewChat: props.onQuoteToNewChat,
       onQuoteToExistingChat: props.onQuoteToExistingChat,
       onToggleEditBounds: props.onToggleEditBounds,

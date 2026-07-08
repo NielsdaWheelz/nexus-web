@@ -91,6 +91,17 @@ import {
   reconcileFocusAfterRefetch,
 } from "@/lib/highlights/useHighlightInteraction";
 import { useHighlightNoteChord } from "@/lib/highlights/useHighlightNoteChord";
+import MarginRail from "@/components/reader/MarginRail";
+import CitePicker from "@/components/reader/CitePicker";
+import { buildMarginItems } from "@/lib/reader/marginItems";
+import { useEvidenceFilters } from "@/lib/reader/useEvidenceFilters";
+import { useCiteComposer } from "@/lib/reader/useCiteComposer";
+import {
+  useReaderKeyChord,
+  useStanceComposer,
+  type StanceEdgeRef,
+} from "@/lib/reader/useStanceComposer";
+import type { HighlightActionTarget } from "@/components/highlights/highlightActions";
 import { createRandomId } from "@/lib/createRandomId";
 import { isEditableTarget } from "@/lib/ui/isEditableTarget";
 import { useMediaReaderViewTransition } from "@/lib/ui/viewTransitions";
@@ -4751,6 +4762,88 @@ export default function MediaPaneBody() {
     );
   }, [fragments, highlights, isPdf, isTranscriptMedia, pdfDocumentHighlights]);
 
+  // ==========================================================================
+  // Second apparatus: shared evidence filters, margin items, Cite + stance
+  // ==========================================================================
+  const evidenceFilters = useEvidenceFilters();
+
+  const marginItemsResult = useMemo(
+    () =>
+      buildMarginItems(
+        { highlights: anchoredHighlights, connectionRows: readerConnectionRows },
+        evidenceFilters.filter,
+      ),
+    [anchoredHighlights, evidenceFilters.filter, readerConnectionRows],
+  );
+
+  const createHighlightForSelection = useCallback(async () => {
+    const created = await handleCreateHighlight(DEFAULT_COLOR);
+    return created?.id ?? null;
+  }, [handleCreateHighlight]);
+
+  const citeComposer = useCiteComposer({
+    createHighlightForSelection,
+    onCited: refreshMediaHighlights,
+  });
+
+  const handleCite = useCallback(
+    (target: HighlightActionTarget) => {
+      void citeComposer.openCite(target);
+    },
+    [citeComposer],
+  );
+
+  const stanceEdges = useMemo<StanceEdgeRef[]>(() => {
+    const out: StanceEdgeRef[] = [];
+    for (const row of readerConnectionRows) {
+      const { origin, kind, source_ref, edge_id } = row.connection;
+      if (
+        origin === "user" &&
+        (kind === "supports" || kind === "contradicts") &&
+        source_ref.startsWith("highlight:")
+      ) {
+        out.push({
+          sourceHighlightId: source_ref.slice("highlight:".length),
+          kind,
+          edgeId: edge_id,
+        });
+      }
+    }
+    return out;
+  }, [readerConnectionRows]);
+
+  const resolveStanceTarget = useCallback(async () => {
+    const focusedId = focusState.focusedId;
+    if (focusedId) {
+      return { highlightId: focusedId, targetRef: `media:${id}` };
+    }
+    const created = await createHighlightForSelection();
+    if (!created) return null;
+    return { highlightId: created, targetRef: `media:${id}` };
+  }, [createHighlightForSelection, focusState.focusedId, id]);
+
+  const stanceComposer = useStanceComposer({
+    resolveTarget: resolveStanceTarget,
+    stanceEdges,
+    onChanged: refreshMediaHighlights,
+  });
+
+  // Focus-a-passage + one dedicated key (D-11): t = concede, y = doubt. Enabled
+  // while a highlight is focused (both readers) or a live text selection exists.
+  const stanceChordEnabled =
+    !focusState.editingBounds &&
+    (focusState.focusedId !== null || (!isPdf && selection !== null));
+  useReaderKeyChord({
+    enabled: stanceChordEnabled,
+    key: "t",
+    onTrigger: () => void stanceComposer.mintStance("supports"),
+  });
+  useReaderKeyChord({
+    enabled: stanceChordEnabled,
+    key: "y",
+    onTrigger: () => void stanceComposer.mintStance("contradicts"),
+  });
+
   // Whole-document 0..1 fraction range of the currently-scrollable content.
   // For text the active fragment/section spans `[start, end]` of the document;
   // for PDF the scroll container holds every page, so it is the full range.
@@ -5098,6 +5191,7 @@ export default function MediaPaneBody() {
         <div className={styles.readerSecondaryBody}>
           <EvidencePaneSurface
             contentRef={isPdf ? pdfContentRef : contentRef}
+            filters={evidenceFilters}
             highlights={anchoredHighlights}
             readerApparatusRows={readerApparatusRows}
             connectionRows={readerConnectionRows}
@@ -5117,6 +5211,7 @@ export default function MediaPaneBody() {
             onFocusHighlight={focusHighlight}
             onHoverHighlight={setHoveredHighlightId}
             onQuoteToChat={quoteHighlightToChat}
+            onCite={handleCite}
             onColorChange={handleColorChange}
             onDelete={handleDelete}
             onStartEditBounds={startEditBounds}
@@ -5142,11 +5237,13 @@ export default function MediaPaneBody() {
     contentsSurfaceBody,
     documentMapConnectionsError,
     documentMapConnectionsMeasureKey,
+    evidenceFilters,
     focusedApparatusItemId,
     focusHighlight,
     focusState.editingBounds,
     focusState.focusedId,
     handleActivateReaderConnectionTarget,
+    handleCite,
     handleColorChange,
     handleDelete,
     handleDismissSynapse,
@@ -5546,7 +5643,27 @@ export default function MediaPaneBody() {
             />
           )}
         </div>
+        {!isTranscriptMedia && canRead ? (
+          <MarginRail
+            items={marginItemsResult.items}
+            hiddenByCap={marginItemsResult.hiddenByCap}
+            contentRef={isPdf ? pdfContentRef : contentRef}
+            measureKey={documentMapConnectionsMeasureKey}
+            isMobile={isMobileViewport}
+            onOpenSidecar={() => requestSecondarySurface?.("reader-evidence")}
+            onDismissSynapse={handleDismissSynapse}
+            onActivateFootnote={(href) => handleOpenNoteLink(href, { newPane: false })}
+          />
+        ) : null}
       </div>
+
+      {citeComposer.open ? (
+        <div className={styles.citePickerOverlay} role="presentation" onClick={citeComposer.close}>
+          <div onClick={(event) => event.stopPropagation()}>
+            <CitePicker onPick={(ref) => void citeComposer.cite(ref)} onClose={citeComposer.close} />
+          </div>
+        </div>
+      ) : null}
 
       {readerApparatusPreview ? (
         <HoverPreview
@@ -5588,6 +5705,7 @@ export default function MediaPaneBody() {
                 : undefined
             }
             onAddNote={handleAddNoteToSelection}
+            onCite={() => handleCite({ kind: "selection", color: DEFAULT_COLOR })}
             onDismiss={handleDismissPopover}
             isCreating={isCreating}
           />
@@ -5611,6 +5729,10 @@ export default function MediaPaneBody() {
               quote: highlightActionTarget.exact,
               anchorRect: highlightActionAnchor.rect,
             });
+            dismissHighlightActions();
+          }}
+          onCite={() => {
+            handleCite({ kind: "existing", highlight: highlightActionTarget });
             dismissHighlightActions();
           }}
           onDelete={() => handleDelete(highlightActionTarget.id)}

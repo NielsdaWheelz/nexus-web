@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { useRef } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
+import { useEvidenceFilters } from "@/lib/reader/useEvidenceFilters";
 import EvidencePaneSurface from "./EvidencePaneSurface";
 
 vi.mock("@/components/notes/HighlightNoteEditor", () => ({
@@ -38,6 +39,7 @@ function EvidencePaneSurfaceHarness({
   >
 >) {
   const contentRef = useRef<HTMLDivElement>(null);
+  const filters = useEvidenceFilters();
   return (
     <FeedbackProvider>
       <div ref={contentRef} style={{ height: 700 }}>
@@ -45,6 +47,8 @@ function EvidencePaneSurfaceHarness({
       </div>
       <EvidencePaneSurface
         contentRef={contentRef}
+        filters={filters}
+        onCite={vi.fn()}
         highlights={highlights}
         readerApparatusRows={readerApparatusRows}
         connectionRows={connectionRows}
@@ -120,6 +124,11 @@ describe("EvidencePaneSurface", () => {
         <FeedbackProvider>
           <EvidencePaneSurface
             contentRef={contentRef as React.RefObject<HTMLElement | null>}
+            filters={{
+              filter: { highlight: true, apparatus: true, connection: true },
+              toggleFilter: vi.fn(),
+            }}
+            onCite={vi.fn()}
             highlights={[]}
             readerApparatusRows={[]}
             connectionRows={[]}

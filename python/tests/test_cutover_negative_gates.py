@@ -1723,3 +1723,41 @@ def test_attention_service_has_no_legacy_table_fallback():
     # never read here (hard-cutover doctrine).
     hits = _grep(r"reader_media_state|podcast_listening_states", _ATTENTION_SERVICE)
     assert not hits, f"attention.py reads a legacy read-state table:\n{_fmt(hits)}"
+
+
+# =============================================================================
+# Second apparatus hard cutover: span-grain synapse + user Cite/stance
+# (second-apparatus-hard-cutover.md §13, clauses 1, 3, 5)
+# =============================================================================
+
+_SECOND_APPARATUS_MIGRATION = (
+    _REPO_ROOT / "migrations" / "alembic" / "versions" / "0173_synapse_span_grain_targets.py"
+)
+_API_ROOT = _PY_ROOT / "api"
+
+
+def test_evidence_span_synapse_edge_target_constructed_only_in_synapse():
+    # Clause 1: only services/synapse.py mints a *synapse* edge inline-targeting an
+    # evidence_span. library_intelligence_reduce.py builds an evidence_span target
+    # for a citation-origin edge (LI synthesis citations, pre-existing) — a
+    # different origin/writer, allowlisted here. (The read-model span-ref builders
+    # in resolve.py / reader_connections.py resolve anchors, not edge targets.)
+    hits = _excluding(
+        _grep(r'target=ResourceRef\(scheme="evidence_span"', _PY_ROOT, _SCRIPTS_ROOT),
+        "services/synapse.py",
+        "services/library_intelligence_reduce.py",
+    )
+    assert not hits, f'evidence_span synapse edge target built outside synapse.py:\n{_fmt(hits)}'
+
+
+def test_second_apparatus_migration_creates_no_table():
+    # Clause 3: the widen migration adds no table (zero new tables, §5/G-5).
+    hits = _filtered(r"create_table|CREATE TABLE", _SECOND_APPARATUS_MIGRATION)
+    assert not hits, f"0173 migration creates a table:\n{_fmt(hits)}"
+
+
+def test_no_margin_backend_endpoint():
+    # Clause 5: the margin reuses the reader-connections read model; no forked
+    # /media/{id}/margin route or margin_projection builder exists (N-5/D-6).
+    hits = _grep(r"/media/\{[a-z_]+\}/margin|def .*margin_projection", _API_ROOT)
+    assert not hits, f"a dedicated margin backend endpoint exists:\n{_fmt(hits)}"

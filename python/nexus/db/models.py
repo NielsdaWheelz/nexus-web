@@ -730,7 +730,7 @@ class ResourceEdge(Base):
             origin != 'synapse'
             OR (
                 source_scheme IN ('media', 'page', 'note_block', 'highlight')
-                AND target_scheme IN ('media', 'note_block')
+                AND target_scheme IN ('media', 'note_block', 'evidence_span')
                 AND source_order_key IS NULL
                 AND target_order_key IS NULL
                 AND ordinal IS NULL

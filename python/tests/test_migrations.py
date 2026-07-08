@@ -14147,3 +14147,85 @@ class TestMigration0172AttentionLedger:
             session.execute(text("DELETE FROM media WHERE id = :id"), {"id": media_id})
             session.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
             session.commit()
+
+
+class TestMigration0173SynapseSpanGrainTargets:
+    """0173 widens ck_resource_edges_synapse_shape so a synapse edge can target an
+    evidence_span (passage grain); downgrade deletes those edges then narrows."""
+
+    @pytest.fixture(scope="class")
+    def head_engine(self):
+        reset_test_schema()
+        result = run_alembic_command("upgrade head")
+        if result.returncode != 0:
+            pytest.fail(f"Migration upgrade failed: {result.stderr}")
+        engine = create_engine(get_test_database_url())
+        yield engine
+        engine.dispose()
+        reset_test_schema()
+
+    def _constraint_def(self, session, conname: str) -> str:
+        return session.execute(
+            text(
+                "SELECT pg_get_constraintdef(oid) FROM pg_constraint"
+                " WHERE conrelid = 'resource_edges'::regclass AND conname = :c"
+            ),
+            {"c": conname},
+        ).scalar_one()
+
+    def test_head_synapse_shape_allows_evidence_span_target(self, head_engine):
+        with Session(head_engine) as session:
+            definition = self._constraint_def(session, "ck_resource_edges_synapse_shape")
+        assert "evidence_span" in definition, definition
+
+    def test_downgrade_deletes_span_target_synapse_edges_then_narrows(self):
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        user_id = uuid4()
+        try:
+            assert run_alembic_command("upgrade 0173").returncode == 0
+
+            def _insert_span_edge(session) -> None:
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO resource_edges (
+                            id, user_id, kind, origin,
+                            source_scheme, source_id, target_scheme, target_id, snapshot
+                        )
+                        VALUES (
+                            gen_random_uuid(), :u, 'context', 'synapse',
+                            'media', gen_random_uuid(), 'evidence_span', gen_random_uuid(),
+                            CAST('{"title": "T", "excerpt": "e"}' AS jsonb)
+                        )
+                        """
+                    ),
+                    {"u": user_id},
+                )
+
+            with Session(engine) as session:
+                session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+                _insert_span_edge(session)
+                session.commit()
+
+            assert run_alembic_command("downgrade 0172").returncode == 0
+
+            with Session(engine) as session:
+                remaining = session.execute(
+                    text(
+                        "SELECT count(*) FROM resource_edges"
+                        " WHERE origin = 'synapse' AND target_scheme = 'evidence_span'"
+                    )
+                ).scalar_one()
+                assert remaining == 0, "downgrade must delete span-target synapse edges"
+                definition = self._constraint_def(session, "ck_resource_edges_synapse_shape")
+                assert "evidence_span" not in definition, definition
+                with pytest.raises(IntegrityError):
+                    _insert_span_edge(session)
+                    session.commit()
+                session.rollback()
+                session.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
+                session.commit()
+        finally:
+            reset_test_schema()
+            engine.dispose()

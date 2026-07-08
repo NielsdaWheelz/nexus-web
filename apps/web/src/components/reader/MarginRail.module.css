@@ -1,0 +1,146 @@
+/* Editorial margin: borderless, type-forward, calm. A hairline rule gives
+   rhythm; amber only for the live focus; nothing is a bordered card. The Machine
+   Hand register belongs to MachineText — this stylesheet never names the machine
+   tokens (secondApparatus guard §13.6). */
+
+.rail {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: var(--reader-margin-width);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.rail > * {
+  pointer-events: auto;
+}
+
+.probe {
+  position: absolute;
+  visibility: hidden;
+  pointer-events: none;
+  height: 0;
+  top: 0;
+  left: 0;
+}
+
+.container {
+  position: relative;
+  height: 100%;
+  min-height: 100%;
+}
+
+.item {
+  position: absolute;
+  left: 0;
+  right: 0;
+  padding: var(--space-2) 0 var(--space-2) var(--space-3);
+  border-left: 1px solid var(--edge-subtle);
+}
+
+.note {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--ink);
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.synapse {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.synapseText {
+  flex: 1 1 auto;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+.dismiss {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  background: none;
+  border: none;
+  color: var(--ink-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.item:hover .dismiss {
+  opacity: 1;
+}
+
+.dismiss:hover {
+  color: var(--ink);
+}
+
+.footnote {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 0;
+  background: none;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+  color: var(--ink);
+}
+
+.footnote:disabled {
+  cursor: default;
+}
+
+.footnoteKicker {
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-variant-caps: all-small-caps;
+  letter-spacing: var(--tracking-wider);
+  color: var(--ink-muted);
+}
+
+.footnoteTitle {
+  font-family: var(--font-serif);
+  font-size: var(--text-sm);
+  line-height: 1.4;
+}
+
+.stance {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--font-serif);
+  font-size: var(--text-lg);
+  line-height: 1;
+  color: var(--ink);
+}
+
+.overflowFoot {
+  position: absolute;
+  bottom: var(--space-2);
+  left: var(--space-3);
+  padding: 0;
+  background: none;
+  border: none;
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-variant-caps: all-small-caps;
+  letter-spacing: var(--tracking-wider);
+  color: var(--ink-muted);
+  cursor: pointer;
+}
+
+.overflowFoot:hover {
+  color: var(--accent);
+}

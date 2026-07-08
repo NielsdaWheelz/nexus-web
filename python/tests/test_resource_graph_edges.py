@@ -12,11 +12,13 @@ from typing import cast
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
-from nexus.db.models import Contributor, NoteBlock, ResourceEdge
+from nexus.db.models import Contributor, Fragment, NoteBlock, ResourceEdge
 from nexus.errors import InvalidRequestError, NotFoundError
+from nexus.schemas.highlights import CreateHighlightRequest
+from nexus.services.highlights import create_highlight_for_fragment
 from nexus.services.note_indexing import rebuild_note_content_index
 from nexus.services.resource_graph import adjacency as graph_adjacency
 from nexus.services.resource_graph.citations import (
@@ -47,6 +49,7 @@ from nexus.services.resource_graph.schemas import (
     EdgeOut,
 )
 from tests.factories import (
+    create_searchable_media,
     create_test_conversation,
     create_test_conversation_with_message,
     create_test_media_in_library,
@@ -214,6 +217,66 @@ def test_create_edge_rejects_user_link_to_external_snapshot_target(
     target = ResourceRef(scheme="external_snapshot", id=uuid4())
     with pytest.raises(InvalidRequestError):
         create_edge(db_session, viewer_id=bootstrapped_user, input=_bare(source, target))
+
+
+def _highlight_and_span_refs(db: Session, user_id: UUID) -> tuple[ResourceRef, ResourceRef]:
+    """A user Cite/stance source (highlight in doc A) + a citable target span in doc B."""
+    source_media = create_searchable_media(db, user_id, title="Cite From Doc")
+    fragment_id = db.execute(
+        select(Fragment.id).where(Fragment.media_id == source_media)
+    ).scalar_one()
+    highlight = create_highlight_for_fragment(
+        db,
+        user_id,
+        fragment_id,
+        CreateHighlightRequest(start_offset=0, end_offset=4, color="yellow"),
+    )
+    target_media = create_searchable_media(db, user_id, title="Cite To Doc")
+    span_id = db.scalar(
+        text(
+            "SELECT primary_evidence_span_id FROM content_chunks"
+            " WHERE owner_kind = 'media' AND owner_id = :id"
+            " AND primary_evidence_span_id IS NOT NULL ORDER BY chunk_idx LIMIT 1"
+        ),
+        {"id": target_media},
+    )
+    assert span_id is not None
+    return (
+        ResourceRef(scheme="highlight", id=highlight.id),
+        ResourceRef(scheme="evidence_span", id=span_id),
+    )
+
+
+def test_user_cite_and_stance_edges_to_span_carry_no_snapshot(
+    db_session: Session, bootstrapped_user: UUID
+):
+    # AC-5: Cite (kind=context) and stance (supports/contradicts) mint user-origin
+    # highlight→evidence_span edges with no snapshot; the CHECK forbids any.
+    source, target = _highlight_and_span_refs(db_session, bootstrapped_user)
+    for kind in cast("list[EdgeKind]", ["context", "supports", "contradicts"]):
+        edge = create_edge(
+            db_session,
+            viewer_id=bootstrapped_user,
+            input=EdgeCreate(source=source, target=target, kind=kind, origin="user"),
+        )
+        assert edge.origin == "user"
+        assert edge.snapshot is None
+        assert edge.ordinal is None
+        delete_edge(db_session, viewer_id=bootstrapped_user, edge_id=edge.id)
+
+    with pytest.raises(InvalidRequestError):
+        create_edge(
+            db_session,
+            viewer_id=bootstrapped_user,
+            input=EdgeCreate(
+                source=source, target=target, kind="context", origin="user", snapshot=_SNAPSHOT
+            ),
+        )
+
+    leaked = db_session.scalar(
+        text("SELECT count(*) FROM resource_edges WHERE origin = 'user' AND snapshot IS NOT NULL")
+    )
+    assert leaked == 0
 
 
 def test_create_edge_rejects_unknown_kind(db_session: Session, bootstrapped_user: UUID):
