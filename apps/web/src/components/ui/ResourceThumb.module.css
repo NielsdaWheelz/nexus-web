@@ -20,20 +20,30 @@
   color: var(--ink-faint);
 }
 
+.icon {
+  flex: none;
+  width: var(--resource-thumb-icon-size);
+  height: var(--resource-thumb-icon-size);
+}
+
 .sizeSm {
   --resource-thumb-size: 32px;
+  --resource-thumb-icon-size: 16px;
 }
 
 .sizeMd {
   --resource-thumb-size: 44px;
+  --resource-thumb-icon-size: 22px;
 }
 
 .sizeLg {
   --resource-thumb-size: 64px;
+  --resource-thumb-icon-size: 32px;
 }
 
 .fill {
   --resource-thumb-size: auto;
+  --resource-thumb-icon-size: min(50%, 8rem);
   width: 100%;
   height: auto;
   aspect-ratio: 1;

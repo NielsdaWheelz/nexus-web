@@ -2,30 +2,11 @@ import { FileText } from "lucide-react";
 import { render, screen } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import { describe, expect, it, vi } from "vitest";
+import { horizontallyScrollableElements } from "@/__tests__/helpers/horizontalOverflow";
 import ContributorCreditList from "@/components/contributors/ContributorCreditList";
 import ResourceList from "@/components/ui/ResourceList";
 import ResourceRow from "@/components/ui/ResourceRow";
 import ResourceThumb from "@/components/ui/ResourceThumb";
-
-function describeElement(element: HTMLElement): string {
-  return (
-    element.getAttribute("aria-label") ??
-    element.getAttribute("role") ??
-    element.tagName.toLowerCase()
-  );
-}
-
-function horizontallyScrollableElements(root: HTMLElement): string[] {
-  return [root, ...Array.from(root.querySelectorAll<HTMLElement>("*"))]
-    .filter((element) => {
-      const overflowX = getComputedStyle(element).overflowX;
-      return (
-        (overflowX === "auto" || overflowX === "scroll") &&
-        element.scrollWidth > element.clientWidth + 1
-      );
-    })
-    .map(describeElement);
-}
 
 describe("ResourceRow", () => {
   it("renders a real link row and keeps actions outside the link", () => {

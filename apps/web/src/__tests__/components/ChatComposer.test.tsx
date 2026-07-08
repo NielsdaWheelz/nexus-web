@@ -1,6 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { horizontallyScrollableElements } from "@/__tests__/helpers/horizontalOverflow";
 import ChatComposer from "@/components/chat/ChatComposer";
 import type { ChatRunCreateRequest } from "@/lib/api/sse/requests";
 import type { BranchDraft } from "@/lib/conversations/types";
@@ -188,26 +189,6 @@ function setViewportWidth(width: number) {
     writable: true,
   });
   window.dispatchEvent(new Event("resize"));
-}
-
-function describeElement(element: HTMLElement): string {
-  return (
-    element.getAttribute("aria-label") ??
-    element.getAttribute("role") ??
-    element.tagName.toLowerCase()
-  );
-}
-
-function horizontallyScrollableElements(root: HTMLElement): string[] {
-  return [root, ...Array.from(root.querySelectorAll<HTMLElement>("*"))]
-    .filter((element) => {
-      const overflowX = getComputedStyle(element).overflowX;
-      return (
-        (overflowX === "auto" || overflowX === "scroll") &&
-        element.scrollWidth > element.clientWidth + 1
-      );
-    })
-    .map(describeElement);
 }
 
 describe("ChatComposer", () => {

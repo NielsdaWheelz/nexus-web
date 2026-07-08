@@ -1,7 +1,9 @@
 import { FileText } from "lucide-react";
+import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { horizontallyScrollableElements } from "@/__tests__/helpers/horizontalOverflow";
 import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import type { CollectionRowView } from "@/lib/collections/types";
 import type { ContributorCredit } from "@/lib/contributors/types";
@@ -35,26 +37,6 @@ function contributor(index: number): ContributorCredit {
     role: "author",
     href: `/authors/contributor-${index}`,
   };
-}
-
-function describeElement(element: HTMLElement): string {
-  return (
-    element.getAttribute("aria-label") ??
-    element.getAttribute("role") ??
-    element.tagName.toLowerCase()
-  );
-}
-
-function horizontallyScrollableElements(root: HTMLElement): string[] {
-  return [root, ...Array.from(root.querySelectorAll<HTMLElement>("*"))]
-    .filter((element) => {
-      const overflowX = getComputedStyle(element).overflowX;
-      return (
-        (overflowX === "auto" || overflowX === "scroll") &&
-        element.scrollWidth > element.clientWidth + 1
-      );
-    })
-    .map(describeElement);
 }
 
 const ROWS: CollectionRowView[] = [
@@ -185,6 +167,7 @@ describe("CollectionView", () => {
   });
 
   it("keeps compact collection rows inside a 320px mobile width", async () => {
+    const onAction = vi.fn();
     render(
       withRenderEnvironment(
         <div
@@ -207,6 +190,7 @@ describe("CollectionView", () => {
                   credits: [contributor(1), contributor(2), contributor(3)],
                   maxVisible: 3,
                 },
+                actions: [{ id: "archive", label: "Archive", onSelect: onAction }],
                 status: {
                   tone: "neutral",
                   label: "Extremely Long Status Label",
@@ -217,6 +201,9 @@ describe("CollectionView", () => {
             density="compact"
             status="ready"
             ariaLabel="Documents"
+            rowControls={{
+              a: <button type="button">Pin</button>,
+            }}
           />
         </div>,
       ),
@@ -240,8 +227,59 @@ describe("CollectionView", () => {
     await userEvent.keyboard("{ArrowRight}");
     expect(screen.getByRole("button", { name: "Related" })).toHaveFocus();
 
+    await userEvent.keyboard("{ArrowRight}");
+    expect(screen.getByRole("link", { name: "Contributor 1" })).toHaveFocus();
+    expect(screen.getByRole("link", { name: "Contributor 1" })).toHaveStyle({
+      outlineOffset: "-2px",
+    });
+
+    await userEvent.keyboard("{ArrowRight}");
+    expect(screen.getByRole("link", { name: "Contributor 2" })).toHaveFocus();
+
+    await userEvent.keyboard("{ArrowRight}");
+    expect(screen.getByRole("button", { name: "Pin" })).toHaveFocus();
+
     await userEvent.keyboard("{ArrowLeft}");
-    expect(primary).toHaveFocus();
+    expect(screen.getByRole("link", { name: "Contributor 2" })).toHaveFocus();
+
+    await userEvent.keyboard("{ArrowRight}");
+    expect(screen.getByRole("button", { name: "Pin" })).toHaveFocus();
+
+    await userEvent.keyboard("{ArrowRight}");
+    expect(await screen.findByRole("menuitem", { name: "Archive" })).toHaveFocus();
+
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Actions" })).toHaveFocus());
+  });
+
+  it("keeps gallery fallback icons inside the narrowest grid card", async () => {
+    render(
+      withRenderEnvironment(
+        <div
+          data-testid="narrow-gallery-host"
+          style={{ width: "168px", maxWidth: "168px" }}
+        >
+          <CollectionView
+            rows={ROWS.slice(0, 1)}
+            view="gallery"
+            density="comfortable"
+            status="ready"
+            ariaLabel="Documents"
+          />
+        </div>,
+      ),
+    );
+
+    const host = await screen.findByTestId("narrow-gallery-host");
+    const iconTile = screen.getByRole("img", { name: "First document" });
+    const iconTileStyle = getComputedStyle(iconTile);
+
+    expect(host.clientWidth).toBe(168);
+    expect(host.scrollWidth).toBeLessThanOrEqual(host.clientWidth + 1);
+    expect(iconTileStyle.getPropertyValue("--resource-thumb-icon-size").trim()).toBe(
+      "min(50%, 8rem)",
+    );
+    expect(horizontallyScrollableElements(host)).toEqual([]);
   });
 
   it("keeps compact sortable rows inside a 320px mobile width", async () => {
@@ -294,6 +332,51 @@ describe("CollectionView", () => {
     expect(horizontallyScrollableElements(host)).toEqual([]);
     expect(screen.getByRole("button", { name: "Drag row" })).toBeInTheDocument();
     expect(onReorder).not.toHaveBeenCalled();
+  });
+
+  it("reorders sortable rows from the keyboard handle", async () => {
+    const onReorder = vi.fn();
+
+    function SortableCollectionHarness() {
+      const [rows, setRows] = useState(ROWS);
+      return (
+        <CollectionView
+          rows={rows}
+          view="list"
+          density="comfortable"
+          status="ready"
+          ariaLabel="Documents"
+          sortable={{
+            onReorder: (nextRows) => {
+              onReorder(nextRows);
+              setRows(nextRows);
+            },
+            renderControls: (row, { handleProps }) => (
+              <button
+                type="button"
+                aria-label={`Reorder ${row.headline.text}`}
+                {...handleProps.attributes}
+                {...handleProps.listeners}
+              >
+                Drag
+              </button>
+            ),
+          }}
+        />
+      );
+    }
+
+    render(withRenderEnvironment(<SortableCollectionHarness />));
+
+    screen.getByRole("button", { name: "Reorder First document" }).focus();
+    await userEvent.keyboard("{ArrowDown}");
+
+    await waitFor(() => {
+      expect(onReorder).toHaveBeenCalledWith([ROWS[1], ROWS[0], ROWS[2]]);
+    });
+    expect(
+      screen.getAllByRole("link").map((link) => link.textContent),
+    ).toEqual(["Second document", "First document", "Third document"]);
   });
 
   it("moves focus from the first row to the second on ArrowDown", async () => {

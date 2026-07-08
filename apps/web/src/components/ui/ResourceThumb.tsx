@@ -59,7 +59,7 @@ export default function ResourceThumb({
       role="img"
       aria-label={alt}
     >
-      <Icon size={Math.round(px * 0.5)} aria-hidden="true" />
+      <Icon className={styles.icon} aria-hidden="true" />
     </span>
   );
 }
