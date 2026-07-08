@@ -27,6 +27,7 @@ import {
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import { libraryResourceOptions } from "@/lib/actions/resourceActions";
+import { postConsumptionOverride } from "@/lib/attention";
 import { presentMedia } from "@/lib/collections/presenters/media";
 import { presentPodcast } from "@/lib/collections/presenters/podcast";
 import { startResourceChat } from "@/lib/resources/resourceChat";
@@ -634,6 +635,40 @@ export default function LibraryPaneBody() {
     [feedback],
   );
 
+  const handleSetConsumption = useCallback(
+    async (mediaId: string, status: "finished" | "unread") => {
+      const patch = <T extends { kind: string; media?: { id: string; read_state?: unknown } }>(
+        entry: T,
+      ): T =>
+        entry.kind === "media" && entry.media?.id === mediaId
+          ? { ...entry, media: { ...entry.media, read_state: status } }
+          : entry;
+
+      let previousEntries: LibraryEntry[] = [];
+      let previousResonance: LibraryEntry[] = [];
+      setEntries((current) => {
+        previousEntries = current;
+        return current.map(patch);
+      });
+      setResonanceEntries((current) => {
+        previousResonance = current;
+        return current.map(patch);
+      });
+
+      try {
+        await postConsumptionOverride(mediaId, status);
+      } catch (err) {
+        setEntries(previousEntries);
+        setResonanceEntries(previousResonance);
+        if (handleUnauthenticatedApiError(err)) return;
+        feedback.show({
+          ...toFeedback(err, { fallback: "Failed to update read state" }),
+        });
+      }
+    },
+    [feedback],
+  );
+
   const handleDeleteLibrary = async () => {
     if (!currentLibrary || currentLibrary.is_default) {
       return;
@@ -1056,6 +1091,12 @@ export default function LibraryPaneBody() {
               void handleDeleteMedia(item);
             }
         : undefined,
+      onMarkFinished: () => {
+        void handleSetConsumption(item.media.id, "finished");
+      },
+      onMarkUnread: () => {
+        void handleSetConsumption(item.media.id, "unread");
+      },
     });
     return { ...row, id: item.id, relatedMediaId: item.media.id };
   };

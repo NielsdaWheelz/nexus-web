@@ -1694,3 +1694,32 @@ def test_no_reader_apparatus_surface():
 def test_no_reader_connections_surface():
     hits = _filtered(r"reader-connections", _PANE_SECONDARY_MODEL)
     assert not hits, f'"reader-connections" survives in paneSecondaryModel.ts:\n{_fmt(hits)}'
+
+
+# =============================================================================
+# Attention ledger hard cutover: read-state derivation is consolidated into
+# services.attention; the old enrich functions are gone; attention.py holds no
+# legacy-table fallback (attention-ledger-hard-cutover.md §13)
+# =============================================================================
+
+_ATTENTION_SERVICE = _PY_ROOT / "services" / "attention.py"
+
+
+def test_enrich_media_read_state_absent_from_production():
+    # G-1: the collection read-state owner is now consumption_state.
+    hits = _grep(r"enrich_media_read_state", _PY_ROOT, _WEB_ROOT)
+    assert not hits, f"enrich_media_read_state survives in production:\n{_fmt(hits)}"
+
+
+def test_doc_and_audio_read_state_helpers_absent_from_production():
+    # G-2: the per-medium derivation helpers are replaced by consumption_state.
+    hits = _grep(r"_doc_read_state|_audio_read_state", _PY_ROOT, _WEB_ROOT)
+    assert not hits, f"_doc_read_state/_audio_read_state survive in production:\n{_fmt(hits)}"
+
+
+def test_attention_service_has_no_legacy_table_fallback():
+    # G-8: consumption_state derives only from reading_sessions +
+    # consumption_overrides; the old tables are seeded once by the migration and
+    # never read here (hard-cutover doctrine).
+    hits = _grep(r"reader_media_state|podcast_listening_states", _ATTENTION_SERVICE)
+    assert not hits, f"attention.py reads a legacy read-state table:\n{_fmt(hits)}"

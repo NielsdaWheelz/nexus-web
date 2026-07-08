@@ -240,6 +240,7 @@ describe("useReaderResumeState", () => {
     expect(apiFetch).toHaveBeenNthCalledWith(2, "/api/media/media-1/reader-state", {
       method: "PUT",
       body: JSON.stringify(nextResumeState),
+      keepalive: true,
     });
   });
 
@@ -286,6 +287,7 @@ describe("useReaderResumeState", () => {
       expect(apiFetch).toHaveBeenCalledWith("/api/media/media-1/reader-state", {
         method: "PUT",
         body: JSON.stringify(PDF_RESUME_STATE),
+        keepalive: true,
       });
     });
 
@@ -303,6 +305,118 @@ describe("useReaderResumeState", () => {
     await waitFor(() => {
       expect(result.current.state).toEqual(WEB_RESUME_STATE);
     });
+  });
+
+  it("folds accumulated dwell into the attention block and resets after flush", async () => {
+    const putBodies: string[] = [];
+    const putInits: (RequestInit | undefined)[] = [];
+    const apiFetchImpl = async <T,>(path: string, init?: RequestInit): Promise<T> => {
+      if (path === "/api/media/media-1/reader-state" && !init) {
+        return { data: null } as T;
+      }
+      if (path === "/api/media/media-1/reader-state" && init?.method === "PUT") {
+        putBodies.push(String(init.body));
+        putInits.push(init);
+        return { data: WEB_RESUME_STATE } as T;
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    };
+    const dwellDeltaRef = { current: 45_000 };
+    const tracker = {
+      dwellDeltaRef,
+      resetDelta: () => {
+        dwellDeltaRef.current = 0;
+      },
+      deviceId: "device-x",
+    };
+
+    const { result } = renderHook(() =>
+      useReaderResumeState({
+        mediaId: "media-1",
+        apiFetch: apiFetchImpl as typeof apiFetchImpl,
+        debounceMs: 10_000,
+        attention: tracker,
+      })
+    );
+
+    await waitFor(() => {
+      expect(result.current.state).toBeNull();
+    });
+
+    act(() => {
+      result.current.save(WEB_RESUME_STATE);
+    });
+
+    await act(async () => {
+      window.dispatchEvent(new Event("pagehide"));
+    });
+
+    await waitFor(() => {
+      expect(putBodies).toHaveLength(1);
+    });
+
+    const body = JSON.parse(putBodies[0]) as {
+      locator: { kind: string };
+      attention: { dwell_ms_delta: number; device_id: string; progression: number | null };
+    };
+    expect(body.locator).toMatchObject({ kind: "web" });
+    expect(body.attention.dwell_ms_delta).toBe(45_000);
+    expect(body.attention.device_id).toBe("device-x");
+    expect(body.attention.progression).toBe(0.7);
+    expect(dwellDeltaRef.current).toBe(0);
+    // The attention-bearing pagehide flush must be keepalive so the browser
+    // sends it after navigation, same as the locator-only pagehide path.
+    expect(putInits[0]?.keepalive).toBe(true);
+  });
+
+  it("sends dwell_ms_delta 0 as the opened event when no dwell accrued", async () => {
+    const putBodies: string[] = [];
+    const apiFetchImpl = async <T,>(path: string, init?: RequestInit): Promise<T> => {
+      if (path === "/api/media/media-1/reader-state" && !init) {
+        return { data: null } as T;
+      }
+      if (path === "/api/media/media-1/reader-state" && init?.method === "PUT") {
+        putBodies.push(String(init.body));
+        return { data: WEB_RESUME_STATE } as T;
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    };
+    const dwellDeltaRef = { current: 0 };
+    const tracker = {
+      dwellDeltaRef,
+      resetDelta: () => {
+        dwellDeltaRef.current = 0;
+      },
+      deviceId: "device-x",
+    };
+
+    const { result } = renderHook(() =>
+      useReaderResumeState({
+        mediaId: "media-1",
+        apiFetch: apiFetchImpl as typeof apiFetchImpl,
+        debounceMs: 10_000,
+        attention: tracker,
+      })
+    );
+
+    await waitFor(() => {
+      expect(result.current.state).toBeNull();
+    });
+
+    act(() => {
+      result.current.save(WEB_RESUME_STATE);
+    });
+
+    await act(async () => {
+      window.dispatchEvent(new Event("pagehide"));
+    });
+
+    await waitFor(() => {
+      expect(putBodies).toHaveLength(1);
+    });
+
+    const body = JSON.parse(putBodies[0]) as { attention: { dwell_ms_delta: number } };
+    expect(body.attention.dwell_ms_delta).toBe(0);
   });
 
   it("surfaces invalid API payloads when hydrating reader state", async () => {

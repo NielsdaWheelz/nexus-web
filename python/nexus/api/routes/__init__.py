@@ -11,6 +11,7 @@ from nexus.api.routes.auth_handoff_codes import router as auth_handoff_codes_rou
 from nexus.api.routes.billing import router as billing_router
 from nexus.api.routes.browse import router as browse_router
 from nexus.api.routes.chat_runs import router as chat_runs_router
+from nexus.api.routes.consumption import router as consumption_router
 from nexus.api.routes.contributors import router as contributors_router
 from nexus.api.routes.conversation_branches import router as conversation_branches_router
 from nexus.api.routes.conversation_context import router as conversation_context_router
@@ -75,6 +76,7 @@ def create_api_router() -> APIRouter:
     api_router.include_router(media_assets_router)
     api_router.include_router(media_ingest_router)
     api_router.include_router(listening_state_router)
+    api_router.include_router(consumption_router)
     api_router.include_router(podcast_transcripts_router)
     api_router.include_router(reader_router)
     api_router.include_router(media_router)

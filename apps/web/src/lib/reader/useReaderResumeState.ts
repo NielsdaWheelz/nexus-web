@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { toFeedback } from "@/components/feedback/Feedback";
+import type { AttentionTracker } from "./useAttentionTracker";
 import {
   parseReaderResumeState,
   readerResumeStatesEqual,
@@ -16,10 +17,17 @@ interface UseReaderResumeStateOptions {
   mediaId: string | null;
   apiFetch?: ApiFetchFn;
   debounceMs?: number;
+  attention?: AttentionTracker;
+}
+
+function progressionOf(locator: ReaderResumeState | null): number | null {
+  if (!locator) return null;
+  if (locator.kind === "pdf") return locator.page_progression ?? null;
+  return locator.locations.total_progression ?? null;
 }
 
 export function useReaderResumeState(options: UseReaderResumeStateOptions) {
-  const { mediaId, apiFetch: fetchFn = apiFetch, debounceMs = 500 } = options;
+  const { mediaId, apiFetch: fetchFn = apiFetch, debounceMs = 500, attention } = options;
   const [state, setState] = useState<ReaderResumeState | null>(null);
   const [loading, setLoading] = useState(Boolean(mediaId));
   const [error, setError] = useState<string | null>(null);
@@ -32,51 +40,94 @@ export function useReaderResumeState(options: UseReaderResumeStateOptions) {
   const hydratedMediaIdRef = useRef<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadRequestRef = useRef(0);
+  const attentionRef = useRef<AttentionTracker | undefined>(attention);
 
   useEffect(() => {
     stateRef.current = state;
   }, [state]);
 
-  const flush = useCallback(async () => {
-    const targetMediaId = pendingMediaIdRef.current;
-    if (
-      !targetMediaId ||
-      mediaId !== targetMediaId ||
-      !hydratedRef.current ||
-      hydratedMediaIdRef.current !== targetMediaId ||
-      !hasPendingRef.current
-    ) {
-      return;
-    }
-    if (debounceRef.current) {
-      clearTimeout(debounceRef.current);
-      debounceRef.current = null;
-    }
+  useEffect(() => {
+    attentionRef.current = attention;
+  }, [attention]);
 
-    const payload = pendingRef.current;
-    hasPendingRef.current = false;
-
-    try {
-      const res = await fetchFn<{ data: unknown }>(`/api/media/${targetMediaId}/reader-state`, {
-        method: "PUT",
-        body: JSON.stringify(payload),
-      });
-      const savedState = parseReaderResumeState(res.data);
-      if (!hydratedRef.current || hydratedMediaIdRef.current !== targetMediaId) {
+  const flush = useCallback(
+    async (keepalive = false) => {
+      const targetMediaId = mediaId;
+      if (
+        !targetMediaId ||
+        !hydratedRef.current ||
+        hydratedMediaIdRef.current !== targetMediaId
+      ) {
         return;
       }
-      stateRef.current = savedState;
-      setState(savedState);
-    } catch (err) {
-      if (handleUnauthenticatedApiError(err)) return;
-      console.error("Failed to save reader state:", err);
-      if (hydratedRef.current && hydratedMediaIdRef.current === targetMediaId) {
-        pendingRef.current = payload;
-        pendingMediaIdRef.current = targetMediaId;
-        hasPendingRef.current = true;
+
+      const hasPendingLocator =
+        hasPendingRef.current && pendingMediaIdRef.current === targetMediaId;
+      const tracker = attentionRef.current;
+      const dwell = tracker ? tracker.dwellDeltaRef.current : 0;
+      if (!hasPendingLocator && dwell === 0) {
+        return;
       }
-    }
-  }, [fetchFn, mediaId]);
+
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+        debounceRef.current = null;
+      }
+
+      const locatorPayload = hasPendingLocator ? pendingRef.current : stateRef.current;
+      hasPendingRef.current = false;
+
+      // A clear (explicit null locator) stays a bare null body; attention is
+      // ignored on a clear (the reader is closing).
+      let body: unknown;
+      let sentDwell = 0;
+      if (locatorPayload === null && hasPendingLocator) {
+        body = null;
+      } else if (tracker) {
+        tracker.resetDelta();
+        sentDwell = dwell;
+        body = {
+          locator: locatorPayload,
+          attention: {
+            dwell_ms_delta: dwell,
+            device_id: tracker.deviceId,
+            spans_touched: [],
+            progression: progressionOf(locatorPayload),
+          },
+        };
+      } else {
+        body = locatorPayload;
+      }
+
+      try {
+        const res = await fetchFn<{ data: unknown }>(
+          `/api/media/${targetMediaId}/reader-state`,
+          { method: "PUT", body: JSON.stringify(body), ...(keepalive ? { keepalive } : {}) },
+        );
+        const savedState = parseReaderResumeState(res.data);
+        if (!hydratedRef.current || hydratedMediaIdRef.current !== targetMediaId) {
+          return;
+        }
+        stateRef.current = savedState;
+        setState(savedState);
+      } catch (err) {
+        if (handleUnauthenticatedApiError(err)) return;
+        console.error("Failed to save reader state:", err);
+        // Best-effort dwell: the delta was zeroed before the request, so add it
+        // back (the rAF loop may have accrued more since) to retry next flush —
+        // otherwise dwell accrued during a failed save is silently dropped.
+        if (sentDwell > 0 && tracker) {
+          tracker.dwellDeltaRef.current += sentDwell;
+        }
+        if (hasPendingLocator && hydratedRef.current && hydratedMediaIdRef.current === targetMediaId) {
+          pendingRef.current = locatorPayload;
+          pendingMediaIdRef.current = targetMediaId;
+          hasPendingRef.current = true;
+        }
+      }
+    },
+    [fetchFn, mediaId],
+  );
 
   const load = useCallback(async () => {
     const requestId = loadRequestRef.current + 1;
@@ -176,11 +227,11 @@ export function useReaderResumeState(options: UseReaderResumeStateOptions) {
 
   useEffect(() => {
     const flushOnPageHide = () => {
-      void flush();
+      void flush(true);
     };
     const flushOnVisibilityChange = () => {
       if (document.visibilityState === "hidden") {
-        void flush();
+        void flush(true);
       }
     };
 

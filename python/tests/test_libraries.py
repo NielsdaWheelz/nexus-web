@@ -1522,9 +1522,23 @@ class TestListLibraryMedia:
                 """),
                 {"user_id": user_id, "media_id": media_id},
             )
+            # Read-state now derives from the attention ledger, not the listening
+            # table: an in-progress session (dwell >= 30s) with the same playback
+            # fraction is what the listening route would record.
+            session.execute(
+                text("""
+                    INSERT INTO reading_sessions (
+                        user_id, media_id, device_id, dwell_ms, max_progression
+                    ) VALUES (
+                        :user_id, :media_id, 'device-test', 35000, :fraction
+                    )
+                """),
+                {"user_id": user_id, "media_id": media_id, "fraction": 12000.0 / 180000.0},
+            )
             session.commit()
 
         direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("reading_sessions", "media_id", media_id)
         direct_db.register_cleanup("podcast_listening_states", "media_id", media_id)
         direct_db.register_cleanup("podcast_subscriptions", "podcast_id", podcast_id)
         direct_db.register_cleanup("podcast_episode_chapters", "media_id", media_id)

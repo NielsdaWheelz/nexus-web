@@ -15,8 +15,9 @@ from sqlalchemy.orm import Session
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
 from nexus.responses import ok
+from nexus.schemas.attention import AttentionBlock
 from nexus.schemas.media import ListeningStateBatchUpsertRequest, ListeningStateUpsertRequest
-from nexus.services import listening_state
+from nexus.services import attention, listening_state
 
 router = APIRouter(tags=["media"])
 
@@ -65,4 +66,26 @@ def put_listening_state(
         playback_speed=body.playback_speed,
         is_completed=body.is_completed,
     )
+    if body.dwell_ms_delta is not None and body.device_id is not None:
+        attention.record_attention(
+            db,
+            viewer.user_id,
+            media_id,
+            AttentionBlock(
+                dwell_ms_delta=body.dwell_ms_delta,
+                device_id=body.device_id,
+                spans_touched=[],
+                progression=_audio_progression(body),
+            ),
+        )
     return Response(status_code=204)
+
+
+def _audio_progression(body: ListeningStateUpsertRequest) -> float | None:
+    """Playback fraction for the session's max_progression: completion wins, else
+    position/duration when both are known, else None."""
+    if body.is_completed:
+        return 1.0
+    if body.position_ms is not None and body.duration_ms and body.duration_ms > 0:
+        return min(1.0, body.position_ms / body.duration_ms)
+    return None

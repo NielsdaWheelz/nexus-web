@@ -14020,7 +14020,7 @@ class TestMigration0168WebArticleInlineEmbedsHardCutover:
     def test_0168_downgrade_is_blocked(self):
         reset_test_schema()
         try:
-            assert run_alembic_command("upgrade head").returncode == 0
+            assert run_alembic_command("upgrade 0168").returncode == 0
 
             result = run_alembic_command("downgrade 0167")
 
@@ -14029,3 +14029,121 @@ class TestMigration0168WebArticleInlineEmbedsHardCutover:
             assert "Hard cutover: 0168 is not reversible" in combined
         finally:
             reset_test_schema()
+
+
+class TestMigration0172AttentionLedger:
+    """0172 creates reading_sessions + consumption_overrides with the ledger
+    contract and seeds sessions from existing reader/listening state."""
+
+    @pytest.fixture(scope="class")
+    def head_engine(self):
+        reset_test_schema()
+        result = run_alembic_command("upgrade head")
+        if result.returncode != 0:
+            pytest.fail(f"Migration upgrade failed: {result.stderr}")
+        engine = create_engine(get_test_database_url())
+        yield engine
+        engine.dispose()
+        reset_test_schema()
+
+    def test_head_contains_attention_tables_and_constraints(self, head_engine):
+        with Session(head_engine) as session:
+            reading_session_columns = {
+                row[0]
+                for row in session.execute(
+                    text(
+                        """
+                        SELECT column_name
+                        FROM information_schema.columns
+                        WHERE table_name = 'reading_sessions'
+                        """
+                    )
+                ).fetchall()
+            }
+            reading_session_constraints = {
+                row[0]
+                for row in session.execute(
+                    text(
+                        """
+                        SELECT conname
+                        FROM pg_constraint
+                        WHERE conrelid = 'reading_sessions'::regclass
+                        """
+                    )
+                ).fetchall()
+            }
+            reading_session_indexes = {
+                row[0]
+                for row in session.execute(
+                    text(
+                        """
+                        SELECT indexname
+                        FROM pg_indexes
+                        WHERE tablename = 'reading_sessions'
+                        """
+                    )
+                ).fetchall()
+            }
+            override_constraints = {
+                row[0]
+                for row in session.execute(
+                    text(
+                        """
+                        SELECT conname
+                        FROM pg_constraint
+                        WHERE conrelid = 'consumption_overrides'::regclass
+                        """
+                    )
+                ).fetchall()
+            }
+
+        assert {
+            "id",
+            "user_id",
+            "media_id",
+            "device_id",
+            "started_at",
+            "last_active_at",
+            "dwell_ms",
+            "max_progression",
+            "spans",
+        }.issubset(reading_session_columns), reading_session_columns
+        assert "ck_reading_sessions_dwell_non_negative" in reading_session_constraints
+        assert "ck_reading_sessions_max_progression" in reading_session_constraints
+        assert "ck_reading_sessions_spans_array" in reading_session_constraints
+        assert "ck_reading_sessions_device_id_len" in reading_session_constraints
+        assert "ix_reading_sessions_user_media_active" in reading_session_indexes
+        assert "ix_reading_sessions_user_started" in reading_session_indexes
+        assert "ck_consumption_overrides_status" in override_constraints
+
+    def test_status_check_rejects_in_progress_override(self, head_engine):
+        user_id = uuid4()
+        media_id = uuid4()
+        with Session(head_engine) as session:
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.execute(
+                text(
+                    """
+                    INSERT INTO media (id, kind, title, processing_status)
+                    VALUES (:id, 'web_article', 'M', 'ready_for_reading')
+                    """
+                ),
+                {"id": media_id},
+            )
+            session.commit()
+
+            with pytest.raises(IntegrityError):
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO consumption_overrides (user_id, media_id, status)
+                        VALUES (:u, :m, 'in_progress')
+                        """
+                    ),
+                    {"u": user_id, "m": media_id},
+                )
+            session.rollback()
+
+            session.execute(text("DELETE FROM media WHERE id = :id"), {"id": media_id})
+            session.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
+            session.commit()

@@ -95,10 +95,27 @@ describe("presentMedia", () => {
     const ids = view.actions?.map((a) => a.id) ?? [];
     expect(ids).toContain("delete-media");
     expect(ids).toContain("manage-media-libraries");
-    expect(view.swipeActions?.[0]).toMatchObject({
-      id: "delete-media",
-      label: "Delete document",
-      tone: "danger",
-    });
+  });
+
+  it("makes mark-finished the primary swipe for unread/in-progress rows (delete is menu-only)", () => {
+    const onMarkFinished = vi.fn();
+    const view = presentMedia(
+      item({ read_state: "unread", capabilities: { can_delete: true } }),
+      ctx({ onDelete: vi.fn(), onMarkFinished }),
+    );
+
+    expect(view.actions?.map((a) => a.id)).toContain("mark-finished");
+    expect(view.swipeActions?.[0]).toMatchObject({ id: "mark-finished", label: "Mark as finished" });
+    expect(view.swipeActions?.map((a) => a.id)).not.toContain("delete-media");
+  });
+
+  it("makes mark-unread the primary swipe for finished rows", () => {
+    const onMarkUnread = vi.fn();
+    const view = presentMedia(
+      item({ read_state: "finished" }),
+      ctx({ onMarkUnread }),
+    );
+
+    expect(view.swipeActions?.[0]).toMatchObject({ id: "mark-unread", label: "Mark as unread" });
   });
 });

@@ -1,21 +1,29 @@
 "use client";
 
-import { useCallback, useEffect, useRef, type RefObject } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { apiFetch, apiKeepaliveJson, type ApiPath } from "@/lib/api/client";
+import { readDeviceId } from "@/lib/attention";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { useIntervalPoll } from "@/lib/useIntervalPoll";
 
 const SYNC_INTERVAL_MS = 15_000;
+// Cap the dwell accrued between persists so a tab-hidden or paused stretch does
+// not inflate listening dwell (attention-ledger §4.3).
+const DWELL_CAP_MS = SYNC_INTERVAL_MS + 2_000;
 
 interface ListeningStatePayload {
   position_ms: number;
   duration_ms: number | null;
   playback_speed: number;
+  dwell_ms_delta: number;
+  device_id: string;
 }
 
 function buildPayload(
   audio: HTMLAudioElement,
   playbackRate: number,
+  dwellMsDelta: number,
+  deviceId: string,
 ): ListeningStatePayload {
   const durationValue = Number.isFinite(audio.duration) ? audio.duration : null;
   return {
@@ -25,6 +33,8 @@ function buildPayload(
         ? Math.floor(durationValue * 1000)
         : null,
     playback_speed: playbackRate,
+    dwell_ms_delta: dwellMsDelta,
+    device_id: deviceId,
   };
 }
 
@@ -44,8 +54,10 @@ async function persist(
   mediaId: string,
   playbackRate: number,
   keepalive: boolean,
+  dwellMsDelta: number,
+  deviceId: string,
 ): Promise<void> {
-  const payload = buildPayload(audio, playbackRate);
+  const payload = buildPayload(audio, playbackRate, dwellMsDelta, deviceId);
   const endpoint: ApiPath = `/api/media/${mediaId}/listening-state`;
   try {
     if (keepalive) {
@@ -80,14 +92,22 @@ export function useListeningStatePersistence(args: {
 }): { persistForMediaId: (mediaId: string, keepalive?: boolean) => void } {
   const { track, isPlaying, audioElementRef, playbackRateRef } = args;
   const wasPlayingRef = useRef(false);
+  const lastPersistAtRef = useRef<number | null>(null);
+  const [deviceId] = useState(() => readDeviceId());
 
   const persistForMediaId = useCallback(
     (mediaId: string, keepalive = false) => {
       const audio = audioElementRef.current;
       if (!audio) return;
-      void persist(audio, mediaId, playbackRateRef.current, keepalive);
+      const now = Date.now();
+      const dwellMsDelta =
+        lastPersistAtRef.current === null
+          ? 0
+          : Math.max(0, Math.min(now - lastPersistAtRef.current, DWELL_CAP_MS));
+      lastPersistAtRef.current = now;
+      void persist(audio, mediaId, playbackRateRef.current, keepalive, dwellMsDelta, deviceId);
     },
-    [audioElementRef, playbackRateRef],
+    [audioElementRef, playbackRateRef, deviceId],
   );
 
   // justify-polling: playback position is local media-element state with no

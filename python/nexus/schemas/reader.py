@@ -6,6 +6,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from nexus.schemas.attention import AttentionBlock
 from nexus.schemas.resource_graph import ConnectionOut
 from nexus.schemas.resource_items import ResourceActivationOut
 
@@ -248,3 +249,14 @@ ReaderResumeState = Annotated[
     | EpubReaderResumeState,
     Field(discriminator="kind"),
 ]
+
+
+class ReaderStateWithAttention(BaseModel):
+    """Envelope for PUT /media/{id}/reader-state: the resume locator plus an
+    optional attention block. A bare (top-level ``kind``) locator body is also
+    accepted for saves that carry no attention (see
+    ``services.reader.parse_reader_state_with_attention``)."""
+
+    model_config = ConfigDict(extra="forbid")
+    locator: ReaderResumeState | None = None
+    attention: AttentionBlock | None = None

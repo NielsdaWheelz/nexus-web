@@ -213,10 +213,10 @@ class MediaOut(BaseModel):
     description_html: str | None = None
     description_text: str | None = None
     metadata_enriched_at: datetime | None = None
-    # Derived per-viewer read-state (S3, collection-surface cutover). Populated
-    # post-hoc by `services.media.enrich_media_read_state` for viewer-scoped
-    # listings; absent (None) only on contexts that never enrich (e.g. SSE snapshots).
-    # For documents, "unread" means no committed scroll position.
+    # Derived per-viewer read-state (attention ledger). Populated post-hoc by
+    # `services.attention.consumption_state` (applied in `services.media`) for
+    # viewer-scoped listings; absent (None) only on contexts that never derive it
+    # (e.g. SSE snapshots). For documents, "unread" means no reading session yet.
     read_state: MediaReadState | None = None
     progress_fraction: float | None = Field(default=None, ge=0.0, le=1.0)
     last_engaged_at: datetime | None = None
@@ -351,6 +351,11 @@ class ListeningStateUpsertRequest(BaseModel):
     duration_ms: int | None = Field(default=None, ge=0)
     playback_speed: float | None = Field(default=None, gt=0)
     is_completed: bool | None = None
+    # Attention ledger: elapsed listening dwell since the last persist and the
+    # originating device. Both optional — absent for clients that predate the
+    # ledger; when present the route records an attention session.
+    dwell_ms_delta: int | None = Field(default=None, ge=0)
+    device_id: str | None = Field(default=None, max_length=128)
 
     @model_validator(mode="after")
     def validate_has_mutation_field(self) -> "ListeningStateUpsertRequest":

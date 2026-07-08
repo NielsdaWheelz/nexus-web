@@ -149,6 +149,7 @@ import {
   scrollToCanonicalTextAnchor,
 } from "./paneTextAnchor";
 import { useReaderResumeState } from "@/lib/reader/useReaderResumeState";
+import { useAttentionTracker } from "@/lib/reader/useAttentionTracker";
 import { useGlobalPlayer } from "@/lib/player/globalPlayer";
 import {
   type MediaNavigationResponse,
@@ -586,6 +587,7 @@ export default function MediaPaneBody() {
     save: saveReaderProfile,
     updateTheme,
   } = useReaderContext();
+  const attentionTracker = useAttentionTracker({ mediaId: id });
   const {
     state: readerResumeState,
     loading: liveReaderResumeStateLoading,
@@ -593,6 +595,7 @@ export default function MediaPaneBody() {
   } = useReaderResumeState({
     mediaId: id,
     debounceMs: 500,
+    attention: attentionTracker,
   });
   const [initialReaderResumeState, setInitialReaderResumeState] = useState<
     ReaderResumeState | null | undefined

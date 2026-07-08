@@ -6,7 +6,7 @@
  * (the pane supplies callbacks + capability flags + busy state).
  */
 
-import { Trash2 } from "lucide-react";
+import { CheckCircle2, Circle } from "lucide-react";
 import { mediaResourceOptions } from "@/lib/actions/resourceActions";
 import { readConsumption, type ReadStateFields } from "@/lib/collections/readState";
 import { connectionsFromSummary } from "@/lib/collections/connectionSummary";
@@ -28,16 +28,29 @@ export interface MediaPresenterItem extends ReadStateFields {
   capabilities?: unknown;
 }
 
-export type MediaPresenterContext = Omit<Parameters<typeof mediaResourceOptions>[0], "media"> & {
+export type MediaPresenterContext = Omit<
+  Parameters<typeof mediaResourceOptions>[0],
+  "media" | "readState"
+> & {
   connectionSummary?: ConnectionSummaryOut;
 };
 
 export function presentMedia(item: MediaPresenterItem, ctx: MediaPresenterContext): CollectionRowView {
   const { connectionSummary, ...actionCtx } = ctx;
   const status = mediaProcessingStatusPill(item.processing_status);
-  const actions = mediaResourceOptions({ media: item, ...actionCtx });
-  const deleteAction = actions.find(
-    (action) => action.id === "delete-media" && !action.disabled && action.onSelect,
+  const actions = mediaResourceOptions({
+    media: item,
+    readState: item.read_state ?? undefined,
+    ...actionCtx,
+  });
+  // The read-state override verb is the primary swipe (D-11): mark-finished on
+  // unread/in-progress rows, mark-unread on finished rows. Delete stays in the
+  // action menu only.
+  const markAction = actions.find(
+    (action) =>
+      (action.id === "mark-finished" || action.id === "mark-unread") &&
+      !action.disabled &&
+      action.onSelect,
   );
 
   const signals: SignalFact[] = [];
@@ -65,14 +78,13 @@ export function presentMedia(item: MediaPresenterItem, ctx: MediaPresenterContex
         ? { credits: item.contributors, maxVisible: 3 }
         : undefined,
     actions,
-    swipeActions: deleteAction
+    swipeActions: markAction
       ? [
           {
-            id: deleteAction.id,
-            label: deleteAction.label,
-            icon: Trash2,
-            tone: "danger",
-            onActivate: () => deleteAction.onSelect?.({ triggerEl: null }),
+            id: markAction.id,
+            label: markAction.label,
+            icon: markAction.id === "mark-finished" ? CheckCircle2 : Circle,
+            onActivate: () => markAction.onSelect?.({ triggerEl: null }),
           },
         ]
       : undefined,

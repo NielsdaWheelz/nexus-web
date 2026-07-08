@@ -15,6 +15,7 @@ from nexus.db.session import get_db
 from nexus.responses import ok, success_response
 from nexus.schemas.media import MediaEvidenceResponse
 from nexus.services import (
+    attention,
     epub_read,
     locator_resolver,
     media_file_access,
@@ -104,9 +105,17 @@ async def put_reader_state(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    """Replace per-media reader state. An empty body is rejected; JSON ``null`` clears it."""
-    body = reader_service.parse_reader_resume_state(await request.body())
-    result = reader_service.put_reader_media_state(db, viewer.user_id, media_id, body)
+    """Replace per-media reader state. An empty body is rejected; JSON ``null`` clears it.
+
+    An optional ``attention`` block rides the same PUT and is dispatched to the
+    attention ledger after the locator write (the locator write validates access).
+    """
+    locator, attention_block = reader_service.parse_reader_state_with_attention(
+        await request.body()
+    )
+    result = reader_service.put_reader_media_state(db, viewer.user_id, media_id, locator)
+    if attention_block is not None:
+        attention.record_attention(db, viewer.user_id, media_id, attention_block)
     return success_response(result.model_dump(mode="json") if result else None)
 
 

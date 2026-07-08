@@ -1,4 +1,5 @@
 import type { ActionMenuOption } from "@/components/ui/ActionMenu";
+import type { ReadStatus } from "@/lib/collections/types";
 import { isRecord } from "@/lib/validation";
 
 type MenuSelectDetail = { triggerEl: HTMLButtonElement | null };
@@ -42,12 +43,15 @@ export function mediaResourceOptions(input: {
   refreshBusy?: boolean;
   deleteBusy?: boolean;
   retryMetadataBusy?: boolean;
+  readState?: ReadStatus;
   onOpenChat?: () => void;
   onManageLibraries?: (detail: MenuSelectDetail) => void;
   onRetry?: () => void;
   onRefreshSource?: () => void;
   onDelete?: () => void;
   onRetryMetadata?: () => void;
+  onMarkFinished?: () => void;
+  onMarkUnread?: () => void;
 }): ActionMenuOption[] {
   const media = input.media;
   if (!media) return [];
@@ -104,6 +108,23 @@ export function mediaResourceOptions(input: {
       label: "Libraries...",
       restoreFocusOnClose: false,
       onSelect: input.onManageLibraries,
+    });
+  }
+
+  // Read-state override verb: mark-finished on unread/in-progress; mark-unread on
+  // finished. Exactly one is offered, driven by the current derived read-state.
+  if (input.readState !== "finished" && input.onMarkFinished) {
+    options.push({
+      id: "mark-finished",
+      label: "Mark as finished",
+      onSelect: input.onMarkFinished,
+    });
+  }
+  if (input.readState === "finished" && input.onMarkUnread) {
+    options.push({
+      id: "mark-unread",
+      label: "Mark as unread",
+      onSelect: input.onMarkUnread,
     });
   }
 

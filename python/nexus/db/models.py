@@ -6399,6 +6399,119 @@ class ReaderMediaState(Base):
     media: Mapped["Media"] = relationship("Media")
 
 
+class ReadingSession(Base):
+    """One contiguous reading/listening episode for a user + media.
+
+    Written solely by ``services.attention.record_attention``. Continuity is a
+    30-minute gap rule on ``last_active_at`` (not config); ``spans`` is an
+    append-only jsonb array of touched ranges (no write-time dedup).
+    """
+
+    __tablename__ = "reading_sessions"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    media_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("media.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    device_id: Mapped[str] = mapped_column(Text, nullable=False)
+    started_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    last_active_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    dwell_ms: Mapped[int] = mapped_column(
+        BigInteger,
+        server_default=text("0"),
+        nullable=False,
+    )
+    max_progression: Mapped[float | None] = mapped_column(Float, nullable=True)
+    spans: Mapped[list[dict[str, object]]] = mapped_column(
+        JSONB,
+        server_default=text("'[]'"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint("dwell_ms >= 0", name="ck_reading_sessions_dwell_non_negative"),
+        CheckConstraint(
+            "max_progression IS NULL OR (max_progression >= 0.0 AND max_progression <= 1.0)",
+            name="ck_reading_sessions_max_progression",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(spans) = 'array'",
+            name="ck_reading_sessions_spans_array",
+        ),
+        CheckConstraint(
+            "char_length(device_id) <= 128",
+            name="ck_reading_sessions_device_id_len",
+        ),
+        Index(
+            "ix_reading_sessions_user_media_active",
+            "user_id",
+            "media_id",
+            text("last_active_at DESC"),
+        ),
+        Index("ix_reading_sessions_user_started", "user_id", text("started_at DESC")),
+    )
+
+    user: Mapped["User"] = relationship("User")
+    media: Mapped["Media"] = relationship("Media")
+
+
+class ConsumptionOverride(Base):
+    """Explicit per-viewer read-state override (highest-priority signal).
+
+    Written solely by ``services.attention.set_consumption_override`` /
+    ``delete_consumption_override``. Vocabulary is 'unread' | 'finished' only —
+    'in_progress' is a derived state, not a user gesture.
+    """
+
+    __tablename__ = "consumption_overrides"
+
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    media_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("media.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('unread', 'finished')",
+            name="ck_consumption_overrides_status",
+        ),
+    )
+
+    user: Mapped["User"] = relationship("User")
+    media: Mapped["Media"] = relationship("Media")
+
+
 class WorkspaceSession(Base):
     """Per user + device persisted workspace pane set."""
 

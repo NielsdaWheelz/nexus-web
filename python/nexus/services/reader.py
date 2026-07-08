@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import can_read_media, visible_media_ids_cte_sql
 from nexus.db.models import Media, MediaKind, ReaderMediaState, ReaderProfile
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
+from nexus.schemas.attention import AttentionBlock
 from nexus.schemas.reader import ReaderProfileOut, ReaderProfilePatch, ReaderResumeState
 
 DEFAULT_THEME = "light"
@@ -115,10 +116,22 @@ def _deserialize_reader_state(
     return locator
 
 
-def parse_reader_resume_state(raw_body: bytes) -> ReaderResumeState | None:
-    """Parse a PUT /media/{id}/reader-state request body. An empty body is
-    rejected; a JSON ``null`` clears the state (returns None); anything else must
-    validate as a ReaderResumeState."""
+def parse_reader_state_with_attention(
+    raw_body: bytes,
+) -> tuple[ReaderResumeState | None, AttentionBlock | None]:
+    """Parse a PUT /media/{id}/reader-state request body into (locator, attention).
+
+    An empty body is rejected; a bare JSON ``null`` clears the locator and carries
+    no attention (returns ``(None, None)``). A body is self-describing:
+    - an envelope ``{"locator": ..., "attention": ...}`` (either key present)
+      unpacks both fields independently. A null ``locator`` in the envelope
+      clears/omits the resume position but the ``attention`` block is still
+      returned and recorded — a fresh document with no saved position (locator
+      null) accrues dwell on first open, so do NOT collapse this to ``(None,
+      None)``;
+    - anything else is validated as a bare ``ReaderResumeState`` with no
+      attention (a save that carries only a resume position).
+    """
     if not raw_body:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Reader state body is required.")
     try:
@@ -128,9 +141,28 @@ def parse_reader_resume_state(raw_body: bytes) -> ReaderResumeState | None:
             ApiErrorCode.E_INVALID_REQUEST, "Reader state body must be valid JSON."
         ) from exc
     if payload is None:
-        return None
+        return None, None
+
+    if isinstance(payload, dict) and ("locator" in payload or "attention" in payload):
+        locator_raw = payload.get("locator")
+        attention_raw = payload.get("attention")
+        try:
+            locator = (
+                READER_RESUME_STATE_ADAPTER.validate_python(locator_raw)
+                if locator_raw is not None
+                else None
+            )
+            attention = (
+                AttentionBlock.model_validate(attention_raw) if attention_raw is not None else None
+            )
+        except ValidationError as exc:
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST, "Invalid reader state payload."
+            ) from exc
+        return (None, attention) if locator is None else (locator, attention)
+
     try:
-        return READER_RESUME_STATE_ADAPTER.validate_python(payload)
+        return READER_RESUME_STATE_ADAPTER.validate_python(payload), None
     except ValidationError as exc:
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST, "Invalid reader state payload."

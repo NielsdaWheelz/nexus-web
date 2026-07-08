@@ -1,0 +1,465 @@
+"""Integration tests for the attention ledger (sessions + overrides + derivation).
+
+Service-level tests seed committed users/media via ``direct_db`` and call the
+``services.attention`` functions directly. Route-level tests use the safe
+``auth_client`` + ``direct_db`` pattern (never savepoint db_session + client).
+"""
+
+from uuid import UUID, uuid4
+
+import pytest
+from sqlalchemy import text
+
+from nexus.db.models import Media, MediaKind, ProcessingStatus
+from nexus.schemas.attention import AttentionBlock
+from nexus.services import attention
+from tests.helpers import auth_headers, create_test_user_id
+from tests.utils.db import DirectSessionManager
+
+pytestmark = pytest.mark.integration
+
+
+def _seed_user_and_media(
+    direct_db: DirectSessionManager,
+    *,
+    kind: str = MediaKind.web_article.value,
+) -> tuple[UUID, UUID]:
+    user_id = uuid4()
+    media_id = uuid4()
+    with direct_db.session() as session:
+        session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+        session.add(
+            Media(
+                id=media_id,
+                kind=kind,
+                title="Attention Test Media",
+                processing_status=ProcessingStatus.ready_for_reading,
+            )
+        )
+        session.commit()
+    # Parent-first registration; LIFO teardown deletes children first.
+    direct_db.register_cleanup("users", "id", user_id)
+    direct_db.register_cleanup("media", "id", media_id)
+    direct_db.register_cleanup("reading_sessions", "media_id", media_id)
+    direct_db.register_cleanup("consumption_overrides", "media_id", media_id)
+    return user_id, media_id
+
+
+def _record(
+    direct_db: DirectSessionManager,
+    user_id: UUID,
+    media_id: UUID,
+    *,
+    dwell: int,
+    progression: float | None = None,
+    device: str = "device-1",
+) -> None:
+    with direct_db.session() as session:
+        attention.record_attention(
+            session,
+            user_id,
+            media_id,
+            AttentionBlock(
+                dwell_ms_delta=dwell,
+                device_id=device,
+                spans_touched=[],
+                progression=progression,
+            ),
+        )
+
+
+def _session_rows(direct_db: DirectSessionManager, user_id: UUID, media_id: UUID):
+    with direct_db.session() as session:
+        return session.execute(
+            text("""
+                SELECT dwell_ms, max_progression, started_at, last_active_at
+                FROM reading_sessions
+                WHERE user_id = :u AND media_id = :m
+                ORDER BY started_at ASC
+            """),
+            {"u": user_id, "m": media_id},
+        ).fetchall()
+
+
+def _consumption(direct_db: DirectSessionManager, user_id: UUID, media_id: UUID):
+    with direct_db.session() as session:
+        return attention.consumption_state(session, viewer_id=user_id, media_ids=[media_id])[
+            media_id
+        ]
+
+
+class TestRecordAttention:
+    def test_creates_session_with_dwell_and_progression(self, direct_db: DirectSessionManager):
+        user_id, media_id = _seed_user_and_media(direct_db)
+
+        _record(direct_db, user_id, media_id, dwell=45_000, progression=0.3)
+
+        rows = _session_rows(direct_db, user_id, media_id)
+        assert len(rows) == 1
+        assert rows[0][0] == 45_000
+        assert rows[0][1] == pytest.approx(0.3, abs=1e-6)
+
+    def test_continues_session_within_gap(self, direct_db: DirectSessionManager):
+        user_id, media_id = _seed_user_and_media(direct_db)
+
+        _record(direct_db, user_id, media_id, dwell=10_000, progression=0.2)
+        _record(direct_db, user_id, media_id, dwell=5_000, progression=0.5)
+
+        rows = _session_rows(direct_db, user_id, media_id)
+        assert len(rows) == 1
+        assert rows[0][0] == 15_000
+        assert rows[0][1] == pytest.approx(0.5, abs=1e-6)
+        assert rows[0][2] == rows[0][3] or rows[0][3] >= rows[0][2]
+
+    def test_progression_is_max_not_last(self, direct_db: DirectSessionManager):
+        user_id, media_id = _seed_user_and_media(direct_db)
+
+        _record(direct_db, user_id, media_id, dwell=1_000, progression=0.8)
+        _record(direct_db, user_id, media_id, dwell=1_000, progression=0.4)
+
+        rows = _session_rows(direct_db, user_id, media_id)
+        assert len(rows) == 1
+        assert rows[0][1] == pytest.approx(0.8, abs=1e-6)
+
+    def test_opens_new_session_after_gap(self, direct_db: DirectSessionManager):
+        user_id, media_id = _seed_user_and_media(direct_db)
+
+        _record(direct_db, user_id, media_id, dwell=10_000, progression=0.2)
+        # Age the open session beyond the 30-minute gap.
+        with direct_db.session() as session:
+            session.execute(
+                text("""
+                    UPDATE reading_sessions
+                    SET last_active_at = now() - interval '31 minutes',
+                        started_at = now() - interval '31 minutes'
+                    WHERE user_id = :u AND media_id = :m
+                """),
+                {"u": user_id, "m": media_id},
+            )
+            session.commit()
+
+        _record(direct_db, user_id, media_id, dwell=7_000, progression=0.9)
+
+        rows = _session_rows(direct_db, user_id, media_id)
+        assert len(rows) == 2
+        assert {rows[0][0], rows[1][0]} == {10_000, 7_000}
+
+    def test_no_op_save_does_not_touch_existing_session(self, direct_db: DirectSessionManager):
+        user_id, media_id = _seed_user_and_media(direct_db)
+
+        _record(direct_db, user_id, media_id, dwell=12_000, progression=0.3)
+        _record(direct_db, user_id, media_id, dwell=0, progression=None)
+
+        rows = _session_rows(direct_db, user_id, media_id)
+        assert len(rows) == 1
+        assert rows[0][0] == 12_000
+
+    def test_records_audio_session(self, direct_db: DirectSessionManager):
+        user_id, media_id = _seed_user_and_media(direct_db, kind=MediaKind.podcast_episode.value)
+
+        _record(direct_db, user_id, media_id, dwell=15_000, progression=0.1)
+        _record(direct_db, user_id, media_id, dwell=15_000, progression=0.2)
+
+        rows = _session_rows(direct_db, user_id, media_id)
+        assert len(rows) == 1
+        assert rows[0][0] == 30_000
+
+
+class TestConsumptionState:
+    def test_unread_with_no_sessions(self, direct_db: DirectSessionManager):
+        user_id, media_id = _seed_user_and_media(direct_db)
+        assert _consumption(direct_db, user_id, media_id).status == "unread"
+
+    def test_finished_from_progression(self, direct_db: DirectSessionManager):
+        user_id, media_id = _seed_user_and_media(direct_db)
+        _record(direct_db, user_id, media_id, dwell=5_000, progression=0.96)
+        assert _consumption(direct_db, user_id, media_id).status == "finished"
+
+    def test_finished_from_total_dwell(self, direct_db: DirectSessionManager):
+        user_id, media_id = _seed_user_and_media(direct_db)
+        _record(direct_db, user_id, media_id, dwell=130_000, progression=0.1)
+        assert _consumption(direct_db, user_id, media_id).status == "finished"
+
+    def test_in_progress_from_session_dwell(self, direct_db: DirectSessionManager):
+        user_id, media_id = _seed_user_and_media(direct_db)
+        _record(direct_db, user_id, media_id, dwell=35_000, progression=0.4)
+        state = _consumption(direct_db, user_id, media_id)
+        assert state.status == "in_progress"
+        assert state.progress_fraction == pytest.approx(0.4, abs=1e-6)
+
+    def test_short_dwell_stays_unread(self, direct_db: DirectSessionManager):
+        user_id, media_id = _seed_user_and_media(direct_db)
+        _record(direct_db, user_id, media_id, dwell=10_000, progression=None)
+        assert _consumption(direct_db, user_id, media_id).status == "unread"
+
+    def test_override_wins_over_session(self, direct_db: DirectSessionManager):
+        user_id, media_id = _seed_user_and_media(direct_db)
+        _record(direct_db, user_id, media_id, dwell=5_000, progression=1.0)
+        with direct_db.session() as session:
+            session.execute(
+                text("""
+                    INSERT INTO consumption_overrides (user_id, media_id, status)
+                    VALUES (:u, :m, 'unread')
+                """),
+                {"u": user_id, "m": media_id},
+            )
+            session.commit()
+        state = _consumption(direct_db, user_id, media_id)
+        assert state.status == "unread"
+        assert state.progress_fraction is None
+
+
+class TestAttentionOnDay:
+    def test_returns_media_and_dwell_for_calendar_day(self, direct_db: DirectSessionManager):
+        user_id, media_id = _seed_user_and_media(direct_db)
+        with direct_db.session() as session:
+            session.execute(
+                text("""
+                    INSERT INTO reading_sessions
+                        (user_id, media_id, device_id, started_at, last_active_at, dwell_ms)
+                    VALUES
+                        (:u, :m, 'device-x', '2021-07-06T10:00:00Z', '2021-07-06T10:05:00Z', 60000),
+                        (:u, :m, 'device-x', '2023-07-06T12:00:00Z', '2023-07-06T12:05:00Z', 40000),
+                        (:u, :m, 'device-x', '2023-08-06T12:00:00Z', '2023-08-06T12:05:00Z', 90000)
+                """),
+                {"u": user_id, "m": media_id},
+            )
+            session.commit()
+
+        with direct_db.session() as session:
+            pairs = attention.attention_on_day(session, user_id, month=7, day=6)
+
+        assert pairs == [(media_id, 100_000)]
+
+
+class TestConsumptionOverrideRoute:
+    def _add_media_to_user_library(self, auth_client, user_id: UUID, media_id: UUID) -> None:
+        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
+        library_id = me_resp.json()["data"]["default_library_id"]
+        auth_client.post(
+            f"/libraries/{library_id}/media",
+            json={"media_id": str(media_id)},
+            headers=auth_headers(user_id),
+        )
+
+    def test_post_and_delete_override(self, auth_client, direct_db: DirectSessionManager):
+        user_id = create_test_user_id()
+        media_id = uuid4()
+        with direct_db.session() as session:
+            session.add(
+                Media(
+                    id=media_id,
+                    kind=MediaKind.web_article.value,
+                    title="Override Route Media",
+                    processing_status=ProcessingStatus.ready_for_reading,
+                )
+            )
+            session.commit()
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("consumption_overrides", "media_id", media_id)
+        direct_db.register_cleanup("reading_sessions", "media_id", media_id)
+
+        self._add_media_to_user_library(auth_client, user_id, media_id)
+
+        post_resp = auth_client.post(
+            f"/media/{media_id}/consumption-override",
+            json={"status": "finished"},
+            headers=auth_headers(user_id),
+        )
+        assert post_resp.status_code == 204
+
+        with direct_db.session() as session:
+            state = attention.consumption_state(session, viewer_id=user_id, media_ids=[media_id])
+        assert state[media_id].status == "finished"
+
+        delete_resp = auth_client.delete(
+            f"/media/{media_id}/consumption-override",
+            headers=auth_headers(user_id),
+        )
+        assert delete_resp.status_code == 204
+
+        with direct_db.session() as session:
+            state = attention.consumption_state(session, viewer_id=user_id, media_ids=[media_id])
+        assert state[media_id].status == "unread"
+
+    def test_delete_is_idempotent(self, auth_client, direct_db: DirectSessionManager):
+        user_id = create_test_user_id()
+        media_id = uuid4()
+        with direct_db.session() as session:
+            session.add(
+                Media(
+                    id=media_id,
+                    kind=MediaKind.web_article.value,
+                    title="Idempotent Override Media",
+                    processing_status=ProcessingStatus.ready_for_reading,
+                )
+            )
+            session.commit()
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("consumption_overrides", "media_id", media_id)
+
+        self._add_media_to_user_library(auth_client, user_id, media_id)
+
+        resp = auth_client.delete(
+            f"/media/{media_id}/consumption-override",
+            headers=auth_headers(user_id),
+        )
+        assert resp.status_code == 204
+
+
+class TestReaderAttentionRoute:
+    def _add_media_to_user_library(self, auth_client, user_id: UUID, media_id: UUID) -> None:
+        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
+        library_id = me_resp.json()["data"]["default_library_id"]
+        auth_client.post(
+            f"/libraries/{library_id}/media",
+            json={"media_id": str(media_id)},
+            headers=auth_headers(user_id),
+        )
+
+    def test_reader_put_with_attention_writes_session(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        media_id = uuid4()
+        with direct_db.session() as session:
+            session.add(
+                Media(
+                    id=media_id,
+                    kind=MediaKind.web_article.value,
+                    title="Reader Attention Media",
+                    processing_status=ProcessingStatus.ready_for_reading,
+                )
+            )
+            session.commit()
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("reader_media_state", "media_id", media_id)
+        direct_db.register_cleanup("reading_sessions", "media_id", media_id)
+
+        self._add_media_to_user_library(auth_client, user_id, media_id)
+
+        body = {
+            "locator": {
+                "kind": "web",
+                "target": {"fragment_id": "fragment-1"},
+                "locations": {
+                    "text_offset": 42,
+                    "progression": None,
+                    "total_progression": 0.5,
+                    "position": 2,
+                },
+                "text": {"quote": "hello", "quote_prefix": None, "quote_suffix": None},
+            },
+            "attention": {
+                "dwell_ms_delta": 45_000,
+                "device_id": "device-abc",
+                "spans_touched": [],
+                "progression": 0.5,
+            },
+        }
+        resp = auth_client.put(
+            f"/media/{media_id}/reader-state",
+            json=body,
+            headers=auth_headers(user_id),
+        )
+        assert resp.status_code == 200
+
+        rows = _session_rows(direct_db, user_id, media_id)
+        assert len(rows) == 1
+        assert rows[0][0] == 45_000
+
+    def test_reader_put_without_attention_is_noop_for_sessions(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        media_id = uuid4()
+        with direct_db.session() as session:
+            session.add(
+                Media(
+                    id=media_id,
+                    kind=MediaKind.web_article.value,
+                    title="Reader No-Attention Media",
+                    processing_status=ProcessingStatus.ready_for_reading,
+                )
+            )
+            session.commit()
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("reader_media_state", "media_id", media_id)
+        direct_db.register_cleanup("reading_sessions", "media_id", media_id)
+
+        self._add_media_to_user_library(auth_client, user_id, media_id)
+
+        bare_locator = {
+            "kind": "web",
+            "target": {"fragment_id": "fragment-1"},
+            "locations": {
+                "text_offset": 42,
+                "progression": None,
+                "total_progression": 0.5,
+                "position": 2,
+            },
+            "text": {"quote": "hello", "quote_prefix": None, "quote_suffix": None},
+        }
+        resp = auth_client.put(
+            f"/media/{media_id}/reader-state",
+            json=bare_locator,
+            headers=auth_headers(user_id),
+        )
+        assert resp.status_code == 200
+        assert resp.json()["data"] == bare_locator
+        assert _session_rows(direct_db, user_id, media_id) == []
+
+
+class TestListeningAttentionRoute:
+    def _add_media_to_user_library(self, auth_client, user_id: UUID, media_id: UUID) -> None:
+        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
+        library_id = me_resp.json()["data"]["default_library_id"]
+        auth_client.post(
+            f"/libraries/{library_id}/media",
+            json={"media_id": str(media_id)},
+            headers=auth_headers(user_id),
+        )
+
+    def test_listening_put_with_dwell_writes_session(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        media_id = uuid4()
+        with direct_db.session() as session:
+            session.add(
+                Media(
+                    id=media_id,
+                    kind=MediaKind.podcast_episode.value,
+                    title="Listening Attention Media",
+                    processing_status=ProcessingStatus.ready_for_reading,
+                )
+            )
+            session.commit()
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("podcast_listening_states", "media_id", media_id)
+        direct_db.register_cleanup("reading_sessions", "media_id", media_id)
+
+        self._add_media_to_user_library(auth_client, user_id, media_id)
+
+        resp = auth_client.put(
+            f"/media/{media_id}/listening-state",
+            json={
+                "position_ms": 60_000,
+                "duration_ms": 600_000,
+                "playback_speed": 1.0,
+                "dwell_ms_delta": 15_000,
+                "device_id": "device-audio",
+            },
+            headers=auth_headers(user_id),
+        )
+        assert resp.status_code == 204
+
+        rows = _session_rows(direct_db, user_id, media_id)
+        assert len(rows) == 1
+        assert rows[0][0] == 15_000
+        assert rows[0][1] == pytest.approx(0.1, abs=1e-6)
