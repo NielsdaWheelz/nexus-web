@@ -21,7 +21,6 @@ describe("paneSecondaryModel", () => {
     expect(getSecondaryGroupForSurface("conversation-forks")).toBe(
       "conversation-context",
     );
-    expect(getSecondaryGroupForSurface("library-intelligence")).toBe("library-tools");
   });
 
   it("owns surface metadata in one place", () => {
@@ -49,29 +48,25 @@ describe("paneSecondaryModel", () => {
       "conversation-context-refs",
       "conversation-forks",
     ]);
-    expect(getSecondarySurfaceIdsForGroup("library-tools")).toEqual([
-      "library-intelligence",
-    ]);
   });
 
   it("validates secondary ids", () => {
-    expect(isWorkspaceSecondarySurfaceId("library-chat")).toBe(false);
-    expect(isWorkspaceSecondarySurfaceId("library-intelligence")).toBe(true);
+    expect(isWorkspaceSecondarySurfaceId("reader-evidence")).toBe(true);
     expect(isWorkspaceSecondarySurfaceId("unknown")).toBe(false);
-    expect(isWorkspaceSecondaryGroupId("library-tools")).toBe(true);
+    expect(isWorkspaceSecondaryGroupId("conversation-context")).toBe(true);
     expect(isWorkspaceSecondaryGroupId("unknown")).toBe(false);
   });
 
   it("clamps secondary width to the group policy", () => {
-    const policy = getSecondaryWidthPolicy("library-tools");
+    const policy = getSecondaryWidthPolicy("reader-tools");
 
     expect(
       resolveEffectiveSecondarySizing({ storedWidthPx: 100, policy }),
     ).toMatchObject({
-      widthPx: 320,
-      minWidthPx: 320,
-      maxWidthPx: 760,
-      storedWidthCorrectionPx: 320,
+      widthPx: 280,
+      minWidthPx: 280,
+      maxWidthPx: 720,
+      storedWidthCorrectionPx: 280,
     });
     expect(
       resolveEffectiveSecondarySizing({ storedWidthPx: 640, policy }),
@@ -82,7 +77,7 @@ describe("paneSecondaryModel", () => {
     expect(
       resolveEffectiveSecondarySizing({ storedWidthPx: Number.NaN, policy }),
     ).toMatchObject({
-      widthPx: 420,
+      widthPx: 360,
       storedWidthCorrectionPx: null,
     });
   });
@@ -104,5 +99,23 @@ describe("paneSecondaryModel", () => {
     expect(readerTools.map((d) => d.id)).toEqual(
       expect.arrayContaining(["reader-contents", "reader-evidence"]),
     );
+  });
+
+  // Machine-output-in-place §13.1 — the dossier and page-connections drawers are
+  // deleted, not toggled: no library-tools/notes-tools group, no
+  // library-intelligence/notes-connections surface.
+  it("has deleted the library-tools and notes-tools groups", () => {
+    expect(isWorkspaceSecondaryGroupId("library-tools")).toBe(false);
+    expect(isWorkspaceSecondaryGroupId("notes-tools")).toBe(false);
+    expect(isWorkspaceSecondaryGroupId("reader-tools")).toBe(true);
+    expect(isWorkspaceSecondaryGroupId("conversation-context")).toBe(true);
+  });
+
+  it("has deleted the library-intelligence and notes-connections surfaces", () => {
+    const ids = PANE_SECONDARY_SURFACE_DEFINITIONS.map((d) => d.id);
+    expect(ids).not.toContain("library-intelligence");
+    expect(ids).not.toContain("notes-connections");
+    expect(isWorkspaceSecondarySurfaceId("library-intelligence")).toBe(false);
+    expect(isWorkspaceSecondarySurfaceId("notes-connections")).toBe(false);
   });
 });

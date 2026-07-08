@@ -39,14 +39,12 @@ export interface WorkspacePaneState {
 export interface WorkspaceAttachedSecondaryPaneState {
   id: string;
   parentPrimaryPaneId: string;
-  groupId: "reader-tools" | "conversation-context" | "library-tools" | "notes-tools";
+  groupId: "reader-tools" | "conversation-context";
   activeSurfaceId:
     | "reader-contents"
     | "reader-evidence"
     | "conversation-context-refs"
-    | "conversation-forks"
-    | "library-intelligence"
-    | "notes-connections";
+    | "conversation-forks";
   widthPx: number;
   visibility: "visible" | "collapsed";
 }

@@ -415,14 +415,10 @@ test.describe("notes cutover", () => {
           { timeout: 10_000 }
         )
         .toBe(true);
-      await notePane
-        .getByTestId("pane-shell-chrome")
-        .getByRole("button", { name: "Options" })
-        .click();
-      await page.getByRole("menuitem", { name: "Show connections" }).click();
-      const connectionsPane = notePane.getByTestId("workspace-secondary-pane");
+      // The connections apparatus renders inline in the note-pane footer (no
+      // secondary drawer): machine-output-in-place hard cutover.
+      const connectionsPane = notePane.getByRole("region", { name: "Connections" });
       await expect(connectionsPane).toBeVisible({ timeout: 10_000 });
-      await expect(connectionsPane).toHaveAttribute("aria-label", "Connections");
       await expect(connectionsPane).toContainText("E2E linked-items web article seed", {
         timeout: 10_000,
       });

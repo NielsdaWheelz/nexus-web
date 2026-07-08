@@ -41,7 +41,9 @@ describe("pane route table", () => {
       ref: `page:${PAGE_ID}`,
     });
     expect(route.definition?.bodyMode).toBe("document");
-    expect(route.definition?.secondaryGroups).toContain("notes-tools");
+    // Machine-output-in-place §13.2 — page connections render inline, not via a
+    // notes-tools secondary drawer.
+    expect(route.definition?.secondaryGroups).toBeUndefined();
   });
 
   it("resolves notes and note block routes", () => {
@@ -59,7 +61,7 @@ describe("pane route table", () => {
       ref: `note_block:${BLOCK_ID}`,
     });
     expect(noteRoute.definition?.bodyMode).toBe("document");
-    expect(noteRoute.definition?.secondaryGroups).toContain("notes-tools");
+    expect(noteRoute.definition?.secondaryGroups).toBeUndefined();
   });
 
   it("returns the unsupported placeholder for redirected /daily routes", () => {

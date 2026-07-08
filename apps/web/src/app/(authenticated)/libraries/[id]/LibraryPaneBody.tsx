@@ -3,7 +3,6 @@
 import {
   useCallback,
   useEffect,
-  useMemo,
   useRef,
   useState,
 } from "react";
@@ -43,7 +42,7 @@ import { clientResourceFetcher } from "@/lib/api/resourceTransport.client";
 import { useResource } from "@/lib/api/useResource";
 import { paneResourceLoaders } from "@/lib/panes/paneResourceLoaders";
 import { fetchPodcastLibraries } from "@/app/(authenticated)/podcasts/podcastSubscriptions";
-import LibraryIntelligencePane from "./LibraryIntelligencePane";
+import LibraryBrief from "@/components/library/LibraryBrief";
 import Button from "@/components/ui/Button";
 import PaneSurface from "@/components/ui/PaneSurface";
 import SectionOpener from "@/components/ui/SectionOpener";
@@ -67,7 +66,6 @@ import type { LibraryTargetPickerItem } from "@/lib/media/mediaLibraries";
 import type { LibraryForEdit } from "@/components/LibraryEditDialog";
 import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
-import { usePaneSecondary } from "@/components/workspace/PaneSecondary";
 import {
   usePaneParam,
   usePaneRouter,
@@ -156,9 +154,8 @@ export default function LibraryPaneBody() {
   }
   const router = usePaneRouter();
   const paneSearchParams = usePaneSearchParams();
-  const selectedTab = paneSearchParams.get("tab");
   const { displayState, setDisplayState } = useCollectionDisplayState(`/libraries/${id}`);
-  const { openInNewPane, requestSecondarySurface } = usePaneRuntime() ?? {};
+  const { openInNewPane } = usePaneRuntime() ?? {};
   const feedback = useFeedback();
   const [library, setLibrary] = useState<Library | null>(null);
   const [entries, setEntries] = useState<LibraryEntry[]>([]);
@@ -713,15 +710,6 @@ export default function LibraryPaneBody() {
     router.push("/libraries");
   }, [currentLibrary, closeEditDialog, router]);
 
-  const handleOpenLibraryIntelligence = useCallback(() => {
-    requestSecondarySurface?.("library-intelligence");
-  }, [requestSecondarySurface]);
-  useEffect(() => {
-    if (selectedTab === "intelligence") {
-      requestSecondarySurface?.("library-intelligence");
-    }
-  }, [requestSecondarySurface, selectedTab]);
-
   const handleOpenMediaChat = useCallback(
     async (media: LibraryMediaEntry) => {
       try {
@@ -786,7 +774,6 @@ export default function LibraryPaneBody() {
           : []),
         ...libraryResourceOptions({
           library: currentLibrary,
-          onViewIntelligence: handleOpenLibraryIntelligence,
           onEdit: () => void openEditDialog(),
           onDelete: () => {
             void handleDeleteLibrary();
@@ -803,23 +790,6 @@ export default function LibraryPaneBody() {
     folio: { kind: "count", value: entryFolioCount, unit: "entry" },
     folioPending: loading,
   });
-  const secondaryDescriptor = useMemo(
-    () =>
-      currentLibrary
-        ? {
-            groupId: "library-tools" as const,
-            defaultSurfaceId: "library-intelligence" as const,
-            surfaces: [
-              {
-                id: "library-intelligence" as const,
-                body: <LibraryIntelligencePane libraryId={id} />,
-              },
-            ],
-          }
-        : null,
-    [currentLibrary, id],
-  );
-  usePaneSecondary(secondaryDescriptor);
 
   if (loading) {
     return <PaneLoadingState />;
@@ -925,6 +895,7 @@ export default function LibraryPaneBody() {
           void handleRemoveFromLibrary(libraryId);
         }}
       />
+      <LibraryBrief libraryId={id} />
       <PaneSurface
         opener={<SectionOpener heading={currentLibrary.name} scale="title" />}
         toolbar={

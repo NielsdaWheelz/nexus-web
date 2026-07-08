@@ -109,6 +109,8 @@ export default function ConnectionsSurface({
   objectRef: ObjectRef;
   onOpenRoute?: (href: string, openInNewPane: boolean) => void;
 }) {
+  const composerId = useId();
+  const [composerOpen, setComposerOpen] = useState(false);
   const [refreshTick, setRefreshTick] = useState(0);
   const selfRef = formatResourceRef({
     scheme: objectRef.objectType,
@@ -233,23 +235,34 @@ export default function ConnectionsSurface({
     <section className={styles.backlinks} aria-label="Connections">
       <div className={styles.header}>
         <h2 className={styles.title}>Connections</h2>
-        {scannable ? (
-          <Button
+        <div className={styles.headerActions}>
+          <button
             type="button"
-            variant="ghost"
-            size="sm"
-            iconOnly
-            loading={scanning}
-            aria-label="Find connections"
-            title="Find connections"
-            onClick={() => {
-              setScanVoice(null);
-              void scan.start();
-            }}
+            className={styles.composerToggle}
+            aria-expanded={composerOpen}
+            aria-controls={composerId}
+            onClick={() => setComposerOpen((open) => !open)}
           >
-            <Sparkles size={14} aria-hidden="true" />
-          </Button>
-        ) : null}
+            ＋ Connect
+          </button>
+          {scannable ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              iconOnly
+              loading={scanning}
+              aria-label="Find connections"
+              title="Find connections"
+              onClick={() => {
+                setScanVoice(null);
+                void scan.start();
+              }}
+            >
+              <Sparkles size={14} aria-hidden="true" />
+            </Button>
+          ) : null}
+        </div>
       </div>
       {scan.feedback ? <FeedbackNotice feedback={scan.feedback} /> : null}
       {scanning ? (
@@ -257,20 +270,24 @@ export default function ConnectionsSurface({
       ) : scanVoice ? (
         <p className={styles.scanVoice}>{scanVoice}</p>
       ) : null}
-      <ConnectionComposer selfRef={selfRef} onChanged={reloadConnections} />
+      {composerOpen ? (
+        <ConnectionComposer
+          id={composerId}
+          selfRef={selfRef}
+          onChanged={reloadConnections}
+          autoFocus
+        />
+      ) : null}
       {loading ? (
         <FeedbackNotice severity="info" title="Loading connections..." />
       ) : null}
       {!loading && error ? <FeedbackNotice feedback={error} /> : null}
       {!loading && !error && connections.length === 0 ? (
-        <FeedbackNotice
-          severity="neutral"
-          title={
-            scannable
-              ? "No connections yet. Scan to find resonant material, or link one manually."
-              : "No connected objects yet."
-          }
-        />
+        <p className={styles.empty}>
+          {scannable
+            ? "No connections yet. Scan to find resonant material, or link one manually."
+            : "No connected objects yet."}
+        </p>
       ) : null}
       {connections.length > 0 ? (
         <div className={styles.list}>
@@ -340,11 +357,15 @@ export default function ConnectionsSurface({
 }
 
 function ConnectionComposer({
+  id,
   selfRef,
   onChanged,
+  autoFocus = false,
 }: {
+  id: string;
   selfRef: string;
   onChanged: () => void;
+  autoFocus?: boolean;
 }) {
   const autocompleteId = useId();
   const [query, setQuery] = useState("");
@@ -356,8 +377,15 @@ function ConnectionComposer({
   const [submitting, setSubmitting] = useState(false);
   const [attaching, setAttaching] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
   const trimmedQuery = query.trim();
   const rawRef = useMemo(() => parseResourceRef(trimmedQuery), [trimmedQuery]);
+
+  // The composer only mounts when the "＋ Connect" disclosure opens it, so focus
+  // the first field on mount to keep the keyboard on the reveal (AC-7).
+  useEffect(() => {
+    if (autoFocus) searchInputRef.current?.focus();
+  }, [autoFocus]);
 
   useEffect(() => {
     if (trimmedQuery.length < 2 || rawRef !== null || selected !== null) {
@@ -468,6 +496,7 @@ function ConnectionComposer({
 
   return (
     <form
+      id={id}
       className={styles.composer}
       onSubmit={(event) => void submitConnection(event)}
       onDragOver={(event) => {
@@ -483,6 +512,7 @@ function ConnectionComposer({
       <div className={styles.composerControls}>
         <div className={styles.searchWrap}>
           <Input
+            ref={searchInputRef}
             size="sm"
             value={query}
             placeholder="Search or paste resource ref"

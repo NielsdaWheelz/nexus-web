@@ -49,3 +49,57 @@ describe("NotePaneBody resource identity", () => {
     expect(fetchSpy.mock.calls.some(([input]) => fetchInputPath(input).startsWith("/api/notes/pages/"))).toBe(false);
   });
 });
+
+describe("NotePaneBody connections footer", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("mounts the connections apparatus inline in the note footer", async () => {
+    const blockId = "66666666-6666-4666-8666-666666666666";
+    // Only the network boundary is mocked: the note body loads, and the
+    // connections apparatus answers its resource-graph + synapse probes empty.
+    stubFetch(async (input) => {
+      const path = fetchInputPath(input);
+      if (path === `/api/notes/blocks/${blockId}`) {
+        return jsonResponse({
+          data: {
+            id: blockId,
+            bodyPmJson: {
+              type: "paragraph",
+              content: [{ type: "text", text: "Footnoted note" }],
+            },
+            bodyText: "Footnoted note",
+            collapsed: false,
+            children: [],
+            versionByLane: { body: 1, outgoing_edges: 1 },
+          },
+        });
+      }
+      if (path === "/api/resource-graph/connections/query") {
+        return jsonResponse({ data: { items: [], next_cursor: null } });
+      }
+      if (path.startsWith("/api/synapse/scans")) {
+        return jsonResponse({ data: { status: "idle" } });
+      }
+      return jsonResponse({ data: [] });
+    });
+
+    renderHydratedPane({
+      href: `/notes/${blockId}`,
+      resources: {},
+      children: <NotePaneBody />,
+    });
+
+    // The connections apparatus renders in place (no secondary drawer); its
+    // composer is quiet by default, collapsed behind the "＋ Connect" disclosure.
+    expect(
+      await screen.findByRole("region", { name: "Connections" }),
+    ).toBeInTheDocument();
+    const disclosure = screen.getByRole("button", { name: /Connect/ });
+    expect(disclosure).toHaveAttribute("aria-expanded", "false");
+    expect(
+      screen.queryByRole("textbox", { name: "Connection target" }),
+    ).not.toBeInTheDocument();
+  });
+});

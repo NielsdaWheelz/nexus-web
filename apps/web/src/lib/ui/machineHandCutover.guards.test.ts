@@ -13,7 +13,7 @@ const APP_ROOT = process.cwd();
 const OWNER_MODULE_CSS = "src/components/ui/MachineText.module.css";
 const MACHINE_TOKENS = ["--font-machine", "--ink-machine", "--rail-machine"];
 const MARKDOWN_IMPORTERS = [
-  "src/app/(authenticated)/libraries/[id]/LibraryIntelligencePane.tsx",
+  "src/components/library/LibraryBriefArtifact.tsx",
   "src/components/chat/AssistantEvidenceDisclosure.tsx",
 ];
 
@@ -80,7 +80,7 @@ describe("Machine Hand cutover source gates", () => {
 
     // Each importer is a known machine-voice site.
     expect(
-      sourceText("src/app/(authenticated)/libraries/[id]/LibraryIntelligencePane.tsx"),
+      sourceText("src/components/library/LibraryBriefArtifact.tsx"),
     ).toMatch(/from\s+["']@\/components\/ui\/MachineText["']/);
     expect(sourceText("src/components/chat/AssistantMessage.tsx")).toMatch(
       /from\s+["']@\/components\/ui\/MachineText["']/,

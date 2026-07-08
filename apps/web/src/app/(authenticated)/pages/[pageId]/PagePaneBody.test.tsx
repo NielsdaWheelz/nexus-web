@@ -171,16 +171,31 @@ describe("PagePaneBody note activation", () => {
       .mockImplementation(() => {});
 
     // Only the network boundary is mocked: the page loads from `initialPage`,
-    // and note connections are published to secondary chrome instead of
-    // mounting in the writing surface.
+    // and the connections apparatus mounts inline in the page footer.
     fetchSpy = vi
       .spyOn(globalThis, "fetch")
-      .mockImplementation(async () => jsonResponse({ data: [] }));
+      .mockImplementation(async (input) => defaultPageFetch(input));
   });
 
   afterEach(() => {
     scrollIntoViewSpy.mockRestore();
     fetchSpy.mockRestore();
+  });
+
+  it("mounts the connections apparatus inline in the page footer", async () => {
+    renderPagePane(PAGE_ID, activationPage(PAGE_ID, BLOCK_ID));
+    await screen.findByRole("listitem");
+
+    // The connections apparatus renders in place (no secondary drawer); its
+    // composer is quiet by default, collapsed behind the "＋ Connect" disclosure.
+    expect(
+      await screen.findByRole("region", { name: "Connections" }),
+    ).toBeInTheDocument();
+    const disclosure = screen.getByRole("button", { name: /Connect/ });
+    expect(disclosure).toHaveAttribute("aria-expanded", "false");
+    expect(
+      screen.queryByRole("textbox", { name: "Connection target" }),
+    ).not.toBeInTheDocument();
   });
 
   it("scrolls to and pulses a cited note already visible on the page", async () => {
@@ -260,7 +275,7 @@ describe("PagePaneBody note activation", () => {
             },
           });
         }
-        return jsonResponse({ data: [] });
+        return defaultPageFetch(input);
       },
     );
 
@@ -333,7 +348,7 @@ describe("PagePaneBody note activation", () => {
             data: { ...activationPage(PAGE_ID, BLOCK_ID), title: "Retitled page" },
           });
         }
-        return jsonResponse({ data: [] });
+        return defaultPageFetch(input);
       },
     );
 
@@ -390,7 +405,7 @@ describe("PagePaneBody daily-note chrome options", () => {
     window.localStorage.clear();
     fetchSpy = vi
       .spyOn(globalThis, "fetch")
-      .mockImplementation(async () => jsonResponse({ data: [] }));
+      .mockImplementation(async (input) => defaultPageFetch(input));
   });
 
   afterEach(() => {
@@ -578,6 +593,20 @@ function jsonResponse(data: unknown): Response {
     status: 200,
     headers: { "Content-Type": "application/json" },
   });
+}
+
+// The connections apparatus now mounts inline in the page footer, so every
+// page-pane fetch mock must answer its resource-graph + synapse probes with the
+// real response shapes (empty here) — otherwise the surface renders an error.
+function defaultPageFetch(input: RequestInfo | URL): Response {
+  const url = new URL(String(input), "http://localhost");
+  if (url.pathname === "/api/resource-graph/connections/query") {
+    return jsonResponse({ data: { items: [], next_cursor: null } });
+  }
+  if (url.pathname.startsWith("/api/synapse/scans")) {
+    return jsonResponse({ data: { status: "idle" } });
+  }
+  return jsonResponse({ data: [] });
 }
 
 interface OutlineInput {

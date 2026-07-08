@@ -52,8 +52,8 @@ function secondary(
   return {
     id: input.id ?? "secondary-1",
     parentPrimaryPaneId: input.parentPrimaryPaneId ?? "pane-1",
-    groupId: input.groupId ?? "library-tools",
-    activeSurfaceId: input.activeSurfaceId ?? "library-intelligence",
+    groupId: input.groupId ?? "reader-tools",
+    activeSurfaceId: input.activeSurfaceId ?? "reader-evidence",
     widthPx: input.widthPx ?? 420,
     visibility: input.visibility ?? "collapsed",
   };
@@ -216,6 +216,36 @@ describe("prepareRestoredState", () => {
       ],
     });
     expect(hrefs(prepareRestoredState(raw, metrics, true))).toEqual(["/settings/billing"]);
+  });
+
+  // Machine-output-in-place AC-9 — a session persisted before the drawers were
+  // deleted references removed group/surface ids; restore drops the secondary
+  // pane and opens the primary cleanly (P-4 / R6).
+  it("drops a stored library-intelligence secondary pane on restore", () => {
+    const raw = workspace({
+      primaryPanes: [
+        primary("pane-1", "/libraries", { attachedSecondaryPaneId: "secondary-1" }),
+      ],
+      secondaryPanesById: {
+        "secondary-1": secondary({ parentPrimaryPaneId: "pane-1" }),
+      },
+    });
+    const stale = {
+      ...raw,
+      secondaryPanesById: {
+        "secondary-1": {
+          ...raw.secondaryPanesById["secondary-1"],
+          groupId: "library-tools",
+          activeSurfaceId: "library-intelligence",
+        },
+      },
+    };
+
+    const restored = prepareRestoredState(stale, metrics, false);
+
+    expect(hrefs(restored)).toEqual(["/libraries"]);
+    expect(getWorkspacePrimaryPanes(restored)[0]?.attachedSecondaryPaneId).toBeNull();
+    expect(Object.keys(restored.secondaryPanesById)).toHaveLength(0);
   });
 });
 

@@ -1,0 +1,177 @@
+.brief {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.lede {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.ledeBody {
+  min-width: 0;
+}
+
+.controlsRow {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.statusCue {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  line-height: var(--leading-snug);
+  color: var(--ink-muted);
+}
+
+.statusCue[data-status="stale"] {
+  color: var(--warning);
+}
+
+.statusCue[data-status="building"] {
+  color: var(--accent);
+}
+
+.statusCue[data-status="failed"] {
+  color: var(--danger);
+}
+
+.expander {
+  align-self: flex-start;
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+}
+
+.expander:hover {
+  color: var(--ink);
+}
+
+.full {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.statusLine {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.statusLabel {
+  display: inline-flex;
+  align-items: center;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  line-height: var(--leading-snug);
+  color: var(--ink-muted);
+}
+
+.statusLine[data-status="current"] .statusLabel {
+  color: var(--success);
+}
+
+.statusLine[data-status="stale"] .statusLabel {
+  color: var(--warning);
+}
+
+.statusLine[data-status="building"] .statusLabel {
+  color: var(--accent);
+}
+
+.statusLine[data-status="failed"] .statusLabel {
+  color: var(--danger);
+}
+
+.generateForm {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.artifact {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.artifactBody {
+  min-width: 0;
+}
+
+.history {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  border-top: 1px solid var(--edge-subtle);
+  padding-top: var(--space-3);
+}
+
+.historyToggle {
+  align-self: flex-start;
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+}
+
+.historyList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.historyItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.historyMeta {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-snug);
+}
+
+.historyMark {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  color: var(--ink-faint);
+}
+
+.historyEmpty {
+  margin: 0;
+  color: var(--ink-faint);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}

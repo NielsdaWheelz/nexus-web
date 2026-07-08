@@ -179,13 +179,11 @@ describe("libraryResourceOptions", () => {
         can_delete: true,
         can_edit_entries: true,
       },
-      onViewIntelligence: () => {},
       onEdit: () => {},
       onDelete: () => {},
     });
 
     expect(options.map((option) => option.id)).toEqual([
-      "view-library-intelligence",
       "edit-library",
       "delete-library",
     ]);
@@ -196,9 +194,9 @@ describe("libraryResourceOptions", () => {
     });
   });
 
-  it("does not offer edit or delete on the default library", () => {
+  it("offers no menu actions on the default library", () => {
     // The default library cannot be renamed or deleted (its media entries are
-    // still editable), so only intelligence remains.
+    // still editable); the dossier is now inline, not a menu action.
     const options = libraryResourceOptions({
       library: {
         is_default: true,
@@ -207,14 +205,11 @@ describe("libraryResourceOptions", () => {
         can_delete: false,
         can_edit_entries: true,
       },
-      onViewIntelligence: () => {},
       onEdit: () => {},
       onDelete: () => {},
     });
 
-    expect(options.map((option) => option.id)).toEqual([
-      "view-library-intelligence",
-    ]);
+    expect(options.map((option) => option.id)).toEqual([]);
   });
 
   it("offers no mutation actions on a system-protected library", () => {
@@ -228,14 +223,11 @@ describe("libraryResourceOptions", () => {
         can_delete: false,
         can_edit_entries: false,
       },
-      onViewIntelligence: () => {},
       onEdit: () => {},
       onDelete: () => {},
     });
 
-    expect(options.map((option) => option.id)).toEqual([
-      "view-library-intelligence",
-    ]);
+    expect(options.map((option) => option.id)).toEqual([]);
   });
 });
 

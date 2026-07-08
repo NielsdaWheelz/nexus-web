@@ -5,7 +5,6 @@ import { apiFetch } from "@/lib/api/client";
 import { librariesResource as librariesResourceDescriptor } from "@/lib/api/resource";
 import { useResource } from "@/lib/api/useResource";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import {
   FeedbackNotice,
   toFeedback,
@@ -47,7 +46,6 @@ interface Library {
 }
 
 export default function LibrariesPaneBody() {
-  const { openInNewPane } = usePaneRuntime() ?? {};
   const { displayState, setDisplayState } = useCollectionDisplayState("/libraries");
   const [localLibraries, setLocalLibraries] = useState<Library[] | null>(null);
   const [librariesRefreshVersion, setLibrariesRefreshVersion] = useState(0);
@@ -289,13 +287,6 @@ export default function LibrariesPaneBody() {
       <CollectionView
         rows={libraries.map((library) =>
           presentLibrary(library, {
-            onViewIntelligence: () => {
-              openInNewPane?.(
-                `/libraries/${library.id}`,
-                library.name,
-                "library-intelligence",
-              );
-            },
             onEdit: () => void openEditDialog(library),
             onDelete: () => void handleDeleteLibrary(library),
           }),

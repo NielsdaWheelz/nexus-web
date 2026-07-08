@@ -2,8 +2,8 @@
  * Library presenter — mirrors the media template. Pure data: it owns the decision
  * of what earns weight for a library row. No React, no fetch.
  *
- * `ctx` carries the callbacks `libraryResourceOptions` needs (view intelligence /
- * edit / delete); the capability flags travel on the subject itself.
+ * `ctx` carries the callbacks `libraryResourceOptions` needs (edit / delete);
+ * the capability flags travel on the subject itself.
  */
 
 import { Trash2 } from "lucide-react";
@@ -17,7 +17,6 @@ export interface LibraryPresenterItem extends LibraryActionSubject {
 }
 
 export interface LibraryPresenterContext {
-  onViewIntelligence?: () => void;
   onEdit?: () => void;
   onDelete?: () => void;
 }

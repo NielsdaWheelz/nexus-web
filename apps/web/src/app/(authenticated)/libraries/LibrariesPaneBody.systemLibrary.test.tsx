@@ -7,17 +7,18 @@ import { stubFetch } from "@/__tests__/helpers/fetch";
 
 // A system-protected library (e.g. the Oracle Corpus) carries system_key and
 // reports every can_* capability false. It must list like any other library but
-// expose no rename/delete/share affordances — only the read-only Intelligence
-// action. A sibling owner-admin library proves the gate is per-library, not a
-// blanket suppression. The list is served entirely from the bootstrap seed, so
-// any client fetch is a failure signal.
+// expose no rename/delete/share affordances. With the dossier re-homed inline
+// (machine-output-in-place), a system library now carries no menu actions at
+// all, so it renders no Actions trigger. A sibling owner-admin library proves
+// the gate is per-library, not a blanket suppression. The list is served
+// entirely from the bootstrap seed, so any client fetch is a failure signal.
 
 afterEach(() => {
   vi.restoreAllMocks();
 });
 
 describe("LibrariesPaneBody (system library protection)", () => {
-  it("offers only the read-only action on a system library", async () => {
+  it("offers no menu actions on a system library", async () => {
     stubFetch(async () => {
       throw new Error("unexpected client fetch; the seed is the source");
     });
@@ -61,29 +62,16 @@ describe("LibrariesPaneBody (system library protection)", () => {
 
     // The system library lists normally.
     expect(await screen.findByText("Oracle Corpus")).toBeInTheDocument();
+    expect(screen.getByText("Reading Room")).toBeInTheDocument();
 
-    // Rows render in seed order: [0] = Oracle Corpus (system), [1] = Reading Room.
+    // The system library carries no menu actions, so it renders no Actions
+    // trigger; only the owner-admin sibling does.
     const actionButtons = screen.getAllByRole("button", { name: "Actions" });
-
-    // Opening the system library's action menu offers Intelligence only.
-    await userEvent.click(actionButtons[0]);
-    const systemMenu = await screen.findByRole("menu");
-    expect(
-      within(systemMenu).getByRole("menuitem", { name: "Intelligence" }),
-    ).toBeInTheDocument();
-    expect(
-      within(systemMenu).queryByRole("menuitem", { name: "Edit library" }),
-    ).not.toBeInTheDocument();
-    expect(
-      within(systemMenu).queryByRole("menuitem", { name: "Delete library" }),
-    ).not.toBeInTheDocument();
-
-    // Close the system menu before opening the sibling's.
-    await userEvent.keyboard("{Escape}");
+    expect(actionButtons).toHaveLength(1);
 
     // A normal owner-admin library still exposes the full mutation set, proving
     // the suppression is keyed on the capability flags, not the surface.
-    await userEvent.click(actionButtons[1]);
+    await userEvent.click(actionButtons[0]);
     const userMenu = await screen.findByRole("menu");
     expect(
       within(userMenu).getByRole("menuitem", { name: "Edit library" }),
@@ -91,5 +79,8 @@ describe("LibrariesPaneBody (system library protection)", () => {
     expect(
       within(userMenu).getByRole("menuitem", { name: "Delete library" }),
     ).toBeInTheDocument();
+    expect(
+      within(userMenu).queryByRole("menuitem", { name: "Intelligence" }),
+    ).not.toBeInTheDocument();
   });
 });

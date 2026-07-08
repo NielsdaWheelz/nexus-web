@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Node as ProseMirrorNode } from "prosemirror-model";
 import {
   FeedbackNotice,
@@ -11,8 +11,6 @@ import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import NoteDraftRecovery from "@/components/notes/NoteDraftRecovery";
 import ProseMirrorOutlineEditor from "@/components/notes/ProseMirrorOutlineEditor";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
-import { usePaneSecondary } from "@/components/workspace/PaneSecondary";
-import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createRandomId } from "@/lib/createRandomId";
 import { saveNoteBody } from "@/lib/notes/api";
@@ -46,7 +44,6 @@ export default function NotePaneBody() {
   const router = usePaneRouter();
   const paneRuntime = usePaneRuntime();
   const openInNewPaneRoute = paneRuntime?.openInNewPane;
-  const requestSecondarySurface = paneRuntime?.requestSecondarySurface;
   const [block, setBlock] = useState<NoteBlock | null>(null);
   const [initialDoc, setInitialDoc] = useState<ProseMirrorNode | null>(null);
   const [notePulseTarget, setNotePulseTarget] = useState<{
@@ -160,40 +157,6 @@ export default function NotePaneBody() {
     [openInNewPaneRoute, router],
   );
 
-  const paneOptions = useMemo(
-    () => [
-      {
-        id: "show-note-connections",
-        label: "Show connections",
-        onSelect: () => {
-          requestSecondarySurface?.("notes-connections");
-        },
-      },
-    ],
-    [requestSecondarySurface],
-  );
-  usePaneChromeOverride({ options: paneOptions });
-
-  const secondaryDescriptor = useMemo(
-    () => ({
-      groupId: "notes-tools" as const,
-      defaultSurfaceId: "notes-connections" as const,
-      surfaces: [
-        {
-          id: "notes-connections" as const,
-          body: (
-            <ConnectionsSurface
-              objectRef={{ objectType: "note_block", objectId: blockId }}
-              onOpenRoute={openRoute}
-            />
-          ),
-        },
-      ],
-    }),
-    [blockId, openRoute],
-  );
-  usePaneSecondary(secondaryDescriptor);
-
   const pulseNoteBlock = useCallback((target: NotePulseTarget) => {
     const pulseId = notePulseIdRef.current + 1;
     notePulseIdRef.current = pulseId;
@@ -254,6 +217,10 @@ export default function NotePaneBody() {
         onError={(error) =>
           setFeedback(toFeedback(error, { fallback: "Note could not be edited." }))
         }
+      />
+      <ConnectionsSurface
+        objectRef={{ objectType: "note_block", objectId: blockId }}
+        onOpenRoute={openRoute}
       />
     </div>
   );

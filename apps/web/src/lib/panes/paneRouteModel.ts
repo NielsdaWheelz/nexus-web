@@ -104,7 +104,6 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
     staticTitle: "Library",
     titleMode: "dynamic",
     bodyMode: "standard",
-    secondaryGroups: ["library-tools"],
     ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
@@ -196,7 +195,6 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
     staticTitle: "Page",
     titleMode: "dynamic",
     bodyMode: "document",
-    secondaryGroups: ["notes-tools"],
     ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
@@ -205,7 +203,6 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
     staticTitle: "Note",
     titleMode: "dynamic",
     bodyMode: "document",
-    secondaryGroups: ["notes-tools"],
     ...STANDARD_WIDTH_CONTRACT,
   }),
   route({

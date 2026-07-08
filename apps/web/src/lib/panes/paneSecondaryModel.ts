@@ -15,14 +15,6 @@ const PANE_SECONDARY_GROUP_BASE = {
     title: "Conversation context",
     width: { defaultWidthPx: 320, minWidthPx: 260, maxWidthPx: 640 },
   },
-  "library-tools": {
-    title: "Library tools",
-    width: { defaultWidthPx: 420, minWidthPx: 320, maxWidthPx: 760 },
-  },
-  "notes-tools": {
-    title: "Note tools",
-    width: { defaultWidthPx: 360, minWidthPx: 280, maxWidthPx: 680 },
-  },
 } as const satisfies Record<
   string,
   { title: string; width: WorkspaceSecondaryWidthPolicy }
@@ -54,18 +46,6 @@ export const PANE_SECONDARY_SURFACE_DEFINITIONS = [
     groupId: "conversation-context",
     title: "Forks",
     iconId: "git-branch",
-  },
-  {
-    id: "library-intelligence",
-    groupId: "library-tools",
-    title: "Intelligence",
-    iconId: "bar-chart-3",
-  },
-  {
-    id: "notes-connections",
-    groupId: "notes-tools",
-    title: "Connections",
-    iconId: "link-2",
   },
 ] as const satisfies readonly {
   id: string;

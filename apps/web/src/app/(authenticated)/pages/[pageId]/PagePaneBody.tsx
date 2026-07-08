@@ -28,7 +28,6 @@ import {
   usePaneRuntime,
   useSetPaneTitle,
 } from "@/lib/panes/paneRuntime";
-import { usePaneSecondary } from "@/components/workspace/PaneSecondary";
 import { createRandomId } from "@/lib/createRandomId";
 import { isObjectType, resolveObjectRefs } from "@/lib/objectRefs";
 import { pinObjectToNavbar } from "@/lib/pinnedObjects";
@@ -128,7 +127,6 @@ export default function PagePaneBody({
   const router = usePaneRouter();
   const paneRuntime = usePaneRuntime();
   const openInNewPaneCommand = paneRuntime?.openInNewPane;
-  const requestSecondarySurface = paneRuntime?.requestSecondarySurface;
   const toast = useFeedback();
   const pageId = pageIdOverride ?? routePageId;
   if (!pageId) throw new Error("page route requires a page id");
@@ -700,13 +698,6 @@ export default function PagePaneBody({
           ]
         : []),
       {
-        id: "show-note-connections",
-        label: "Show connections",
-        onSelect: () => {
-          requestSecondarySurface?.("notes-connections");
-        },
-      },
-      {
         id: focusBlockId ? "pin-current-note" : "pin-current-page",
         label: focusBlockId ? "Pin current note" : "Pin current page",
         onSelect: () => {
@@ -714,7 +705,7 @@ export default function PagePaneBody({
         },
       },
     ],
-    [dailyLocalDate, focusBlockId, openDatedPage, pinCurrentObject, requestSecondarySurface],
+    [dailyLocalDate, focusBlockId, openDatedPage, pinCurrentObject],
   );
   usePaneChromeOverride({ options: paneOptions });
 
@@ -725,25 +716,6 @@ export default function PagePaneBody({
     }),
     [focusBlockId, pageId],
   );
-  const secondaryDescriptor = useMemo(
-    () => ({
-      groupId: "notes-tools" as const,
-      defaultSurfaceId: "notes-connections" as const,
-      surfaces: [
-        {
-          id: "notes-connections" as const,
-          body: (
-            <ConnectionsSurface
-              objectRef={backlinkObjectRef}
-              onOpenRoute={openRoute}
-            />
-          ),
-        },
-      ],
-    }),
-    [backlinkObjectRef, openRoute],
-  );
-  usePaneSecondary(secondaryDescriptor);
 
   if (feedback && !initialDoc) return <FeedbackNotice {...feedback} />;
   if (!page || !initialDoc) return <PaneLoadingState />;
@@ -782,6 +754,7 @@ export default function PagePaneBody({
           );
         }}
       />
+      <ConnectionsSurface objectRef={backlinkObjectRef} onOpenRoute={openRoute} />
     </div>
   );
 }

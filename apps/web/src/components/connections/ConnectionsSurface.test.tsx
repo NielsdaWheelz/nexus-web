@@ -230,6 +230,35 @@ describe("ConnectionsSurface", () => {
     expect(screen.getByRole("button", { name: /Deleted page/ })).toBeDisabled();
   });
 
+  it("keeps the connect composer collapsed until the disclosure reveals it", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) =>
+        String(input).startsWith("/api/synapse/scans")
+          ? idleStatusResponse()
+          : connectionResponse([]),
+      ),
+    );
+
+    render(
+      <ConnectionsSurface objectRef={{ objectType: "note_block", objectId: BLOCK_A }} />,
+    );
+    expect(await screen.findByText(SCANNABLE_EMPTY_COPY)).toBeInTheDocument();
+
+    const disclosure = screen.getByRole("button", { name: /Connect/ });
+    expect(disclosure).toHaveAttribute("aria-expanded", "false");
+    expect(
+      screen.queryByRole("textbox", { name: "Connection target" }),
+    ).not.toBeInTheDocument();
+
+    await user.click(disclosure);
+
+    expect(disclosure).toHaveAttribute("aria-expanded", "true");
+    const field = await screen.findByRole("textbox", { name: "Connection target" });
+    await waitFor(() => expect(field).toHaveFocus());
+  });
+
   it("creates a user connection from an object search result and reloads", async () => {
     const user = userEvent.setup();
     const requests = stubFetchQueue();
@@ -241,6 +270,7 @@ describe("ConnectionsSurface", () => {
     connectionReads(requests)[0].resolve(connectionResponse([]));
     expect(await screen.findByText(SCANNABLE_EMPTY_COPY)).toBeInTheDocument();
 
+    await user.click(screen.getByRole("button", { name: /Connect/ }));
     await user.type(screen.getByLabelText("Connection target"), "linked");
     const searchRequests = () =>
       requests.filter((request) => request.path.startsWith("/api/object-refs/search"));
@@ -363,6 +393,7 @@ describe("ConnectionsSurface", () => {
     );
     expect(await screen.findByText(SCANNABLE_EMPTY_COPY)).toBeInTheDocument();
 
+    await user.click(screen.getByRole("button", { name: /Connect/ }));
     await user.upload(
       screen.getByLabelText("Attach files"),
       new File(["%PDF-1.7"], "paper.pdf", { type: "application/pdf" }),

@@ -2,12 +2,7 @@
 
 import { useRef } from "react";
 import type { ComponentType } from "react";
-import {
-  BarChart3,
-  GitBranch,
-  Link2,
-  ListTree,
-} from "lucide-react";
+import { GitBranch, Link2, ListTree } from "lucide-react";
 import type { PaneSecondarySurfacePublication } from "@/lib/panes/panePublications";
 import { getSecondarySurfaceDefinition } from "@/lib/panes/paneSecondaryModel";
 import type {
@@ -20,7 +15,6 @@ const SECONDARY_ICONS: Record<
   PaneSecondaryIconId,
   ComponentType<{ size?: number; "aria-hidden"?: "true" }>
 > = {
-  "bar-chart-3": BarChart3,
   "git-branch": GitBranch,
   "link-2": Link2,
   "list-tree": ListTree,

@@ -136,7 +136,6 @@ export interface LibraryActionSubject {
 
 export function libraryResourceOptions(input: {
   library: LibraryActionSubject | null | undefined;
-  onViewIntelligence?: () => void;
   onEdit?: () => void;
   onDelete?: () => void;
 }): ActionMenuOption[] {
@@ -144,14 +143,6 @@ export function libraryResourceOptions(input: {
   if (!library) return [];
 
   const options: ActionMenuOption[] = [];
-
-  if (input.onViewIntelligence) {
-    options.push({
-      id: "view-library-intelligence",
-      label: "Intelligence",
-      onSelect: input.onViewIntelligence,
-    });
-  }
 
   // The edit dialog owns rename + sharing/membership (not media-entry
   // editing), so it is gated on can_rename. The default library reports
