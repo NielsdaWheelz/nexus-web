@@ -25,6 +25,9 @@ export interface MemberLibrary extends LibraryDestination {
 
 interface MemberLibrariesResponse {
   data: MemberLibrary[];
+  page: {
+    next_cursor: string | null;
+  };
 }
 
 interface CreateLibraryResponse {
@@ -58,13 +61,20 @@ export async function listMemberLibraries({
   limit?: number;
   signal?: AbortSignal;
 } = {}): Promise<MemberLibrary[]> {
-  const params = new URLSearchParams({ limit: String(limit) });
-  const response = await apiFetch<MemberLibrariesResponse>(
-    `/api/libraries?${params.toString()}`,
-    { signal },
-  );
-  remember(response.data);
-  return response.data;
+  const libraries: MemberLibrary[] = [];
+  let cursor: string | null = null;
+  do {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (cursor) params.set("cursor", cursor);
+    const response = await apiFetch<MemberLibrariesResponse>(
+      `/api/libraries?${params.toString()}`,
+      { signal },
+    );
+    remember(response.data);
+    libraries.push(...response.data);
+    cursor = response.page.next_cursor;
+  } while (cursor !== null);
+  return libraries;
 }
 
 export async function searchWritableLibraryDestinations({

@@ -24,7 +24,8 @@ interface LibraryDestinationPickerProps {
 
 type Row =
   | { kind: "library"; id: string; destination: LibraryDestination }
-  | { kind: "create"; id: "create"; name: string };
+  | { kind: "create"; id: "create"; name: string }
+  | { kind: "load-more"; id: "load-more" };
 
 function uniqueDestinations(destinations: LibraryDestination[]) {
   const seen = new Set<string>();
@@ -55,12 +56,15 @@ export default function LibraryDestinationPicker({
   const [resultsQuery, setResultsQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [moreError, setMoreError] = useState<string | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
 
   useEffect(() => {
-    onBusyChange?.(creating);
-  }, [creating, onBusyChange]);
+    onBusyChange?.(creating || loadingMore);
+  }, [creating, loadingMore, onBusyChange]);
 
   useEffect(() => {
     if (disabled) setOpen(false);
@@ -74,6 +78,7 @@ export default function LibraryDestinationPicker({
     const timer = window.setTimeout(() => {
       setLoading(true);
       setError(null);
+      setMoreError(null);
       void searchWritableLibraryDestinations({
         q: query,
         limit: 25,
@@ -83,12 +88,14 @@ export default function LibraryDestinationPicker({
           if (requestId !== requestIdRef.current) return;
           setResults(page.data);
           setResultsQuery(requestedQuery);
+          setNextCursor(page.page.next_cursor);
         })
         .catch((err) => {
           if (controller.signal.aborted || requestId !== requestIdRef.current) return;
           if (handleUnauthenticatedApiError(err)) return;
           setError(err instanceof Error ? err.message : "Could not load libraries");
           setResults([]);
+          setNextCursor(null);
         })
         .finally(() => {
           if (requestId === requestIdRef.current) setLoading(false);
@@ -99,6 +106,26 @@ export default function LibraryDestinationPicker({
       controller.abort();
     };
   }, [disabled, open, query]);
+
+  async function loadMoreResults() {
+    if (disabled || loadingMore || nextCursor === null) return;
+    setLoadingMore(true);
+    setMoreError(null);
+    try {
+      const page = await searchWritableLibraryDestinations({
+        q: resultsQuery,
+        cursor: nextCursor,
+        limit: 25,
+      });
+      setResults((current) => uniqueDestinations([...current, ...page.data]));
+      setNextCursor(page.page.next_cursor);
+    } catch (err) {
+      if (handleUnauthenticatedApiError(err)) return;
+      setMoreError(err instanceof Error ? err.message : "Could not load more libraries");
+    } finally {
+      setLoadingMore(false);
+    }
+  }
 
   const selectedIds = useMemo(() => new Set(selectedLibraryIds), [selectedLibraryIds]);
   const resultById = useMemo(
@@ -133,7 +160,9 @@ export default function LibraryDestinationPicker({
     createName.length > 0 &&
     createName.length <= 100 &&
     !loading &&
+    !loadingMore &&
     !error &&
+    nextCursor === null &&
     resultsQuery === normalizedCreateName &&
     !results.some(
       (destination) => destination.name.trim().toLowerCase() === normalizedCreateName,
@@ -150,8 +179,11 @@ export default function LibraryDestinationPicker({
       ...(canCreate
         ? [{ kind: "create" as const, id: "create" as const, name: createName }]
         : []),
+      ...(nextCursor !== null
+        ? [{ kind: "load-more" as const, id: "load-more" as const }]
+        : []),
     ],
-    [canCreate, createName, results, selectedRows],
+    [canCreate, createName, nextCursor, results, selectedRows],
   );
 
   useEffect(() => {
@@ -199,6 +231,10 @@ export default function LibraryDestinationPicker({
     if (disabled) return;
     if (row.kind === "create") {
       void runCreate(row.name);
+      return;
+    }
+    if (row.kind === "load-more") {
+      void loadMoreResults();
       return;
     }
     toggle(row.destination.id);
@@ -251,8 +287,12 @@ export default function LibraryDestinationPicker({
 
   const status = loading
     ? "Loading libraries"
+    : loadingMore
+      ? "Loading more libraries"
     : error
       ? error
+      : moreError
+        ? moreError
       : rows.length === 0
         ? "No matching libraries"
         : `${rows.length} library options`;
@@ -351,6 +391,16 @@ export default function LibraryDestinationPicker({
               {error}
             </div>
           ) : null}
+          {!loading && !error && moreError ? (
+            <div
+              role="option"
+              aria-disabled="true"
+              aria-selected="false"
+              className={styles.status}
+            >
+              {moreError}
+            </div>
+          ) : null}
           {!loading && !error && rows.length === 0 ? (
             <div
               role="option"
@@ -379,6 +429,26 @@ export default function LibraryDestinationPicker({
                   >
                     <Plus size={16} aria-hidden="true" />
                     <span className={styles.optionText}>Create “{row.name}”</span>
+                  </div>
+                ) : row.kind === "load-more" ? (
+                  <div
+                    key={row.id}
+                    id={optionId(row.id)}
+                    role="option"
+                    aria-selected={false}
+                    aria-disabled={loadingMore}
+                    className={styles.option}
+                    data-active={row.id === activeId || undefined}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onMouseMove={() => {
+                      if (!disabled) setActiveId(row.id);
+                    }}
+                    onClick={() => select(row)}
+                  >
+                    <Plus size={16} aria-hidden="true" />
+                    <span className={styles.optionText}>
+                      {loadingMore ? "Loading more libraries..." : "Load more libraries"}
+                    </span>
                   </div>
                 ) : (
                   <div

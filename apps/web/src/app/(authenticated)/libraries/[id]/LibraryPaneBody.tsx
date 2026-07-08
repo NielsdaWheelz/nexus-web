@@ -9,7 +9,7 @@ import {
 } from "react";
 import { flushSync } from "react-dom";
 import { dispatchOpenLauncher } from "@/lib/launcher/launcherEvents";
-import { apiFetch, isApiError, type ApiPath } from "@/lib/api/client";
+import { apiFetch, isApiError } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
   libraryEntriesResource,
@@ -32,6 +32,7 @@ import { presentMedia } from "@/lib/collections/presenters/media";
 import { presentPodcast } from "@/lib/collections/presenters/podcast";
 import { startResourceChat } from "@/lib/resources/resourceChat";
 import LibraryMembershipPanel from "@/components/LibraryMembershipPanel";
+import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
 import {
   addMediaToLibrary,
   fetchMediaLibraryMemberships,
@@ -75,6 +76,7 @@ import {
   useSetPaneTitle,
 } from "@/lib/panes/paneRuntime";
 import type { ContributorCredit } from "@/lib/contributors/types";
+import { isAbortError } from "@/lib/errors";
 import styles from "./page.module.css";
 
 interface Library {
@@ -148,6 +150,32 @@ interface LibraryPodcastListEntry extends LibraryEntryBase {
 
 type LibraryEntry = LibraryMediaListEntry | LibraryPodcastListEntry;
 
+interface LibraryPageInfo {
+  next_cursor: string | null;
+}
+
+interface LibraryEntryPage {
+  data: LibraryEntry[];
+  page: LibraryPageInfo;
+}
+
+interface LibraryPaneResource {
+  library: Library;
+  entries: LibraryEntry[];
+  entriesPage: LibraryPageInfo;
+}
+
+function appendUniqueEntries(current: LibraryEntry[], next: LibraryEntry[]): LibraryEntry[] {
+  const seen = new Set(current.map((entry) => entry.id));
+  const merged = [...current];
+  for (const entry of next) {
+    if (seen.has(entry.id)) continue;
+    seen.add(entry.id);
+    merged.push(entry);
+  }
+  return merged;
+}
+
 export default function LibraryPaneBody() {
   const id = usePaneParam("id");
   if (!id) {
@@ -161,24 +189,30 @@ export default function LibraryPaneBody() {
   const feedback = useFeedback();
   const [library, setLibrary] = useState<Library | null>(null);
   const [entries, setEntries] = useState<LibraryEntry[]>([]);
+  const [entryCursor, setEntryCursor] = useState<string | null>(null);
+  const [manualLoadingMore, setManualLoadingMore] = useState(false);
+  const [manualLoadMoreError, setManualLoadMoreError] = useState<FeedbackContent | null>(null);
+  const [resonanceEntries, setResonanceEntries] = useState<LibraryEntry[]>([]);
+  const [resonanceCursor, setResonanceCursor] = useState<string | null>(null);
+  const [resonanceLoadingMore, setResonanceLoadingMore] = useState(false);
+  const [resonanceLoadMoreError, setResonanceLoadMoreError] =
+    useState<FeedbackContent | null>(null);
   const removedEntryIds = useStringIdSet();
   const retryingMediaIds = useStringIdSet();
   const refreshingMediaIds = useStringIdSet();
   const [error, setError] = useState<FeedbackContent | null>(null);
   const [reorderBusy, setReorderBusy] = useState(false);
-  const libraryResource = useResource<{
-    library: Library;
-    entries: LibraryEntry[];
-  }, { id: string }>({
+  const libraryResource = useResource<LibraryPaneResource, { id: string }>({
     descriptor: libraryResourceDescriptor,
     params: { id },
     load: (params, signal) =>
       paneResourceLoaders.library!.load(
         clientResourceFetcher(signal),
         params,
-      ) as Promise<{ library: Library; entries: LibraryEntry[] }>,
+      ) as Promise<LibraryPaneResource>,
   });
   const currentLibrary = library?.id === id ? library : null;
+  const sort = paneSearchParams.get("sort") === "resonance" ? "resonance" : "manual";
   // Entry mutation (add content, reorder, remove) is hidden for system-protected
   // libraries (e.g. the Oracle Corpus), which report can_edit_entries === false.
   const canEditEntries =
@@ -186,12 +220,12 @@ export default function LibraryPaneBody() {
   const loading =
     libraryResource.status === "loading" && currentLibrary === null;
   useSetPaneTitle(currentLibrary?.name ?? (loading ? null : "Library"));
+  const connectionSummaryEntries = sort === "resonance" ? resonanceEntries : entries;
   const connectionSummaries = useConnectionSummaries(
-    entries.map((entry) =>
+    connectionSummaryEntries.map((entry) =>
       entry.kind === "podcast" ? `podcast:${entry.podcast.id}` : `media:${entry.media.id}`,
     ),
   );
-  const sort = paneSearchParams.get("sort") === "resonance" ? "resonance" : "manual";
   const setSort = useCallback(
     (next: "manual" | "resonance") => {
       const params = new URLSearchParams(paneSearchParams);
@@ -207,13 +241,10 @@ export default function LibraryPaneBody() {
     },
     [id, paneSearchParams, router],
   );
-  const resonanceFetch = useDebouncedFetch(
-    sort === "resonance" ? `${libraryEntriesResource.clientPath({ id })}?sort=resonance` : null,
-    (signal) =>
-      apiFetch<{ data: LibraryEntry[] }>(
-        `${libraryEntriesResource.clientPath({ id })}?sort=resonance` as ApiPath,
-        { signal },
-      ).then((response) => response.data),
+  const resonanceEntriesPath = libraryEntriesResource.clientPath({ id, sort: "resonance" });
+  const resonanceFetch = useDebouncedFetch<LibraryEntryPage>(
+    sort === "resonance" ? resonanceEntriesPath : null,
+    (signal) => apiFetch<LibraryEntryPage>(resonanceEntriesPath, { signal }),
   );
 
   const [editOpen, setEditOpen] = useState(false);
@@ -240,6 +271,9 @@ export default function LibraryPaneBody() {
     if (libraryResource.status === "ready") {
       setLibrary(libraryResource.data.library);
       setEntries(libraryResource.data.entries);
+      setEntryCursor(libraryResource.data.entriesPage.next_cursor);
+      setManualLoadingMore(false);
+      setManualLoadMoreError(null);
       clearRemovedEntryIds();
       setError(null);
       return;
@@ -260,8 +294,30 @@ export default function LibraryPaneBody() {
       );
       setLibrary((current) => (current?.id === id ? null : current));
       setEntries([]);
+      setEntryCursor(null);
+      setManualLoadingMore(false);
+      setManualLoadMoreError(null);
     }
   }, [clearRemovedEntryIds, id, libraryResource, router]);
+
+  useEffect(() => {
+    if (sort !== "resonance") {
+      setResonanceEntries([]);
+      setResonanceCursor(null);
+      setResonanceLoadingMore(false);
+      setResonanceLoadMoreError(null);
+      return;
+    }
+    if (resonanceFetch.data === null) {
+      return;
+    }
+    setResonanceEntries(resonanceFetch.data.data);
+    setResonanceCursor(resonanceFetch.data.page.next_cursor);
+    setResonanceLoadMoreError(null);
+  }, [resonanceFetch.data, sort]);
+
+  const entryLoadMoreAbortRef = useRef<AbortController | null>(null);
+  useEffect(() => () => entryLoadMoreAbortRef.current?.abort(), []);
 
   const closeLibraryPanel = useCallback(() => {
     libraryPanelRequestIdRef.current += 1;
@@ -738,8 +794,78 @@ export default function LibraryPaneBody() {
     [openInNewPane],
   );
 
+  const handleLoadMoreEntries = useCallback(
+    (requestedSort: "manual" | "resonance") => {
+      const cursor = requestedSort === "resonance" ? resonanceCursor : entryCursor;
+      if (cursor === null) {
+        return;
+      }
+      if (requestedSort === "resonance") {
+        if (resonanceLoadingMore) return;
+        setResonanceLoadingMore(true);
+        setResonanceLoadMoreError(null);
+      } else {
+        if (manualLoadingMore) return;
+        setManualLoadingMore(true);
+        setManualLoadMoreError(null);
+      }
+
+      entryLoadMoreAbortRef.current?.abort();
+      const controller = new AbortController();
+      entryLoadMoreAbortRef.current = controller;
+      void apiFetch<LibraryEntryPage>(
+        libraryEntriesResource.clientPath({
+          id,
+          cursor,
+          sort: requestedSort === "resonance" ? "resonance" : undefined,
+        }),
+        { signal: controller.signal },
+      )
+        .then((page) => {
+          if (controller.signal.aborted) return;
+          if (requestedSort === "resonance") {
+            setResonanceEntries((current) => appendUniqueEntries(current, page.data));
+            setResonanceCursor(page.page.next_cursor);
+          } else {
+            setEntries((current) => appendUniqueEntries(current, page.data));
+            setEntryCursor(page.page.next_cursor);
+          }
+        })
+        .catch((err: unknown) => {
+          if (isAbortError(err) || controller.signal.aborted) return;
+          if (handleUnauthenticatedApiError(err)) return;
+          const feedbackContent = toFeedback(err, {
+            fallback:
+              requestedSort === "resonance"
+                ? "Failed to load more resonance entries"
+                : "Failed to load more entries",
+          });
+          if (requestedSort === "resonance") {
+            setResonanceLoadMoreError(feedbackContent);
+          } else {
+            setManualLoadMoreError(feedbackContent);
+          }
+        })
+        .finally(() => {
+          if (controller.signal.aborted) return;
+          if (requestedSort === "resonance") {
+            setResonanceLoadingMore(false);
+          } else {
+            setManualLoadingMore(false);
+          }
+        });
+    },
+    [
+      entryCursor,
+      id,
+      manualLoadingMore,
+      resonanceCursor,
+      resonanceLoadingMore,
+    ],
+  );
+
   const handleReorderEntries = (nextEntries: LibraryEntry[]) => {
-    if (!canEditEntries) {
+    if (!canEditEntries || entryCursor !== null) {
       return;
     }
     const previousEntries = entries;
@@ -835,8 +961,38 @@ export default function LibraryPaneBody() {
   const visibleEntries = entries.filter(
     (entry) => !removedEntryIds.ids.has(entry.id),
   );
+  const visibleResonanceEntries = resonanceEntries.filter(
+    (entry) => !removedEntryIds.ids.has(entry.id),
+  );
   const surfacedEntries = visibleEntries.filter((entry) => entry.surfaced_today);
-  const resonanceEntries = resonanceFetch.data ?? [];
+  const canReorderVisibleEntries = canEditEntries && sort === "manual" && entryCursor === null;
+  const entryFooter =
+    sort === "resonance" ? (
+      <>
+        {resonanceLoadMoreError ? <FeedbackNotice {...resonanceLoadMoreError} /> : null}
+        <LoadMoreFooter
+          hasMore={resonanceCursor !== null}
+          loading={resonanceLoadingMore}
+          onLoadMore={() => handleLoadMoreEntries("resonance")}
+          label="Load more entries"
+        />
+      </>
+    ) : (
+      <>
+        {manualLoadMoreError ? <FeedbackNotice {...manualLoadMoreError} /> : null}
+        <LoadMoreFooter
+          hasMore={entryCursor !== null}
+          loading={manualLoadingMore}
+          onLoadMore={() => handleLoadMoreEntries("manual")}
+          label="Load more entries"
+        />
+      </>
+    );
+  const resonanceStatus = resonanceFetch.loading
+    ? "loading"
+    : resonanceFetch.error !== null && resonanceEntries.length === 0
+      ? "error"
+      : "ready";
 
   const entryRowView = (item: LibraryEntry): CollectionRowView => {
     if (item.kind === "podcast") {
@@ -945,7 +1101,7 @@ export default function LibraryPaneBody() {
         }
         state={error ? <FeedbackNotice {...error} /> : null}
         empty={
-          visibleEntries.length === 0 ? (
+          sort === "manual" && visibleEntries.length === 0 ? (
             <FeedbackNotice
               severity="neutral"
               title="No podcasts or media in this library yet."
@@ -955,12 +1111,22 @@ export default function LibraryPaneBody() {
       >
           {sort === "resonance" ? (
             <CollectionView
-              rows={resonanceEntries.map(entryRowView)}
+              rows={visibleResonanceEntries.map(entryRowView)}
               view={displayState.view}
               density={displayState.density}
-              status={resonanceFetch.loading ? "loading" : "ready"}
+              status={resonanceStatus}
               ariaLabel="Library by resonance"
               empty={<FeedbackNotice severity="neutral" title="No entries to rank yet." />}
+              error={
+                resonanceFetch.error ? (
+                  <FeedbackNotice
+                    feedback={toFeedback(resonanceFetch.error, {
+                      fallback: "Failed to rank library entries",
+                    })}
+                  />
+                ) : undefined
+              }
+              footer={entryFooter}
               surface={false}
             />
           ) : visibleEntries.length > 0 ? (
@@ -984,6 +1150,7 @@ export default function LibraryPaneBody() {
                 density={displayState.density}
                 status="ready"
                 ariaLabel="Library entries"
+                footer={entryFooter}
                 surface={false}
               />
             ) : (
@@ -993,36 +1160,40 @@ export default function LibraryPaneBody() {
                 density={displayState.density}
                 status="ready"
                 ariaLabel="Library entries"
+                footer={entryFooter}
                 surface={false}
-                sortable={{
-                  className: styles.mediaList,
-                  itemClassName: styles.mediaListItem,
-                  onReorder: (nextRows) => {
-                    const byEntryId = new Map(
-                      visibleEntries.map((entry) => [entry.id, entry]),
-                    );
-                    const nextEntries = nextRows
-                      .map((row) => byEntryId.get(row.id))
-                      .filter((entry): entry is LibraryEntry => entry !== undefined);
-                    if (nextEntries.length === visibleEntries.length) {
-                      handleReorderEntries(nextEntries);
-                    }
-                  },
-                  renderControls: (row, { handleProps }) =>
-                    canEditEntries ? (
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        className={styles.dragHandle}
-                        aria-label={`Reorder ${row.headline.text}`}
-                        disabled={reorderBusy}
-                        {...handleProps.attributes}
-                        {...handleProps.listeners}
-                      >
-                        ⋮⋮
-                      </Button>
-                    ) : undefined,
-                }}
+                sortable={
+                  canReorderVisibleEntries
+                    ? {
+                        className: styles.mediaList,
+                        itemClassName: styles.mediaListItem,
+                        onReorder: (nextRows) => {
+                          const byEntryId = new Map(
+                            visibleEntries.map((entry) => [entry.id, entry]),
+                          );
+                          const nextEntries = nextRows
+                            .map((row) => byEntryId.get(row.id))
+                            .filter((entry): entry is LibraryEntry => entry !== undefined);
+                          if (nextEntries.length === visibleEntries.length) {
+                            handleReorderEntries(nextEntries);
+                          }
+                        },
+                        renderControls: (row, { handleProps }) => (
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            className={styles.dragHandle}
+                            aria-label={`Reorder ${row.headline.text}`}
+                            disabled={reorderBusy}
+                            {...handleProps.attributes}
+                            {...handleProps.listeners}
+                          >
+                            ⋮⋮
+                          </Button>
+                        ),
+                      }
+                    : undefined
+                }
               />
             )}
             </>

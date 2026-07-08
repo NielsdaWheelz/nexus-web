@@ -23,6 +23,14 @@ const books = {
   updated_at: "",
 };
 
+const archive = {
+  id: "lib-archive",
+  name: "Archive",
+  color: "#f97316",
+  created_at: "",
+  updated_at: "",
+};
+
 function Harness({
   initial = [],
   disabled = false,
@@ -64,8 +72,8 @@ function parseJsonBody(init: RequestInit | undefined): Record<string, unknown> {
   return JSON.parse(init.body) as Record<string, unknown>;
 }
 
-function destinationPage(data: LibraryDestination[]) {
-  return { data, page: { next_cursor: null } };
+function destinationPage(data: LibraryDestination[], nextCursor: string | null = null) {
+  return { data, page: { next_cursor: nextCursor } };
 }
 
 function installLibraryFetch({
@@ -190,6 +198,33 @@ describe("LibraryDestinationPicker", () => {
       ([input, init]) => pathFor(input) === "/api/libraries" && init?.method === "POST",
     );
     expect(parseJsonBody(createCall?.[1])).toEqual({ name: "New Library" });
+  });
+
+  it("loads another page of writable destinations", async () => {
+    const fetchMock = installLibraryFetch({
+      search: (url) => {
+        if (url.searchParams.get("cursor") === "cursor-2") {
+          return jsonResponse(destinationPage([archive]));
+        }
+        return jsonResponse(destinationPage([research], "cursor-2"));
+      },
+    });
+
+    render(<Harness />);
+
+    const input = screen.getByRole("combobox", { name: "Libraries" });
+    fireEvent.focus(input);
+    await waitForSearchCallCount(fetchMock);
+    expect(await screen.findByRole("option", { name: "Research" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("option", { name: "Load more libraries" }));
+    await waitForSearchCallCount(fetchMock, 2);
+
+    expect(await screen.findByRole("option", { name: "Archive" })).toBeInTheDocument();
+    const secondCall = searchCalls(fetchMock)[1]!;
+    expect(pathFor(secondCall[0])).toBe(
+      "/api/libraries/writable-destinations?cursor=cursor-2&limit=25",
+    );
   });
 
   it("supports keyboard selection with aria-activedescendant", async () => {

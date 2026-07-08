@@ -25,7 +25,13 @@ from nexus.errors import (
     InvalidRequestError,
     NotFoundError,
 )
-from nexus.schemas.library import LibraryDestinationOut, LibraryMemberOut, LibraryOut, LibraryRole
+from nexus.schemas.library import (
+    LibraryDestinationOut,
+    LibraryMemberOut,
+    LibraryOut,
+    LibraryPageInfo,
+    LibraryRole,
+)
 from nexus.storage.client import StorageError, get_storage_client
 
 logger = logging.getLogger(__name__)
@@ -431,28 +437,70 @@ def _delete_library_intelligence_rows(db: Session, library_id: UUID) -> None:
     )
 
 
-def list_libraries(db: Session, viewer_id: UUID, limit: int = 100) -> list[LibraryOut]:
+def _encode_library_cursor(row) -> str:
+    payload = {
+        "k": "libraries",
+        "created_at": row["created_at"].isoformat(),
+        "id": str(row["id"]),
+    }
+    encoded = base64.urlsafe_b64encode(json.dumps(payload).encode("utf-8")).decode("ascii")
+    return encoded.rstrip("=")
+
+
+def _decode_library_cursor(cursor: str) -> tuple[datetime, UUID]:
+    try:
+        padded = cursor + "=" * (-len(cursor) % 4)
+        payload: dict[str, Any] = json.loads(base64.urlsafe_b64decode(padded).decode("utf-8"))
+        if payload.get("k") != "libraries":
+            raise ValueError
+        return datetime.fromisoformat(str(payload["created_at"])), UUID(str(payload["id"]))
+    except Exception:
+        # justify-ignore-error: malformed cursor input is an expected API error path.
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor") from None
+
+
+def list_libraries(
+    db: Session, viewer_id: UUID, *, cursor: str | None = None, limit: int = 100
+) -> tuple[list[LibraryOut], LibraryPageInfo]:
     """List all libraries the viewer is a member of, ordered created_at ASC, id ASC."""
     if limit <= 0:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Limit must be positive")
     limit = min(limit, 200)
+    cursor_clause = ""
+    params: dict[str, object] = {"viewer_id": viewer_id, "limit": limit + 1}
+    if cursor is not None:
+        cursor_created_at, cursor_id = _decode_library_cursor(cursor)
+        cursor_clause = """
+          AND (
+            l.created_at > :cursor_created_at
+            OR (l.created_at = :cursor_created_at AND l.id > :cursor_id)
+          )
+        """
+        params.update({"cursor_created_at": cursor_created_at, "cursor_id": cursor_id})
 
     rows = (
         db.execute(
-            text("""
+            text(f"""
             SELECT l.id, l.name, l.color, l.owner_user_id, l.is_default,
                    l.system_key, l.created_at, l.updated_at, m.role
             FROM libraries l
             JOIN memberships m ON m.library_id = l.id AND m.user_id = :viewer_id
+            WHERE 1 = 1
+              {cursor_clause}
             ORDER BY l.created_at ASC, l.id ASC
             LIMIT :limit
         """),
-            {"viewer_id": viewer_id, "limit": limit},
+            params,
         )
         .mappings()
         .all()
     )
-    return [_library_out_from_row(row) for row in rows]
+    page_rows = rows[:limit]
+    next_cursor = _encode_library_cursor(page_rows[-1]) if len(rows) > limit else None
+    return (
+        [_library_out_from_row(row) for row in page_rows],
+        LibraryPageInfo(has_more=next_cursor is not None, next_cursor=next_cursor),
+    )
 
 
 def _escape_like(value: str) -> str:
@@ -485,7 +533,7 @@ def _decode_destination_cursor(cursor: str, q: str) -> tuple[int, datetime, date
         )
     except Exception:
         # justify-ignore-error: malformed cursor input is an expected API error path.
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid cursor") from None
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor") from None
 
 
 def list_writable_library_destinations(

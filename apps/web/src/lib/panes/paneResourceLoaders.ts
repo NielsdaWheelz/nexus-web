@@ -52,9 +52,9 @@ export const paneResourceLoaders: Partial<Record<PaneRouteId, PaneResourceLoader
       const params = { id: p.id };
       const [library, entries] = await Promise.all([
         request<{ id: string }, { data: unknown }>(libraryResource, params),
-        request<{ id: string }, { data: unknown }>(libraryEntriesResource, params),
+        request<{ id: string }, { data: unknown; page: unknown }>(libraryEntriesResource, params),
       ]);
-      return { library: library.data, entries: entries.data };
+      return { library: library.data, entries: entries.data, entriesPage: entries.page };
     },
   },
 

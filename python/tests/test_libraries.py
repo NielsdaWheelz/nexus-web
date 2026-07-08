@@ -17,7 +17,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 from nexus.services import library_entries, library_governance
-from tests.factories import create_test_media
+from tests.factories import create_test_library, create_test_media
 from tests.helpers import auth_headers, create_test_user_id
 from tests.support.storage import FakeStorageClient
 from tests.utils.db import DirectSessionManager
@@ -160,7 +160,9 @@ class TestListLibraries:
         response = auth_client.get("/libraries", headers=auth_headers(user_id))
 
         assert response.status_code == 200
-        data = response.json()["data"]
+        body = response.json()
+        assert body["page"]["next_cursor"] is None
+        data = body["data"]
         assert len(data) >= 1
 
         # Find default library
@@ -210,6 +212,44 @@ class TestListLibraries:
 
         # Should succeed (clamped internally to 200)
         assert response.status_code == 200
+
+    def test_list_libraries_paginates_with_next_cursor(self, auth_client):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        for idx in range(3):
+            response = auth_client.post(
+                "/libraries",
+                json={"name": f"Cursor Library {idx}"},
+                headers=auth_headers(user_id),
+            )
+            assert response.status_code == 201, response.text
+
+        first = auth_client.get("/libraries?limit=2", headers=auth_headers(user_id))
+        assert first.status_code == 200, first.text
+        first_body = first.json()
+        assert len(first_body["data"]) == 2
+        cursor = first_body["page"]["next_cursor"]
+        assert cursor is not None
+
+        second = auth_client.get(
+            f"/libraries?limit=2&cursor={cursor}",
+            headers=auth_headers(user_id),
+        )
+        assert second.status_code == 200, second.text
+        first_ids = {row["id"] for row in first_body["data"]}
+        second_ids = {row["id"] for row in second.json()["data"]}
+        assert first_ids
+        assert second_ids
+        assert first_ids.isdisjoint(second_ids)
+
+    def test_list_libraries_rejects_invalid_cursor(self, auth_client):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        response = auth_client.get("/libraries?cursor=not-a-cursor", headers=auth_headers(user_id))
+
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "E_INVALID_CURSOR"
 
     def test_list_libraries_invalid_limit(self, auth_client):
         """Limit <= 0 returns 422 (FastAPI validation error)."""
@@ -330,7 +370,7 @@ class TestWritableLibraryDestinations:
         )
 
         assert response.status_code == 400
-        assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
+        assert response.json()["error"]["code"] == "E_INVALID_CURSOR"
 
 
 class TestSystemLibraryMutationGuards:
@@ -1127,7 +1167,9 @@ class TestListLibraryMedia:
         response = _list_library_entries(auth_client, user_id, library_id)
 
         assert response.status_code == 200
-        assert response.json()["data"] == []
+        body = response.json()
+        assert body["page"]["next_cursor"] is None
+        assert body["data"] == []
 
     def test_list_media_success(self, auth_client, direct_db: DirectSessionManager):
         """List media returns media in library."""
@@ -1153,7 +1195,9 @@ class TestListLibraryMedia:
         response = _list_library_entries(auth_client, user_id, library_id)
 
         assert response.status_code == 200
-        data = response.json()["data"]
+        body = response.json()
+        assert body["page"]["next_cursor"] is None
+        data = body["data"]
         assert len(data) == 1
         assert data[0]["kind"] == "media"
         assert data[0]["media"]["id"] == str(media_id)
@@ -1525,9 +1569,116 @@ class TestListLibraryMedia:
         response = _list_library_entries(auth_client, user_id, library_id)
 
         assert response.status_code == 200
-        data = response.json()["data"]
+        body = response.json()
+        assert body["page"]["next_cursor"] is None
+        data = body["data"]
         assert len(data) == 3
         assert _library_entry_media_ids(data) == [str(media_id) for media_id in media_ids]
+
+    def test_list_media_paginates_with_next_cursor(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        library_id = auth_client.get("/me", headers=auth_headers(user_id)).json()["data"][
+            "default_library_id"
+        ]
+        media_ids: list[UUID] = []
+        with direct_db.session() as session:
+            for idx in range(3):
+                media_id = create_test_media(session, title=f"Paged Entry {idx}")
+                media_ids.append(media_id)
+                direct_db.register_cleanup("library_entries", "media_id", media_id)
+                direct_db.register_cleanup("media", "id", media_id)
+            session.commit()
+
+        for media_id in media_ids:
+            response = auth_client.post(
+                f"/libraries/{library_id}/media",
+                json={"media_id": str(media_id)},
+                headers=auth_headers(user_id),
+            )
+            assert response.status_code in (200, 201), response.text
+
+        first = _list_library_entries(auth_client, user_id, library_id, limit=2)
+        assert first.status_code == 200, first.text
+        first_body = first.json()
+        assert _library_entry_media_ids(first_body["data"]) == [
+            str(media_ids[0]),
+            str(media_ids[1]),
+        ]
+        cursor = first_body["page"]["next_cursor"]
+        assert cursor is not None
+
+        second = _list_library_entries(auth_client, user_id, library_id, limit=2, cursor=cursor)
+        assert second.status_code == 200, second.text
+        second_body = second.json()
+        assert _library_entry_media_ids(second_body["data"]) == [str(media_ids[2])]
+        assert second_body["page"]["next_cursor"] is None
+
+    def test_list_media_rejects_invalid_cursor(self, auth_client):
+        user_id = create_test_user_id()
+        library_id = auth_client.get("/me", headers=auth_headers(user_id)).json()["data"][
+            "default_library_id"
+        ]
+
+        response = _list_library_entries(auth_client, user_id, library_id, cursor="not-a-cursor")
+
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "E_INVALID_CURSOR"
+
+    def test_list_media_rejects_offset_parameter(self, auth_client):
+        user_id = create_test_user_id()
+        library_id = auth_client.get("/me", headers=auth_headers(user_id)).json()["data"][
+            "default_library_id"
+        ]
+
+        response = _list_library_entries(auth_client, user_id, library_id, offset=1)
+
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
+
+    def test_list_media_rejects_cursor_from_another_sort(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        with direct_db.session() as session:
+            library_id = create_test_library(session, user_id, "Cross Sort Cursor")
+            media_a = create_test_media(session, title="Cross Sort A")
+            media_b = create_test_media(session, title="Cross Sort B")
+            for position, media_id in enumerate((media_a, media_b)):
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO library_entries (library_id, media_id, position)
+                        VALUES (:library_id, :media_id, :position)
+                        """
+                    ),
+                    {"library_id": library_id, "media_id": media_id, "position": position},
+                )
+            session.commit()
+
+        for media_id in (media_a, media_b):
+            direct_db.register_cleanup("library_entries", "media_id", media_id)
+            direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("memberships", "library_id", library_id)
+        direct_db.register_cleanup("libraries", "id", library_id)
+
+        first = _list_library_entries(auth_client, user_id, library_id, sort="position", limit=1)
+        assert first.status_code == 200, first.text
+        cursor = first.json()["page"]["next_cursor"]
+        assert cursor is not None
+
+        response = _list_library_entries(
+            auth_client,
+            user_id,
+            library_id,
+            sort="resonance",
+            cursor=cursor,
+        )
+
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "E_INVALID_CURSOR"
 
 
 class TestReorderLibraryMedia:
@@ -1618,6 +1769,44 @@ class TestReorderLibraryMedia:
         )
         assert missing_id_resp.status_code == 400
         assert missing_id_resp.json()["error"]["code"] == "E_INVALID_REQUEST"
+
+    def test_reorder_library_entries_rejects_partial_page_subset(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        library_id = auth_client.get("/me", headers=auth_headers(user_id)).json()["data"][
+            "default_library_id"
+        ]
+
+        media_ids: list[UUID] = []
+        with direct_db.session() as session:
+            for idx in range(3):
+                media_id = create_test_media(session, title=f"Partial Reorder {idx}")
+                media_ids.append(media_id)
+                direct_db.register_cleanup("library_entries", "media_id", media_id)
+                direct_db.register_cleanup("media", "id", media_id)
+            session.commit()
+
+        for media_id in media_ids:
+            add_resp = auth_client.post(
+                f"/libraries/{library_id}/media",
+                json={"media_id": str(media_id)},
+                headers=auth_headers(user_id),
+            )
+            assert add_resp.status_code in (200, 201), add_resp.text
+
+        first_page = _list_library_entries(auth_client, user_id, library_id, limit=2).json()
+        assert first_page["page"]["next_cursor"] is not None
+        partial_ids = [row["id"] for row in first_page["data"]]
+
+        response = auth_client.patch(
+            f"/libraries/{library_id}/entries/reorder",
+            json={"entry_ids": partial_ids},
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
 
     def test_reorder_library_entries_forbids_non_admin(
         self, auth_client, direct_db: DirectSessionManager

@@ -41,6 +41,7 @@ describe("library client", () => {
             updated_at: "2026-06-04T00:00:00Z",
           },
         ],
+        page: { next_cursor: null },
       }),
     );
 
@@ -58,6 +59,59 @@ describe("library client", () => {
     ]);
     expect(fetchSpy).toHaveBeenCalledWith(
       "/api/libraries?limit=200",
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
+
+  it("follows member-library cursors until all pages are loaded", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        Response.json({
+          data: [
+            {
+              id: "library-1",
+              name: "Research",
+              color: null,
+              is_default: false,
+              role: "member",
+              owner_user_id: "user-1",
+              created_at: "2026-06-04T00:00:00Z",
+              updated_at: "2026-06-04T00:00:00Z",
+            },
+          ],
+          page: { next_cursor: "cursor-2" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          data: [
+            {
+              id: "library-2",
+              name: "Archive",
+              color: null,
+              is_default: false,
+              role: "member",
+              owner_user_id: "user-1",
+              created_at: "2026-06-05T00:00:00Z",
+              updated_at: "2026-06-05T00:00:00Z",
+            },
+          ],
+          page: { next_cursor: null },
+        }),
+      );
+
+    const libraries = await listMemberLibraries({ limit: 1 });
+
+    expect(libraries.map((library) => library.name)).toEqual(["Research", "Archive"]);
+    expect(fetchSpy).toHaveBeenNthCalledWith(
+      1,
+      "/api/libraries?limit=1",
+      expect.objectContaining({ method: "GET" }),
+    );
+    expect(fetchSpy).toHaveBeenNthCalledWith(
+      2,
+      "/api/libraries?limit=1&cursor=cursor-2",
       expect.objectContaining({ method: "GET" }),
     );
   });

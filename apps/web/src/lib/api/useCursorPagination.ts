@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, apiFetch, isApiError, type ApiPath } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import type { AsyncResource } from "@/lib/api/useResource";
@@ -44,6 +44,12 @@ export function useCursorPagination<T>(args: {
       : firstDataIsCurrent
         ? cursor
         : firstData.page.next_cursor;
+  const items = useMemo(() => {
+    if (firstData === null) {
+      return [];
+    }
+    return [...firstData.data, ...effectiveAppended];
+  }, [effectiveAppended, firstData]);
 
   useEffect(() => {
     if (firstData === null || seenRef.current === firstData) {
@@ -127,7 +133,7 @@ export function useCursorPagination<T>(args: {
       };
     case "ready":
       return {
-        items: [...firstPage.data.data, ...effectiveAppended],
+        items,
         status: "ready",
         error: firstDataIsCurrent ? moreError : null,
         hasMore: effectiveCursor !== null,

@@ -7,10 +7,12 @@ The visibility readers in `auth/permissions.py` and the search/object modules re
 the table under an explicit allowlist (see the cutover spec).
 """
 
+import base64
+import json
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, time
-from typing import Literal, assert_never
+from typing import Any, Literal, assert_never
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -25,6 +27,7 @@ from nexus.schemas.library import (
     LibraryEntryKind,
     LibraryEntryOrderRequest,
     LibraryEntryOut,
+    LibraryPageInfo,
     LibraryPodcastOut,
     LibraryPodcastSubscriptionOut,
 )
@@ -231,23 +234,26 @@ _MOST_RECENT_ACTIVITY_SQL = f"""
     )
 """
 
-# Deterministic resonance ORDER BY: weighted recency-decay + log1p(connection_count),
+# Deterministic resonance score: weighted recency-decay + log1p(connection_count),
 # highest first, with `id DESC` as the stable tiebreak so identical input yields one
-# fixed order. `now()` is the DB's authoritative clock (database.md). An entry with no
-# engagement/connection/published signal decays from its created_at.
-_RESONANCE_ORDER = f"""
+# fixed order. The caller binds `:resonance_as_of`; cursor pagination reuses the same
+# timestamp across pages so a load-more sequence cannot reshuffle underneath itself.
+_RESONANCE_SCORE_SQL = f"""
     (
         {_RESONANCE_RECENCY_WEIGHT} * power(
             0.5,
             GREATEST(
-                EXTRACT(EPOCH FROM (now() - {_MOST_RECENT_ACTIVITY_SQL})) / 86400.0,
+                EXTRACT(EPOCH FROM (:resonance_as_of - {_MOST_RECENT_ACTIVITY_SQL})) / 86400.0,
                 0.0
             ) / {_RESONANCE_RECENCY_HALF_LIFE_DAYS}
         )
         + {_RESONANCE_CONNECTION_WEIGHT} * ln(1.0 + {_CONNECTION_COUNT_SQL})
         + {_RESONANCE_SHARED_AUTHOR_WEIGHT} * {_SHARED_AUTHOR_HITS_SQL}
         + {_RESONANCE_SIMILARITY_WEIGHT} * {_SIMILARITY_SQL}
-    ) DESC,
+    )
+"""
+_RESONANCE_ORDER = f"""
+    {_RESONANCE_SCORE_SQL} DESC,
     le.id DESC
 """
 
@@ -920,15 +926,66 @@ def remove_user_podcast_subscription_libraries(
     )
 
 
+def _encode_entry_cursor(
+    sort: LibraryEntrySort, row, *, resonance_as_of: datetime | None = None
+) -> str:
+    if sort == "position":
+        payload: dict[str, object] = {
+            "k": "library_entries:position",
+            "position": int(row["position"]),
+            "created_at": row["created_at"].isoformat(),
+            "id": str(row["id"]),
+        }
+    elif sort == "resonance":
+        if resonance_as_of is None:
+            raise RuntimeError("resonance cursor requires resonance_as_of")
+        payload = {
+            "k": "library_entries:resonance",
+            "as_of": resonance_as_of.isoformat(),
+            "score": float(row["resonance_score"]),
+            "id": str(row["id"]),
+        }
+    else:
+        assert_never(sort)
+    encoded = base64.urlsafe_b64encode(json.dumps(payload).encode("utf-8")).decode("ascii")
+    return encoded.rstrip("=")
+
+
+def _decode_entry_cursor(cursor: str, expected_sort: LibraryEntrySort) -> dict[str, object]:
+    expected_key = f"library_entries:{expected_sort}"
+    try:
+        padded = cursor + "=" * (-len(cursor) % 4)
+        payload: dict[str, Any] = json.loads(base64.urlsafe_b64decode(padded).decode("utf-8"))
+        if payload.get("k") != expected_key:
+            raise ValueError
+        if expected_sort == "position":
+            return {
+                "position": int(payload["position"]),
+                "created_at": datetime.fromisoformat(str(payload["created_at"])),
+                "id": UUID(str(payload["id"])),
+            }
+        if expected_sort == "resonance":
+            return {
+                "as_of": datetime.fromisoformat(str(payload["as_of"])),
+                "score": float(payload["score"]),
+                "id": UUID(str(payload["id"])),
+            }
+        assert_never(expected_sort)
+    except Exception:
+        # justify-ignore-error: malformed cursor input is an expected API error path.
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor") from None
+
+
 def list_library_entries(
     db: Session,
     viewer_id: UUID,
     library_id: UUID,
+    *,
     limit: int = 100,
-    offset: int = 0,
+    cursor: str | None = None,
     sort: LibraryEntrySort = "position",
     viewer_timezone: str = "UTC",
-) -> list[LibraryEntryOut]:
+) -> tuple[list[LibraryEntryOut], LibraryPageInfo]:
     """List a library's ordered, hydrated entries. Member-only.
 
     ``sort="position"`` (default) keeps EXACTLY the canonical `_ENTRY_ORDER`;
@@ -937,8 +994,6 @@ def list_library_entries(
     """
     if limit <= 0:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Limit must be positive")
-    if offset < 0:
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Offset must be non-negative")
     _start_of_today(viewer_timezone)
     limit = min(limit, 200)
 
@@ -949,36 +1004,107 @@ def list_library_entries(
     if member is None:
         raise NotFoundError(ApiErrorCode.E_LIBRARY_NOT_FOUND, "Library not found")
 
-    params: dict[str, object] = {"library_id": library_id, "limit": limit, "offset": offset}
+    params: dict[str, object] = {"library_id": library_id, "limit": limit + 1}
     if sort == "resonance":
         # Lazy import: connection_summaries -> resolve -> library_entries is an
         # import cycle, so the S4 origin owner is read at call time, not import.
         from nexus.services.resource_graph.connection_summaries import LIST_CONNECTION_ORIGINS
         from nexus.services.semantic_chunks import transcript_embedding_dimensions
 
-        order_by = _RESONANCE_ORDER
+        decoded_cursor = _decode_entry_cursor(cursor, sort) if cursor is not None else None
+        resonance_as_of = (
+            decoded_cursor["as_of"]
+            if decoded_cursor is not None
+            else db.execute(text("SELECT now()")).scalar_one()
+        )
+        cursor_clause = ""
+        if decoded_cursor is not None:
+            cursor_clause = """
+              AND (
+                resonance_score < :cursor_score
+                OR (resonance_score = :cursor_score AND id < :cursor_id)
+              )
+            """
+            params.update(
+                {
+                    "cursor_score": decoded_cursor["score"],
+                    "cursor_id": decoded_cursor["id"],
+                }
+            )
         params["viewer_id"] = viewer_id
         params["resonance_origins"] = list(LIST_CONNECTION_ORIGINS)
         params["embedding_dims"] = transcript_embedding_dimensions()
+        params["resonance_as_of"] = resonance_as_of
+        rows = (
+            db.execute(
+                text(f"""
+                WITH scored AS (
+                    SELECT {_ENTRY_COLUMNS}, {_RESONANCE_SCORE_SQL} AS resonance_score
+                    FROM library_entries le
+                    WHERE le.library_id = :library_id
+                )
+                SELECT {_ENTRY_COLUMNS}, resonance_score
+                FROM scored
+                WHERE 1 = 1
+                  {cursor_clause}
+                ORDER BY resonance_score DESC, id DESC
+                LIMIT :limit
+            """),
+                params,
+            )
+            .mappings()
+            .all()
+        )
     elif sort == "position":
-        order_by = _ENTRY_ORDER
+        cursor_clause = ""
+        if cursor is not None:
+            decoded_cursor = _decode_entry_cursor(cursor, sort)
+            cursor_clause = """
+              AND (
+                le.position > :cursor_position
+                OR (le.position = :cursor_position AND le.created_at < :cursor_created_at)
+                OR (
+                  le.position = :cursor_position
+                  AND le.created_at = :cursor_created_at
+                  AND le.id < :cursor_id
+                )
+              )
+            """
+            params.update(
+                {
+                    "cursor_position": decoded_cursor["position"],
+                    "cursor_created_at": decoded_cursor["created_at"],
+                    "cursor_id": decoded_cursor["id"],
+                }
+            )
+        rows = (
+            db.execute(
+                text(f"""
+                SELECT {_ENTRY_COLUMNS} FROM library_entries le
+                WHERE le.library_id = :library_id
+                  {cursor_clause}
+                ORDER BY {_ENTRY_ORDER}
+                LIMIT :limit
+            """),
+                params,
+            )
+            .mappings()
+            .all()
+        )
+        resonance_as_of = None
     else:
         assert_never(sort)
 
-    rows = (
-        db.execute(
-            text(f"""
-            SELECT {_ENTRY_COLUMNS} FROM library_entries le
-            WHERE le.library_id = :library_id
-            ORDER BY {order_by}
-            LIMIT :limit OFFSET :offset
-        """),
-            params,
-        )
-        .mappings()
-        .all()
+    page_rows = rows[:limit]
+    next_cursor = (
+        _encode_entry_cursor(sort, page_rows[-1], resonance_as_of=resonance_as_of)
+        if len(rows) > limit and page_rows
+        else None
     )
-    return _hydrate_entries(db, viewer_id, rows, viewer_timezone=viewer_timezone)
+    return (
+        _hydrate_entries(db, viewer_id, page_rows, viewer_timezone=viewer_timezone),
+        LibraryPageInfo(has_more=next_cursor is not None, next_cursor=next_cursor),
+    )
 
 
 def reorder_entries(
@@ -1022,9 +1148,14 @@ def reorder_entries(
             {"entry_ids": requested_ids, "library_id": library_id},
         )
 
-    return list_library_entries(
-        db, viewer_id, library_id, limit=min(max(len(requested_ids), 1), 200), offset=0
+    entries, _page = list_library_entries(
+        db,
+        viewer_id,
+        library_id,
+        limit=min(max(len(requested_ids), 1), 200),
+        sort="position",
     )
+    return entries
 
 
 # ---------------------------------------------------------------------------
