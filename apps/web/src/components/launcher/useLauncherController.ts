@@ -36,6 +36,7 @@ import {
 } from "@/lib/launcher/providers";
 import { rankLauncher } from "@/lib/launcher/ranking";
 import { DESTINATIONS } from "@/lib/navigation/destinations";
+import { openTodayPage } from "@/lib/notes/openToday";
 import { fetchSearchResultPage } from "@/lib/search/searchApi";
 import { searchHref } from "@/lib/search/searchParams";
 import type { SearchResultRowViewModel } from "@/lib/search/types";
@@ -525,6 +526,11 @@ export function useLauncherController(): LauncherController {
         if (actionId === "open-launcher") continue;
         if (!matchesKeyEvent(combo, event)) continue;
         const destination = DESTINATIONS.find((entry) => entry.id === actionId);
+        if (actionId === "today") {
+          event.preventDefault();
+          void openTodayPage().catch(fail);
+          return;
+        }
         if (!destination) continue; // a bound non-destination combo (e.g. pane-nav) is owned elsewhere
         event.preventDefault();
         void dispatchTarget(

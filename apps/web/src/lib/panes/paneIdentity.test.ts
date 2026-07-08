@@ -72,14 +72,10 @@ describe("pane route identity", () => {
     expect(hasSamePaneResource("/libraries", "/libraries?filter=recent")).toBe(false);
   });
 
-  it("represents author and daily aliases as product locators", () => {
+  it("represents author aliases as contributor locators", () => {
     expect(resolvePaneRouteIdentity("/authors/ursula-k-le-guin").resourceLocator).toEqual({
       kind: "contributor_handle",
       handle: "ursula-k-le-guin",
-    });
-    expect(resolvePaneRouteIdentity("/daily/2026-06-19").resourceLocator).toMatchObject({
-      kind: "daily_note_date",
-      localDate: "2026-06-19",
     });
   });
 });

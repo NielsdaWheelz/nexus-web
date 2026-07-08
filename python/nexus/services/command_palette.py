@@ -332,8 +332,6 @@ def _canonicalize_target_href(href: str) -> str:
             return "/settings"
         if segments[0] == "notes":
             return "/notes"
-        if segments[0] == "daily":
-            return "/daily"
         if segments[0] == "oracle":
             return "/oracle"
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Unsupported palette target")
@@ -379,9 +377,6 @@ def _canonicalize_target_href(href: str) -> str:
 
     if segments[0] == "notes" and len(segments) == 2:
         return f"/notes/{segments[1]}"
-
-    if segments[0] == "daily" and len(segments) == 2:
-        return f"/daily/{segments[1]}"
 
     if segments[0] == "oracle" and len(segments) == 2:
         return f"/oracle/{segments[1]}"

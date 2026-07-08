@@ -64,9 +64,21 @@ class NotePageSummaryOut(BaseModel):
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
 
+class DailyNotePageSummaryOut(BaseModel):
+    local_date: date = Field(
+        serialization_alias="localDate",
+    )
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
 class NotePageOut(NotePageSummaryOut):
     surface: ResourceSurfaceOut | None = None
     blocks: list[NoteBlockOut] = Field(default_factory=list)
+    daily_note: DailyNotePageSummaryOut | None = Field(
+        None,
+        serialization_alias="dailyNote",
+    )
 
 
 class DailyNotePageOut(BaseModel):

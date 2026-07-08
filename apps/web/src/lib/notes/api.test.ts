@@ -6,6 +6,7 @@ import {
   quickCaptureDailyNote,
   saveResourceSurface,
 } from "./api";
+import type { NotePageSummary } from "./normalize";
 
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -17,6 +18,47 @@ function jsonResponse(body: unknown): Response {
 describe("notes api", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("normalizePage populates dailyNote.localDate when daily_note is present", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse({
+        data: {
+          page: {
+            id: "page-daily-1",
+            title: "July 7, 2026",
+            surface: null,
+            blocks: [],
+            daily_note: { local_date: "2026-07-07" },
+          },
+        },
+      }),
+    );
+
+    const page = await fetchDailyNotePage("2026-07-07", { timeZone: "UTC" });
+    expect(page.dailyNote).toEqual({ localDate: "2026-07-07" });
+  });
+
+  it("normalizePage sets dailyNote to null for non-daily pages", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse({
+        data: {
+          id: "page-plain-1",
+          title: "Plain page",
+          surface: null,
+          blocks: [],
+        },
+      }),
+    );
+
+    const { fetchNotePage } = await import("./api");
+    const page = await fetchNotePage("page-plain-1");
+    expect(page.dailyNote).toBeNull();
+  });
+
+  it("NotePageSummary shape is not widened with dailyNote", () => {
+    const summary: NotePageSummary = { id: "s1", title: "Summary" };
+    expect(Object.keys(summary)).not.toContain("dailyNote");
   });
 
   it("validates ISO local dates", () => {

@@ -46,10 +46,6 @@ export function paneResourceLocatorKey(locator: PaneResourceLocator | null): str
       return `resource_ref:${locator.ref}`;
     case "contributor_handle":
       return `contributor_handle:${locator.handle}`;
-    case "daily_note_today":
-      return `daily_note_today:${locator.timeZone}`;
-    case "daily_note_date":
-      return `daily_note_date:${locator.localDate}:${locator.timeZone}`;
     default: {
       const _exhaustive: never = locator;
       return _exhaustive;

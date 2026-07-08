@@ -103,6 +103,7 @@ export type LauncherActionTarget =
   | { kind: "copy-link"; href: string }
   | { kind: "pane-open"; paneId: string } // activate, restoring if minimized
   | { kind: "pane-close"; paneId: string }
+  | { kind: "open-today" } // resolve-or-create today's daily page then open it
   | { kind: "set-lane"; lane: LauncherLane; query?: string }; // switch lane in-place (controller intercepts, never dispatched)
 
 // Panel targets: the controller intercepts these to push an embedded page (not dispatch).

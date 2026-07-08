@@ -11,6 +11,7 @@ import { notePagesResource, type NoResourceParams } from "@/lib/api/resource";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { usePaneRouter, useSetPaneTitle } from "@/lib/panes/paneRuntime";
 import { createNotePage } from "@/lib/notes/api";
+import { openTodayPage } from "@/lib/notes/openToday";
 import type { NotePageSummary } from "@/lib/notes/normalize";
 import { setPendingNoteFocus } from "@/lib/notes/pendingNoteFocus";
 import { clientResourceFetcher } from "@/lib/api/resourceTransport.client";
@@ -58,6 +59,15 @@ export default function NotesPaneBody() {
     }
   }, [pagesResource]);
 
+  const openToday = useCallback(async () => {
+    try {
+      await openTodayPage();
+    } catch (error: unknown) {
+      if (handleUnauthenticatedApiError(error)) return;
+      setFeedback(toFeedback(error, { fallback: "Could not open today." }));
+    }
+  }, []);
+
   const createPage = useCallback(async () => {
     const trimmedTitle = title.trim();
     const nextTitle = trimmedTitle || "Untitled";
@@ -104,6 +114,13 @@ export default function NotesPaneBody() {
               <Plus size={16} aria-hidden="true" />
             </Button>
           </form>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => void openToday()}
+          >
+            Today
+          </Button>
           <CollectionDisplayControls
             value={displayState}
             onChange={setDisplayState}

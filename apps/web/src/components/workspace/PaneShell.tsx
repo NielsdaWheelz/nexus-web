@@ -39,7 +39,7 @@ import styles from "./PaneShell.module.css";
 // PaneShell chrome without routing through the workspace store.
 // ---------------------------------------------------------------------------
 
-interface PaneChromeOverrides {
+export interface PaneChromeOverrides {
   toolbar?: React.ReactNode;
   actions?: React.ReactNode;
   options?: ActionMenuOption[];
@@ -48,7 +48,7 @@ interface PaneChromeOverrides {
 
 const EMPTY_PANE_CHROME_OVERRIDES: PaneChromeOverrides = {};
 
-const PaneChromeOverrideContext = createContext<
+export const PaneChromeOverrideContext = createContext<
   ((overrides: PaneChromeOverrides) => void) | null
 >(null);
 

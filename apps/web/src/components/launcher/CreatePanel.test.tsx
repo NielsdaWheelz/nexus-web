@@ -136,12 +136,7 @@ describe("CreatePanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Open today" }));
 
     // The dispatch contract: open the daily note, then dismiss the launcher.
-    expect(onOpen).toHaveBeenCalledWith({
-      kind: "href",
-      href: "/daily",
-      externalShell: false,
-      titleHint: "Today",
-    });
+    expect(onOpen).toHaveBeenCalledWith({ kind: "open-today" });
     expect(onClose).toHaveBeenCalledTimes(1);
 
     // "Open today" flushes the pending draft to the quick-capture endpoint.
@@ -160,12 +155,7 @@ describe("CreatePanel", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Open today" }));
 
-    expect(onOpen).toHaveBeenCalledWith({
-      kind: "href",
-      href: "/daily",
-      externalShell: false,
-      titleHint: "Today",
-    });
+    expect(onOpen).toHaveBeenCalledWith({ kind: "open-today" });
     expect(onClose).toHaveBeenCalledTimes(1);
     // Nothing to flush: an empty quick note must not create a daily block.
     expect(quickCaptureBodies(fetchMock)).toHaveLength(0);

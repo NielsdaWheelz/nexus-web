@@ -409,7 +409,7 @@ describe("loadWorkspaceBootstrap", () => {
   });
 
   it("seeds nothing for an unprefetched route without throwing", async () => {
-    requestHeaders.set(REQUEST_PATH_HEADER, "/daily");
+    requestHeaders.set(REQUEST_PATH_HEADER, "/chat/new");
     respondWith({
       "/me/reader-profile": PROFILE_OK,
     });

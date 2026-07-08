@@ -67,6 +67,7 @@ export interface ResourceSurface {
 export interface NotePage extends NotePageSummary {
   surface: ResourceSurface | null;
   blocks: NoteBlock[];
+  dailyNote: { localDate: string } | null;
 }
 
 export interface SaveResourceSurfaceInput {
@@ -218,12 +219,18 @@ export function normalizeSurface(raw: unknown): ResourceSurface | null {
 
 function normalizePage(raw: Record<string, unknown>): NotePage {
   const blocks = Array.isArray(raw.blocks) ? raw.blocks : [];
+  const rawDailyNote = raw.dailyNote ?? raw.daily_note;
+  const dailyNote =
+    isRecord(rawDailyNote) && typeof (rawDailyNote.localDate ?? rawDailyNote.local_date) === "string"
+      ? { localDate: String(rawDailyNote.localDate ?? rawDailyNote.local_date) }
+      : null;
   return {
     ...normalizePageSummary(raw),
     surface: normalizeSurface(raw.surface),
     blocks: blocks.map((block) =>
       normalizeBlock(requiredRecord(block, "note page block")),
     ),
+    dailyNote,
   };
 }
 

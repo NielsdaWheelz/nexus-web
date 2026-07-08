@@ -51,8 +51,10 @@ describe("usePaneWarm", () => {
     const cache = new ResourceCache({});
     const { result } = renderHook(() => usePaneWarm(), { wrapper: withCache(cache) });
 
-    result.current("/daily");
-    expect(preloadPane).toHaveBeenCalledWith("daily");
+    // /search has a pane chunk (PaneRouteId "search") but no paneResourceLoader entry,
+    // so intent warms the chunk immediately without triggering a data prefetch.
+    result.current("/search");
+    expect(preloadPane).toHaveBeenCalledWith("search");
     await vi.advanceTimersByTimeAsync(80);
     expect(fetchSpy).not.toHaveBeenCalled();
   });

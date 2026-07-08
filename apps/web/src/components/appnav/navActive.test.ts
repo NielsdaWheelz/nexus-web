@@ -32,10 +32,14 @@ describe("resolveActiveDestinationId", () => {
     expect(resolve("/pages/y", pins)).toBe("notes");
   });
 
-  it("matches chats, oracle, and today by prefix", () => {
+  it("matches chats and oracle by prefix", () => {
     expect(resolve("/conversations/9")).toBe("chats");
     expect(resolve("/oracle/abc")).toBe("oracle");
-    expect(resolve("/daily/2026-06-01")).toBe("today");
+  });
+
+  it("notes claims /pages/ prefix so daily pages opened via Today fall under notes", () => {
+    expect(resolve("/pages/11111111-1111-4111-8111-111111111111")).toBe("notes");
+    expect(resolve("/pages/any-id")).toBe("notes");
   });
 
   it("matches settings by prefix and exact", () => {

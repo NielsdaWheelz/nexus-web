@@ -28,6 +28,7 @@ from nexus.errors import ApiError, ApiErrorCode, ConflictError, NotFoundError
 from nexus.schemas.notes import (
     CreatePageRequest,
     DailyNotePageOut,
+    DailyNotePageSummaryOut,
     NoteBlockOut,
     NotePageOut,
     NotePageSummaryOut,
@@ -449,12 +450,23 @@ def _resolve_daily_page_once(
 
 def _page_out(db: Session, viewer_id: UUID, page: Page) -> NotePageOut:
     surface = graph_adjacency.load_page_surface(db, user_id=viewer_id, page_id=page.id)
+    daily_local_date = db.scalar(
+        select(DailyNotePage.local_date).where(
+            DailyNotePage.page_id == page.id,
+            DailyNotePage.user_id == viewer_id,
+        )
+    )
     return NotePageOut(
         id=page.id,
         title=page.title,
         updated_at=page.updated_at,
         surface=surfaces.get_surface(db, viewer_id=viewer_id, source=_page_ref(page.id)),
         blocks=[_surface_note_out(db, node) for node in surface.roots],
+        daily_note=(
+            DailyNotePageSummaryOut(local_date=daily_local_date)
+            if daily_local_date is not None
+            else None
+        ),
     )
 
 

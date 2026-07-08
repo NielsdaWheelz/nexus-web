@@ -97,7 +97,6 @@ describe("universal launcher cutover source gates (§14)", () => {
       "/authors",
       "/podcasts",
       "/notes",
-      "/daily",
       "/conversations",
       "/settings",
       "/oracle",
@@ -107,5 +106,53 @@ describe("universal launcher cutover source gates (§14)", () => {
       (href) => navModel.includes(`"${href}"`) && providers.includes(`"${href}"`),
     );
     expect(inBoth).toEqual([]);
+  });
+});
+
+describe("daily surface cutover source gates (§13)", () => {
+  it("G1: DailyNotePaneBody does not exist in the working tree", () => {
+    expect(existsSync(join(APP_ROOT, "src/app/(authenticated)/daily/DailyNotePaneBody.tsx"))).toBe(false);
+  });
+
+  it("G2: no source file imports DailyNotePaneBody", () => {
+    const offenders = appAndComponentAndLib().filter((path) =>
+      sourceText(path).includes("DailyNotePaneBody"),
+    );
+    expect(offenders).toEqual([]);
+  });
+
+  it("G3: DESTINATIONS has no entry with id 'today'", () => {
+    const destinations = sourceText("src/lib/navigation/destinations.ts");
+    expect(destinations).not.toMatch(/id:\s*["']today["']/);
+  });
+
+  it("G4: PaneRouteId does not include 'daily' or 'dailyDate'", () => {
+    const routeModel = sourceText("src/lib/panes/paneRouteModel.ts");
+    expect(routeModel).not.toMatch(/"daily"\s*\|/);
+    expect(routeModel).not.toMatch(/\|\s*"daily"/);
+    expect(routeModel).not.toMatch(/"dailyDate"/);
+  });
+
+  it("G5: href /daily does not appear in dispatch or providers (except the redirect file)", () => {
+    const offenders = sourceFiles(join(APP_ROOT, "src/lib"))
+      .concat(sourceFiles(join(APP_ROOT, "src/components")))
+      .filter((path) => /href.*["']\/daily["']/.test(sourceText(path)));
+    expect(offenders).toEqual([]);
+  });
+
+  it("G6: daily_note_today and daily_note_date locator kinds do not appear in frontend source", () => {
+    const offenders = appAndComponentAndLib().filter((path) =>
+      /daily_note_today|daily_note_date/.test(sourceText(path)),
+    );
+    expect(offenders).toEqual([]);
+  });
+
+  it("G7: backend daily FastAPI routes still exist", () => {
+    const notesRoutes = readFileSync(
+      join(APP_ROOT, "../../python/nexus/api/routes/notes.py"),
+      "utf8",
+    );
+    expect(notesRoutes).toContain("get_daily_note_for_today");
+    expect(notesRoutes).toContain("get_daily_note_by_date");
   });
 });

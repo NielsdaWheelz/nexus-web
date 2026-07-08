@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { resolvePaneResourceLocator } from "@/lib/panes/paneResourceLocator";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 
-const TIME_ZONE = "America/Los_Angeles";
 const LIBRARY_ID = "11111111-1111-4111-8111-111111111111";
 const MEDIA_ID = "22222222-2222-4222-8222-222222222222";
 const PODCAST_ID = "33333333-3333-4333-8333-333333333333";
@@ -11,9 +10,7 @@ const BLOCK_ID = "55555555-5555-4555-8555-555555555555";
 const CONVERSATION_ID = "66666666-6666-4666-8666-666666666666";
 
 function locatorFor(href: string) {
-  return resolvePaneResourceLocator(resolvePaneRouteModel(href), {
-    timeZone: TIME_ZONE,
-  });
+  return resolvePaneResourceLocator(resolvePaneRouteModel(href));
 }
 
 describe("pane resource locator", () => {
@@ -49,19 +46,10 @@ describe("pane resource locator", () => {
     expect(locatorFor("/pages/44444444-4444-4444-8444-zzzzzzzzzzzz")).toBeNull();
   });
 
-  it("builds product alias locators for author and daily routes", () => {
+  it("builds product alias locators for author routes", () => {
     expect(locatorFor("/authors/ursula-k-le-guin")).toEqual({
       kind: "contributor_handle",
       handle: "ursula-k-le-guin",
-    });
-    expect(locatorFor("/daily")).toEqual({
-      kind: "daily_note_today",
-      timeZone: TIME_ZONE,
-    });
-    expect(locatorFor("/daily/2026-06-19")).toEqual({
-      kind: "daily_note_date",
-      localDate: "2026-06-19",
-      timeZone: TIME_ZONE,
     });
   });
 

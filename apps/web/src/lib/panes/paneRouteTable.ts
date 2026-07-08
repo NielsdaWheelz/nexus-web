@@ -3,7 +3,6 @@
 import type { ReactNode } from "react";
 import {
   BookOpen,
-  CalendarDays,
   CreditCard,
   FileText,
   FolderOpen,
@@ -131,14 +130,6 @@ const PANE_ROUTE_META: Record<PaneRouteId, PaneRouteMeta> = {
   note: {
     icon: FileText,
     getChrome: () => ({ title: "Note" }),
-  },
-  daily: {
-    icon: CalendarDays,
-    getChrome: () => ({ title: "Today" }),
-  },
-  dailyDate: {
-    icon: CalendarDays,
-    getChrome: () => ({ title: "Daily note" }),
   },
   settings: {
     icon: Settings,

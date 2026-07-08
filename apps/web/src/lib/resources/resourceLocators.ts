@@ -15,21 +15,7 @@ export async function resolveResourceLocators(
   if (locators.length === 0) return [];
   const response = await apiFetch<{ data: unknown }>("/api/resource-items/locators/resolve", {
     method: "POST",
-    body: JSON.stringify({
-      locators: locators.map((locator) => {
-        if (locator.kind === "daily_note_today") {
-          return { kind: locator.kind, timeZone: locator.timeZone };
-        }
-        if (locator.kind === "daily_note_date") {
-          return {
-            kind: locator.kind,
-            localDate: locator.localDate,
-            timeZone: locator.timeZone,
-          };
-        }
-        return locator;
-      }),
-    }),
+    body: JSON.stringify({ locators }),
   });
   const data = isRecord(response.data) ? response.data : {};
   const resolutions = Array.isArray(data.resolutions) ? data.resolutions : [];

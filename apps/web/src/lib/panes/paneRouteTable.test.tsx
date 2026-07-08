@@ -64,32 +64,11 @@ describe("pane route table", () => {
     expect(noteRoute.definition?.secondaryGroups).toContain("notes-tools");
   });
 
-  it("resolves daily note routes as document panes", () => {
-    const todayRoute = resolvePaneRoute("/daily");
-    const datedRoute = resolvePaneRoute("/daily/2026-05-06");
-
-    expect(todayRoute.id).toBe("daily");
-    expect(resolvePaneResourceLocator(todayRoute, { timeZone: "UTC" })).toEqual({
-      kind: "daily_note_today",
-      timeZone: "UTC",
-    });
-    expect(todayRoute.definition?.bodyMode).toBe("document");
-    expect(todayRoute.definition?.secondaryGroups).toContain("notes-tools");
-
-    expect(datedRoute.id).toBe("dailyDate");
-    expect(datedRoute.params).toEqual({ localDate: "2026-05-06" });
-    expect(resolvePaneResourceLocator(datedRoute, { timeZone: "UTC" })).toEqual({
-      kind: "daily_note_date",
-      localDate: "2026-05-06",
-      timeZone: "UTC",
-    });
-    expect(datedRoute.definition?.bodyMode).toBe("document");
-    expect(datedRoute.definition?.secondaryGroups).toContain("notes-tools");
-  });
-
-  it("returns the unsupported placeholder for full-screen Oracle routes", () => {
+  it("returns the unsupported placeholder for full-screen Oracle routes and redirected /daily routes", () => {
     expect(resolvePaneRoute("/oracle").id).toBe("unsupported");
     expect(resolvePaneRoute("/oracle/reading-1").id).toBe("unsupported");
+    expect(resolvePaneRoute("/daily").id).toBe("unsupported");
+    expect(resolvePaneRoute("/daily/2026-05-06").id).toBe("unsupported");
   });
 
   it("declares max width policy on representative routes", () => {
@@ -130,8 +109,6 @@ describe("pane route table", () => {
       "/notes",
       "/notes/block-1",
       "/pages/page-1",
-      "/daily",
-      "/daily/2026-05-06",
       "/settings",
       "/settings/reader",
       "/settings/billing",

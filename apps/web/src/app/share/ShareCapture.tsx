@@ -65,7 +65,7 @@ export default function ShareCapture({
             label: trimmed,
             ok: true,
             status: "Added to today",
-            path: "/daily",
+            path: "/notes",
           },
         ]);
       } catch {
@@ -198,7 +198,7 @@ export default function ShareCapture({
                         : result.path
                     }
                   >
-                    {result.path === "/daily" ? "Open" : "Open in Nexus"}
+                    {result.path === "/notes" ? "Open" : "Open in Nexus"}
                   </a>
                 </div>
               </>

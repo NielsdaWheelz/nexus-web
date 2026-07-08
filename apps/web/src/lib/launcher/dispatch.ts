@@ -14,6 +14,7 @@ import { isAndroidShellRestrictedRouteId } from "@/lib/androidShell";
 import { createRandomId } from "@/lib/createRandomId";
 import { addMediaFromUrl } from "@/lib/media/ingestionClient";
 import { createNotePage, quickCaptureDailyNote } from "@/lib/notes/api";
+import { openTodayPage } from "@/lib/notes/openToday";
 import { setPendingNoteFocus } from "@/lib/notes/pendingNoteFocus";
 import { paragraphFromText } from "@/lib/notes/prosemirror/schema";
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
@@ -102,13 +103,16 @@ export async function dispatchTarget(
       );
       return;
     }
+    case "open-today":
+      await openTodayPage();
+      return;
     case "create-note":
       await quickCaptureDailyNote({
         blockId: createRandomId(),
         clientMutationId: createRandomId("quick-note"),
         bodyPmJson: paragraphFromText(target.text).toJSON() as Record<string, unknown>,
       });
-      requestOpenInAppPane("/daily", { titleHint: "Today" });
+      await openTodayPage();
       return;
     case "browse-acquire": {
       // Documents/videos become owned media; podcasts/episodes subscribe to a podcast.

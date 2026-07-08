@@ -638,10 +638,6 @@ function WorkspaceHost() {
   >(() => new Map());
   const keybindings = useKeybindings();
   const androidShell = useAndroidShell();
-  const timeZone = useMemo(
-    () => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
-    [],
-  );
 
   // --- Mobile viewport and pane chrome focus state ---
   const isMobile = useIsMobileViewport();
@@ -679,12 +675,12 @@ function WorkspaceHost() {
   const resourceLocatorEntries = useMemo(
     () =>
       paneDescriptors.flatMap(({ descriptor }) => {
-        const locator = resolvePaneResourceLocator(descriptor.route, { timeZone });
+        const locator = resolvePaneResourceLocator(descriptor.route);
         return locator
           ? [{ routeKey: descriptor.routeKey, locator }]
           : [];
       }),
-    [paneDescriptors, timeZone],
+    [paneDescriptors],
   );
   const resourceLocatorRouteKeys = useMemo(
     () => new Set(resourceLocatorEntries.map((entry) => entry.routeKey)),

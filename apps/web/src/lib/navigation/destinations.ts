@@ -47,14 +47,6 @@ export const DESTINATIONS: Destination[] = [
     match: { exact: ["/podcasts"], prefix: ["/podcasts/"] },
   },
   {
-    id: "today",
-    label: "Today",
-    href: "/daily",
-    keywords: ["daily", "journal", "notes"],
-    slot: "primary",
-    match: { exact: ["/daily"], prefix: ["/daily/"] },
-  },
-  {
     id: "notes",
     label: "Notes",
     href: "/notes",

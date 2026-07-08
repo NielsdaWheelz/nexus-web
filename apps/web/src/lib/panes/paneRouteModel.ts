@@ -41,8 +41,6 @@ export type PaneRouteId =
   | "notes"
   | "page"
   | "note"
-  | "daily"
-  | "dailyDate"
   | "settings"
   | "settingsAccount"
   | "settingsBilling"
@@ -202,24 +200,6 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
     id: "note",
     pattern: ["notes", ":blockId"],
     staticTitle: "Note",
-    titleMode: "dynamic",
-    bodyMode: "document",
-    secondaryGroups: ["notes-tools"],
-    ...STANDARD_WIDTH_CONTRACT,
-  }),
-  route({
-    id: "daily",
-    pattern: ["daily"],
-    staticTitle: "Today",
-    titleMode: "static",
-    bodyMode: "document",
-    secondaryGroups: ["notes-tools"],
-    ...STANDARD_WIDTH_CONTRACT,
-  }),
-  route({
-    id: "dailyDate",
-    pattern: ["daily", ":localDate"],
-    staticTitle: "Daily note",
     titleMode: "dynamic",
     bodyMode: "document",
     secondaryGroups: ["notes-tools"],

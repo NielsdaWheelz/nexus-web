@@ -115,7 +115,7 @@ export default function CreatePanel({
 
   const openToday = useCallback(() => {
     flushSession(currentDocRef.current ?? undefined);
-    onOpen({ kind: "href", href: "/daily", externalShell: false, titleHint: "Today" });
+    onOpen({ kind: "open-today" });
     onClose();
   }, [flushSession, onOpen, onClose]);
 

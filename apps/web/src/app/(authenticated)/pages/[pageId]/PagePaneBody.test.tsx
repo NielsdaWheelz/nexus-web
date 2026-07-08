@@ -21,6 +21,10 @@ import {
   readDraftBlocksForPersistence,
 } from "@/lib/notes/resourceSurfacePersistence";
 import type { StoredNoteEditorDraft } from "@/lib/notes/useNoteEditorSession";
+import {
+  PaneChromeOverrideContext,
+  type PaneChromeOverrides,
+} from "@/components/workspace/PaneShell";
 import PagePaneBody from "./PagePaneBody";
 
 describe("readDraftBlocksForPersistence", () => {
@@ -376,6 +380,93 @@ describe("PagePaneBody note activation", () => {
   });
 });
 
+describe("PagePaneBody daily-note chrome options", () => {
+  const PAGE_ID = "33333333-3333-4333-8333-333333333333";
+  const BLOCK_ID = "44444444-4444-4444-8444-444444444444";
+
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    window.localStorage.clear();
+    fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => jsonResponse({ data: [] }));
+  });
+
+  afterEach(() => {
+    fetchSpy.mockRestore();
+    window.localStorage.clear();
+  });
+
+  function renderWithChromeCapture(
+    pageId: string,
+    initialPage: NotePage,
+  ): { captured: PaneChromeOverrides[] } {
+    const captured: PaneChromeOverrides[] = [];
+    const captureFn = (overrides: PaneChromeOverrides) => {
+      captured.push(overrides);
+    };
+    const href = `/pages/${pageId}`;
+    const identity = resolvePaneRouteIdentity(href);
+    render(
+      <FeedbackProvider>
+        <PaneRuntimeProvider
+          paneId="pane-chrome-test"
+          href={href}
+          routeId={identity.routeId}
+          routeKey={identity.routeKey}
+          pathParams={{ pageId }}
+          canGoBack={false}
+          canGoForward={false}
+          onNavigatePane={vi.fn()}
+          onReplacePane={vi.fn()}
+          onOpenInNewPane={vi.fn()}
+          onGoBackPane={vi.fn()}
+          onGoForwardPane={vi.fn()}
+        >
+          <PaneChromeOverrideContext.Provider value={captureFn}>
+            <PagePaneBody pageIdOverride={pageId} initialPage={initialPage} />
+          </PaneChromeOverrideContext.Provider>
+        </PaneRuntimeProvider>
+      </FeedbackProvider>,
+    );
+    return { captured };
+  }
+
+  it("publishes open-yesterday and open-tomorrow options when the page is a daily note", async () => {
+    const page: NotePage = {
+      ...activationPage(PAGE_ID, BLOCK_ID),
+      dailyNote: { localDate: "2026-07-07" },
+    };
+
+    const { captured } = renderWithChromeCapture(PAGE_ID, page);
+
+    await waitFor(() => {
+      expect(
+        captured.flatMap((c) => c.options?.map((o) => o.id) ?? []),
+      ).toContain("daily-open-yesterday");
+    });
+    expect(
+      captured.flatMap((c) => c.options?.map((o) => o.id) ?? []),
+    ).toContain("daily-open-tomorrow");
+  });
+
+  it("omits open-yesterday and open-tomorrow options when the page has no daily note", async () => {
+    const page: NotePage = {
+      ...activationPage(PAGE_ID, BLOCK_ID),
+      dailyNote: null,
+    };
+
+    const { captured } = renderWithChromeCapture(PAGE_ID, page);
+
+    await waitFor(() => {
+      expect(
+        captured.flatMap((c) => c.options?.map((o) => o.id) ?? []),
+      ).not.toContain("daily-open-yesterday");
+    });
+  });
+});
+
 function citedBlock(): HTMLElement {
   return screen.getByRole("listitem");
 }
@@ -415,6 +506,7 @@ function activationPage(pageId: string, blockId: string): NotePage {
     title: "Cited page",
     surface: null,
     updatedAt: "2026-01-01T00:00:00Z",
+    dailyNote: null,
     blocks: [
       {
         id: blockId,

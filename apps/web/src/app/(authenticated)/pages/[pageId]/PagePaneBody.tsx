@@ -45,12 +45,14 @@ import {
   noteBlocksToOutlineDoc,
 } from "@/lib/notes/prosemirror/schema";
 import {
+  fetchDailyNotePage,
   fetchNoteBlock,
   fetchNotePage,
   saveResourceSurface,
   type NotePage,
   type SaveResourceSurfaceInput,
 } from "@/lib/notes/api";
+import { shiftLocalDate } from "@/lib/localDate";
 import type { NoteBlock } from "@/lib/notes/normalize";
 import {
   draftBlocksById,
@@ -651,6 +653,14 @@ export default function PagePaneBody({
     [openInNewPaneCommand, router],
   );
 
+  const openDatedPage = useCallback(
+    async (localDate: string) => {
+      const nextPage = await fetchDailyNotePage(localDate);
+      router.push(`/pages/${nextPage.id}`);
+    },
+    [router],
+  );
+
   const pinCurrentObject = useCallback(async () => {
     try {
       if (focusBlockId) {
@@ -672,8 +682,23 @@ export default function PagePaneBody({
     }
   }, [focusBlockId, pinPageId, toast]);
 
+  const dailyLocalDate = page?.dailyNote?.localDate ?? null;
   const paneOptions = useMemo(
     () => [
+      ...(dailyLocalDate
+        ? [
+            {
+              id: "daily-open-yesterday",
+              label: "Open yesterday",
+              onSelect: () => void openDatedPage(shiftLocalDate(dailyLocalDate, -1)),
+            },
+            {
+              id: "daily-open-tomorrow",
+              label: "Open tomorrow",
+              onSelect: () => void openDatedPage(shiftLocalDate(dailyLocalDate, 1)),
+            },
+          ]
+        : []),
       {
         id: "show-note-connections",
         label: "Show connections",
@@ -689,7 +714,7 @@ export default function PagePaneBody({
         },
       },
     ],
-    [focusBlockId, pinCurrentObject, requestSecondarySurface],
+    [dailyLocalDate, focusBlockId, openDatedPage, pinCurrentObject, requestSecondarySurface],
   );
   usePaneChromeOverride({ options: paneOptions });
 
