@@ -1,8 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import MachineText from "@/components/ui/MachineText";
+import MachineText, { type MachineSignatureTime } from "@/components/ui/MachineText";
 import { MarkdownMessage } from "@/components/ui/MarkdownMessage";
+import { formatDisplayDate } from "@/lib/display/format";
+import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import { dismissDawnWrite, type DawnWrite } from "@/lib/notes/api";
 import styles from "./DawnWriteBlock.module.css";
 
@@ -11,15 +13,18 @@ interface DawnWriteBlockProps {
 }
 
 export default function DawnWriteBlock({ write }: DawnWriteBlockProps) {
+  const display = useRenderEnvironment();
   const [dismissed, setDismissed] = useState(write.dismissed_at !== null);
 
   if (dismissed) return null;
 
-  const generatedAt = new Date(write.generated_at);
-  const displayTime = new Intl.DateTimeFormat("en-US", {
+  const displayTime = formatDisplayDate(write.generated_at, display, {
     hour: "numeric",
     minute: "2-digit",
-  }).format(generatedAt);
+  });
+  const signature: MachineSignatureTime = displayTime
+    ? { timestamp: displayTime, timestampIso: write.generated_at }
+    : {};
 
   const handleDismiss = () => {
     setDismissed(true);
@@ -34,8 +39,7 @@ export default function DawnWriteBlock({ write }: DawnWriteBlockProps) {
     <div className={styles.dawnWriteShell} data-testid="dawn-write-block">
       <MachineText
         origin={{ label: "Dawn" }}
-        timestamp={displayTime}
-        timestampIso={write.generated_at}
+        {...signature}
         variant="block"
         data-testid="dawn-write-machine"
       >

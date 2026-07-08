@@ -895,9 +895,9 @@ export default function LibraryPaneBody() {
           void handleRemoveFromLibrary(libraryId);
         }}
       />
-      <LibraryBrief libraryId={id} />
       <PaneSurface
         opener={<SectionOpener heading={currentLibrary.name} scale="title" />}
+        brief={<LibraryBrief libraryId={id} />}
         toolbar={
           visibleEntries.length > 0 ? (
             <PaneToolbar

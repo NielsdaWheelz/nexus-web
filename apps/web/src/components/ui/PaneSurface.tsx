@@ -6,6 +6,7 @@ import styles from "./PaneSurface.module.css";
 
 interface PaneSurfaceProps {
   opener?: ReactNode;
+  brief?: ReactNode;
   toolbar?: ReactNode;
   state?: ReactNode;
   empty?: ReactNode;
@@ -29,6 +30,7 @@ function isRenderableContent(node: ReactNode): boolean {
 
 export default function PaneSurface({
   opener,
+  brief,
   toolbar,
   state,
   empty,
@@ -41,6 +43,7 @@ export default function PaneSurface({
   return (
     <div className={cx(styles.surface, className)}>
       {opener ? <div className={styles.opener}>{opener}</div> : null}
+      {brief ? <div className={styles.brief}>{brief}</div> : null}
       {toolbar ? <div className={styles.toolbar}>{toolbar}</div> : null}
       {state ? <div className={styles.state}>{state}</div> : null}
       {hasContent ? (

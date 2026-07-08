@@ -33,7 +33,7 @@ export interface PaneResourceLoader {
 
 // Only panes whose primary first-paint resource is FastAPI-backed AND
 // deterministically keyed by the route params appear here. Deliberately NOT
-// prefetched (client-fetch on open): daily (needs the browser timezone), page
+// prefetched (client-fetch on open): page
 // (cacheKey embeds the editor saveScope), conversation (streaming, multi-fetch
 // snapshot), podcastDetail / podcasts (cacheKey embeds mutable filter/sort/search UI
 // state), settingsIdentities (Supabase server action, no FastAPI path),

@@ -501,20 +501,24 @@ def test_reader_citation_data_has_one_constructor():
 
 
 def test_intelligence_pane_does_not_poll():
-    pane_files = [
-        _WEB_ROOT
-        / "app"
-        / "(authenticated)"
-        / "libraries"
-        / "[id]"
-        / "LibraryIntelligencePane.tsx",
+    # LibraryIntelligencePane.tsx was deleted by the machine-output-in-place cutover;
+    # the inline dossier now lives in the LibraryBrief component family.
+    deleted = (
+        _WEB_ROOT / "app" / "(authenticated)" / "libraries" / "[id]" / "LibraryIntelligencePane.tsx"
+    )
+    assert not deleted.exists(), f"LibraryIntelligencePane.tsx should have been deleted: {deleted}"
+
+    # The replacement components and the shared stream hook must not poll either.
+    brief_files = [
+        _WEB_ROOT / "components" / "library" / "LibraryBrief.tsx",
+        _WEB_ROOT / "components" / "library" / "LibraryBriefArtifact.tsx",
         _WEB_ROOT / "components" / "library" / "useLibraryIntelligenceStream.ts",
     ]
-    for pane in pane_files:
-        assert pane.exists(), f"expected intelligence pane file {pane}"
+    for f in brief_files:
+        assert f.exists(), f"expected library brief file {f}"
     pattern = r"refreshVersion|setInterval|setTimeout|refetchInterval|pollInterval"
-    hits = _grep(pattern, *pane_files)
-    assert not hits, f"intelligence pane uses a polling primitive (AC-10):\n{_fmt(hits)}"
+    hits = _grep(pattern, *brief_files)
+    assert not hits, f"library brief uses a polling primitive (AC-10):\n{_fmt(hits)}"
 
 
 # =============================================================================

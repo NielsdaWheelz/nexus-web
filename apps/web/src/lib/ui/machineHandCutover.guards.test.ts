@@ -86,6 +86,9 @@ describe("Machine Hand cutover source gates", () => {
     expect(sourceText("src/components/chat/AssistantMessage.tsx")).toMatch(
       /from\s+["']@\/components\/ui\/MachineText["']/,
     );
+    expect(sourceText("src/components/notes/DawnWriteBlock.tsx")).toMatch(
+      /from\s+["']@\/components\/ui\/MachineText["']/,
+    );
 
     // AssistantEvidenceDisclosure (which imports MarkdownMessage directly) is
     // rendered ONLY by AssistantMessage — the wrapper that owns the register.
