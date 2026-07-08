@@ -20,6 +20,7 @@
 .signalList {
   display: inline-flex;
   min-width: 0;
+  max-width: 100%;
   flex-wrap: wrap;
   gap: var(--space-1);
 }
@@ -27,6 +28,7 @@
 .signalItem {
   display: inline-flex;
   min-width: 0;
+  max-width: 100%;
   gap: var(--space-1);
 }
 
@@ -35,6 +37,9 @@
 }
 
 .connections {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
   border: 0;
   background: none;
   padding: 0;
@@ -42,6 +47,7 @@
   font: inherit;
   font-size: var(--text-sm);
   cursor: pointer;
+  text-overflow: ellipsis;
   white-space: nowrap;
   transition: color var(--duration-fast) var(--ease-glide);
 }
@@ -64,4 +70,24 @@
   height: 100%;
   border-radius: var(--radius-full);
   background: var(--accent);
+}
+
+.contributorList {
+  overflow: hidden;
+}
+
+.controls {
+  display: inline-flex;
+  min-width: 0;
+  max-width: min(22rem, 100%);
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.controls > * {
+  min-width: 0;
+  max-width: 100%;
 }

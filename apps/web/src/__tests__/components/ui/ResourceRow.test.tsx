@@ -1,8 +1,31 @@
+import { FileText } from "lucide-react";
 import { render, screen } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import { describe, expect, it, vi } from "vitest";
+import ContributorCreditList from "@/components/contributors/ContributorCreditList";
 import ResourceList from "@/components/ui/ResourceList";
 import ResourceRow from "@/components/ui/ResourceRow";
+import ResourceThumb from "@/components/ui/ResourceThumb";
+
+function describeElement(element: HTMLElement): string {
+  return (
+    element.getAttribute("aria-label") ??
+    element.getAttribute("role") ??
+    element.tagName.toLowerCase()
+  );
+}
+
+function horizontallyScrollableElements(root: HTMLElement): string[] {
+  return [root, ...Array.from(root.querySelectorAll<HTMLElement>("*"))]
+    .filter((element) => {
+      const overflowX = getComputedStyle(element).overflowX;
+      return (
+        (overflowX === "auto" || overflowX === "scroll") &&
+        element.scrollWidth > element.clientWidth + 1
+      );
+    })
+    .map(describeElement);
+}
 
 describe("ResourceRow", () => {
   it("renders a real link row and keeps actions outside the link", () => {
@@ -118,5 +141,62 @@ describe("ResourceRow", () => {
     expect(screen.getByText("Static item")).toBeInTheDocument();
     expect(screen.queryByRole("button")).toBeNull();
     expect(screen.queryByRole("link")).toBeNull();
+  });
+
+  it("keeps populated rows inside a 320px narrow container", () => {
+    render(
+      <div
+        data-testid="narrow-row-host"
+        style={{ width: "320px", maxWidth: "320px" }}
+      >
+        <ResourceList>
+          <ResourceRow
+            primary={{ kind: "link", href: "/media/long-row" }}
+            leading={
+              <ResourceThumb
+                spec={{ icon: FileText }}
+                alt="A very long narrow resource row"
+              />
+            }
+            title="A very long narrow resource row title that should stay readable without creating horizontal overflow"
+            description="This description represents secondary context that should not force the card wider than the viewport."
+            meta="Publisher With A Very Long Name · 2026 · A signal that needs to clamp on narrow rows"
+            badges={<span>Research status with a long label</span>}
+            contributors={
+              <ContributorCreditList
+                credits={[
+                  {
+                    contributor_handle: "first-contributor",
+                    contributor_display_name: "First Contributor With A Long Name",
+                    credited_name: "First Contributor With A Long Name",
+                    role: "author",
+                    href: "/authors/first-contributor",
+                  },
+                  {
+                    contributor_handle: "second-contributor",
+                    contributor_display_name: "Second Contributor With A Long Name",
+                    credited_name: "Second Contributor With A Long Name",
+                    role: "editor",
+                    href: "/authors/second-contributor",
+                  },
+                ]}
+                showRole
+              />
+            }
+            secondary={<button type="button">↳ 14 connected</button>}
+            actions={<button type="button">Secondary action with long label</button>}
+          />
+        </ResourceList>
+      </div>,
+    );
+
+    const host = screen.getByTestId("narrow-row-host");
+    expect(host.clientWidth).toBe(320);
+    expect(host.scrollWidth).toBeLessThanOrEqual(host.clientWidth + 1);
+    expect(horizontallyScrollableElements(host)).toEqual([]);
+    expect(screen.getByRole("link", { name: /narrow resource row title/ })).toHaveAttribute(
+      "href",
+      "/media/long-row",
+    );
   });
 });

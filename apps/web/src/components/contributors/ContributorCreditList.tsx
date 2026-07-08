@@ -1,9 +1,9 @@
 "use client";
 
-import type { CSSProperties } from "react";
 import ContributorChip from "@/components/contributors/ContributorChip";
 import type { ContributorCredit } from "@/lib/contributors/types";
 import { cx } from "@/lib/ui/cx";
+import styles from "./ContributorCreditList.module.css";
 
 interface ContributorCreditListProps {
   credits: ContributorCredit[] | null | undefined;
@@ -11,27 +11,6 @@ interface ContributorCreditListProps {
   maxVisible?: number;
   showRole?: boolean;
 }
-
-const listStyle: CSSProperties = {
-  display: "inline-flex",
-  alignItems: "center",
-  flexWrap: "wrap",
-  gap: "var(--space-1)",
-  minWidth: 0,
-};
-
-const overflowStyle: CSSProperties = {
-  display: "inline-flex",
-  alignItems: "center",
-  border: "1px solid var(--edge-subtle)",
-  borderRadius: "var(--radius-full)",
-  padding: "2px var(--space-2)",
-  background: "var(--surface-2)",
-  color: "var(--ink-muted)",
-  fontSize: "var(--text-xs)",
-  lineHeight: "var(--leading-snug)",
-  whiteSpace: "nowrap",
-};
 
 export default function ContributorCreditList({
   credits,
@@ -53,7 +32,7 @@ export default function ContributorCreditList({
   const overflowCount = linkableCredits.length - visibleCredits.length;
 
   return (
-    <span className={cx(className)} style={listStyle}>
+    <span className={cx(styles.list, className)}>
       {visibleCredits.map((credit, index) => (
         <ContributorChip
           key={`${credit.contributor_handle}-${credit.role ?? "role"}-${index}`}
@@ -61,7 +40,7 @@ export default function ContributorCreditList({
           showRole={showRole}
         />
       ))}
-      {overflowCount > 0 ? <span style={overflowStyle}>+{overflowCount}</span> : null}
+      {overflowCount > 0 ? <span className={styles.overflow}>+{overflowCount}</span> : null}
     </span>
   );
 }

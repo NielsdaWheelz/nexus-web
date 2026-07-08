@@ -4,6 +4,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import type { CollectionRowView } from "@/lib/collections/types";
+import type { ContributorCredit } from "@/lib/contributors/types";
 import { useMediaRelated } from "@/lib/collections/useMediaRelated";
 import type { ConnectionEndpointOut } from "@/lib/resourceGraph/connections";
 import CollectionView from "./CollectionView";
@@ -24,6 +25,36 @@ function row(id: string, text: string, href: string): CollectionRowView {
     headline: { text },
     signals: [],
   };
+}
+
+function contributor(index: number): ContributorCredit {
+  return {
+    contributor_handle: `contributor-${index}`,
+    contributor_display_name: `Contributor ${index}`,
+    credited_name: `Contributor ${index}`,
+    role: "author",
+    href: `/authors/contributor-${index}`,
+  };
+}
+
+function describeElement(element: HTMLElement): string {
+  return (
+    element.getAttribute("aria-label") ??
+    element.getAttribute("role") ??
+    element.tagName.toLowerCase()
+  );
+}
+
+function horizontallyScrollableElements(root: HTMLElement): string[] {
+  return [root, ...Array.from(root.querySelectorAll<HTMLElement>("*"))]
+    .filter((element) => {
+      const overflowX = getComputedStyle(element).overflowX;
+      return (
+        (overflowX === "auto" || overflowX === "scroll") &&
+        element.scrollWidth > element.clientWidth + 1
+      );
+    })
+    .map(describeElement);
 }
 
 const ROWS: CollectionRowView[] = [
@@ -151,6 +182,118 @@ describe("CollectionView", () => {
     renderView({ rows: [{ ...ROWS[0], consumption: { status: "unread" } }] });
 
     expect(screen.getByText("Unread")).toBeInTheDocument();
+  });
+
+  it("keeps compact collection rows inside a 320px mobile width", async () => {
+    render(
+      withRenderEnvironment(
+        <div
+          data-testid="mobile-collection-host"
+          style={{ width: "320px", maxWidth: "320px" }}
+        >
+          <CollectionView
+            rows={[
+              {
+                ...ROWS[0],
+                headline: {
+                  text: "A compact collection row with a very long title that should clamp on mobile",
+                },
+                signals: [
+                  { value: "Very Long Publisher Name" },
+                  { value: "2026" },
+                  { value: "Long secondary signal" },
+                ],
+                contributors: {
+                  credits: [contributor(1), contributor(2), contributor(3)],
+                  maxVisible: 3,
+                },
+                status: {
+                  tone: "neutral",
+                  label: "Extremely Long Status Label",
+                },
+              },
+            ]}
+            view="list"
+            density="compact"
+            status="ready"
+            ariaLabel="Documents"
+          />
+        </div>,
+      ),
+    );
+
+    const host = await screen.findByTestId("mobile-collection-host");
+    expect(host.clientWidth).toBe(320);
+    expect(host.scrollWidth).toBeLessThanOrEqual(host.clientWidth + 1);
+    expect(horizontallyScrollableElements(host)).toEqual([]);
+    expect(screen.getAllByRole("link", { name: /Contributor/ })).toHaveLength(2);
+    expect(screen.getByText("+1")).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: /compact collection row/ })).toHaveStyle({
+      width: "32px",
+      height: "32px",
+    });
+
+    const primary = screen.getByRole("link", { name: /compact collection row/ });
+    primary.focus();
+    expect(primary).toHaveFocus();
+
+    await userEvent.keyboard("{ArrowRight}");
+    expect(screen.getByRole("button", { name: "Related" })).toHaveFocus();
+
+    await userEvent.keyboard("{ArrowLeft}");
+    expect(primary).toHaveFocus();
+  });
+
+  it("keeps compact sortable rows inside a 320px mobile width", async () => {
+    const onReorder = vi.fn();
+    render(
+      withRenderEnvironment(
+        <div
+          data-testid="mobile-sortable-host"
+          style={{ width: "320px", maxWidth: "320px" }}
+        >
+          <CollectionView
+            rows={[
+              {
+                ...ROWS[0],
+                headline: {
+                  text: "A sortable compact row with enough text to prove the div row path",
+                },
+                signals: [{ value: "Manual order" }, { value: "Long collection metadata" }],
+                contributors: {
+                  credits: [contributor(1), contributor(2), contributor(3)],
+                  maxVisible: 3,
+                },
+              },
+            ]}
+            view="list"
+            density="compact"
+            status="ready"
+            ariaLabel="Documents"
+            sortable={{
+              onReorder,
+              renderControls: (_row, { handleProps }) => (
+                <button
+                  type="button"
+                  aria-label="Drag row"
+                  {...handleProps.attributes}
+                  {...handleProps.listeners}
+                >
+                  Drag
+                </button>
+              ),
+            }}
+          />
+        </div>,
+      ),
+    );
+
+    const host = await screen.findByTestId("mobile-sortable-host");
+    expect(host.clientWidth).toBe(320);
+    expect(host.scrollWidth).toBeLessThanOrEqual(host.clientWidth + 1);
+    expect(horizontallyScrollableElements(host)).toEqual([]);
+    expect(screen.getByRole("button", { name: "Drag row" })).toBeInTheDocument();
+    expect(onReorder).not.toHaveBeenCalled();
   });
 
   it("moves focus from the first row to the second on ArrowDown", async () => {

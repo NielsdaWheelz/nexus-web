@@ -1,11 +1,11 @@
 "use client";
 
-import type { CSSProperties } from "react";
 import { isProdBuild } from "@/lib/build-mode";
 import type { ContributorCredit, ContributorSummary } from "@/lib/contributors/types";
 import { formatContributorRole } from "@/lib/contributors/formatting";
 import { contributorAuthorHref } from "@/lib/contributors/routes";
 import { cx } from "@/lib/ui/cx";
+import styles from "./ContributorChip.module.css";
 
 interface ContributorChipProps {
   credit?: ContributorCredit;
@@ -13,26 +13,6 @@ interface ContributorChipProps {
   className?: string;
   showRole?: boolean;
 }
-
-const chipStyle: CSSProperties = {
-  display: "inline-flex",
-  alignItems: "center",
-  gap: "var(--space-1)",
-  maxWidth: "100%",
-  border: "1px solid var(--edge-subtle)",
-  borderRadius: "var(--radius-full)",
-  padding: "2px var(--space-2)",
-  background: "var(--surface-2)",
-  color: "var(--ink)",
-  fontSize: "var(--text-xs)",
-  lineHeight: "var(--leading-snug)",
-  textDecoration: "none",
-  whiteSpace: "nowrap",
-};
-
-const roleStyle: CSSProperties = {
-  color: "var(--ink-muted)",
-};
 
 export default function ContributorChip({
   credit,
@@ -75,9 +55,9 @@ export default function ContributorChip({
   );
   if (isUnlinkedCredit) {
     return (
-      <span className={cx(className)} style={chipStyle} title={title}>
-        <span>{label}</span>
-        {roleLabel ? <span style={roleStyle}>{roleLabel}</span> : null}
+      <span className={cx(styles.chip, className)} title={title}>
+        <span className={styles.label}>{label}</span>
+        {roleLabel ? <span className={styles.role}>{roleLabel}</span> : null}
       </span>
     );
   }
@@ -94,13 +74,12 @@ export default function ContributorChip({
   return (
     <a
       href={href}
-      className={cx(className)}
-      style={chipStyle}
+      className={cx(styles.chip, className)}
       title={title}
       data-pane-title-hint={label}
     >
-      <span>{label}</span>
-      {roleLabel ? <span style={roleStyle}>{roleLabel}</span> : null}
+      <span className={styles.label}>{label}</span>
+      {roleLabel ? <span className={styles.role}>{roleLabel}</span> : null}
     </a>
   );
 }

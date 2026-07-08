@@ -124,7 +124,7 @@ describe("pane surface/resource row cutover source gates", () => {
 
   it("keeps new primitives below pane runtime and domain layers", () => {
     const forbiddenImport =
-      /from\s+["']@\/(app|components\/workspace|lib\/(api|conversations|libraries|media|notes|panes|resources|search|workspace))/;
+      /from\s+["']@\/(app|components\/workspace|lib\/(api|collections|conversations|libraries|media|notes|panes|resources|search|workspace))/;
     const offenders = [
       "src/components/ui/PaneSurface.tsx",
       "src/components/ui/PaneSection.tsx",

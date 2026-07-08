@@ -64,7 +64,7 @@ const Pill = forwardRef<HTMLSpanElement, PillProps>(function Pill(
 
   return (
     <span ref={ref} className={cls} {...rest}>
-      {children}
+      <span className={styles.label}>{children}</span>
     </span>
   );
 });

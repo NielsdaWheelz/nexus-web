@@ -9,6 +9,12 @@ import styles from "./ResourceThumb.module.css";
 const SIZE_PX = { sm: 32, md: 44, lg: 64 } as const;
 type ResourceThumbSize = keyof typeof SIZE_PX | "fill";
 
+const sizeClass: Record<keyof typeof SIZE_PX, string> = {
+  sm: styles.sizeSm,
+  md: styles.sizeMd,
+  lg: styles.sizeLg,
+};
+
 export default function ResourceThumb({
   spec,
   alt,
@@ -24,6 +30,7 @@ export default function ResourceThumb({
 }) {
   const fill = size === "fill";
   const px = fill ? 320 : SIZE_PX[size];
+  const sizingClass = fill ? styles.fill : sizeClass[size];
   const transitionStyle: CSSProperties = viewTransitionName
     ? { viewTransitionName }
     : {};
@@ -36,7 +43,7 @@ export default function ResourceThumb({
         alt={alt}
         width={px}
         height={px}
-        className={cx(styles.cover, fill && styles.fill, className)}
+        className={cx(styles.cover, sizingClass, className)}
         data-view-transition-part="thumb"
         style={viewTransitionName ? transitionStyle : undefined}
       />
@@ -46,11 +53,8 @@ export default function ResourceThumb({
   const Icon = spec.icon;
   return (
     <span
-      className={cx(styles.iconTile, fill && styles.fill, className)}
-      style={{
-        ...(fill ? {} : { width: px, height: px }),
-        ...transitionStyle,
-      }}
+      className={cx(styles.iconTile, sizingClass, className)}
+      style={viewTransitionName ? transitionStyle : undefined}
       data-view-transition-part="thumb"
       role="img"
       aria-label={alt}

@@ -135,7 +135,11 @@ export default function CollectionRow({
   const actions =
     controls || row.actions?.length ? (
       <>
-        {controls}
+        {controls ? (
+          <div className={styles.controls} data-collection-row-controls="true">
+            {controls}
+          </div>
+        ) : null}
         {row.actions?.length ? (
           <ActionMenu
             options={row.actions}
@@ -191,6 +195,7 @@ export default function CollectionRow({
       contributors={
         row.contributors ? (
           <ContributorCreditList
+            className={styles.contributorList}
             credits={row.contributors.credits}
             showRole={row.contributors.showRole}
             maxVisible={
