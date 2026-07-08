@@ -14,6 +14,7 @@ from nexus.services.search.projection import _truncate_snippet
 from nexus.services.search.results import (
     InternalSearchResult,
     _build_search_score,
+    _RankedArtifactResult,
     _RankedConversationResult,
     _RankedMessageResult,
 )
@@ -145,3 +146,70 @@ def _search_conversations(
         )
         for row in rows
     ]
+
+
+def _search_conversation_artifacts(
+    db: Session,
+    viewer_id: UUID,
+    q: str,
+    scope_type: str,
+    scope_id: UUID | None,
+    limit: int,
+) -> list[InternalSearchResult]:
+    """Lexical FTS over promoted conversation distillates (S4).
+
+    A distillate is retrievable only when it is the head's CURRENT revision and its
+    conversation is visible; library dossiers are excluded by the kind filter.
+    """
+    scope_clause = scope_filter_sql(scope_type, scope_id, "conversation")
+    if isinstance(scope_clause, ScopeUnsupported):
+        return []
+    scope_filter, scope_params = scope_clause
+    params: dict[str, Any] = {"viewer_id": viewer_id, "query": q, "limit": limit}
+    params.update(scope_params)
+
+    rows = db.execute(
+        text(
+            f"""
+            WITH visible_conversations AS ({visible_conversation_ids_cte_sql()})
+            SELECT
+                a.subject_id AS conversation_id,
+                r.id AS revision_id,
+                ts_rank_cd(
+                    to_tsvector('english', COALESCE(r.content_md, '')),
+                    websearch_to_tsquery('english', :query)
+                ) AS score,
+                ts_headline(
+                    'english',
+                    COALESCE(r.content_md, ''),
+                    websearch_to_tsquery('english', :query),
+                    'MaxWords=40, MinWords=8, MaxFragments=1'
+                ) AS snippet
+            FROM artifacts a
+            JOIN artifact_revisions r ON r.id = a.current_revision_id
+            JOIN visible_conversations vc ON vc.conversation_id = a.subject_id
+            WHERE a.subject_scheme = 'conversation'
+              AND a.kind = 'conversation_distillate'
+              AND to_tsvector('english', COALESCE(r.content_md, ''))
+                  @@ websearch_to_tsquery('english', :query)
+              {_artifact_scope_filter(scope_filter)}
+            ORDER BY score DESC, r.id ASC
+            LIMIT :limit
+            """
+        ),
+        params,
+    ).fetchall()
+    return [
+        _RankedArtifactResult(
+            id=row[0],
+            revision_id=row[1],
+            snippet=_truncate_snippet(str(row[3] or "")),
+            score=_build_search_score(row[2]),
+        )
+        for row in rows
+    ]
+
+
+def _artifact_scope_filter(conversation_scope_filter: str) -> str:
+    """Rewrite the conversation-scope filter (``c.id``) onto the artifact subject."""
+    return conversation_scope_filter.replace("c.id", "a.subject_id")

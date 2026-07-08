@@ -22,6 +22,7 @@ TYPE_WEIGHTS = {
     "evidence_span": 1.15,
     "reader_apparatus_item": 1.1,
     "conversation": 0.95,
+    "artifact": 0.95,
     "web_result": 0.9,
 }
 

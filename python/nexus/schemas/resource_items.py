@@ -269,7 +269,7 @@ class ResourceItemCapabilitiesOut(BaseModel):
         "media_owned_reader_children",
         "page_note_blocks",
         "note_block_owned_evidence",
-        "library_intelligence_artifact_revisions",
+        "artifact_revisions",
     ] = Field(
         validation_alias=AliasChoices("expansion_policy", "expansionPolicy"),
         serialization_alias="expansionPolicy",

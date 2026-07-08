@@ -13,7 +13,7 @@ def test_registry_job_kinds_match_task_catalog_contract():
         "ingest_media_source",
         "enrich_metadata",
         "chat_run",
-        "library_intelligence_artifact_generate",
+        "library_dossier_generate",
         "media_unit_build",
         "podcast_sync_subscription_job",
         "podcast_reindex_semantic_job",
@@ -28,6 +28,8 @@ def test_registry_job_kinds_match_task_catalog_contract():
         "synapse_scan",
         "dawn_write_job",
         "contributor_reconciliation",
+        "conversation_distill",
+        "conversation_distill_sweep",
     }
     actual_kinds = set(get_default_registry().keys())
     assert actual_kinds == expected_kinds, (

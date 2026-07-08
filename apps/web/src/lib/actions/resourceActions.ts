@@ -297,15 +297,25 @@ export function episodeResourceOptions(input: {
 
 export function conversationResourceOptions(input: {
   deleting?: boolean;
+  distilling?: boolean;
+  onDistill?: () => void;
   onDelete: () => void;
 }): ActionMenuOption[] {
-  return [
-    {
-      id: "delete-conversation",
-      label: input.deleting ? "Deleting..." : "Delete conversation",
-      tone: "danger",
-      disabled: input.deleting,
-      onSelect: input.onDelete,
-    },
-  ];
+  const options: ActionMenuOption[] = [];
+  if (input.onDistill) {
+    options.push({
+      id: "distill-conversation",
+      label: input.distilling ? "Distilling..." : "Distill",
+      disabled: input.distilling,
+      onSelect: input.onDistill,
+    });
+  }
+  options.push({
+    id: "delete-conversation",
+    label: input.deleting ? "Deleting..." : "Delete conversation",
+    tone: "danger",
+    disabled: input.deleting,
+    onSelect: input.onDelete,
+  });
+  return options;
 }

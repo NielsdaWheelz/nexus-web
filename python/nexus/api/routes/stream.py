@@ -29,10 +29,10 @@ from nexus.db.session import get_session_factory
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
 from nexus.services import chat_runs as chat_runs_service
-from nexus.services import library_intelligence_revisions as library_intelligence_revisions_service
 from nexus.services import media as media_service
 from nexus.services import oracle as oracle_service
 from nexus.services import run_kit
+from nexus.services.artifacts import revisions as artifact_revisions_service
 from nexus.services.redact import safe_kv
 
 router = APIRouter(tags=["streaming"])
@@ -76,15 +76,15 @@ _ORACLE_READING_KIND = CursorStreamKind(
     ),
 )
 
-_LIBRARY_INTELLIGENCE_KIND = CursorStreamKind(
-    run_kind=run_kit.RunStreamKind.LibraryIntelligence,
+_ARTIFACT_REVISION_KIND = CursorStreamKind(
+    run_kind=run_kit.RunStreamKind.ArtifactRevision,
     assert_viewer=lambda db, viewer_id, revision_id: (
-        library_intelligence_revisions_service.assert_revision_viewer(
+        artifact_revisions_service.assert_revision_viewer(
             db, viewer_id=viewer_id, revision_id=revision_id
         )
     ),
     read_after=lambda db, viewer_id, revision_id, after: run_kit.get_run_events(
-        db, run_kit.RunStreamKind.LibraryIntelligence, revision_id, after
+        db, run_kit.RunStreamKind.ArtifactRevision, revision_id, after
     ),
 )
 
@@ -156,8 +156,8 @@ async def stream_oracle_reading_events(
     )
 
 
-@router.get("/stream/library-intelligence/{revision_id}/events")
-async def stream_library_intelligence_events(
+@router.get("/stream/artifact-revisions/{revision_id}/events")
+async def stream_artifact_revision_events(
     request: Request,
     revision_id: UUID,
     viewer_id: Annotated[UUID, Depends(get_stream_viewer)],
@@ -166,7 +166,7 @@ async def stream_library_intelligence_events(
 ) -> StreamingResponse:
     cursor = after if after is not None else _parse_last_event_id(last_event_id)
     return await make_cursor_stream_response(
-        _LIBRARY_INTELLIGENCE_KIND,
+        _ARTIFACT_REVISION_KIND,
         request=request,
         entity_id=revision_id,
         viewer_id=viewer_id,

@@ -30,8 +30,8 @@ describe("resourceKind", () => {
     expect(resourceObjectTypeForScheme("oracle_reading")).toBe(
       "oracle_reading",
     );
-    expect(resourceObjectTypeForScheme("library_intelligence_revision")).toBe(
-      "library_intelligence_revision",
+    expect(resourceObjectTypeForScheme("artifact_revision")).toBe(
+      "artifact_revision",
     );
     expect(resourceObjectTypeForScheme("oracle_passage_anchor")).toBe(
       "oracle_passage_anchor",

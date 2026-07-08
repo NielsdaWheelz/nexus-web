@@ -234,10 +234,10 @@ def load_resource_batch(
             loaded = _load_media(db, items, viewer_id=viewer_id)
         elif scheme == "library":
             loaded = _load_library(db, items, viewer_id=viewer_id)
-        elif scheme == "library_intelligence_artifact":
-            loaded = _load_library_intelligence_artifact(db, items, viewer_id=viewer_id)
-        elif scheme == "library_intelligence_revision":
-            loaded = _load_library_intelligence_revision(db, items, viewer_id=viewer_id)
+        elif scheme == "artifact":
+            loaded = _load_artifact(db, items, viewer_id=viewer_id)
+        elif scheme == "artifact_revision":
+            loaded = _load_artifact_revision(db, items, viewer_id=viewer_id)
         elif scheme == "evidence_span":
             loaded = _load_evidence_span(db, items, viewer_id=viewer_id)
         elif scheme == "content_chunk":
@@ -304,7 +304,7 @@ def reader_target_for_citation_target(
     """Reconstruct the in-reader jump ``(media_id, locator)`` for a citation target.
 
     The render contract (G6): the same single ``ReaderCitationData`` jump path lights
-    up for chat, Oracle, and Library Intelligence, all of which cite the finest-grained
+    up for chat, Oracle, and the library dossier, all of which cite the finest-grained
     object (``evidence_span``/``content_chunk``/``media``). Position lives in the target,
     not the edge (D11), so it is recomputed here from the target's own anchoring using
     the single locator owner (``locator_resolver``), exactly as search and LI synthesis do.
@@ -554,10 +554,10 @@ def _load_library(
     return out
 
 
-def _load_library_intelligence_artifact(
+def _load_artifact(
     db: Session, items: list[ResourceRef], *, viewer_id: UUID
 ) -> list[LoadedResource]:
-    """Resolve each artifact head to its CURRENT revision content_md.
+    """Resolve each library-dossier artifact head to its CURRENT revision content_md.
 
     Joins head -> libraries (name) -> LEFT JOIN current revision (content_md). The
     head resolves to whatever is current at this call (fresh per assembly). A head
@@ -568,13 +568,13 @@ def _load_library_intelligence_artifact(
     rows = db.execute(
         text(
             """
-            SELECT a.id, a.library_id, l.name, r.id AS revision_id, r.content_md,
+            SELECT a.id, a.subject_id AS library_id, l.name, r.id AS revision_id, r.content_md,
                    r.status, a.current_revision_id = r.id AS revision_is_current
-            FROM library_intelligence_artifacts a
-            JOIN libraries l ON l.id = a.library_id
-            LEFT JOIN library_intelligence_artifact_revisions r
+            FROM artifacts a
+            JOIN libraries l ON l.id = a.subject_id
+            LEFT JOIN artifact_revisions r
                 ON r.id = a.current_revision_id
-            WHERE a.id = ANY(:ids)
+            WHERE a.id = ANY(:ids) AND a.subject_scheme = 'library'
             """
         ),
         {"ids": ids},
@@ -584,12 +584,12 @@ def _load_library_intelligence_artifact(
     for ref in items:
         row = by_id.get(ref.id)
         if row is None or not is_library_member(db, viewer_id, row[1]):
-            out.append(_missing(ref.uri, "library_intelligence_artifact"))
+            out.append(_missing(ref.uri, "artifact"))
             continue
         out.append(
             LoadedResource(
                 uri=ref.uri,
-                scheme="library_intelligence_artifact",
+                scheme="artifact",
                 title=str(row[2]),
                 body=str(row[4]) if row[4] is not None else None,
                 related_artifact_id=UUID(str(row[0])),
@@ -602,19 +602,19 @@ def _load_library_intelligence_artifact(
     return out
 
 
-def _load_library_intelligence_revision(
+def _load_artifact_revision(
     db: Session, items: list[ResourceRef], *, viewer_id: UUID
 ) -> list[LoadedResource]:
     ids = [ref.id for ref in items]
     rows = db.execute(
         text(
             """
-            SELECT r.id, r.artifact_id, a.library_id, l.name, r.content_md, r.status,
+            SELECT r.id, r.artifact_id, a.subject_id AS library_id, l.name, r.content_md, r.status,
                    a.current_revision_id = r.id AS is_current
-            FROM library_intelligence_artifact_revisions r
-            JOIN library_intelligence_artifacts a ON a.id = r.artifact_id
-            JOIN libraries l ON l.id = a.library_id
-            WHERE r.id = ANY(:ids)
+            FROM artifact_revisions r
+            JOIN artifacts a ON a.id = r.artifact_id
+            JOIN libraries l ON l.id = a.subject_id
+            WHERE r.id = ANY(:ids) AND a.subject_scheme = 'library'
             """
         ),
         {"ids": ids},
@@ -624,13 +624,13 @@ def _load_library_intelligence_revision(
     for ref in items:
         row = by_id.get(ref.id)
         if row is None or not is_library_member(db, viewer_id, row[2]):
-            out.append(_missing(ref.uri, "library_intelligence_revision"))
+            out.append(_missing(ref.uri, "artifact_revision"))
             continue
         suffix = "current" if row[6] else str(row[5])
         out.append(
             LoadedResource(
                 uri=ref.uri,
-                scheme="library_intelligence_revision",
+                scheme="artifact_revision",
                 title=f"{row[3]} ({suffix})",
                 body=str(row[4] or ""),
                 related_artifact_id=UUID(str(row[1])),
@@ -1264,7 +1264,7 @@ def _present(loaded: LoadedResource) -> ResolvedResource:
             inline_body=None,
             fetch_hint=f'app_search(scopes=["{loaded.uri}"], query=...)',
         )
-    if scheme in ("library_intelligence_artifact", "library_intelligence_revision"):
+    if scheme in ("artifact", "artifact_revision"):
         name = loaded.title or ""
         content_md = loaded.body or ""
         library_uri = (
@@ -1278,19 +1278,19 @@ def _present(loaded: LoadedResource) -> ResolvedResource:
             else ""
         )
         revision_ref = (
-            f"library_intelligence_revision:{loaded.related_revision_id}"
+            f"artifact_revision:{loaded.related_revision_id}"
             if loaded.related_revision_id is not None
             else None
         )
         label = (
-            f"Library Intelligence — {name}"
-            if scheme == "library_intelligence_artifact"
-            else f"Library Intelligence revision — {name}"
+            f"Library dossier — {name}"
+            if scheme == "artifact"
+            else f"Library dossier revision — {name}"
         )
         return ResolvedResource(
             uri=loaded.uri,
             label=label,
-            summary=_first_line(content_md) or f"Library Intelligence for {name}",
+            summary=_first_line(content_md) or f"Library dossier for {name}",
             inline_body=(
                 content_md if content_md and len(content_md) < INLINE_THRESHOLD_CHARS else None
             ),

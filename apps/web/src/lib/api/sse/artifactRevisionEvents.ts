@@ -1,8 +1,9 @@
 /**
- * SSE decoder for the library-intelligence revision stream.
+ * SSE decoder for the artifact-revision stream (library dossier + conversation
+ * distillate share it).
  *
- * The backend emits three event kinds over `/stream/library-intelligence/{revision_id}/events`:
- *   - `meta`     once on subscribe: `{revision_id, library_id}`
+ * The backend emits three event kinds over `/stream/artifact-revisions/{revision_id}/events`:
+ *   - `meta`     once on subscribe: `{revision_id, subject_scheme?, subject_id?}`
  *   - `progress` optional human-readable build progress: `{message, stage?}`
  *   - `done`     terminal: `{status, error_code, revision_id}` (`error_code` set on failure)
  *
@@ -14,15 +15,16 @@
 import { isRecord } from "@/lib/validation";
 import { isOptionalString } from "@/lib/api/sse/guards";
 
-interface LiMetaEvent {
+interface ArtifactMetaEvent {
   type: "meta";
   data: {
     revision_id: string;
-    library_id: string;
+    subject_scheme: string | null;
+    subject_id: string | null;
   };
 }
 
-interface LiProgressEvent {
+interface ArtifactProgressEvent {
   type: "progress";
   data: {
     message: string;
@@ -30,7 +32,7 @@ interface LiProgressEvent {
   };
 }
 
-interface LiDoneEvent {
+interface ArtifactDoneEvent {
   type: "done";
   data: {
     status: "ready" | "failed";
@@ -41,20 +43,28 @@ interface LiDoneEvent {
   };
 }
 
-export type LiStreamEvent = LiMetaEvent | LiProgressEvent | LiDoneEvent;
+export type ArtifactStreamEvent =
+  | ArtifactMetaEvent
+  | ArtifactProgressEvent
+  | ArtifactDoneEvent;
 
-function parseMetaData(data: unknown): LiMetaEvent["data"] {
+function parseMetaData(data: unknown): ArtifactMetaEvent["data"] {
   if (
     !isRecord(data) ||
     typeof data.revision_id !== "string" ||
-    typeof data.library_id !== "string"
+    !isOptionalString(data.subject_scheme) ||
+    !isOptionalString(data.subject_id)
   ) {
     throw new Error("Invalid SSE payload for meta");
   }
-  return { revision_id: data.revision_id, library_id: data.library_id };
+  return {
+    revision_id: data.revision_id,
+    subject_scheme: data.subject_scheme ?? null,
+    subject_id: data.subject_id ?? null,
+  };
 }
 
-function parseProgressData(data: unknown): LiProgressEvent["data"] {
+function parseProgressData(data: unknown): ArtifactProgressEvent["data"] {
   if (
     !isRecord(data) ||
     typeof data.message !== "string" ||
@@ -65,7 +75,7 @@ function parseProgressData(data: unknown): LiProgressEvent["data"] {
   return { message: data.message, stage: data.stage ?? null };
 }
 
-function parseDoneData(data: unknown): LiDoneEvent["data"] {
+function parseDoneData(data: unknown): ArtifactDoneEvent["data"] {
   if (
     !isRecord(data) ||
     (data.status !== "ready" && data.status !== "failed") ||
@@ -81,10 +91,10 @@ function parseDoneData(data: unknown): LiDoneEvent["data"] {
   };
 }
 
-export function toLibraryIntelligenceEvent(
+export function toArtifactRevisionEvent(
   eventType: string,
   data: unknown,
-): LiStreamEvent {
+): ArtifactStreamEvent {
   switch (eventType) {
     case "meta":
       return { type: "meta", data: parseMetaData(data) };

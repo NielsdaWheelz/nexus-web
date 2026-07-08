@@ -167,14 +167,14 @@ def _delete_oracle_corpus_for_libraries(
 def _delete_library_intelligence(session: Session, artifact_filter: str, value: Any) -> None:
     """Tear down the LI head + revisions (non-cascading, migration 0141) for cleanup.
 
-    ``artifact_filter`` is a WHERE clause over ``library_intelligence_artifacts``
+    ``artifact_filter`` is a WHERE clause over ``artifacts``
     (e.g. ``WHERE library_id = :value``). Order: null the circular pointer, drop
     graph refs, revision children (events), then revisions, then the head.
     """
     artifact_ids = [
         row[0]
         for row in session.execute(
-            text(f"SELECT id FROM library_intelligence_artifacts {artifact_filter}"),
+            text(f"SELECT id FROM artifacts {artifact_filter}"),
             {"value": value},
         )
     ]
@@ -184,15 +184,15 @@ def _delete_library_intelligence(session: Session, artifact_filter: str, value: 
         row[0]
         for row in session.execute(
             text(
-                "SELECT id FROM library_intelligence_artifact_revisions "
+                "SELECT id FROM artifact_revisions "
                 "WHERE artifact_id = ANY(:artifact_ids)"
             ),
             {"artifact_ids": artifact_ids},
         )
     ]
     for scheme, ids in (
-        ("library_intelligence_revision", revision_ids),
-        ("library_intelligence_artifact", artifact_ids),
+        ("artifact_revision", revision_ids),
+        ("artifact", artifact_ids),
     ):
         if not ids:
             continue
@@ -206,7 +206,7 @@ def _delete_library_intelligence(session: Session, artifact_filter: str, value: 
         )
     session.execute(
         text(
-            "UPDATE library_intelligence_artifacts "
+            "UPDATE artifacts "
             "SET current_revision_id = NULL WHERE id = ANY(:artifact_ids)"
         ),
         {"artifact_ids": artifact_ids},
@@ -214,20 +214,20 @@ def _delete_library_intelligence(session: Session, artifact_filter: str, value: 
     if revision_ids:
         session.execute(
             text(
-                "DELETE FROM library_intelligence_revision_events "
+                "DELETE FROM artifact_revision_events "
                 "WHERE revision_id = ANY(:revision_ids)"
             ),
             {"revision_ids": revision_ids},
         )
     session.execute(
         text(
-            "DELETE FROM library_intelligence_artifact_revisions "
+            "DELETE FROM artifact_revisions "
             "WHERE artifact_id = ANY(:artifact_ids)"
         ),
         {"artifact_ids": artifact_ids},
     )
     session.execute(
-        text("DELETE FROM library_intelligence_artifacts WHERE id = ANY(:artifact_ids)"),
+        text("DELETE FROM artifacts WHERE id = ANY(:artifact_ids)"),
         {"artifact_ids": artifact_ids},
     )
 
@@ -673,8 +673,9 @@ class DirectSessionManager:
                     # before the user (and its cascaded libraries).
                     _delete_library_intelligence(
                         session,
-                        "WHERE library_id IN (SELECT id FROM libraries WHERE owner_user_id = :value) "
-                        "OR user_id = :value",
+                        "WHERE user_id = :value "
+                        "OR (subject_scheme = 'library' AND subject_id IN "
+                        "(SELECT id FROM libraries WHERE owner_user_id = :value))",
                         value,
                     )
 
@@ -806,7 +807,9 @@ class DirectSessionManager:
                     # library_intelligence head/revisions are non-cascading (migration
                     # 0141): null the circular pointer, then drop revision children, then
                     # revisions + the head, before the library row.
-                    _delete_library_intelligence(session, "WHERE library_id = :value", value)
+                    _delete_library_intelligence(
+                        session, "WHERE subject_scheme = 'library' AND subject_id = :value", value
+                    )
 
                 if table == "libraries" and column == "owner_user_id":
                     # Tear down any corpus media hanging off the user's libraries
@@ -826,7 +829,8 @@ class DirectSessionManager:
                     )
                     _delete_library_intelligence(
                         session,
-                        "WHERE library_id IN (SELECT id FROM libraries WHERE owner_user_id = :value)",
+                        "WHERE subject_scheme = 'library' AND subject_id IN "
+                        "(SELECT id FROM libraries WHERE owner_user_id = :value)",
                         value,
                     )
 

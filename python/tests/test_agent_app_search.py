@@ -405,7 +405,7 @@ def test_li_revision_reference_dropped_from_default_scope_resolution(
 ) -> None:
     """The LI revision reference is NOT a search scope; the library: ref carries retrieval.
 
-    With both a ``library_intelligence_revision:`` and a ``library:`` reference and
+    With both a ``artifact_revision:`` and a ``library:`` reference and
     no explicit scopes, default scope resolution keeps only the library URI.
     """
     from uuid import uuid4 as _uuid4
@@ -419,8 +419,8 @@ def test_li_revision_reference_dropped_from_default_scope_resolution(
     db_session.execute(
         text(
             """
-            INSERT INTO library_intelligence_artifacts (id, library_id, user_id)
-            VALUES (:id, :library_id, :user_id)
+            INSERT INTO artifacts (id, subject_scheme, subject_id, kind, user_id)
+            VALUES (:id, 'library', :library_id, 'library_dossier', :user_id)
             """
         ),
         {"id": artifact_id, "library_id": library_id, "user_id": bootstrapped_user},
@@ -428,7 +428,7 @@ def test_li_revision_reference_dropped_from_default_scope_resolution(
     db_session.execute(
         text(
             """
-            INSERT INTO library_intelligence_artifact_revisions (
+            INSERT INTO artifact_revisions (
                 id, artifact_id, content_md, covered_targets, status, promoted_at
             )
             VALUES (:id, :artifact_id, 'Synthesis', '[]'::jsonb, 'ready', now())
@@ -438,12 +438,12 @@ def test_li_revision_reference_dropped_from_default_scope_resolution(
     )
     db_session.execute(
         text(
-            "UPDATE library_intelligence_artifacts "
+            "UPDATE artifacts "
             "SET current_revision_id = :revision_id WHERE id = :artifact_id"
         ),
         {"revision_id": revision_id, "artifact_id": artifact_id},
     )
-    add_context_edge(db_session, conversation_id, f"library_intelligence_revision:{revision_id}")
+    add_context_edge(db_session, conversation_id, f"artifact_revision:{revision_id}")
     add_context_edge(db_session, conversation_id, f"library:{library_id}")
     db_session.commit()
 

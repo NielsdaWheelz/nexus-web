@@ -13,12 +13,12 @@ from provider_runtime.types import (
 )
 from pydantic import BaseModel
 
-from nexus.services.library_intelligence_reduce import (
+from nexus.services.artifacts.reducers.library_dossier import (
     _LI_SYSTEM_PROMPT,
     _LiSynthesis,
     _map_li_citations,
 )
-from nexus.services.library_intelligence_reduce import (
+from nexus.services.artifacts.reducers.library_dossier import (
     _Candidate as LiCandidate,
 )
 from nexus.services.media_intelligence import (

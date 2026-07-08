@@ -15,14 +15,13 @@ from sqlalchemy.orm import Session
 from nexus.config import clear_settings_cache
 from nexus.db.models import LLMCall, ResourceEdge
 from nexus.services import run_kit
-from nexus.services.billing_entitlements import grant_entitlement_override
-from nexus.services.bootstrap import ensure_user_and_default_library
-from nexus.services.library_intelligence import (
+from nexus.services.artifacts.dossier import (
     generate_artifact,
     get_artifact,
     promote_revision,
 )
-from nexus.services.library_intelligence_reduce import (
+from nexus.services.artifacts.engine import run_revision as run_artifact_generation
+from nexus.services.artifacts.reducers.library_dossier import (
     LI_MODEL_NAME,
     LI_PROVIDER,
     LI_REDUCE_INPUT_CHAR_BUDGET,
@@ -31,10 +30,11 @@ from nexus.services.library_intelligence_reduce import (
     _LiCitationOut,
     _LiSynthesis,
     _map_li_citations,
-    run_artifact_generation,
 )
-from nexus.services.library_intelligence_revisions import get_revision, list_revisions
-from nexus.tasks.library_intelligence import _fail_revision_after_worker_exception
+from nexus.services.artifacts.revisions import get_revision, list_revisions
+from nexus.services.billing_entitlements import grant_entitlement_override
+from nexus.services.bootstrap import ensure_user_and_default_library
+from nexus.tasks.artifacts import _fail_revision_after_worker_exception
 from tests.factories import (
     add_media_to_library,
     create_searchable_media_in_library,
@@ -131,14 +131,14 @@ class TestRunKitExhaustiveness:
             assert run_kit.terminal_statuses(kind)
 
     def test_library_intelligence_terminal_set(self) -> None:
-        assert run_kit.terminal_statuses(run_kit.RunStreamKind.LibraryIntelligence) == frozenset(
+        assert run_kit.terminal_statuses(run_kit.RunStreamKind.ArtifactRevision) == frozenset(
             {"ready", "failed"}
         )
 
     def test_li_channel(self) -> None:
         assert (
-            run_kit.notify_channel(run_kit.RunStreamKind.LibraryIntelligence)
-            == "library_intelligence_revision_events"
+            run_kit.notify_channel(run_kit.RunStreamKind.ArtifactRevision)
+            == "artifact_revision_events"
         )
 
 
@@ -198,7 +198,7 @@ def li_rate_limiter(monkeypatch) -> _RecordingRateLimiter:
     # One recording limiter for both the reduce and the inline unit builds.
     limiter = _RecordingRateLimiter()
     monkeypatch.setattr(
-        "nexus.services.library_intelligence_reduce.get_rate_limiter", lambda: limiter
+        "nexus.services.artifacts.engine.get_rate_limiter", lambda: limiter
     )
     monkeypatch.setattr("nexus.services.media_intelligence.get_rate_limiter", lambda: limiter)
     return limiter
@@ -227,7 +227,7 @@ def _li_call_rows(db: Session, *, revision_id: UUID) -> list[LLMCall]:
     return list(
         db.scalars(
             select(LLMCall)
-            .where(LLMCall.owner_kind == "li_revision", LLMCall.owner_id == revision_id)
+            .where(LLMCall.owner_kind == "artifact_revision", LLMCall.owner_id == revision_id)
             .order_by(LLMCall.call_seq)
         )
     )
@@ -236,7 +236,7 @@ def _li_call_rows(db: Session, *, revision_id: UUID) -> list[LLMCall]:
 def _done_payload(db: Session, *, revision_id: UUID) -> dict:
     return db.execute(
         text(
-            "SELECT payload FROM library_intelligence_revision_events "
+            "SELECT payload FROM artifact_revision_events "
             "WHERE revision_id = :r AND event_type = 'done'"
         ),
         {"r": revision_id},
@@ -569,12 +569,12 @@ class TestGenerateReduce:
 
         # Storage contract: generated citation edges key on the revision, never the head.
         assert view.artifact_id is not None
-        edges = _citation_edges(db_session, "library_intelligence_revision", revision_id)
+        edges = _citation_edges(db_session, "artifact_revision", revision_id)
         assert [(e.ordinal, e.kind, e.origin) for e in edges] == [
             (1, "supports", "citation"),
             (2, "context", "citation"),
         ], f"expected two revision-sourced citation edges; got {edges}"
-        assert _citation_edges(db_session, "library_intelligence_artifact", view.artifact_id) == []
+        assert _citation_edges(db_session, "artifact", view.artifact_id) == []
 
         # Normalized terminal grammar + AC-3 ledger row for the one reduce call.
         assert _done_payload(db_session, revision_id=revision_id) == {
@@ -595,7 +595,7 @@ class TestGenerateReduce:
         first_media_id = _ready_unit_media(db_session, owner_id, library_id, title="Included")
         second_media_id = _ready_unit_media(db_session, owner_id, library_id, title="Omitted")
         monkeypatch.setattr(
-            "nexus.services.library_intelligence_reduce.LI_REDUCE_INPUT_CHAR_BUDGET",
+            "nexus.services.artifacts.reducers.library_dossier.LI_REDUCE_INPUT_CHAR_BUDGET",
             1,
         )
 
@@ -626,7 +626,7 @@ class TestGenerateReduce:
         )
         covered = db_session.execute(
             text(
-                "SELECT covered_targets FROM library_intelligence_artifact_revisions WHERE id = :r"
+                "SELECT covered_targets FROM artifact_revisions WHERE id = :r"
             ),
             {"r": revision_id},
         ).scalar_one()
@@ -697,7 +697,7 @@ class TestGenerateReduce:
         revision = db_session.execute(
             text(
                 "SELECT status, error_code, error_detail "
-                "FROM library_intelligence_artifact_revisions WHERE id = :r"
+                "FROM artifact_revisions WHERE id = :r"
             ),
             {"r": revision_id},
         ).one()
@@ -714,10 +714,10 @@ class TestGenerateReduce:
         # AC22: only the promoting path writes citation edges.
         assert view.citations == []
         assert view.artifact_id is not None
-        assert _citation_edges(db_session, "library_intelligence_revision", revision_id) == [], (
+        assert _citation_edges(db_session, "artifact_revision", revision_id) == [], (
             "a failed revision must write no citation edges"
         )
-        assert _citation_edges(db_session, "library_intelligence_artifact", view.artifact_id) == []
+        assert _citation_edges(db_session, "artifact", view.artifact_id) == []
 
     def test_first_generate_builds_units_inline_and_succeeds(self, db_session: Session) -> None:
         # A fresh library whose per-media units were NOT pre-built: generation must
@@ -758,7 +758,7 @@ class TestGenerateReduce:
         revision = db_session.execute(
             text(
                 "SELECT status, error_code, error_detail "
-                "FROM library_intelligence_artifact_revisions WHERE id = :r"
+                "FROM artifact_revisions WHERE id = :r"
             ),
             {"r": revision_id},
         ).one()
@@ -774,7 +774,7 @@ class TestGenerateReduce:
         assert view.status == "failed"
         assert view.revision_id is None
         assert view.citations == []
-        assert _citation_edges(db_session, "library_intelligence_revision", revision_id) == [], (
+        assert _citation_edges(db_session, "artifact_revision", revision_id) == [], (
             "a marker/citation parity failure must not write ready citation edges"
         )
 
@@ -931,7 +931,7 @@ class TestPodcastExpansion:
         assert view.status == "current"
         covered = db_session.execute(
             text(
-                "SELECT covered_targets FROM library_intelligence_artifact_revisions WHERE id = :r"
+                "SELECT covered_targets FROM artifact_revisions WHERE id = :r"
             ),
             {"r": revision_id},
         ).scalar_one()
@@ -973,8 +973,8 @@ class TestRevisionsAndPromote:
         assert [(c.ordinal, c.role) for c in view.citations] == [(1, "supports")], (
             f"a draft must not touch the current citation set; got {view.citations}"
         )
-        assert _citation_edges(db_session, "library_intelligence_revision", first_rev)
-        assert _citation_edges(db_session, "library_intelligence_revision", ref2.revision_id) == []
+        assert _citation_edges(db_session, "artifact_revision", first_rev)
+        assert _citation_edges(db_session, "artifact_revision", ref2.revision_id) == []
 
         router2 = _ReduceRouter(
             content_md="Second synthesis [1][2]",
@@ -993,16 +993,16 @@ class TestRevisionsAndPromote:
             (2, "context"),
         ], f"the current head must read the new revision's citation set; got {view.citations}"
         assert view.artifact_id is not None
-        assert len(_citation_edges(db_session, "library_intelligence_revision", first_rev)) == 1
+        assert len(_citation_edges(db_session, "artifact_revision", first_rev)) == 1
         assert (
-            len(_citation_edges(db_session, "library_intelligence_revision", ref2.revision_id)) == 2
+            len(_citation_edges(db_session, "artifact_revision", ref2.revision_id)) == 2
         )
-        assert _citation_edges(db_session, "library_intelligence_artifact", view.artifact_id) == []
+        assert _citation_edges(db_session, "artifact", view.artifact_id) == []
         # The prior revision is retained.
         prior = (
             db_session.execute(
                 text(
-                    "SELECT status, promoted_at FROM library_intelligence_artifact_revisions WHERE id = :r"
+                    "SELECT status, promoted_at FROM artifact_revisions WHERE id = :r"
                 ),
                 {"r": first_rev},
             )
@@ -1029,7 +1029,7 @@ class TestRevisionsAndPromote:
         )
         stored = db_session.execute(
             text(
-                "SELECT custom_instruction FROM library_intelligence_artifact_revisions "
+                "SELECT custom_instruction FROM artifact_revisions "
                 "WHERE id = :revision_id"
             ),
             {"revision_id": ref.revision_id},
@@ -1094,9 +1094,9 @@ class TestRevisionsAndPromote:
         )
         assert [(c.ordinal, c.role) for c in second.citations] == [(1, "supports")]
         assert view.artifact_id is not None
-        assert len(_citation_edges(db_session, "library_intelligence_revision", first_rev)) == 1
-        assert len(_citation_edges(db_session, "library_intelligence_revision", second_rev)) == 1
-        assert _citation_edges(db_session, "library_intelligence_artifact", view.artifact_id) == []
+        assert len(_citation_edges(db_session, "artifact_revision", first_rev)) == 1
+        assert len(_citation_edges(db_session, "artifact_revision", second_rev)) == 1
+        assert _citation_edges(db_session, "artifact", view.artifact_id) == []
         # Both revisions retained.
         summaries = list_revisions(db_session, viewer_id=owner_id, library_id=library_id)
         assert {s.revision_id for s in summaries} == {first_rev, second_rev}
@@ -1125,7 +1125,7 @@ class TestRevisionsAndPromote:
         assert second.revision_id == first.revision_id
         stored = db_session.execute(
             text(
-                "SELECT custom_instruction FROM library_intelligence_artifact_revisions "
+                "SELECT custom_instruction FROM artifact_revisions "
                 "WHERE id = :revision_id"
             ),
             {"revision_id": first.revision_id},
@@ -1134,7 +1134,7 @@ class TestRevisionsAndPromote:
         job_count = db_session.execute(
             text(
                 "SELECT COUNT(*) FROM background_jobs "
-                "WHERE kind = 'library_intelligence_artifact_generate' "
+                "WHERE kind = 'library_dossier_generate' "
                 "AND payload->>'revision_id' = :rid"
             ),
             {"rid": str(first.revision_id)},
@@ -1151,7 +1151,7 @@ class TestRevisionsAndPromote:
         assert third.revision_id != first.revision_id
         blank_stored = db_session.execute(
             text(
-                "SELECT custom_instruction FROM library_intelligence_artifact_revisions "
+                "SELECT custom_instruction FROM artifact_revisions "
                 "WHERE id = :revision_id"
             ),
             {"revision_id": third.revision_id},
@@ -1173,12 +1173,12 @@ class TestWorkerBoundary:
         )
         db_session.expire_all()
         # AC22: the failed (non-promoting) path wrote no citation edges.
-        assert _citation_edges(db_session, "library_intelligence_revision", ref.revision_id) == []
-        assert _citation_edges(db_session, "library_intelligence_artifact", ref.artifact_id) == []
+        assert _citation_edges(db_session, "artifact_revision", ref.revision_id) == []
+        assert _citation_edges(db_session, "artifact", ref.artifact_id) == []
         revision = db_session.execute(
             text(
                 "SELECT status, error_code, error_detail "
-                "FROM library_intelligence_artifact_revisions WHERE id = :r"
+                "FROM artifact_revisions WHERE id = :r"
             ),
             {"r": ref.revision_id},
         ).one()
@@ -1211,7 +1211,7 @@ class TestWorkerBoundary:
         revision = db_session.execute(
             text(
                 "SELECT status, error_code, error_detail "
-                "FROM library_intelligence_artifact_revisions WHERE id = :r"
+                "FROM artifact_revisions WHERE id = :r"
             ),
             {"r": ref.revision_id},
         ).one()
@@ -1242,7 +1242,7 @@ class TestWorkerBoundary:
         revision = db_session.execute(
             text(
                 "SELECT status, error_code "
-                "FROM library_intelligence_artifact_revisions WHERE id = :r"
+                "FROM artifact_revisions WHERE id = :r"
             ),
             {"r": revision_id},
         ).one()

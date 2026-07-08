@@ -12,7 +12,7 @@ import { fetchStreamToken } from "./streamToken";
 export type GenerationRunKind =
   | "chat-runs"
   | "oracle-readings"
-  | "library-intelligence"
+  | "artifact-revisions"
   | "media";
 
 export type GenerationRunPhase =
@@ -30,7 +30,7 @@ export type GenerationRunPhase =
 export const GENERATION_RUN_STREAM_PATHS: Record<GenerationRunKind, string> = {
   "chat-runs": "/stream/chat-runs",
   "oracle-readings": "/stream/oracle-readings",
-  "library-intelligence": "/stream/library-intelligence",
+  "artifact-revisions": "/stream/artifact-revisions",
   media: "/stream/media",
 };
 

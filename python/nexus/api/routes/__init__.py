@@ -24,7 +24,7 @@ from nexus.api.routes.internal_ingest import router as internal_ingest_router
 from nexus.api.routes.internal_libraries import router as internal_libraries_router
 from nexus.api.routes.keys import router as keys_router
 from nexus.api.routes.libraries import router as libraries_router
-from nexus.api.routes.library_intelligence import router as library_intelligence_router
+from nexus.api.routes.library_dossier import router as library_dossier_router
 from nexus.api.routes.listening_state import router as listening_state_router
 from nexus.api.routes.me import router as me_router
 from nexus.api.routes.media import router as media_router
@@ -67,7 +67,7 @@ def create_api_router() -> APIRouter:
     api_router.include_router(extension_sessions_router)
     api_router.include_router(auth_handoff_codes_router)
     api_router.include_router(libraries_router)
-    api_router.include_router(library_intelligence_router)
+    api_router.include_router(library_dossier_router)
     # Media family. Every router owning a static `/media/<literal>` path
     # (media_assets, media_ingest, listening_state, podcast_transcripts) must be
     # registered before the `media` router that owns `/media/{media_id}` —

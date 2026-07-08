@@ -29,7 +29,7 @@ from provider_runtime.types import (
 )
 from pydantic import BaseModel, ConfigDict
 
-from nexus.services.library_intelligence_reduce import _LI_SYSTEM_PROMPT
+from nexus.services.artifacts.reducers.library_dossier import _LI_SYSTEM_PROMPT
 from nexus.services.media_intelligence import _MEDIA_UNIT_SYSTEM_PROMPT
 from nexus.services.oracle import _ORACLE_SYSTEM_PROMPT
 from nexus.services.structured_synthesis import (

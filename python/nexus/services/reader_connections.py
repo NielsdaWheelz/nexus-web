@@ -288,7 +288,7 @@ def _source_category(
     connection: Connection,
 ) -> Literal[
     "chat",
-    "library_intelligence",
+    "dossier",
     "oracle",
     "note",
     "highlight_note",
@@ -301,8 +301,8 @@ def _source_category(
     if connection.origin == "citation":
         if connection.source_ref.scheme == "message":
             return "chat"
-        if connection.source_ref.scheme == "library_intelligence_revision":
-            return "library_intelligence"
+        if connection.source_ref.scheme == "artifact_revision":
+            return "dossier"
         if connection.source_ref.scheme == "oracle_reading":
             return "oracle"
         return "other"

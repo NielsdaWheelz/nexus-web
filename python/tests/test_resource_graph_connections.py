@@ -41,8 +41,8 @@ def _li_artifact_with_revision(db: Session, user_id: UUID) -> tuple[ResourceRef,
     artifact_id = db.execute(
         text(
             """
-            INSERT INTO library_intelligence_artifacts (library_id, user_id)
-            VALUES (:library_id, :user_id)
+            INSERT INTO artifacts (subject_scheme, subject_id, kind, user_id)
+            VALUES ('library', :library_id, 'library_dossier', :user_id)
             RETURNING id
             """
         ),
@@ -51,7 +51,7 @@ def _li_artifact_with_revision(db: Session, user_id: UUID) -> tuple[ResourceRef,
     revision_id = db.execute(
         text(
             """
-            INSERT INTO library_intelligence_artifact_revisions (
+            INSERT INTO artifact_revisions (
                 artifact_id, content_md, covered_targets, status, promoted_at
             )
             VALUES (:artifact_id, 'Revision body.', '[]'::jsonb, 'ready', now())
@@ -62,15 +62,15 @@ def _li_artifact_with_revision(db: Session, user_id: UUID) -> tuple[ResourceRef,
     ).scalar_one()
     db.execute(
         text(
-            "UPDATE library_intelligence_artifacts "
+            "UPDATE artifacts "
             "SET current_revision_id = :revision_id WHERE id = :artifact_id"
         ),
         {"revision_id": revision_id, "artifact_id": artifact_id},
     )
     db.flush()
     return (
-        ResourceRef(scheme="library_intelligence_artifact", id=artifact_id),
-        ResourceRef(scheme="library_intelligence_revision", id=revision_id),
+        ResourceRef(scheme="artifact", id=artifact_id),
+        ResourceRef(scheme="artifact_revision", id=revision_id),
     )
 
 

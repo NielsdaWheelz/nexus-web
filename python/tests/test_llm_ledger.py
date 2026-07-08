@@ -533,7 +533,7 @@ async def test_stream_aclose_before_terminal_chunk_writes_abandoned_row(db_sessi
 
 
 async def test_stream_failure_mid_iteration_writes_failure_row_and_reraises(db_session, log_sink):
-    owner = LlmCallOwner(kind="li_revision", id=uuid4())
+    owner = LlmCallOwner(kind="artifact_revision", id=uuid4())
     router = _FakeRouter(
         chunks=(_text_event("partial"),),
         error=ModelCallError(

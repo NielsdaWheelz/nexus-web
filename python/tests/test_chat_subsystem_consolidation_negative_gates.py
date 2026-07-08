@@ -33,7 +33,7 @@ _CHAT_TOOLS_PY = _PY_ROOT / "services" / "chat_run_tools.py"
 _CHAT_EVENT_STORE_PY = _PY_ROOT / "services" / "chat_run_event_store.py"
 _RUN_KIT_PY = _PY_ROOT / "services" / "run_kit.py"
 _ORACLE_PY = _PY_ROOT / "services" / "oracle.py"
-_LI_REVISIONS_PY = _PY_ROOT / "services" / "library_intelligence_revisions.py"
+_LI_REVISIONS_PY = _PY_ROOT / "services" / "artifacts" / "revisions.py"
 
 _FE_TEST = re.compile(r"\.test\.")
 

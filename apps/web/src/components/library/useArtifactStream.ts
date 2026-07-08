@@ -5,9 +5,9 @@ import { apiFetch } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { useGenerationRun } from "@/lib/api/useGenerationRun";
 import {
-  toLibraryIntelligenceEvent,
-  type LiStreamEvent,
-} from "@/lib/api/sse/libraryIntelligenceEvents";
+  toArtifactRevisionEvent,
+  type ArtifactStreamEvent,
+} from "@/lib/api/sse/artifactRevisionEvents";
 import { createRandomId } from "@/lib/createRandomId";
 
 interface GenerateResponse {
@@ -15,14 +15,14 @@ interface GenerateResponse {
 }
 
 /**
- * Slim driver for a library-intelligence revision build. Transport, token
- * minting, and reconnect live in `useGenerationRun` (kind `library-intelligence`);
+ * Slim driver for an artifact revision build (library dossier). Transport, token
+ * minting, and reconnect live in `useGenerationRun` (kind `artifact-revisions`);
  * this hook owns only the 3-event decode (`meta`/`progress`/`done`), the
  * `building` + textual `progress` pair, and the single subscribed revision id.
  * The reduce is a single structured call (no token streaming), so completion is
  * reported via `onDone` off the terminal `done` event's own `revision_id`.
  */
-export function useLibraryIntelligenceStream({
+export function useArtifactStream({
   libraryId,
   onDone,
   onError,
@@ -46,7 +46,7 @@ export function useLibraryIntelligenceStream({
   const onErrorRef = useRef(onError);
   onErrorRef.current = onError;
 
-  const handleEvent = useCallback((event: LiStreamEvent) => {
+  const handleEvent = useCallback((event: ArtifactStreamEvent) => {
     switch (event.type) {
       case "meta":
         setBuilding(true);
@@ -70,10 +70,10 @@ export function useLibraryIntelligenceStream({
     }
   }, []);
 
-  const { phase } = useGenerationRun<LiStreamEvent>({
-    kind: "library-intelligence",
+  const { phase } = useGenerationRun<ArtifactStreamEvent>({
+    kind: "artifact-revisions",
     id: revisionId,
-    decode: toLibraryIntelligenceEvent,
+    decode: toArtifactRevisionEvent,
     isTerminal: (event) => event.type === "done",
     onEvent: handleEvent,
   });

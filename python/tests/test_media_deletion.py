@@ -1038,8 +1038,8 @@ def test_delete_library_applies_graph_cleanup_two_rules(
         artifact_id = session.execute(
             text(
                 """
-                INSERT INTO library_intelligence_artifacts (library_id, user_id)
-                VALUES (:library_id, :user_id)
+                INSERT INTO artifacts (subject_scheme, subject_id, kind, user_id)
+                VALUES ('library', :library_id, 'library_dossier', :user_id)
                 RETURNING id
                 """
             ),
@@ -1048,7 +1048,7 @@ def test_delete_library_applies_graph_cleanup_two_rules(
         revision_id = session.execute(
             text(
                 """
-                INSERT INTO library_intelligence_artifact_revisions (
+                INSERT INTO artifact_revisions (
                     artifact_id, content_md, covered_targets, status, promoted_at
                 )
                 VALUES (:artifact_id, 'Doomed revision [1].', '[]'::jsonb, 'ready', now())
@@ -1059,7 +1059,7 @@ def test_delete_library_applies_graph_cleanup_two_rules(
         ).scalar_one()
         session.execute(
             text(
-                "UPDATE library_intelligence_artifacts "
+                "UPDATE artifacts "
                 "SET current_revision_id = :revision_id WHERE id = :artifact_id"
             ),
             {"revision_id": revision_id, "artifact_id": artifact_id},
@@ -1105,7 +1105,7 @@ def test_delete_library_applies_graph_cleanup_two_rules(
                     user_id=user_id,
                     kind="context",
                     origin="user",
-                    source_scheme="library_intelligence_artifact",
+                    source_scheme="artifact",
                     source_id=artifact_id,
                     target_scheme="conversation",
                     target_id=conversation_id,
@@ -1116,14 +1116,14 @@ def test_delete_library_applies_graph_cleanup_two_rules(
                     origin="user",
                     source_scheme="conversation",
                     source_id=conversation_id,
-                    target_scheme="library_intelligence_revision",
+                    target_scheme="artifact_revision",
                     target_id=revision_id,
                 ),
                 ResourceEdge(
                     user_id=user_id,
                     kind="context",
                     origin="citation",
-                    source_scheme="library_intelligence_revision",
+                    source_scheme="artifact_revision",
                     source_id=revision_id,
                     target_scheme="conversation",
                     target_id=conversation_id,
@@ -1138,9 +1138,9 @@ def test_delete_library_applies_graph_cleanup_two_rules(
     direct_db.register_cleanup("messages", "conversation_id", conversation_id)
     direct_db.register_cleanup("resource_edges", "user_id", user_id)
     direct_db.register_cleanup(
-        "library_intelligence_artifact_revisions", "artifact_id", artifact_id
+        "artifact_revisions", "artifact_id", artifact_id
     )
-    direct_db.register_cleanup("library_intelligence_artifacts", "id", artifact_id)
+    direct_db.register_cleanup("artifacts", "id", artifact_id)
 
     delete_response = auth_client.delete(f"/libraries/{library_id}", headers=auth_headers(user_id))
     assert delete_response.status_code == 204, delete_response.text
@@ -1148,10 +1148,10 @@ def test_delete_library_applies_graph_cleanup_two_rules(
     with direct_db.session() as session:
         assert_no_dangling_bare_edges(session, ref=ResourceRef(scheme="library", id=library_id))
         assert_no_dangling_bare_edges(
-            session, ref=ResourceRef(scheme="library_intelligence_artifact", id=artifact_id)
+            session, ref=ResourceRef(scheme="artifact", id=artifact_id)
         )
         assert_no_dangling_bare_edges(
-            session, ref=ResourceRef(scheme="library_intelligence_revision", id=revision_id)
+            session, ref=ResourceRef(scheme="artifact_revision", id=revision_id)
         )
 
         surviving = session.execute(

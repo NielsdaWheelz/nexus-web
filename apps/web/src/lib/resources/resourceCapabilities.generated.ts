@@ -19,7 +19,7 @@ export type ResourceExpansionPolicy =
   | "media_owned_reader_children"
   | "page_note_blocks"
   | "note_block_owned_evidence"
-  | "library_intelligence_artifact_revisions";
+  | "artifact_revisions";
 
 export interface ResourceCapabilityProjection {
   linkable: boolean;
@@ -227,7 +227,7 @@ export const RESOURCE_CAPABILITIES = {
     adjacencySource: false,
     adjacencyTarget: true,
   },
-  library_intelligence_artifact: {
+  artifact: {
     linkable: true,
     attachable: true,
     chatSubject: "generated_output",
@@ -238,11 +238,11 @@ export const RESOURCE_CAPABILITIES = {
     conversationSearchScope: false,
     citationOutputSource: false,
     promptRender: "inline_body",
-    expansionPolicy: "library_intelligence_artifact_revisions",
+    expansionPolicy: "artifact_revisions",
     adjacencySource: false,
     adjacencyTarget: true,
   },
-  library_intelligence_revision: {
+  artifact_revision: {
     linkable: true,
     attachable: true,
     chatSubject: "generated_output",

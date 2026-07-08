@@ -149,6 +149,15 @@ class _RankedConversationResult:
 
 
 @dataclass(slots=True)
+class _RankedArtifactResult:
+    id: UUID  # the conversation id (subject)
+    revision_id: UUID
+    snippet: str
+    score: _SearchScore
+    result_type: Literal["artifact"] = "artifact"
+
+
+@dataclass(slots=True)
 class _RankedWebResult:
     id: str
     source_id: str
@@ -188,6 +197,7 @@ InternalSearchResult = (
     | _RankedMessageResult
     | _RankedReaderApparatusItemResult
     | _RankedConversationResult
+    | _RankedArtifactResult
     | _RankedWebResult
 )
 

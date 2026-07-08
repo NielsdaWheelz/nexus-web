@@ -30,11 +30,11 @@ import {
 } from "@/lib/resources/activation";
 import { startResourceChat } from "@/lib/resources/resourceChat";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
-import { useLibraryIntelligenceStream } from "@/components/library/useLibraryIntelligenceStream";
+import { useArtifactStream } from "@/components/library/useArtifactStream";
 import type {
   ArtifactStatus,
-  LibraryIntelligenceArtifact,
-  LibraryIntelligenceRevision,
+  DossierArtifact,
+  DossierRevision,
 } from "@/components/library/dossierTypes";
 import { deriveDossierLede } from "@/lib/library/dossierLede";
 import LibraryBriefLede from "./LibraryBriefLede";
@@ -93,24 +93,24 @@ export default function LibraryBrief({ libraryId }: { libraryId: string }) {
     setError(toFeedback(streamError, { fallback: "Library dossier stream failed" }));
   }, []);
 
-  const { building, progress, generate, subscribe } = useLibraryIntelligenceStream({
+  const { building, progress, generate, subscribe } = useArtifactStream({
     libraryId,
     onDone: handleDone,
     onError: handleStreamError,
   });
 
-  const artifactResource = useResource<{ data: LibraryIntelligenceArtifact }>({
-    cacheKey: `library-intelligence:${libraryId}:${reloadNonce}`,
+  const artifactResource = useResource<{ data: DossierArtifact }>({
+    cacheKey: `library-dossier:${libraryId}:${reloadNonce}`,
     path: () => `/api/libraries/${libraryId}/intelligence`,
   });
   const artifact =
     artifactResource.status === "ready" ? artifactResource.data.data : null;
 
-  const revisionResource = useResource<{ data: LibraryIntelligenceRevision }>({
+  const revisionResource = useResource<{ data: DossierRevision }>({
     cacheKey:
       selectedRevisionId === null
         ? null
-        : `library-intelligence-revision:${libraryId}:${selectedRevisionId}:${reloadNonce}`,
+        : `library-dossier-revision:${libraryId}:${selectedRevisionId}:${reloadNonce}`,
     path: () =>
       `/api/libraries/${libraryId}/intelligence/revisions/${selectedRevisionId}`,
   });

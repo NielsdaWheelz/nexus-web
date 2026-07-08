@@ -10,12 +10,12 @@ export type ArtifactStatus =
   | "stale"
   | "current";
 
-export interface LibraryIntelligenceBuild {
+export interface DossierBuild {
   revision_id: string;
   status: "building" | "ready" | "failed";
 }
 
-export interface LibraryIntelligenceArtifact {
+export interface DossierArtifact {
   artifact_id: string | null;
   artifact_ref: string | null;
   revision_id: string | null;
@@ -32,10 +32,10 @@ export interface LibraryIntelligenceArtifact {
   model_provider?: string | null;
   model_name?: string | null;
   total_tokens?: number | null;
-  build: LibraryIntelligenceBuild | null;
+  build: DossierBuild | null;
 }
 
-export interface LibraryIntelligenceRevision {
+export interface DossierRevision {
   artifact_id: string;
   artifact_ref: string;
   revision_id: string;

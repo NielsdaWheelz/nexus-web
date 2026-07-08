@@ -64,7 +64,11 @@ from nexus.services.search.results import (
     _web_result_ref_json,
 )
 from nexus.services.search.retrievers.contributors import _search_contributors
-from nexus.services.search.retrievers.conversations import _search_conversations, _search_messages
+from nexus.services.search.retrievers.conversations import (
+    _search_conversation_artifacts,
+    _search_conversations,
+    _search_messages,
+)
 from nexus.services.search.retrievers.highlights import _search_highlights
 from nexus.services.search.retrievers.library_content import (
     _search_content_chunks,
@@ -1086,6 +1090,8 @@ def _search_type(
         return _search_messages(db, viewer_id, q, scope_type, scope_id, limit)
     if result_type == "conversation":
         return _search_conversations(db, viewer_id, q, scope_type, scope_id, limit)
+    if result_type == "artifact":
+        return _search_conversation_artifacts(db, viewer_id, q, scope_type, scope_id, limit)
     if result_type == "web_result":
         return _search_web_results(db, viewer_id, q, has_query, scope_type, scope_id, limit)
     # Unreachable: result_types are validated at the edge and derived from the kind

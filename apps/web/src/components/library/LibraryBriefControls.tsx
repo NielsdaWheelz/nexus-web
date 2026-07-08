@@ -8,7 +8,7 @@ import { formatDisplayDate } from "@/lib/display/format";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import type {
   ArtifactStatus,
-  LibraryIntelligenceRevision,
+  DossierRevision,
 } from "@/components/library/dossierTypes";
 import styles from "./LibraryBrief.module.css";
 
@@ -205,7 +205,7 @@ function RevisionStatusLine({
   citationCount,
   display,
 }: {
-  revision: LibraryIntelligenceRevision;
+  revision: DossierRevision;
   citationCount: number | null;
   display: DisplayEnvironment;
 }) {
@@ -328,7 +328,7 @@ export default function LibraryBriefControls({
   modelProvider: string | null;
   modelName: string | null;
   totalTokens: number | null;
-  selectedRevision: LibraryIntelligenceRevision | null;
+  selectedRevision: DossierRevision | null;
   revisionCitationCount: number | null;
   display: DisplayEnvironment;
   instruction: string;

@@ -12,7 +12,7 @@ presents the result, labelling every read with an explicit ``kind``:
 - ``full``        — a short media document, whole.
 - ``too_large``   — an over-budget media document; redirect to ``inspect_resource``.
 
-Non-citable bodies (``library_intelligence`` synthesis, ``oracle_reading``) carry
+Non-citable bodies (``artifact`` synthesis, ``oracle_reading``) carry
 their prose but no citation target: their inline chips are owned by their own pane.
 
 A media-derived pointer (``fragment``/``page_range``/``evidence_span``/
@@ -331,8 +331,8 @@ def _present_read(loaded: LoadedResource) -> ReadResourceResult:
             citation_result_type=citation_result_type,
             citation_source_id=citation_source_id,
         )
-    if scheme in ("library_intelligence_artifact", "library_intelligence_revision"):
-        # LI synthesis prose is NON-citable here: inline [N] markers reference the
+    if scheme in ("artifact", "artifact_revision"):
+        # Synthesis prose is NON-citable here: inline [N] markers reference the
         # revision's own citations, not a get_search_result chip.
         library_ref = (
             f"library:{loaded.related_library_id}"
@@ -340,12 +340,12 @@ def _present_read(loaded: LoadedResource) -> ReadResourceResult:
             else None
         )
         artifact_ref = (
-            f"library_intelligence_artifact:{loaded.related_artifact_id}"
+            f"artifact:{loaded.related_artifact_id}"
             if loaded.related_artifact_id is not None
             else None
         )
         revision_ref = (
-            f"library_intelligence_revision:{loaded.related_revision_id}"
+            f"artifact_revision:{loaded.related_revision_id}"
             if loaded.related_revision_id is not None
             else None
         )
@@ -353,11 +353,7 @@ def _present_read(loaded: LoadedResource) -> ReadResourceResult:
             uri=loaded.uri,
             status="complete",
             body=loaded.body or "",
-            kind=(
-                "library_intelligence_revision"
-                if scheme == "library_intelligence_revision"
-                else "library_intelligence"
-            ),
+            kind=("artifact_revision" if scheme == "artifact_revision" else "artifact"),
             library_ref=library_ref,
             artifact_ref=artifact_ref,
             revision_ref=revision_ref,

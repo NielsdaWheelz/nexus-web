@@ -87,9 +87,9 @@ def _scheme_is_handled(scheme: ResourceScheme) -> bool:
         return True
     if scheme == "oracle_passage_anchor":
         return True
-    if scheme == "library_intelligence_artifact":
+    if scheme == "artifact":
         return True
-    if scheme == "library_intelligence_revision":
+    if scheme == "artifact_revision":
         return True
     if scheme == "external_snapshot":
         return True

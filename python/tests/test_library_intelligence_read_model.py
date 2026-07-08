@@ -21,9 +21,9 @@ pytestmark = pytest.mark.integration
 
 # The Rev 3 head/revision tables that must exist at head.
 _CURRENT_INTELLIGENCE_TABLES = {
-    "library_intelligence_artifacts",
-    "library_intelligence_artifact_revisions",
-    "library_intelligence_revision_events",
+    "artifacts",
+    "artifact_revisions",
+    "artifact_revision_events",
 }
 
 # The deterministic-compiler subtables dropped by 0141 (plus the already-dropped
@@ -61,11 +61,11 @@ def _require_library_intelligence_schema(engine: Engine) -> None:
     if missing:
         pytest.fail(f"test database is not migrated to the head/revision schema: missing {missing}")
     assert _REMOVED_INTELLIGENCE_TABLES.isdisjoint(tables)
-    head_columns = {col["name"] for col in inspector.get_columns("library_intelligence_artifacts")}
+    head_columns = {col["name"] for col in inspector.get_columns("artifacts")}
     assert _NEW_HEAD_COLUMNS.issubset(head_columns), head_columns
     assert _REMOVED_HEAD_COLUMNS.isdisjoint(head_columns), head_columns
     revision_columns = {
-        col["name"] for col in inspector.get_columns("library_intelligence_artifact_revisions")
+        col["name"] for col in inspector.get_columns("artifact_revisions")
     }
     assert _NEW_REVISION_COLUMNS.issubset(revision_columns), revision_columns
 
@@ -89,10 +89,10 @@ def _bootstrap_user(auth_client, user_id: UUID) -> UUID:
 
 
 def test_artifact_out_schema_rejects_removed_version_fields():
-    from nexus.schemas.library_intelligence import LibraryIntelligenceArtifactOut
+    from nexus.schemas.artifact import DossierArtifactOut
 
     with pytest.raises(ValidationError):
-        LibraryIntelligenceArtifactOut.model_validate(
+        DossierArtifactOut.model_validate(
             {
                 "status": "current",
                 "active_version_id": str(uuid4()),
@@ -101,7 +101,7 @@ def test_artifact_out_schema_rejects_removed_version_fields():
 
 
 def test_artifact_out_schema_has_no_support_state_or_sections():
-    import nexus.schemas.library_intelligence as schema
+    import nexus.schemas.artifact as schema
 
     assert not hasattr(schema, "SupportState")
     assert not hasattr(schema, "SectionKind")
@@ -183,7 +183,7 @@ def test_generate_route_returns_202_and_revision_is_run(
     with direct_db.session() as session:
         stored_instruction = session.execute(
             text(
-                "SELECT custom_instruction FROM library_intelligence_artifact_revisions "
+                "SELECT custom_instruction FROM artifact_revisions "
                 "WHERE id = :revision_id"
             ),
             {"revision_id": UUID(data["revision_id"])},
@@ -201,7 +201,7 @@ def test_generate_route_returns_202_and_revision_is_run(
     with direct_db.session() as session:
         replay_instruction = session.execute(
             text(
-                "SELECT custom_instruction FROM library_intelligence_artifact_revisions "
+                "SELECT custom_instruction FROM artifact_revisions "
                 "WHERE id = :revision_id"
             ),
             {"revision_id": UUID(data["revision_id"])},
@@ -219,7 +219,7 @@ def test_generate_route_returns_202_and_revision_is_run(
     with direct_db.session() as session:
         forked_instruction = session.execute(
             text(
-                "SELECT custom_instruction FROM library_intelligence_artifact_revisions "
+                "SELECT custom_instruction FROM artifact_revisions "
                 "WHERE id = :revision_id"
             ),
             {"revision_id": UUID(forked.json()["data"]["revision_id"])},
@@ -263,8 +263,8 @@ def test_revision_routes_read_historical_citations_after_head_moves(
         artifact_id = session.execute(
             text(
                 """
-                INSERT INTO library_intelligence_artifacts (library_id, user_id)
-                VALUES (:library_id, :user_id)
+                INSERT INTO artifacts (subject_scheme, subject_id, kind, user_id)
+                VALUES ('library', :library_id, 'library_dossier', :user_id)
                 RETURNING id
                 """
             ),
@@ -273,7 +273,7 @@ def test_revision_routes_read_historical_citations_after_head_moves(
         first_revision_id = session.execute(
             text(
                 """
-                INSERT INTO library_intelligence_artifact_revisions (
+                INSERT INTO artifact_revisions (
                     artifact_id, content_md, covered_targets, status, promoted_at
                 )
                 VALUES (:artifact_id, 'First body [1].', '[]'::jsonb, 'ready', now())
@@ -285,7 +285,7 @@ def test_revision_routes_read_historical_citations_after_head_moves(
         second_revision_id = session.execute(
             text(
                 """
-                INSERT INTO library_intelligence_artifact_revisions (
+                INSERT INTO artifact_revisions (
                     artifact_id, content_md, covered_targets, status, promoted_at
                 )
                 VALUES (:artifact_id, 'Second body [1].', '[]'::jsonb, 'ready', now())
@@ -296,7 +296,7 @@ def test_revision_routes_read_historical_citations_after_head_moves(
         ).scalar_one()
         session.execute(
             text(
-                "UPDATE library_intelligence_artifacts "
+                "UPDATE artifacts "
                 "SET current_revision_id = :revision_id WHERE id = :artifact_id"
             ),
             {"revision_id": second_revision_id, "artifact_id": artifact_id},
@@ -307,7 +307,7 @@ def test_revision_routes_read_historical_citations_after_head_moves(
                     user_id=owner_id,
                     kind="supports",
                     origin="citation",
-                    source_scheme="library_intelligence_revision",
+                    source_scheme="artifact_revision",
                     source_id=first_revision_id,
                     target_scheme="media",
                     target_id=media_id,
@@ -318,7 +318,7 @@ def test_revision_routes_read_historical_citations_after_head_moves(
                     user_id=owner_id,
                     kind="supports",
                     origin="citation",
-                    source_scheme="library_intelligence_revision",
+                    source_scheme="artifact_revision",
                     source_id=second_revision_id,
                     target_scheme="media",
                     target_id=media_id,
@@ -341,8 +341,8 @@ def test_revision_routes_read_historical_citations_after_head_moves(
     assert revisions.status_code == 200, revisions.text
     rows = revisions.json()["data"]["revisions"]
     assert {row["revision_ref"] for row in rows} == {
-        f"library_intelligence_revision:{first_revision_id}",
-        f"library_intelligence_revision:{second_revision_id}",
+        f"artifact_revision:{first_revision_id}",
+        f"artifact_revision:{second_revision_id}",
     }
     assert {row["citation_count"] for row in rows} == {1}
     assert {row["source_count"] for row in rows} == {0}
@@ -360,7 +360,7 @@ def test_revision_routes_read_historical_citations_after_head_moves(
     )
     assert historical.status_code == 200, historical.text
     data = historical.json()["data"]
-    assert data["revision_ref"] == f"library_intelligence_revision:{first_revision_id}"
+    assert data["revision_ref"] == f"artifact_revision:{first_revision_id}"
     assert data["content_md"] == "First body [1]."
     assert data["is_current"] is False
     assert data["citations"][0]["snapshot"]["title"] == "First Source"
@@ -374,7 +374,7 @@ def test_revision_routes_read_historical_citations_after_head_moves(
     )
     assert promoted.status_code == 200, promoted.text
     assert promoted.json()["data"]["revision_ref"] == (
-        f"library_intelligence_revision:{first_revision_id}"
+        f"artifact_revision:{first_revision_id}"
     )
     assert "run_id" not in promoted.json()["data"]
 
@@ -385,7 +385,7 @@ def test_revision_routes_read_historical_citations_after_head_moves(
     assert after.status_code == 200, after.text
     assert (
         after.json()["data"]["revision_ref"]
-        == f"library_intelligence_revision:{second_revision_id}"
+        == f"artifact_revision:{second_revision_id}"
     )
     assert after.json()["data"]["is_current"] is False
     assert after.json()["data"]["citations"][0]["snapshot"]["title"] == "Second Source"
@@ -414,15 +414,15 @@ def test_chat_runs_next_event_seq_column_is_gone(db_session: Session, engine: En
 def test_circular_head_revision_fk_present(db_session: Session, engine: Engine):
     _require_library_intelligence_schema(engine)
     fk = db_session.execute(
-        text("SELECT conname FROM pg_constraint WHERE conname = 'fk_li_artifacts_current_revision'")
+        text("SELECT conname FROM pg_constraint WHERE conname = 'fk_artifacts_current_revision'")
     ).scalar_one_or_none()
-    assert fk == "fk_li_artifacts_current_revision"
+    assert fk == "fk_artifacts_current_revision"
     # Nullable until the first revision is promoted (the circular FK is resolved
     # after both tables exist; §11).
     nullable = db_session.execute(
         text(
             "SELECT is_nullable FROM information_schema.columns "
-            "WHERE table_name = 'library_intelligence_artifacts' "
+            "WHERE table_name = 'artifacts' "
             "AND column_name = 'current_revision_id'"
         )
     ).scalar_one()

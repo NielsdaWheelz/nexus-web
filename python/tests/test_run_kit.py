@@ -6,10 +6,10 @@ import pytest
 from sqlalchemy import text
 
 from nexus.db.models import (
+    ArtifactRevision,
     ChatRun,
-    LibraryIntelligenceArtifact,
-    LibraryIntelligenceArtifactRevision,
     OracleReading,
+    SynthesisArtifact,
 )
 from nexus.services import run_kit
 from tests.factories import (
@@ -67,13 +67,19 @@ def _streaming_reading(db) -> OracleReading:
     return reading
 
 
-def _building_revision(db) -> LibraryIntelligenceArtifactRevision:
+def _building_revision(db) -> ArtifactRevision:
     user_id = _insert_user(db)
     library_id = create_test_library(db, user_id)
-    artifact = LibraryIntelligenceArtifact(id=uuid4(), library_id=library_id, user_id=user_id)
+    artifact = SynthesisArtifact(
+        id=uuid4(),
+        subject_scheme="library",
+        subject_id=library_id,
+        kind="library_dossier",
+        user_id=user_id,
+    )
     db.add(artifact)
     db.flush()
-    revision = LibraryIntelligenceArtifactRevision(
+    revision = ArtifactRevision(
         id=uuid4(), artifact_id=artifact.id, covered_targets=[], status="building"
     )
     db.add(revision)
@@ -168,7 +174,7 @@ def test_mark_terminal_stamps_error_pair_on_li_revision(db_session):
 
     run_kit.mark_terminal(
         db_session,
-        stream=run_kit.library_intelligence_revision_stream(revision),
+        stream=run_kit.artifact_revision_stream(revision),
         status="failed",
         done_payload={"error": "llm_failure"},
         error_code="E_LLM_TIMEOUT",
@@ -210,7 +216,7 @@ def test_mark_terminal_is_noop_on_already_terminal_parent(db_session):
 def _li_write_failure(db, revision) -> None:
     run_kit.mark_terminal(
         db,
-        stream=run_kit.library_intelligence_revision_stream(revision),
+        stream=run_kit.artifact_revision_stream(revision),
         status="failed",
         done_payload={"error": "E_INTERNAL"},
         error_code="E_INTERNAL",
@@ -219,7 +225,7 @@ def _li_write_failure(db, revision) -> None:
 
 
 def _li_load(revision_id):
-    return lambda db: db.get(LibraryIntelligenceArtifactRevision, revision_id)
+    return lambda db: db.get(ArtifactRevision, revision_id)
 
 
 def _li_is_terminal(revision) -> bool:
@@ -250,7 +256,7 @@ def test_fail_run_after_worker_exception_writes_failure_on_nonterminal_parent(db
     )
     assert parent.content_md == "", "the broken transaction's writes must be rolled back"
     assert _event_types(
-        db_session, "library_intelligence_revision_events", "revision_id", revision_id
+        db_session, "artifact_revision_events", "revision_id", revision_id
     ) == ["done"]
 
 
@@ -271,7 +277,7 @@ def test_fail_run_after_worker_exception_noops_on_terminal_parent(db_session):
     assert parent is not None and parent.status == "ready"
     assert parent.error_code is None and parent.error_detail is None
     assert (
-        _event_types(db_session, "library_intelligence_revision_events", "revision_id", revision_id)
+        _event_types(db_session, "artifact_revision_events", "revision_id", revision_id)
         == []
     )
 

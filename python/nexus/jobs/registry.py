@@ -43,7 +43,7 @@ USER_FACING_JOB_KINDS = (
     "ingest_media_source",
     "enrich_metadata",
     "chat_run",
-    "library_intelligence_artifact_generate",
+    "library_dossier_generate",
     "media_unit_build",
     "note_reindex_job",
     "podcast_sync_subscription_job",
@@ -52,6 +52,7 @@ USER_FACING_JOB_KINDS = (
     "oracle_reading_generate",
     "synapse_scan",
     "contributor_reconciliation",
+    "conversation_distill",
 )
 
 
@@ -122,12 +123,31 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             lease_seconds=900,
             dead_letter_handler=_dead_letter_chat_run,
         ),
-        "library_intelligence_artifact_generate": JobDefinition(
-            kind="library_intelligence_artifact_generate",
-            handler=_run_library_intelligence_artifact_generate,
+        "library_dossier_generate": JobDefinition(
+            kind="library_dossier_generate",
+            handler=_run_library_dossier_generate,
             max_attempts=1,
             retry_delays_seconds=(0,),
             lease_seconds=900,
+        ),
+        "conversation_distill": JobDefinition(
+            kind="conversation_distill",
+            handler=_run_conversation_distill,
+            max_attempts=1,
+            retry_delays_seconds=(0,),
+            lease_seconds=900,
+        ),
+        "conversation_distill_sweep": JobDefinition(
+            kind="conversation_distill_sweep",
+            handler=_run_conversation_distill_sweep,
+            max_attempts=1,
+            retry_delays_seconds=(0,),
+            lease_seconds=300,
+            periodic_interval_seconds=(
+                int(settings.conversation_distill_schedule_seconds)
+                if settings.conversation_distill_schedule_seconds > 0
+                else None
+            ),
         ),
         "podcast_sync_subscription_job": JobDefinition(
             kind="podcast_sync_subscription_job",
@@ -291,12 +311,22 @@ def _dead_letter_chat_run(db: Session, job: JobRow) -> None:
     finalize_dead_lettered_chat_run(db, job)
 
 
-def _run_library_intelligence_artifact_generate(
-    *, payload: Mapping[str, Any]
-) -> Mapping[str, Any] | None:
-    from nexus.tasks.library_intelligence import library_intelligence_artifact_generate
+def _run_library_dossier_generate(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    from nexus.tasks.artifacts import library_dossier_generate
 
-    return library_intelligence_artifact_generate(revision_id=str(payload["revision_id"]))
+    return library_dossier_generate(revision_id=str(payload["revision_id"]))
+
+
+def _run_conversation_distill(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    from nexus.tasks.artifacts import conversation_distill
+
+    return conversation_distill(revision_id=str(payload["revision_id"]))
+
+
+def _run_conversation_distill_sweep(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    from nexus.tasks.artifacts import conversation_distill_sweep
+
+    return conversation_distill_sweep()
 
 
 def _run_podcast_sync_subscription(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:

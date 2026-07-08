@@ -37,6 +37,7 @@ SEARCH_RESULT_TYPES = Literal[
     "message",
     "evidence_span",
     "conversation",
+    "artifact",
     "web_result",
     "reader_apparatus_item",
 ]
@@ -269,6 +270,20 @@ class SearchResultConversationOut(SearchResultBaseOut):
     id: UUID
 
 
+class ConversationArtifactSearchOut(SearchResultBaseOut):
+    """Typed search result for a conversation distillate claim (S4).
+
+    Lexical hit over a promoted ``conversation_distillate`` revision. Activates via
+    ``artifact_revision`` context ref → ``/conversations/{cid}?distillate=1`` (AC-10).
+    """
+
+    type: Literal["artifact"]
+    id: UUID
+    revision_id: UUID
+    subject_ref: str
+    kind: str
+
+
 class SearchResultWebOut(SearchResultBaseOut):
     """Typed public-web result shape shared with chat web search."""
 
@@ -313,6 +328,7 @@ SearchResultOut = Annotated[
     | SearchResultEvidenceSpanOut
     | SearchResultReaderApparatusItemOut
     | SearchResultConversationOut
+    | ConversationArtifactSearchOut
     | SearchResultWebOut,
     Field(discriminator="type"),
 ]

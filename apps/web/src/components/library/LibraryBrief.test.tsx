@@ -5,7 +5,7 @@ import LibraryBrief from "@/components/library/LibraryBrief";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { GENERATION_RUN_STREAM_PATHS } from "@/lib/api/useGenerationRun";
-import type { LiStreamEvent } from "@/lib/api/sse/libraryIntelligenceEvents";
+import type { ArtifactStreamEvent } from "@/lib/api/sse/artifactRevisionEvents";
 import {
   NOTE_PULSE_HIGHLIGHT,
   READER_PULSE_HIGHLIGHT,
@@ -14,7 +14,7 @@ import {
 } from "@/lib/reader/pulseEvent";
 
 // Only the external streaming transport is mocked (the BFF stream-token fetch +
-// the direct SSE client), so the brief runs the real useLibraryIntelligenceStream
+// the direct SSE client), so the brief runs the real useArtifactStream
 // hook end to end; fetch (apiFetch/useResource) is stubbed at the boundary.
 const streamMocks = vi.hoisted(() => ({
   fetchStreamToken: vi.fn(),
@@ -32,13 +32,13 @@ vi.mock("@/lib/api/sse-client", () => ({
 const LIBRARY_ID = "lib-1";
 const ARTIFACT_ID = "artifact-1";
 const REVISION_ID = "rev-1";
-const REVISION_REF = `library_intelligence_revision:${REVISION_ID}`;
+const REVISION_REF = `artifact_revision:${REVISION_ID}`;
 const MEDIA_ID = "media-1";
 const CONVERSATION_ID = "conversation-1";
 
 interface SseOptions {
   url: string;
-  onEvent: (event: LiStreamEvent) => void;
+  onEvent: (event: ArtifactStreamEvent) => void;
 }
 
 function lastSseOptions(): SseOptions {
@@ -113,7 +113,7 @@ const NOTE_CITATION = {
 function artifact(overrides: Record<string, unknown> = {}) {
   return {
     artifact_id: ARTIFACT_ID,
-    artifact_ref: `library_intelligence_artifact:${ARTIFACT_ID}`,
+    artifact_ref: `artifact:${ARTIFACT_ID}`,
     revision_id: REVISION_ID,
     revision_ref: REVISION_REF,
     status: "current",
@@ -136,9 +136,9 @@ function artifact(overrides: Record<string, unknown> = {}) {
 function revision(overrides: Record<string, unknown> = {}) {
   return {
     artifact_id: ARTIFACT_ID,
-    artifact_ref: `library_intelligence_artifact:${ARTIFACT_ID}`,
+    artifact_ref: `artifact:${ARTIFACT_ID}`,
     revision_id: "rev-2",
-    revision_ref: "library_intelligence_revision:rev-2",
+    revision_ref: "artifact_revision:rev-2",
     status: "ready",
     content_md: "Historical synthesis [1].",
     citations: [CITATION],
@@ -160,7 +160,7 @@ function revision(overrides: Record<string, unknown> = {}) {
 function revisionSummary(overrides: Record<string, unknown> = {}) {
   return {
     artifact_id: ARTIFACT_ID,
-    artifact_ref: `library_intelligence_artifact:${ARTIFACT_ID}`,
+    artifact_ref: `artifact:${ARTIFACT_ID}`,
     revision_id: REVISION_ID,
     revision_ref: REVISION_REF,
     status: "ready",
@@ -284,8 +284,8 @@ describe("LibraryBrief", () => {
   });
 
   it("preserves the unchanged SSE stream path (anti-regression)", () => {
-    expect(GENERATION_RUN_STREAM_PATHS["library-intelligence"]).toBe(
-      "/stream/library-intelligence",
+    expect(GENERATION_RUN_STREAM_PATHS["artifact-revisions"]).toBe(
+      "/stream/artifact-revisions",
     );
   });
 
@@ -351,7 +351,7 @@ describe("LibraryBrief", () => {
       expect(streamMocks.sseClientDirect).toHaveBeenCalledTimes(1),
     );
     expect(lastSseOptions().url).toBe(
-      "https://stream.example.test/stream/library-intelligence/draft-rev/events",
+      "https://stream.example.test/stream/artifact-revisions/draft-rev/events",
     );
   });
 

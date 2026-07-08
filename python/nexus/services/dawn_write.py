@@ -24,7 +24,7 @@ from nexus.errors import ApiError
 from nexus.llm_catalog import require_catalog_model
 from nexus.logging import get_logger
 from nexus.services.api_key_resolver import resolve_api_key
-from nexus.services.library_intelligence import is_artifact_stale
+from nexus.services.artifacts.engine import is_artifact_stale
 from nexus.services.llm_ledger import LedgeredLLM, LlmCallOwner
 
 logger = get_logger(__name__)
@@ -159,12 +159,15 @@ def collect_signals(
     # Signal C — stale library dossiers.
     stale_rows = db.execute(
         text(
-            "SELECT lib.name, art.id AS artifact_id, art.library_id, rev.id AS revision_id"
-            " FROM library_intelligence_artifacts art"
-            " JOIN libraries lib ON lib.id = art.library_id"
-            " JOIN library_intelligence_artifact_revisions rev"
+            "SELECT lib.name, art.id AS artifact_id, art.subject_id AS library_id,"
+            " rev.id AS revision_id"
+            " FROM artifacts art"
+            " JOIN libraries lib ON lib.id = art.subject_id"
+            " JOIN artifact_revisions rev"
             "   ON rev.id = art.current_revision_id"
             " WHERE art.user_id = :uid"
+            "   AND art.subject_scheme = 'library'"
+            "   AND art.kind = 'library_dossier'"
             "   AND rev.status = 'ready'"
             "   AND rev.promoted_at IS NOT NULL"
         ),
@@ -174,7 +177,13 @@ def collect_signals(
     stale_libraries = [
         _StaleLibrarySignal(name=row.name)
         for row in stale_rows
-        if is_artifact_stale(db, library_id=row.library_id, current_revision_id=row.revision_id)
+        if is_artifact_stale(
+            db,
+            subject_scheme="library",
+            subject_id=row.library_id,
+            kind="library_dossier",
+            current_revision_id=row.revision_id,
+        )
     ]
 
     signals = DawnWriteSignals(

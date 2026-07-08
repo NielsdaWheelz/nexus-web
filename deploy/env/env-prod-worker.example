@@ -2,7 +2,7 @@
 # Safe production default for small VPS Postgres: explicit user/domain jobs only.
 # Merged after env-prod-backend, so values here can override API defaults.
 
-WORKER_ALLOWED_JOB_KINDS=ingest_media_source,enrich_metadata,chat_run,library_intelligence_artifact_generate,media_unit_build,note_reindex_job,podcast_sync_subscription_job,podcast_reindex_semantic_job,backfill_default_library_closure_job,oracle_reading_generate,synapse_scan,dawn_write_job,contributor_reconciliation
+WORKER_ALLOWED_JOB_KINDS=ingest_media_source,enrich_metadata,chat_run,library_dossier_generate,media_unit_build,note_reindex_job,podcast_sync_subscription_job,podcast_reindex_semantic_job,backfill_default_library_closure_job,oracle_reading_generate,synapse_scan,dawn_write_job,contributor_reconciliation,conversation_distill,conversation_distill_sweep
 WORKER_POLL_INTERVAL_SECONDS=5
 WORKER_IDLE_BACKOFF_MAX_SECONDS=300
 WORKER_SCHEDULER_INTERVAL_SECONDS=300
@@ -17,6 +17,10 @@ WORKER_DB_FAILURE_BACKOFF_MAX_SECONDS=900
 # Dawn write morning brief (dawn_write_job no-op when false).
 # DAWN_WRITE_ENABLED=true
 DAWN_WRITE_SCHEDULE_SECONDS=3600
+
+# Conversation distillate sweep (conversation_distill + sweep no-op when false).
+# DISTILL_ENABLED=true
+CONVERSATION_DISTILL_SCHEDULE_SECONDS=3600
 
 # 0 means disabled. For maintenance, add only the specific job kind needed to
 # WORKER_ALLOWED_JOB_KINDS and set only its schedule for a bounded operator window.

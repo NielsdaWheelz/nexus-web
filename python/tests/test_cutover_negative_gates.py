@@ -414,12 +414,12 @@ def test_must_remain_store_has_table_def_and_a_consumer(table: str):
 
 
 def test_allowed_rev3_symbols_present_and_unflagged():
-    # current_revision_id / revision_id / library_intelligence_artifact_revisions
+    # current_revision_id / revision_id / artifact_revisions
     # are the Rev-3 model and must NOT be matched by any absence gate above. Prove
     # they're live (present in production) so the gates can never be "tightened"
     # into banning them by accident.
     for symbol in (
-        "library_intelligence_artifact_revisions",
+        "artifact_revisions",
         "current_revision_id",
         "revision_id",
     ):
@@ -429,13 +429,13 @@ def test_allowed_rev3_symbols_present_and_unflagged():
 
 def test_li_generated_citations_never_source_from_artifact_head():
     pattern = (
-        r"source\s*=\s*ResourceRef\(\s*scheme\s*=\s*['\"]library_intelligence_artifact['\"]|"
-        r"source_scheme\s*=\s*['\"]library_intelligence_artifact['\"].*ordinal\s*="
+        r"source\s*=\s*ResourceRef\(\s*scheme\s*=\s*['\"]artifact['\"]|"
+        r"source_scheme\s*=\s*['\"]artifact['\"].*ordinal\s*="
     )
     hits = _filtered(pattern, _PY_ROOT, _SCRIPTS_ROOT, exclude=_FRONTEND_TEST)
     assert not hits, (
         "Library Intelligence generated citations must source from "
-        "library_intelligence_revision, never the mutable artifact head:\n"
+        "artifact_revision, never the mutable artifact head:\n"
         f"{_fmt(hits)}"
     )
 
@@ -512,7 +512,7 @@ def test_intelligence_pane_does_not_poll():
     brief_files = [
         _WEB_ROOT / "components" / "library" / "LibraryBrief.tsx",
         _WEB_ROOT / "components" / "library" / "LibraryBriefArtifact.tsx",
-        _WEB_ROOT / "components" / "library" / "useLibraryIntelligenceStream.ts",
+        _WEB_ROOT / "components" / "library" / "useArtifactStream.ts",
     ]
     for f in brief_files:
         assert f.exists(), f"expected library brief file {f}"
@@ -527,10 +527,10 @@ def test_intelligence_pane_does_not_poll():
 
 
 def test_library_intelligence_line_count_within_budget():
-    path = _PY_ROOT / "services" / "library_intelligence.py"
+    path = _PY_ROOT / "services" / "artifacts" / "dossier.py"
     line_count = sum(1 for _ in path.open(encoding="utf-8"))
     assert line_count <= _LIBRARY_INTELLIGENCE_LINE_BUDGET, (
-        f"library_intelligence.py grew to {line_count} lines "
+        f"artifacts/dossier.py grew to {line_count} lines "
         f"(budget {_LIBRARY_INTELLIGENCE_LINE_BUDGET}); split a concern out of the "
         f"artifact-head owner rather than raising the budget."
     )
@@ -1745,7 +1745,7 @@ def test_evidence_span_synapse_edge_target_constructed_only_in_synapse():
     hits = _excluding(
         _grep(r'target=ResourceRef\(scheme="evidence_span"', _PY_ROOT, _SCRIPTS_ROOT),
         "services/synapse.py",
-        "services/library_intelligence_reduce.py",
+        "services/artifacts/reducers/library_dossier.py",
     )
     assert not hits, f'evidence_span synapse edge target built outside synapse.py:\n{_fmt(hits)}'
 

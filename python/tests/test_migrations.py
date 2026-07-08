@@ -9723,9 +9723,9 @@ class TestLibraryIntelligenceArtifactRewrite0142:
         "library_intelligence_citations",
     )
     _NEW_LI_TABLES = (
-        "library_intelligence_artifacts",
-        "library_intelligence_artifact_revisions",
-        "library_intelligence_revision_events",
+        "artifacts",
+        "artifact_revisions",
+        "artifact_revision_events",
     )
 
     def test_dropped_li_tables_are_gone_at_head(self, li_head_engine):
@@ -9769,7 +9769,7 @@ class TestLibraryIntelligenceArtifactRewrite0142:
                     text(
                         """
                         SELECT column_name FROM information_schema.columns
-                        WHERE table_name = 'library_intelligence_artifacts'
+                        WHERE table_name = 'artifacts'
                         """
                     )
                 ).fetchall()
@@ -9791,19 +9791,19 @@ class TestLibraryIntelligenceArtifactRewrite0142:
             fk = session.execute(
                 text(
                     "SELECT conname FROM pg_constraint "
-                    "WHERE conname = 'fk_li_artifacts_current_revision'"
+                    "WHERE conname = 'fk_artifacts_current_revision'"
                 )
             ).scalar_one_or_none()
             nullable = session.execute(
                 text(
                     """
                     SELECT is_nullable FROM information_schema.columns
-                    WHERE table_name = 'library_intelligence_artifacts'
+                    WHERE table_name = 'artifacts'
                       AND column_name = 'current_revision_id'
                     """
                 )
             ).scalar_one()
-        assert fk == "fk_li_artifacts_current_revision"
+        assert fk == "fk_artifacts_current_revision"
         # Nullable until the first revision is promoted (circular FK, §11).
         assert nullable == "YES", "current_revision_id must be nullable"
 
@@ -9816,9 +9816,9 @@ class TestLibraryIntelligenceArtifactRewrite0142:
                     FROM pg_constraint
                     WHERE contype = 'f'
                       AND conrelid IN (
-                        'library_intelligence_artifacts'::regclass,
-                        'library_intelligence_artifact_revisions'::regclass,
-                        'library_intelligence_revision_events'::regclass
+                        'artifacts'::regclass,
+                        'artifact_revisions'::regclass,
+                        'artifact_revision_events'::regclass
                       )
                     """
                 )
@@ -9834,12 +9834,12 @@ class TestLibraryIntelligenceArtifactRewrite0142:
                 for row in session.execute(
                     text(
                         "SELECT conname FROM pg_constraint "
-                        "WHERE conrelid = 'library_intelligence_revision_events'::regclass"
+                        "WHERE conrelid = 'artifact_revision_events'::regclass"
                     )
                 ).fetchall()
             }
-        assert "ck_li_revision_events_type" in constraints
-        assert "uq_li_revision_events_seq" in constraints
+        assert "ck_artifact_revision_events_type" in constraints
+        assert "uq_artifact_revision_events_seq" in constraints
 
     def test_chat_run_events_check_drops_claim_keeps_citation_index(self, li_head_engine):
         with Session(li_head_engine) as session:
@@ -10364,13 +10364,13 @@ class TestMigration0145LlmCallLedgerAndErrorFloor:
                 }
                 for table_name in (
                     "chat_runs",
-                    "library_intelligence_artifact_revisions",
+                    "artifact_revisions",
                     "media_summaries",
                 )
             }
         assert "error_detail" in columns_by_table["chat_runs"]
         assert {"error_code", "error_detail"}.issubset(
-            columns_by_table["library_intelligence_artifact_revisions"]
+            columns_by_table["artifact_revisions"]
         )
         assert {"error_code", "error_detail"}.issubset(columns_by_table["media_summaries"])
 
@@ -11711,7 +11711,7 @@ RESOURCE_EDGE_SCHEMES = (
     "message",
     "oracle_reading",
     "oracle_passage_anchor",
-    "library_intelligence_artifact",
+    "artifact",
     "external_snapshot",
     "contributor",
     "podcast",
@@ -11803,7 +11803,7 @@ class TestMigration0149SynapseResonance:
         for owner_kind in (
             "chat_run",
             "oracle_reading",
-            "li_revision",
+            "artifact_revision",
             "media_summary",
             "media_enrichment",
             "synapse_scan",
@@ -11857,8 +11857,8 @@ class TestMigration0149SynapseResonance:
                     )
                     VALUES (
                         :user_id, 'context', 'user',
-                        'library_intelligence_revision', :source_id,
-                        'library_intelligence_revision', :target_id
+                        'artifact_revision', :source_id,
+                        'artifact_revision', :target_id
                     )
                     """
                 ),
@@ -11866,8 +11866,8 @@ class TestMigration0149SynapseResonance:
             )
             session.commit()
 
-        assert "'library_intelligence_revision'" in source_check, source_check
-        assert "'library_intelligence_revision'" in target_check, target_check
+        assert "'artifact_revision'" in source_check, source_check
+        assert "'artifact_revision'" in target_check, target_check
 
     def test_synapse_suppressions_shape_at_head(self, head_engine):
         """The dismissal memory exists with exact columns, five-column PK,
@@ -12656,7 +12656,7 @@ class TestMigration0157ResourceEdgeDbParity:
             (
                 {
                     "origin": "citation",
-                    "source_scheme": "library_intelligence_artifact",
+                    "source_scheme": "artifact",
                     "ordinal": 1,
                     "snapshot": '{"excerpt": "Artifact head citation"}',
                 },
@@ -12684,7 +12684,7 @@ class TestMigration0157ResourceEdgeDbParity:
                 "ck_resource_edges_synapse_shape",
             ),
             (
-                {"origin": "synapse", "target_scheme": "library_intelligence_revision"},
+                {"origin": "synapse", "target_scheme": "artifact_revision"},
                 "ck_resource_edges_synapse_shape",
             ),
             (

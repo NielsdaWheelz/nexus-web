@@ -28,10 +28,11 @@ from pydantic_settings import BaseSettings
 TRANSCRIPT_EMBEDDING_SCHEMA_DIMENSIONS = 256
 DEFAULT_WORKER_ALLOWED_JOB_KINDS = (
     "ingest_media_source,enrich_metadata,chat_run,"
-    "library_intelligence_artifact_generate,media_unit_build,note_reindex_job,"
+    "library_dossier_generate,media_unit_build,note_reindex_job,"
     "podcast_sync_subscription_job,podcast_reindex_semantic_job,"
     "backfill_default_library_closure_job,oracle_reading_generate,synapse_scan,"
-    "dawn_write_job,contributor_reconciliation"
+    "dawn_write_job,contributor_reconciliation,"
+    "conversation_distill,conversation_distill_sweep"
 )
 
 
@@ -414,6 +415,13 @@ class Settings(BaseSettings):
     # Dawn write: DAWN_WRITE_ENABLED=false makes the sweep job a no-op.
     dawn_write_enabled: bool = Field(default=True, alias="DAWN_WRITE_ENABLED")
     dawn_write_schedule_seconds: int = Field(default=3600, alias="DAWN_WRITE_SCHEDULE_SECONDS")
+
+    # Conversation distillate sweep: DISTILL_ENABLED=false makes the sweep + the
+    # on-demand distill enqueue no-ops (one deploy safety valve, D-14).
+    distill_enabled: bool = Field(default=True, alias="DISTILL_ENABLED")
+    conversation_distill_schedule_seconds: int = Field(
+        default=3600, alias="CONVERSATION_DISTILL_SCHEDULE_SECONDS"
+    )
 
     # Stream token auth.
     # HS256 signing key for short-lived stream tokens (base64-encoded 32+ bytes)

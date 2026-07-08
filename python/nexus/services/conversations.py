@@ -829,6 +829,12 @@ def delete_conversation_rows_without_commit(db: Session, conversation_id: UUID) 
         db, ref=ResourceRef(scheme="conversation", id=conversation_id)
     )
 
+    # FK-less artifact subject cleanup: drop this conversation's distillate head +
+    # revisions + events + citation edges (D-10; no cascade, D-2).
+    from nexus.services.artifacts import engine as artifact_engine
+
+    artifact_engine.on_subject_deleted(db, ResourceRef(scheme="conversation", id=conversation_id))
+
     db.execute(
         text("DELETE FROM conversation_active_paths WHERE conversation_id = :conversation_id"),
         {"conversation_id": conversation_id},

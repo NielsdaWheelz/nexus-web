@@ -305,7 +305,7 @@ def test_create_edge_rejects_ordinal_without_snapshot(db_session: Session, boots
         create_edge(db_session, viewer_id=bootstrapped_user, input=bad)
 
 
-@pytest.mark.parametrize("source_scheme", ["conversation", "library_intelligence_artifact"])
+@pytest.mark.parametrize("source_scheme", ["conversation", "artifact"])
 def test_create_edge_rejects_ordinal_citation_from_non_output_source(
     db_session: Session, bootstrapped_user: UUID, source_scheme: str
 ):
@@ -406,7 +406,7 @@ def test_create_edge_rejects_synapse_target_outside_candidate_vocabulary(
 ):
     bad = EdgeCreate(
         source=_page_ref(db_session, bootstrapped_user),
-        target=ResourceRef(scheme="library_intelligence_revision", id=uuid4()),
+        target=ResourceRef(scheme="artifact_revision", id=uuid4()),
         kind="context",
         origin="synapse",
         snapshot=_SNAPSHOT,

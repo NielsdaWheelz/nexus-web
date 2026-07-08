@@ -13,9 +13,19 @@ import { pluralize } from "@/lib/text/pluralize";
 
 export function presentConversation(
   item: ConversationSummary,
-  ctx: { deleting?: boolean; onDelete: () => void },
+  ctx: {
+    deleting?: boolean;
+    distilling?: boolean;
+    onDistill?: () => void;
+    onDelete: () => void;
+  },
 ): CollectionRowView {
-  const actions = conversationResourceOptions({ deleting: ctx.deleting, onDelete: ctx.onDelete });
+  const actions = conversationResourceOptions({
+    deleting: ctx.deleting,
+    distilling: ctx.distilling,
+    onDistill: ctx.onDistill,
+    onDelete: ctx.onDelete,
+  });
   const deleteAction = actions.find(
     (action) => action.id === "delete-conversation" && !action.disabled && action.onSelect,
   );

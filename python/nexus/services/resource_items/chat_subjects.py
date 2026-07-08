@@ -46,14 +46,14 @@ def resolve_chat_subject(
         )
 
     subject_ref = requested_ref
-    if requested_ref.scheme == "library_intelligence_artifact":
+    if requested_ref.scheme == "artifact":
         if requested_loaded.related_revision_id is None:
             raise InvalidRequestError(
                 ApiErrorCode.E_INVALID_REQUEST,
-                "Library Intelligence artifact has no current revision",
+                "Artifact has no current revision",
             )
         subject_ref = ResourceRef(
-            scheme="library_intelligence_revision",
+            scheme="artifact_revision",
             id=requested_loaded.related_revision_id,
         )
 
@@ -78,7 +78,7 @@ def resolve_chat_subject(
 
     companion_refs: tuple[ResourceRef, ...] = ()
     if (
-        subject_ref.scheme == "library_intelligence_revision"
+        subject_ref.scheme == "artifact_revision"
         and subject_loaded.related_library_id is not None
     ):
         companion_refs = (ResourceRef(scheme="library", id=subject_loaded.related_library_id),)

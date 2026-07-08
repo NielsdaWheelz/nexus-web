@@ -1,28 +1,40 @@
 import { describe, expect, it } from "vitest";
-import { toLibraryIntelligenceEvent } from "./libraryIntelligenceEvents";
+import { toArtifactRevisionEvent } from "./artifactRevisionEvents";
 
-describe("toLibraryIntelligenceEvent", () => {
-  it("parses meta events", () => {
+describe("toArtifactRevisionEvent", () => {
+  it("parses meta events with subject fields", () => {
     expect(
-      toLibraryIntelligenceEvent("meta", {
+      toArtifactRevisionEvent("meta", {
         revision_id: "rev-1",
-        library_id: "lib-1",
+        subject_scheme: "conversation",
+        subject_id: "conv-1",
       }),
     ).toEqual({
       type: "meta",
-      data: { revision_id: "rev-1", library_id: "lib-1" },
+      data: {
+        revision_id: "rev-1",
+        subject_scheme: "conversation",
+        subject_id: "conv-1",
+      },
+    });
+  });
+
+  it("parses a meta event with only a revision id", () => {
+    expect(toArtifactRevisionEvent("meta", { revision_id: "rev-1" })).toEqual({
+      type: "meta",
+      data: { revision_id: "rev-1", subject_scheme: null, subject_id: null },
     });
   });
 
   it("parses progress events with and without a stage", () => {
     expect(
-      toLibraryIntelligenceEvent("progress", { message: "Reducing sources" }),
+      toArtifactRevisionEvent("progress", { message: "Reducing sources" }),
     ).toEqual({
       type: "progress",
       data: { message: "Reducing sources", stage: null },
     });
     expect(
-      toLibraryIntelligenceEvent("progress", {
+      toArtifactRevisionEvent("progress", {
         message: "Reducing sources",
         stage: "reduce",
       }),
@@ -34,7 +46,7 @@ describe("toLibraryIntelligenceEvent", () => {
 
   it("parses a successful done event", () => {
     expect(
-      toLibraryIntelligenceEvent("done", {
+      toArtifactRevisionEvent("done", {
         status: "ready",
         error_code: null,
         revision_id: "rev-1",
@@ -47,7 +59,7 @@ describe("toLibraryIntelligenceEvent", () => {
 
   it("parses a failed done event", () => {
     expect(
-      toLibraryIntelligenceEvent("done", {
+      toArtifactRevisionEvent("done", {
         status: "failed",
         error_code: "E_INTERNAL",
         revision_id: "rev-1",
@@ -58,21 +70,21 @@ describe("toLibraryIntelligenceEvent", () => {
     });
   });
 
-  it("throws on a malformed meta payload", () => {
+  it("throws on a malformed meta payload (missing revision_id)", () => {
     expect(() =>
-      toLibraryIntelligenceEvent("meta", { revision_id: "rev-1" }),
+      toArtifactRevisionEvent("meta", { subject_scheme: "conversation" }),
     ).toThrow("Invalid SSE payload for meta");
   });
 
   it("throws on a malformed progress payload", () => {
     expect(() =>
-      toLibraryIntelligenceEvent("progress", { message: 42 }),
+      toArtifactRevisionEvent("progress", { message: 42 }),
     ).toThrow("Invalid SSE payload for progress");
   });
 
   it("throws on a malformed done payload (missing status)", () => {
     expect(() =>
-      toLibraryIntelligenceEvent("done", {
+      toArtifactRevisionEvent("done", {
         error_code: null,
         revision_id: "rev-1",
       }),
@@ -80,7 +92,7 @@ describe("toLibraryIntelligenceEvent", () => {
   });
 
   it("throws on an unknown event type", () => {
-    expect(() => toLibraryIntelligenceEvent("bogus", {})).toThrow(
+    expect(() => toArtifactRevisionEvent("bogus", {})).toThrow(
       "Unknown SSE event type: bogus",
     );
   });

@@ -15,8 +15,8 @@ describe("resourceRef", () => {
       scheme: "evidence_span",
       id: UUID,
     });
-    expect(parseResourceRef(`library_intelligence_revision:${UUID}`)).toEqual({
-      scheme: "library_intelligence_revision",
+    expect(parseResourceRef(`artifact_revision:${UUID}`)).toEqual({
+      scheme: "artifact_revision",
       id: UUID,
     });
     expect(parseResourceRef(`reader_apparatus_item:${UUID}`)).toEqual({
@@ -70,7 +70,7 @@ describe("resourceRef", () => {
     expect(isResourceScheme("media")).toBe(true);
     expect(isResourceScheme("oracle_passage_anchor")).toBe(true);
     expect(isResourceScheme("oracle_corpus_passage")).toBe(false);
-    expect(isResourceScheme("library_intelligence_revision")).toBe(true);
+    expect(isResourceScheme("artifact_revision")).toBe(true);
     expect(isResourceScheme("reader_apparatus_item")).toBe(true);
     expect(isResourceScheme("tag")).toBe(false);
     expect(isResourceScheme("span")).toBe(false);

@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas.retrieval import RetrievalLocator, retrieval_locator_json
 from nexus.schemas.search import (
+    ConversationArtifactSearchOut,
     SearchResultContentChunkOut,
     SearchResultContextRefOut,
     SearchResultContributorOut,
@@ -38,6 +39,7 @@ from nexus.services.search.constants import MAX_SNIPPET_LENGTH, RETRIEVAL_LOCATO
 from nexus.services.search.results import (
     InternalSearchResult,
     _credited_names,
+    _RankedArtifactResult,
     _RankedContentChunkResult,
     _RankedContributorResult,
     _RankedConversationResult,
@@ -238,6 +240,9 @@ def _result_resource_ref(result: InternalSearchResult) -> ResourceRef:
         return ResourceRef(scheme="message", id=result.id)
     if isinstance(result, _RankedConversationResult):
         return ResourceRef(scheme="conversation", id=result.id)
+    if isinstance(result, _RankedArtifactResult):
+        # Activate on the revision so route_for_ref lands on ?distillate=1 (AC-10).
+        return ResourceRef(scheme="artifact_revision", id=result.revision_id)
     if isinstance(result, _RankedEvidenceSpanResult):
         return ResourceRef(scheme="evidence_span", id=result.id)
     if isinstance(result, _RankedReaderApparatusItemResult):
@@ -326,6 +331,15 @@ def _result_model_fields(
         return {
             "title": result.title,
             "source_label": "conversation",
+            "media_id": None,
+            "media_kind": None,
+            **fields,
+        }
+
+    if isinstance(result, _RankedArtifactResult):
+        return {
+            "title": "Distillate",
+            "source_label": "distillate",
             "media_id": None,
             "media_kind": None,
             **fields,
@@ -498,6 +512,15 @@ def _result_to_out(db: Session, viewer_id: UUID, result: InternalSearchResult) -
     if isinstance(result, _RankedConversationResult):
         return SearchResultConversationOut(
             type="conversation",
+            **base_payload,
+        )
+
+    if isinstance(result, _RankedArtifactResult):
+        return ConversationArtifactSearchOut(
+            type="artifact",
+            revision_id=result.revision_id,
+            subject_ref=f"conversation:{result.id}",
+            kind="conversation_distillate",
             **base_payload,
         )
 

@@ -118,11 +118,11 @@ def test_generated_and_identity_resources_project_existing_routes(
     db_session.flush()
 
     assert (
-        _route(db_session, bootstrapped_user, "library_intelligence_artifact", artifact_id)
+        _route(db_session, bootstrapped_user, "artifact", artifact_id)
         == f"/libraries/{library_id}?tab=intelligence"
     )
     assert (
-        _route(db_session, bootstrapped_user, "library_intelligence_revision", revision_id)
+        _route(db_session, bootstrapped_user, "artifact_revision", revision_id)
         == f"/libraries/{library_id}?tab=intelligence&revision={revision_id}"
     )
     assert _route(db_session, bootstrapped_user, "oracle_reading", reading_id) == (
@@ -160,8 +160,8 @@ def _make_library_intelligence(db: Session, user_id: UUID, library_id: UUID) -> 
     artifact_id = db.execute(
         text(
             """
-            INSERT INTO library_intelligence_artifacts (library_id, user_id)
-            VALUES (:library_id, :user_id)
+            INSERT INTO artifacts (subject_scheme, subject_id, kind, user_id)
+            VALUES ('library', :library_id, 'library_dossier', :user_id)
             RETURNING id
             """
         ),
@@ -170,7 +170,7 @@ def _make_library_intelligence(db: Session, user_id: UUID, library_id: UUID) -> 
     revision_id = db.execute(
         text(
             """
-            INSERT INTO library_intelligence_artifact_revisions (
+            INSERT INTO artifact_revisions (
                 artifact_id, content_md, covered_targets, status, promoted_at
             )
             VALUES (:artifact_id, 'Route synthesis', '[]'::jsonb, 'ready', now())
@@ -182,7 +182,7 @@ def _make_library_intelligence(db: Session, user_id: UUID, library_id: UUID) -> 
     db.execute(
         text(
             """
-            UPDATE library_intelligence_artifacts
+            UPDATE artifacts
             SET current_revision_id = :revision_id
             WHERE id = :artifact_id
             """

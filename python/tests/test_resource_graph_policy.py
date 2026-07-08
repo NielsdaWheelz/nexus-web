@@ -48,7 +48,7 @@ def test_policy_rejects_unowned_origin_shapes() -> None:
         ),
         EdgeCreate(
             source=_ref("page"),
-            target=_ref("library_intelligence_revision"),
+            target=_ref("artifact_revision"),
             kind="context",
             origin="synapse",
         ),

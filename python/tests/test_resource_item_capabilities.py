@@ -60,8 +60,8 @@ def test_read_search_and_citation_capabilities_are_owned_together() -> None:
         "conversation",
         "message",
         "oracle_reading",
-        "library_intelligence_artifact",
-        "library_intelligence_revision",
+        "artifact",
+        "artifact_revision",
         "contributor",
         "podcast",
         "reader_apparatus_item",
@@ -70,7 +70,7 @@ def test_read_search_and_citation_capabilities_are_owned_together() -> None:
     assert citation_output_source_schemes() == (
         "message",
         "oracle_reading",
-        "library_intelligence_revision",
+        "artifact_revision",
     )
     readable = {
         scheme
@@ -99,7 +99,7 @@ def test_read_search_and_citation_capabilities_are_owned_together() -> None:
         "media",
         "page",
         "note_block",
-        "library_intelligence_artifact",
+        "artifact",
     )
     assert resource_expansion_policy(_ref("media")) == "media_owned_reader_children"
 
@@ -113,7 +113,7 @@ def test_every_resource_scheme_has_full_capability_decisions() -> None:
         "media_owned_reader_children",
         "page_note_blocks",
         "note_block_owned_evidence",
-        "library_intelligence_artifact_revisions",
+        "artifact_revisions",
     }
     for scheme, capability in RESOURCE_ITEM_CAPABILITIES.items():
         assert isinstance(capability.linkable, bool), scheme

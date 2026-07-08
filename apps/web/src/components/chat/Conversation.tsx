@@ -17,6 +17,7 @@ import { GitBranch, Link2 } from "lucide-react";
 import Button from "@/components/ui/Button";
 import ChatComposer from "@/components/chat/ChatComposer";
 import ChatSurface from "@/components/chat/ChatSurface";
+import ConversationDistillate from "@/components/chat/ConversationDistillate";
 import ConversationForksPanel from "@/components/chat/ConversationForksPanel";
 import ConversationContextRefsSurface from "@/components/chat/ConversationContextRefsSurface";
 import { useConversation } from "@/components/chat/useConversation";
@@ -61,8 +62,11 @@ export default function Conversation() {
   const resourceRef = paneRuntime?.resourceRef ?? null;
   const searchParams = usePaneSearchParams();
   const draft = searchParams.get("draft") ?? "";
+  const distillateForceOpen = searchParams.get("distillate") === "1";
 
   const [deleting, setDeleting] = useState(false);
+  const [distilling, setDistilling] = useState(false);
+  const [distillNonce, setDistillNonce] = useState(0);
   const [branchFocusKey, setBranchFocusKey] = useState("");
 
   // The context-ref secondary surface is keyed off the engine's resolved id, but the engine
@@ -184,6 +188,21 @@ export default function Conversation() {
     }
   }, [convo.conversationId, router]);
 
+  const handleDistillConversation = useCallback(async () => {
+    const id = convo.conversationId;
+    if (!id) return;
+    setDistilling(true);
+    try {
+      await apiFetch(`/api/conversations/${id}/distill`, { method: "POST" });
+      setDistillNonce((n) => n + 1);
+    } catch (err) {
+      if (handleUnauthenticatedApiError(err)) return;
+      setDeleteError(toFeedback(err, { fallback: "Failed to distill conversation" }));
+    } finally {
+      setDistilling(false);
+    }
+  }, [convo.conversationId]);
+
   // --------------------------------------------------------------------------
   // Reader-source activation + open cited resource
   // --------------------------------------------------------------------------
@@ -232,12 +251,22 @@ export default function Conversation() {
       convo.conversationId
         ? conversationResourceOptions({
             deleting,
+            distilling,
+            onDistill: () => {
+              void handleDistillConversation();
+            },
             onDelete: () => {
               void handleDeleteConversation();
             },
           })
         : [],
-    [convo.conversationId, deleting, handleDeleteConversation],
+    [
+      convo.conversationId,
+      deleting,
+      distilling,
+      handleDistillConversation,
+      handleDeleteConversation,
+    ],
   );
   const activeChatSurface =
     secondaryPane?.visibility === "visible"
@@ -375,6 +404,14 @@ export default function Conversation() {
       <div className={styles.chatPrimaryColumn}>
         <div className={styles.paneContentChat}>
           {error ? <FeedbackNotice feedback={error} /> : null}
+          {convo.conversationId ? (
+            <ConversationDistillate
+              conversationId={convo.conversationId}
+              reloadNonce={distillNonce}
+              forceExpand={distillateForceOpen}
+              navigate={(href) => router.push(href)}
+            />
+          ) : null}
           <ChatSurface
             ref={convo.scrollRef}
             messages={convo.messages}

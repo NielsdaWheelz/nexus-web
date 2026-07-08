@@ -133,8 +133,8 @@ def test_resolve_li_artifact_consumes_current_revision_and_library_companion(
         user_id=bootstrapped_user,
     )
 
-    artifact = ResourceRef(scheme="library_intelligence_artifact", id=artifact_id)
-    revision = ResourceRef(scheme="library_intelligence_revision", id=revision_id)
+    artifact = ResourceRef(scheme="artifact", id=artifact_id)
+    revision = ResourceRef(scheme="artifact_revision", id=revision_id)
     library = ResourceRef(scheme="library", id=library_id)
     resolved = resolve_chat_subject(
         db_session,
@@ -158,8 +158,8 @@ def test_resolve_li_artifact_without_current_revision_errors(
     artifact_id = db_session.execute(
         text(
             """
-            INSERT INTO library_intelligence_artifacts (library_id, user_id)
-            VALUES (:library_id, :user_id)
+            INSERT INTO artifacts (subject_scheme, subject_id, kind, user_id)
+            VALUES ('library', :library_id, 'library_dossier', :user_id)
             RETURNING id
             """
         ),
@@ -172,7 +172,7 @@ def test_resolve_li_artifact_without_current_revision_errors(
             db_session,
             viewer_id=bootstrapped_user,
             requested_ref=ResourceRef(
-                scheme="library_intelligence_artifact",
+                scheme="artifact",
                 id=UUID(str(artifact_id)),
             ),
         )
@@ -186,8 +186,8 @@ def _li_artifact_with_current_revision(
     artifact_id = db.execute(
         text(
             """
-            INSERT INTO library_intelligence_artifacts (library_id, user_id)
-            VALUES (:library_id, :user_id)
+            INSERT INTO artifacts (subject_scheme, subject_id, kind, user_id)
+            VALUES ('library', :library_id, 'library_dossier', :user_id)
             RETURNING id
             """
         ),
@@ -196,7 +196,7 @@ def _li_artifact_with_current_revision(
     revision_id = db.execute(
         text(
             """
-            INSERT INTO library_intelligence_artifact_revisions (
+            INSERT INTO artifact_revisions (
                 artifact_id, content_md, covered_targets, status, promoted_at
             )
             VALUES (:artifact_id, 'Synthesis body.', '[]'::jsonb, 'ready', now())
@@ -207,7 +207,7 @@ def _li_artifact_with_current_revision(
     ).scalar_one()
     db.execute(
         text(
-            "UPDATE library_intelligence_artifacts "
+            "UPDATE artifacts "
             "SET current_revision_id = :revision_id WHERE id = :artifact_id"
         ),
         {"revision_id": revision_id, "artifact_id": artifact_id},

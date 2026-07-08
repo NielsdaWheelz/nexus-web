@@ -65,7 +65,7 @@ export interface ReaderConnectionRow {
   anchor: ReaderConnectionAnchor | null;
   source_category:
     | "chat"
-    | "library_intelligence"
+    | "dossier"
     | "oracle"
     | "note"
     | "highlight_note"

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import assert_never
+from typing import Any, assert_never
 from urllib.parse import quote, urlencode
 from uuid import UUID
 
@@ -16,6 +16,23 @@ from nexus.services.resource_graph.resolve import (
     oracle_anchor_current_target,
     reader_target_for_citation_target,
 )
+
+
+def _artifact_subject_route(row: Any, *, revision_id: UUID | None) -> str | None:
+    """Route an artifact head/revision by its subject scheme (§4.1).
+
+    ``library`` -> the dossier tab (unchanged, D-7); ``conversation`` -> the
+    conversation with the distillate forced open (§4.5).
+    """
+    if row is None:
+        return None
+    subject_scheme, subject_id = row[0], row[1]
+    if subject_scheme == "library":
+        base = f"/libraries/{subject_id}?tab=intelligence"
+        return f"{base}&revision={revision_id}" if revision_id is not None else base
+    if subject_scheme == "conversation":
+        return f"/conversations/{subject_id}?distillate=1"
+    return None
 
 
 def resource_activation_for_ref(
@@ -133,29 +150,25 @@ def route_for_ref(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> str | No
             return None
         params = urlencode({"apparatus": str(row[1]), "apparatus_id": str(ref.id)})
         return f"/media/{row[0]}?{params}"
-    if ref.scheme == "library_intelligence_artifact":
-        library_id = db.scalar(
-            text("SELECT library_id FROM library_intelligence_artifacts WHERE id = :id"),
+    if ref.scheme == "artifact":
+        row = db.execute(
+            text("SELECT subject_scheme, subject_id FROM artifacts WHERE id = :id"),
             {"id": ref.id},
-        )
-        return f"/libraries/{library_id}?tab=intelligence" if library_id is not None else None
-    if ref.scheme == "library_intelligence_revision":
-        library_id = db.scalar(
+        ).first()
+        return _artifact_subject_route(row, revision_id=None)
+    if ref.scheme == "artifact_revision":
+        row = db.execute(
             text(
                 """
-                SELECT a.library_id
-                FROM library_intelligence_artifact_revisions r
-                JOIN library_intelligence_artifacts a ON a.id = r.artifact_id
+                SELECT a.subject_scheme, a.subject_id
+                FROM artifact_revisions r
+                JOIN artifacts a ON a.id = r.artifact_id
                 WHERE r.id = :id
                 """
             ),
             {"id": ref.id},
-        )
-        return (
-            f"/libraries/{library_id}?tab=intelligence&revision={ref.id}"
-            if library_id is not None
-            else None
-        )
+        ).first()
+        return _artifact_subject_route(row, revision_id=ref.id)
     if ref.scheme == "contributor":
         handle = db.scalar(text("SELECT handle FROM contributors WHERE id = :id"), {"id": ref.id})
         return f"/authors/{quote(str(handle), safe='')}" if handle is not None else None

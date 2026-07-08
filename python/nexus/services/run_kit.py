@@ -30,25 +30,25 @@ from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import (
+    ArtifactRevision,
+    ArtifactRevisionEvent,
     ChatRun,
     ChatRunEvent,
-    LibraryIntelligenceArtifactRevision,
-    LibraryIntelligenceRevisionEvent,
     OracleReading,
     OracleReadingEvent,
 )
+from nexus.schemas.artifact import ArtifactRevisionEventOut
 from nexus.schemas.conversation import ChatRunEventOut
-from nexus.schemas.library_intelligence import LibraryIntelligenceRevisionEventOut
 from nexus.schemas.oracle import OracleReadingEventOut
 
 RunEventPayload = dict[str, JsonValue]
 
 _CHAT_TERMINAL_STATUSES = frozenset({"complete", "error", "cancelled"})
 _ORACLE_TERMINAL_STATUSES = frozenset({"complete", "failed"})
-_LIBRARY_INTELLIGENCE_TERMINAL_STATUSES = frozenset({"ready", "failed"})
+_ARTIFACT_REVISION_TERMINAL_STATUSES = frozenset({"ready", "failed"})
 _CHAT_CHANNEL = "chat_run_events"
 _ORACLE_CHANNEL = "oracle_reading_events"
-_LIBRARY_INTELLIGENCE_CHANNEL = "library_intelligence_revision_events"
+_ARTIFACT_REVISION_CHANNEL = "artifact_revision_events"
 
 
 class RunStreamKind(Enum):
@@ -56,14 +56,14 @@ class RunStreamKind(Enum):
 
     ChatRun = "ChatRun"
     OracleReading = "OracleReading"
-    LibraryIntelligence = "LibraryIntelligence"
+    ArtifactRevision = "ArtifactRevision"
 
 
 @dataclass(frozen=True)
 class RunStream:
     """A durable-run event stream bound to one parent run row."""
 
-    parent: ChatRun | OracleReading | LibraryIntelligenceArtifactRevision
+    parent: ChatRun | OracleReading | ArtifactRevision
 
 
 def chat_run_stream(run: ChatRun) -> RunStream:
@@ -74,9 +74,7 @@ def oracle_reading_stream(reading: OracleReading) -> RunStream:
     return RunStream(parent=reading)
 
 
-def library_intelligence_revision_stream(
-    revision: LibraryIntelligenceArtifactRevision,
-) -> RunStream:
+def artifact_revision_stream(revision: ArtifactRevision) -> RunStream:
     return RunStream(parent=revision)
 
 
@@ -86,8 +84,8 @@ def notify_channel(kind: RunStreamKind) -> str:
         return _CHAT_CHANNEL
     if kind is RunStreamKind.OracleReading:
         return _ORACLE_CHANNEL
-    if kind is RunStreamKind.LibraryIntelligence:
-        return _LIBRARY_INTELLIGENCE_CHANNEL
+    if kind is RunStreamKind.ArtifactRevision:
+        return _ARTIFACT_REVISION_CHANNEL
     assert_never(kind)
 
 
@@ -97,8 +95,8 @@ def terminal_statuses(kind: RunStreamKind) -> frozenset[str]:
         return _CHAT_TERMINAL_STATUSES
     if kind is RunStreamKind.OracleReading:
         return _ORACLE_TERMINAL_STATUSES
-    if kind is RunStreamKind.LibraryIntelligence:
-        return _LIBRARY_INTELLIGENCE_TERMINAL_STATUSES
+    if kind is RunStreamKind.ArtifactRevision:
+        return _ARTIFACT_REVISION_TERMINAL_STATUSES
     assert_never(kind)
 
 
@@ -128,12 +126,12 @@ def append_event(
                 reading_id=parent.id, seq=seq, event_type=event_type, payload=payload
             )
         )
-    elif isinstance(parent, LibraryIntelligenceArtifactRevision):
+    elif isinstance(parent, ArtifactRevision):
         seq = _next_seq(
-            db, table="library_intelligence_revision_events", fk="revision_id", parent_id=parent.id
+            db, table="artifact_revision_events", fk="revision_id", parent_id=parent.id
         )
         db.add(
-            LibraryIntelligenceRevisionEvent(
+            ArtifactRevisionEvent(
                 revision_id=parent.id, seq=seq, event_type=event_type, payload=payload
             )
         )
@@ -166,8 +164,8 @@ def mark_terminal(
         terminal = _CHAT_TERMINAL_STATUSES
     elif isinstance(parent, OracleReading):
         terminal = _ORACLE_TERMINAL_STATUSES
-    elif isinstance(parent, LibraryIntelligenceArtifactRevision):
-        terminal = _LIBRARY_INTELLIGENCE_TERMINAL_STATUSES
+    elif isinstance(parent, ArtifactRevision):
+        terminal = _ARTIFACT_REVISION_TERMINAL_STATUSES
     else:
         assert_never(parent)
     if parent.status in terminal:
@@ -185,9 +183,7 @@ def mark_terminal(
 
 def get_run_events(
     db: Session, kind: RunStreamKind, parent_id: UUID, after: int
-) -> tuple[
-    list[ChatRunEventOut | OracleReadingEventOut | LibraryIntelligenceRevisionEventOut], bool
-]:
+) -> tuple[list[ChatRunEventOut | OracleReadingEventOut | ArtifactRevisionEventOut], bool]:
     """Return the kind's replay events with ``seq > after`` plus the terminal flag.
 
     The single owner of the run-tail query (chat/oracle/LI) that the SSE cursor
@@ -195,7 +191,7 @@ def get_run_events(
     as the old per-surface functions did. Viewer scoping is **not** here: the
     route's ``assert_viewer`` owns ownership (it runs upfront, once).
     """
-    events: list[ChatRunEventOut | OracleReadingEventOut | LibraryIntelligenceRevisionEventOut]
+    events: list[ChatRunEventOut | OracleReadingEventOut | ArtifactRevisionEventOut]
     if kind is RunStreamKind.ChatRun:
         chat_rows = (
             db.execute(
@@ -234,26 +230,26 @@ def get_run_events(
             )
             for row in oracle_rows
         ]
-    elif kind is RunStreamKind.LibraryIntelligence:
-        li_rows = (
+    elif kind is RunStreamKind.ArtifactRevision:
+        artifact_rows = (
             db.execute(
-                select(LibraryIntelligenceRevisionEvent)
+                select(ArtifactRevisionEvent)
                 .where(
-                    LibraryIntelligenceRevisionEvent.revision_id == parent_id,
-                    LibraryIntelligenceRevisionEvent.seq > after,
+                    ArtifactRevisionEvent.revision_id == parent_id,
+                    ArtifactRevisionEvent.seq > after,
                 )
-                .order_by(LibraryIntelligenceRevisionEvent.seq)
+                .order_by(ArtifactRevisionEvent.seq)
             )
             .scalars()
             .all()
         )
         events = [
-            LibraryIntelligenceRevisionEventOut(
+            ArtifactRevisionEventOut(
                 seq=row.seq,
                 event_type=row.event_type,
                 payload=dict(row.payload) if isinstance(row.payload, dict) else {},
             )
-            for row in li_rows
+            for row in artifact_rows
         ]
     else:
         assert_never(kind)
@@ -274,11 +270,9 @@ def is_run_terminal(db: Session, kind: RunStreamKind, parent_id: UUID) -> bool:
         status = db.execute(
             select(OracleReading.status).where(OracleReading.id == parent_id)
         ).scalar_one_or_none()
-    elif kind is RunStreamKind.LibraryIntelligence:
+    elif kind is RunStreamKind.ArtifactRevision:
         status = db.execute(
-            select(LibraryIntelligenceArtifactRevision.status).where(
-                LibraryIntelligenceArtifactRevision.id == parent_id
-            )
+            select(ArtifactRevision.status).where(ArtifactRevision.id == parent_id)
         ).scalar_one_or_none()
     else:
         assert_never(kind)

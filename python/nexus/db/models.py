@@ -390,8 +390,8 @@ class ResourceVersion(Base):
                 'media', 'library', 'evidence_span', 'content_chunk',
                 'highlight', 'page', 'note_block', 'fragment',
                 'conversation', 'message', 'oracle_reading',
-                'oracle_passage_anchor', 'library_intelligence_artifact',
-                'library_intelligence_revision',
+                'oracle_passage_anchor', 'artifact',
+                'artifact_revision',
                 'external_snapshot', 'contributor', 'podcast',
                 'reader_apparatus_item'
             )
@@ -516,8 +516,8 @@ class ResourceViewState(Base):
                 'media', 'library', 'evidence_span', 'content_chunk',
                 'highlight', 'page', 'note_block', 'fragment',
                 'conversation', 'message', 'oracle_reading',
-                'oracle_passage_anchor', 'library_intelligence_artifact',
-                'library_intelligence_revision',
+                'oracle_passage_anchor', 'artifact',
+                'artifact_revision',
                 'external_snapshot', 'contributor', 'podcast',
                 'reader_apparatus_item'
             )
@@ -530,8 +530,8 @@ class ResourceViewState(Base):
                 'media', 'library', 'evidence_span', 'content_chunk',
                 'highlight', 'page', 'note_block', 'fragment',
                 'conversation', 'message', 'oracle_reading',
-                'oracle_passage_anchor', 'library_intelligence_artifact',
-                'library_intelligence_revision',
+                'oracle_passage_anchor', 'artifact',
+                'artifact_revision',
                 'external_snapshot', 'contributor', 'podcast',
                 'reader_apparatus_item'
             )
@@ -616,8 +616,8 @@ class ResourceEdge(Base):
                 'media', 'library', 'evidence_span', 'content_chunk',
                 'highlight', 'page', 'note_block', 'fragment',
                 'conversation', 'message', 'oracle_reading',
-                'oracle_passage_anchor', 'library_intelligence_artifact',
-                'library_intelligence_revision',
+                'oracle_passage_anchor', 'artifact',
+                'artifact_revision',
                 'external_snapshot', 'contributor', 'podcast',
                 'reader_apparatus_item'
             )
@@ -630,8 +630,8 @@ class ResourceEdge(Base):
                 'media', 'library', 'evidence_span', 'content_chunk',
                 'highlight', 'page', 'note_block', 'fragment',
                 'conversation', 'message', 'oracle_reading',
-                'oracle_passage_anchor', 'library_intelligence_artifact',
-                'library_intelligence_revision',
+                'oracle_passage_anchor', 'artifact',
+                'artifact_revision',
                 'external_snapshot', 'contributor', 'podcast',
                 'reader_apparatus_item'
             )
@@ -693,7 +693,7 @@ class ResourceEdge(Base):
             OR (
                 ordinal IS NOT NULL
                 AND source_scheme IN (
-                    'message', 'oracle_reading', 'library_intelligence_revision'
+                    'message', 'oracle_reading', 'artifact_revision'
                 )
             )
             """,
@@ -896,7 +896,7 @@ class SynapseSuppression(Base):
                 'media', 'library', 'evidence_span', 'content_chunk',
                 'highlight', 'page', 'note_block', 'fragment',
                 'conversation', 'message', 'oracle_reading',
-                'oracle_passage_anchor', 'library_intelligence_artifact',
+                'oracle_passage_anchor', 'artifact',
                 'external_snapshot', 'contributor', 'podcast'
             )
             """,
@@ -908,7 +908,7 @@ class SynapseSuppression(Base):
                 'media', 'library', 'evidence_span', 'content_chunk',
                 'highlight', 'page', 'note_block', 'fragment',
                 'conversation', 'message', 'oracle_reading',
-                'oracle_passage_anchor', 'library_intelligence_artifact',
+                'oracle_passage_anchor', 'artifact',
                 'external_snapshot', 'contributor', 'podcast'
             )
             """,
@@ -2242,21 +2242,25 @@ class LibraryEntryPageSnapshotItem(Base):
     )
 
 
-class LibraryIntelligenceArtifact(Base):
-    """Stable library-intelligence head: one per library, promoting one revision."""
+class SynthesisArtifact(Base):
+    """Stable artifact head keyed by ``(subject_scheme, subject_id, kind)``.
 
-    __tablename__ = "library_intelligence_artifacts"
+    The scope-generic press: one head per subject+kind (a library dossier, a
+    conversation distillate, …), promoting one revision. ``subject_id`` is
+    deliberately FK-less — a polymorphic subject reference (D-2); cleanup on
+    subject deletion is the engine's ``on_subject_deleted`` (D-10).
+    """
+
+    __tablename__ = "artifacts"
 
     id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
         primary_key=True,
         server_default=text("gen_random_uuid()"),
     )
-    library_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("libraries.id"),
-        nullable=False,
-    )
+    subject_scheme: Mapped[str] = mapped_column(Text, nullable=False)
+    subject_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
     user_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("users.id"),
@@ -2265,8 +2269,8 @@ class LibraryIntelligenceArtifact(Base):
     current_revision_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey(
-            "library_intelligence_artifact_revisions.id",
-            name="fk_li_artifacts_current_revision",
+            "artifact_revisions.id",
+            name="fk_artifacts_current_revision",
             use_alter=True,
         ),
         nullable=True,
@@ -2284,16 +2288,26 @@ class LibraryIntelligenceArtifact(Base):
 
     __table_args__ = (
         UniqueConstraint(
-            "library_id",
-            name="uq_library_intelligence_artifacts_library",
+            "subject_scheme",
+            "subject_id",
+            "kind",
+            name="uq_artifacts_subject_kind",
+        ),
+        CheckConstraint(
+            "kind IN ('library_dossier', 'conversation_distillate')",
+            name="ck_artifacts_kind",
+        ),
+        CheckConstraint(
+            "subject_scheme IN ('library', 'conversation')",
+            name="ck_artifacts_subject_scheme",
         ),
     )
 
 
-class LibraryIntelligenceArtifactRevision(Base):
+class ArtifactRevision(Base):
     """Immutable generated synthesis snapshot; a revision IS its generation run."""
 
-    __tablename__ = "library_intelligence_artifact_revisions"
+    __tablename__ = "artifact_revisions"
 
     id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
@@ -2302,7 +2316,7 @@ class LibraryIntelligenceArtifactRevision(Base):
     )
     artifact_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("library_intelligence_artifacts.id"),
+        ForeignKey("artifacts.id"),
         nullable=False,
     )
     content_md: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
@@ -2323,20 +2337,20 @@ class LibraryIntelligenceArtifactRevision(Base):
     __table_args__ = (
         CheckConstraint(
             "status IN ('building', 'ready', 'failed')",
-            name="ck_li_revisions_status",
+            name="ck_artifact_revisions_status",
         ),
         CheckConstraint(
             "jsonb_typeof(covered_targets) = 'array'",
-            name="ck_li_revisions_covered_targets_array",
+            name="ck_artifact_revisions_covered_targets_array",
         ),
         Index(
-            "ix_li_revisions_artifact_created",
+            "ix_artifact_revisions_artifact_created",
             "artifact_id",
             text("created_at DESC"),
             text("id DESC"),
         ),
         Index(
-            "uq_li_revisions_artifact_idempotency_key",
+            "uq_artifact_revisions_idempotency_key",
             "artifact_id",
             "idempotency_key",
             unique=True,
@@ -2345,10 +2359,10 @@ class LibraryIntelligenceArtifactRevision(Base):
     )
 
 
-class LibraryIntelligenceRevisionEvent(Base):
-    """One run_kit event for a revision generation run (the LI run stream)."""
+class ArtifactRevisionEvent(Base):
+    """One run_kit event for a revision generation run (the artifact run stream)."""
 
-    __tablename__ = "library_intelligence_revision_events"
+    __tablename__ = "artifact_revision_events"
 
     id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
@@ -2357,7 +2371,7 @@ class LibraryIntelligenceRevisionEvent(Base):
     )
     revision_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("library_intelligence_artifact_revisions.id"),
+        ForeignKey("artifact_revisions.id"),
         nullable=False,
     )
     seq: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -2370,12 +2384,12 @@ class LibraryIntelligenceRevisionEvent(Base):
     )
 
     __table_args__ = (
-        CheckConstraint("seq >= 1", name="ck_li_revision_events_seq_positive"),
+        CheckConstraint("seq >= 1", name="ck_artifact_revision_events_seq_positive"),
         CheckConstraint(
             "event_type IN ('meta', 'progress', 'delta', 'done')",
-            name="ck_li_revision_events_type",
+            name="ck_artifact_revision_events_type",
         ),
-        UniqueConstraint("revision_id", "seq", name="uq_li_revision_events_seq"),
+        UniqueConstraint("revision_id", "seq", name="uq_artifact_revision_events_seq"),
     )
 
 
@@ -4262,7 +4276,7 @@ class LLMCall(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "owner_kind IN ('chat_run', 'oracle_reading', 'li_revision', "
+            "owner_kind IN ('chat_run', 'oracle_reading', 'artifact_revision', "
             "'media_summary', 'media_enrichment', 'synapse_scan', 'dawn_write')",
             name="ck_llm_calls_owner_kind",
         ),
@@ -5158,8 +5172,8 @@ class ChatRunTurnContext(Base):
             "requested_subject_scheme IS NULL OR requested_subject_scheme IN ("
             "'media', 'library', 'evidence_span', 'content_chunk', 'highlight', 'page', "
             "'note_block', 'fragment', 'conversation', 'message', 'oracle_reading', "
-            "'oracle_passage_anchor', 'library_intelligence_artifact', "
-            "'library_intelligence_revision', 'external_snapshot', 'contributor', "
+            "'oracle_passage_anchor', 'artifact', "
+            "'artifact_revision', 'external_snapshot', 'contributor', "
             "'podcast', 'reader_apparatus_item')",
             name="ck_chat_run_turn_contexts_requested_subject_scheme",
         ),
@@ -5167,8 +5181,8 @@ class ChatRunTurnContext(Base):
             "subject_scheme IS NULL OR subject_scheme IN ("
             "'media', 'library', 'evidence_span', 'content_chunk', 'highlight', 'page', "
             "'note_block', 'fragment', 'conversation', 'message', 'oracle_reading', "
-            "'oracle_passage_anchor', 'library_intelligence_artifact', "
-            "'library_intelligence_revision', 'external_snapshot', 'contributor', "
+            "'oracle_passage_anchor', 'artifact', "
+            "'artifact_revision', 'external_snapshot', 'contributor', "
             "'podcast', 'reader_apparatus_item')",
             name="ck_chat_run_turn_contexts_subject_scheme",
         ),

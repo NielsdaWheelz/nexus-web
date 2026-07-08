@@ -234,8 +234,8 @@ def _make_li_artifact(
     artifact_id = db.execute(
         sql_text(
             """
-            INSERT INTO library_intelligence_artifacts (library_id, user_id)
-            VALUES (:library_id, :user_id)
+            INSERT INTO artifacts (subject_scheme, subject_id, kind, user_id)
+            VALUES ('library', :library_id, 'library_dossier', :user_id)
             RETURNING id
             """
         ),
@@ -245,7 +245,7 @@ def _make_li_artifact(
         revision_id = db.execute(
             sql_text(
                 """
-                INSERT INTO library_intelligence_artifact_revisions (
+                INSERT INTO artifact_revisions (
                     artifact_id, content_md, covered_targets, status, promoted_at
                 )
                 VALUES (:artifact_id, :content_md, '[]'::jsonb, 'ready', now())
@@ -256,7 +256,7 @@ def _make_li_artifact(
         ).scalar_one()
         db.execute(
             sql_text(
-                "UPDATE library_intelligence_artifacts "
+                "UPDATE artifacts "
                 "SET current_revision_id = :rev WHERE id = :artifact_id"
             ),
             {"rev": revision_id, "artifact_id": artifact_id},
@@ -269,7 +269,7 @@ def _current_li_revision_id(db: Session, artifact_id: UUID) -> UUID:
     from sqlalchemy import text as sql_text
 
     revision_id = db.execute(
-        sql_text("SELECT current_revision_id FROM library_intelligence_artifacts WHERE id = :id"),
+        sql_text("SELECT current_revision_id FROM artifacts WHERE id = :id"),
         {"id": artifact_id},
     ).scalar_one()
     assert revision_id is not None
@@ -539,11 +539,11 @@ def test_resolve_li_artifact_promoted_inlines_current_revision(
     )
 
     resolved = _resolve(
-        db_session, f"library_intelligence_artifact:{artifact_id}", viewer_id=bootstrapped_user
+        db_session, f"artifact:{artifact_id}", viewer_id=bootstrapped_user
     )
 
     assert not resolved.missing, f"Member should resolve a promoted artifact; got {resolved}"
-    assert resolved.label == "Library Intelligence — Synthesis Library", (
+    assert resolved.label == "Library dossier — Synthesis Library", (
         f"Artifact label should name the library; got {resolved.label!r}"
     )
     assert resolved.summary == "Overview line.", (
@@ -557,7 +557,7 @@ def test_resolve_li_artifact_promoted_inlines_current_revision(
     )
     assert "read_resource" in resolved.fetch_hint
     assert resolved.resolved_revision_ref == (
-        f"library_intelligence_revision:{_current_li_revision_id(db_session, artifact_id)}"
+        f"artifact_revision:{_current_li_revision_id(db_session, artifact_id)}"
     )
 
 
@@ -577,7 +577,7 @@ def test_resolve_li_revision_inlines_exact_revision_after_head_moves(
     new_revision_id = db_session.execute(
         sql_text(
             """
-            INSERT INTO library_intelligence_artifact_revisions (
+            INSERT INTO artifact_revisions (
                 artifact_id, content_md, covered_targets, status, promoted_at
             )
             VALUES (:artifact_id, 'New head prose.', '[]'::jsonb, 'ready', now())
@@ -588,7 +588,7 @@ def test_resolve_li_revision_inlines_exact_revision_after_head_moves(
     ).scalar_one()
     db_session.execute(
         sql_text(
-            "UPDATE library_intelligence_artifacts "
+            "UPDATE artifacts "
             "SET current_revision_id = :rev WHERE id = :artifact_id"
         ),
         {"rev": new_revision_id, "artifact_id": artifact_id},
@@ -597,14 +597,14 @@ def test_resolve_li_revision_inlines_exact_revision_after_head_moves(
 
     resolved = _resolve(
         db_session,
-        f"library_intelligence_revision:{pinned_revision_id}",
+        f"artifact_revision:{pinned_revision_id}",
         viewer_id=bootstrapped_user,
     )
 
     assert not resolved.missing
-    assert resolved.label == "Library Intelligence revision — Pinned Synthesis (ready)"
+    assert resolved.label == "Library dossier revision — Pinned Synthesis (ready)"
     assert resolved.inline_body == "Pinned revision prose."
-    assert resolved.resolved_revision_ref == f"library_intelligence_revision:{pinned_revision_id}"
+    assert resolved.resolved_revision_ref == f"artifact_revision:{pinned_revision_id}"
 
 
 def test_resolve_li_artifact_long_body_not_inlined(db_session: Session, bootstrapped_user: UUID):
@@ -615,7 +615,7 @@ def test_resolve_li_artifact_long_body_not_inlined(db_session: Session, bootstra
     )
 
     resolved = _resolve(
-        db_session, f"library_intelligence_artifact:{artifact_id}", viewer_id=bootstrapped_user
+        db_session, f"artifact:{artifact_id}", viewer_id=bootstrapped_user
     )
 
     assert not resolved.missing
@@ -633,14 +633,14 @@ def test_resolve_li_artifact_no_current_revision_is_present_no_inline(
     artifact_id = _make_li_artifact(db_session, library_id, bootstrapped_user, content_md=None)
 
     resolved = _resolve(
-        db_session, f"library_intelligence_artifact:{artifact_id}", viewer_id=bootstrapped_user
+        db_session, f"artifact:{artifact_id}", viewer_id=bootstrapped_user
     )
 
     assert not resolved.missing, (
         f"A head with current_revision_id NULL must resolve non-missing; got {resolved}"
     )
     assert resolved.inline_body is None, "No current revision -> no inline body"
-    assert resolved.label == "Library Intelligence — Ungenerated Library"
+    assert resolved.label == "Library dossier — Ungenerated Library"
 
 
 def test_resolve_li_artifact_non_member_returns_missing(
@@ -652,7 +652,7 @@ def test_resolve_li_artifact_non_member_returns_missing(
     artifact_id = _make_li_artifact(db_session, other_library_id, other_user_id)
 
     resolved = _resolve(
-        db_session, f"library_intelligence_artifact:{artifact_id}", viewer_id=bootstrapped_user
+        db_session, f"artifact:{artifact_id}", viewer_id=bootstrapped_user
     )
 
     assert resolved.missing, "Non-member must see the artifact as missing"
@@ -662,7 +662,7 @@ def test_resolve_li_artifact_unknown_id_returns_missing(
     db_session: Session, bootstrapped_user: UUID
 ):
     resolved = _resolve(
-        db_session, f"library_intelligence_artifact:{uuid4()}", viewer_id=bootstrapped_user
+        db_session, f"artifact:{uuid4()}", viewer_id=bootstrapped_user
     )
     assert resolved.missing, "Unknown artifact URI must resolve as missing"
 
@@ -685,7 +685,7 @@ def test_li_artifact_resources_block_reflects_current_revision(
         db_session, library_id, bootstrapped_user, content_md="First revision prose."
     )
     conversation_id = create_test_conversation(db_session, bootstrapped_user)
-    add_context_edge(db_session, conversation_id, f"library_intelligence_artifact:{artifact_id}")
+    add_context_edge(db_session, conversation_id, f"artifact:{artifact_id}")
     db_session.commit()
 
     first_revision_id = _current_li_revision_id(db_session, artifact_id)
@@ -697,13 +697,13 @@ def test_li_artifact_resources_block_reflects_current_revision(
         f"Block should inline the current revision; got:\n{block.text}"
     )
     assert len(revision_refs) == 1
-    assert revision_refs[0]["revision_uri"] == f"library_intelligence_revision:{first_revision_id}"
+    assert revision_refs[0]["revision_uri"] == f"artifact_revision:{first_revision_id}"
 
     # Promote a new revision; the head URI is unchanged.
     new_revision_id = db_session.execute(
         sql_text(
             """
-            INSERT INTO library_intelligence_artifact_revisions (
+            INSERT INTO artifact_revisions (
                 artifact_id, content_md, covered_targets, status, promoted_at
             )
             VALUES (:artifact_id, 'Second revision prose.', '[]'::jsonb, 'ready', now())
@@ -714,7 +714,7 @@ def test_li_artifact_resources_block_reflects_current_revision(
     ).scalar_one()
     db_session.execute(
         sql_text(
-            "UPDATE library_intelligence_artifacts "
+            "UPDATE artifacts "
             "SET current_revision_id = :rev WHERE id = :artifact_id"
         ),
         {"rev": new_revision_id, "artifact_id": artifact_id},
@@ -730,7 +730,7 @@ def test_li_artifact_resources_block_reflects_current_revision(
     )
     assert "First revision prose." not in block2.text
     assert len(revision_refs2) == 1
-    assert revision_refs2[0]["revision_uri"] == f"library_intelligence_revision:{new_revision_id}"
+    assert revision_refs2[0]["revision_uri"] == f"artifact_revision:{new_revision_id}"
 
 
 def test_li_artifact_not_a_citable_attached_resource(db_session: Session, bootstrapped_user: UUID):
@@ -747,7 +747,7 @@ def test_li_artifact_not_a_citable_attached_resource(db_session: Session, bootst
         db_session, library_id, bootstrapped_user, content_md="Inline synthesis [1]."
     )
     conversation_id = create_test_conversation(db_session, bootstrapped_user)
-    add_context_edge(db_session, conversation_id, f"library_intelligence_artifact:{artifact_id}")
+    add_context_edge(db_session, conversation_id, f"artifact:{artifact_id}")
     db_session.commit()
 
     block, _meta, citations, _revision_refs = context_assembler._build_resources_block(
@@ -771,7 +771,7 @@ def test_li_artifact_in_context_stamps_resolved_revision(
     )
     revision_id = _current_li_revision_id(db_session, artifact_id)
     conversation_id = create_test_conversation(db_session, bootstrapped_user)
-    add_context_edge(db_session, conversation_id, f"library_intelligence_artifact:{artifact_id}")
+    add_context_edge(db_session, conversation_id, f"artifact:{artifact_id}")
     db_session.commit()
 
     _block, _meta, _citations, revision_refs = context_assembler._build_resources_block(
@@ -779,8 +779,8 @@ def test_li_artifact_in_context_stamps_resolved_revision(
     )
     assert len(revision_refs) == 1
     assert revision_refs[0]["type"] == "context_ref_resolved_revision"
-    assert revision_refs[0]["resource_uri"] == f"library_intelligence_artifact:{artifact_id}"
-    assert revision_refs[0]["revision_uri"] == f"library_intelligence_revision:{revision_id}"
+    assert revision_refs[0]["resource_uri"] == f"artifact:{artifact_id}"
+    assert revision_refs[0]["revision_uri"] == f"artifact_revision:{revision_id}"
 
 
 def test_li_revision_context_stays_pinned_after_head_moves(
@@ -800,13 +800,13 @@ def test_li_revision_context_stays_pinned_after_head_moves(
     add_context_edge(
         db_session,
         conversation_id,
-        f"library_intelligence_revision:{pinned_revision_id}",
+        f"artifact_revision:{pinned_revision_id}",
     )
 
     new_revision_id = db_session.execute(
         sql_text(
             """
-            INSERT INTO library_intelligence_artifact_revisions (
+            INSERT INTO artifact_revisions (
                 artifact_id, content_md, covered_targets, status, promoted_at
             )
             VALUES (:artifact_id, 'New context head.', '[]'::jsonb, 'ready', now())
@@ -817,7 +817,7 @@ def test_li_revision_context_stays_pinned_after_head_moves(
     ).scalar_one()
     db_session.execute(
         sql_text(
-            "UPDATE library_intelligence_artifacts "
+            "UPDATE artifacts "
             "SET current_revision_id = :rev WHERE id = :artifact_id"
         ),
         {"rev": new_revision_id, "artifact_id": artifact_id},
@@ -832,8 +832,8 @@ def test_li_revision_context_stays_pinned_after_head_moves(
     assert "Pinned context prose." in block.text
     assert "New context head." not in block.text
     assert len(revision_refs) == 1
-    assert revision_refs[0]["resource_uri"] == f"library_intelligence_revision:{pinned_revision_id}"
-    assert revision_refs[0]["revision_uri"] == f"library_intelligence_revision:{pinned_revision_id}"
+    assert revision_refs[0]["resource_uri"] == f"artifact_revision:{pinned_revision_id}"
+    assert revision_refs[0]["revision_uri"] == f"artifact_revision:{pinned_revision_id}"
 
 
 # =============================================================================

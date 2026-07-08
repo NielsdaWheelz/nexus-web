@@ -651,7 +651,7 @@ function connectionTargetStatusText(row: ReaderConnectionRow): string | null {
 function categoryLabel(category: ReaderConnectionRow["source_category"]): string {
   switch (category) {
     case "chat": return "Chat";
-    case "library_intelligence": return "Library Intelligence";
+    case "dossier": return "Dossier";
     case "oracle": return "Oracle";
     case "note": return "Note";
     case "highlight_note": return "Highlight note";

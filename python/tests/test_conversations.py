@@ -155,8 +155,8 @@ class TestCreateConversation:
             session.execute(
                 text(
                     """
-                    INSERT INTO library_intelligence_artifacts (id, library_id, user_id)
-                    VALUES (:id, :library_id, :user_id)
+                    INSERT INTO artifacts (id, subject_scheme, subject_id, kind, user_id)
+                    VALUES (:id, 'library', :library_id, 'library_dossier', :user_id)
                     """
                 ),
                 {"id": artifact_id, "library_id": library_id, "user_id": user_id},
@@ -164,7 +164,7 @@ class TestCreateConversation:
             session.execute(
                 text(
                     """
-                    INSERT INTO library_intelligence_artifact_revisions (
+                    INSERT INTO artifact_revisions (
                         id, artifact_id, content_md, covered_targets, status, promoted_at
                     )
                     VALUES (
@@ -176,7 +176,7 @@ class TestCreateConversation:
             )
             session.execute(
                 text(
-                    "UPDATE library_intelligence_artifacts "
+                    "UPDATE artifacts "
                     "SET current_revision_id = :revision_id WHERE id = :artifact_id"
                 ),
                 {"revision_id": revision_id, "artifact_id": artifact_id},
@@ -186,7 +186,7 @@ class TestCreateConversation:
         direct_db.register_cleanup("libraries", "id", library_id)
         direct_db.register_cleanup("memberships", "library_id", library_id)
 
-        revision_uri = f"library_intelligence_revision:{revision_id}"
+        revision_uri = f"artifact_revision:{revision_id}"
         library_uri = f"library:{library_id}"
         response = auth_client.post(
             "/conversations",

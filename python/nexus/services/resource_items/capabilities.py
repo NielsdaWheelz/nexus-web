@@ -25,7 +25,7 @@ ResourceExpansionPolicy = Literal[
     "media_owned_reader_children",
     "page_note_blocks",
     "note_block_owned_evidence",
-    "library_intelligence_artifact_revisions",
+    "artifact_revisions",
 ]
 
 
@@ -231,7 +231,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         adjacency_source=False,
         adjacency_target=True,
     ),
-    "library_intelligence_artifact": ResourceItemCapability(
+    "artifact": ResourceItemCapability(
         linkable=True,
         attachable=True,
         chat_subject="generated_output",
@@ -242,11 +242,11 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         conversation_search_scope=False,
         citation_output_source=False,
         prompt_render="inline_body",
-        expansion_policy="library_intelligence_artifact_revisions",
+        expansion_policy="artifact_revisions",
         adjacency_source=False,
         adjacency_target=True,
     ),
-    "library_intelligence_revision": ResourceItemCapability(
+    "artifact_revision": ResourceItemCapability(
         linkable=True,
         attachable=True,
         chat_subject="generated_output",
@@ -467,11 +467,11 @@ def expand_owned_child_refs(
                 ref.id,
             ),
         )
-    if policy == "library_intelligence_artifact_revisions":
+    if policy == "artifact_revisions":
         return _child_refs(
             db,
-            "library_intelligence_revision",
-            "SELECT id FROM library_intelligence_artifact_revisions WHERE artifact_id = :id",
+            "artifact_revision",
+            "SELECT id FROM artifact_revisions WHERE artifact_id = :id",
             ref.id,
         )
     assert_never(policy)

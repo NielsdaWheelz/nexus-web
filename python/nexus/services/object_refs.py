@@ -210,20 +210,20 @@ def _hydrated_from_loaded(
             route=route,
             icon="quote",
         )
-    if object_type == "library_intelligence_artifact":
+    if object_type == "artifact":
         return HydratedObjectRef(
-            object_type="library_intelligence_artifact",
+            object_type="artifact",
             object_id=object_id,
-            label=f"Library Intelligence - {loaded.title or 'Library'}",
+            label=f"Library dossier - {loaded.title or 'Library'}",
             snippet=(loaded.body or "")[:300],
             route=route,
             icon="sparkles",
         )
-    if object_type == "library_intelligence_revision":
+    if object_type == "artifact_revision":
         return HydratedObjectRef(
-            object_type="library_intelligence_revision",
+            object_type="artifact_revision",
             object_id=object_id,
-            label=f"Library Intelligence revision - {loaded.title or 'Library'}",
+            label=f"Library dossier revision - {loaded.title or 'Library'}",
             snippet=(loaded.body or "")[:300],
             route=route,
             icon="sparkles",

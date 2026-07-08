@@ -48,7 +48,7 @@ class ReaderConnectionRowOut(BaseModel):
     anchor: ReaderConnectionAnchorOut | None
     source_category: Literal[
         "chat",
-        "library_intelligence",
+        "dossier",
         "oracle",
         "note",
         "highlight_note",

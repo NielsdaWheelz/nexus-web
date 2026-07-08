@@ -248,7 +248,7 @@ def test_read_resource_li_artifact_returns_current_revision_body(
         db_session, library_id, bootstrapped_user, content_md=content_md
     )
     revision_id = _current_li_revision_id(db_session, artifact_id)
-    uri = f"library_intelligence_artifact:{artifact_id}"
+    uri = f"artifact:{artifact_id}"
     _admit_reference(db_session, conversation_id, uri)
 
     result = execute_read_resource(
@@ -256,14 +256,14 @@ def test_read_resource_li_artifact_returns_current_revision_body(
     )
 
     assert not result.is_error, f"A member should read the artifact body; got {result}"
-    assert result.kind == "library_intelligence"
+    assert result.kind == "artifact"
     assert result.body == content_md
     assert result.library_ref == f"library:{library_id}"
     assert result.artifact_ref == uri
-    assert result.revision_ref == f"library_intelligence_revision:{revision_id}"
+    assert result.revision_ref == f"artifact_revision:{revision_id}"
     assert result.revision_status == "ready"
     assert result.revision_is_current is True
-    assert f'revision_ref="library_intelligence_revision:{revision_id}"' in result.tool_output()
+    assert f'revision_ref="artifact_revision:{revision_id}"' in result.tool_output()
     # NON-citable: its [N] reference the revision's own citations, not a search chip.
     assert result.citation_result_type is None
     assert result.citation_source_id is None
@@ -288,7 +288,7 @@ def test_read_resource_li_revision_returns_exact_body_after_head_moves(
     new_revision_id = db_session.execute(
         sql_text(
             """
-            INSERT INTO library_intelligence_artifact_revisions (
+            INSERT INTO artifact_revisions (
                 artifact_id, content_md, covered_targets, status, promoted_at
             )
             VALUES (:artifact_id, 'New head body.', '[]'::jsonb, 'ready', now())
@@ -299,14 +299,14 @@ def test_read_resource_li_revision_returns_exact_body_after_head_moves(
     ).scalar_one()
     db_session.execute(
         sql_text(
-            "UPDATE library_intelligence_artifacts "
+            "UPDATE artifacts "
             "SET current_revision_id = :rev WHERE id = :artifact_id"
         ),
         {"rev": new_revision_id, "artifact_id": artifact_id},
     )
     db_session.commit()
 
-    uri = f"library_intelligence_revision:{pinned_revision_id}"
+    uri = f"artifact_revision:{pinned_revision_id}"
     _admit_reference(db_session, conversation_id, uri)
 
     result = execute_read_resource(
@@ -314,15 +314,15 @@ def test_read_resource_li_revision_returns_exact_body_after_head_moves(
     )
 
     assert not result.is_error, f"A member should read the exact revision body; got {result}"
-    assert result.kind == "library_intelligence_revision"
+    assert result.kind == "artifact_revision"
     assert result.body == "Pinned synthesis body."
     assert result.library_ref == f"library:{library_id}"
-    assert result.artifact_ref == f"library_intelligence_artifact:{artifact_id}"
+    assert result.artifact_ref == f"artifact:{artifact_id}"
     assert result.revision_ref == uri
     assert result.revision_status == "ready"
     assert result.revision_is_current is False
     output = result.tool_output()
-    assert f'artifact_ref="library_intelligence_artifact:{artifact_id}"' in output
+    assert f'artifact_ref="artifact:{artifact_id}"' in output
     assert f'revision_ref="{uri}"' in output
     assert 'revision_is_current="false"' in output
     assert result.citation_result_type is None
@@ -337,7 +337,7 @@ def test_read_resource_li_artifact_non_member_masked(db_session: Session, bootst
     other_library_id = create_test_library(db_session, other_user_id, "Closed Synthesis")
     artifact_id = _make_li_artifact(db_session, other_library_id, other_user_id)
     conversation_id = create_test_conversation(db_session, bootstrapped_user)
-    uri = f"library_intelligence_artifact:{artifact_id}"
+    uri = f"artifact:{artifact_id}"
     # Admit the reference so the gate passes; the loader masks the non-member.
     _admit_reference(db_session, conversation_id, uri)
 
@@ -358,7 +358,7 @@ def test_read_resource_li_revision_non_member_masked(db_session: Session, bootst
     artifact_id = _make_li_artifact(db_session, other_library_id, other_user_id)
     revision_id = _current_li_revision_id(db_session, artifact_id)
     conversation_id = create_test_conversation(db_session, bootstrapped_user)
-    uri = f"library_intelligence_revision:{revision_id}"
+    uri = f"artifact_revision:{revision_id}"
     _admit_reference(db_session, conversation_id, uri)
 
     result = execute_read_resource(

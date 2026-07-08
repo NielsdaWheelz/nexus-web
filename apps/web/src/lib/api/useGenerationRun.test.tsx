@@ -167,7 +167,7 @@ describe("useGenerationRun", () => {
   it.each<[GenerationRunKind, string]>([
     ["chat-runs", `${STREAM_BASE}/stream/chat-runs/run-1/events`],
     ["oracle-readings", `${STREAM_BASE}/stream/oracle-readings/run-1/events`],
-    ["library-intelligence", `${STREAM_BASE}/stream/library-intelligence/run-1/events`],
+    ["artifact-revisions", `${STREAM_BASE}/stream/artifact-revisions/run-1/events`],
     ["media", `${STREAM_BASE}/stream/media/run-1/events`],
   ])("streams %s from its current stream path", async (kind, expectedUrl) => {
     const fetchBoundary = installFetch([doneConnection()]);

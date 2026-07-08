@@ -50,7 +50,7 @@ KIND_TO_RESULT_TYPES: dict[SearchKind, tuple[str, ...]] = {
     ),
     "notes": ("page", "note_block"),
     "highlights": ("highlight",),
-    "conversations": ("conversation", "message"),
+    "conversations": ("conversation", "message", "artifact"),
     "people": ("contributor",),
     "web": ("web_result",),
 }
