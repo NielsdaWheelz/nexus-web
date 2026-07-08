@@ -124,6 +124,8 @@ export default function ResourceChatDetail({
         onLoadOlder={convo.loadOlder}
         onRetryAssistantResponse={convo.retryAssistantResponse}
         retryingAssistantMessageIds={convo.retryingAssistantMessageIds.ids}
+        onResendAssistantResponse={convo.resendAssistantResponse}
+        resendingAssistantMessageIds={convo.resendingAssistantMessageIds.ids}
         onReaderSourceActivate={onReaderSourceActivate}
         emptyState={
           convo.loading ? (

@@ -308,12 +308,53 @@ docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.
 ```
 
 Check recent LLM provider calls in the `llm_calls` ledger (table lands with
-migration 0145):
+migration 0145). `provider_attempts` may contain `safe_body_snippet` values for
+structured provider errors; these are bounded, secret-redacted summaries, not
+raw body fallbacks. Treat them as operator-only diagnostics and do not paste raw
+provider bodies into product logs or user copy:
 
 ```bash
-docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml exec postgres \
-  sh -lc 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
-  -c "select * from llm_calls order by created_at desc limit 20"'
+docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml exec -T postgres \
+  sh -lc 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
+SELECT created_at, owner_kind, owner_id, call_seq, provider, provider_route,
+       model_name, llm_operation, streaming, error_class,
+       left(error_detail, 240) AS error_detail, provider_request_id,
+       attempt_count, retry_count, terminal_attempt_status, provider_attempts
+FROM llm_calls
+ORDER BY created_at DESC
+LIMIT 20;
+SQL
+```
+
+For chat send failures, join the run parent to the ledger. This distinguishes a
+retryable transient failure from a terminal nonretryable provider rejection or
+`cancelled` run; after a code/schema fix, recover terminal failed/cancelled
+assistant messages with `/messages/{assistant_message_id}/resend`, not by
+manually requeueing the original job:
+
+```bash
+docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml exec -T postgres \
+  sh -lc 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
+SELECT cr.created_at, cr.id AS run_id, cr.assistant_message_id, cr.status,
+       cr.error_code, left(cr.error_detail, 240) AS run_error_detail,
+       lc.call_seq, lc.provider, lc.provider_route, lc.model_name,
+       lc.error_class, lc.terminal_attempt_status, lc.provider_attempts
+FROM chat_runs cr
+LEFT JOIN llm_calls lc
+  ON lc.owner_kind = 'chat_run' AND lc.owner_id = cr.id
+WHERE cr.created_at >= now() - interval '6 hours'
+  AND (cr.status IN ('error', 'cancelled') OR lc.error_class IS NOT NULL)
+ORDER BY cr.created_at DESC, lc.call_seq DESC NULLS LAST
+LIMIT 40;
+SQL
+```
+
+Production logs are useful for run ids, request ids, and lifecycle events; any
+structured provider error summary lives in `llm_calls.provider_attempts`:
+
+```bash
+docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml logs --since=2h api worker \
+  | grep -E 'llm\.request\.(failed|finished)|chat_run\.|resend|retry'
 ```
 
 ## Cutover

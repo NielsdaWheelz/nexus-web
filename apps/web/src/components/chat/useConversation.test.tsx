@@ -492,6 +492,46 @@ describe("useConversation", () => {
     expect(result.current.retryingAssistantMessageIds.has("a")).toBe(false);
   });
 
+  it("resend posts to the message resend endpoint and tracks the busy id", async () => {
+    const fetchMock = stubFetch((input, init) => {
+      const path = pathOf(input);
+      if (path === "/api/conversations/conversation-1") {
+        return jsonResponse({ data: { title: "Resend chat" } });
+      }
+      if (path === "/api/conversations/conversation-1/messages") {
+        return jsonResponse({
+          data: [message("a", 1, "assistant", "boom", null, "error")],
+          page: { next_cursor: null },
+        });
+      }
+      if (path === "/api/messages/a/resend" && init?.method === "POST") {
+        return jsonResponse({ data: retryRunData() });
+      }
+      throw new Error(`Unexpected fetch: ${init?.method ?? "GET"} ${path}`);
+    });
+
+    const { result } = renderHook(() =>
+      useConversation({ conversationId: "conversation-1", branching: false }),
+    );
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    await act(async () => {
+      await result.current.resendAssistantResponse("a");
+    });
+
+    const resendCall = fetchMock.mock.calls.find(
+      ([input, init]) =>
+        pathOf(input as RequestInfo | URL) === "/api/messages/a/resend" &&
+        (init as RequestInit | undefined)?.method === "POST",
+    );
+    expect(resendCall).toBeDefined();
+    expect(
+      (resendCall?.[1] as RequestInit).headers,
+    ).toMatchObject({ "Idempotency-Key": expect.any(String) });
+    expect(tailMocks.tailChatRun).toHaveBeenCalled();
+    expect(result.current.resendingAssistantMessageIds.has("a")).toBe(false);
+  });
+
   it("branching mode loads /tree, keeps olderCursor null, and loadOlder is a no-op", async () => {
     const fetchMock = stubFetch((input, init) => {
       const path = pathOf(input);

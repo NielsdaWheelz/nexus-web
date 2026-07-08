@@ -76,6 +76,28 @@ results.
   carry bounded `RetryAttempt` metadata so Nexus can persist attempt counts and
   terminal attempt status without owning provider retry policy.
 
+### OpenAI strict schemas
+
+OpenAI-compatible strict schema rules apply to `openai`, `openrouter`, and
+`cloudflare` model calls for strict tools and strict structured output. The
+runtime normalizes schemas before provider I/O, and call-site authors should
+treat the normalized shape as the contract:
+
+- the root must be an object;
+- every object schema is sealed with `additionalProperties: false`;
+- every property listed under `properties` is also listed under `required`;
+- optional fields are represented as required fields whose schema permits
+  `null` (`type: ["string", "null"]`, an `anyOf` branch with `{"type":"null"}`,
+  etc.), not by omitting the key.
+
+Schemas with map-like `additionalProperties` objects,
+`additionalProperties: true`, `patternProperties`, root `anyOf`, tuple-style
+array items, or unsupported composition cannot be strictified and fail closed as
+provider-runtime `BAD_REQUEST` before provider I/O. Do not add per-surface
+OpenAI workarounds in Nexus; fix the shared schema or the `provider_runtime`
+normalizer so chat tools and structured-output surfaces stay on the same
+contract.
+
 ## Model catalog
 
 `provider_runtime.catalog.DEFAULT_CATALOG` is the source of truth for per-model
@@ -149,6 +171,14 @@ incident lacked: one row per ledgered generation call, on every terminal path.
   from `provider_runtime.catalog.Pricing`. It is operator-queryable only; there
   is no product surface ([deployment.md](../../deployment.md) has the query
   recipe).
+- `provider_attempts` is the redacted provider-diagnostic trail. Each attempt may
+  include `status_code`, retryability, retry-after/delay, provider request id,
+  streamed-output-started, and `safe_body_snippet`. The snippet is a bounded,
+  secret-redacted structured provider-error summary when the provider returned
+  one; arbitrary raw text bodies are intentionally not persisted. Treat snippets
+  as operator-only diagnostics for provider 400s and schema rejections, never
+  render them to users or copy raw provider request/response bodies into product
+  logs.
 - Explicit exceptions: saved-key probes emit the shared `llm.request.*` telemetry
   but write no `llm_calls` row because there is no run owner; transcript
   embeddings call `provider_runtime.embed()` directly and are not yet ledgered

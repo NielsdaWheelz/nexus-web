@@ -23,6 +23,8 @@ interface MessageRowProps {
   retryAssistantMessageId?: string;
   retryingAssistantMessageIds?: Set<string>;
   onRetryAssistantResponse?: (assistantMessageId: string) => void;
+  resendingAssistantMessageIds?: Set<string>;
+  onResendAssistantResponse?: (assistantMessageId: string) => void;
   onReaderSourceActivate?: (
     activation: ResourceActivation,
     target: ReaderSourceTarget | null,
@@ -51,6 +53,8 @@ export const MessageRow = memo(function MessageRow({
   retryAssistantMessageId,
   retryingAssistantMessageIds,
   onRetryAssistantResponse,
+  resendingAssistantMessageIds,
+  onResendAssistantResponse,
   onReaderSourceActivate,
 }: MessageRowProps) {
   const display = useRenderEnvironment();
@@ -69,6 +73,12 @@ export const MessageRow = memo(function MessageRow({
   const timestampLabel =
     formatDisplayDate(message.created_at, display, { month: "short", day: "numeric" }) ??
     "";
+  const resendAssistantMessageId =
+    message.role === "assistant" &&
+    message.can_resend_response === true &&
+    message.can_retry_response !== true
+      ? message.id
+      : undefined;
 
   switch (message.role) {
     case "user":
@@ -98,6 +108,14 @@ export const MessageRow = memo(function MessageRow({
           onSelectFork={onSelectFork}
           onReplyToAssistant={onReplyToAssistant}
           onCitationActivate={activateTarget}
+          resendAssistantMessageId={resendAssistantMessageId}
+          resending={
+            resendAssistantMessageId
+              ? resendingAssistantMessageIds?.has(resendAssistantMessageId) ===
+                true
+              : false
+          }
+          onResendAssistantResponse={onResendAssistantResponse}
         />
       );
     case "system":

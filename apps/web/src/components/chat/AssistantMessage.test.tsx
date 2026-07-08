@@ -55,6 +55,30 @@ function selectText(root: HTMLElement, exact: string) {
 }
 
 describe("AssistantMessage", () => {
+  it("renders a resend action for terminal nonretryable assistant failures", () => {
+    const onResendAssistantResponse = vi.fn();
+    const message = {
+      ...assistantMessage("The response failed."),
+      status: "error" as const,
+      error_code: "E_LLM_BAD_REQUEST",
+    };
+
+    render(
+      <AssistantMessage
+        message={message}
+        forkOptions={[]}
+        errorLabel="The response failed."
+        timestampLabel="Jun 3"
+        resendAssistantMessageId="assistant-1"
+        onResendAssistantResponse={onResendAssistantResponse}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Resend response" }));
+
+    expect(onResendAssistantResponse).toHaveBeenCalledWith("assistant-1");
+  });
+
   it("captures assistant selection and branches from it", async () => {
     const user = userEvent.setup();
     vi.spyOn(Range.prototype, "getBoundingClientRect").mockReturnValue(

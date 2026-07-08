@@ -345,6 +345,45 @@ function failedRootRetryTree(): ConversationTreeResponse {
   };
 }
 
+function failedRootResendTree(): ConversationTreeResponse {
+  const failedUser = message("failed-user", 1, "user", "Original prompt");
+  const failedAssistant: ConversationMessage = {
+    ...message(
+      "failed-assistant",
+      2,
+      "assistant",
+      "The response failed.",
+      "failed-user",
+      "error",
+    ),
+    error_code: "E_LLM_BAD_REQUEST",
+    can_retry_response: false,
+    can_resend_response: true,
+  };
+  return {
+    conversation: {
+      id: "conversation-1",
+      title: "Resend chat",
+      sharing: "private",
+      message_count: 2,
+      created_at: timestamp,
+      updated_at: timestamp,
+    },
+    selected_path: [failedUser, failedAssistant],
+    active_leaf_message_id: "failed-assistant",
+    fork_options_by_parent_id: {},
+    path_cache_by_leaf_id: {
+      "failed-assistant": [failedUser, failedAssistant],
+    },
+    branch_graph: {
+      root_message_id: "failed-user",
+      edges: [],
+      nodes: [],
+    },
+    page: { before_cursor: null },
+  };
+}
+
 function retryRun(): ChatRunResponse["data"] {
   const retryUser = message("retry-user", 3, "user", "Original prompt");
   const retryAssistant = message(
@@ -385,6 +424,15 @@ function retryRun(): ChatRunResponse["data"] {
       reconnectable: true,
       terminal: false,
     },
+  };
+}
+
+function resendRun(): ChatRunResponse["data"] {
+  const run = retryRun();
+  return {
+    ...run,
+    run: { ...run.run, id: "resend-run" },
+    conversation: failedRootResendTree().conversation,
   };
 }
 
@@ -555,6 +603,55 @@ describe("Conversation", () => {
     expect(retryCall).toBeDefined();
     expect(
       (retryCall?.[1]?.headers as Record<string, string>)["Idempotency-Key"],
+    ).toEqual(expect.any(String));
+  });
+
+  it("resends a nonretryable failed root response from the assistant error row", async () => {
+    const user = userEvent.setup();
+    const resendData = resendRun();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = pathOf(input);
+      if (path === "/api/conversations/conversation-1/tree") {
+        return jsonResponse({ data: failedRootResendTree() });
+      }
+      if (path === "/api/conversations/conversation-1/context-refs") {
+        return jsonResponse({ data: [] });
+      }
+      if (path === "/api/models") {
+        return jsonResponse({ data: MODELS });
+      }
+      if (path === "/api/chat-runs") {
+        return jsonResponse({ data: [] });
+      }
+      if (
+        path === "/api/messages/failed-assistant/resend" &&
+        init?.method === "POST"
+      ) {
+        return jsonResponse({ data: resendData });
+      }
+      throw new Error(`Unexpected fetch call: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderPane();
+
+    expect(await screen.findByText("Original prompt")).toBeVisible();
+    expect(screen.getByText("Wait for a complete assistant response before sending."))
+      .toBeVisible();
+    expect(screen.queryByRole("button", { name: "Retry response" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Resend response" }));
+
+    await waitFor(() => {
+      expect(tailMocks.tailChatRun).toHaveBeenCalledWith(resendData);
+    });
+    const resendCall = fetchMock.mock.calls.find(
+      ([input, init]) =>
+        pathOf(input) === "/api/messages/failed-assistant/resend" &&
+        init?.method === "POST",
+    );
+    expect(resendCall).toBeDefined();
+    expect(
+      (resendCall?.[1]?.headers as Record<string, string>)["Idempotency-Key"],
     ).toEqual(expect.any(String));
   });
 

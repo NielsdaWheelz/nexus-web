@@ -89,3 +89,19 @@ def retry_failed_assistant_response(
         idempotency_key=idempotency_key,
     )
     return ok(result)
+
+
+@router.post("/messages/{assistant_message_id}/resend", status_code=200)
+def resend_assistant_response(
+    assistant_message_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+) -> dict:
+    result = chat_runs_service.resend_assistant_response(
+        db=db,
+        viewer_id=viewer.user_id,
+        assistant_message_id=assistant_message_id,
+        idempotency_key=idempotency_key,
+    )
+    return ok(result)

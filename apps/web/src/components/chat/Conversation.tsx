@@ -391,6 +391,8 @@ export default function Conversation() {
             onReplyToAssistant={branch ? handleReplyToAssistant : undefined}
             onRetryAssistantResponse={convo.retryAssistantResponse}
             retryingAssistantMessageIds={convo.retryingAssistantMessageIds.ids}
+            onResendAssistantResponse={convo.resendAssistantResponse}
+            resendingAssistantMessageIds={convo.resendingAssistantMessageIds.ids}
             composer={
               <ChatComposer
                 conversationId={convo.conversationId}

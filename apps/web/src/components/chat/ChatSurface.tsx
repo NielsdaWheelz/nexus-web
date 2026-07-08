@@ -38,6 +38,8 @@ interface ChatSurfaceProps {
   onReplyToAssistant?: (draft: BranchDraft) => void;
   onRetryAssistantResponse?: (assistantMessageId: string) => void;
   retryingAssistantMessageIds?: Set<string>;
+  onResendAssistantResponse?: (assistantMessageId: string) => void;
+  resendingAssistantMessageIds?: Set<string>;
   onReaderSourceActivate?: (
     activation: ResourceActivation,
     target: ReaderSourceTarget | null,
@@ -60,6 +62,8 @@ const ChatSurface = forwardRef<ChatScrollHandle, ChatSurfaceProps>(
       onReplyToAssistant,
       onRetryAssistantResponse,
       retryingAssistantMessageIds,
+      onResendAssistantResponse,
+      resendingAssistantMessageIds,
       onReaderSourceActivate,
     },
     ref,
@@ -142,6 +146,8 @@ const ChatSurface = forwardRef<ChatScrollHandle, ChatSurfaceProps>(
                 retryAssistantMessageId={retryAssistantIdByUserId.get(msg.id)}
                 retryingAssistantMessageIds={retryingAssistantMessageIds}
                 onRetryAssistantResponse={onRetryAssistantResponse}
+                resendingAssistantMessageIds={resendingAssistantMessageIds}
+                onResendAssistantResponse={onResendAssistantResponse}
                 onReaderSourceActivate={onReaderSourceActivate}
               />
             ))}
