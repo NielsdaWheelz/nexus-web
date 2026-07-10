@@ -417,17 +417,18 @@ class Settings(BaseSettings):
     dawn_write_schedule_seconds: int = Field(default=3600, alias="DAWN_WRITE_SCHEDULE_SECONDS")
 
     # Conversation distillate sweep: DISTILL_ENABLED=false makes the sweep + the
-    # on-demand distill enqueue no-ops (one deploy safety valve, D-14).
+    # on-demand distill enqueue no-ops (one deploy safety valve, D-14). The sweep
+    # is an opt-in periodic job: 0 (default) leaves conversation_distill_sweep
+    # unregistered as periodic; the deploy env sets a positive cadence (prod: 3600).
     distill_enabled: bool = Field(default=True, alias="DISTILL_ENABLED")
     conversation_distill_schedule_seconds: int = Field(
-        default=3600, alias="CONVERSATION_DISTILL_SCHEDULE_SECONDS"
+        default=0, alias="CONVERSATION_DISTILL_SCHEDULE_SECONDS"
     )
 
-    # Grand atlas projection: the nightly PCA re-projection cadence. Set 0 to
-    # disable the periodic sweep (the on-demand trigger still fires on ingest).
-    atlas_project_schedule_seconds: int = Field(
-        default=86400, alias="ATLAS_PROJECT_SCHEDULE_SECONDS"
-    )
+    # Grand atlas projection: the nightly PCA re-projection cadence. 0 (default)
+    # leaves atlas_project_job unregistered as periodic; the deploy env sets a
+    # positive cadence (prod: 86400). The on-demand trigger still fires on ingest.
+    atlas_project_schedule_seconds: int = Field(default=0, alias="ATLAS_PROJECT_SCHEDULE_SECONDS")
 
     # Amanuensis: ASSISTANT_WRITE_TOOLS_ENABLED=false omits the five write
     # ToolSpecs from the chat tool loop, leaving a read-only agent (amanuensis

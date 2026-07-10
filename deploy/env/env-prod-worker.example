@@ -22,6 +22,9 @@ DAWN_WRITE_SCHEDULE_SECONDS=3600
 # DISTILL_ENABLED=true
 CONVERSATION_DISTILL_SCHEDULE_SECONDS=3600
 
+# Grand atlas nightly re-projection (0 disables the periodic sweep).
+ATLAS_PROJECT_SCHEDULE_SECONDS=86400
+
 # 0 means disabled. For maintenance, add only the specific job kind needed to
 # WORKER_ALLOWED_JOB_KINDS and set only its schedule for a bounded operator window.
 PODCAST_ACTIVE_POLL_SCHEDULE_SECONDS=0
