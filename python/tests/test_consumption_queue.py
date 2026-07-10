@@ -185,9 +185,7 @@ class TestConsumptionQueueApi:
         assert rows[1]["kind"] == "podcast_episode"
         assert rows[1]["stream_url"] is not None
 
-        audio_only = auth_client.get(
-            "/queue?kind_filter=audio", headers=auth_headers(user_id)
-        )
+        audio_only = auth_client.get("/queue?kind_filter=audio", headers=auth_headers(user_id))
         assert audio_only.status_code == 200
         assert [row["media_id"] for row in audio_only.json()["data"]] == [str(episode)]
 
@@ -197,9 +195,7 @@ class TestConsumptionQueueApi:
         assert readable_only.status_code == 200
         assert [row["media_id"] for row in readable_only.json()["data"]] == [str(article)]
 
-    def test_next_audio_skips_readable_items(
-        self, auth_client, direct_db: DirectSessionManager
-    ):
+    def test_next_audio_skips_readable_items(self, auth_client, direct_db: DirectSessionManager):
         # AC-4: episode -> article -> episode. /queue/next?kind=audio from the first
         # episode returns the second episode, skipping the article in between.
         user_id = create_test_user_id()

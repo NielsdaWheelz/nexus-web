@@ -138,8 +138,7 @@ def conversation_distill_sweep() -> dict:
             )
             signature = live[0] if live else {}
             key = (
-                f"sweep:{signature.get('active_leaf_message_id')}:"
-                f"{signature.get('message_count')}"
+                f"sweep:{signature.get('active_leaf_message_id')}:{signature.get('message_count')}"
             )
             engine.create_revision(
                 db,

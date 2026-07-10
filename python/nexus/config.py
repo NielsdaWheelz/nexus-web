@@ -432,9 +432,7 @@ class Settings(BaseSettings):
     # Amanuensis: ASSISTANT_WRITE_TOOLS_ENABLED=false omits the five write
     # ToolSpecs from the chat tool loop, leaving a read-only agent (amanuensis
     # D-6, AC-6).
-    assistant_write_tools_enabled: bool = Field(
-        default=True, alias="ASSISTANT_WRITE_TOOLS_ENABLED"
-    )
+    assistant_write_tools_enabled: bool = Field(default=True, alias="ASSISTANT_WRITE_TOOLS_ENABLED")
 
     # Post Room: private email ingest address (Cloudflare Email Worker → HMAC-signed POST).
     # EMAIL_INGEST_ENABLED gates route registration; when false the endpoint is absent
@@ -442,13 +440,9 @@ class Settings(BaseSettings):
     # only in staging/prod when the flag is true (mirrors the billing block).
     email_ingest_enabled: bool = Field(default=False, alias="EMAIL_INGEST_ENABLED")
     email_ingest_hmac_secret: str | None = Field(default=None, alias="EMAIL_INGEST_HMAC_SECRET")
-    email_ingest_address_slug: str | None = Field(
-        default=None, alias="EMAIL_INGEST_ADDRESS_SLUG"
-    )
+    email_ingest_address_slug: str | None = Field(default=None, alias="EMAIL_INGEST_ADDRESS_SLUG")
     email_ingest_domain: str | None = Field(default=None, alias="EMAIL_INGEST_DOMAIN")
-    email_ingest_owner_user_id: str | None = Field(
-        default=None, alias="EMAIL_INGEST_OWNER_USER_ID"
-    )
+    email_ingest_owner_user_id: str | None = Field(default=None, alias="EMAIL_INGEST_OWNER_USER_ID")
     email_ingest_max_bytes: int = Field(default=2_097_152, alias="EMAIL_INGEST_MAX_BYTES")
 
     # Stream token auth.

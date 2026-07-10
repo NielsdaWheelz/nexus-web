@@ -10369,9 +10369,7 @@ class TestMigration0145LlmCallLedgerAndErrorFloor:
                 )
             }
         assert "error_detail" in columns_by_table["chat_runs"]
-        assert {"error_code", "error_detail"}.issubset(
-            columns_by_table["artifact_revisions"]
-        )
+        assert {"error_code", "error_detail"}.issubset(columns_by_table["artifact_revisions"])
         assert {"error_code", "error_detail"}.issubset(columns_by_table["media_summaries"])
 
 
@@ -14299,7 +14297,7 @@ class TestMigration0176AmanuensisAssistantWrites:
 
             # Valid assistant edge (bare, rationale excerpt, page endpoint) commits.
             _insert(
-                "CAST('{\"excerpt\": \"because\"}' AS jsonb)",
+                'CAST(\'{"excerpt": "because"}\' AS jsonb)',
                 ordinal_clause=("", ""),
                 target_scheme="page",
             )
@@ -14307,7 +14305,11 @@ class TestMigration0176AmanuensisAssistantWrites:
 
             # Missing excerpt is rejected.
             with pytest.raises(IntegrityError):
-                _insert("CAST('{\"title\": \"t\"}' AS jsonb)", ordinal_clause=("", ""), target_scheme="page")
+                _insert(
+                    'CAST(\'{"title": "t"}\' AS jsonb)',
+                    ordinal_clause=("", ""),
+                    target_scheme="page",
+                )
                 session.commit()
             session.rollback()
 
@@ -14320,7 +14322,7 @@ class TestMigration0176AmanuensisAssistantWrites:
             # An ordinal is rejected (assistant edges are bare).
             with pytest.raises(IntegrityError):
                 _insert(
-                    "CAST('{\"excerpt\": \"x\"}' AS jsonb)",
+                    'CAST(\'{"excerpt": "x"}\' AS jsonb)',
                     ordinal_clause=("ordinal,", "3,"),
                     target_scheme="page",
                 )
@@ -14330,7 +14332,7 @@ class TestMigration0176AmanuensisAssistantWrites:
             # A disallowed endpoint scheme is rejected (evidence_span excluded).
             with pytest.raises(IntegrityError):
                 _insert(
-                    "CAST('{\"excerpt\": \"x\"}' AS jsonb)",
+                    'CAST(\'{"excerpt": "x"}\' AS jsonb)',
                     ordinal_clause=("", ""),
                     target_scheme="evidence_span",
                 )
@@ -14408,8 +14410,7 @@ class TestMigration0177GrandAtlas:
                 row[0]
                 for row in session.execute(
                     text(
-                        "SELECT indexname FROM pg_indexes"
-                        " WHERE tablename = 'media_atlas_positions'"
+                        "SELECT indexname FROM pg_indexes WHERE tablename = 'media_atlas_positions'"
                     )
                 ).fetchall()
             }
@@ -14434,10 +14435,7 @@ class TestMigration0177GrandAtlas:
 
             # Valid row commits.
             session.execute(
-                text(
-                    "INSERT INTO media_atlas_positions (media_id, x, y)"
-                    " VALUES (:id, 0.5, 0.5)"
-                ),
+                text("INSERT INTO media_atlas_positions (media_id, x, y) VALUES (:id, 0.5, 0.5)"),
                 {"id": media_id},
             )
             session.commit()
@@ -14445,9 +14443,7 @@ class TestMigration0177GrandAtlas:
             # Out-of-range x is rejected.
             with pytest.raises(IntegrityError):
                 session.execute(
-                    text(
-                        "UPDATE media_atlas_positions SET x = 1.5 WHERE media_id = :id"
-                    ),
+                    text("UPDATE media_atlas_positions SET x = 1.5 WHERE media_id = :id"),
                     {"id": media_id},
                 )
                 session.commit()

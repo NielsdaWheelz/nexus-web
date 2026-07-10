@@ -158,8 +158,7 @@ class TestRunProjectionIntegration:
         user_id = create_test_user_id()
         library_id = _bootstrap_default_library(auth_client, user_id)
         media_ids = [
-            _seed_media_with_embedding(direct_db, axis=i, title=f"Work {i}")
-            for i in range(3)
+            _seed_media_with_embedding(direct_db, axis=i, title=f"Work {i}") for i in range(3)
         ]
         for media_id in media_ids:
             _add_media(auth_client, user_id, library_id, media_id)
@@ -195,10 +194,7 @@ class TestRunProjectionIntegration:
             run_projection(session, user_id)
             session.commit()
             version = session.execute(
-                text(
-                    "SELECT projection_version FROM media_atlas_positions"
-                    " WHERE media_id = :id"
-                ),
+                text("SELECT projection_version FROM media_atlas_positions WHERE media_id = :id"),
                 {"id": media_id},
             ).scalar_one()
         assert version == 2

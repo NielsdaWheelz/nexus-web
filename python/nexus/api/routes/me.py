@@ -49,7 +49,11 @@ def get_me(
     profile = users_service.get_user_profile(
         db, viewer.user_id, viewer.default_library_id, viewer.email
     )
-    if settings.email_ingest_enabled and settings.email_ingest_address_slug and settings.email_ingest_domain:
+    if (
+        settings.email_ingest_enabled
+        and settings.email_ingest_address_slug
+        and settings.email_ingest_domain
+    ):
         profile.email_ingest_address = (
             f"{settings.email_ingest_address_slug}@{settings.email_ingest_domain}"
         )

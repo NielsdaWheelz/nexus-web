@@ -127,9 +127,7 @@ def append_event(
             )
         )
     elif isinstance(parent, ArtifactRevision):
-        seq = _next_seq(
-            db, table="artifact_revision_events", fk="revision_id", parent_id=parent.id
-        )
+        seq = _next_seq(db, table="artifact_revision_events", fk="revision_id", parent_id=parent.id)
         db.add(
             ArtifactRevisionEvent(
                 revision_id=parent.id, seq=seq, event_type=event_type, payload=payload

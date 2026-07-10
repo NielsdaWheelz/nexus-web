@@ -298,10 +298,7 @@ def test_read_resource_li_revision_returns_exact_body_after_head_moves(
         {"artifact_id": artifact_id},
     ).scalar_one()
     db_session.execute(
-        sql_text(
-            "UPDATE artifacts "
-            "SET current_revision_id = :rev WHERE id = :artifact_id"
-        ),
+        sql_text("UPDATE artifacts SET current_revision_id = :rev WHERE id = :artifact_id"),
         {"rev": new_revision_id, "artifact_id": artifact_id},
     )
     db_session.commit()

@@ -136,9 +136,7 @@ def distill_conversation(
     """
     from typing import cast
 
-    ref = distillate_service.distill(
-        db, viewer_id=viewer.user_id, conversation_id=conversation_id
-    )
+    ref = distillate_service.distill(db, viewer_id=viewer.user_id, conversation_id=conversation_id)
     return ok(
         ConversationDistillOut(
             artifact_id=ref.artifact_id,

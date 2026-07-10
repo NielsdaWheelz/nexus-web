@@ -165,7 +165,11 @@ def extract_email_html(raw_body: bytes) -> tuple[str, str | None, str | None]:
     if text_acc[0] is not None:
         import html as html_module
 
-        return _PLAIN_TEXT_WRAP.format(body=html_module.escape(text_acc[0])), subject, published_date
+        return (
+            _PLAIN_TEXT_WRAP.format(body=html_module.escape(text_acc[0])),
+            subject,
+            published_date,
+        )
 
     raise InvalidRequestError(
         ApiErrorCode.E_INVALID_REQUEST,
@@ -372,9 +376,7 @@ def accept_email_message(
                 "name": sender_name,
                 "role": "author",
                 "ordinal": 0,
-                "external_ids": [
-                    {"authority": "email", "external_key": sender_address}
-                ],
+                "external_ids": [{"authority": "email", "external_key": sender_address}],
             }
         ],
         source="email",

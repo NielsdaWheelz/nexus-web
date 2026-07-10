@@ -437,10 +437,7 @@ def test_li_revision_reference_dropped_from_default_scope_resolution(
         {"id": revision_id, "artifact_id": artifact_id},
     )
     db_session.execute(
-        text(
-            "UPDATE artifacts "
-            "SET current_revision_id = :revision_id WHERE id = :artifact_id"
-        ),
+        text("UPDATE artifacts SET current_revision_id = :revision_id WHERE id = :artifact_id"),
         {"revision_id": revision_id, "artifact_id": artifact_id},
     )
     add_context_edge(db_session, conversation_id, f"artifact_revision:{revision_id}")

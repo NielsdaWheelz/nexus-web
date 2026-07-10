@@ -326,18 +326,10 @@ class ContributorReconciliationEvidenceOut(BaseModel):
     target_handle: str = Field(serialization_alias="targetHandle")
     source_work_count: int = Field(serialization_alias="sourceWorkCount")
     target_work_count: int = Field(serialization_alias="targetWorkCount")
-    source_confirmed_alias_count: int = Field(
-        serialization_alias="sourceConfirmedAliasCount"
-    )
-    target_confirmed_alias_count: int = Field(
-        serialization_alias="targetConfirmedAliasCount"
-    )
-    source_strong_external_id_count: int = Field(
-        serialization_alias="sourceStrongExternalIdCount"
-    )
-    target_strong_external_id_count: int = Field(
-        serialization_alias="targetStrongExternalIdCount"
-    )
+    source_confirmed_alias_count: int = Field(serialization_alias="sourceConfirmedAliasCount")
+    target_confirmed_alias_count: int = Field(serialization_alias="targetConfirmedAliasCount")
+    source_strong_external_id_count: int = Field(serialization_alias="sourceStrongExternalIdCount")
+    target_strong_external_id_count: int = Field(serialization_alias="targetStrongExternalIdCount")
 
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 

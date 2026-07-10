@@ -1930,9 +1930,7 @@ class TestChatResponseRetry:
             assert resend_response.json()["error"]["code"] == "E_MODEL_NOT_AVAILABLE"
             with direct_db.session() as session:
                 run_count_after = session.execute(
-                    text(
-                        "SELECT COUNT(*) FROM chat_runs WHERE conversation_id = :conversation_id"
-                    ),
+                    text("SELECT COUNT(*) FROM chat_runs WHERE conversation_id = :conversation_id"),
                     {"conversation_id": conversation_id},
                 ).scalar_one()
             assert run_count_after == run_count_before
@@ -2066,9 +2064,7 @@ class TestChatResponseRetry:
             )
             session.commit()
 
-        response = _post_resend(
-            auth_client, user_id, cancelled_assistant_id, "resend-cancelled"
-        )
+        response = _post_resend(auth_client, user_id, cancelled_assistant_id, "resend-cancelled")
 
         assert response.status_code == 200, f"Expected cancelled resend: {response.text}"
         data = response.json()["data"]

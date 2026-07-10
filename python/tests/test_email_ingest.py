@@ -130,7 +130,9 @@ class TestAcceptEmailMessage:
             request_id=None,
         )
         row = db_session.execute(
-            text("SELECT kind, provider, provider_id, title, published_date FROM media WHERE id = :id"),
+            text(
+                "SELECT kind, provider, provider_id, title, published_date FROM media WHERE id = :id"
+            ),
             {"id": result.media_id},
         ).one()
         assert row.kind == MediaKind.web_article.value
@@ -241,11 +243,15 @@ class TestAcceptEmailMessage:
         )
         # Fetch contributor_id for each media
         cid1 = db_session.execute(
-            text("SELECT contributor_id FROM contributor_credits WHERE media_id = :mid AND role = 'author'"),
+            text(
+                "SELECT contributor_id FROM contributor_credits WHERE media_id = :mid AND role = 'author'"
+            ),
             {"mid": r1.media_id},
         ).scalar_one()
         cid2 = db_session.execute(
-            text("SELECT contributor_id FROM contributor_credits WHERE media_id = :mid AND role = 'author'"),
+            text(
+                "SELECT contributor_id FROM contributor_credits WHERE media_id = :mid AND role = 'author'"
+            ),
             {"mid": r2.media_id},
         ).scalar_one()
         assert cid1 == cid2, "Both issues must credit the same contributor"
@@ -473,7 +479,9 @@ class TestEmailIngestRouteAuth:
         )
         assert response.status_code == 403
 
-    def test_oversize_body_returns_413(self, email_client: TestClient, email_env: UUID, monkeypatch):
+    def test_oversize_body_returns_413(
+        self, email_client: TestClient, email_env: UUID, monkeypatch
+    ):
         # Temporarily lower the limit to make the test fast.
         monkeypatch.setenv("EMAIL_INGEST_MAX_BYTES", "10")
         clear_settings_cache()
@@ -504,7 +512,9 @@ class TestEmailIngestRouteAuth:
             )
         assert response.status_code == 404
 
-    def test_ac3_parser_not_called_on_bad_sig(self, email_client: TestClient, email_env: UUID, monkeypatch):
+    def test_ac3_parser_not_called_on_bad_sig(
+        self, email_client: TestClient, email_env: UUID, monkeypatch
+    ):
         """AC-3: MIME parser must NOT be called when signature fails."""
         call_log: list[str] = []
 
@@ -534,9 +544,7 @@ class TestEmailIngestRouteAuth:
 class TestGetMeEmailIngestAddress:
     """GET /me response gains email_ingest_address when configured."""
 
-    def test_me_returns_null_address_when_disabled(
-        self, authenticated_client: TestClient
-    ):
+    def test_me_returns_null_address_when_disabled(self, authenticated_client: TestClient):
         from tests.helpers import auth_headers
 
         response = authenticated_client.get("/me", headers=auth_headers(uuid4()))
@@ -544,9 +552,7 @@ class TestGetMeEmailIngestAddress:
         data = response.json()["data"]
         assert data.get("email_ingest_address") is None
 
-    def test_me_returns_address_when_enabled(
-        self, authenticated_client: TestClient, monkeypatch
-    ):
+    def test_me_returns_address_when_enabled(self, authenticated_client: TestClient, monkeypatch):
         from tests.helpers import auth_headers
 
         monkeypatch.setenv("EMAIL_INGEST_ENABLED", "true")

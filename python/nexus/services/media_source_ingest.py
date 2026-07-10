@@ -2457,9 +2457,9 @@ def _run_prepared_html_article(
     source_html: str | None = None
     if source_storage_path:
         try:
-            source_html = b"".join(
-                storage_client.stream_object(source_storage_path)
-            ).decode("utf-8")
+            source_html = b"".join(storage_client.stream_object(source_storage_path)).decode(
+                "utf-8"
+            )
         except UnicodeDecodeError as exc:
             raise InvalidRequestError(
                 ApiErrorCode.E_SANITIZATION_FAILED,

@@ -414,9 +414,7 @@ def _resolve_library_id(db: Session, viewer_id: UUID, args: dict[str, Any]) -> U
             raise _ToolRefusal("invalid_arguments", "library_id must be a UUID") from exc
     name = _optional_str(args, "library_name")
     if not name:
-        raise _ToolRefusal(
-            "invalid_arguments", "Provide library_id or library_name to file into"
-        )
+        raise _ToolRefusal("invalid_arguments", "Provide library_id or library_name to file into")
     rows = db.execute(
         text(
             """
@@ -595,9 +593,10 @@ def undo_tool_call(
     already-absent target (the user may have deleted it manually, R-5). Returns
     the ``assistant_message_id`` so the route can rebuild the trail.
     """
-    row = db.execute(
-        text(
-            """
+    row = (
+        db.execute(
+            text(
+                """
             SELECT mtc.id, mtc.tool_name, mtc.result_refs, mtc.reverted_at,
                    mtc.assistant_message_id
             FROM message_tool_calls mtc
@@ -606,13 +605,16 @@ def undo_tool_call(
               AND mtc.conversation_id = :conversation_id
               AND c.owner_user_id = :viewer_id
             """
-        ),
-        {
-            "tool_call_id": tool_call_id,
-            "conversation_id": conversation_id,
-            "viewer_id": viewer_id,
-        },
-    ).mappings().fetchone()
+            ),
+            {
+                "tool_call_id": tool_call_id,
+                "conversation_id": conversation_id,
+                "viewer_id": viewer_id,
+            },
+        )
+        .mappings()
+        .fetchone()
+    )
     if row is None or row["tool_name"] not in WRITE_TOOL_NAMES:
         raise ApiError(ApiErrorCode.E_NOT_FOUND, "Write tool call not found")
 
@@ -624,7 +626,9 @@ def undo_tool_call(
         _revert_ref(db, viewer_id=viewer_id, ref=ref)
 
     db.execute(
-        text("UPDATE message_tool_calls SET reverted_at = now(), updated_at = now() WHERE id = :id"),
+        text(
+            "UPDATE message_tool_calls SET reverted_at = now(), updated_at = now() WHERE id = :id"
+        ),
         {"id": tool_call_id},
     )
     db.commit()
@@ -641,9 +645,7 @@ def _revert_ref(db: Session, *, viewer_id: UUID, ref: dict[str, Any]) -> None:
             library_entries.delete_entry(
                 db,
                 UUID(ref["library_id"]),
-                library_entries.EntryTarget(
-                    kind=ref["target_scheme"], id=UUID(ref["target_id"])
-                ),
+                library_entries.EntryTarget(kind=ref["target_scheme"], id=UUID(ref["target_id"])),
             )
             db.commit()
         elif kind == "highlight":

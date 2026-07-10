@@ -366,7 +366,6 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
                 )
 
 
-
 def _encode_library_cursor(row, *, viewer_id: UUID) -> str:
     payload = {
         "k": "libraries",

@@ -468,18 +468,22 @@ def reject_contributor_reconciliation_candidate(
     _require_contributor_curator(actor_roles)
 
     def _txn() -> None:
-        row = db.execute(
-            text(
-                """
+        row = (
+            db.execute(
+                text(
+                    """
                 SELECT id
                 FROM contributor_reconciliation_candidates
                 WHERE id = :candidate_id
                   AND status = 'pending'
                 FOR UPDATE
                 """
-            ),
-            {"candidate_id": candidate_id},
-        ).mappings().one_or_none()
+                ),
+                {"candidate_id": candidate_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
         if row is None:
             raise NotFoundError(
                 ApiErrorCode.E_NOT_FOUND,

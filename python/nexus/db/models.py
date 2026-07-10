@@ -3266,9 +3266,7 @@ class MediaAtlasPosition(Base):
     )
     x: Mapped[float] = mapped_column(Float, nullable=False)
     y: Mapped[float] = mapped_column(Float, nullable=False)
-    projection_version: Mapped[int] = mapped_column(
-        Integer, nullable=False, server_default="1"
-    )
+    projection_version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
     computed_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -4689,9 +4687,7 @@ class MessageToolCall(Base):
     # Undo lifecycle state for assistant write tool calls (amanuensis §5.6, D-3):
     # a real column, not a result_refs field, because the per-run write cap counts
     # rows WHERE reverted_at IS NULL (D-6) and undo must be queryable.
-    reverted_at: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=True
-    )
+    reverted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),

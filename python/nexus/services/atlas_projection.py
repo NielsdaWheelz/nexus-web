@@ -89,9 +89,7 @@ def fetch_mean_embeddings(db: Session, user_id: UUID) -> list[tuple[UUID, list[f
         return _fetch_mean_embeddings_python(db, user_id)
 
 
-def _fetch_mean_embeddings_python(
-    db: Session, user_id: UUID
-) -> list[tuple[UUID, list[float]]]:
+def _fetch_mean_embeddings_python(db: Session, user_id: UUID) -> list[tuple[UUID, list[float]]]:
     rows = db.execute(
         text(
             f"""
@@ -324,9 +322,7 @@ def _atlas_dedupe_key(user_id: UUID) -> str:
     return f"atlas_project:{user_id}"
 
 
-def try_enqueue_atlas_project(
-    db: Session, *, user_id: UUID, force: bool = False
-) -> bool:
+def try_enqueue_atlas_project(db: Session, *, user_id: UUID, force: bool = False) -> bool:
     """Soft-enqueue one projection for ``user_id``; never breaks the host write.
 
     Rides the caller's transaction (flush-only) behind a SAVEPOINT so a queue

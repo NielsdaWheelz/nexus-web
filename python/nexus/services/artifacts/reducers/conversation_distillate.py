@@ -80,9 +80,7 @@ async def _collect(
         db, viewer_id=cast("UUID", viewer_id), conversation_id=subject_ref.id
     )
     path = [
-        m
-        for m in tree.selected_path
-        if m.status == "complete" and m.role in ("user", "assistant")
+        m for m in tree.selected_path if m.status == "complete" and m.role in ("user", "assistant")
     ]
     ids = [m.id for m in path]
     contents: dict[UUID, str] = {}
@@ -116,9 +114,7 @@ async def _collect(
 
 
 def _build_request(inputs: DistillateInputs, custom_instruction: str | None) -> ModelCall:
-    rendered = "\n\n".join(
-        f"[{m.index}] ({m.role})\n{m.content}" for m in inputs.offered
-    )
+    rendered = "\n\n".join(f"[{m.index}] ({m.role})\n{m.content}" for m in inputs.offered)
     extra_user_block = (
         f"CUSTOM INSTRUCTION:\n{custom_instruction}" if custom_instruction is not None else None
     )
@@ -197,9 +193,7 @@ def _live_fingerprint(
         db, viewer_id=cast("UUID", viewer_id), conversation_id=subject_ref.id
     )
     count = sum(
-        1
-        for m in tree.selected_path
-        if m.status == "complete" and m.role in ("user", "assistant")
+        1 for m in tree.selected_path if m.status == "complete" and m.role in ("user", "assistant")
     )
     return [
         {
@@ -221,7 +215,10 @@ def _freshness_signature(covered_targets: object) -> tuple[str | None, int]:
         if isinstance(record, dict):
             leaf = record.get("active_leaf_message_id")
             count = record.get("message_count")
-            return (str(leaf) if leaf is not None else None, int(count) if isinstance(count, int) else -1)
+            return (
+                str(leaf) if leaf is not None else None,
+                int(count) if isinstance(count, int) else -1,
+            )
     return (None, -1)
 
 
@@ -239,9 +236,7 @@ _SYSTEM_PROMPT = build_synthesis_prompt(
         "{text:str, message_index:int} where message_index is the single provided message "
         "the claim came from. Never cite an index you were not given.",
     ],
-    json_shape=(
-        '{"summary_md": string, "claims": [{"text": string, "message_index": int}]}'
-    ),
+    json_shape=('{"summary_md": string, "claims": [{"text": string, "message_index": int}]}'),
 )
 
 

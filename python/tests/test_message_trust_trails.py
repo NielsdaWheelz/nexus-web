@@ -160,9 +160,7 @@ class TestTrustTrailCostField:
         assert trail.run is not None
         assert trail.run.total_cost_usd_micros == 15_000
 
-    def test_total_cost_null_when_no_llm_calls(
-        self, direct_db: DirectSessionManager
-    ) -> None:
+    def test_total_cost_null_when_no_llm_calls(self, direct_db: DirectSessionManager) -> None:
         """total_cost_usd_micros is null for runs with no llm_calls."""
         (
             user_id,
@@ -192,17 +190,13 @@ class TestTrustTrailCostField:
         assert trail.run is not None
         assert trail.run.total_cost_usd_micros is None
 
-    def test_total_cost_absent_when_no_run(
-        self, direct_db: DirectSessionManager
-    ) -> None:
+    def test_total_cost_absent_when_no_run(self, direct_db: DirectSessionManager) -> None:
         """trail.run is None when there is no chat_run, so cost is implicitly absent."""
         user_id = _seed_user(direct_db)
 
         with direct_db.session() as session:
             conversation_id = create_test_conversation(session, user_id)
-            create_test_message(
-                session, conversation_id, seq=1, role="user", content="Hi"
-            )
+            create_test_message(session, conversation_id, seq=1, role="user", content="Hi")
             assistant_message_id = create_test_message(
                 session,
                 conversation_id,

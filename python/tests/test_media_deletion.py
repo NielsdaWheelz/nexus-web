@@ -1058,10 +1058,7 @@ def test_delete_library_applies_graph_cleanup_two_rules(
             {"artifact_id": artifact_id},
         ).scalar_one()
         session.execute(
-            text(
-                "UPDATE artifacts "
-                "SET current_revision_id = :revision_id WHERE id = :artifact_id"
-            ),
+            text("UPDATE artifacts SET current_revision_id = :revision_id WHERE id = :artifact_id"),
             {"revision_id": revision_id, "artifact_id": artifact_id},
         )
 
@@ -1137,9 +1134,7 @@ def test_delete_library_applies_graph_cleanup_two_rules(
     direct_db.register_cleanup("conversations", "id", conversation_id)
     direct_db.register_cleanup("messages", "conversation_id", conversation_id)
     direct_db.register_cleanup("resource_edges", "user_id", user_id)
-    direct_db.register_cleanup(
-        "artifact_revisions", "artifact_id", artifact_id
-    )
+    direct_db.register_cleanup("artifact_revisions", "artifact_id", artifact_id)
     direct_db.register_cleanup("artifacts", "id", artifact_id)
 
     delete_response = auth_client.delete(f"/libraries/{library_id}", headers=auth_headers(user_id))
@@ -1147,9 +1142,7 @@ def test_delete_library_applies_graph_cleanup_two_rules(
 
     with direct_db.session() as session:
         assert_no_dangling_bare_edges(session, ref=ResourceRef(scheme="library", id=library_id))
-        assert_no_dangling_bare_edges(
-            session, ref=ResourceRef(scheme="artifact", id=artifact_id)
-        )
+        assert_no_dangling_bare_edges(session, ref=ResourceRef(scheme="artifact", id=artifact_id))
         assert_no_dangling_bare_edges(
             session, ref=ResourceRef(scheme="artifact_revision", id=revision_id)
         )

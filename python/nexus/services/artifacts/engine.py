@@ -239,7 +239,9 @@ async def run_revision(db: Session, *, revision_id: UUID, llm: ModelRuntime) -> 
     try:
         resolved_key = resolve_api_key(db, owner_id, reducer.provider, "auto")
     except ApiError as exc:
-        _fail_revision(db, revision_id=revision_id, error_code=exc.code.value, error_detail=exc.message)
+        _fail_revision(
+            db, revision_id=revision_id, error_code=exc.code.value, error_detail=exc.message
+        )
         return
     except ModelCallError as exc:
         _fail_revision(
@@ -254,7 +256,9 @@ async def run_revision(db: Session, *, revision_id: UUID, llm: ModelRuntime) -> 
     try:
         rate_limiter.acquire_inflight_slot(owner_id)
     except ApiError as exc:
-        _fail_revision(db, revision_id=revision_id, error_code=exc.code.value, error_detail=exc.message)
+        _fail_revision(
+            db, revision_id=revision_id, error_code=exc.code.value, error_detail=exc.message
+        )
         return
     budget_reserved = False
     estimated_tokens = 0
@@ -329,9 +333,7 @@ async def run_revision(db: Session, *, revision_id: UUID, llm: ModelRuntime) -> 
 
         # Commit the per-attempt llm_calls rows now so they survive the promote.
         db.commit()
-        content_md, citations = reducer.materialize(
-            db, owner_id, subject_ref, inputs, result.value
-        )
+        content_md, citations = reducer.materialize(db, owner_id, subject_ref, inputs, result.value)
         try:
             validate_generated_markdown_citations(content_md, citations)
         except InvalidRequestError as exc:
@@ -360,7 +362,9 @@ async def run_revision(db: Session, *, revision_id: UUID, llm: ModelRuntime) -> 
         )
         if budget_reserved:
             actual_tokens = usage_tokens(result.usage)["total_tokens"]
-            rate_limiter.commit_token_budget(owner_id, revision_id, actual_tokens or estimated_tokens)
+            rate_limiter.commit_token_budget(
+                owner_id, revision_id, actual_tokens or estimated_tokens
+            )
             budget_reserved = False
     finally:
         if budget_reserved:
@@ -557,9 +561,7 @@ class _ArtifactRow:
 
 def _artifact_row(db: Session, *, artifact_id: UUID) -> _ArtifactRow:
     row = db.execute(
-        text(
-            "SELECT id, subject_scheme, subject_id, kind, user_id FROM artifacts WHERE id = :id"
-        ),
+        text("SELECT id, subject_scheme, subject_id, kind, user_id FROM artifacts WHERE id = :id"),
         {"id": artifact_id},
     ).one()
     return _ArtifactRow(

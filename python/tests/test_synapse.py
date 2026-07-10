@@ -638,9 +638,7 @@ class TestRunSynapseScan:
 
         first = _scan(db_session, user_id=user_id, ref=ref, router=_SynapseRouter())
         assert first == "ok"
-        assert _work_targets(
-            db_session, _synapse_edges(db_session, user_id=user_id, ref=ref)
-        ) == {
+        assert _work_targets(db_session, _synapse_edges(db_session, user_id=user_id, ref=ref)) == {
             f"note_block:{other_block}",
             f"media:{alpha_id}",
             f"media:{beta_id}",
@@ -793,9 +791,9 @@ class TestRunSynapseScan:
         assert (suppression.source_scheme, suppression.source_id) == (ref.scheme, ref.id)
         # Re-scan proposes no span of the dismissed work — only beta survives.
         assert _scan(db_session, user_id=user_id, ref=ref, router=router) == "ok"
-        assert _work_targets(
-            db_session, _synapse_edges(db_session, user_id=user_id, ref=ref)
-        ) == {f"media:{beta_id}"}, "a dismissed work's spans stay silenced (AC6)"
+        assert _work_targets(db_session, _synapse_edges(db_session, user_id=user_id, ref=ref)) == {
+            f"media:{beta_id}"
+        }, "a dismissed work's spans stay silenced (AC6)"
 
     def test_mid_scan_dismiss_wins_over_the_scan(self, db_session: Session) -> None:
         user_id = _seed_user(db_session)

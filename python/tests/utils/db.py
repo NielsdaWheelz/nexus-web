@@ -183,10 +183,7 @@ def _delete_library_intelligence(session: Session, artifact_filter: str, value: 
     revision_ids = [
         row[0]
         for row in session.execute(
-            text(
-                "SELECT id FROM artifact_revisions "
-                "WHERE artifact_id = ANY(:artifact_ids)"
-            ),
+            text("SELECT id FROM artifact_revisions WHERE artifact_id = ANY(:artifact_ids)"),
             {"artifact_ids": artifact_ids},
         )
     ]
@@ -205,25 +202,16 @@ def _delete_library_intelligence(session: Session, artifact_filter: str, value: 
             {"scheme": scheme, "ids": ids},
         )
     session.execute(
-        text(
-            "UPDATE artifacts "
-            "SET current_revision_id = NULL WHERE id = ANY(:artifact_ids)"
-        ),
+        text("UPDATE artifacts SET current_revision_id = NULL WHERE id = ANY(:artifact_ids)"),
         {"artifact_ids": artifact_ids},
     )
     if revision_ids:
         session.execute(
-            text(
-                "DELETE FROM artifact_revision_events "
-                "WHERE revision_id = ANY(:revision_ids)"
-            ),
+            text("DELETE FROM artifact_revision_events WHERE revision_id = ANY(:revision_ids)"),
             {"revision_ids": revision_ids},
         )
     session.execute(
-        text(
-            "DELETE FROM artifact_revisions "
-            "WHERE artifact_id = ANY(:artifact_ids)"
-        ),
+        text("DELETE FROM artifact_revisions WHERE artifact_id = ANY(:artifact_ids)"),
         {"artifact_ids": artifact_ids},
     )
     session.execute(

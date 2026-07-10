@@ -255,10 +255,7 @@ def _make_li_artifact(
             {"artifact_id": artifact_id, "content_md": content_md},
         ).scalar_one()
         db.execute(
-            sql_text(
-                "UPDATE artifacts "
-                "SET current_revision_id = :rev WHERE id = :artifact_id"
-            ),
+            sql_text("UPDATE artifacts SET current_revision_id = :rev WHERE id = :artifact_id"),
             {"rev": revision_id, "artifact_id": artifact_id},
         )
     db.commit()
@@ -538,9 +535,7 @@ def test_resolve_li_artifact_promoted_inlines_current_revision(
         content_md="Overview line.\nThe library covers X and Y [1].",
     )
 
-    resolved = _resolve(
-        db_session, f"artifact:{artifact_id}", viewer_id=bootstrapped_user
-    )
+    resolved = _resolve(db_session, f"artifact:{artifact_id}", viewer_id=bootstrapped_user)
 
     assert not resolved.missing, f"Member should resolve a promoted artifact; got {resolved}"
     assert resolved.label == "Library dossier — Synthesis Library", (
@@ -587,10 +582,7 @@ def test_resolve_li_revision_inlines_exact_revision_after_head_moves(
         {"artifact_id": artifact_id},
     ).scalar_one()
     db_session.execute(
-        sql_text(
-            "UPDATE artifacts "
-            "SET current_revision_id = :rev WHERE id = :artifact_id"
-        ),
+        sql_text("UPDATE artifacts SET current_revision_id = :rev WHERE id = :artifact_id"),
         {"rev": new_revision_id, "artifact_id": artifact_id},
     )
     db_session.commit()
@@ -614,9 +606,7 @@ def test_resolve_li_artifact_long_body_not_inlined(db_session: Session, bootstra
         db_session, library_id, bootstrapped_user, content_md=long_content
     )
 
-    resolved = _resolve(
-        db_session, f"artifact:{artifact_id}", viewer_id=bootstrapped_user
-    )
+    resolved = _resolve(db_session, f"artifact:{artifact_id}", viewer_id=bootstrapped_user)
 
     assert not resolved.missing
     assert resolved.inline_body is None, (
@@ -632,9 +622,7 @@ def test_resolve_li_artifact_no_current_revision_is_present_no_inline(
     library_id = create_test_library(db_session, bootstrapped_user, "Ungenerated Library")
     artifact_id = _make_li_artifact(db_session, library_id, bootstrapped_user, content_md=None)
 
-    resolved = _resolve(
-        db_session, f"artifact:{artifact_id}", viewer_id=bootstrapped_user
-    )
+    resolved = _resolve(db_session, f"artifact:{artifact_id}", viewer_id=bootstrapped_user)
 
     assert not resolved.missing, (
         f"A head with current_revision_id NULL must resolve non-missing; got {resolved}"
@@ -651,9 +639,7 @@ def test_resolve_li_artifact_non_member_returns_missing(
     other_library_id = create_test_library(db_session, other_user_id, "Closed Synthesis")
     artifact_id = _make_li_artifact(db_session, other_library_id, other_user_id)
 
-    resolved = _resolve(
-        db_session, f"artifact:{artifact_id}", viewer_id=bootstrapped_user
-    )
+    resolved = _resolve(db_session, f"artifact:{artifact_id}", viewer_id=bootstrapped_user)
 
     assert resolved.missing, "Non-member must see the artifact as missing"
 
@@ -661,9 +647,7 @@ def test_resolve_li_artifact_non_member_returns_missing(
 def test_resolve_li_artifact_unknown_id_returns_missing(
     db_session: Session, bootstrapped_user: UUID
 ):
-    resolved = _resolve(
-        db_session, f"artifact:{uuid4()}", viewer_id=bootstrapped_user
-    )
+    resolved = _resolve(db_session, f"artifact:{uuid4()}", viewer_id=bootstrapped_user)
     assert resolved.missing, "Unknown artifact URI must resolve as missing"
 
 
@@ -713,10 +697,7 @@ def test_li_artifact_resources_block_reflects_current_revision(
         {"artifact_id": artifact_id},
     ).scalar_one()
     db_session.execute(
-        sql_text(
-            "UPDATE artifacts "
-            "SET current_revision_id = :rev WHERE id = :artifact_id"
-        ),
+        sql_text("UPDATE artifacts SET current_revision_id = :rev WHERE id = :artifact_id"),
         {"rev": new_revision_id, "artifact_id": artifact_id},
     )
     db_session.commit()
@@ -816,10 +797,7 @@ def test_li_revision_context_stays_pinned_after_head_moves(
         {"artifact_id": artifact_id},
     ).scalar_one()
     db_session.execute(
-        sql_text(
-            "UPDATE artifacts "
-            "SET current_revision_id = :rev WHERE id = :artifact_id"
-        ),
+        sql_text("UPDATE artifacts SET current_revision_id = :rev WHERE id = :artifact_id"),
         {"rev": new_revision_id, "artifact_id": artifact_id},
     )
     db_session.commit()

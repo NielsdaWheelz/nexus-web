@@ -50,7 +50,9 @@ def test_web_highlight_resolves_to_covering_span(db_session: Session) -> None:
         CreateHighlightRequest(start_offset=0, end_offset=4, color="yellow"),
     )
 
-    ref = covering_evidence_span_for_highlight(db_session, viewer_id=user_id, highlight_id=highlight.id)
+    ref = covering_evidence_span_for_highlight(
+        db_session, viewer_id=user_id, highlight_id=highlight.id
+    )
 
     assert ref is not None
     assert ref.scheme == "evidence_span"
@@ -80,7 +82,9 @@ def test_no_covering_chunk_returns_none(db_session: Session) -> None:
         {"id": media_id},
     )
 
-    ref = covering_evidence_span_for_highlight(db_session, viewer_id=user_id, highlight_id=highlight.id)
+    ref = covering_evidence_span_for_highlight(
+        db_session, viewer_id=user_id, highlight_id=highlight.id
+    )
 
     assert ref is None
 

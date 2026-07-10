@@ -119,9 +119,7 @@ def list_libraries(
 
     Returns libraries ordered by created_at ASC, id ASC.
     """
-    result, page = library_governance.list_libraries(
-        db, viewer.user_id, cursor=cursor, limit=limit
-    )
+    result, page = library_governance.list_libraries(db, viewer.user_id, cursor=cursor, limit=limit)
     return ok_page(result, page)
 
 

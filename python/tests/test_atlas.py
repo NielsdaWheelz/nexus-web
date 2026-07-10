@@ -19,9 +19,7 @@ def _bootstrap_default_library(auth_client, user_id: UUID) -> UUID:
 
 
 def _create_library(auth_client, user_id: UUID, name: str) -> UUID:
-    response = auth_client.post(
-        "/libraries", headers=auth_headers(user_id), json={"name": name}
-    )
+    response = auth_client.post("/libraries", headers=auth_headers(user_id), json={"name": name})
     assert response.status_code == 201, response.text
     return UUID(response.json()["data"]["id"])
 
@@ -59,10 +57,7 @@ def _add_media(auth_client, user_id: UUID, library_id: UUID, media_id: UUID) -> 
 def _set_position(direct_db: DirectSessionManager, media_id: UUID, x: float, y: float) -> None:
     with direct_db.session() as session:
         session.execute(
-            text(
-                "INSERT INTO media_atlas_positions (media_id, x, y)"
-                " VALUES (:id, :x, :y)"
-            ),
+            text("INSERT INTO media_atlas_positions (media_id, x, y) VALUES (:id, :x, :y)"),
             {"id": media_id, "x": x, "y": y},
         )
         session.commit()
@@ -179,9 +174,7 @@ class TestAtlasReadModel:
         etag = first.headers["ETag"]
         assert etag
 
-        second = auth_client.get(
-            "/atlas", headers={**auth_headers(user_id), "If-None-Match": etag}
-        )
+        second = auth_client.get("/atlas", headers={**auth_headers(user_id), "If-None-Match": etag})
         assert second.status_code == 304
         assert second.content == b""
 

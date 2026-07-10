@@ -1752,7 +1752,9 @@ def test_media_atlas_positions_has_sole_writer():
 
 def test_atlas_projection_service_has_no_numpy():
     # G1: the projection is pure Python (no numpy/scipy/umap dependency).
-    hits = _grep(r"import\s+numpy|from\s+numpy|import\s+scipy|import\s+umap", _ATLAS_PROJECTION_SERVICE)
+    hits = _grep(
+        r"import\s+numpy|from\s+numpy|import\s+scipy|import\s+umap", _ATLAS_PROJECTION_SERVICE
+    )
     assert not hits, f"numpy/scipy/umap imported in atlas projection:\n{_fmt(hits)}"
 
 
@@ -1792,7 +1794,7 @@ def test_evidence_span_synapse_edge_target_constructed_only_in_synapse():
         "services/synapse.py",
         "services/artifacts/reducers/library_dossier.py",
     )
-    assert not hits, f'evidence_span synapse edge target built outside synapse.py:\n{_fmt(hits)}'
+    assert not hits, f"evidence_span synapse edge target built outside synapse.py:\n{_fmt(hits)}"
 
 
 def test_second_apparatus_migration_creates_no_table():

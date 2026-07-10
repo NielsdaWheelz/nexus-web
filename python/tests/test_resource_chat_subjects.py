@@ -206,10 +206,7 @@ def _li_artifact_with_current_revision(
         {"artifact_id": artifact_id},
     ).scalar_one()
     db.execute(
-        text(
-            "UPDATE artifacts "
-            "SET current_revision_id = :revision_id WHERE id = :artifact_id"
-        ),
+        text("UPDATE artifacts SET current_revision_id = :revision_id WHERE id = :artifact_id"),
         {"revision_id": revision_id, "artifact_id": artifact_id},
     )
     db.commit()

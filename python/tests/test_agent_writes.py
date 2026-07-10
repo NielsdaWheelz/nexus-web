@@ -77,9 +77,7 @@ def _seed_readable_media(
 ) -> tuple[UUID, UUID]:
     with direct_db.session() as session:
         library_id = factories.create_test_library(session, user_id, name=f"Lib {title}")
-        media_id = factories.create_test_media_in_library(
-            session, user_id, library_id, title=title
-        )
+        media_id = factories.create_test_media_in_library(session, user_id, library_id, title=title)
         fragment_id = factories.create_test_fragment(session, media_id, content=canonical_text)
     direct_db.register_cleanup("resource_edges", "user_id", user_id)
     direct_db.register_cleanup("highlights", "user_id", user_id)
@@ -162,9 +160,7 @@ def test_flag_off_omits_write_tools(monkeypatch):
 def test_text_quote_resolution_paths(direct_db):
     user_id = _seed_user(direct_db)
     canonical = "The cat sat. The entropy of the system rose. The cat sat again."
-    media_id, _ = _seed_readable_media(
-        direct_db, user_id, title="Quote", canonical_text=canonical
-    )
+    media_id, _ = _seed_readable_media(direct_db, user_id, title="Quote", canonical_text=canonical)
     with direct_db.session() as session:
         unique = text_quote.resolve(session, media_id=media_id, exact="entropy of the system")
         assert unique.status is text_quote.QuoteStatus.unique
@@ -208,13 +204,17 @@ def test_mint_edge_creates_assistant_origin_edge(direct_db):
             },
         )
         assert not outcome.is_error
-        edge = session.execute(
-            text(
-                "SELECT origin, snapshot->>'excerpt' AS excerpt, ordinal"
-                " FROM resource_edges WHERE user_id = :u AND origin = 'assistant'"
-            ),
-            {"u": user_id},
-        ).mappings().one()
+        edge = (
+            session.execute(
+                text(
+                    "SELECT origin, snapshot->>'excerpt' AS excerpt, ordinal"
+                    " FROM resource_edges WHERE user_id = :u AND origin = 'assistant'"
+                ),
+                {"u": user_id},
+            )
+            .mappings()
+            .one()
+        )
         assert edge["origin"] == "assistant"
         assert edge["excerpt"] == "these rhyme"
         assert edge["ordinal"] is None
@@ -249,8 +249,7 @@ def test_add_to_library_files_entry(direct_db):
         assert not outcome.is_error
         count = session.execute(
             text(
-                "SELECT count(*) FROM library_entries"
-                " WHERE library_id = :lib AND media_id = :media"
+                "SELECT count(*) FROM library_entries WHERE library_id = :lib AND media_id = :media"
             ),
             {"lib": target_library, "media": media_id},
         ).scalar_one()
@@ -261,9 +260,7 @@ def test_create_highlight_unique_and_ambiguous(direct_db):
     user_id = _seed_user(direct_db)
     run = _seed_run(direct_db, user_id)
     canonical = "The cat sat. The entropy of the system rose. The cat sat again."
-    media_id, _ = _seed_readable_media(
-        direct_db, user_id, title="H", canonical_text=canonical
-    )
+    media_id, _ = _seed_readable_media(direct_db, user_id, title="H", canonical_text=canonical)
 
     with direct_db.session() as session:
         ok = writes.execute_write_tool(
@@ -328,10 +325,7 @@ def test_queue_add_marks_assistant_source(direct_db):
         )
         assert not outcome.is_error
         source = session.execute(
-            text(
-                "SELECT source FROM consumption_queue_items"
-                " WHERE user_id = :u AND media_id = :m"
-            ),
+            text("SELECT source FROM consumption_queue_items WHERE user_id = :u AND media_id = :m"),
             {"u": user_id, "m": media_id},
         ).scalar_one()
         assert source == "assistant"
@@ -468,8 +462,7 @@ def test_undo_removes_assistant_entry(direct_db):
         )
         count = session.execute(
             text(
-                "SELECT count(*) FROM library_entries"
-                " WHERE library_id = :lib AND media_id = :media"
+                "SELECT count(*) FROM library_entries WHERE library_id = :lib AND media_id = :media"
             ),
             {"lib": target_library, "media": media_id},
         ).scalar_one()
@@ -503,8 +496,7 @@ def test_add_to_library_preexisting_entry_survives_undo(direct_db):
         )
         count = session.execute(
             text(
-                "SELECT count(*) FROM library_entries"
-                " WHERE library_id = :lib AND media_id = :media"
+                "SELECT count(*) FROM library_entries WHERE library_id = :lib AND media_id = :media"
             ),
             {"lib": target_library, "media": media_id},
         ).scalar_one()
@@ -575,8 +567,7 @@ def test_undo_reverts_queue_item(direct_db):
         )
         left = session.execute(
             text(
-                "SELECT count(*) FROM consumption_queue_items"
-                " WHERE user_id = :u AND media_id = :m"
+                "SELECT count(*) FROM consumption_queue_items WHERE user_id = :u AND media_id = :m"
             ),
             {"u": user_id, "m": media_id},
         ).scalar_one()

@@ -39,9 +39,7 @@ QUEUE_SOURCES = {
 
 # The player consumes these; the reader consumes the rest. Both live in one queue.
 AUDIO_KINDS = frozenset({MediaKind.podcast_episode.value, MediaKind.video.value})
-READABLE_KINDS = frozenset(
-    {MediaKind.web_article.value, MediaKind.epub.value, MediaKind.pdf.value}
-)
+READABLE_KINDS = frozenset({MediaKind.web_article.value, MediaKind.epub.value, MediaKind.pdf.value})
 QUEUEABLE_KINDS = AUDIO_KINDS | READABLE_KINDS
 
 
@@ -101,9 +99,7 @@ def list_queue_for_viewer(
     queue_items = [_row_to_queue_item(row) for row in rows]
 
     # Text rows carry a derived read-state fraction; the ledger is the sole owner.
-    readable_ids = [
-        item.media_id for item in queue_items if item.kind in READABLE_KINDS
-    ]
+    readable_ids = [item.media_id for item in queue_items if item.kind in READABLE_KINDS]
     if readable_ids:
         states = attention.consumption_state(db, viewer_id=viewer_id, media_ids=readable_ids)
         for item in queue_items:

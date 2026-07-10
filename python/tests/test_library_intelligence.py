@@ -197,9 +197,7 @@ class _RecordingRateLimiter:
 def li_rate_limiter(monkeypatch) -> _RecordingRateLimiter:
     # One recording limiter for both the reduce and the inline unit builds.
     limiter = _RecordingRateLimiter()
-    monkeypatch.setattr(
-        "nexus.services.artifacts.engine.get_rate_limiter", lambda: limiter
-    )
+    monkeypatch.setattr("nexus.services.artifacts.engine.get_rate_limiter", lambda: limiter)
     monkeypatch.setattr("nexus.services.media_intelligence.get_rate_limiter", lambda: limiter)
     return limiter
 
@@ -625,9 +623,7 @@ class TestGenerateReduce:
             == 1
         )
         covered = db_session.execute(
-            text(
-                "SELECT covered_targets FROM artifact_revisions WHERE id = :r"
-            ),
+            text("SELECT covered_targets FROM artifact_revisions WHERE id = :r"),
             {"r": revision_id},
         ).scalar_one()
         assert {record["id"]: record["coverage"] for record in covered} == {
@@ -695,10 +691,7 @@ class TestGenerateReduce:
         )
         assert router.calls == 0  # the reduce never ran (no ready units)
         revision = db_session.execute(
-            text(
-                "SELECT status, error_code, error_detail "
-                "FROM artifact_revisions WHERE id = :r"
-            ),
+            text("SELECT status, error_code, error_detail FROM artifact_revisions WHERE id = :r"),
             {"r": revision_id},
         ).one()
         assert revision.status == "failed"
@@ -756,10 +749,7 @@ class TestGenerateReduce:
             db_session, owner_id=owner_id, library_id=library_id, token="t1", router=router
         )
         revision = db_session.execute(
-            text(
-                "SELECT status, error_code, error_detail "
-                "FROM artifact_revisions WHERE id = :r"
-            ),
+            text("SELECT status, error_code, error_detail FROM artifact_revisions WHERE id = :r"),
             {"r": revision_id},
         ).one()
         assert revision.status == "failed"
@@ -930,9 +920,7 @@ class TestPodcastExpansion:
         view = get_artifact(db_session, viewer_id=owner_id, library_id=library_id)
         assert view.status == "current"
         covered = db_session.execute(
-            text(
-                "SELECT covered_targets FROM artifact_revisions WHERE id = :r"
-            ),
+            text("SELECT covered_targets FROM artifact_revisions WHERE id = :r"),
             {"r": revision_id},
         ).scalar_one()
         covered_media_ids = {rec["id"] for rec in covered if rec.get("kind") == "media"}
@@ -994,16 +982,12 @@ class TestRevisionsAndPromote:
         ], f"the current head must read the new revision's citation set; got {view.citations}"
         assert view.artifact_id is not None
         assert len(_citation_edges(db_session, "artifact_revision", first_rev)) == 1
-        assert (
-            len(_citation_edges(db_session, "artifact_revision", ref2.revision_id)) == 2
-        )
+        assert len(_citation_edges(db_session, "artifact_revision", ref2.revision_id)) == 2
         assert _citation_edges(db_session, "artifact", view.artifact_id) == []
         # The prior revision is retained.
         prior = (
             db_session.execute(
-                text(
-                    "SELECT status, promoted_at FROM artifact_revisions WHERE id = :r"
-                ),
+                text("SELECT status, promoted_at FROM artifact_revisions WHERE id = :r"),
                 {"r": first_rev},
             )
             .mappings()
@@ -1028,10 +1012,7 @@ class TestRevisionsAndPromote:
             instruction=f"  {instruction}  ",
         )
         stored = db_session.execute(
-            text(
-                "SELECT custom_instruction FROM artifact_revisions "
-                "WHERE id = :revision_id"
-            ),
+            text("SELECT custom_instruction FROM artifact_revisions WHERE id = :revision_id"),
             {"revision_id": ref.revision_id},
         ).scalar_one()
         assert stored == instruction
@@ -1124,10 +1105,7 @@ class TestRevisionsAndPromote:
         )
         assert second.revision_id == first.revision_id
         stored = db_session.execute(
-            text(
-                "SELECT custom_instruction FROM artifact_revisions "
-                "WHERE id = :revision_id"
-            ),
+            text("SELECT custom_instruction FROM artifact_revisions WHERE id = :revision_id"),
             {"revision_id": first.revision_id},
         ).scalar_one()
         assert stored == "first instruction"
@@ -1150,10 +1128,7 @@ class TestRevisionsAndPromote:
         )
         assert third.revision_id != first.revision_id
         blank_stored = db_session.execute(
-            text(
-                "SELECT custom_instruction FROM artifact_revisions "
-                "WHERE id = :revision_id"
-            ),
+            text("SELECT custom_instruction FROM artifact_revisions WHERE id = :revision_id"),
             {"revision_id": third.revision_id},
         ).scalar_one()
         assert blank_stored is None
@@ -1176,10 +1151,7 @@ class TestWorkerBoundary:
         assert _citation_edges(db_session, "artifact_revision", ref.revision_id) == []
         assert _citation_edges(db_session, "artifact", ref.artifact_id) == []
         revision = db_session.execute(
-            text(
-                "SELECT status, error_code, error_detail "
-                "FROM artifact_revisions WHERE id = :r"
-            ),
+            text("SELECT status, error_code, error_detail FROM artifact_revisions WHERE id = :r"),
             {"r": ref.revision_id},
         ).one()
         assert revision.status == "failed"
@@ -1209,10 +1181,7 @@ class TestWorkerBoundary:
         )
         db_session.expire_all()
         revision = db_session.execute(
-            text(
-                "SELECT status, error_code, error_detail "
-                "FROM artifact_revisions WHERE id = :r"
-            ),
+            text("SELECT status, error_code, error_detail FROM artifact_revisions WHERE id = :r"),
             {"r": ref.revision_id},
         ).one()
         assert revision.status == "failed"
@@ -1240,10 +1209,7 @@ class TestWorkerBoundary:
         )
         db_session.expire_all()
         revision = db_session.execute(
-            text(
-                "SELECT status, error_code "
-                "FROM artifact_revisions WHERE id = :r"
-            ),
+            text("SELECT status, error_code FROM artifact_revisions WHERE id = :r"),
             {"r": revision_id},
         ).one()
         assert revision.status == "ready", "a terminal revision must not be re-failed"

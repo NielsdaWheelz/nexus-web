@@ -64,9 +64,7 @@ def _require_library_intelligence_schema(engine: Engine) -> None:
     head_columns = {col["name"] for col in inspector.get_columns("artifacts")}
     assert _NEW_HEAD_COLUMNS.issubset(head_columns), head_columns
     assert _REMOVED_HEAD_COLUMNS.isdisjoint(head_columns), head_columns
-    revision_columns = {
-        col["name"] for col in inspector.get_columns("artifact_revisions")
-    }
+    revision_columns = {col["name"] for col in inspector.get_columns("artifact_revisions")}
     assert _NEW_REVISION_COLUMNS.issubset(revision_columns), revision_columns
 
 
@@ -182,10 +180,7 @@ def test_generate_route_returns_202_and_revision_is_run(
     assert UUID(data["artifact_id"])
     with direct_db.session() as session:
         stored_instruction = session.execute(
-            text(
-                "SELECT custom_instruction FROM artifact_revisions "
-                "WHERE id = :revision_id"
-            ),
+            text("SELECT custom_instruction FROM artifact_revisions WHERE id = :revision_id"),
             {"revision_id": UUID(data["revision_id"])},
         ).scalar_one()
     assert stored_instruction == "focus on source tensions"
@@ -200,10 +195,7 @@ def test_generate_route_returns_202_and_revision_is_run(
     assert again.json()["data"]["revision_id"] == data["revision_id"]
     with direct_db.session() as session:
         replay_instruction = session.execute(
-            text(
-                "SELECT custom_instruction FROM artifact_revisions "
-                "WHERE id = :revision_id"
-            ),
+            text("SELECT custom_instruction FROM artifact_revisions WHERE id = :revision_id"),
             {"revision_id": UUID(data["revision_id"])},
         ).scalar_one()
     assert replay_instruction == "focus on source tensions"
@@ -218,10 +210,7 @@ def test_generate_route_returns_202_and_revision_is_run(
     assert forked.json()["data"]["revision_id"] != data["revision_id"]
     with direct_db.session() as session:
         forked_instruction = session.execute(
-            text(
-                "SELECT custom_instruction FROM artifact_revisions "
-                "WHERE id = :revision_id"
-            ),
+            text("SELECT custom_instruction FROM artifact_revisions WHERE id = :revision_id"),
             {"revision_id": UUID(forked.json()["data"]["revision_id"])},
         ).scalar_one()
     assert forked_instruction is None
@@ -295,10 +284,7 @@ def test_revision_routes_read_historical_citations_after_head_moves(
             {"artifact_id": artifact_id},
         ).scalar_one()
         session.execute(
-            text(
-                "UPDATE artifacts "
-                "SET current_revision_id = :revision_id WHERE id = :artifact_id"
-            ),
+            text("UPDATE artifacts SET current_revision_id = :revision_id WHERE id = :artifact_id"),
             {"revision_id": second_revision_id, "artifact_id": artifact_id},
         )
         session.add_all(
@@ -373,9 +359,7 @@ def test_revision_routes_read_historical_citations_after_head_moves(
         headers=auth_headers(owner_id),
     )
     assert promoted.status_code == 200, promoted.text
-    assert promoted.json()["data"]["revision_ref"] == (
-        f"artifact_revision:{first_revision_id}"
-    )
+    assert promoted.json()["data"]["revision_ref"] == (f"artifact_revision:{first_revision_id}")
     assert "run_id" not in promoted.json()["data"]
 
     after = auth_client.get(
@@ -383,10 +367,7 @@ def test_revision_routes_read_historical_citations_after_head_moves(
         headers=auth_headers(owner_id),
     )
     assert after.status_code == 200, after.text
-    assert (
-        after.json()["data"]["revision_ref"]
-        == f"artifact_revision:{second_revision_id}"
-    )
+    assert after.json()["data"]["revision_ref"] == f"artifact_revision:{second_revision_id}"
     assert after.json()["data"]["is_current"] is False
     assert after.json()["data"]["citations"][0]["snapshot"]["title"] == "Second Source"
 

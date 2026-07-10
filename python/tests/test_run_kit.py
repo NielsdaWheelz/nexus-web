@@ -255,9 +255,9 @@ def test_fail_run_after_worker_exception_writes_failure_on_nonterminal_parent(db
         "RuntimeError: boom",
     )
     assert parent.content_md == "", "the broken transaction's writes must be rolled back"
-    assert _event_types(
-        db_session, "artifact_revision_events", "revision_id", revision_id
-    ) == ["done"]
+    assert _event_types(db_session, "artifact_revision_events", "revision_id", revision_id) == [
+        "done"
+    ]
 
 
 def test_fail_run_after_worker_exception_noops_on_terminal_parent(db_session):
@@ -276,10 +276,7 @@ def test_fail_run_after_worker_exception_noops_on_terminal_parent(db_session):
     assert failed_now is False
     assert parent is not None and parent.status == "ready"
     assert parent.error_code is None and parent.error_detail is None
-    assert (
-        _event_types(db_session, "artifact_revision_events", "revision_id", revision_id)
-        == []
-    )
+    assert _event_types(db_session, "artifact_revision_events", "revision_id", revision_id) == []
 
 
 def test_fail_run_after_worker_exception_noops_on_missing_parent(db_session):
