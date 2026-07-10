@@ -64,7 +64,11 @@ export function useReaderResumeState(options: UseReaderResumeStateOptions) {
       const hasPendingLocator =
         hasPendingRef.current && pendingMediaIdRef.current === targetMediaId;
       const tracker = attentionRef.current;
-      const dwell = tracker ? tracker.dwellDeltaRef.current : 0;
+      // Dwell accrues from rAF timestamp deltas (fractional ms), but the ledger
+      // wire contract is an integer (attention.dwell_ms_delta: int). A fractional
+      // value fails backend validation and 400s the whole envelope — taking the
+      // piggybacked locator write down with it — so round at the boundary.
+      const dwell = tracker ? Math.round(tracker.dwellDeltaRef.current) : 0;
       if (!hasPendingLocator && dwell === 0) {
         return;
       }

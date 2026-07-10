@@ -369,6 +369,61 @@ describe("useReaderResumeState", () => {
     expect(putInits[0]?.keepalive).toBe(true);
   });
 
+  it("rounds fractional rAF dwell to an integer so the envelope validates", async () => {
+    const putBodies: string[] = [];
+    const apiFetchImpl = async <T,>(path: string, init?: RequestInit): Promise<T> => {
+      if (path === "/api/media/media-1/reader-state" && !init) {
+        return { data: null } as T;
+      }
+      if (path === "/api/media/media-1/reader-state" && init?.method === "PUT") {
+        putBodies.push(String(init.body));
+        return { data: WEB_RESUME_STATE } as T;
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    };
+    // The real useAttentionTracker accumulates rAF timestamp deltas, which are
+    // sub-millisecond floats; the ledger wire contract is an integer.
+    const dwellDeltaRef = { current: 1233.6667 };
+    const tracker = {
+      dwellDeltaRef,
+      resetDelta: () => {
+        dwellDeltaRef.current = 0;
+      },
+      deviceId: "device-x",
+    };
+
+    const { result } = renderHook(() =>
+      useReaderResumeState({
+        mediaId: "media-1",
+        apiFetch: apiFetchImpl as typeof apiFetchImpl,
+        debounceMs: 10_000,
+        attention: tracker,
+      })
+    );
+
+    await waitFor(() => {
+      expect(result.current.state).toBeNull();
+    });
+
+    act(() => {
+      result.current.save(WEB_RESUME_STATE);
+    });
+
+    await act(async () => {
+      window.dispatchEvent(new Event("pagehide"));
+    });
+
+    await waitFor(() => {
+      expect(putBodies).toHaveLength(1);
+    });
+
+    const body = JSON.parse(putBodies[0]) as {
+      attention: { dwell_ms_delta: number };
+    };
+    expect(body.attention.dwell_ms_delta).toBe(1234);
+    expect(Number.isInteger(body.attention.dwell_ms_delta)).toBe(true);
+  });
+
   it("sends dwell_ms_delta 0 as the opened event when no dwell accrued", async () => {
     const putBodies: string[] = [];
     const apiFetchImpl = async <T,>(path: string, init?: RequestInit): Promise<T> => {
