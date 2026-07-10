@@ -1,4 +1,4 @@
-import type { PlaybackQueueItem } from "@/lib/player/playbackQueueClient";
+import type { ConsumptionQueueItem } from "@/lib/player/consumptionQueueClient";
 import { vi } from "vitest";
 
 type AudioMetrics = {
@@ -10,11 +10,12 @@ type AudioMetrics = {
 
 type PlaybackQueueItemOptions = {
   listeningPositionMs?: number;
-  listeningState?: PlaybackQueueItem["listening_state"];
+  listeningState?: ConsumptionQueueItem["listening_state"];
   subscriptionDefaultPlaybackSpeed?: number | null;
   podcastTitle?: string | null;
   imageUrl?: string | null;
   durationSeconds?: number | null;
+  kind?: string;
 };
 
 export function setViewportWidth(width: number): void {
@@ -56,7 +57,7 @@ export function buildPlaybackQueueItem(
   title: string,
   position: number,
   options: PlaybackQueueItemOptions = {}
-): PlaybackQueueItem {
+): ConsumptionQueueItem {
   const listeningState =
     options.listeningState === undefined
       ? {
@@ -68,13 +69,14 @@ export function buildPlaybackQueueItem(
   return {
     item_id: itemId,
     media_id: mediaId,
+    position,
+    kind: options.kind ?? "podcast_episode",
     title,
     podcast_title: options.podcastTitle ?? "Queue Podcast",
     image_url: options.imageUrl ?? null,
     duration_seconds: options.durationSeconds ?? 120,
     stream_url: `https://cdn.example.com/${mediaId}.mp3`,
-    source_url: `https://example.com/${mediaId}`,
-    position,
+    reader_href: `/media/${mediaId}`,
     source: "manual",
     added_at: "2026-03-22T00:00:00Z",
     listening_state: listeningState,
@@ -82,27 +84,55 @@ export function buildPlaybackQueueItem(
   };
 }
 
-export function installPlaybackFetchMock(initialQueueItems: PlaybackQueueItem[]) {
+export function installPlaybackFetchMock(initialQueueItems: ConsumptionQueueItem[]) {
   let queueItems = [...initialQueueItems];
+  const AUDIO_KINDS = ["podcast_episode", "video"];
   const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = new URL(String(input), "http://localhost");
     const method = init?.method ?? "GET";
 
-    if (url.pathname === "/api/playback/queue" && method === "GET") {
-      return jsonResponse({ data: queueItems });
+    if (url.pathname === "/api/queue" && method === "GET") {
+      const kindFilter = url.searchParams.get("kind_filter");
+      const rows =
+        kindFilter === "audio"
+          ? queueItems.filter((item) => AUDIO_KINDS.includes(item.kind))
+          : kindFilter === "readable"
+            ? queueItems.filter((item) => !AUDIO_KINDS.includes(item.kind))
+            : queueItems;
+      return jsonResponse({ data: rows });
     }
 
-    if (url.pathname === "/api/playback/queue/next" && method === "GET") {
+    if (url.pathname === "/api/queue/next" && method === "GET") {
       const currentMediaId = url.searchParams.get("current_media_id");
+      const kind = url.searchParams.get("kind") ?? "audio";
+      const inScope = (item: ConsumptionQueueItem) =>
+        kind === "readable"
+          ? !AUDIO_KINDS.includes(item.kind)
+          : AUDIO_KINDS.includes(item.kind);
       const currentIndex = queueItems.findIndex((item) => item.media_id === currentMediaId);
-      const nextItem = currentIndex >= 0 ? queueItems[currentIndex + 1] ?? null : null;
+      const start = currentIndex >= 0 ? currentIndex + 1 : 0;
+      const nextItem = queueItems.slice(start).find(inScope) ?? null;
       return jsonResponse({ data: nextItem });
     }
 
-    if (url.pathname === "/api/playback/queue/order" && method === "PUT") {
+    if (url.pathname === "/api/queue/order" && method === "PUT") {
       const body = JSON.parse(String(init?.body ?? "{}"));
       const rawItemIds: unknown[] = Array.isArray(body.item_ids) ? body.item_ids : [];
       const itemIds = rawItemIds.filter((value): value is string => typeof value === "string");
+      // Mirror reorder_queue_for_viewer: the payload MUST be the exact full viewer
+      // set. Reject a subset/superset with 400 so a panel that only sends the audio
+      // rows surfaces as a failed reorder (the mixed-queue reorder contract).
+      const existingIds = new Set(queueItems.map((item) => item.item_id));
+      const requestedIds = new Set(itemIds);
+      const isExactSet =
+        itemIds.length === existingIds.size &&
+        [...existingIds].every((id) => requestedIds.has(id));
+      if (!isExactSet) {
+        return jsonResponse(
+          { error: { code: "E_INVALID_REQUEST", message: "exact full set required" } },
+          400,
+        );
+      }
       const byId = new Map(queueItems.map((item) => [item.item_id, item]));
       queueItems = itemIds
         .map((itemId, index) => {
@@ -112,11 +142,11 @@ export function installPlaybackFetchMock(initialQueueItems: PlaybackQueueItem[])
           }
           return { ...existing, position: index };
         })
-        .filter((item): item is PlaybackQueueItem => item != null);
+        .filter((item): item is ConsumptionQueueItem => item != null);
       return jsonResponse({ data: queueItems });
     }
 
-    if (url.pathname.startsWith("/api/playback/queue/items/") && method === "DELETE") {
+    if (url.pathname.startsWith("/api/queue/items/") && method === "DELETE") {
       const itemId = url.pathname.split("/").pop() ?? "";
       queueItems = queueItems
         .filter((item) => item.item_id !== itemId)
@@ -124,7 +154,7 @@ export function installPlaybackFetchMock(initialQueueItems: PlaybackQueueItem[])
       return jsonResponse({ data: queueItems });
     }
 
-    if (url.pathname === "/api/playback/queue/clear" && method === "POST") {
+    if (url.pathname === "/api/queue/clear" && method === "POST") {
       queueItems = [];
       return jsonResponse({ data: [] });
     }

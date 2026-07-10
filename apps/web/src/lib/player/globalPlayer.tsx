@@ -12,17 +12,17 @@ import {
 } from "react";
 import { clamp } from "@/lib/clamp";
 import {
-  PLAYBACK_QUEUE_UPDATED_EVENT,
-  addPlaybackQueueItems,
-  clearPlaybackQueue,
-  countUpcomingQueueItems,
-  fetchNextPlaybackQueueItem,
-  fetchPlaybackQueue,
-  removePlaybackQueueItem,
-  reorderPlaybackQueue,
-  type PlaybackQueueInsertPosition,
-  type PlaybackQueueItem,
-} from "@/lib/player/playbackQueueClient";
+  CONSUMPTION_QUEUE_UPDATED_EVENT,
+  addConsumptionQueueItems,
+  clearConsumptionQueue,
+  fetchConsumptionQueue,
+  fetchNextAudioQueueItem,
+  isAudioQueueItem,
+  removeConsumptionQueueItem,
+  reorderConsumptionQueue,
+  type ConsumptionQueueInsertPosition,
+  type ConsumptionQueueItem,
+} from "@/lib/player/consumptionQueueClient";
 import {
   SUBSCRIPTION_PLAYBACK_SPEED_OPTIONS,
   type SubscriptionPlaybackSpeedOption,
@@ -114,17 +114,16 @@ interface GlobalPlayerContextValue {
   audioEffectsAvailable: boolean;
   isSilenceTrimming: boolean;
   silenceTimeSavedSeconds: number;
-  queueItems: PlaybackQueueItem[];
+  queueItems: ConsumptionQueueItem[];
   refreshQueue: () => Promise<void>;
-  addToQueue: (mediaId: string, insertPosition: PlaybackQueueInsertPosition) => Promise<void>;
+  addToQueue: (mediaId: string, insertPosition: ConsumptionQueueInsertPosition) => Promise<void>;
   removeFromQueue: (itemId: string) => Promise<void>;
   reorderQueue: (itemIds: string[]) => Promise<void>;
   clearQueue: () => Promise<void>;
-  playQueueItem: (item: PlaybackQueueItem) => void;
+  playQueueItem: (item: ConsumptionQueueItem) => void;
   playNextInQueue: () => Promise<void>;
   playPreviousInQueue: () => Promise<void>;
   currentQueueItemId: string | null;
-  upcomingQueueCount: number;
   hasNextInQueue: boolean;
   hasPreviousInQueue: boolean;
   bindAudioElement: (node: HTMLAudioElement | null) => void;
@@ -207,7 +206,7 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
   const [audioEffectsAvailable, setAudioEffectsAvailable] = useState(true);
   const [isSilenceTrimming, setIsSilenceTrimming] = useState(false);
   const [silenceTimeSavedSeconds, setSilenceTimeSavedSeconds] = useState(0);
-  const [queueItems, setQueueItems] = useState<PlaybackQueueItem[]>([]);
+  const [queueItems, setQueueItems] = useState<ConsumptionQueueItem[]>([]);
   const [requestVersion, setRequestVersion] = useState(0);
   const pendingTrackOptionsRef = useRef<SetTrackOptions>({});
   const audioElementRef = useRef<HTMLAudioElement | null>(null);
@@ -691,7 +690,7 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
 
     const request = (async () => {
       try {
-        const nextQueueItems = await fetchPlaybackQueue();
+        const nextQueueItems = await fetchConsumptionQueue();
         setQueueItems(nextQueueItems);
       } catch {
         // Queue hydration is non-fatal for playback controls.
@@ -707,9 +706,9 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const addToQueue = useCallback(
-    async (mediaId: string, insertPosition: PlaybackQueueInsertPosition) => {
+    async (mediaId: string, insertPosition: ConsumptionQueueInsertPosition) => {
       try {
-        const nextQueueItems = await addPlaybackQueueItems(
+        const nextQueueItems = await addConsumptionQueueItems(
           [mediaId],
           insertPosition,
           track?.media_id ?? null
@@ -724,7 +723,7 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
 
   const removeFromQueue = useCallback(async (itemId: string) => {
     try {
-      const nextQueueItems = await removePlaybackQueueItem(itemId);
+      const nextQueueItems = await removeConsumptionQueueItem(itemId);
       setQueueItems(nextQueueItems);
     } catch {
       await refreshQueue();
@@ -732,7 +731,7 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
   }, [refreshQueue]);
 
   const reorderQueueItems = useCallback(
-    (itemIds: string[]): PlaybackQueueItem[] => {
+    (itemIds: string[]): ConsumptionQueueItem[] => {
       const queueById = new Map(queueItems.map((item) => [item.item_id, item]));
       return itemIds
         .map((itemId, index) => {
@@ -742,7 +741,7 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
           }
           return { ...existing, position: index };
         })
-        .filter((item): item is PlaybackQueueItem => item != null);
+        .filter((item): item is ConsumptionQueueItem => item != null);
     },
     [queueItems]
   );
@@ -755,7 +754,7 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
         setQueueItems(optimistic);
       }
       try {
-        const nextQueueItems = await reorderPlaybackQueue(itemIds);
+        const nextQueueItems = await reorderConsumptionQueue(itemIds);
         setQueueItems(nextQueueItems);
       } catch {
         setQueueItems(previousQueueItems);
@@ -767,7 +766,7 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
 
   const clearQueue = useCallback(async () => {
     try {
-      const nextQueueItems = await clearPlaybackQueue();
+      const nextQueueItems = await clearConsumptionQueue();
       setQueueItems(nextQueueItems);
     } catch {
       await refreshQueue();
@@ -775,13 +774,14 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
   }, [refreshQueue]);
 
   const playQueueItem = useCallback(
-    (queueItem: PlaybackQueueItem) => {
+    (queueItem: ConsumptionQueueItem) => {
       setTrack(
         {
           media_id: queueItem.media_id,
           title: queueItem.title,
-          stream_url: queueItem.stream_url,
-          source_url: queueItem.source_url,
+          // Audio kinds always carry a non-null stream URL by the service contract.
+          stream_url: queueItem.stream_url ?? "",
+          source_url: queueItem.stream_url ?? "",
           podcast_title: queueItem.podcast_title ?? undefined,
           image_url: queueItem.image_url ?? undefined,
         },
@@ -801,26 +801,27 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
     [setTrack]
   );
 
-  const currentQueueIndex = useMemo(() => {
+  // The queue holds mixed kinds (audio + readable). The player only navigates the
+  // audio subset — readable rows are consumed by the reader, never loaded as an
+  // (empty-URL) audio track. Prev/next and the has-* flags all operate here.
+  const audioQueueItems = useMemo(() => queueItems.filter(isAudioQueueItem), [queueItems]);
+
+  const currentAudioIndex = useMemo(() => {
     if (!track) {
       return -1;
     }
-    return queueItems.findIndex((item) => item.media_id === track.media_id);
-  }, [queueItems, track]);
+    return audioQueueItems.findIndex((item) => item.media_id === track.media_id);
+  }, [audioQueueItems, track]);
 
-  const currentQueueItemId = currentQueueIndex >= 0 ? queueItems[currentQueueIndex]?.item_id ?? null : null;
-
-  const upcomingQueueCount = useMemo(
-    () => countUpcomingQueueItems(queueItems, track?.media_id ?? null),
-    [queueItems, track?.media_id]
-  );
+  const currentQueueItemId =
+    currentAudioIndex >= 0 ? audioQueueItems[currentAudioIndex]?.item_id ?? null : null;
 
   const playNextInQueue = useCallback(async () => {
     if (!track) {
       return;
     }
     try {
-      const nextItem = await fetchNextPlaybackQueueItem(track.media_id);
+      const nextItem = await fetchNextAudioQueueItem(track.media_id);
       if (!nextItem) {
         return;
       }
@@ -840,12 +841,12 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
       seekToMs(0);
       return;
     }
-    if (currentQueueIndex > 0) {
-      playQueueItem(queueItems[currentQueueIndex - 1]);
+    if (currentAudioIndex > 0) {
+      playQueueItem(audioQueueItems[currentAudioIndex - 1]);
       return;
     }
     seekToMs(0);
-  }, [currentQueueIndex, currentTimeSeconds, playQueueItem, queueItems, seekToMs, track]);
+  }, [audioQueueItems, currentAudioIndex, currentTimeSeconds, playQueueItem, seekToMs, track]);
 
   const currentChapter = useMemo(
     () => getTrackChapterAtSeconds(track?.chapters, currentTimeSeconds),
@@ -875,13 +876,13 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
     if (!track) {
       return false;
     }
-    if (currentQueueIndex < 0) {
-      return queueItems.length > 0;
+    if (currentAudioIndex < 0) {
+      return audioQueueItems.length > 0;
     }
-    return currentQueueIndex < queueItems.length - 1;
-  }, [currentQueueIndex, queueItems.length, track]);
+    return currentAudioIndex < audioQueueItems.length - 1;
+  }, [audioQueueItems.length, currentAudioIndex, track]);
 
-  const hasPreviousInQueue = useMemo(() => currentQueueIndex > 0, [currentQueueIndex]);
+  const hasPreviousInQueue = useMemo(() => currentAudioIndex > 0, [currentAudioIndex]);
   const activeTrackMediaId = track?.media_id ?? null;
 
   const { updatePositionState: updateMediaSessionPositionState } =
@@ -1154,9 +1155,9 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
     const handleQueueUpdated = () => {
       void refreshQueue();
     };
-    window.addEventListener(PLAYBACK_QUEUE_UPDATED_EVENT, handleQueueUpdated);
+    window.addEventListener(CONSUMPTION_QUEUE_UPDATED_EVENT, handleQueueUpdated);
     return () => {
-      window.removeEventListener(PLAYBACK_QUEUE_UPDATED_EVENT, handleQueueUpdated);
+      window.removeEventListener(CONSUMPTION_QUEUE_UPDATED_EVENT, handleQueueUpdated);
     };
   }, [refreshQueue]);
 
@@ -1223,7 +1224,6 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
       playNextInQueue,
       playPreviousInQueue,
       currentQueueItemId,
-      upcomingQueueCount,
       hasNextInQueue,
       hasPreviousInQueue,
       bindAudioElement,
@@ -1265,7 +1265,6 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
       playNextInQueue,
       playPreviousInQueue,
       currentQueueItemId,
-      upcomingQueueCount,
       hasNextInQueue,
       hasPreviousInQueue,
       bindAudioElement,

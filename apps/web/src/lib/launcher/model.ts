@@ -96,6 +96,7 @@ export type LauncherActionTarget =
   | { kind: "resource"; activation: ResourceActivation; titleHint?: string }
   | { kind: "ask"; text: string }
   | { kind: "add-url"; url: string } // quick add from the hard-signal row
+  | { kind: "queue-add"; mediaId: string; title: string } // append media to the Lectern
   | { kind: "create-note"; text: string } // quick capture → daily note
   | { kind: "browse-acquire"; result: BrowseResult } // open if owned, else add by url
   | { kind: "new-conversation" }

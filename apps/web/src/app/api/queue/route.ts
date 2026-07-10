@@ -3,5 +3,5 @@ import { proxyToFastAPI } from "@/lib/api/proxy";
 export const runtime = "nodejs";
 
 export async function GET(req: Request) {
-  return proxyToFastAPI(req, "/playback/queue/next");
+  return proxyToFastAPI(req, "/queue");
 }

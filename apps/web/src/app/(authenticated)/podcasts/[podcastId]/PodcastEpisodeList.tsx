@@ -2,6 +2,7 @@
 
 import { useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
+import { addToLectern } from "@/lib/player/consumptionQueueClient";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
@@ -160,6 +161,9 @@ export default function PodcastEpisodeList({
           : undefined,
         onTogglePlayed: () => {
           onTogglePlayed(episode, deriveEpisodeState(episode) !== "played");
+        },
+        onAddToLectern: () => {
+          void addToLectern(episode.id);
         },
       },
     ),

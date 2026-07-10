@@ -1503,7 +1503,7 @@ class TestPodcastSubscriptionSyncLifecycle:
                 text(
                     """
                     SELECT source
-                    FROM playback_queue_items
+                    FROM consumption_queue_items
                     WHERE user_id = :user_id
                     ORDER BY position ASC
                     """
@@ -1514,7 +1514,7 @@ class TestPodcastSubscriptionSyncLifecycle:
                 text(
                     """
                     SELECT source
-                    FROM playback_queue_items
+                    FROM consumption_queue_items
                     WHERE user_id = :user_id
                     ORDER BY position ASC
                     """

@@ -205,8 +205,8 @@ class User(Base):
     memberships: Mapped[list["Membership"]] = relationship(
         "Membership", back_populates="user", cascade="all, delete-orphan"
     )
-    playback_queue_items: Mapped[list["PlaybackQueueItem"]] = relationship(
-        "PlaybackQueueItem", back_populates="user", cascade="all, delete-orphan"
+    consumption_queue_items: Mapped[list["ConsumptionQueueItem"]] = relationship(
+        "ConsumptionQueueItem", back_populates="user", cascade="all, delete-orphan"
     )
     podcast_listening_states: Mapped[list["PodcastListeningState"]] = relationship(
         "PodcastListeningState", back_populates="user", cascade="all, delete-orphan"
@@ -1244,8 +1244,8 @@ class Media(Base):
         back_populates="media",
         cascade="all, delete-orphan",
     )
-    playback_queue_items: Mapped[list["PlaybackQueueItem"]] = relationship(
-        "PlaybackQueueItem",
+    consumption_queue_items: Mapped[list["ConsumptionQueueItem"]] = relationship(
+        "ConsumptionQueueItem",
         back_populates="media",
         cascade="all, delete-orphan",
     )
@@ -2794,10 +2794,10 @@ class PodcastListeningState(Base):
     user: Mapped["User"] = relationship("User", back_populates="podcast_listening_states")
 
 
-class PlaybackQueueItem(Base):
-    """Per-user ordered playback queue item."""
+class ConsumptionQueueItem(Base):
+    """Per-user ordered consumption queue item (any media kind)."""
 
-    __tablename__ = "playback_queue_items"
+    __tablename__ = "consumption_queue_items"
 
     id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
@@ -2823,20 +2823,20 @@ class PlaybackQueueItem(Base):
     source: Mapped[str] = mapped_column(Text, nullable=False, server_default="manual")
 
     __table_args__ = (
-        UniqueConstraint("user_id", "media_id", name="uq_playback_queue_items_user_media"),
+        UniqueConstraint("user_id", "media_id", name="uq_consumption_queue_items_user_media"),
         CheckConstraint(
             "position >= 0",
-            name="ck_playback_queue_items_position_non_negative",
+            name="ck_consumption_queue_items_position_non_negative",
         ),
         CheckConstraint(
-            "source IN ('manual', 'auto_subscription', 'auto_playlist')",
-            name="ck_playback_queue_items_source",
+            "source IN ('manual', 'auto_subscription', 'auto_playlist', 'assistant')",
+            name="ck_consumption_queue_items_source",
         ),
-        Index("ix_playback_queue_items_user_position", "user_id", "position"),
+        Index("ix_consumption_queue_items_user_position", "user_id", "position"),
     )
 
-    user: Mapped["User"] = relationship("User", back_populates="playback_queue_items")
-    media: Mapped["Media"] = relationship("Media", back_populates="playback_queue_items")
+    user: Mapped["User"] = relationship("User", back_populates="consumption_queue_items")
+    media: Mapped["Media"] = relationship("Media", back_populates="consumption_queue_items")
 
 
 class PodcastTranscriptionJob(Base):

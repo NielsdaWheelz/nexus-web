@@ -23,6 +23,14 @@ export interface Destination {
 // Launcher-only destinations (no slot) follow.
 export const DESTINATIONS: Destination[] = [
   {
+    id: "lectern",
+    label: "Lectern",
+    href: "/lectern",
+    keywords: ["queue", "reading list", "playlist", "next"],
+    slot: "primary",
+    match: { exact: ["/lectern"] },
+  },
+  {
     id: "libraries",
     label: "Libraries",
     href: "/libraries",

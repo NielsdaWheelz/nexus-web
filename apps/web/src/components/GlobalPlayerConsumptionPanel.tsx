@@ -1,13 +1,19 @@
 "use client";
 
-import { useId, useRef } from "react";
+import Link from "next/link";
+import { useId, useMemo, useRef } from "react";
 import SortableList from "@/components/sortable/SortableList";
 import Button from "@/components/ui/Button";
+import { isAudioQueueItem } from "@/lib/player/consumptionQueueClient";
 import { useGlobalPlayer } from "@/lib/player/globalPlayer";
 import { useDialogOverlay } from "@/lib/ui/useDialogOverlay";
 import styles from "./GlobalPlayerFooter.module.css";
 
-export default function GlobalPlayerQueuePanel({
+// The in-player overlay is audio-only (podcast episodes + video). The full,
+// all-kinds queue lives in the Lectern pane; this panel filters internally and
+// never receives a kind-filter prop (D-4).
+
+export default function GlobalPlayerConsumptionPanel({
   onClose,
   returnFocusFallback,
 }: {
@@ -26,6 +32,20 @@ export default function GlobalPlayerQueuePanel({
     removeFromQueue,
     clearQueue,
   } = useGlobalPlayer();
+
+  const audioItems = useMemo(() => queueItems.filter(isAudioQueueItem), [queueItems]);
+
+  // The panel reorders only the audio subset, but the reorder endpoint requires the
+  // exact full viewer set. Splice the new audio order back into the full queue,
+  // leaving readable rows pinned to their absolute slots, and send that.
+  const reorderAudioSubset = (nextAudio: typeof audioItems) => {
+    const nextAudioIds = nextAudio.map((item) => item.item_id);
+    let cursor = 0;
+    const fullOrder = queueItems.map((item) =>
+      isAudioQueueItem(item) ? nextAudioIds[cursor++] : item.item_id,
+    );
+    void reorderQueue(fullOrder);
+  };
 
   useDialogOverlay({
     ref: panelRef,
@@ -65,35 +85,35 @@ export default function GlobalPlayerQueuePanel({
       >
         <header className={styles.queueHeader}>
           <h2 id={titleId} ref={titleRef} tabIndex={-1} className={styles.queueTitle}>
-            Playback queue
+            Up next
           </h2>
           <Button
             variant="secondary"
             size="sm"
             className={styles.queueCloseButton}
             onClick={onClose}
-            aria-label="Close playback queue"
+            aria-label="Close up next"
           >
             Close
           </Button>
         </header>
 
-        {queueItems.length === 0 ? (
-          <p className={styles.queueEmpty}>Queue is empty.</p>
+        {audioItems.length === 0 ? (
+          <p className={styles.queueEmpty}>Nothing up next.</p>
         ) : (
           <SortableList
             className={styles.queueList}
             itemClassName={styles.queueListItem}
-            items={queueItems}
+            items={audioItems}
             getItemId={(item) => item.item_id}
-            onReorder={(next) =>
-              void reorderQueue(next.map((item) => item.item_id))
-            }
+            onReorder={reorderAudioSubset}
             renderItem={({ item, handleProps }) => {
               const isCurrent = item.item_id === currentQueueItemId;
-              const itemIndex = queueItems.findIndex((queueItem) => queueItem.item_id === item.item_id);
+              const itemIndex = audioItems.findIndex(
+                (queueItem) => queueItem.item_id === item.item_id,
+              );
               const focusTargetItemId =
-                queueItems[itemIndex + 1]?.item_id ?? queueItems[itemIndex - 1]?.item_id ?? null;
+                audioItems[itemIndex + 1]?.item_id ?? audioItems[itemIndex - 1]?.item_id ?? null;
               return (
                 <div className={styles.queueListItemInner} data-current={isCurrent ? "true" : "false"}>
                   <Button
@@ -148,6 +168,9 @@ export default function GlobalPlayerQueuePanel({
         )}
 
         <footer className={styles.queueFooter}>
+          <Link href="/lectern" className={styles.queueLecternLink} onClick={onClose}>
+            Open Lectern
+          </Link>
           <Button
             variant="secondary"
             size="sm"

@@ -515,7 +515,7 @@ def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[s
         {"media_id": media_id},
     )
     db.execute(
-        text("DELETE FROM playback_queue_items WHERE media_id = :media_id"),
+        text("DELETE FROM consumption_queue_items WHERE media_id = :media_id"),
         {"media_id": media_id},
     )
     db.execute(
@@ -665,7 +665,7 @@ def _delete_viewer_media_state(db: Session, viewer_id: UUID, media_id: UUID) -> 
     )
     db.execute(
         text("""
-            DELETE FROM playback_queue_items
+            DELETE FROM consumption_queue_items
             WHERE user_id = :viewer_id
               AND media_id = :media_id
         """),

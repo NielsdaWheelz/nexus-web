@@ -701,7 +701,19 @@
 .queueFooter {
   margin-top: auto;
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.queueLecternLink {
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
+  text-decoration: none;
+}
+
+.queueLecternLink:hover {
+  color: var(--ink);
 }
 
 .queueClearButton {

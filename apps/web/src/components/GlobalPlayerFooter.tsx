@@ -25,7 +25,8 @@ import { useVoiceRecorder } from "@/lib/walknotes/useVoiceRecorder";
 import { transcribeAudio } from "@/lib/walknotes/transcribeAudio";
 import MediaImage from "@/components/ui/MediaImage";
 import MobileSheet from "@/components/ui/MobileSheet";
-import GlobalPlayerQueuePanel from "@/components/GlobalPlayerQueuePanel";
+import GlobalPlayerConsumptionPanel from "@/components/GlobalPlayerConsumptionPanel";
+import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
 import WalknoteReviewPanel from "@/components/walknotes/WalknoteReviewPanel";
 import Button from "@/components/ui/Button";
 import Select from "@/components/ui/Select";
@@ -207,7 +208,6 @@ export default function GlobalPlayerFooter() {
     refreshQueue,
     playNextInQueue,
     playPreviousInQueue,
-    upcomingQueueCount,
     hasNextInQueue,
   } = useGlobalPlayer();
   const trackMediaId = track?.media_id ?? null;
@@ -389,9 +389,11 @@ export default function GlobalPlayerFooter() {
   const getQueueReturnFocusTarget = () =>
     isMobile ? miniExpandButtonRef.current : moreButtonRef.current;
   const openQueueFromMobileExpanded = () => {
+    // On mobile the Lectern pane IS the queue surface; the audio-only panel is
+    // desktop-only (D-4).
     miniExpandButtonRef.current?.focus();
     setMobileExpanded(false);
-    setQueueOpen(true);
+    requestOpenInAppPane("/lectern", { titleHint: "Lectern" });
   };
   const openQueueFromDesktopMore = () => {
     moreButtonRef.current?.focus();
@@ -681,10 +683,9 @@ export default function GlobalPlayerFooter() {
                   size="sm"
                   className={styles.queueButton}
                   onClick={openQueueFromDesktopMore}
-                  aria-label={`Open playback queue (${upcomingQueueCount} upcoming)`}
+                  aria-label="Open up next"
                 >
                   Queue
-                  <span className={styles.queueBadge}>{upcomingQueueCount}</span>
                 </Button>
               </div>
 
@@ -865,10 +866,9 @@ export default function GlobalPlayerFooter() {
               size="sm"
               className={styles.queueButton}
               onClick={openQueueFromMobileExpanded}
-              aria-label={`Open playback queue (${upcomingQueueCount} upcoming)`}
+              aria-label="Open Lectern"
             >
               Queue
-              <span className={styles.queueBadge}>{upcomingQueueCount}</span>
             </Button>
 
             <Button
@@ -918,7 +918,7 @@ export default function GlobalPlayerFooter() {
       />
 
       {queueOpen && (
-        <GlobalPlayerQueuePanel
+        <GlobalPlayerConsumptionPanel
           onClose={() => setQueueOpen(false)}
           returnFocusFallback={getQueueReturnFocusTarget}
         />

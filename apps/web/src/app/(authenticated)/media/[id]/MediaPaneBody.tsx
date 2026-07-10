@@ -30,6 +30,15 @@ import {
 } from "@/lib/resources/activation";
 import { isMediaRetrievalLocator, isRetrievalLocator } from "@/lib/api/sse/locators";
 import ReaderDocumentMapOverviewRail from "@/components/reader/ReaderDocumentMapOverviewRail";
+import LecternNextPrompt from "@/components/LecternNextPrompt";
+import {
+  addToLectern,
+  fetchConsumptionQueue,
+  fetchNextConsumptionQueueItem,
+  notifyConsumptionQueueUpdated,
+  removeConsumptionQueueItem,
+  type ConsumptionQueueItem,
+} from "@/lib/player/consumptionQueueClient";
 import {
   toPdfAnchoredReaderRow,
   toTextAnchoredReaderRow,
@@ -385,6 +394,8 @@ interface EvidenceResolutionResponse {
 
 const MOBILE_SELECTION_STABILIZATION_DELAY_MS = 180;
 const READER_POSITION_BUCKET_CP = 1024;
+// Matches FINISHED_PROGRESSION in services/attention.py.
+const LECTERN_PROMPT_THRESHOLD = 0.95;
 const METADATA_REENRICHMENT_POLL_INTERVAL_MS = 3000;
 const METADATA_REENRICHMENT_MAX_POLLS = 40;
 const READER_APPARATUS_FOCUS_CLASS = "reader-apparatus-focused";
@@ -646,10 +657,65 @@ export default function MediaPaneBody() {
   const lastSavedTextAnchorOffsetRef = useRef<number | null>(null);
   const [textRestoreSettled, setTextRestoreSettled] = useState(false);
   const [readerLayoutReady, setReaderLayoutReady] = useState(false);
+  // End-of-document Lectern prompt (§7.7): mirror committed total_progression into
+  // React so a threshold effect can offer the next readable queue entry.
+  const [currentTotalProgression, setCurrentTotalProgression] = useState<number | null>(null);
+  const [nextReadableItem, setNextReadableItem] = useState<ConsumptionQueueItem | null>(null);
 
   useEffect(() => {
     setInitialReaderResumeState(undefined);
   }, [id]);
+
+  useEffect(() => {
+    setCurrentTotalProgression(null);
+    setNextReadableItem(null);
+  }, [id]);
+
+  // At end-of-document, offer the next readable queue entry (§7.7). Explicit tap
+  // only — never auto-advance (N-2). Below the threshold, the prompt is absent.
+  useEffect(() => {
+    if ((currentTotalProgression ?? 0) < LECTERN_PROMPT_THRESHOLD) {
+      setNextReadableItem(null);
+      return;
+    }
+    let cancelled = false;
+    fetchNextConsumptionQueueItem("readable", id)
+      .then((item) => {
+        if (!cancelled) setNextReadableItem(item);
+      })
+      .catch(() => {
+        // Non-fatal: a failed lookup simply leaves the prompt hidden (R-4).
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [currentTotalProgression, id]);
+
+  const handleAddMediaToLectern = useCallback(async () => {
+    try {
+      await addToLectern(id);
+      feedback.show({ severity: "success", title: "Added to Lectern" });
+    } catch (err) {
+      feedback.show({ ...toFeedback(err, { fallback: "Failed to add to Lectern" }) });
+    }
+  }, [feedback, id]);
+
+  const handleOpenNextReadable = useCallback(async () => {
+    const next = nextReadableItem;
+    if (!next) return;
+    try {
+      const queue = await fetchConsumptionQueue();
+      const current = queue.find((item) => item.media_id === id);
+      if (current) {
+        await removeConsumptionQueueItem(current.item_id);
+        notifyConsumptionQueueUpdated();
+      }
+    } catch {
+      // Removal is best-effort; still open the next entry below.
+    }
+    openInNewPane?.(next.reader_href, next.title);
+    setNextReadableItem(null);
+  }, [id, nextReadableItem, openInNewPane]);
 
   useEffect(() => {
     if (
@@ -2168,6 +2234,7 @@ export default function MediaPaneBody() {
               : 0,
           position: Math.floor(absoluteOffset / READER_POSITION_BUCKET_CP) + 1,
         };
+        setCurrentTotalProgression(locations.total_progression);
         const text = {
           quote: quoteWindow.quote,
           quote_prefix: quoteWindow.quotePrefix,
@@ -4196,6 +4263,11 @@ export default function MediaPaneBody() {
             void handleDeleteDocument();
           }
         : undefined,
+      onAddToLectern: media
+        ? () => {
+            void handleAddMediaToLectern();
+          }
+        : undefined,
     });
     const readerOptions: ActionMenuOption[] = [
       {
@@ -4247,6 +4319,7 @@ export default function MediaPaneBody() {
   }, [
     documentDeleteBusy,
     defaultDocumentMapSurface,
+    handleAddMediaToLectern,
     handleDeleteDocument,
     handleRefreshSource,
     handleRetryMetadata,
@@ -5642,6 +5715,12 @@ export default function MediaPaneBody() {
               onContentBlur={handleContentBlur}
             />
           )}
+          {!isTranscriptMedia && canRead && nextReadableItem ? (
+            <LecternNextPrompt
+              title={nextReadableItem.title}
+              onSelect={() => void handleOpenNextReadable()}
+            />
+          ) : null}
         </div>
         {!isTranscriptMedia && canRead ? (
           <MarginRail

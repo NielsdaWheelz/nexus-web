@@ -7,6 +7,7 @@ import { DESTINATIONS } from "@/lib/navigation/destinations";
 import type { PaneRouteId } from "@/lib/panes/paneRouteModel";
 
 const ROUTE_SECTION = {
+  lectern: "lectern",
   libraries: "libraries",
   library: "libraries",
   media: "libraries",

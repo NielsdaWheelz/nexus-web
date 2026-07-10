@@ -14,6 +14,7 @@ import { isAndroidShellRestrictedRouteId } from "@/lib/androidShell";
 import { createRandomId } from "@/lib/createRandomId";
 import { addMediaFromUrl } from "@/lib/media/ingestionClient";
 import { createNotePage, quickCaptureDailyNote } from "@/lib/notes/api";
+import { addToLectern } from "@/lib/player/consumptionQueueClient";
 import { openTodayPage } from "@/lib/notes/openToday";
 import { setPendingNoteFocus } from "@/lib/notes/pendingNoteFocus";
 import { paragraphFromText } from "@/lib/notes/prosemirror/schema";
@@ -95,6 +96,10 @@ export async function dispatchTarget(
       requestOpenInAppPane(`/conversations/new?draft=${encodeURIComponent(target.text)}`, {
         titleHint: "New chat",
       });
+      return;
+    case "queue-add":
+      await addToLectern(target.mediaId);
+      feedback.show({ severity: "success", title: "Added to Lectern" });
       return;
     case "add-url": {
       const res = await addMediaFromUrl({ url: target.url, libraryIds: ctx.defaultLibraryIds });

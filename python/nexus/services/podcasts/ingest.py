@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from nexus.coerce import coerce_non_negative_int, coerce_positive_int
 from nexus.jobs.queue import enqueue_unique_job
 from nexus.logging import get_logger
-from nexus.services import playback_queue as playback_queue_service
+from nexus.services import consumption_queue as consumption_queue_service
 from nexus.services.contributor_credits import (
     load_contributor_credits_for_podcasts,
     replace_media_contributor_credits,
@@ -427,7 +427,7 @@ def sync_subscription_ingest(
         )
         enrichment_media_ids.add(media_id)
 
-    playback_queue_service.append_subscription_media_if_enabled(
+    consumption_queue_service.append_subscription_media_if_enabled(
         db,
         viewer_id=viewer_id,
         podcast_id=podcast_id,

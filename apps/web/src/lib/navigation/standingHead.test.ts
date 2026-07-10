@@ -13,6 +13,7 @@ describe("standingHeadForRoute", () => {
   });
 
   it("maps index, detail, and reader routes to their parent section", () => {
+    expect(standingHeadForRoute("lectern")).toBe("Lectern");
     expect(standingHeadForRoute("libraries")).toBe("Libraries");
     expect(standingHeadForRoute("library")).toBe("Libraries");
     expect(standingHeadForRoute("media")).toBe("Libraries");

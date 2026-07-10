@@ -12,6 +12,7 @@ type PaneLoader = () => Promise<{ default: ComponentType }>;
 // free of pane code (R4/R6). Imported solely by WorkspaceHost (render) and
 // AuthenticatedShell (preload).
 const PANE_LOADERS: Record<PaneRouteId, PaneLoader> = {
+  lectern: () => import("@/app/(authenticated)/lectern/LecternPaneBody"),
   libraries: () => import("@/app/(authenticated)/libraries/LibrariesPaneBody"),
   library: () => import("@/app/(authenticated)/libraries/[id]/LibraryPaneBody"),
   media: () => import("@/app/(authenticated)/media/[id]/MediaPaneBody"),

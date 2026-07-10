@@ -11,6 +11,7 @@ import {
   KeyRound,
   Library,
   Link2,
+  ListMusic,
   MessageSquare,
   Mic,
   Palette,
@@ -57,6 +58,10 @@ export interface ResolvedPaneRoute {
 }
 
 const PANE_ROUTE_META: Record<PaneRouteId, PaneRouteMeta> = {
+  lectern: {
+    icon: ListMusic,
+    getChrome: () => ({ title: "Lectern" }),
+  },
   libraries: {
     icon: Library,
     getChrome: () => ({ title: "Libraries" }),

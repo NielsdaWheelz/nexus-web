@@ -28,6 +28,7 @@ import {
 } from "@/components/feedback/Feedback";
 import { libraryResourceOptions } from "@/lib/actions/resourceActions";
 import { postConsumptionOverride } from "@/lib/attention";
+import { addToLectern } from "@/lib/player/consumptionQueueClient";
 import { presentMedia } from "@/lib/collections/presenters/media";
 import { presentPodcast } from "@/lib/collections/presenters/podcast";
 import { startResourceChat } from "@/lib/resources/resourceChat";
@@ -669,6 +670,19 @@ export default function LibraryPaneBody() {
     [feedback],
   );
 
+  const handleAddToLectern = useCallback(
+    async (mediaId: string) => {
+      try {
+        await addToLectern(mediaId);
+        feedback.show({ severity: "success", title: "Added to Lectern" });
+      } catch (err) {
+        if (handleUnauthenticatedApiError(err)) return;
+        feedback.show({ ...toFeedback(err, { fallback: "Failed to add to Lectern" }) });
+      }
+    },
+    [feedback],
+  );
+
   const handleDeleteLibrary = async () => {
     if (!currentLibrary || currentLibrary.is_default) {
       return;
@@ -1096,6 +1110,9 @@ export default function LibraryPaneBody() {
       },
       onMarkUnread: () => {
         void handleSetConsumption(item.media.id, "unread");
+      },
+      onAddToLectern: () => {
+        void handleAddToLectern(item.media.id);
       },
     });
     return { ...row, id: item.id, relatedMediaId: item.media.id };

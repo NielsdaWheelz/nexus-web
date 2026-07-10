@@ -52,6 +52,7 @@ export function mediaResourceOptions(input: {
   onRetryMetadata?: () => void;
   onMarkFinished?: () => void;
   onMarkUnread?: () => void;
+  onAddToLectern?: () => void;
 }): ActionMenuOption[] {
   const media = input.media;
   if (!media) return [];
@@ -91,6 +92,14 @@ export function mediaResourceOptions(input: {
       label: input.retryMetadataBusy ? "Re-enriching..." : "Re-enrich metadata",
       disabled: input.retryMetadataBusy,
       onSelect: input.onRetryMetadata,
+    });
+  }
+
+  if (input.onAddToLectern) {
+    options.push({
+      id: "add-to-lectern",
+      label: "Add to Lectern",
+      onSelect: input.onAddToLectern,
     });
   }
 
@@ -261,6 +270,7 @@ export function episodeResourceOptions(input: {
   onDelete?: () => void;
   onRetryMetadata?: () => void;
   onTogglePlayed: () => void;
+  onAddToLectern?: () => void;
 }): ActionMenuOption[] {
   const options = mediaResourceOptions({
     media: input.media,
@@ -275,6 +285,7 @@ export function episodeResourceOptions(input: {
     onRefreshSource: input.onRefreshSource,
     onDelete: input.onDelete,
     onRetryMetadata: input.onRetryMetadata,
+    onAddToLectern: input.onAddToLectern,
   }).map((option) =>
     option.id === "manage-media-libraries"
       ? { ...option, disabled: input.busy }

@@ -27,6 +27,7 @@ export interface PaneRouteContext {
 }
 
 export type PaneRouteId =
+  | "lectern"
   | "libraries"
   | "library"
   | "media"
@@ -90,6 +91,14 @@ function route(
 }
 
 export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
+  route({
+    id: "lectern",
+    pattern: ["lectern"],
+    staticTitle: "Lectern",
+    titleMode: "static",
+    bodyMode: "standard",
+    ...STANDARD_WIDTH_CONTRACT,
+  }),
   route({
     id: "libraries",
     pattern: ["libraries"],

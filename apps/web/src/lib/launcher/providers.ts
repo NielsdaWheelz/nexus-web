@@ -246,6 +246,11 @@ function searchItems(ctx: LauncherContext): LauncherItem[] {
     .map((result): LauncherItem | null => {
       const href = hrefForResourceActivation(result.activation);
       if (!href || androidBlocked(ctx, href)) return null;
+      // Readable/playable media rows expose a trailing "Add to Lectern" action; the
+      // default Enter still opens the resource.
+      const queueable =
+        (result.type === "media" || result.type === "episode" || result.type === "video") &&
+        result.mediaId !== null;
       return {
         id: `search-${result.key}`,
         title: result.primaryText,
@@ -257,6 +262,12 @@ function searchItems(ctx: LauncherContext): LauncherItem[] {
         source: "search",
         rank: { searchScore: 1 },
         hasActions: true,
+        trailingAction: queueable
+          ? {
+              target: { kind: "queue-add", mediaId: result.mediaId!, title: result.primaryText },
+              ariaLabel: "Add to Lectern",
+            }
+          : undefined,
       };
     })
     .filter((item): item is LauncherItem => item !== null);

@@ -71,11 +71,11 @@ async function openDesktopQueue(initialQueueItems = [buildPlaybackQueueItem("ite
   fireEvent.click(screen.getByRole("button", { name: "More controls" }));
 
   const queueButton = await screen.findByRole("button", {
-    name: `Open playback queue (${Math.max(initialQueueItems.length - 1, 0)} upcoming)`,
+    name: "Open up next",
   });
   queueButton.focus();
   fireEvent.click(queueButton);
-  return screen.findByRole("dialog", { name: "Playback queue" });
+  return screen.findByRole("dialog", { name: "Up next" });
 }
 
 function RefreshHarness() {
@@ -114,7 +114,7 @@ describe("GlobalPlayer queue behavior", () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = new URL(String(input), "http://localhost");
       const method = init?.method ?? "GET";
-      if (url.pathname === "/api/playback/queue" && method === "GET") {
+      if (url.pathname === "/api/queue" && method === "GET") {
         return new Promise<Response>((resolve) => {
           resolveQueue = resolve;
         });
@@ -165,7 +165,7 @@ describe("GlobalPlayer queue behavior", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Load A" }));
     fireEvent.click(screen.getByRole("button", { name: "More controls" }));
-    expect(await screen.findByRole("button", { name: "Open playback queue (1 upcoming)" })).toBeVisible();
+    expect(await screen.findByRole("button", { name: "Open up next" })).toBeVisible();
     const audio = screen.getByLabelText("Global podcast player") as HTMLAudioElement;
     fireEvent(audio, new Event("ended"));
     await waitFor(() => {
@@ -185,7 +185,7 @@ describe("GlobalPlayer queue behavior", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Load A" }));
     fireEvent.click(screen.getByRole("button", { name: "More controls" }));
-    expect(await screen.findByRole("button", { name: "Open playback queue (1 upcoming)" })).toBeVisible();
+    expect(await screen.findByRole("button", { name: "Open up next" })).toBeVisible();
 
     const audio = screen.getByLabelText("Global podcast player") as HTMLAudioElement;
     fireEvent(audio, new Event("ended"));
@@ -223,25 +223,25 @@ describe("GlobalPlayer queue behavior", () => {
     await waitFor(() =>
       expect(within(dialog).getByRole("button", { name: "Play Episode C from queue" })).toHaveFocus(),
     );
-    expect(screen.getByRole("dialog", { name: "Playback queue" })).toBeVisible();
+    expect(screen.getByRole("dialog", { name: "Up next" })).toBeVisible();
 
     fireEvent.click(within(dialog).getByRole("button", { name: "Clear queue" }));
     await waitFor(() => {
-      expect(screen.getByText("Queue is empty.")).toBeVisible();
+      expect(screen.getByText("Nothing up next.")).toBeVisible();
     });
     await waitFor(() =>
-      expect(within(dialog).getByRole("heading", { name: "Playback queue" })).toHaveFocus(),
+      expect(within(dialog).getByRole("heading", { name: "Up next" })).toHaveFocus(),
     );
     expect(within(dialog).getByRole("button", { name: "Clear queue" })).toBeDisabled();
-    expect(screen.getByRole("dialog", { name: "Playback queue" })).toBeVisible();
+    expect(screen.getByRole("dialog", { name: "Up next" })).toBeVisible();
   });
 
   it("opens desktop queue as a modal dialog and restores focus to More controls", async () => {
     const dialog = await openDesktopQueue([]);
-    const title = within(dialog).getByRole("heading", { name: "Playback queue" });
+    const title = within(dialog).getByRole("heading", { name: "Up next" });
 
     expect(dialog).toHaveAttribute("aria-modal", "true");
-    expect(within(dialog).getByText("Queue is empty.")).toBeVisible();
+    expect(within(dialog).getByText("Nothing up next.")).toBeVisible();
     expect(within(dialog).getByRole("button", { name: "Clear queue" })).toBeDisabled();
     await waitFor(() => expect(title).toHaveFocus());
     await waitFor(() => expect(document.body.style.overflow).toBe("hidden"));
@@ -249,7 +249,7 @@ describe("GlobalPlayer queue behavior", () => {
     const notPrevented = fireEvent.keyDown(document, { key: "Escape" });
     expect(notPrevented).toBe(false);
     await waitFor(() =>
-      expect(screen.queryByRole("dialog", { name: "Playback queue" })).toBeNull(),
+      expect(screen.queryByRole("dialog", { name: "Up next" })).toBeNull(),
     );
     await waitFor(() => expect(document.body.style.overflow).toBe(""));
     await waitFor(() => expect(screen.getByRole("button", { name: "More controls" })).toHaveFocus());
@@ -260,8 +260,8 @@ describe("GlobalPlayer queue behavior", () => {
       buildPlaybackQueueItem("item-a", "media-a", "Episode A", 0),
       buildPlaybackQueueItem("item-b", "media-b", "Episode B", 1),
     ]);
-    const title = within(dialog).getByRole("heading", { name: "Playback queue" });
-    const closeButton = within(dialog).getByRole("button", { name: "Close playback queue" });
+    const title = within(dialog).getByRole("heading", { name: "Up next" });
+    const closeButton = within(dialog).getByRole("button", { name: "Close up next" });
     const clearButton = within(dialog).getByRole("button", { name: "Clear queue" });
 
     await waitFor(() => expect(title).toHaveFocus());
@@ -284,19 +284,19 @@ describe("GlobalPlayer queue behavior", () => {
     const dialog = await openDesktopQueue();
 
     fireEvent.click(dialog);
-    expect(screen.getByRole("dialog", { name: "Playback queue" })).toBeVisible();
+    expect(screen.getByRole("dialog", { name: "Up next" })).toBeVisible();
 
     fireEvent.click(screen.getByRole("presentation"));
     await waitFor(() =>
-      expect(screen.queryByRole("dialog", { name: "Playback queue" })).toBeNull(),
+      expect(screen.queryByRole("dialog", { name: "Up next" })).toBeNull(),
     );
   });
 
   it("closes from the close button", async () => {
     const dialog = await openDesktopQueue();
-    fireEvent.click(within(dialog).getByRole("button", { name: "Close playback queue" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close up next" }));
     await waitFor(() =>
-      expect(screen.queryByRole("dialog", { name: "Playback queue" })).toBeNull(),
+      expect(screen.queryByRole("dialog", { name: "Up next" })).toBeNull(),
     );
   });
 
@@ -309,38 +309,50 @@ describe("GlobalPlayer queue behavior", () => {
     vi.spyOn(audio, "play").mockResolvedValue(undefined);
     fireEvent.click(within(dialog).getByRole("button", { name: "Play Episode B from queue" }));
     await waitFor(() =>
-      expect(screen.queryByRole("dialog", { name: "Playback queue" })).toBeNull(),
+      expect(screen.queryByRole("dialog", { name: "Up next" })).toBeNull(),
     );
     expect(await screen.findByText("Episode B")).toBeInTheDocument();
   });
 
-  it("opens mobile queue from the expanded player and restores focus to Expand player", async () => {
+  it("mobile queue button opens the Lectern pane, not the audio-only panel (AC-9)", async () => {
     setViewportWidth(390);
     installPlaybackFetchMock([]);
+    // Capture the Lectern open regardless of the transport path requestOpenInAppPane
+    // picks (in-page custom event, cross-frame postMessage, or the pending queue).
+    const openedHrefs: string[] = [];
+    window.__nexusPendingPaneOpenQueue = [];
+    const onOpenEvent = (event: Event) => {
+      const detail = (event as CustomEvent<{ href?: string }>).detail;
+      if (detail?.href) openedHrefs.push(detail.href);
+    };
+    window.addEventListener("nexus:open-pane", onOpenEvent);
+    const postSpy = vi
+      .spyOn(window.parent, "postMessage")
+      .mockImplementation((message: unknown) => {
+        if (message && typeof message === "object" && "href" in message) {
+          openedHrefs.push(String((message as { href: unknown }).href));
+        }
+      });
     render(<App />);
 
     fireEvent.click(screen.getByRole("button", { name: "Load A" }));
     const opener = await screen.findByRole("button", { name: "Expand player" });
-    opener.focus();
     fireEvent.click(opener);
 
     const expandedPlayer = await screen.findByRole("dialog", { name: "Expanded player" });
-    const queueButton = within(expandedPlayer).getByRole("button", {
-      name: "Open playback queue (0 upcoming)",
-    });
-    queueButton.focus();
+    const queueButton = within(expandedPlayer).getByRole("button", { name: "Open Lectern" });
     fireEvent.click(queueButton);
 
-    const dialog = await screen.findByRole("dialog", { name: "Playback queue" });
-    await waitFor(() =>
-      expect(within(dialog).getByRole("heading", { name: "Playback queue" })).toHaveFocus(),
-    );
+    // The audio-only overlay never opens on mobile.
+    expect(screen.queryByRole("dialog", { name: "Up next" })).toBeNull();
+    await waitFor(() => {
+      const queued = window.__nexusPendingPaneOpenQueue ?? [];
+      const captured = [...openedHrefs, ...queued.map((detail) => detail.href)];
+      expect(captured).toContain("/lectern");
+    });
 
-    fireEvent.keyDown(document, { key: "Escape" });
-    await waitFor(() =>
-      expect(screen.queryByRole("dialog", { name: "Playback queue" })).toBeNull(),
-    );
-    await waitFor(() => expect(screen.getByRole("button", { name: "Expand player" })).toHaveFocus());
+    window.removeEventListener("nexus:open-pane", onOpenEvent);
+    postSpy.mockRestore();
   });
 
   it("suppresses global playback shortcuts from focused queue controls", async () => {
@@ -364,11 +376,11 @@ describe("GlobalPlayer queue behavior", () => {
     expect(Math.floor(audio.currentTime)).toBe(60);
 
     fireEvent.click(screen.getByRole("button", { name: "More controls" }));
-    const queueButton = await screen.findByRole("button", { name: "Open playback queue (1 upcoming)" });
+    const queueButton = await screen.findByRole("button", { name: "Open up next" });
     fireEvent.click(queueButton);
 
-    const dialog = await screen.findByRole("dialog", { name: "Playback queue" });
-    const closeButton = within(dialog).getByRole("button", { name: "Close playback queue" });
+    const dialog = await screen.findByRole("dialog", { name: "Up next" });
+    const closeButton = within(dialog).getByRole("button", { name: "Close up next" });
     closeButton.focus();
     fireEvent.keyDown(closeButton, { key: " ", code: "Space" });
     expect(playSpy).toHaveBeenCalledTimes(1);

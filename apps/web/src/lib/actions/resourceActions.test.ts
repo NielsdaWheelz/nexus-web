@@ -70,6 +70,21 @@ describe("mediaResourceOptions", () => {
     });
   });
 
+  it("exposes Add to Lectern only when onAddToLectern is wired", () => {
+    const withoutHandler = mediaResourceOptions({ media, canManageLibraries: false });
+    expect(withoutHandler.some((option) => option.id === "add-to-lectern")).toBe(false);
+
+    const withHandler = mediaResourceOptions({
+      media,
+      canManageLibraries: false,
+      onAddToLectern: () => {},
+    });
+    expect(withHandler.map((option) => option.id)).toContain("add-to-lectern");
+    expect(withHandler.find((option) => option.id === "add-to-lectern")).toMatchObject({
+      label: "Add to Lectern",
+    });
+  });
+
   it("only exposes actions the surface can actually execute", () => {
     const options = mediaResourceOptions({
       media,
@@ -321,6 +336,22 @@ describe("episodeResourceOptions", () => {
       tone: "danger",
       separatorBefore: true,
     });
+  });
+
+  it("exposes Add to Lectern when onAddToLectern is wired (AC-13)", () => {
+    const options = episodeResourceOptions({
+      media: {
+        id: "episode-2",
+        title: "Episode 2",
+        canonical_source_url: "https://example.com/episode-2",
+        capabilities: {},
+      },
+      played: false,
+      onManageLibraries: () => {},
+      onTogglePlayed: () => {},
+      onAddToLectern: () => {},
+    });
+    expect(options.map((option) => option.id)).toContain("add-to-lectern");
   });
 });
 

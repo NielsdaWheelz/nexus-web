@@ -445,7 +445,7 @@ def register_media_cleanup(direct_db: DirectSessionManager, media_id: UUID) -> N
     direct_db.register_cleanup("media_source_attempts", "media_id", media_id)
     direct_db.register_cleanup("user_media_deletions", "media_id", media_id)
     direct_db.register_cleanup("reader_media_state", "media_id", media_id)
-    direct_db.register_cleanup("playback_queue_items", "media_id", media_id)
+    direct_db.register_cleanup("consumption_queue_items", "media_id", media_id)
     direct_db.register_cleanup("podcast_listening_states", "media_id", media_id)
     direct_db.register_cleanup("media_file", "media_id", media_id)
     direct_db.register_cleanup("library_entries", "media_id", media_id)

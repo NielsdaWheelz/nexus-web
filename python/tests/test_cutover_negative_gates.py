@@ -1761,3 +1761,48 @@ def test_no_margin_backend_endpoint():
     # /media/{id}/margin route or margin_projection builder exists (N-5/D-6).
     hits = _grep(r"/media/\{[a-z_]+\}/margin|def .*margin_projection", _API_ROOT)
     assert not hits, f"a dedicated margin backend endpoint exists:\n{_fmt(hits)}"
+
+
+# =============================================================================
+# Lectern hard cutover: one consumption queue across kinds
+# (lectern-hard-cutover.md §13, gates G-1/G-2/G-3/G-7)
+# =============================================================================
+
+
+def test_lectern_old_table_name_absent():
+    # G-1: the old table name is dead in production code; only the rename
+    # migration (outside the grep roots) may still name it.
+    hits = _grep(r"\bplayback_queue_items\b", _PY_ROOT)
+    assert not hits, f"old playback_queue_items table still referenced:\n{_fmt(hits)}"
+
+
+def test_lectern_old_service_and_schema_absent():
+    # G-2/G-3: the old service + schema modules are deleted; no live import path.
+    hits = _grep(
+        r"services[./]playback_queue|schemas[./]playback|"
+        r"from nexus\.services\.playback_queue|from nexus\.schemas\.playback|"
+        r"\bPlaybackQueueItem\b",
+        _PY_ROOT,
+    )
+    assert not hits, f"old playback_queue service/schema still referenced:\n{_fmt(hits)}"
+
+
+def test_lectern_old_modules_deleted():
+    for rel_path in (
+        "python/nexus/services/playback_queue.py",
+        "python/nexus/schemas/playback.py",
+        "python/nexus/api/routes/playback.py",
+    ):
+        assert not (_REPO_ROOT / rel_path).exists(), f"{rel_path} must be deleted"
+
+
+def test_lectern_queue_table_sole_writer():
+    # G-7: only the queue service writes the table; media_deletion.py is the
+    # allowed cascade cleaner and db/models.py is the ORM schema owner.
+    hits = _excluding(
+        _grep(r"\bconsumption_queue_items\b", _PY_ROOT),
+        "services/consumption_queue.py",
+        "services/media_deletion.py",
+        "db/models.py",
+    )
+    assert not hits, f"consumption_queue_items written outside its owner:\n{_fmt(hits)}"

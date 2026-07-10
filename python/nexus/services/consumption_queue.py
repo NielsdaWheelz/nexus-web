@@ -1,37 +1,61 @@
-"""Playback queue service-layer logic."""
+"""Consumption queue service-layer logic — one ordered queue across media kinds."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Literal, cast
 from uuid import UUID
 
-from sqlalchemy import text
+from sqlalchemy import RowMapping, text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media as _can_read_media
 from nexus.auth.permissions import visible_media_ids_cte_sql
-from nexus.db.models import PlaybackQueueItem
+from nexus.db.models import ConsumptionQueueItem, MediaKind
 from nexus.db.session import transaction
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.schemas.media import PlaybackSourceOut
-from nexus.schemas.playback import PlaybackQueueItemOut
+from nexus.schemas.queue import (
+    ConsumptionQueueItemOut,
+    ConsumptionQueueListeningStateOut,
+    ConsumptionQueueSource,
+)
+from nexus.services import attention
 from nexus.services.playback_source import derive_playback_source
 
 QueueInsertPosition = Literal["next", "last"]
+QueueKindFilter = Literal["audio", "readable"]
+
 QUEUE_SOURCE_MANUAL = "manual"
 QUEUE_SOURCE_AUTO_SUBSCRIPTION = "auto_subscription"
 QUEUE_SOURCE_AUTO_PLAYLIST = "auto_playlist"
+QUEUE_SOURCE_ASSISTANT = "assistant"
 QUEUE_SOURCES = {
     QUEUE_SOURCE_MANUAL,
     QUEUE_SOURCE_AUTO_SUBSCRIPTION,
     QUEUE_SOURCE_AUTO_PLAYLIST,
+    QUEUE_SOURCE_ASSISTANT,
 }
 
+# The player consumes these; the reader consumes the rest. Both live in one queue.
+AUDIO_KINDS = frozenset({MediaKind.podcast_episode.value, MediaKind.video.value})
+READABLE_KINDS = frozenset(
+    {MediaKind.web_article.value, MediaKind.epub.value, MediaKind.pdf.value}
+)
+QUEUEABLE_KINDS = AUDIO_KINDS | READABLE_KINDS
 
-def list_queue_for_viewer(db: Session, viewer_id: UUID) -> list[PlaybackQueueItemOut]:
-    """Return the ordered playback queue for a viewer."""
+
+def _kinds_for_filter(kind_filter: QueueKindFilter) -> frozenset[str]:
+    return AUDIO_KINDS if kind_filter == "audio" else READABLE_KINDS
+
+
+def list_queue_for_viewer(
+    db: Session,
+    viewer_id: UUID,
+    *,
+    kind_filter: QueueKindFilter | None = None,
+) -> list[ConsumptionQueueItemOut]:
+    """Return the ordered consumption queue for a viewer, optionally kind-scoped."""
     rows = db.execute(
         text(
             f"""
@@ -55,7 +79,7 @@ def list_queue_for_viewer(db: Session, viewer_id: UUID) -> list[PlaybackQueueIte
                 pls.position_ms AS listening_position_ms,
                 pls.playback_speed AS listening_playback_speed,
                 ps.default_playback_speed AS subscription_default_playback_speed
-            FROM playback_queue_items q
+            FROM consumption_queue_items q
             JOIN visible_media vm ON vm.media_id = q.media_id
             JOIN media m ON m.id = q.media_id
             LEFT JOIN podcast_episodes pe ON pe.media_id = q.media_id
@@ -73,11 +97,27 @@ def list_queue_for_viewer(db: Session, viewer_id: UUID) -> list[PlaybackQueueIte
         ),
         {"viewer_id": viewer_id},
     ).mappings()
-    queue_items: list[PlaybackQueueItemOut] = []
-    for row in rows:
-        item = _row_to_queue_item(row)
-        if item is not None:
-            queue_items.append(item)
+
+    queue_items = [_row_to_queue_item(row) for row in rows]
+
+    # Text rows carry a derived read-state fraction; the ledger is the sole owner.
+    readable_ids = [
+        item.media_id for item in queue_items if item.kind in READABLE_KINDS
+    ]
+    if readable_ids:
+        states = attention.consumption_state(db, viewer_id=viewer_id, media_ids=readable_ids)
+        for item in queue_items:
+            state = states.get(item.media_id)
+            if state is None:
+                continue
+            if state.status == "finished":
+                item.progress_fraction = 1.0
+            else:
+                item.progress_fraction = state.progress_fraction
+
+    if kind_filter is not None:
+        allowed = _kinds_for_filter(kind_filter)
+        queue_items = [item for item in queue_items if item.kind in allowed]
     return queue_items
 
 
@@ -88,7 +128,7 @@ def add_queue_items_for_viewer(
     media_ids: list[UUID],
     insert_position: QueueInsertPosition,
     current_media_id: UUID | None = None,
-) -> list[PlaybackQueueItemOut]:
+) -> list[ConsumptionQueueItemOut]:
     """Insert one or more media rows into the viewer queue."""
     normalized_media_ids = _dedupe_media_ids(media_ids)
     _assert_media_ids_queueable(db, viewer_id, normalized_media_ids)
@@ -101,6 +141,7 @@ def add_queue_items_for_viewer(
             insert_position=insert_position,
             current_media_id=current_media_id,
             source=QUEUE_SOURCE_MANUAL,
+            move_existing=True,
         )
         _normalize_queue_positions(db, viewer_id)
     return list_queue_for_viewer(db, viewer_id)
@@ -110,13 +151,13 @@ def remove_queue_item_for_viewer(
     db: Session,
     viewer_id: UUID,
     item_id: UUID,
-) -> list[PlaybackQueueItemOut]:
+) -> list[ConsumptionQueueItemOut]:
     """Delete one queue item and close any position gap."""
     with transaction(db):
         deleted_row = db.execute(
             text(
                 """
-                DELETE FROM playback_queue_items
+                DELETE FROM consumption_queue_items
                 WHERE id = :item_id
                   AND user_id = :viewer_id
                 RETURNING position
@@ -131,7 +172,7 @@ def remove_queue_item_for_viewer(
         db.execute(
             text(
                 """
-                UPDATE playback_queue_items
+                UPDATE consumption_queue_items
                 SET position = position - 1
                 WHERE user_id = :viewer_id
                   AND position > :deleted_position
@@ -148,7 +189,7 @@ def reorder_queue_for_viewer(
     viewer_id: UUID,
     *,
     item_ids: list[UUID],
-) -> list[PlaybackQueueItemOut]:
+) -> list[ConsumptionQueueItemOut]:
     """Reorder queue rows using a full item-id order payload."""
     requested_ids = [UUID(str(item_id)) for item_id in item_ids]
     if len(set(requested_ids)) != len(requested_ids):
@@ -160,7 +201,7 @@ def reorder_queue_for_viewer(
             text(
                 """
                 SELECT id
-                FROM playback_queue_items
+                FROM consumption_queue_items
                 WHERE user_id = :viewer_id
                 ORDER BY position ASC, id ASC
                 """
@@ -179,7 +220,7 @@ def reorder_queue_for_viewer(
             db.execute(
                 text(
                     """
-                    UPDATE playback_queue_items
+                    UPDATE consumption_queue_items
                     SET position = :position
                     WHERE id = :item_id
                       AND user_id = :viewer_id
@@ -191,11 +232,11 @@ def reorder_queue_for_viewer(
     return list_queue_for_viewer(db, viewer_id)
 
 
-def clear_queue_for_viewer(db: Session, viewer_id: UUID) -> list[PlaybackQueueItemOut]:
+def clear_queue_for_viewer(db: Session, viewer_id: UUID) -> list[ConsumptionQueueItemOut]:
     """Remove all queue rows for the viewer."""
     with transaction(db):
         db.execute(
-            text("DELETE FROM playback_queue_items WHERE user_id = :viewer_id"),
+            text("DELETE FROM consumption_queue_items WHERE user_id = :viewer_id"),
             {"viewer_id": viewer_id},
         )
     return []
@@ -205,21 +246,28 @@ def get_next_queue_item_for_viewer(
     db: Session,
     viewer_id: UUID,
     current_media_id: UUID,
-) -> PlaybackQueueItemOut | None:
-    """Return the next queued item after the current media item."""
+    *,
+    kind_filter: QueueKindFilter = "audio",
+) -> ConsumptionQueueItemOut | None:
+    """Return the next queued item after the current media within the kind scope.
+
+    Scans forward by position from ``current_media_id`` and returns the first item
+    whose kind is in the requested set (audio for the player, readable for the
+    reader prompt). Items of the other kind are skipped in place, not removed."""
     queue_items = list_queue_for_viewer(db, viewer_id)
     if not queue_items:
         return None
 
+    allowed = _kinds_for_filter(kind_filter)
     current_index = next(
         (index for index, item in enumerate(queue_items) if item.media_id == current_media_id),
         None,
     )
-    if current_index is None:
-        return queue_items[0]
-    if current_index + 1 >= len(queue_items):
-        return None
-    return queue_items[current_index + 1]
+    start = 0 if current_index is None else current_index + 1
+    for item in queue_items[start:]:
+        if item.kind in allowed:
+            return item
+    return None
 
 
 def append_subscription_media_if_enabled(
@@ -260,7 +308,7 @@ def append_subscription_media_if_enabled(
     _normalize_queue_positions(db, viewer_id)
 
 
-def _playback_source_for_row(row: Mapping[str, object]) -> PlaybackSourceOut | None:
+def _playback_source_for_row(row: RowMapping) -> PlaybackSourceOut | None:
     return derive_playback_source(
         kind=str(row["kind"]),
         external_playback_url=str(row["external_playback_url"])
@@ -274,32 +322,32 @@ def _playback_source_for_row(row: Mapping[str, object]) -> PlaybackSourceOut | N
     )
 
 
-def _row_to_queue_item(row: dict[str, object]) -> PlaybackQueueItemOut | None:
+def _row_to_queue_item(row: RowMapping) -> ConsumptionQueueItemOut:
     playback_source = _playback_source_for_row(row)
-    if playback_source is None:
-        return None
 
     listening_state = None
     if row["listening_position_ms"] is not None and row["listening_playback_speed"] is not None:
-        listening_state = {
-            "position_ms": int(row["listening_position_ms"]),
-            "playback_speed": float(row["listening_playback_speed"]),
-        }
+        listening_state = ConsumptionQueueListeningStateOut(
+            position_ms=int(row["listening_position_ms"]),
+            playback_speed=float(row["listening_playback_speed"]),
+        )
 
-    return PlaybackQueueItemOut(
+    media_id = row["media_id"]
+    return ConsumptionQueueItemOut(
         item_id=row["item_id"],
-        media_id=row["media_id"],
+        media_id=media_id,
+        position=int(row["position"]),
+        kind=str(row["kind"]),
         title=str(row["title"]),
+        stream_url=playback_source.stream_url if playback_source is not None else None,
+        reader_href=f"/media/{media_id}",
+        source=cast(ConsumptionQueueSource, str(row["source"])),
+        added_at=row["added_at"],
+        listening_state=listening_state,
         podcast_title=str(row["podcast_title"]) if row["podcast_title"] is not None else None,
         duration_seconds=int(row["duration_seconds"])
         if row["duration_seconds"] is not None
         else None,
-        stream_url=playback_source.stream_url,
-        source_url=playback_source.source_url,
-        position=int(row["position"]),
-        source=str(row["source"]),
-        added_at=row["added_at"],
-        listening_state=listening_state,
         subscription_default_playback_speed=float(row["subscription_default_playback_speed"])
         if row["subscription_default_playback_speed"] is not None
         else None,
@@ -322,23 +370,13 @@ def _assert_media_ids_queueable(db: Session, viewer_id: UUID, media_ids: list[UU
     for media_id in media_ids:
         if not _can_read_media(db, viewer_id, media_id):
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-        row = (
-            db.execute(
-                text(
-                    """
-                SELECT kind, external_playback_url, canonical_source_url, provider, provider_id
-                FROM media
-                WHERE id = :media_id
-                """
-                ),
-                {"media_id": media_id},
-            )
-            .mappings()
-            .one_or_none()
-        )
-        if row is None:
+        kind = db.execute(
+            text("SELECT kind FROM media WHERE id = :media_id"),
+            {"media_id": media_id},
+        ).scalar_one_or_none()
+        if kind is None:
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-        if _playback_source_for_row(row) is None:
+        if str(kind) not in QUEUEABLE_KINDS:
             raise InvalidRequestError(ApiErrorCode.E_INVALID_KIND, "Media is not queueable")
 
 
@@ -350,6 +388,7 @@ def _insert_media_ids_for_viewer(
     insert_position: str,
     current_media_id: UUID | None,
     source: str,
+    move_existing: bool = False,
 ) -> None:
     if source not in QUEUE_SOURCES:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid queue source")
@@ -364,7 +403,7 @@ def _insert_media_ids_for_viewer(
             text(
                 """
                 SELECT media_id
-                FROM playback_queue_items
+                FROM consumption_queue_items
                 WHERE user_id = :viewer_id
                   AND media_id = ANY(:media_ids)
                 """
@@ -372,7 +411,26 @@ def _insert_media_ids_for_viewer(
             {"viewer_id": viewer_id, "media_ids": media_ids},
         ).fetchall()
     }
-    to_insert = [media_id for media_id in media_ids if media_id not in existing_media_ids]
+    if move_existing:
+        # D-1: re-queuing an already-queued item moves it to the requested
+        # position. Delete existing rows first (positions resolve against the
+        # post-delete order), then re-insert every requested media below.
+        already_queued = [media_id for media_id in media_ids if media_id in existing_media_ids]
+        if already_queued:
+            db.execute(
+                text(
+                    """
+                    DELETE FROM consumption_queue_items
+                    WHERE user_id = :viewer_id
+                      AND media_id = ANY(:media_ids)
+                    """
+                ),
+                {"viewer_id": viewer_id, "media_ids": already_queued},
+            )
+            db.flush()
+        to_insert = media_ids
+    else:
+        to_insert = [media_id for media_id in media_ids if media_id not in existing_media_ids]
     if not to_insert:
         return
 
@@ -381,7 +439,7 @@ def _insert_media_ids_for_viewer(
         db.execute(
             text(
                 """
-                UPDATE playback_queue_items
+                UPDATE consumption_queue_items
                 SET position = position + :shift
                 WHERE user_id = :viewer_id
                   AND position >= :next_position
@@ -400,7 +458,7 @@ def _insert_media_ids_for_viewer(
     now = datetime.now(UTC)
     for offset, media_id in enumerate(to_insert):
         db.add(
-            PlaybackQueueItem(
+            ConsumptionQueueItem(
                 user_id=viewer_id,
                 media_id=media_id,
                 position=start_position + offset,
@@ -423,7 +481,7 @@ def _resolve_next_insert_position(
         text(
             """
             SELECT position
-            FROM playback_queue_items
+            FROM consumption_queue_items
             WHERE user_id = :viewer_id
               AND media_id = :current_media_id
             LIMIT 1
@@ -441,7 +499,7 @@ def _next_append_position(db: Session, viewer_id: UUID) -> int:
         text(
             """
             SELECT COALESCE(MAX(position), -1) + 1
-            FROM playback_queue_items
+            FROM consumption_queue_items
             WHERE user_id = :viewer_id
             """
         ),
@@ -460,10 +518,10 @@ def _normalize_queue_positions(db: Session, viewer_id: UUID) -> None:
                 SELECT
                     id,
                     ROW_NUMBER() OVER (ORDER BY position ASC, added_at ASC, id ASC) - 1 AS new_position
-                FROM playback_queue_items
+                FROM consumption_queue_items
                 WHERE user_id = :viewer_id
             )
-            UPDATE playback_queue_items q
+            UPDATE consumption_queue_items q
             SET position = ordered.new_position
             FROM ordered
             WHERE q.id = ordered.id

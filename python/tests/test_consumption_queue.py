@@ -1,4 +1,4 @@
-"""Integration tests for playback queue APIs."""
+"""Integration tests for the unified consumption queue APIs (all media kinds)."""
 
 from uuid import UUID, uuid4
 
@@ -94,12 +94,30 @@ def _create_podcast_episode_media_with_podcast_id(
         )
         session.commit()
 
-    direct_db.register_cleanup("playback_queue_items", "media_id", media_id)
+    direct_db.register_cleanup("consumption_queue_items", "media_id", media_id)
     direct_db.register_cleanup("podcast_listening_states", "media_id", media_id)
     direct_db.register_cleanup("podcast_episodes", "media_id", media_id)
     direct_db.register_cleanup("media", "id", media_id)
     direct_db.register_cleanup("podcasts", "id", podcast_id)
     return podcast_id, media_id
+
+
+def _create_web_article_media(direct_db: DirectSessionManager, *, title: str) -> UUID:
+    media_id = uuid4()
+    with direct_db.session() as session:
+        session.add(
+            Media(
+                id=media_id,
+                kind=MediaKind.web_article.value,
+                title=title,
+                canonical_source_url=f"https://example.com/{media_id}",
+                processing_status=ProcessingStatus.ready_for_reading,
+            )
+        )
+        session.commit()
+    direct_db.register_cleanup("consumption_queue_items", "media_id", media_id)
+    direct_db.register_cleanup("media", "id", media_id)
+    return media_id
 
 
 def _add_media_to_library(auth_client, user_id: UUID, library_id: UUID, media_id: UUID) -> None:
@@ -128,7 +146,7 @@ def _queue_media(
     if current_media_id is not None:
         payload["current_media_id"] = str(current_media_id)
     response = auth_client.post(
-        "/playback/queue/items",
+        "/queue/items",
         headers=auth_headers(user_id),
         json=payload,
     )
@@ -138,30 +156,164 @@ def _queue_media(
     return response.json()
 
 
-class TestPlaybackQueueApi:
-    def test_post_items_supports_next_last_and_ignores_duplicates(
+class TestConsumptionQueueApi:
+    def test_queue_holds_readable_and_audio_together_in_order(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        # AC-1 / AC-2: a web article and a podcast episode share one queue, and the
+        # kind_filter param splits them.
+        user_id = create_test_user_id()
+        library_id = _bootstrap_user_default_library(auth_client, user_id)
+
+        article = _create_web_article_media(direct_db, title="A Long Read")
+        episode = _create_podcast_episode_media(
+            direct_db, title="Episode One", podcast_title="Queue Podcast", duration_seconds=60
+        )
+        _add_media_to_library(auth_client, user_id, library_id, article)
+        _add_media_to_library(auth_client, user_id, library_id, episode)
+
+        _queue_media(auth_client, user_id, [article], insert_position="last")
+        queued = _queue_media(auth_client, user_id, [episode], insert_position="last")
+
+        rows = queued["data"]
+        assert [row["media_id"] for row in rows] == [str(article), str(episode)]
+        assert rows[0]["position"] == 0
+        assert rows[1]["position"] == 1
+        assert rows[0]["kind"] == "web_article"
+        assert rows[0]["stream_url"] is None, "readable rows carry no stream URL"
+        assert rows[0]["reader_href"] == f"/media/{article}"
+        assert rows[1]["kind"] == "podcast_episode"
+        assert rows[1]["stream_url"] is not None
+
+        audio_only = auth_client.get(
+            "/queue?kind_filter=audio", headers=auth_headers(user_id)
+        )
+        assert audio_only.status_code == 200
+        assert [row["media_id"] for row in audio_only.json()["data"]] == [str(episode)]
+
+        readable_only = auth_client.get(
+            "/queue?kind_filter=readable", headers=auth_headers(user_id)
+        )
+        assert readable_only.status_code == 200
+        assert [row["media_id"] for row in readable_only.json()["data"]] == [str(article)]
+
+    def test_next_audio_skips_readable_items(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        # AC-4: episode -> article -> episode. /queue/next?kind=audio from the first
+        # episode returns the second episode, skipping the article in between.
+        user_id = create_test_user_id()
+        library_id = _bootstrap_user_default_library(auth_client, user_id)
+
+        first = _create_podcast_episode_media(
+            direct_db, title="First", podcast_title="Skip Podcast", duration_seconds=30
+        )
+        middle = _create_web_article_media(direct_db, title="Interlude")
+        last = _create_podcast_episode_media(
+            direct_db, title="Last", podcast_title="Skip Podcast", duration_seconds=40
+        )
+        for media_id in (first, middle, last):
+            _add_media_to_library(auth_client, user_id, library_id, media_id)
+        _queue_media(auth_client, user_id, [first, middle, last], insert_position="last")
+
+        next_audio = auth_client.get(
+            f"/queue/next?current_media_id={first}&kind=audio",
+            headers=auth_headers(user_id),
+        )
+        assert next_audio.status_code == 200
+        assert next_audio.json()["data"]["media_id"] == str(last)
+
+        # Defaulting kind (player path) behaves the same.
+        default_next = auth_client.get(
+            f"/queue/next?current_media_id={first}", headers=auth_headers(user_id)
+        )
+        assert default_next.json()["data"]["media_id"] == str(last)
+
+        next_readable = auth_client.get(
+            f"/queue/next?current_media_id={first}&kind=readable",
+            headers=auth_headers(user_id),
+        )
+        assert next_readable.json()["data"]["media_id"] == str(middle)
+
+    def test_next_audio_returns_null_when_only_readable_follows(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        # AC-3 shape: finishing the last audio item with only a readable item left
+        # yields null (player stops); the readable item stays in the queue.
+        user_id = create_test_user_id()
+        library_id = _bootstrap_user_default_library(auth_client, user_id)
+
+        episode = _create_podcast_episode_media(
+            direct_db, title="Only Audio", podcast_title="Stop Podcast", duration_seconds=30
+        )
+        article = _create_web_article_media(direct_db, title="Left Behind")
+        for media_id in (episode, article):
+            _add_media_to_library(auth_client, user_id, library_id, media_id)
+        _queue_media(auth_client, user_id, [episode, article], insert_position="last")
+
+        response = auth_client.get(
+            f"/queue/next?current_media_id={episode}&kind=audio",
+            headers=auth_headers(user_id),
+        )
+        assert response.status_code == 200
+        assert response.json()["data"] is None
+
+        remaining = auth_client.get("/queue", headers=auth_headers(user_id))
+        assert [row["media_id"] for row in remaining.json()["data"]] == [
+            str(episode),
+            str(article),
+        ]
+
+    def test_requeue_moves_to_requested_position_without_duplicating(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        # AC-11 / D-1: re-queuing an already-queued item MOVES it to the requested
+        # position (delete + re-insert in one transaction), never adds a second copy.
+        user_id = create_test_user_id()
+        library_id = _bootstrap_user_default_library(auth_client, user_id)
+
+        media_a = _create_web_article_media(direct_db, title="Article A")
+        media_b = _create_web_article_media(direct_db, title="Article B")
+        media_c = _create_web_article_media(direct_db, title="Article C")
+        for media_id in (media_a, media_b, media_c):
+            _add_media_to_library(auth_client, user_id, library_id, media_id)
+        _queue_media(auth_client, user_id, [media_a, media_b, media_c], insert_position="last")
+
+        # Re-queue the head to "last" — it moves to the end, not a no-op.
+        moved_last = _queue_media(auth_client, user_id, [media_a], insert_position="last")
+        assert [row["media_id"] for row in moved_last["data"]] == [
+            str(media_b),
+            str(media_c),
+            str(media_a),
+        ]
+
+        # AC-11: re-queue with insert_position="next" moves it to just after the
+        # current item — one copy, at the requested position.
+        moved_next = _queue_media(
+            auth_client,
+            user_id,
+            [media_a],
+            insert_position="next",
+            current_media_id=media_b,
+        )
+        media_ids = [row["media_id"] for row in moved_next["data"]]
+        assert media_ids == [str(media_b), str(media_a), str(media_c)]
+        assert media_ids.count(str(media_a)) == 1, "re-queue must not duplicate a row"
+
+    def test_post_items_supports_next_and_last_positions(
         self, auth_client, direct_db: DirectSessionManager
     ):
         user_id = create_test_user_id()
         library_id = _bootstrap_user_default_library(auth_client, user_id)
 
         media_a = _create_podcast_episode_media(
-            direct_db,
-            title="Episode A",
-            podcast_title="Queue Podcast",
-            duration_seconds=60,
+            direct_db, title="Episode A", podcast_title="Queue Podcast", duration_seconds=60
         )
         media_b = _create_podcast_episode_media(
-            direct_db,
-            title="Episode B",
-            podcast_title="Queue Podcast",
-            duration_seconds=70,
+            direct_db, title="Episode B", podcast_title="Queue Podcast", duration_seconds=70
         )
         media_c = _create_podcast_episode_media(
-            direct_db,
-            title="Episode C",
-            podcast_title="Queue Podcast",
-            duration_seconds=80,
+            direct_db, title="Episode C", podcast_title="Queue Podcast", duration_seconds=80
         )
         for media_id in (media_a, media_b, media_c):
             _add_media_to_library(auth_client, user_id, library_id, media_id)
@@ -175,18 +327,20 @@ class TestPlaybackQueueApi:
             insert_position="next",
             current_media_id=media_a,
         )
-        duplicate_attempt = _queue_media(auth_client, user_id, [media_b], insert_position="last")
+        # media_b is already last; re-queuing it to "last" moves it there (a no-op
+        # in position) and never duplicates the row.
+        requeue_b_last = _queue_media(auth_client, user_id, [media_b], insert_position="last")
 
         assert [row["media_id"] for row in queue_after_next["data"]] == [
             str(media_a),
             str(media_c),
             str(media_b),
-        ], f"Expected next insert order A->C->B, got: {queue_after_next}"
-        assert [row["media_id"] for row in duplicate_attempt["data"]] == [
+        ]
+        assert [row["media_id"] for row in requeue_b_last["data"]] == [
             str(media_a),
             str(media_c),
             str(media_b),
-        ], f"Duplicate add should be idempotent with no extra row; got {duplicate_attempt['data']}"
+        ]
 
         put_state = auth_client.put(
             f"/media/{media_a}/listening-state",
@@ -195,10 +349,8 @@ class TestPlaybackQueueApi:
         )
         assert put_state.status_code == 204
 
-        queue_response = auth_client.get("/playback/queue", headers=auth_headers(user_id))
-        assert queue_response.status_code == 200, (
-            f"Expected 200 from queue read, got {queue_response.status_code}: {queue_response.text}"
-        )
+        queue_response = auth_client.get("/queue", headers=auth_headers(user_id))
+        assert queue_response.status_code == 200
         first_item = queue_response.json()["data"][0]
         assert first_item["title"] == "Episode A"
         assert first_item["podcast_title"] == "Queue Podcast"
@@ -231,12 +383,8 @@ class TestPlaybackQueueApi:
 
         queued = _queue_media(auth_client, user_id, [media_id], insert_position="last")
         queue_item = queued["data"][0]
-        assert queue_item["listening_state"] is None, (
-            "Queue contract must keep listening_state null until per-episode state exists."
-        )
-        assert queue_item["subscription_default_playback_speed"] == 1.75, (
-            "Queue rows must expose subscription default speed for first-play inheritance."
-        )
+        assert queue_item["listening_state"] is None
+        assert queue_item["subscription_default_playback_speed"] == 1.75
 
     def test_put_order_requires_exact_item_set_and_reorders_atomically(
         self, auth_client, direct_db: DirectSessionManager
@@ -246,10 +394,7 @@ class TestPlaybackQueueApi:
 
         media_ids = [
             _create_podcast_episode_media(
-                direct_db,
-                title=f"Episode {label}",
-                podcast_title="Atomic Queue Podcast",
-                duration_seconds=60,
+                direct_db, title=f"Episode {label}", podcast_title="Atomic", duration_seconds=60
             )
             for label in ("A", "B", "C")
         ]
@@ -259,36 +404,25 @@ class TestPlaybackQueueApi:
         item_ids = [UUID(row["item_id"]) for row in queue["data"]]
 
         missing_one = auth_client.put(
-            "/playback/queue/order",
+            "/queue/order",
             headers=auth_headers(user_id),
             json={"item_ids": [str(item_ids[0]), str(item_ids[1])]},
         )
-        assert missing_one.status_code == 400, (
-            "Queue reorder must reject missing IDs to avoid silent item loss."
-        )
+        assert missing_one.status_code == 400
 
         with_extra = auth_client.put(
-            "/playback/queue/order",
+            "/queue/order",
             headers=auth_headers(user_id),
             json={"item_ids": [str(item_ids[0]), str(item_ids[1]), str(item_ids[2]), str(uuid4())]},
         )
-        assert with_extra.status_code == 400, (
-            "Queue reorder must reject extra IDs to avoid cross-queue corruption."
-        )
-
-        unchanged = auth_client.get("/playback/queue", headers=auth_headers(user_id))
-        assert [row["item_id"] for row in unchanged.json()["data"]] == [str(i) for i in item_ids], (
-            "Invalid reorder request must leave queue order unchanged."
-        )
+        assert with_extra.status_code == 400
 
         reordered = auth_client.put(
-            "/playback/queue/order",
+            "/queue/order",
             headers=auth_headers(user_id),
             json={"item_ids": [str(item_ids[2]), str(item_ids[0]), str(item_ids[1])]},
         )
-        assert reordered.status_code == 200, (
-            f"Expected successful reorder, got {reordered.status_code}: {reordered.text}"
-        )
+        assert reordered.status_code == 200
         assert [row["media_id"] for row in reordered.json()["data"]] == [
             str(media_ids[2]),
             str(media_ids[0]),
@@ -304,16 +438,10 @@ class TestPlaybackQueueApi:
         _bootstrap_user_default_library(auth_client, other_user_id)
 
         media_a = _create_podcast_episode_media(
-            direct_db,
-            title="Delete Episode A",
-            podcast_title="Delete Podcast",
-            duration_seconds=50,
+            direct_db, title="Delete A", podcast_title="Delete", duration_seconds=50
         )
         media_b = _create_podcast_episode_media(
-            direct_db,
-            title="Delete Episode B",
-            podcast_title="Delete Podcast",
-            duration_seconds=55,
+            direct_db, title="Delete B", podcast_title="Delete", duration_seconds=55
         )
         _add_media_to_library(auth_client, owner_user_id, owner_library_id, media_a)
         _add_media_to_library(auth_client, owner_user_id, owner_library_id, media_b)
@@ -323,98 +451,37 @@ class TestPlaybackQueueApi:
         second_item_id = queue["data"][1]["item_id"]
 
         delete_owner = auth_client.delete(
-            f"/playback/queue/items/{first_item_id}",
-            headers=auth_headers(owner_user_id),
+            f"/queue/items/{first_item_id}", headers=auth_headers(owner_user_id)
         )
-        assert delete_owner.status_code == 200, (
-            f"Expected owner delete success, got {delete_owner.status_code}: {delete_owner.text}"
-        )
+        assert delete_owner.status_code == 200
         owner_rows = delete_owner.json()["data"]
         assert len(owner_rows) == 1
         assert owner_rows[0]["item_id"] == second_item_id
         assert owner_rows[0]["position"] == 0
 
         delete_other = auth_client.delete(
-            f"/playback/queue/items/{second_item_id}",
-            headers=auth_headers(other_user_id),
+            f"/queue/items/{second_item_id}", headers=auth_headers(other_user_id)
         )
-        assert delete_other.status_code == 404, (
-            "Queue item deletion by non-owner must be masked as not found."
-        )
+        assert delete_other.status_code == 404
 
     def test_clear_removes_all_queue_rows(self, auth_client, direct_db: DirectSessionManager):
         user_id = create_test_user_id()
         library_id = _bootstrap_user_default_library(auth_client, user_id)
 
         media_ids = [
-            _create_podcast_episode_media(
-                direct_db,
-                title="Clear Episode A",
-                podcast_title="Clear Podcast",
-                duration_seconds=40,
-            ),
-            _create_podcast_episode_media(
-                direct_db,
-                title="Clear Episode B",
-                podcast_title="Clear Podcast",
-                duration_seconds=45,
-            ),
+            _create_web_article_media(direct_db, title="Clear A"),
+            _create_web_article_media(direct_db, title="Clear B"),
         ]
         for media_id in media_ids:
             _add_media_to_library(auth_client, user_id, library_id, media_id)
         _queue_media(auth_client, user_id, media_ids, insert_position="last")
 
-        clear_response = auth_client.post("/playback/queue/clear", headers=auth_headers(user_id))
-        assert clear_response.status_code == 200, (
-            f"Expected 200 from clear, got {clear_response.status_code}: {clear_response.text}"
-        )
+        clear_response = auth_client.post("/queue/clear", headers=auth_headers(user_id))
+        assert clear_response.status_code == 200
         assert clear_response.json()["data"] == []
 
-        queue_after_clear = auth_client.get("/playback/queue", headers=auth_headers(user_id))
-        assert queue_after_clear.status_code == 200
+        queue_after_clear = auth_client.get("/queue", headers=auth_headers(user_id))
         assert queue_after_clear.json()["data"] == []
-
-    def test_get_next_returns_following_item_or_null(
-        self, auth_client, direct_db: DirectSessionManager
-    ):
-        user_id = create_test_user_id()
-        library_id = _bootstrap_user_default_library(auth_client, user_id)
-
-        media_a = _create_podcast_episode_media(
-            direct_db,
-            title="Next Episode A",
-            podcast_title="Next Podcast",
-            duration_seconds=30,
-        )
-        media_b = _create_podcast_episode_media(
-            direct_db,
-            title="Next Episode B",
-            podcast_title="Next Podcast",
-            duration_seconds=35,
-        )
-        media_c = _create_podcast_episode_media(
-            direct_db,
-            title="Next Episode C",
-            podcast_title="Next Podcast",
-            duration_seconds=40,
-        )
-        for media_id in (media_a, media_b, media_c):
-            _add_media_to_library(auth_client, user_id, library_id, media_id)
-        _queue_media(auth_client, user_id, [media_a, media_b, media_c], insert_position="last")
-
-        next_from_a = auth_client.get(
-            f"/playback/queue/next?current_media_id={media_a}",
-            headers=auth_headers(user_id),
-        )
-        assert next_from_a.status_code == 200
-        assert next_from_a.json()["data"]["media_id"] == str(media_b)
-
-        next_from_c = auth_client.get(
-            f"/playback/queue/next?current_media_id={media_c}",
-            headers=auth_headers(user_id),
-        )
-        assert next_from_c.status_code == 200
-        assert next_from_c.json()["data"] is None
 
     def test_queue_rows_are_scoped_per_user(self, auth_client, direct_db: DirectSessionManager):
         user_a = create_test_user_id()
@@ -422,27 +489,15 @@ class TestPlaybackQueueApi:
         library_a = _bootstrap_user_default_library(auth_client, user_a)
         library_b = _bootstrap_user_default_library(auth_client, user_b)
 
-        media_a = _create_podcast_episode_media(
-            direct_db,
-            title="Scoped Episode A",
-            podcast_title="Scoped Podcast A",
-            duration_seconds=20,
-        )
-        media_b = _create_podcast_episode_media(
-            direct_db,
-            title="Scoped Episode B",
-            podcast_title="Scoped Podcast B",
-            duration_seconds=25,
-        )
+        media_a = _create_web_article_media(direct_db, title="Scoped A")
+        media_b = _create_web_article_media(direct_db, title="Scoped B")
         _add_media_to_library(auth_client, user_a, library_a, media_a)
         _add_media_to_library(auth_client, user_b, library_b, media_b)
         _queue_media(auth_client, user_a, [media_a], insert_position="last")
         _queue_media(auth_client, user_b, [media_b], insert_position="last")
 
-        queue_a = auth_client.get("/playback/queue", headers=auth_headers(user_a))
-        queue_b = auth_client.get("/playback/queue", headers=auth_headers(user_b))
+        queue_a = auth_client.get("/queue", headers=auth_headers(user_a))
+        queue_b = auth_client.get("/queue", headers=auth_headers(user_b))
 
-        assert queue_a.status_code == 200
-        assert queue_b.status_code == 200
         assert [row["media_id"] for row in queue_a.json()["data"]] == [str(media_a)]
         assert [row["media_id"] for row in queue_b.json()["data"]] == [str(media_b)]

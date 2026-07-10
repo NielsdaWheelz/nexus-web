@@ -36,9 +36,9 @@ from nexus.api.routes.notes import router as notes_router
 from nexus.api.routes.object_refs import router as object_refs_router
 from nexus.api.routes.oracle import router as oracle_router
 from nexus.api.routes.pinned_objects import router as pinned_objects_router
-from nexus.api.routes.playback import router as playback_router
 from nexus.api.routes.podcast_transcripts import router as podcast_transcripts_router
 from nexus.api.routes.podcasts import router as podcasts_router
+from nexus.api.routes.queue import router as queue_router
 from nexus.api.routes.reader import router as reader_router
 from nexus.api.routes.resource_graph import router as resource_graph_router
 from nexus.api.routes.resource_items import router as resource_items_router
@@ -104,9 +104,11 @@ def create_api_router() -> APIRouter:
     api_router.include_router(vault_router)
     api_router.include_router(users_router)
     api_router.include_router(walknotes_router)
+    # The consumption queue serves web articles, epubs, and PDFs regardless of the
+    # podcast feature flag, so it is registered unconditionally.
+    api_router.include_router(queue_router)
     settings = get_settings()
     if settings.podcasts_enabled:
-        api_router.include_router(playback_router)
         api_router.include_router(podcasts_router)
     api_router.include_router(internal_libraries_router)
     api_router.include_router(internal_ingest_router)

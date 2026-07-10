@@ -7063,17 +7063,17 @@ class TestPodcastListeningStateMigration:
         assert is_completed_column[2] == "NO", "is_completed must be non-null"
 
 
-class TestPlaybackQueueMigration:
-    """Schema assertions for playback queue table and subscription auto-queue toggle."""
+class TestConsumptionQueueMigration:
+    """Schema assertions for consumption queue table and subscription auto-queue toggle."""
 
-    def test_head_contains_playback_queue_table_and_auto_queue_flag(self, migrated_engine):
+    def test_head_contains_consumption_queue_table_and_auto_queue_flag(self, migrated_engine):
         with Session(migrated_engine) as session:
             queue_columns = session.execute(
                 text(
                     """
                     SELECT column_name
                     FROM information_schema.columns
-                    WHERE table_name = 'playback_queue_items'
+                    WHERE table_name = 'consumption_queue_items'
                     ORDER BY ordinal_position
                     """
                 )
@@ -7083,7 +7083,7 @@ class TestPlaybackQueueMigration:
                     """
                     SELECT conname
                     FROM pg_constraint
-                    WHERE conrelid = 'playback_queue_items'::regclass
+                    WHERE conrelid = 'consumption_queue_items'::regclass
                     ORDER BY conname
                     """
                 )
@@ -7093,7 +7093,7 @@ class TestPlaybackQueueMigration:
                     """
                     SELECT indexname
                     FROM pg_indexes
-                    WHERE tablename = 'playback_queue_items'
+                    WHERE tablename = 'consumption_queue_items'
                     ORDER BY indexname
                     """
                 )
@@ -7128,17 +7128,17 @@ class TestPlaybackQueueMigration:
             "added_at",
             "source",
         }.issubset(queue_column_names), (
-            "playback queue migration must provide durable ordered queue schema; "
+            "consumption queue migration must provide durable ordered queue schema; "
             f"got columns {queue_column_names}"
         )
 
         queue_constraint_names = {row[0] for row in queue_constraints}
-        assert "uq_playback_queue_items_user_media" in queue_constraint_names
-        assert "ck_playback_queue_items_position_non_negative" in queue_constraint_names
-        assert "ck_playback_queue_items_source" in queue_constraint_names
+        assert "uq_consumption_queue_items_user_media" in queue_constraint_names
+        assert "ck_consumption_queue_items_position_non_negative" in queue_constraint_names
+        assert "ck_consumption_queue_items_source" in queue_constraint_names
 
         queue_index_names = {row[0] for row in queue_indexes}
-        assert "ix_playback_queue_items_user_position" in queue_index_names
+        assert "ix_consumption_queue_items_user_position" in queue_index_names
 
         assert auto_queue_column is not None, (
             "podcast_subscriptions.auto_queue must exist for sync-driven queue opt-in"
