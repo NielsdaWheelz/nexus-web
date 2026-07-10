@@ -116,7 +116,8 @@ test.describe("quote-attach references (post-cutover)", () => {
       name: /ask anything/i,
     });
     const sendButton = conversationPane.getByRole("button", {
-      name: /send message/i,
+      name: "SEND",
+      exact: true,
     });
     const modelSettings = conversationPane.getByRole("button", {
       name: /model settings/i,
