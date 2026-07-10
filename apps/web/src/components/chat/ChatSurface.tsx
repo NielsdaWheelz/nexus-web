@@ -7,6 +7,7 @@ import {
   useRef,
   type ReactNode,
 } from "react";
+import type { CitationOut } from "@/lib/conversations/citationOut";
 import { ArrowDown } from "lucide-react";
 import Button from "@/components/ui/Button";
 import type {
@@ -28,6 +29,10 @@ const NO_FORKS: ForkOption[] = [];
 interface ChatSurfaceProps {
   messages: ConversationMessage[];
   composer: ReactNode;
+  /** Docent HUD: rendered before {composer} inside the composerSlot. */
+  docentOverlay?: ReactNode;
+  /** Forwarded to each MessageRow for the Walk-the-sources entry verb. */
+  onStartWalk?: (citations: CitationOut[], text: string) => void;
   historyLoading?: boolean;
   olderCursor?: string | null;
   onLoadOlder?: () => void;
@@ -52,6 +57,8 @@ const ChatSurface = forwardRef<ChatScrollHandle, ChatSurfaceProps>(
     {
       messages,
       composer,
+      docentOverlay,
+      onStartWalk,
       historyLoading = false,
       olderCursor,
       onLoadOlder,
@@ -149,6 +156,7 @@ const ChatSurface = forwardRef<ChatScrollHandle, ChatSurfaceProps>(
                 resendingAssistantMessageIds={resendingAssistantMessageIds}
                 onResendAssistantResponse={onResendAssistantResponse}
                 onReaderSourceActivate={onReaderSourceActivate}
+                onStartWalk={onStartWalk}
               />
             ))}
 
@@ -179,6 +187,7 @@ const ChatSurface = forwardRef<ChatScrollHandle, ChatSurfaceProps>(
           data-testid="chat-composer-dock"
           onWheel={onComposerWheel}
         >
+          {docentOverlay}
           {composer}
         </div>
       </div>

@@ -18,6 +18,7 @@ import { conversationMessageText } from "@/lib/conversations/types";
 import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
 import type { ResourceActivation } from "@/lib/resources/activation";
 import { toReaderCitationData } from "@/lib/conversations/citations";
+import type { CitationOut } from "@/lib/conversations/citationOut";
 import AssistantSelectionPopover from "./AssistantSelectionPopover";
 import AssistantEvidenceDisclosure from "./AssistantEvidenceDisclosure";
 import AssistantTrustInspector, { AssistantWriteTrail } from "./AssistantTrustInspector";
@@ -39,6 +40,7 @@ export default function AssistantMessage({
   resendAssistantMessageId,
   resending,
   onResendAssistantResponse,
+  onStartWalk,
 }: {
   message: ConversationMessage;
   forkOptions: ForkOption[];
@@ -54,6 +56,7 @@ export default function AssistantMessage({
   resendAssistantMessageId?: string;
   resending?: boolean;
   onResendAssistantResponse?: (assistantMessageId: string) => void;
+  onStartWalk?: (citations: CitationOut[], text: string) => void;
 }) {
   const display = useRenderEnvironment();
   const assistantText = conversationMessageText(message);
@@ -67,6 +70,10 @@ export default function AssistantMessage({
     message.status === "complete" && Boolean(onReplyToAssistant);
   const canResendAssistant =
     Boolean(resendAssistantMessageId) && Boolean(onResendAssistantResponse);
+  const canWalk =
+    !!onStartWalk &&
+    message.status === "complete" &&
+    (message.citations?.length ?? 0) >= 2;
   const resendAssistant = () => {
     if (!resendAssistantMessageId) return;
     onResendAssistantResponse?.(resendAssistantMessageId);
@@ -118,7 +125,7 @@ export default function AssistantMessage({
       onMouseUp={captureSelection}
       onKeyUp={captureSelection}
     >
-      {canBranchFromAssistant || canResendAssistant ? (
+      {canBranchFromAssistant || canResendAssistant || canWalk ? (
         <div className={styles.messageActions}>
           {canBranchFromAssistant ? (
             <Button
@@ -141,6 +148,18 @@ export default function AssistantMessage({
               aria-label="Resend response"
             >
               Resend
+            </Button>
+          ) : null}
+          {canWalk ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() =>
+                onStartWalk!(message.citations!, conversationMessageText(message))
+              }
+              aria-label="Walk the sources"
+            >
+              Walk
             </Button>
           ) : null}
         </div>

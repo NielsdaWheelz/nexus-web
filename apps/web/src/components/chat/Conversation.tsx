@@ -14,6 +14,9 @@
 
 import { useCallback, useMemo, useRef, useState } from "react";
 import { GitBranch, Link2 } from "lucide-react";
+import DocentOverlay from "@/components/chat/DocentOverlay";
+import { useDocentWalk } from "@/lib/conversations/useDocentWalk";
+import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import Button from "@/components/ui/Button";
 import ChatComposer from "@/components/chat/ChatComposer";
 import ChatSurface from "@/components/chat/ChatSurface";
@@ -56,6 +59,12 @@ export default function Conversation() {
   const router = usePaneRouter();
   const paneRuntime = usePaneRuntime();
   const openInNewPane = paneRuntime?.openInNewPane;
+  const isMobile = useIsMobileViewport();
+  const { walk, startWalk, next, prev, leave } = useDocentWalk({
+    openInNewPane,
+    router,
+    isMobile,
+  });
   const requestSecondarySurface = paneRuntime?.requestSecondarySurface;
   const closeSecondaryPane = paneRuntime?.closeSecondaryPane;
   const secondaryPane = paneRuntime?.secondaryPane ?? null;
@@ -421,6 +430,15 @@ export default function Conversation() {
                 <FeedbackNotice severity="info">Loading conversation...</FeedbackNotice>
               ) : null
             }
+            docentOverlay={
+              <DocentOverlay
+                walk={walk}
+                onNext={next}
+                onPrev={prev}
+                onLeave={leave}
+              />
+            }
+            onStartWalk={startWalk}
             onReaderSourceActivate={handleReaderSourceActivate}
             forkOptionsByParentId={branch?.forkOptionsByParentId}
             switchableLeafIds={branch?.switchableLeafIds}

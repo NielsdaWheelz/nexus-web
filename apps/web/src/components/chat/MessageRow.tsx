@@ -10,6 +10,7 @@ import type {
   ConversationMessage,
   ForkOption,
 } from "@/lib/conversations/types";
+import type { CitationOut } from "@/lib/conversations/citationOut";
 import AssistantMessage from "./AssistantMessage";
 import SystemMessage from "./SystemMessage";
 import UserMessage from "./UserMessage";
@@ -30,6 +31,7 @@ interface MessageRowProps {
     target: ReaderSourceTarget | null,
     event?: React.MouseEvent,
   ) => void;
+  onStartWalk?: (citations: CitationOut[], text: string) => void;
 }
 
 function errorLabel(message: ConversationMessage): string {
@@ -56,6 +58,7 @@ export const MessageRow = memo(function MessageRow({
   resendingAssistantMessageIds,
   onResendAssistantResponse,
   onReaderSourceActivate,
+  onStartWalk,
 }: MessageRowProps) {
   const display = useRenderEnvironment();
   const activateTarget = useCallback(
@@ -115,6 +118,7 @@ export const MessageRow = memo(function MessageRow({
               : false
           }
           onResendAssistantResponse={onResendAssistantResponse}
+          onStartWalk={onStartWalk}
         />
       );
     case "system":
