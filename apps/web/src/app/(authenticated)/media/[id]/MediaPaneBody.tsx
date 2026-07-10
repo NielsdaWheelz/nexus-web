@@ -244,6 +244,7 @@ import {
 } from "@/lib/reader/pulseEvent";
 import { useReaderTarget } from "@/lib/reader/useReaderTarget";
 import Button from "@/components/ui/Button";
+import SectionOpener from "@/components/ui/SectionOpener";
 import Select from "@/components/ui/Select";
 import { mediaKindIcon } from "@/lib/resources/resourceKind";
 import { buildReaderSurfaceStyle } from "@/lib/reader/readerSurfaceStyle";
@@ -5572,6 +5573,7 @@ export default function MediaPaneBody() {
             </div>
           ) : !canRead ? (
             <div className={styles.notReady}>
+              <SectionOpener heading={media.title} />
               {media.processing_status === "failed" ? (
                 <>
                   {isPdf &&
