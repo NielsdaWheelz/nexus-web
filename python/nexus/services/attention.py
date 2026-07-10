@@ -8,6 +8,7 @@ Session continuity is a 30-minute gap rule on ``last_active_at`` serialized by
 ``FOR UPDATE`` on the open session row.
 """
 
+from typing import cast
 from uuid import UUID
 
 from sqlalchemy import bindparam, text
@@ -18,6 +19,7 @@ from nexus.auth.permissions import can_read_media
 from nexus.db.session import transaction
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas.attention import AttentionBlock, ConsumptionStateOut
+from nexus.schemas.media import MediaReadState
 
 # Product constant, not config (D-3): two saves > 30 minutes apart open separate
 # reading episodes.
@@ -185,7 +187,10 @@ def consumption_state(
     for row in override_rows:
         media_id = UUID(str(row[0]))
         overridden.add(media_id)
-        result[media_id] = ConsumptionStateOut(status=str(row[1]), progress_fraction=None)
+        # consumption_overrides.status is CHECK-constrained to ('unread', 'finished').
+        result[media_id] = ConsumptionStateOut(
+            status=cast(MediaReadState, row[1]), progress_fraction=None
+        )
 
     remaining = [media_id for media_id in media_ids if media_id not in overridden]
     if not remaining:

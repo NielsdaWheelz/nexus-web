@@ -813,7 +813,7 @@ requires-dist = [
     { name = "lxml", specifier = ">=5.0.0" },
     { name = "pillow", specifier = ">=10.0.0" },
     { name = "pip-audit", marker = "extra == 'dev'", specifier = ">=2.9.0" },
-    { name = "provider-runtime", git = "https://github.com/NielsdaWheelz/llm-calling?rev=3b8246a548a0711465f589074057c9585939152a" },
+    { name = "provider-runtime", git = "https://github.com/NielsdaWheelz/llm-calling?rev=7c06fe905e48fc718254df13c9e4daf7a0f1c2ef" },
     { name = "psycopg-binary", specifier = ">=3.1.0" },
     { name = "pydantic-settings", specifier = ">=2.6.0" },
     { name = "pyjwt", extras = ["crypto"], specifier = ">=2.13.0" },
@@ -1009,7 +1009,7 @@ wheels = [
 [[package]]
 name = "provider-runtime"
 version = "0.1.0"
-source = { git = "https://github.com/NielsdaWheelz/llm-calling?rev=3b8246a548a0711465f589074057c9585939152a#3b8246a548a0711465f589074057c9585939152a" }
+source = { git = "https://github.com/NielsdaWheelz/llm-calling?rev=7c06fe905e48fc718254df13c9e4daf7a0f1c2ef#7c06fe905e48fc718254df13c9e4daf7a0f1c2ef" }
 dependencies = [
     { name = "httpx" },
     { name = "json-repair" },

@@ -52,7 +52,7 @@ build-backend = "hatchling.build"
 packages = ["nexus"]
 
 [tool.uv.sources]
-provider-runtime = { git = "https://github.com/NielsdaWheelz/llm-calling", rev = "3b8246a548a0711465f589074057c9585939152a" }
+provider-runtime = { git = "https://github.com/NielsdaWheelz/llm-calling", rev = "7c06fe905e48fc718254df13c9e4daf7a0f1c2ef" }
 web-search-tool = { git = "https://github.com/NielsdaWheelz/web-search-tool", rev = "ce911344a2e31900eaee3039b5d61109ef54bcb1" }
 
 [tool.ruff]
@@ -98,18 +98,27 @@ include = [
     "nexus/logging.py",
     "nexus/middleware/request_id.py",
     "nexus/responses.py",
+    "nexus/services/agent_tools",
     "nexus/services/api_key_resolver.py",
+    "nexus/services/artifacts",
+    "nexus/services/atlas_projection.py",
+    "nexus/services/attention.py",
     "nexus/services/capabilities.py",
     "nexus/services/canonicalize.py",
+    "nexus/services/chat_run_tools.py",
     "nexus/services/chat_runs.py",
     "nexus/services/conversation_branches.py",
     "nexus/services/chat_context_refs.py",
     "nexus/services/chat_prompt.py",
+    "nexus/services/consumption_queue.py",
     "nexus/services/content_indexing.py",
     "nexus/services/contributor_credits.py",
+    "nexus/services/contributor_reconciliation.py",
     "nexus/services/contributor_taxonomy.py",
     "nexus/services/contributors.py",
     "nexus/services/crypto.py",
+    "nexus/services/dawn_write.py",
+    "nexus/services/email_ingest_service.py",
     "nexus/services/epub_ingest.py",
     "nexus/services/epub_lifecycle.py",
     "nexus/services/extension_sessions.py",
@@ -117,8 +126,6 @@ include = [
     "nexus/services/image_proxy.py",
     "nexus/services/image_validation.py",
     "nexus/services/ingest_recovery.py",
-    "nexus/services/library_intelligence.py",
-    "nexus/services/library_intelligence_reduce.py",
     "nexus/services/media_intelligence.py",
     "nexus/services/media_processing_state.py",
     "nexus/services/message_trust_trails.py",
@@ -144,6 +151,8 @@ include = [
     "nexus/services/semantic_chunks.py",
     "nexus/services/seq.py",
     "nexus/services/structured_synthesis.py",
+    "nexus/services/synapse.py",
+    "nexus/services/text_quote.py",
     "nexus/services/shares.py",
     "nexus/services/upload.py",
     "nexus/services/locator_resolver.py",

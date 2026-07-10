@@ -8,13 +8,13 @@ candidate through ``contributors.merge_contributor``.
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass, field
 from itertools import combinations
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import bindparam, text
+from sqlalchemy import RowMapping, bindparam, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Session
@@ -29,6 +29,7 @@ from nexus.schemas.contributors import (
     ContributorReconciliationContributorOut,
     ContributorReconciliationEvidenceOut,
     ContributorReconciliationRunOut,
+    ContributorReconciliationSignal,
 )
 from nexus.services import contributors as contributors_service
 from nexus.services.contributor_taxonomy import (
@@ -788,7 +789,7 @@ def _load_profiles(db: Session) -> dict[UUID, _ContributorProfile]:
     }
 
 
-def _load_alias_rows(db: Session) -> list[Mapping[str, Any]]:
+def _load_alias_rows(db: Session) -> Sequence[RowMapping]:
     return (
         db.execute(
             text(
@@ -809,7 +810,7 @@ def _load_alias_rows(db: Session) -> list[Mapping[str, Any]]:
     )
 
 
-def _load_work_rows(db: Session) -> list[Mapping[str, Any]]:
+def _load_work_rows(db: Session) -> Sequence[RowMapping]:
     return (
         db.execute(
             text(
@@ -887,7 +888,7 @@ def _candidate_evidence(
     accumulator: _PairAccumulator,
     score: int,
 ) -> ContributorReconciliationEvidenceOut:
-    signals: list[str] = []
+    signals: list[ContributorReconciliationSignal] = []
     if accumulator.shared_aliases:
         signals.append("shared_alias")
     if accumulator.shared_confirmed_aliases:
@@ -1162,7 +1163,7 @@ def _list_candidates_for_run(
     return [_candidate_out(row) for row in rows]
 
 
-def _run_out(row: Mapping[str, Any]) -> ContributorReconciliationRunOut:
+def _run_out(row: RowMapping) -> ContributorReconciliationRunOut:
     return ContributorReconciliationRunOut(
         id=row["id"],
         algorithm_version=row["algorithm_version"],
@@ -1173,7 +1174,7 @@ def _run_out(row: Mapping[str, Any]) -> ContributorReconciliationRunOut:
     )
 
 
-def _candidate_out(row: Mapping[str, Any]) -> ContributorReconciliationCandidateOut:
+def _candidate_out(row: RowMapping) -> ContributorReconciliationCandidateOut:
     return ContributorReconciliationCandidateOut(
         id=row["id"],
         run_id=row["run_id"],
