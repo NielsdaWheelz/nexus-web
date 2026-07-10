@@ -1,5 +1,4 @@
 import { expect, test, type Page } from "@playwright/test";
-import { readerSecondaryForActivePane } from "../reader";
 import { selectFreshVisibleTextSnippet } from "../selection";
 import {
   ACTIVE_WORKSPACE_PANE_SELECTOR,
@@ -32,7 +31,7 @@ async function existingHighlightExacts(
     .filter(Boolean);
 }
 
-test("@real-media desktop selected quote opens doc chat pending context", async ({
+test("@real-media desktop selected quote opens new chat pane with attached context", async ({
   page,
 }, testInfo) => {
   test.setTimeout(180_000);
@@ -74,16 +73,22 @@ test("@real-media desktop selected quote opens doc chat pending context", async 
   ).toBeVisible({ timeout: 5_000 });
   await actions.getByRole("button", { name: "Quote to new chat" }).click();
 
-  // Chat now opens a full conversation pane via openInNewPane, not a secondary surface.
+  // After the reader-sidecar cutover, "Quote to new chat" calls startResourceChat
+  // and opens the new conversation as a full workspace pane (not a secondary
+  // surface). Wait for the chat pane button to appear in the workspace toolbar,
+  // then assert the active pane is now the conversation pane.
   const chatPaneButton = workspacePaneButton(page, /^chat\b/i);
   await expect
     .poll(() => chatPaneButton.count(), { intervals: [250], timeout: 10_000 })
     .toBeGreaterThan(chatPaneCountBefore);
-  const chatPane = page.getByTestId("conversation-pane");
-  await expect(chatPane).toBeVisible({ timeout: 10_000 });
-  await expect(chatPane.getByLabel("Attached to next message")).toContainText(
-    selectedText,
-  );
+
+  const conversationPane = activeWorkspacePane(page);
+  await expect(
+    conversationPane.getByRole("textbox", { name: /ask anything/i }),
+  ).toBeVisible({ timeout: 10_000 });
+  await expect(
+    conversationPane.getByLabel("Attached to next message"),
+  ).toContainText(selectedText);
 
   const afterExacts = await existingHighlightExacts(page, fragmentId);
   expect(afterExacts).toContain(selectedText);
@@ -97,7 +102,7 @@ test("@real-media desktop selected quote opens doc chat pending context", async 
   });
 });
 
-test("@real-media mobile selected quote opens document chat chooser", async ({
+test("@real-media mobile selected quote opens new chat pane", async ({
   page,
 }, testInfo) => {
   test.setTimeout(180_000);
@@ -137,11 +142,14 @@ test("@real-media mobile selected quote opens document chat chooser", async ({
   ).toBeVisible({ timeout: 5_000 });
   await actions.getByRole("button", { name: "Quote to existing chat" }).click();
 
-  const chooser = page.getByRole("dialog", { name: "Chat" });
-  await expect(chooser).toBeVisible({ timeout: 10_000 });
+  // After the reader-sidecar cutover, "Quote to existing chat" calls
+  // startResourceChat and opens the conversation as a full workspace pane (the
+  // old "Choose a chat" dialog/chooser is gone). On mobile the new pane becomes
+  // the active (and only rendered) pane. Poll for the composer to appear.
+  const conversationPane = activeWorkspacePane(page);
   await expect(
-    chooser.getByText("Choose a chat to add your quote"),
-  ).toBeVisible({ timeout: 10_000 });
+    conversationPane.getByRole("textbox", { name: /ask anything/i }),
+  ).toBeVisible({ timeout: 15_000 });
 
   const afterExacts = await existingHighlightExacts(page, fragmentId);
   expect(afterExacts).toContain(selectedText);
