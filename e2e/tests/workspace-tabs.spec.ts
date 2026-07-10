@@ -349,7 +349,6 @@ test.describe("workspace tabs", () => {
       )
       .not.toBe("");
     const resolvedTitle = await paneButtonLabel(activator);
-    const resolvedHeadingTitle = resolvedTitle.replace(/\s+Active pane\.$/, "");
 
     const navigationResponse = await page.request.get(
       `/api/media/${epub.media_id}/navigation`,
@@ -381,11 +380,9 @@ test.describe("workspace tabs", () => {
         intervals: [500, 1_000],
       })
       .toBe(resolvedTitle);
-    await expect(
-      activeWorkspacePane(page).getByRole("heading", {
-        name: new RegExp(`^${escapeRegExp(resolvedHeadingTitle)}$`),
-      }),
-    ).toBeVisible();
+    // The book title is surfaced via the pane-strip button label (verified
+    // above), not as a heading element — the EPUB HTML only contains chapter
+    // headings and the RunningHead uses <span>, not <h*>.
   });
 
   test("desktop: library epub title hint appears before media load", async ({

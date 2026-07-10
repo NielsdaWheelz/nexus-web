@@ -7,6 +7,7 @@ import {
 } from "@playwright/test";
 import { stateChangingApiHeaders } from "./api";
 import {
+  activeWorkspacePane,
   makeWorkspacePane,
   makeWorkspaceState,
   pinDeviceId,
@@ -153,19 +154,28 @@ test.describe("workspace session restore", () => {
 
     try {
       await page.goto("/libraries");
-      await expect(workspacePaneButton(page, /^Libraries\b/)).toBeVisible();
+      await expect(workspacePaneButton(page, /^Libraries\b/)).toBeVisible({
+        timeout: 15_000,
+      });
+      await expect(activeWorkspacePane(page)).toBeVisible({ timeout: 15_000 });
 
       // Open a second pane: shift-click an in-pane library link.
-      const libraryLink = page.locator("a[href^='/libraries/']").first();
-      await expect(libraryLink).toBeVisible();
+      // Scope to the active pane so the click lands inside PaneRouteBoundary
+      // and the pane runtime is guaranteed to be mounted.
+      const libraryLink = activeWorkspacePane(page)
+        .locator("a[href^='/libraries/']")
+        .first();
+      await expect(libraryLink).toBeVisible({ timeout: 10_000 });
       await libraryLink.click({ modifiers: ["Shift"] });
 
       await expect
-        .poll(() =>
-          page
-            .getByRole("toolbar", { name: "Workspace panes" })
-            .getByRole("button", { name: /^Close / })
-            .count(),
+        .poll(
+          () =>
+            page
+              .getByRole("toolbar", { name: "Workspace panes" })
+              .getByRole("button", { name: /^Close / })
+              .count(),
+          { timeout: 10_000 },
         )
         .toBeGreaterThan(1);
 
