@@ -13,18 +13,28 @@ export type AsyncResource<T> =
   | { status: "ready"; data: T }
   | { status: "error"; error: ApiError; retry: () => void };
 
-type DescriptorResourceArgs<T, P> = {
+// claimSeed (default true) controls whether this consumer, on reading a seeded/
+// prefetched entry, also *consumes* it (removes it so a later re-open fetches fresh).
+// A seed is one-shot, but a single key can have several first-paint consumers (e.g. the
+// pane it was seeded for plus an always-mounted chrome reader). Only the owner should
+// claim; ambient readers pass claimSeed:false so they paint from the seed without
+// starving the owner's first render — otherwise whichever commits first (the eager
+// chrome reader) removes the seed before the lazy owner pane hydrates, so the pane
+// renders its loading state against server-rendered content and hydration mismatches.
+type SeedClaimArgs = { claimSeed?: boolean };
+
+type DescriptorResourceArgs<T, P> = SeedClaimArgs & {
   descriptor: ResourceDescriptor<P>;
   params: P | null;
   load?: (params: P, signal: AbortSignal) => Promise<T>;
 };
 
-type PathResourceArgs = {
+type PathResourceArgs = SeedClaimArgs & {
   cacheKey: string | null;
   path: (cacheKey: string) => ApiPath;
 };
 
-type LoadResourceArgs<T> = {
+type LoadResourceArgs<T> = SeedClaimArgs & {
   cacheKey: string | null;
   load: (signal: AbortSignal) => Promise<T>;
 };
@@ -83,6 +93,7 @@ export function useResource<T, P>(
     }
   }
   const seeded = seededRef.current;
+  const claimSeed = args.claimSeed ?? true;
 
   const skipKeyRef = useRef(seeded !== null ? seeded.key : null);
 
@@ -94,10 +105,10 @@ export function useResource<T, P>(
   });
 
   useEffect(() => {
-    if (seeded !== null && cache !== null) {
+    if (claimSeed && seeded !== null && cache !== null) {
       cache.consume(seeded.key);
     }
-  }, [cache, seeded]);
+  }, [cache, seeded, claimSeed]);
 
   useEffect(() => {
     if (cacheKey === null) {

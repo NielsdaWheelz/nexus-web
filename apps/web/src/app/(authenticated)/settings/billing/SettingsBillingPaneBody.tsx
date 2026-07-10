@@ -136,7 +136,10 @@ function sourceLabel(source: string): string {
 
 export default function SettingsBillingPaneBody() {
   const display = useRenderEnvironment();
-  const { account, loading, error } = useBillingAccount();
+  // This pane owns the `billing-account:0` first-paint seed, so it claims (consumes) it;
+  // ambient readers (e.g. GlobalPlayerFooter) read the same seed without consuming so the
+  // pane's lazy hydration render still paints from it and matches the server (React #418).
+  const { account, loading, error } = useBillingAccount({ claimSeed: true });
   const [checkoutBusy, setCheckoutBusy] = useState<BillingPlanTier | null>(null);
   const [portalBusy, setPortalBusy] = useState(false);
   const [actionError, setActionError] = useState<FeedbackContent | null>(null);

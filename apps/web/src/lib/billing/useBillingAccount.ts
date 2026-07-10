@@ -39,7 +39,15 @@ interface BillingAccountResponse {
   data: BillingAccount;
 }
 
-export function useBillingAccount() {
+// The billing account seed (cacheKey `billing-account:0`) has multiple simultaneous
+// first-paint consumers: the settings-billing pane it is seeded for, the always-mounted
+// GlobalPlayerFooter, and (in multi-pane workspaces) media/podcast panes. The resource
+// cache is consume-once, so if an ambient reader claimed the seed it would starve the
+// pane, whose lazy chunk hydrates later — the pane would then render its loading state
+// against the server-rendered content and hydration would mismatch (React #418). So only
+// the seed's route owner (the settings-billing pane) claims it; every other reader passes
+// the default `claimSeed: false` and paints from the seed without removing it.
+export function useBillingAccount(options?: { claimSeed?: boolean }) {
   const [reloadVersion, setReloadVersion] = useState(0);
   const accountResource = useResource<
     BillingAccountResponse,
@@ -47,6 +55,7 @@ export function useBillingAccount() {
   >({
     descriptor: billingAccountResource,
     params: { refreshVersion: reloadVersion },
+    claimSeed: options?.claimSeed ?? false,
   });
   const reload = useCallback(() => {
     setReloadVersion((version) => version + 1);
