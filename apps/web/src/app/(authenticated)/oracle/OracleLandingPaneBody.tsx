@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   FieldFeedback,
   toFeedback,
@@ -24,6 +24,15 @@ export default function OracleLandingPaneBody() {
   const [question, setQuestion] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<FeedbackContent | null>(null);
+  // Pane bodies are lazy chunks: on a cold load the Suspense boundary suspends and
+  // remounts at hydration, so an SSR-visible controlled textarea filled before the
+  // chunk lands would have its value stranded/reset. Keep the input inert until this
+  // instance is truly mounted (the SearchPaneBody idiom) — a typed value can only
+  // land on the live, hydrated instance, and its onChange keeps the controlled state.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const handleSubmit = useCallback(
     async (event: React.FormEvent) => {
@@ -81,7 +90,7 @@ export default function OracleLandingPaneBody() {
               value={question}
               onChange={(e) => setQuestion(e.target.value)}
               rows={3}
-              disabled={submitting}
+              disabled={submitting || !mounted}
               aria-label="Oracle question"
             />
             <div className={styles.askMeta}>
@@ -91,7 +100,7 @@ export default function OracleLandingPaneBody() {
               <button
                 type="submit"
                 className={styles.askSubmit}
-                disabled={submitting || question.trim().length === 0}
+                disabled={submitting || !mounted || question.trim().length === 0}
               >
                 {submitting ? "Consulting…" : "Consult the oracle"}
               </button>
