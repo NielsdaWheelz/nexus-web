@@ -30,6 +30,7 @@ def test_registry_job_kinds_match_task_catalog_contract():
         "contributor_reconciliation",
         "conversation_distill",
         "conversation_distill_sweep",
+        "atlas_project_job",
     }
     actual_kinds = set(get_default_registry().keys())
     assert actual_kinds == expected_kinds, (

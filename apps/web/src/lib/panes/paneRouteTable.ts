@@ -12,6 +12,7 @@ import {
   Library,
   Link2,
   ListMusic,
+  Map,
   MessageSquare,
   Mic,
   Palette,
@@ -154,13 +155,13 @@ const PANE_ROUTE_META: Record<PaneRouteId, PaneRouteMeta> = {
     icon: Keyboard,
     getChrome: () => ({ title: "Keyboard Shortcuts" }),
   },
+  atlas: {
+    icon: Map,
+    getChrome: () => ({ title: "The Atlas" }),
+  },
   oracle: {
     icon: Sparkles,
     getChrome: () => ({ title: "Oracle" }),
-  },
-  oracleAtlas: {
-    icon: Sparkles,
-    getChrome: () => ({ title: "The Atlas" }),
   },
   oracleReading: {
     icon: Sparkles,

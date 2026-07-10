@@ -1,4 +1,13 @@
 .surface {
+  /* Canvas cannot read var() directly (same limit as drawCardinal), so these
+     scoped tokens are read once at mount via getComputedStyle. Fallbacks cover
+     oracle-theme-absent environments. */
+  --atlas-contradicts-line: color-mix(
+    in oklab,
+    var(--oracle-gold, #c39a4d) 45%,
+    #6b2a2a 55%
+  );
+  --atlas-synapse-line: var(--oracle-gold, #c39a4d);
   background: var(--oracle-bg);
   color: var(--oracle-fg);
   min-height: 100%;
@@ -7,6 +16,58 @@
   display: flex;
   flex-direction: column;
   gap: 1rem;
+}
+
+/* ---- layer toggles — quiet small-caps text buttons ---------------------- */
+
+.layerToggles {
+  position: absolute;
+  bottom: 0.9rem;
+  right: 1rem;
+  display: flex;
+  gap: 0.9rem;
+}
+
+.layerToggle {
+  appearance: none;
+  background: transparent;
+  border: none;
+  padding: 0.3rem 0.1rem;
+  cursor: pointer;
+  font-family: var(--font-oracle-display);
+  font-variant: small-caps;
+  font-size: 0.72rem;
+  letter-spacing: 0.22em;
+  color: var(--oracle-marginalia-fg);
+  transition: color 200ms ease;
+}
+
+.layerToggle[aria-pressed="true"] {
+  color: var(--oracle-gold);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .layerToggle:hover {
+    color: var(--oracle-cream);
+  }
+}
+
+/* ---- corpus star tooltip ------------------------------------------------ */
+
+.corpusLabelKind {
+  font-style: normal;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  font-size: 0.68rem;
+  color: var(--oracle-marginalia-fg);
+}
+
+@media (any-pointer: coarse) {
+  .layerToggle {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+  }
 }
 
 .headline {
@@ -101,13 +162,6 @@
   text-wrap: balance;
 }
 
-.starLabelTheme {
-  font-style: italic;
-  font-size: 0.85rem;
-  color: var(--oracle-fg-muted);
-  letter-spacing: 0.04em;
-}
-
 .starLabelHint {
   font-size: 0.75rem;
   color: var(--oracle-marginalia-fg);
@@ -130,66 +184,6 @@
   text-align: right;
   max-width: 16rem;
   text-wrap: balance;
-}
-
-/* ---- empty state -------------------------------------------------------- */
-
-.emptyState {
-  margin: 4rem auto;
-  max-width: 28rem;
-  text-align: center;
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-  border: 1px solid var(--oracle-rule);
-  padding: 2.5rem 2rem;
-}
-
-.emptyLine {
-  font-family: var(--font-oracle-display);
-  font-style: italic;
-  color: var(--oracle-fg-muted);
-  font-size: 1.05rem;
-  line-height: 1.6;
-  text-wrap: balance;
-}
-
-.emptyAction {
-  font-family: var(--font-oracle-display);
-  text-transform: uppercase;
-  letter-spacing: 0.18em;
-  color: var(--oracle-gold);
-  font-size: 0.85rem;
-  text-decoration: none;
-  border-bottom: 1px solid transparent;
-  transition: border-color 200ms ease;
-  align-self: center;
-  padding: 0.25rem 0;
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .emptyAction:hover {
-    border-color: var(--oracle-gold);
-  }
-}
-
-/* ---- back link ---------------------------------------------------------- */
-
-.backToAleph {
-  align-self: center;
-  font-family: var(--font-oracle-display);
-  font-style: italic;
-  color: var(--oracle-marginalia-fg);
-  text-decoration: none;
-  font-size: 0.9rem;
-  letter-spacing: 0.05em;
-  padding: 0.4rem 0.8rem;
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .backToAleph:hover {
-    color: var(--oracle-gold);
-  }
 }
 
 /* ---- accessibility: visually-hidden star list --------------------------- */
@@ -232,16 +226,6 @@
 @media (any-pointer: coarse) {
   .canvas {
     cursor: default;
-  }
-  .emptyAction {
-    min-height: 44px;
-    display: inline-flex;
-    align-items: center;
-  }
-  .backToAleph {
-    min-height: 44px;
-    display: inline-flex;
-    align-items: center;
   }
 }
 

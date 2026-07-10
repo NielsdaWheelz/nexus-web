@@ -32,7 +32,7 @@ DEFAULT_WORKER_ALLOWED_JOB_KINDS = (
     "podcast_sync_subscription_job,podcast_reindex_semantic_job,"
     "backfill_default_library_closure_job,oracle_reading_generate,synapse_scan,"
     "dawn_write_job,contributor_reconciliation,"
-    "conversation_distill,conversation_distill_sweep"
+    "conversation_distill,conversation_distill_sweep,atlas_project_job"
 )
 
 
@@ -423,6 +423,12 @@ class Settings(BaseSettings):
         default=3600, alias="CONVERSATION_DISTILL_SCHEDULE_SECONDS"
     )
 
+    # Grand atlas projection: the nightly PCA re-projection cadence. Set 0 to
+    # disable the periodic sweep (the on-demand trigger still fires on ingest).
+    atlas_project_schedule_seconds: int = Field(
+        default=86400, alias="ATLAS_PROJECT_SCHEDULE_SECONDS"
+    )
+
     # Amanuensis: ASSISTANT_WRITE_TOOLS_ENABLED=false omits the five write
     # ToolSpecs from the chat tool loop, leaving a read-only agent (amanuensis
     # D-6, AC-6).
@@ -711,6 +717,8 @@ class Settings(BaseSettings):
             raise ValueError("SYNC_GUTENBERG_CATALOG_SCHEDULE_SECONDS must be >= 0.")
         if self.background_job_prune_schedule_seconds < 0:
             raise ValueError("BACKGROUND_JOB_PRUNE_SCHEDULE_SECONDS must be >= 0.")
+        if self.atlas_project_schedule_seconds < 0:
+            raise ValueError("ATLAS_PROJECT_SCHEDULE_SECONDS must be >= 0.")
         if self.background_job_prune_succeeded_after_days < 1:
             raise ValueError("BACKGROUND_JOB_PRUNE_SUCCEEDED_AFTER_DAYS must be >= 1.")
         if self.background_job_prune_dead_after_days < 1:

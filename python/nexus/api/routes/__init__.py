@@ -7,6 +7,7 @@ variables to be configured upfront.
 
 from fastapi import APIRouter
 
+from nexus.api.routes.atlas import router as atlas_router
 from nexus.api.routes.auth_handoff_codes import router as auth_handoff_codes_router
 from nexus.api.routes.billing import router as billing_router
 from nexus.api.routes.browse import router as browse_router
@@ -104,6 +105,7 @@ def create_api_router() -> APIRouter:
     api_router.include_router(vault_router)
     api_router.include_router(users_router)
     api_router.include_router(walknotes_router)
+    api_router.include_router(atlas_router)
     # The consumption queue serves web articles, epubs, and PDFs regardless of the
     # podcast feature flag, so it is registered unconditionally.
     api_router.include_router(queue_router)

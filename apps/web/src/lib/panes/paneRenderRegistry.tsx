@@ -40,8 +40,8 @@ const PANE_LOADERS: Record<PaneRouteId, PaneLoader> = {
     import("@/app/(authenticated)/settings/identities/SettingsIdentitiesPaneBody"),
   settingsKeybindings: () =>
     import("@/app/(authenticated)/settings/keybindings/KeybindingsPaneBody"),
+  atlas: () => import("@/app/(authenticated)/atlas/GrandAtlasPaneBody"),
   oracle: () => import("@/app/(authenticated)/oracle/OracleLandingPaneBody"),
-  oracleAtlas: () => import("@/app/(authenticated)/oracle/atlas/AtlasPaneBody"),
   oracleReading: () =>
     import("@/app/(authenticated)/oracle/[readingId]/OracleReadingPaneBody"),
 };

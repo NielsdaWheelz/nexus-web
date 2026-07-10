@@ -486,6 +486,9 @@ def test_reader_citation_data_has_one_constructor():
         # Array annotations (ReaderCitationData[]) and Map values are consumers,
         # not constructors — they keep a space/bracket after the type.
         and not re.search(r": ReaderCitationData\[\]", hit.text)
+        # Scalar property/parameter annotations (`citation: ReaderCitationData;`)
+        # are also consumers — they end with a semicolon after the bare type name.
+        and not re.search(r": ReaderCitationData\s*;", hit.text)
     ]
     # Exactly one: the toReaderCitationData return type in resourceGraph/citations.ts.
     assert len(constructors) == 1, (
@@ -1723,6 +1726,48 @@ def test_attention_service_has_no_legacy_table_fallback():
     # never read here (hard-cutover doctrine).
     hits = _grep(r"reader_media_state|podcast_listening_states", _ATTENTION_SERVICE)
     assert not hits, f"attention.py reads a legacy read-state table:\n{_fmt(hits)}"
+
+
+# =============================================================================
+# Grand atlas hard cutover: media_atlas_positions has exactly one writer
+# (services/atlas_projection.py); no numpy in the projection service
+# (grand-atlas-hard-cutover.md §13 G1/G2).
+# =============================================================================
+
+_ATLAS_PROJECTION_SERVICE = _PY_ROOT / "services" / "atlas_projection.py"
+
+
+def test_media_atlas_positions_has_sole_writer():
+    # G2: only atlas_projection.py may write media_atlas_positions. The route
+    # only SELECTs it and models.py only declares it, so a write-verb scan flags
+    # any second writer.
+    hits = _grep(
+        r"(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+media_atlas_positions",
+        _PY_ROOT,
+        _WEB_ROOT,
+    )
+    hits = [hit for hit in hits if "atlas_projection.py" not in hit.path]
+    assert not hits, f"non-sole writer of media_atlas_positions:\n{_fmt(hits)}"
+
+
+def test_atlas_projection_service_has_no_numpy():
+    # G1: the projection is pure Python (no numpy/scipy/umap dependency).
+    hits = _grep(r"import\s+numpy|from\s+numpy|import\s+scipy|import\s+umap", _ATLAS_PROJECTION_SERVICE)
+    assert not hits, f"numpy/scipy/umap imported in atlas projection:\n{_fmt(hits)}"
+
+
+def test_oracle_atlas_route_id_absent_from_pane_files():
+    # G3: `oracleAtlas` was never a registered pane route (the grand atlas is its
+    # own `/atlas` pane; `/oracle/atlas` only survives as an App Router redirect).
+    # A future spec (e.g. oracle-shell-dissolution) must never re-add it, so the
+    # three pane registration files must carry no `"oracleAtlas"` literal.
+    pane_files = (
+        _WEB_ROOT / "lib" / "panes" / "paneRouteModel.ts",
+        _WEB_ROOT / "lib" / "panes" / "paneRenderRegistry.tsx",
+        _WEB_ROOT / "lib" / "panes" / "paneRouteTable.ts",
+    )
+    hits = _grep(r'"oracleAtlas"', *pane_files)
+    assert not hits, f"oracleAtlas route id survives in a pane file:\n{_fmt(hits)}"
 
 
 # =============================================================================

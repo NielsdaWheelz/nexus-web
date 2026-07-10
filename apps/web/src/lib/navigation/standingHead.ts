@@ -31,8 +31,8 @@ const ROUTE_SECTION = {
   settingsLocalVault: "settings",
   settingsIdentities: "settings",
   settingsKeybindings: "settings",
+  atlas: "atlas",
   oracle: "oracle",
-  oracleAtlas: "oracle",
   oracleReading: "oracle",
 } satisfies Record<PaneRouteId, string>;
 

@@ -82,11 +82,16 @@ describe("pane route model", () => {
 
   it("resolves oracle routes as registered pane routes", () => {
     expect(resolvePaneRouteModel("/oracle")).toMatchObject({ id: "oracle" });
-    expect(resolvePaneRouteModel("/oracle/atlas")).toMatchObject({ id: "oracleAtlas" });
     expect(resolvePaneRouteModel("/oracle/some-uuid")).toMatchObject({
       id: "oracleReading",
       params: { readingId: "some-uuid" },
     });
+  });
+
+  it("resolves the grand atlas as its own pane route", () => {
+    // /oracle/atlas is no longer a pane route (oracleAtlas is dead); its App
+    // Router page redirects legacy links to /atlas?layer=readings.
+    expect(resolvePaneRouteModel("/atlas")).toMatchObject({ id: "atlas" });
   });
 
   it("declares unique model ids", () => {

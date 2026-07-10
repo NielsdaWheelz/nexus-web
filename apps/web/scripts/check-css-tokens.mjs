@@ -21,7 +21,11 @@ function toPosix(path) {
 function isAllowedPath(relativePath) {
   return (
     allowedFiles.has(relativePath) ||
-    relativePath.startsWith("src/app/(authenticated)/oracle/")
+    relativePath.startsWith("src/app/(authenticated)/oracle/") ||
+    // The grand atlas is the manuscript register's escape from the Oracle: it
+    // renders under [data-theme="oracle"] and owns a documented scoped palette
+    // (the --atlas-* edge tokens) alongside the --oracle-* variables.
+    relativePath.startsWith("src/app/(authenticated)/atlas/")
   );
 }
 

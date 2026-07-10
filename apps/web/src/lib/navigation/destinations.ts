@@ -63,6 +63,14 @@ export const DESTINATIONS: Destination[] = [
     match: { exact: ["/notes"], prefix: ["/notes/", "/pages/"] },
   },
   {
+    id: "atlas",
+    label: "Atlas",
+    href: "/atlas",
+    keywords: ["map", "chart", "library", "constellation", "stars"],
+    slot: "primary",
+    match: { exact: ["/atlas"], prefix: ["/atlas/"] },
+  },
+  {
     id: "chats",
     label: "Chats",
     href: "/conversations",

@@ -101,7 +101,7 @@ export default function OracleLandingPaneBody() {
 
           <OracleAlephGrid />
 
-          <Link className={styles.atlasLink} href="/oracle/atlas">
+          <Link className={styles.atlasLink} href="/atlas?layer=readings">
             ✦ View as a sky
           </Link>
         </div>

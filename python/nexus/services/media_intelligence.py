@@ -752,6 +752,7 @@ def _persist_unit(
             return
 
         from nexus.services import synapse
+        from nexus.services.atlas_projection import try_enqueue_atlas_project
 
         synapse.queue_synapse_scan(
             db,
@@ -759,6 +760,9 @@ def _persist_unit(
             ref=ResourceRef(scheme="media", id=media_id),
             reason="media_unit_ready",
         )
+        # Re-project the grand atlas once the unpositioned backlog is meaningful
+        # (soft, dedupes, rides this transaction — grand-atlas §S1.5).
+        try_enqueue_atlas_project(db, user_id=owner_user_id)
         db.execute(
             text("DELETE FROM media_claims WHERE summary_id = :summary_id"),
             {"summary_id": summary_id},

@@ -46,11 +46,11 @@ export interface FolioStar extends FolioStarInput {
 }
 
 /** Margin from the zenith point — stars never sit exactly at the center. */
-const ZENITH_MARGIN = (Math.PI / 2) * 0.06;
+export const ZENITH_MARGIN = (Math.PI / 2) * 0.06;
 /** Margin from the horizon rim — stars never sit on the very edge. */
-const HORIZON_RIM_MARGIN = (Math.PI / 2) * 0.1;
+export const HORIZON_RIM_MARGIN = (Math.PI / 2) * 0.1;
 /** Effective altitude span, [ZENITH_MARGIN, π/2 - HORIZON_RIM_MARGIN]. */
-const ALTITUDE_SPAN = Math.PI / 2 - ZENITH_MARGIN - HORIZON_RIM_MARGIN;
+export const ALTITUDE_SPAN = Math.PI / 2 - ZENITH_MARGIN - HORIZON_RIM_MARGIN;
 /** Hash space normalizer — keeps the math in [0, 1). */
 const HASH_NORMALIZER = 0xffffffff;
 

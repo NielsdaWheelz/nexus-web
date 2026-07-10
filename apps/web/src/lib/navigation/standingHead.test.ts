@@ -31,8 +31,8 @@ describe("standingHeadForRoute", () => {
     expect(standingHeadForRoute("settings")).toBe("Settings");
     expect(standingHeadForRoute("settingsBilling")).toBe("Settings");
     expect(standingHeadForRoute("settingsKeybindings")).toBe("Settings");
+    expect(standingHeadForRoute("atlas")).toBe("Atlas");
     expect(standingHeadForRoute("oracle")).toBe("Oracle");
-    expect(standingHeadForRoute("oracleAtlas")).toBe("Oracle");
     expect(standingHeadForRoute("oracleReading")).toBe("Oracle");
   });
 });

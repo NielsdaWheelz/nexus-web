@@ -53,6 +53,7 @@ USER_FACING_JOB_KINDS = (
     "synapse_scan",
     "contributor_reconciliation",
     "conversation_distill",
+    "atlas_project_job",
 )
 
 
@@ -276,6 +277,18 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             retry_delays_seconds=(60, 300, 900),
             lease_seconds=300,
         ),
+        "atlas_project_job": JobDefinition(
+            kind="atlas_project_job",
+            handler=_run_atlas_project,
+            max_attempts=3,
+            retry_delays_seconds=(120, 600, 1800),
+            lease_seconds=300,
+            periodic_interval_seconds=(
+                int(settings.atlas_project_schedule_seconds)
+                if settings.atlas_project_schedule_seconds > 0
+                else None
+            ),
+        ),
     }
 
 
@@ -469,6 +482,12 @@ def _run_dawn_write_sweep(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | 
     from nexus.tasks.dawn_write import dawn_write_sweep
 
     return dawn_write_sweep()
+
+
+def _run_atlas_project(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    from nexus.tasks.atlas_project import atlas_project
+
+    return atlas_project(payload=payload)
 
 
 def _run_contributor_reconciliation(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:

@@ -14367,3 +14367,126 @@ class TestMigration0176AmanuensisAssistantWrites:
         finally:
             reset_test_schema()
             engine.dispose()
+
+
+class TestMigration0177GrandAtlas:
+    """0177 adds media_atlas_positions: the persistent 2D corpus spatial substrate
+    with x/y range CHECKs and a version-positive CHECK."""
+
+    @pytest.fixture(scope="class")
+    def head_engine(self):
+        reset_test_schema()
+        result = run_alembic_command("upgrade head")
+        if result.returncode != 0:
+            pytest.fail(f"Migration upgrade failed: {result.stderr}")
+        engine = create_engine(get_test_database_url())
+        yield engine
+        engine.dispose()
+        reset_test_schema()
+
+    def test_head_has_media_atlas_positions_shape(self, head_engine):
+        with Session(head_engine) as session:
+            columns = {
+                row[0]
+                for row in session.execute(
+                    text(
+                        "SELECT column_name FROM information_schema.columns"
+                        " WHERE table_name = 'media_atlas_positions'"
+                    )
+                ).fetchall()
+            }
+            constraints = {
+                row[0]
+                for row in session.execute(
+                    text(
+                        "SELECT conname FROM pg_constraint"
+                        " WHERE conrelid = 'media_atlas_positions'::regclass"
+                    )
+                ).fetchall()
+            }
+            indexes = {
+                row[0]
+                for row in session.execute(
+                    text(
+                        "SELECT indexname FROM pg_indexes"
+                        " WHERE tablename = 'media_atlas_positions'"
+                    )
+                ).fetchall()
+            }
+        assert {"media_id", "x", "y", "projection_version", "computed_at"}.issubset(columns)
+        assert "ck_media_atlas_positions_x_range" in constraints
+        assert "ck_media_atlas_positions_y_range" in constraints
+        assert "ck_media_atlas_positions_version_positive" in constraints
+        assert "ix_media_atlas_positions_version" in indexes
+
+    def test_head_range_checks_reject_out_of_bounds(self, head_engine):
+        media_id = uuid4()
+        with Session(head_engine) as session:
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": media_id})
+            session.execute(
+                text(
+                    "INSERT INTO media (id, kind, title, processing_status)"
+                    " VALUES (:id, 'web_article', 'T', 'ready_for_reading')"
+                ),
+                {"id": media_id},
+            )
+            session.commit()
+
+            # Valid row commits.
+            session.execute(
+                text(
+                    "INSERT INTO media_atlas_positions (media_id, x, y)"
+                    " VALUES (:id, 0.5, 0.5)"
+                ),
+                {"id": media_id},
+            )
+            session.commit()
+
+            # Out-of-range x is rejected.
+            with pytest.raises(IntegrityError):
+                session.execute(
+                    text(
+                        "UPDATE media_atlas_positions SET x = 1.5 WHERE media_id = :id"
+                    ),
+                    {"id": media_id},
+                )
+                session.commit()
+            session.rollback()
+
+            # projection_version < 1 is rejected.
+            with pytest.raises(IntegrityError):
+                session.execute(
+                    text(
+                        "UPDATE media_atlas_positions SET projection_version = 0"
+                        " WHERE media_id = :id"
+                    ),
+                    {"id": media_id},
+                )
+                session.commit()
+            session.rollback()
+
+            session.execute(
+                text("DELETE FROM media_atlas_positions WHERE media_id = :id"),
+                {"id": media_id},
+            )
+            session.execute(text("DELETE FROM media WHERE id = :id"), {"id": media_id})
+            session.execute(text("DELETE FROM users WHERE id = :id"), {"id": media_id})
+            session.commit()
+
+    def test_downgrade_drops_table(self):
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            assert run_alembic_command("upgrade 0177").returncode == 0
+            assert run_alembic_command("downgrade 0176").returncode == 0
+            with Session(engine) as session:
+                present = session.execute(
+                    text(
+                        "SELECT 1 FROM information_schema.tables"
+                        " WHERE table_name = 'media_atlas_positions'"
+                    )
+                ).scalar_one_or_none()
+                assert present is None
+        finally:
+            reset_test_schema()
+            engine.dispose()

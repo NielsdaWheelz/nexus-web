@@ -3241,6 +3241,42 @@ class ContentEmbedding(Base):
     )
 
 
+class MediaAtlasPosition(Base):
+    """Persistent 2D position for one work in the grand atlas.
+
+    Produced by the atlas_project_job PCA projection; x/y in [0, 1] map to
+    celestial coords at render time (grand-atlas-hard-cutover.md §4.2). Sole
+    writer: services/atlas_projection.py.
+    """
+
+    __tablename__ = "media_atlas_positions"
+
+    media_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("media.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    x: Mapped[float] = mapped_column(Float, nullable=False)
+    y: Mapped[float] = mapped_column(Float, nullable=False)
+    projection_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="1"
+    )
+    computed_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint("x >= 0.0 AND x <= 1.0", name="ck_media_atlas_positions_x_range"),
+        CheckConstraint("y >= 0.0 AND y <= 1.0", name="ck_media_atlas_positions_y_range"),
+        CheckConstraint(
+            "projection_version >= 1", name="ck_media_atlas_positions_version_positive"
+        ),
+        Index("ix_media_atlas_positions_version", "projection_version"),
+    )
+
+
 class ContentIndexState(Base):
     """Active evidence index pointer for a content owner."""
 
