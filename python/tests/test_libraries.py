@@ -1762,10 +1762,10 @@ class TestListLibraryMedia:
         assert cursor is not None
 
         delete_response = auth_client.delete(
-            f"/libraries/{library_id}/media/{media_ids[0]}",
+            f"/media/{media_ids[0]}?library_id={library_id}",
             headers=auth_headers(user_id),
         )
-        assert delete_response.status_code == 204, delete_response.text
+        assert delete_response.status_code == 200, delete_response.text
 
         second = _list_library_entries(auth_client, user_id, library_id, limit=2, cursor=cursor)
         assert second.status_code == 200, second.text

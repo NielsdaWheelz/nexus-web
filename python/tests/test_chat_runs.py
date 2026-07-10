@@ -1485,6 +1485,7 @@ class TestChatResponseRetry:
         """
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
+        _seed_ai_plus_billing(direct_db, user_id)
         with direct_db.session() as session:
             model_id = create_test_model(session)
             conversation_id = create_test_conversation(session, user_id)
@@ -1604,6 +1605,7 @@ class TestChatResponseRetry:
     ):
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
+        _seed_ai_plus_billing(direct_db, user_id)
         with direct_db.session() as session:
             model_id = create_test_model(session)
             conversation_id = create_test_conversation(session, user_id)
@@ -1705,6 +1707,7 @@ class TestChatResponseRetry:
     ):
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
+        _seed_ai_plus_billing(direct_db, user_id)
         with direct_db.session() as session:
             model_id = create_test_model(session)
             conversation_id = create_test_conversation(session, user_id)
