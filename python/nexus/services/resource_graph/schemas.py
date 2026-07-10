@@ -29,6 +29,7 @@ EdgeOrigin = Literal[
     "highlight_note",
     "synapse",
     "document_embed",
+    "assistant",
 ]
 
 EDGE_KINDS: tuple[EdgeKind, ...] = get_args(EdgeKind)

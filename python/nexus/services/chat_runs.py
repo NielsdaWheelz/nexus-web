@@ -78,6 +78,11 @@ from nexus.services.agent_tools.web_search import (
     WEB_SEARCH_TOOL_NAME,
     execute_web_search,
 )
+from nexus.services.agent_tools.writes import (
+    WRITE_TOOL_NAMES,
+    assistant_write_tool_definitions,
+    execute_write_tool,
+)
 from nexus.services.api_key_resolver import (
     get_model_by_id,
     resolve_api_key,
@@ -198,6 +203,19 @@ _CHAT_TOOL_SPECS: tuple[ToolSpec, ...] = (
         parameters=INSPECT_RESOURCE_TOOL_DEFINITION["parameters"],
     ),
 )
+
+
+def _chat_tool_specs() -> tuple[ToolSpec, ...]:
+    """The read-only tools plus the assistant write tools when enabled (AC-6)."""
+    write_specs = tuple(
+        ToolSpec(
+            name=definition["name"],
+            description=definition["description"],
+            parameters=definition["parameters"],
+        )
+        for definition in assistant_write_tool_definitions()
+    )
+    return _CHAT_TOOL_SPECS + write_specs
 
 
 def _app_search_scopes_from_tool_args(args: Mapping[str, Any]) -> tuple[list[str], str | None]:
@@ -1010,7 +1028,7 @@ async def _execute_chat_run(
             )
             return {"status": "error", "error_code": error_code}
 
-        llm_request = dataclasses.replace(assembly.llm_request, tools=_CHAT_TOOL_SPECS)
+        llm_request = dataclasses.replace(assembly.llm_request, tools=_chat_tool_specs())
         if resolved_key.mode == "platform":
             est_tokens = (
                 estimate_tokens("\n".join(turn.content for turn in llm_request.messages))
@@ -1739,6 +1757,67 @@ async def _execute_chat_run(
                                 call_id=tc.id,
                                 output=inspect_result.tool_output(),
                                 is_error=inspect_result.is_error,
+                            )
+                        )
+                    elif tc.name in WRITE_TOOL_NAMES:
+                        raw_args = tc.arguments or {}
+                        write_args: dict[str, Any] = (
+                            dict(raw_args) if isinstance(raw_args, Mapping) else {}
+                        )
+                        write_tool_call_id = persist_tool_call_start(
+                            db,
+                            run=run,
+                            tool_call_index=tool_call_index_next,
+                            tool_name=tc.name,
+                            scope="assistant_write",
+                            requested_types=[],
+                        )
+                        bind_provider_tool_call_events(
+                            db,
+                            run=run,
+                            tool_call_index=tool_call_index_next,
+                            tool_call_id=write_tool_call_id,
+                        )
+                        emitter.tool_result(
+                            tool_start_event(
+                                run=run,
+                                tool_call_id=write_tool_call_id,
+                                tool_call_index=tool_call_index_next,
+                                tool_name=tc.name,
+                                scope="assistant_write",
+                                types=[],
+                                filters={},
+                            )
+                        )
+                        db.commit()
+                        write_outcome = execute_write_tool(
+                            db,
+                            run=run,
+                            tool_call_index=tool_call_index_next,
+                            tool_name=tc.name,
+                            args=write_args,
+                        )
+                        emitter.tool_result(
+                            {
+                                **tool_start_event(
+                                    run=run,
+                                    tool_call_id=write_outcome.tool_call_id,
+                                    tool_call_index=tool_call_index_next,
+                                    tool_name=tc.name,
+                                    scope="assistant_write",
+                                    types=[],
+                                    filters={},
+                                ),
+                                "status": write_outcome.status,
+                                "error_code": write_outcome.error_code,
+                            }
+                        )
+                        db.commit()
+                        tool_results.append(
+                            ToolResult(
+                                call_id=tc.id,
+                                output=write_outcome.tool_output_json,
+                                is_error=write_outcome.is_error,
                             )
                         )
                     else:

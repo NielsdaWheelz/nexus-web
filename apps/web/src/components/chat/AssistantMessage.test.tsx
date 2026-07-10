@@ -1,8 +1,32 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
-import type { ConversationMessage } from "@/lib/conversations/types";
+import type { ConversationMessage, MessageToolCall } from "@/lib/conversations/types";
 import AssistantMessage from "./AssistantMessage";
+
+function writeToolCall(
+  overrides: Partial<MessageToolCall> & Pick<MessageToolCall, "tool_name">,
+): MessageToolCall {
+  return {
+    id: `tool-${overrides.tool_name}`,
+    assistant_message_id: "assistant-1",
+    tool_call_index: 0,
+    status: "complete",
+    scope: "assistant_write",
+    requested_types: [],
+    result_refs: [],
+    selected_context_refs: [],
+    provider_request_ids: [],
+    result_count: 1,
+    selected_count: 0,
+    retrievals: [],
+    candidate_ledgers: [],
+    rerank_ledgers: [],
+    created_at: "2026-06-03T00:00:00Z",
+    updated_at: "2026-06-03T00:00:00Z",
+    ...overrides,
+  };
+}
 
 function assistantMessage(text = "Alpha beta gamma"): ConversationMessage {
   return {
@@ -55,6 +79,10 @@ function selectText(root: HTMLElement, exact: string) {
 }
 
 describe("AssistantMessage", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it("renders a resend action for terminal nonretryable assistant failures", () => {
     const onResendAssistantResponse = vi.fn();
     const message = {
@@ -424,6 +452,121 @@ describe("AssistantMessage", () => {
     );
 
     expect(screen.getByRole("status")).toHaveTextContent("Running custom_tool");
+  });
+
+  it("renders one small-caps verb row per write tool call", () => {
+    const message = assistantMessage("Done.");
+    message.trust_trail = {
+      ...message.trust_trail!,
+      tool_calls: [
+        writeToolCall({
+          tool_name: "add_to_library",
+          id: "w-file",
+          result_refs: [{ kind: "entry", label: "Criticism" }],
+        }),
+        writeToolCall({
+          tool_name: "create_highlight",
+          id: "w-hl",
+          result_refs: [{ kind: "highlight", label: "the entropy of the system" }],
+        }),
+        writeToolCall({
+          tool_name: "mint_edge",
+          id: "w-edge",
+          result_refs: [{ kind: "edge", label: "these rhyme" }],
+        }),
+        writeToolCall({
+          tool_name: "jot_note",
+          id: "w-note",
+          result_refs: [{ kind: "note_block", label: "today's note" }],
+        }),
+        writeToolCall({
+          tool_name: "queue_add",
+          id: "w-queue",
+          result_refs: [{ kind: "queue", label: "The Waste Land" }],
+        }),
+      ],
+    };
+
+    render(
+      <AssistantMessage message={message} forkOptions={[]} errorLabel="The response failed." />,
+    );
+
+    expect(screen.getByText("Filed to")).toBeInTheDocument();
+    expect(screen.getByText("Criticism")).toBeInTheDocument();
+    expect(screen.getByText("Highlighted")).toBeInTheDocument();
+    expect(screen.getByText("Connected")).toBeInTheDocument();
+    expect(screen.getByText("Noted in")).toBeInTheDocument();
+    expect(screen.getByText("Queued")).toBeInTheDocument();
+    expect(screen.getByText("The Waste Land")).toBeInTheDocument();
+    // One Undo control per completed write.
+    expect(screen.getAllByRole("button", { name: /^Undo:/ })).toHaveLength(5);
+  });
+
+  it("renders a mint_edge row as 'Connected A ↔ B' with the rationale detail (§2/§7)", () => {
+    const message = assistantMessage("Done.");
+    message.trust_trail = {
+      ...message.trust_trail!,
+      tool_calls: [
+        writeToolCall({
+          tool_name: "mint_edge",
+          id: "w-edge",
+          result_refs: [
+            {
+              kind: "edge",
+              source_label: "The Waste Land",
+              target_label: "Four Quartets",
+              rationale: "shared imagery",
+            },
+          ],
+        }),
+      ],
+    };
+
+    render(
+      <AssistantMessage message={message} forkOptions={[]} errorLabel="The response failed." />,
+    );
+
+    expect(screen.getByText("Connected")).toBeInTheDocument();
+    expect(screen.getByText("The Waste Land ↔ Four Quartets")).toBeInTheDocument();
+    expect(screen.getByText("shared imagery")).toBeInTheDocument();
+  });
+
+  it("fires the undo request through the fetch boundary and flips to Undone", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          data: { tool_name: "mint_edge", reverted_at: "2026-06-03T01:00:00Z" },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const message = assistantMessage("Connected them.");
+    message.trust_trail = {
+      ...message.trust_trail!,
+      tool_calls: [
+        writeToolCall({
+          tool_name: "mint_edge",
+          id: "w-edge",
+          result_refs: [{ kind: "edge", label: "these rhyme" }],
+        }),
+      ],
+    };
+
+    render(
+      <AssistantMessage message={message} forkOptions={[]} errorLabel="The response failed." />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /^Undo:/ }));
+
+    expect(await screen.findByText("Undone")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/conversations/conversation-1/tool-calls/w-edge/undo",
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(screen.queryByRole("button", { name: /^Undo:/ })).toBeNull();
   });
 
   it("sets the machine register with an ASSISTANT signature and a valid <time> (AC-2)", () => {

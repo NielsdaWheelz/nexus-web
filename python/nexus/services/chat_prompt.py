@@ -92,6 +92,31 @@ def render_system_prompt_block() -> str:
         "read the sections you need. "
         "To use a whole document, search it or inspect its map, then read the relevant "
         "parts."
+    ) + _render_write_tools_block()
+
+
+def _render_write_tools_block() -> str:
+    """The amanuensis 'hands' instructions, only when write tools are enabled."""
+    from nexus.config import get_settings
+
+    if not get_settings().assistant_write_tools_enabled:
+        return ""
+    return (
+        " You can also act on the user's library when they explicitly ask you to file, "
+        "annotate, connect, or queue — never on your own initiative. "
+        "add_to_library(resource_uri, library_id|library_name) files a media or podcast "
+        "into a library the user administers. "
+        "jot_note(markdown, page_uri?) appends a note the user dictates to today's daily "
+        "note, or to a given page. "
+        "create_highlight(media_uri, exact, prefix?, suffix?, note?) dog-ears an exact "
+        "passage; if exact is not unique, add prefix/suffix or quote more surrounding "
+        "text — an ambiguous quote is refused, so never guess. "
+        "mint_edge(source_uri, target_uri, kind?, rationale) connects two of the user's "
+        "resources with your one-line rationale. "
+        "queue_add(media_uri) adds a media item to the read/listen-next queue. "
+        "Each write happens immediately and is shown to the user with an Undo; there is "
+        "no undo or delete tool, so do not attempt to remove anything. Use these tools "
+        "only when the user's words ask for the action."
     )
 
 

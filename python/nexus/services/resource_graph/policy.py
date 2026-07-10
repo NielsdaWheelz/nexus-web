@@ -25,6 +25,10 @@ SchemeSet = tuple[ResourceScheme, ...] | Literal["any"]
 SEARCH_SCOPE_EDGE_KIND: EdgeKind = "context"
 SYNAPSE_SOURCE_SCHEMES: tuple[ResourceScheme, ...] = ("media", "page", "note_block", "highlight")
 SYNAPSE_TARGET_SCHEMES: tuple[ResourceScheme, ...] = ("media", "note_block", "evidence_span")
+# The assistant's hand stays inside the durable library graph (amanuensis D-1):
+# a widened copy of the synapse shape that admits page + highlight, and excludes
+# evidence_span (which only the synapse scanner mints).
+ASSISTANT_EDGE_SCHEMES: tuple[ResourceScheme, ...] = ("media", "page", "note_block", "highlight")
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,7 +39,7 @@ class EdgeShapePolicy:
     source_schemes: SchemeSet
     target_schemes: SchemeSet
     ordinal: Literal["forbidden", "citation_required"]
-    snapshot: Literal["forbidden", "citation_required", "synapse_required"]
+    snapshot: Literal["forbidden", "citation_required", "synapse_required", "assistant_required"]
     source_order: Literal["forbidden", "optional", "conversation_context_optional"]
     target_order: Literal["forbidden"]
     cleanup: str
@@ -128,6 +132,20 @@ EDGE_SHAPE_POLICIES: dict[EdgeOrigin, EdgeShapePolicy] = {
         search_activation="never",
         rendering="suggestion",
     ),
+    "assistant": EdgeShapePolicy(
+        origin="assistant",
+        writer="services.agent_tools.writes",
+        allowed_kinds=EDGE_KINDS,
+        source_schemes=ASSISTANT_EDGE_SCHEMES,
+        target_schemes=ASSISTANT_EDGE_SCHEMES,
+        ordinal="forbidden",
+        snapshot="assistant_required",
+        source_order="forbidden",
+        target_order="forbidden",
+        cleanup="delete on undo; delete bare rows with either endpoint",
+        search_activation="never",
+        rendering="assistant connection",
+    ),
     "document_embed": EdgeShapePolicy(
         origin="document_embed",
         writer="document_embeds child-link sync",
@@ -183,13 +201,16 @@ def validate_edge_shape(edge: EdgeCreate) -> None:
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST, "Only citation edges can carry ordinals"
         )
-    if edge.snapshot is not None and edge.origin != "synapse":
+    if edge.snapshot is not None and edge.origin not in ("synapse", "assistant"):
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST,
-            "Only citation and synapse edges can carry snapshots",
+            "Only citation, synapse, and assistant edges can carry snapshots",
         )
     if edge.origin == "synapse":
         _validate_synapse(edge)
+        return
+    if edge.origin == "assistant":
+        _validate_assistant(edge)
         return
 
     policy = EDGE_SHAPE_POLICIES[edge.origin]
@@ -254,6 +275,31 @@ def _validate_synapse(edge: EdgeCreate) -> None:
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST,
             "Synapse snapshots require a non-empty excerpt",
+        )
+
+
+def _validate_assistant(edge: EdgeCreate) -> None:
+    if (
+        edge.source.scheme not in ASSISTANT_EDGE_SCHEMES
+        or edge.target.scheme not in ASSISTANT_EDGE_SCHEMES
+    ):
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Assistant edges must connect media, page, note_block, or highlight",
+        )
+    if edge.source_order_key is not None or edge.target_order_key is not None:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST, "Assistant edges cannot carry order keys"
+        )
+    if edge.snapshot is None:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Assistant edges require a rationale snapshot",
+        )
+    if not (edge.snapshot.excerpt or "").strip():
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Assistant snapshots require a non-empty excerpt",
         )
 
 

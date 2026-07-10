@@ -19,7 +19,7 @@ import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
 import type { ResourceActivation } from "@/lib/resources/activation";
 import AssistantSelectionPopover from "./AssistantSelectionPopover";
 import AssistantEvidenceDisclosure from "./AssistantEvidenceDisclosure";
-import AssistantTrustInspector from "./AssistantTrustInspector";
+import AssistantTrustInspector, { AssistantWriteTrail } from "./AssistantTrustInspector";
 import ForkStrip from "./ForkStrip";
 import StreamingGutterCue from "./StreamingGutterCue";
 import { useAssistantSelectionBranch } from "./useAssistantSelectionBranch";
@@ -148,6 +148,12 @@ export default function AssistantMessage({
           />
         ) : null}
         {message.trust_trail ? (
+          <AssistantWriteTrail
+            conversationId={message.trust_trail.conversation_id}
+            toolCalls={message.trust_trail.tool_calls}
+          />
+        ) : null}
+        {message.trust_trail ? (
           <AssistantTrustInspector
             trustTrail={message.trust_trail}
             onCitationActivate={onCitationActivate}
@@ -194,21 +200,24 @@ function isGenericAssistantFailureContent(content: string): boolean {
   );
 }
 
+const ACTIVE_TOOL_LABELS: Record<string, string> = {
+  web_search: "Searching web",
+  app_search: "Searching library",
+  read_resource: "Reading source",
+  inspect_resource: "Inspecting source",
+  add_to_library: "Filing to library",
+  jot_note: "Writing note",
+  create_highlight: "Highlighting passage",
+  mint_edge: "Connecting resources",
+  queue_add: "Adding to queue",
+};
+
 function ToolActivity({ toolCalls }: { toolCalls: MessageToolCall[] }) {
   const active = toolCalls.find((toolCall) =>
     ["running", "pending"].includes(toolCall.status),
   );
   if (!active) return null;
-  const label =
-    active.tool_name === "web_search"
-      ? "Searching web"
-      : active.tool_name === "app_search"
-        ? "Searching library"
-        : active.tool_name === "read_resource"
-          ? "Reading source"
-          : active.tool_name === "inspect_resource"
-            ? "Inspecting source"
-            : `Running ${active.tool_name}`;
+  const label = ACTIVE_TOOL_LABELS[active.tool_name] ?? `Running ${active.tool_name}`;
 
   return (
     <div className={styles.toolActivity} role="status" aria-live="polite">

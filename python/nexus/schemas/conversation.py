@@ -498,8 +498,14 @@ class TrustToolCallOut(BaseModel):
     selected_count: int
     error_code: str | None = None
     provider_request_ids: list[str]
+    # Write tools reuse result_refs to carry created refs ([{kind, id, ...}]);
+    # read tools carry {uri, status, body_chars} payloads. Told apart by
+    # tool_name (amanuensis D-9 — no separate created_refs field).
     result_refs: list[dict[str, Any]]
     selected_context_refs: list[dict[str, Any]]
+    # Undo lifecycle for assistant write tool calls: set once the call is
+    # reverted (amanuensis §5.6, D-3); the FE greys the row to "Undone".
+    reverted_at: datetime | None = None
     retrievals: list[TrustRetrievalOut] = Field(default_factory=list)
     candidate_ledgers: list[MessageRetrievalCandidateLedgerOut] = Field(default_factory=list)
     rerank_ledgers: list[MessageRerankLedgerOut] = Field(default_factory=list)

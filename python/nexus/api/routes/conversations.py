@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
+from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.responses import ok, ok_page
 from nexus.schemas.artifact import (
     ArtifactBuildOut,
@@ -185,6 +186,39 @@ def get_conversation_distillate(
             build=build,
         )
     )
+
+
+@router.post("/conversations/{conversation_id}/tool-calls/{tool_call_id}/undo")
+def undo_tool_call(
+    conversation_id: UUID,
+    tool_call_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    """Revert one assistant write tool call's created refs (amanuensis §6).
+
+    Owner-gated on the conversation; idempotent (a second undo is a no-op 200).
+    Returns the updated ``TrustToolCallOut``.
+
+    Errors:
+        E_NOT_FOUND (404): The tool call is not a write tool of this conversation.
+    """
+    from nexus.services.agent_tools.writes import undo_tool_call as revert_tool_call
+    from nexus.services.message_trust_trails import build_assistant_trust_trail
+
+    assistant_message_id = revert_tool_call(
+        db,
+        viewer_id=viewer.user_id,
+        conversation_id=conversation_id,
+        tool_call_id=tool_call_id,
+    )
+    trail = build_assistant_trust_trail(
+        db, viewer_id=viewer.user_id, assistant_message_id=assistant_message_id
+    )
+    tool_call = next((call for call in trail.tool_calls if call.id == tool_call_id), None)
+    if tool_call is None:
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Write tool call not found")
+    return ok(tool_call)
 
 
 @router.delete("/conversations/{conversation_id}", status_code=204)

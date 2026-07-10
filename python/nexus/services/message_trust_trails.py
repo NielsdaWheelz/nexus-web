@@ -361,6 +361,7 @@ def build_assistant_trust_trails(
                 provider_request_ids=tool.provider_request_ids,
                 result_refs=tool.result_refs,
                 selected_context_refs=tool.selected_context_refs,
+                reverted_at=tool.reverted_at,
                 retrievals=retrievals,
                 candidate_ledgers=candidate_ledgers_by_tool.get(tool.id, []),
                 rerank_ledgers=rerank_ledgers_by_tool.get(tool.id, []),

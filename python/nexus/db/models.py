@@ -605,7 +605,7 @@ class ResourceEdge(Base):
             """
             origin IN (
                 'user', 'citation', 'system', 'note_body', 'highlight_note',
-                'synapse', 'document_embed'
+                'synapse', 'document_embed', 'assistant'
             )
             """,
             name="ck_resource_edges_origin",
@@ -749,14 +749,47 @@ class ResourceEdge(Base):
         ),
         CheckConstraint(
             # A citation edge carries its snapshot beside an ordinal; a synapse
-            # edge (origin='synapse') carries a bare-edge rationale snapshot with
-            # no ordinal (spec §13.3). Both are the snapshot's only writers.
-            "snapshot IS NULL OR ordinal IS NOT NULL OR origin = 'synapse'",
+            # or assistant edge carries a bare-edge rationale snapshot with no
+            # ordinal (spec §13.3, amanuensis §5.3). All are the snapshot's only
+            # writers.
+            "snapshot IS NULL OR ordinal IS NOT NULL OR origin IN ('synapse', 'assistant')",
             name="ck_resource_edges_snapshot_has_ordinal",
         ),
         CheckConstraint(
-            "snapshot IS NULL OR origin IN ('citation', 'synapse')",
+            "snapshot IS NULL OR origin IN ('citation', 'synapse', 'assistant')",
             name="ck_resource_edges_snapshot_origin",
+        ),
+        CheckConstraint(
+            # An assistant edge (the house agent's hand) carries a mandatory
+            # bare-edge rationale snapshot whose excerpt is the model's one-line
+            # justification (amanuensis §5.4, mirrors synapse).
+            """
+            origin != 'assistant'
+            OR (
+                snapshot IS NOT NULL
+                AND snapshot ? 'excerpt'
+                AND jsonb_typeof(snapshot->'excerpt') = 'string'
+                AND btrim(snapshot->>'excerpt') <> ''
+            )
+            """,
+            name="ck_resource_edges_assistant_snapshot_excerpt",
+        ),
+        CheckConstraint(
+            # Assistant edges stay inside the durable library graph and carry no
+            # ordinal or order keys (amanuensis §5.5). Endpoints are a widened
+            # copy of synapse's shape (adds page + highlight, excludes
+            # evidence_span).
+            """
+            origin != 'assistant'
+            OR (
+                source_scheme IN ('media', 'page', 'note_block', 'highlight')
+                AND target_scheme IN ('media', 'page', 'note_block', 'highlight')
+                AND source_order_key IS NULL
+                AND target_order_key IS NULL
+                AND ordinal IS NULL
+            )
+            """,
+            name="ck_resource_edges_assistant_shape",
         ),
         CheckConstraint(
             "ordinal IS NULL OR origin = 'citation'",
@@ -4609,6 +4642,12 @@ class MessageToolCall(Base):
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
     error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Undo lifecycle state for assistant write tool calls (amanuensis §5.6, D-3):
+    # a real column, not a result_refs field, because the per-run write cap counts
+    # rows WHERE reverted_at IS NULL (D-6) and undo must be queryable.
+    reverted_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),

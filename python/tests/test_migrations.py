@@ -14229,3 +14229,141 @@ class TestMigration0173SynapseSpanGrainTargets:
         finally:
             reset_test_schema()
             engine.dispose()
+
+
+class TestMigration0176AmanuensisAssistantWrites:
+    """0176 adds the 'assistant' edge origin (a widened synapse shape: adds page +
+    highlight, keeps a mandatory rationale snapshot, no ordinal) and the
+    message_tool_calls.reverted_at undo column."""
+
+    @pytest.fixture(scope="class")
+    def head_engine(self):
+        reset_test_schema()
+        result = run_alembic_command("upgrade head")
+        if result.returncode != 0:
+            pytest.fail(f"Migration upgrade failed: {result.stderr}")
+        engine = create_engine(get_test_database_url())
+        yield engine
+        engine.dispose()
+        reset_test_schema()
+
+    def _constraint_def(self, session, conname: str) -> str:
+        return session.execute(
+            text(
+                "SELECT pg_get_constraintdef(oid) FROM pg_constraint"
+                " WHERE conrelid = 'resource_edges'::regclass AND conname = :c"
+            ),
+            {"c": conname},
+        ).scalar_one()
+
+    def test_head_origin_check_includes_assistant(self, head_engine):
+        with Session(head_engine) as session:
+            definition = self._constraint_def(session, "ck_resource_edges_origin")
+        assert "assistant" in definition, definition
+
+    def test_head_has_reverted_at_column(self, head_engine):
+        with Session(head_engine) as session:
+            present = session.execute(
+                text(
+                    "SELECT 1 FROM information_schema.columns"
+                    " WHERE table_name = 'message_tool_calls'"
+                    " AND column_name = 'reverted_at'"
+                )
+            ).scalar_one_or_none()
+        assert present == 1
+
+    def test_head_assistant_checks_reject_violations(self, head_engine):
+        user_id = uuid4()
+        with Session(head_engine) as session:
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.commit()
+
+            def _insert(snapshot: str, *, ordinal_clause: str, target_scheme: str) -> None:
+                session.execute(
+                    text(
+                        f"""
+                        INSERT INTO resource_edges (
+                            id, user_id, kind, origin,
+                            source_scheme, source_id, target_scheme, target_id,
+                            {ordinal_clause[0]} snapshot
+                        )
+                        VALUES (
+                            gen_random_uuid(), :u, 'context', 'assistant',
+                            'media', gen_random_uuid(), '{target_scheme}', gen_random_uuid(),
+                            {ordinal_clause[1]} {snapshot}
+                        )
+                        """
+                    ),
+                    {"u": user_id},
+                )
+
+            # Valid assistant edge (bare, rationale excerpt, page endpoint) commits.
+            _insert(
+                "CAST('{\"excerpt\": \"because\"}' AS jsonb)",
+                ordinal_clause=("", ""),
+                target_scheme="page",
+            )
+            session.commit()
+
+            # Missing excerpt is rejected.
+            with pytest.raises(IntegrityError):
+                _insert("CAST('{\"title\": \"t\"}' AS jsonb)", ordinal_clause=("", ""), target_scheme="page")
+                session.commit()
+            session.rollback()
+
+            # A NULL snapshot is rejected (assistant requires one).
+            with pytest.raises(IntegrityError):
+                _insert("NULL", ordinal_clause=("", ""), target_scheme="page")
+                session.commit()
+            session.rollback()
+
+            # An ordinal is rejected (assistant edges are bare).
+            with pytest.raises(IntegrityError):
+                _insert(
+                    "CAST('{\"excerpt\": \"x\"}' AS jsonb)",
+                    ordinal_clause=("ordinal,", "3,"),
+                    target_scheme="page",
+                )
+                session.commit()
+            session.rollback()
+
+            # A disallowed endpoint scheme is rejected (evidence_span excluded).
+            with pytest.raises(IntegrityError):
+                _insert(
+                    "CAST('{\"excerpt\": \"x\"}' AS jsonb)",
+                    ordinal_clause=("", ""),
+                    target_scheme="evidence_span",
+                )
+                session.commit()
+            session.rollback()
+
+            session.execute(text("DELETE FROM resource_edges WHERE user_id = :u"), {"u": user_id})
+            session.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
+            session.commit()
+
+    def test_downgrade_drops_column_and_narrows_origin(self):
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            assert run_alembic_command("upgrade 0176").returncode == 0
+            assert run_alembic_command("downgrade 0175").returncode == 0
+            with Session(engine) as session:
+                present = session.execute(
+                    text(
+                        "SELECT 1 FROM information_schema.columns"
+                        " WHERE table_name = 'message_tool_calls'"
+                        " AND column_name = 'reverted_at'"
+                    )
+                ).scalar_one_or_none()
+                assert present is None
+                definition = session.execute(
+                    text(
+                        "SELECT pg_get_constraintdef(oid) FROM pg_constraint"
+                        " WHERE conrelid = 'resource_edges'::regclass"
+                        " AND conname = 'ck_resource_edges_origin'"
+                    )
+                ).scalar_one()
+                assert "assistant" not in definition, definition
+        finally:
+            reset_test_schema()
+            engine.dispose()

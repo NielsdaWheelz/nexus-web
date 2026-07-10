@@ -147,6 +147,31 @@ def add_queue_items_for_viewer(
     return list_queue_for_viewer(db, viewer_id)
 
 
+def add_assistant_queue_item(
+    db: Session, viewer_id: UUID, *, media_id: UUID
+) -> ConsumptionQueueItemOut:
+    """Append one media to the tail of the viewer's queue with source='assistant'
+    (the amanuensis ``queue_add`` path). Returns the resulting queue row so the
+    caller can record its ``item_id`` for undo. An already-queued media is a
+    no-op that returns its existing row (idempotent)."""
+    _assert_media_ids_queueable(db, viewer_id, [media_id])
+    with transaction(db):
+        _insert_media_ids_for_viewer(
+            db=db,
+            viewer_id=viewer_id,
+            media_ids=[media_id],
+            insert_position="last",
+            current_media_id=None,
+            source=QUEUE_SOURCE_ASSISTANT,
+            move_existing=False,
+        )
+        _normalize_queue_positions(db, viewer_id)
+    for item in list_queue_for_viewer(db, viewer_id):
+        if item.media_id == media_id:
+            return item
+    raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+
+
 def remove_queue_item_for_viewer(
     db: Session,
     viewer_id: UUID,

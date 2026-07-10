@@ -6,7 +6,7 @@ import hashlib
 import json
 from datetime import date, datetime
 from typing import Any, cast
-from uuid import UUID
+from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel
@@ -36,6 +36,7 @@ from nexus.schemas.notes import (
     UpdatePageRequest,
 )
 from nexus.services import note_bodies
+from nexus.services.content_indexing import IndexOwner, delete_content_index
 from nexus.services.highlight_access import get_highlight_for_visible_read_or_404
 from nexus.services.note_indexing import enqueue_note_reindex
 from nexus.services.resource_graph import adjacency as graph_adjacency
@@ -255,6 +256,56 @@ def quick_capture(
     return response
 
 
+def append_note_block_to_page(
+    db: Session, viewer_id: UUID, *, page_id: UUID, body_pm_json: dict[str, Any]
+) -> NoteBlockOut:
+    """Append one new note block to a caller-supplied page (the amanuensis
+    ``jot_note`` page-append seam). Mirrors ``quick_capture``'s ordered-edge
+    append, but resolves an explicit page instead of today's daily page and does
+    not carry a client-mutation replay (the tool loop re-arms at the tool-call
+    level). The page must belong to the viewer."""
+    page = get_page_for_owner_or_404(db, viewer_id, page_id)
+    block = _upsert_note_body(db, viewer_id, uuid4(), body_pm_json)
+    source = _page_ref(page.id)
+    target = _note_ref(block.id)
+    surface = surfaces.get_surface(db, viewer_id=viewer_id, source=source)
+    graph_adjacency.replace_ordered_targets(
+        db,
+        user_id=viewer_id,
+        source=source,
+        targets=[
+            graph_adjacency.OrderedTarget(
+                target=ResourceRef(
+                    scheme=cast(ResourceScheme, item.target.scheme),
+                    id=item.target.id,
+                ),
+                source_order_key=item.source_order_key,
+            )
+            for item in surface.ordered_items
+        ]
+        + [
+            graph_adjacency.OrderedTarget(
+                target=target,
+                source_order_key=_next_order_key(db, viewer_id, source),
+            )
+        ],
+    )
+    _bump_version(db, viewer_id, source, "outgoing_edges")
+    enqueue_note_reindex(db, note_block_id=block.id, reason="assistant_jot_note")
+    response = NoteBlockOut(
+        id=block.id,
+        parent_block_id=None,
+        order_key=None,
+        body_pm_json=block.body_pm_json,
+        body_text=block.body_text,
+        created_at=block.created_at,
+        updated_at=block.updated_at,
+        version_by_lane=versions.versions_for_ref(db, viewer_id=viewer_id, ref=_note_ref(block.id)),
+    )
+    db.commit()
+    return response
+
+
 def get_note_block_for_owner_or_404(db: Session, viewer_id: UUID, block_id: UUID) -> NoteBlock:
     block = db.get(NoteBlock, block_id)
     if block is None or block.user_id != viewer_id:
@@ -280,6 +331,24 @@ def upsert_note_body_without_commit(
     db: Session, viewer_id: UUID, block_id: UUID, body_pm_json: dict[str, Any]
 ) -> NoteBlock:
     return _upsert_note_body(db, viewer_id, block_id, body_pm_json)
+
+
+def remove_note_block(db: Session, viewer_id: UUID, block_id: UUID) -> None:
+    """Delete one note block and its graph edges + content index (the assistant
+    ``jot_note`` undo seam, amanuensis F-02). Mirrors ``delete_page``: no single-
+    block deleter existed before this. Named ``remove_*`` to stay clear of the
+    notes-cutover's banned single-block editing command surface. Idempotent — an
+    already-absent block is a no-op so undo tolerates a manually-deleted target
+    (R-5)."""
+    block = db.get(NoteBlock, block_id)
+    if block is None or block.user_id != viewer_id:
+        return
+    ref = _note_ref(block.id)
+    delete_edges_for_deleted_resource(db, ref=ref)
+    delete_content_index(db, owner=IndexOwner("note_block", block.id))
+    delete_resource_protocol_state(db, viewer_id=viewer_id, ref=ref)
+    db.delete(block)
+    db.commit()
 
 
 def set_highlight_note_body_pm_json(

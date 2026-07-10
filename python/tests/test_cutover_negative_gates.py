@@ -1806,3 +1806,62 @@ def test_lectern_queue_table_sole_writer():
         "db/models.py",
     )
     assert not hits, f"consumption_queue_items written outside its owner:\n{_fmt(hits)}"
+
+
+# ---------------------------------------------------------------------------
+# Amanuensis: assistant write tools under origin discipline
+# (amanuensis-hard-cutover.md §13, gates G1-G5)
+# ---------------------------------------------------------------------------
+
+
+def test_amanuensis_assistant_origin_written_only_in_writes_owner():
+    # G1: exactly one module constructs origin='assistant' writes. The policy /
+    # schema / route-owner mention the literal in validation, not construction.
+    hits = _grep(r"origin\s*=\s*[\"']assistant[\"']", _PY_ROOT)
+    allowed = re.compile(
+        r"services/agent_tools/writes\.py"
+        r"|resource_graph/(policy|schemas)\.py"
+    )
+    stray = [hit for hit in hits if not allowed.search(hit.path)]
+    assert not stray, f"assistant-origin write outside writes.py:\n{_fmt(stray)}"
+
+
+def test_amanuensis_no_destructive_write_tool():
+    # G2: no delete/destroy/remove-capable write ToolSpec (N-1, additive only).
+    writes = _PY_ROOT / "services" / "agent_tools" / "writes.py"
+    hits = _grep(
+        r"[\"']name[\"']:\s*[\"'](delete|remove|destroy|clear|overwrite|unfile|move)_",
+        writes,
+    )
+    assert not hits, f"destructive assistant write tool registered:\n{_fmt(hits)}"
+
+
+def test_amanuensis_write_tools_have_no_standalone_route():
+    # G3: the five write tools have no standalone HTTP route path; their only
+    # caller is the chat tool loop (N-7). We scan @router path decorators for a
+    # tool-named endpoint. (``create_highlight`` is intentionally scanned only as
+    # a path segment — the bare word collides with the pre-existing user
+    # fragment-highlight route handler; a tool route would be a *path*.)
+    hits = _grep(
+        r"@router\.\w+\([\"'][^\"']*(add_to_library|jot_note|mint_edge|queue_add|"
+        r"/create_highlight)",
+        _PY_ROOT / "api" / "routes",
+    )
+    assert not hits, f"standalone write-tool route present:\n{_fmt(hits)}"
+
+
+def test_amanuensis_text_quote_has_ambiguity_path():
+    # G4: text_quote never returns offsets for a non-unique match.
+    quote = _PY_ROOT / "services" / "text_quote.py"
+    hits = _grep(r"ambiguous|no_match", quote)
+    assert hits, "text_quote must classify ambiguous/no_match rather than guess"
+
+
+def test_amanuensis_does_not_widen_llm_calls_owner_kind():
+    # G5: this cutover does not touch ck_llm_calls_owner_kind (dawn-write owns it).
+    models = (_PY_ROOT / "db" / "models.py").read_text(encoding="utf-8")
+    idx = models.find("ck_llm_calls_owner_kind")
+    assert idx != -1
+    # The owner_kind CHECK block must not enumerate an assistant-write owner.
+    window = models[max(0, idx - 800) : idx + 800]
+    assert "assistant_write" not in window, "llm_calls owner_kind widened by amanuensis"

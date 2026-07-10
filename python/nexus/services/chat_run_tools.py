@@ -15,6 +15,7 @@ back.
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from typing import Any
 from uuid import UUID
 
@@ -328,6 +329,132 @@ def persist_tool_call_trace(
     )
     prune_tool_call_retrievals(db, tool_call_id=tool_call_id)
     return tool_call_id
+
+
+def persist_write_tool_call(
+    db: Session,
+    *,
+    run: ChatRun,
+    tool_call_index: int,
+    tool_name: str,
+    created_refs: list[dict[str, Any]],
+    status: str,
+    error_code: str | None,
+) -> UUID:
+    """Persist an assistant write tool call, recording its created refs.
+
+    Sibling of ``persist_tool_call_trace`` (D-8), not a fork: the payload is a
+    list of created refs (``[{kind, id, ...}]``) rather than the read
+    ``{uri, status, body_chars}`` object, and — because
+    ``create_highlight_for_fragment`` commits internally — this row is written
+    *after* an intervening commit (the two-commit window, R-3). It shares the
+    same ``FOR UPDATE`` re-arm-on-retry pattern so a re-driven turn overwrites
+    the prior attempt's refs rather than duplicating them.
+    """
+    params = {
+        "conversation_id": run.conversation_id,
+        "user_message_id": run.user_message_id,
+        "assistant_message_id": run.assistant_message_id,
+        "tool_name": tool_name,
+        "tool_call_index": tool_call_index,
+        "result_refs": json.dumps(created_refs),
+        "status": status,
+        "error_code": error_code,
+    }
+    existing = db.execute(
+        text(
+            "SELECT id FROM message_tool_calls "
+            "WHERE assistant_message_id = :assistant_message_id "
+            "AND tool_call_index = :tool_call_index "
+            "FOR UPDATE"
+        ),
+        params,
+    ).first()
+    if existing is None:
+        return db.execute(
+            text(
+                """
+                INSERT INTO message_tool_calls (
+                    conversation_id,
+                    user_message_id,
+                    assistant_message_id,
+                    tool_name,
+                    tool_call_index,
+                    scope,
+                    result_refs,
+                    selected_context_refs,
+                    provider_request_ids,
+                    status,
+                    error_code
+                )
+                VALUES (
+                    :conversation_id,
+                    :user_message_id,
+                    :assistant_message_id,
+                    :tool_name,
+                    :tool_call_index,
+                    'assistant_write',
+                    CAST(:result_refs AS JSONB),
+                    '[]'::jsonb,
+                    '[]'::jsonb,
+                    :status,
+                    :error_code
+                )
+                RETURNING id
+                """
+            ),
+            params,
+        ).scalar_one()
+
+    tool_call_id = existing[0]
+    db.execute(
+        text(
+            """
+            UPDATE message_tool_calls
+            SET tool_name = :tool_name,
+                scope = 'assistant_write',
+                result_refs = CAST(:result_refs AS JSONB),
+                selected_context_refs = '[]'::jsonb,
+                provider_request_ids = '[]'::jsonb,
+                status = :status,
+                error_code = :error_code,
+                reverted_at = NULL,
+                updated_at = now()
+            WHERE id = :tool_call_id
+            """
+        ),
+        {**params, "tool_call_id": tool_call_id},
+    )
+    prune_tool_call_retrievals(db, tool_call_id=tool_call_id)
+    return tool_call_id
+
+
+def assistant_write_tool_call_count(
+    db: Session, *, assistant_message_id: UUID, tool_names: Sequence[str]
+) -> int:
+    """Committed, non-reverted assistant write tool calls for this message.
+
+    The per-run write cap (amanuensis D-6/AC-9) counts rows WHERE
+    ``reverted_at IS NULL`` and ``status = 'complete'`` — so undo reclaims budget.
+    """
+    return int(
+        db.execute(
+            text(
+                """
+                SELECT COUNT(*)
+                FROM message_tool_calls
+                WHERE assistant_message_id = :assistant_message_id
+                  AND status = 'complete'
+                  AND reverted_at IS NULL
+                  AND tool_name = ANY(:tool_names)
+                """
+            ),
+            {
+                "assistant_message_id": assistant_message_id,
+                "tool_names": list(tool_names),
+            },
+        ).scalar_one()
+    )
 
 
 def tool_trace_event(

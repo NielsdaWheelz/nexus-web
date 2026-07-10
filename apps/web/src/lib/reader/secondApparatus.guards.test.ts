@@ -15,8 +15,10 @@ function sourceText(path: string): string {
 const MACHINE_TOKENS = ["--font-machine", "--ink-machine", "--rail-machine"];
 
 describe("Second Apparatus cutover source gates", () => {
-  // §13.2 — no new resource_edges origin; EDGE_ORIGINS stays 7 members.
-  it("keeps EDGE_ORIGINS at exactly seven members (no new origin)", () => {
+  // §13.2 — Second Apparatus adds no origin. The amanuensis cutover (same batch)
+  // adds exactly one — `assistant`, the house agent's hand — so EDGE_ORIGINS holds
+  // these eight and no others.
+  it("keeps EDGE_ORIGINS to the sanctioned origins (assistant is the only agent add)", () => {
     const edges = sourceText("src/lib/resourceGraph/edges.ts");
     const block = edges.slice(edges.indexOf("EDGE_ORIGINS = ["));
     const literals = block.slice(0, block.indexOf("]")).match(/"[a-z_]+"/g) ?? [];
@@ -28,6 +30,7 @@ describe("Second Apparatus cutover source gates", () => {
       '"highlight_note"',
       '"synapse"',
       '"document_embed"',
+      '"assistant"',
     ]);
   });
 

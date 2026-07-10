@@ -14,6 +14,7 @@ const OWNER_MODULE_CSS = "src/components/ui/MachineText.module.css";
 const MACHINE_TOKENS = ["--font-machine", "--ink-machine", "--rail-machine"];
 const MARKDOWN_IMPORTERS = [
   "src/components/chat/AssistantEvidenceDisclosure.tsx",
+  "src/components/chat/ConversationDistillate.tsx",
   "src/components/library/LibraryBriefArtifact.tsx",
   "src/components/notes/DawnWriteBlock.tsx",
 ];

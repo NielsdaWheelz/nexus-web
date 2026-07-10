@@ -123,6 +123,8 @@ export interface MessageToolCall {
   status: ChatToolStatus;
   error_code?: string | null;
   input_preview?: string;
+  // Undo lifecycle for assistant write tool calls; set once reverted (amanuensis).
+  reverted_at?: string | null;
   created_at?: string;
   updated_at?: string;
   retrievals: MessageRetrieval[];

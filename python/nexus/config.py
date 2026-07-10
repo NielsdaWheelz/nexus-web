@@ -423,6 +423,13 @@ class Settings(BaseSettings):
         default=3600, alias="CONVERSATION_DISTILL_SCHEDULE_SECONDS"
     )
 
+    # Amanuensis: ASSISTANT_WRITE_TOOLS_ENABLED=false omits the five write
+    # ToolSpecs from the chat tool loop, leaving a read-only agent (amanuensis
+    # D-6, AC-6).
+    assistant_write_tools_enabled: bool = Field(
+        default=True, alias="ASSISTANT_WRITE_TOOLS_ENABLED"
+    )
+
     # Stream token auth.
     # HS256 signing key for short-lived stream tokens (base64-encoded 32+ bytes)
     # Required in staging/prod; auto-generated deterministic key in local/test
