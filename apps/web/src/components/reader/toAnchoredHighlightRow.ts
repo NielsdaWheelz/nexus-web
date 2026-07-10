@@ -45,6 +45,46 @@ export function toPdfAnchoredReaderRow(
   };
 }
 
+/**
+ * Accumulate the per-page PDF highlights the reader streams in as the user pages
+ * through a document. The reader emits `(pageNumber, highlightsForThatPage)`; we
+ * keep every rendered page's slice (focus and note state reference highlights
+ * across pages) and replace the slice for `pageNumber` wholesale on each emit.
+ *
+ * Dedup is by highlight id as well as by page slot. During navigation the reader
+ * can emit a stale pair `(newPage, previousPageHighlights)` for one render — its
+ * page number advances a beat before its per-page highlight fetch transitions to
+ * loading — so a page-slot-only replace would re-append an already-held highlight
+ * (its `page_number` does not match `pageNumber`, so the slot filter misses it)
+ * and the store would carry that highlight twice. Excluding the incoming ids from
+ * the retained set keeps the store free of duplicate highlight rows.
+ */
+export function mergePdfPageHighlights<
+  T extends { id: string; anchor: { page_number: number } },
+>(current: T[], pageNumber: number, pageHighlights: T[]): T[] {
+  const incomingIds = new Set(pageHighlights.map((highlight) => highlight.id));
+  const retained = current.filter(
+    (highlight) =>
+      highlight.anchor.page_number !== pageNumber &&
+      !incomingIds.has(highlight.id),
+  );
+  return [...retained, ...pageHighlights];
+}
+
+/**
+ * Evidence is scoped to the page whose geometry the reader is currently showing:
+ * a PDF highlight is listed only while its own page is the active page. Returns
+ * every highlight untouched until the reader reports a page (initial mount).
+ */
+export function pdfHighlightsForActivePage<
+  T extends { anchor: { page_number: number } },
+>(highlights: T[], activePageNumber: number | null | undefined): T[] {
+  if (activePageNumber == null) return highlights;
+  return highlights.filter(
+    (highlight) => highlight.anchor.page_number === activePageNumber,
+  );
+}
+
 export function toTextAnchoredReaderRow(
   highlight: HighlightMetadata,
   anchor: { fragment_id: string; start_offset: number; end_offset: number },

@@ -214,7 +214,13 @@ export default function EvidencePaneSurface({
     const merged: EvidenceRow[] = [];
 
     if (filter.highlight) {
+      // One row per highlight id: a highlight data source can momentarily surface
+      // the same highlight twice, and the sidecar keys rows by id, so collapse
+      // duplicates here rather than emit two nodes with the same test id.
+      const seenHighlightIds = new Set<string>();
       for (const h of highlights) {
+        if (seenHighlightIds.has(h.id)) continue;
+        seenHighlightIds.add(h.id);
         merged.push({ kind: "highlight", id: h.id, data: h });
       }
     }

@@ -87,6 +87,19 @@ function EvidencePaneSurfaceHarness({
 
 // Use React here to avoid a lint error from JSX without the import
 import React from "react";
+import type { AnchoredReaderRow } from "@/components/reader/useAnchoredReaderProjection";
+
+function pdfHighlightRow(id: string): AnchoredReaderRow {
+  return {
+    id,
+    exact: `highlight ${id}`,
+    color: "yellow",
+    page_number: 1,
+    quads: [{ x1: 0, y1: 0, x2: 1, y2: 0, x3: 1, y3: 1, x4: 0, y4: 1 }],
+    stable_order_key: `000001:${id}`,
+    is_owner: true,
+  };
+}
 
 describe("EvidencePaneSurface", () => {
   describe("AC-15 empty state", () => {
@@ -184,6 +197,29 @@ describe("EvidencePaneSurface", () => {
     it("renders a region landmark labelled Evidence", () => {
       render(<EvidencePaneSurfaceHarness />);
       expect(screen.getByRole("region", { name: "Evidence" })).toBeInTheDocument();
+    });
+  });
+
+  describe("highlight row dedup", () => {
+    it("renders one row per highlight id even if a highlight is supplied twice", () => {
+      render(
+        <EvidencePaneSurfaceHarness
+          highlights={[pdfHighlightRow("dup-1"), pdfHighlightRow("dup-1")]}
+        />,
+      );
+      expect(
+        screen.getAllByTestId("evidence-highlight-row-dup-1"),
+      ).toHaveLength(1);
+    });
+
+    it("renders a distinct row for each unique highlight id", () => {
+      render(
+        <EvidencePaneSurfaceHarness
+          highlights={[pdfHighlightRow("a"), pdfHighlightRow("b")]}
+        />,
+      );
+      expect(screen.getByTestId("evidence-highlight-row-a")).toBeInTheDocument();
+      expect(screen.getByTestId("evidence-highlight-row-b")).toBeInTheDocument();
     });
   });
 });

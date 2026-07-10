@@ -40,6 +40,8 @@ import {
   type ConsumptionQueueItem,
 } from "@/lib/player/consumptionQueueClient";
 import {
+  mergePdfPageHighlights,
+  pdfHighlightsForActivePage,
   toPdfAnchoredReaderRow,
   toTextAnchoredReaderRow,
 } from "@/components/reader/toAnchoredHighlightRow";
@@ -3872,12 +3874,9 @@ export default function MediaPaneBody() {
         ...current,
         version: current.version + 1,
       }));
-      setPdfDocumentHighlights((current) => {
-        const filtered = current.filter(
-          (highlight) => highlight.anchor.page_number !== nextPage,
-        );
-        return [...filtered, ...nextHighlights];
-      });
+      setPdfDocumentHighlights((current) =>
+        mergePdfPageHighlights(current, nextPage, nextHighlights),
+      );
 
       const focusedHighlightId = focusedHighlightIdRef.current;
       const focusedHighlight = focusedHighlightId
@@ -4815,7 +4814,13 @@ export default function MediaPaneBody() {
 
   const anchoredHighlights = useMemo<AnchoredReaderRow[]>(() => {
     if (isPdf) {
-      return pdfDocumentHighlights.map((highlight) =>
+      // Evidence is scoped to the active page: only the highlights whose page the
+      // reader is currently rendering are listed (the store accumulates every
+      // visited page for focus/note state, but off-page rows do not belong here).
+      return pdfHighlightsForActivePage(
+        pdfDocumentHighlights,
+        pdfControlsState?.pageNumber,
+      ).map((highlight) =>
         toPdfAnchoredReaderRow(
           highlight,
           highlight.anchor.page_number,
@@ -4834,7 +4839,14 @@ export default function MediaPaneBody() {
           : null,
       ),
     );
-  }, [fragments, highlights, isPdf, isTranscriptMedia, pdfDocumentHighlights]);
+  }, [
+    fragments,
+    highlights,
+    isPdf,
+    isTranscriptMedia,
+    pdfControlsState?.pageNumber,
+    pdfDocumentHighlights,
+  ]);
 
   // ==========================================================================
   // Second apparatus: shared evidence filters, margin items, Cite + stance
