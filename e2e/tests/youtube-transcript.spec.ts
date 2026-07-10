@@ -1,7 +1,7 @@
 import { test, expect, type Locator } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { openHighlightsPane, openMediaInSinglePaneWorkspace } from "./reader";
+import { openEvidencePane, openMediaInSinglePaneWorkspace } from "./reader";
 import { selectFreshVisibleTextSnippet } from "./selection";
 import {
   activePaneSelector,
@@ -142,8 +142,8 @@ test.describe("youtube transcript media", () => {
     };
     const existingExacts = existingHighlightsPayload.data.highlights.map((highlight) => highlight.exact);
 
-    const highlightsPane = await openHighlightsPane(page);
-    const linkedRows = highlightsPane.locator("[data-highlight-id]");
+    const evidencePane = await openEvidencePane(page);
+    const linkedRows = evidencePane.locator("[data-highlight-id]");
     const highlightedSegments = transcriptContent.locator("[data-active-highlight-ids]");
     const beforeLinkedRowCount = await linkedRows.count();
     const beforeHighlightedCount = await highlightedSegments.count();

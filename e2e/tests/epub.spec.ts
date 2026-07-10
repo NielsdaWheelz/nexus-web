@@ -9,7 +9,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { openAddContentPanel } from "./add-content";
 import { stateChangingApiHeaders } from "./api";
-import { openHighlightsPane } from "./reader";
+import { openEvidencePane } from "./reader";
 import { selectFreshVisibleTextSnippet } from "./selection";
 import {
   activePaneSelector,
@@ -351,7 +351,7 @@ async function readLinkedItemOrder(
 ): Promise<{ order: string[]; missing: string[] }> {
   return await activeWorkspacePane(page).evaluate((pane, ids) => {
     const linkedContainer = pane.querySelector<HTMLElement>(
-      '[data-testid="anchored-highlights-container"]'
+      '[data-testid="evidence-pane-surface"]'
     );
 
     if (!linkedContainer) {
@@ -975,7 +975,7 @@ test.describe("epub", () => {
       data: HighlightOut;
     };
 
-    const highlightsPane = await openHighlightsPane(page);
+    const highlightsPane = await openEvidencePane(page);
     const linkedRow = highlightsPane
       .locator("[data-highlight-id]")
       .filter({ hasText: selectedText })
@@ -1043,7 +1043,7 @@ test.describe("epub", () => {
       await expect(
         activePane.getByRole("heading", { name: seed.chapter_titles[0] })
       ).toBeVisible({ timeout: 30_000 });
-      await openHighlightsPane(page);
+      await openEvidencePane(page);
 
       await expect
         .poll(
@@ -1131,7 +1131,7 @@ test.describe("epub", () => {
     await expect(
       activePane.getByRole("heading", { name: seed.chapter_titles[0] })
     ).toBeVisible({ timeout: 15_000 });
-    const highlightsPane = await openHighlightsPane(page);
+    const highlightsPane = await openEvidencePane(page);
 
     await expect(
       activePane.getByRole("button", { name: /all highlights|entire book/i })

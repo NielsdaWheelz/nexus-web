@@ -4,10 +4,7 @@ import path from "node:path";
 import { openAddContentPanel } from "./add-content";
 import { stateChangingApiHeaders } from "./api";
 import { deleteE2eResource, throwE2eCleanupFailures } from "./cleanup";
-import {
-  openEvidencePane,
-  readerSecondaryForActivePane,
-} from "./reader";
+import { openEvidencePane } from "./reader";
 import {
   activeWorkspacePane,
   gotoSinglePaneWorkspace,
@@ -209,12 +206,13 @@ async function expectHighlightRowToBeExpanded(row: Locator): Promise<void> {
   await expect(actionsTrigger).toHaveAttribute("aria-haspopup", "menu");
 }
 
-async function expectDocChatPendingContext(page: Page, exact: string): Promise<void> {
-  // Chat now opens a full conversation pane rather than a secondary surface.
-  await expect(page.getByTestId("conversation-pane")).toBeVisible({ timeout: 10_000 });
+async function expectConversationPaneOpened(page: Page): Promise<void> {
+  // Quote-to-chat now opens a full conversation pane (AC-7) instead of revealing a
+  // reader secondary Chat tab. The newly opened, active pane exposes the chat
+  // composer; the quoted passage is attached as a conversation context ref.
   await expect(
-    page.getByLabel("Attached to next message"),
-  ).toContainText(exact);
+    activeWorkspacePane(page).getByRole("textbox", { name: /ask anything/i }),
+  ).toBeVisible({ timeout: 10_000 });
 }
 
 function pageIndicator(page: Page, pageNumber: number, pageCount: number) {
@@ -400,7 +398,7 @@ test.describe("pdf reader", () => {
 
       const evidencePane = await openEvidencePane(page);
       const linkedRow = evidencePane.getByTestId(
-        `anchored-highlight-row-${createdHighlightId}`,
+        `evidence-highlight-row-${createdHighlightId}`,
       );
       await expect(linkedRow).toBeVisible({ timeout: 20_000 });
       await linkedRow.click();
@@ -409,10 +407,11 @@ test.describe("pdf reader", () => {
       await expect(page.getByRole("button", { name: /show in document/i })).toHaveCount(0);
       const chatPaneCountBefore = await workspacePaneButton(page, /^chat\b/i).count();
       await quoteRowToNewChat(linkedRow);
-      await expectDocChatPendingContext(page, exact);
+      await expectConversationPaneOpened(page);
+      // Quote-to-chat opens a new conversation pane (AC-7), so the pane count grows.
       await expect
         .poll(() => workspacePaneButton(page, /^chat\b/i).count(), { timeout: 10_000 })
-        .toBe(chatPaneCountBefore);
+        .toBeGreaterThan(chatPaneCountBefore);
     } catch (error) {
       productError = error;
       throw error;
@@ -520,10 +519,10 @@ test.describe("pdf reader", () => {
       const evidencePane = await openEvidencePane(page);
 
       const onPageRow = evidencePane.getByTestId(
-        `anchored-highlight-row-${pageOneHighlightId}`,
+        `evidence-highlight-row-${pageOneHighlightId}`,
       );
       const offPageRow = evidencePane.getByTestId(
-        `anchored-highlight-row-${pageTwoHighlightId}`,
+        `evidence-highlight-row-${pageTwoHighlightId}`,
       );
       await expect(onPageRow).toBeVisible({ timeout: 10_000 });
       await expect(offPageRow).toHaveCount(0);

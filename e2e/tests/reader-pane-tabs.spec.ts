@@ -14,7 +14,12 @@ function readNonPdfSeed(): NonPdfSeed {
 }
 
 test.describe("reader pane tabs (evidence cutover)", () => {
-  test("opens the reader pane and exposes exactly two tabs: Contents and Evidence", async ({
+  // The seeded non-PDF media is a single-fragment web article with no headings,
+  // so it has no table of contents. Per the reader-sidecar cutover (AC-8 / §4.6),
+  // the Contents tab is only published when a ToC exists; a no-ToC reader shows
+  // the Evidence surface alone and defaults to it. This test pins that behavior
+  // plus the removal of all five legacy reader-tools tabs.
+  test("exposes the Evidence surface and none of the retired reader-tools tabs", async ({
     page,
   }, testInfo) => {
     const seed = readNonPdfSeed();
@@ -27,14 +32,16 @@ test.describe("reader pane tabs (evidence cutover)", () => {
     const secondary = await openReaderSecondary(page);
     const tablist = secondary.getByRole("tablist", { name: "Secondary surfaces" });
     const tabs = tablist.getByRole("tab");
-    const contentsTab = tablist.getByRole("tab", { name: "Contents" });
     const evidenceTab = tablist.getByRole("tab", { name: "Evidence" });
 
-    await expect(tabs).toHaveCount(2);
-    await expect(contentsTab).toBeVisible();
+    // No ToC → Evidence is the only reader-tools surface.
+    await expect(tabs).toHaveCount(1);
     await expect(evidenceTab).toBeVisible();
+    await expect(tablist.getByRole("tab", { name: "Contents" })).toHaveCount(0);
 
+    // The five legacy surfaces are gone after the Contents + Evidence cutover.
     await expect(tablist.getByRole("tab", { name: "Highlights" })).toHaveCount(0);
+    await expect(tablist.getByRole("tab", { name: "Embeds" })).toHaveCount(0);
     await expect(tablist.getByRole("tab", { name: "Chat" })).toHaveCount(0);
     await expect(tablist.getByRole("tab", { name: "Citations" })).toHaveCount(0);
     await expect(tablist.getByRole("tab", { name: "Connections" })).toHaveCount(0);

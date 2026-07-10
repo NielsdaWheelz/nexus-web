@@ -8,7 +8,7 @@ import {
 } from "@playwright/test";
 import { openAddContentPanel } from "../add-content";
 import { stateChangingApiHeaders } from "../api";
-import { openHighlightsPane as openReaderHighlightsPane } from "../reader";
+import { openEvidencePane } from "../reader";
 import { selectFreshVisibleTextSnippet } from "../selection";
 import { runE2eWorkerOnce } from "../worker";
 import {
@@ -953,7 +953,7 @@ export async function createFragmentHighlightThroughVisibleSelection(
         .filter({ hasText: selectedText })
         .first(),
     ).toBeVisible({ timeout: 10_000 });
-    const highlightsPane = await openReaderHighlightsPane(page);
+    const highlightsPane = await openEvidencePane(page);
     const row = highlightsPane
       .locator(`[data-highlight-id="${highlightIdSelectorValue}"]`)
       .first();

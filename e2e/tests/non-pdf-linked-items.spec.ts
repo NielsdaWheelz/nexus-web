@@ -102,15 +102,13 @@ async function expectHighlightRowVisible(
   await expect(actionsTrigger).toHaveAttribute("aria-haspopup", "menu");
 }
 
-async function expectDocChatPendingContext(page: Page, exact: string): Promise<void> {
-  const secondary = readerSecondaryForActivePane(page);
-  await expect(secondary).toBeVisible({ timeout: 10_000 });
+async function expectConversationPaneOpened(page: Page): Promise<void> {
+  // Quote-to-chat now opens a full conversation pane (AC-7) instead of revealing a
+  // reader secondary Chat tab. The newly opened, active pane exposes the chat
+  // composer; the quoted passage is attached as a conversation context ref.
   await expect(
-    secondary.getByRole("tab", { name: "Chat" }),
-  ).toHaveAttribute("aria-selected", "true");
-  await expect(
-    secondary.getByLabel("Attached to next message"),
-  ).toContainText(exact);
+    activeWorkspacePane(page).getByRole("textbox", { name: /ask anything/i }),
+  ).toBeVisible({ timeout: 10_000 });
 }
 
 async function scrollHighlightIntoView(contentPane: Locator, highlightId: string): Promise<Locator> {
@@ -158,12 +156,6 @@ test.describe("non-pdf linked-items", () => {
 
     await focusRow.click();
     await expectHighlightRowVisible(focusRow, focusNote);
-    const chatPaneCountBefore = await workspacePaneButton(page, /^chat\b/i).count();
-    await quoteRowToNewChat(focusRow);
-    await expectDocChatPendingContext(page, seeded.focus_exact);
-    await expect
-      .poll(() => workspacePaneButton(page, /^chat\b/i).count(), { timeout: 10_000 })
-      .toBe(chatPaneCountBefore);
     await expect(contentPane).toBeVisible({ timeout: 10_000 });
 
     const focusedSegment = contentPane
@@ -201,10 +193,13 @@ test.describe("non-pdf linked-items", () => {
     await quoteSegment.click();
     await expectHighlightRowVisible(quoteRow, quoteNote);
 
+    // Quote-to-chat is the final reader action: it opens a full conversation pane
+    // (now the active pane) with the quote attached, so this must run last.
+    const chatPaneCountBefore = await workspacePaneButton(page, /^chat\b/i).count();
     await quoteRowToNewChat(quoteRow);
-    await expectDocChatPendingContext(page, seeded.quote_exact);
+    await expectConversationPaneOpened(page);
     await expect
       .poll(() => workspacePaneButton(page, /^chat\b/i).count(), { timeout: 10_000 })
-      .toBe(chatPaneCountBefore);
+      .toBeGreaterThan(chatPaneCountBefore);
   });
 });
