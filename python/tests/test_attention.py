@@ -144,6 +144,20 @@ class TestRecordAttention:
         assert len(rows) == 2
         assert {rows[0][0], rows[1][0]} == {10_000, 7_000}
 
+    def test_continues_session_with_null_progression(self, direct_db: DirectSessionManager):
+        # Regression: a dwell-only save on an OPEN session binds progression as
+        # a bare NULL in the UPDATE; without a typed cast Postgres rejects the
+        # statement (AmbiguousParameter) and every such save 500s.
+        user_id, media_id = _seed_user_and_media(direct_db)
+
+        _record(direct_db, user_id, media_id, dwell=10_000, progression=0.4)
+        _record(direct_db, user_id, media_id, dwell=5_000, progression=None)
+
+        rows = _session_rows(direct_db, user_id, media_id)
+        assert len(rows) == 1
+        assert rows[0][0] == 15_000
+        assert rows[0][1] == pytest.approx(0.4, abs=1e-6)
+
     def test_no_op_save_does_not_touch_existing_session(self, direct_db: DirectSessionManager):
         user_id, media_id = _seed_user_and_media(direct_db)
 

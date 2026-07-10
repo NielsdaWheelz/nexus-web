@@ -56,11 +56,10 @@ _UPDATE_SESSION_SQL = text("""
     UPDATE reading_sessions
     SET dwell_ms = dwell_ms + :dwell_ms,
         last_active_at = now(),
-        max_progression = CASE
-            WHEN :progression IS NULL THEN max_progression
-            WHEN max_progression IS NULL THEN :progression
-            ELSE GREATEST(max_progression, :progression)
-        END,
+        -- GREATEST ignores NULLs, so a null progression keeps the stored max.
+        -- The CAST is load-bearing: a bare NULL param in this position has no
+        -- type context and Postgres rejects the statement (AmbiguousParameter).
+        max_progression = GREATEST(max_progression, CAST(:progression AS real)),
         spans = spans || CAST(:spans AS jsonb)
     WHERE id = :session_id
 """).bindparams(bindparam("spans", type_=JSONB))
