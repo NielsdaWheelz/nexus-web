@@ -36,6 +36,7 @@ interface AccountResponse {
   data: {
     email?: string;
     display_name: string | null;
+    email_ingest_address?: string | null;
   };
 }
 
@@ -44,6 +45,18 @@ export default function SettingsAccountPaneBody() {
     descriptor: settingsAccountResource,
     params: {},
   });
+
+  const [ingestAddressCopied, setIngestAddressCopied] = useState(false);
+
+  const handleCopyIngestAddress = useCallback(
+    (address: string) => {
+      navigator.clipboard.writeText(address).then(() => {
+        setIngestAddressCopied(true);
+        setTimeout(() => setIngestAddressCopied(false), 2000);
+      });
+    },
+    []
+  );
 
   const [currentEmail, setCurrentEmail] = useState("");
   const [emailInput, setEmailInput] = useState("");
@@ -219,6 +232,33 @@ export default function SettingsAccountPaneBody() {
             Update display name
           </Button>
         </form>
+      </PaneSection>
+
+      <PaneSection title="Post Room">
+        {accountResource.status !== "ready" ? null : accountResource.data.data
+            .email_ingest_address ? (
+          <>
+            <p className={styles.current}>
+              <code>{accountResource.data.data.email_ingest_address}</code>
+            </p>
+            <Button
+              variant="ghost"
+              onClick={() =>
+                handleCopyIngestAddress(
+                  accountResource.data.data.email_ingest_address!
+                )
+              }
+            >
+              {ingestAddressCopied ? "Copied" : "Copy address"}
+            </Button>
+            <p className={styles.current}>
+              Forward newsletters here. Rotating the address is an env change +
+              redeploy.
+            </p>
+          </>
+        ) : (
+          <p className={styles.current}>The Post Room is not configured.</p>
+        )}
       </PaneSection>
     </PaneSurface>
   );

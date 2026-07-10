@@ -15,6 +15,7 @@ UPLOADED_EPUB_FILE = "uploaded_epub_file"
 BROWSER_PDF_CAPTURE = "browser_pdf_capture"
 BROWSER_EPUB_CAPTURE = "browser_epub_capture"
 PODCAST_EPISODE_TRANSCRIPT = "podcast_episode_transcript"
+EMAIL_MESSAGE = "email_message"
 
 TRANSCRIPT_SOURCE_TYPES = frozenset(
     {
@@ -38,14 +39,18 @@ WEB_ARTICLE_ARTIFACT_SOURCE_TYPES = frozenset(
         BROWSER_ARTICLE_CAPTURE,
         X_AUTHOR_THREAD,
         X_POST,
+        EMAIL_MESSAGE,
     }
 )
-NON_REACQUIRABLE_FILE_SOURCE_TYPES = frozenset(
+# Non-reacquirable artifacts: the derived HTML stored in R2 is the only copy.
+# Retrying with a new source requires the caller to provide fresh content.
+NON_REACQUIRABLE_ARTIFACT_SOURCE_TYPES = frozenset(
     {
         UPLOADED_PDF_FILE,
         UPLOADED_EPUB_FILE,
         BROWSER_ARTICLE_CAPTURE,
         BROWSER_PDF_CAPTURE,
         BROWSER_EPUB_CAPTURE,
+        EMAIL_MESSAGE,
     }
 )

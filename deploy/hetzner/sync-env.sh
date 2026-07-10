@@ -125,6 +125,15 @@ require_non_empty_keys() {
     done
   fi
 
+  email_ingest_enabled="$(normalize_env_value "$(env_value "EMAIL_INGEST_ENABLED" "$file" || true)")"
+  if is_true "$email_ingest_enabled"; then
+    for key in EMAIL_INGEST_HMAC_SECRET EMAIL_INGEST_ADDRESS_SLUG EMAIL_INGEST_DOMAIN EMAIL_INGEST_OWNER_USER_ID; do
+      if ! value="$(env_value "$key" "$file")" || is_blank "$(normalize_env_value "$value")"; then
+        missing="${missing} ${key}"
+      fi
+    done
+  fi
+
   [ -z "$missing" ] || die "required production Hetzner env keys are missing or empty:${missing}"
 }
 

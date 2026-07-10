@@ -1226,6 +1226,13 @@ class Media(Base):
             postgresql_where=text("provider = 'x' AND provider_id IS NOT NULL"),
         ),
         Index(
+            "uix_media_email_provider_id",
+            "provider",
+            "provider_id",
+            unique=True,
+            postgresql_where=text("provider = 'email' AND provider_id IS NOT NULL"),
+        ),
+        Index(
             "idx_media_stale_extracting_recovery",
             "processing_started_at",
             "id",
@@ -1376,7 +1383,8 @@ class MediaSourceAttempt(Base):
                 'browser_pdf_capture',
                 'browser_epub_capture',
                 'podcast_episode_transcript',
-                'video_transcript'
+                'video_transcript',
+                'email_message'
             )
             """,
             name="ck_media_source_attempts_source_type",
@@ -1638,7 +1646,7 @@ class ContributorExternalId(Base):
     __table_args__ = (
         CheckConstraint(
             "authority IN ('orcid', 'isni', 'viaf', 'wikidata', 'openalex', 'lcnaf', "
-            "'podcast_index', 'rss', 'youtube', 'gutenberg')",
+            "'podcast_index', 'rss', 'youtube', 'gutenberg', 'email')",
             name="ck_contributor_external_ids_authority",
         ),
         UniqueConstraint(

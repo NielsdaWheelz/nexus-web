@@ -1,0 +1,17 @@
+MIME-Version: 1.0
+From: Bob Plaintext <bob@newsletter.example>
+To: letters-test@mail.example.com
+Subject: A Plain Text Letter
+Date: Tue, 08 Jul 2026 12:00:00 +0000
+Message-ID: <plain-text-letter-2026-07-08@newsletter.example>
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 7bit
+
+Hello reader,
+
+This is a plain-text-only email. It has no HTML part. The Post Room should
+wrap it in a <pre> block and process it through the standard web-article
+pipeline, yielding a readable fragment.
+
+Regards,
+Bob

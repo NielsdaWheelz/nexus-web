@@ -1,0 +1,19 @@
+MIME-Version: 1.0
+From: Alice Writer <alice@substack.com>
+To: letters-test@mail.example.com
+Subject: The Weekly Dispatch: Issue 43
+Date: Mon, 14 Jul 2026 10:00:00 +0000
+Message-ID: <dispatch-43-2026-07-14@substack.com>
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: quoted-printable
+
+<!DOCTYPE html>
+<html>
+<body>
+<h1>The Weekly Dispatch</h1>
+<h2>Issue 43 &mdash; July 14, 2026</h2>
+<p>Second issue from the same sender. The contributor should resolve to the same
+person as Issue 42, not a duplicate.</p>
+<p>Alice</p>
+</body>
+</html>

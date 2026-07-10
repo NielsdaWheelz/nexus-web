@@ -27,6 +27,7 @@ class UserProfileOut(BaseModel):
     default_library_id: UUID
     email: str | None
     display_name: str | None
+    email_ingest_address: str | None = None
 
     model_config = ConfigDict(from_attributes=True)
 

@@ -1,0 +1,42 @@
+MIME-Version: 1.0
+From: Alice Writer <alice@substack.com>
+To: letters-test@mail.example.com
+Subject: The Weekly Dispatch: Issue 42
+Date: Mon, 07 Jul 2026 10:00:00 +0000
+Message-ID: <dispatch-42-2026-07-07@substack.com>
+Content-Type: multipart/alternative; boundary="nexus-test-boundary-42"
+
+--nexus-test-boundary-42
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: quoted-printable
+
+The Weekly Dispatch
+
+Issue 42 — July 7, 2026
+
+Hello reader,
+
+This week we explore the art of slow reading. Long-form writing rewards
+patience: the meaning accumulates over paragraphs, not sentences.
+
+Until next week,
+Alice
+
+--nexus-test-boundary-42
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: quoted-printable
+
+<!DOCTYPE html>
+<html>
+<head><title>The Weekly Dispatch: Issue 42</title></head>
+<body>
+<h1>The Weekly Dispatch</h1>
+<h2>Issue 42 &mdash; July 7, 2026</h2>
+<p>Hello reader,</p>
+<p>This week we explore the art of slow reading. Long-form writing rewards
+patience: the meaning accumulates over paragraphs, not sentences.</p>
+<p>Until next week,<br>Alice</p>
+</body>
+</html>
+
+--nexus-test-boundary-42--

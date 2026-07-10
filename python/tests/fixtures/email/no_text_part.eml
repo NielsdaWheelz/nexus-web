@@ -1,0 +1,16 @@
+MIME-Version: 1.0
+From: Silent Sender <silent@example.com>
+To: letters-test@mail.example.com
+Subject: No Text Attachment Only
+Date: Wed, 09 Jul 2026 08:00:00 +0000
+Message-ID: <no-text-2026-07-09@example.com>
+Content-Type: multipart/mixed; boundary="nexus-test-no-text"
+
+--nexus-test-no-text
+Content-Type: application/pdf
+Content-Transfer-Encoding: base64
+Content-Disposition: attachment; filename="document.pdf"
+
+JVBERi0xLjQKdGVzdA==
+
+--nexus-test-no-text--

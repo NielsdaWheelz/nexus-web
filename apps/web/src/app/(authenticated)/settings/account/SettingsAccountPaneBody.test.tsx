@@ -195,4 +195,77 @@ describe("SettingsAccountPaneBody", () => {
       );
     });
   });
+
+  it("renders the Post Room address and copy button when configured", async () => {
+    apiFetch.mockReset();
+    apiFetch.mockResolvedValue({
+      data: {
+        email: "ada@example.com",
+        display_name: "Ada",
+        email_ingest_address: "letters-abc@mail.example.com",
+      },
+    });
+
+    render(<SettingsAccountPaneBody />);
+
+    expect(
+      await screen.findByText("letters-abc@mail.example.com")
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /copy address/i })
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/the post room is not configured/i)
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders the not-configured line when the Post Room address is null", async () => {
+    apiFetch.mockReset();
+    apiFetch.mockResolvedValue({
+      data: {
+        email: "ada@example.com",
+        display_name: "Ada",
+        email_ingest_address: null,
+      },
+    });
+
+    render(<SettingsAccountPaneBody />);
+
+    expect(
+      await screen.findByText(/the post room is not configured/i)
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /copy address/i })
+    ).not.toBeInTheDocument();
+  });
+
+  it("copies the Post Room address to the clipboard", async () => {
+    apiFetch.mockReset();
+    apiFetch.mockResolvedValue({
+      data: {
+        email: "ada@example.com",
+        display_name: "Ada",
+        email_ingest_address: "letters-abc@mail.example.com",
+      },
+    });
+    const writeText = vi
+      .spyOn(navigator.clipboard, "writeText")
+      .mockResolvedValue(undefined);
+    const user = userEvent.setup();
+
+    render(<SettingsAccountPaneBody />);
+
+    const button = await screen.findByRole("button", {
+      name: /copy address/i,
+    });
+    await user.click(button);
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: /copied/i })
+      ).toBeInTheDocument();
+    });
+    expect(writeText).toHaveBeenCalledWith("letters-abc@mail.example.com");
+    writeText.mockRestore();
+  });
 });

@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
+from nexus.config import Settings, get_settings
 from nexus.db.session import get_db
 from nexus.responses import ok, success_response
 from nexus.schemas.command_palette import CommandPaletteSelectionRecordRequest
@@ -37,15 +38,21 @@ def _workspace_session_payload(session: WorkspaceSessionOut | None) -> dict | No
 def get_me(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> dict:
     """Get current user information.
 
     Requires authentication. Returns the authenticated user's ID,
-    default library ID, email, and display name.
+    default library ID, email, display name, and the Post Room ingest address
+    when configured.
     """
     profile = users_service.get_user_profile(
         db, viewer.user_id, viewer.default_library_id, viewer.email
     )
+    if settings.email_ingest_enabled and settings.email_ingest_address_slug and settings.email_ingest_domain:
+        profile.email_ingest_address = (
+            f"{settings.email_ingest_address_slug}@{settings.email_ingest_domain}"
+        )
     return ok(profile)
 
 

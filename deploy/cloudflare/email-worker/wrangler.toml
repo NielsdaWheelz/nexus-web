@@ -1,0 +1,15 @@
+name = "nexus-post-room"
+main = "worker.js"
+compatibility_date = "2024-01-01"
+
+# Email handler — triggered by Cloudflare Email Routing.
+[triggers]
+# No cron triggers; this worker is invoked by Email Routing only.
+
+# Secret bindings (populated via `wrangler secret put`):
+#   EMAIL_INGEST_HMAC_SECRET
+#   EMAIL_INGEST_API_URL
+#
+# Set them with:
+#   wrangler secret put EMAIL_INGEST_HMAC_SECRET
+#   wrangler secret put EMAIL_INGEST_API_URL

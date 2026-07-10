@@ -436,6 +436,21 @@ class Settings(BaseSettings):
         default=True, alias="ASSISTANT_WRITE_TOOLS_ENABLED"
     )
 
+    # Post Room: private email ingest address (Cloudflare Email Worker → HMAC-signed POST).
+    # EMAIL_INGEST_ENABLED gates route registration; when false the endpoint is absent
+    # entirely (no live public POST target in CI/local). Required keys are validated
+    # only in staging/prod when the flag is true (mirrors the billing block).
+    email_ingest_enabled: bool = Field(default=False, alias="EMAIL_INGEST_ENABLED")
+    email_ingest_hmac_secret: str | None = Field(default=None, alias="EMAIL_INGEST_HMAC_SECRET")
+    email_ingest_address_slug: str | None = Field(
+        default=None, alias="EMAIL_INGEST_ADDRESS_SLUG"
+    )
+    email_ingest_domain: str | None = Field(default=None, alias="EMAIL_INGEST_DOMAIN")
+    email_ingest_owner_user_id: str | None = Field(
+        default=None, alias="EMAIL_INGEST_OWNER_USER_ID"
+    )
+    email_ingest_max_bytes: int = Field(default=2_097_152, alias="EMAIL_INGEST_MAX_BYTES")
+
     # Stream token auth.
     # HS256 signing key for short-lived stream tokens (base64-encoded 32+ bytes)
     # Required in staging/prod; auto-generated deterministic key in local/test
@@ -655,6 +670,21 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "Billing is enabled but required Stripe settings are missing: "
                     f"{', '.join(missing_billing)}"
+                )
+        if self.nexus_env in (Environment.STAGING, Environment.PROD) and self.email_ingest_enabled:
+            missing_email: list[str] = []
+            if not self.email_ingest_hmac_secret:
+                missing_email.append("EMAIL_INGEST_HMAC_SECRET")
+            if not self.email_ingest_address_slug:
+                missing_email.append("EMAIL_INGEST_ADDRESS_SLUG")
+            if not self.email_ingest_domain:
+                missing_email.append("EMAIL_INGEST_DOMAIN")
+            if not self.email_ingest_owner_user_id:
+                missing_email.append("EMAIL_INGEST_OWNER_USER_ID")
+            if missing_email:
+                raise ValueError(
+                    "Email ingest is enabled but required settings are missing: "
+                    f"{', '.join(missing_email)}"
                 )
         if self.podcasts_enabled:
             missing_podcast_provider_settings: list[str] = []

@@ -215,7 +215,7 @@ def _accept_url_source(
             ApiErrorCode.E_INVALID_KIND,
             f"URL source produced {spec['kind']!r}; expected {expected_kind!r}.",
         )
-    intent_key = _intent_key(
+    intent_key = build_intent_key(
         spec["source_type"],
         url,
         spec["provider_target_ref"],
@@ -279,7 +279,7 @@ def _accept_url_source(
         source_payload["library_ids"] = [str(library_id) for library_id in library_ids]
     if source_payload_extra:
         source_payload.update(source_payload_extra)
-    attempt = _create_attempt(
+    attempt = create_attempt(
         db,
         media=media,
         viewer_id=viewer_id,
@@ -358,7 +358,7 @@ def accept_browser_article_capture(
         )
 
     source_type = source_types.BROWSER_ARTICLE_CAPTURE
-    intent_key = _intent_key(
+    intent_key = build_intent_key(
         source_type,
         url,
         {"content_size_bytes": len(html_bytes), "source_size_bytes": len(source_html_bytes)},
@@ -408,7 +408,7 @@ def accept_browser_article_capture(
     storage_client = get_storage_client()
     db.add(media)
     db.flush()
-    attempt = _create_attempt(
+    attempt = create_attempt(
         db,
         media=media,
         viewer_id=viewer_id,
@@ -553,12 +553,12 @@ def accept_embedded_source(
         **dict(spec["source_payload"]),
         "library_ids": [str(library_id) for library_id in library_ids],
     }
-    attempt = _create_attempt(
+    attempt = create_attempt(
         db,
         media=media,
         viewer_id=viewer_id,
         source_type=str(spec["source_type"]),
-        intent_key=_intent_key(
+        intent_key=build_intent_key(
             spec["source_type"],
             url,
             spec["provider_target_ref"],
@@ -651,7 +651,7 @@ def accept_browser_file_capture(
         validate_requested_url(clean_source_url)
 
     source_type = f"browser_{kind}_capture"
-    intent_key = _intent_key(
+    intent_key = build_intent_key(
         source_type,
         clean_source_url or cleaned_filename,
         len(payload),
@@ -718,7 +718,7 @@ def accept_browser_file_capture(
                 size_bytes=len(payload),
             )
         )
-    attempt = _create_attempt(
+    attempt = create_attempt(
         db,
         media=media,
         viewer_id=viewer_id,
@@ -958,6 +958,8 @@ def run_source_attempt(
             result = _run_remote_file(db, media_id, attempt, request_id)
         elif attempt.source_type == source_types.BROWSER_ARTICLE_CAPTURE:
             result = _run_browser_article_capture(db, media_id, attempt, request_id)
+        elif attempt.source_type == source_types.EMAIL_MESSAGE:
+            result = _run_email_message(db, media_id, attempt, request_id)
         elif attempt.source_type in source_types.LOCAL_FILE_SOURCE_TYPES:
             result = _run_existing_file(db, media_id, request_id)
         elif attempt.source_type == source_types.PODCAST_EPISODE_TRANSCRIPT:
@@ -1332,12 +1334,12 @@ def record_upload_source_intent(
 ) -> MediaSourceAttempt:
     """Record the durable source intent created by upload init."""
     source_type = f"uploaded_{media.kind}_file"
-    return _create_attempt(
+    return create_attempt(
         db,
         media=media,
         viewer_id=viewer_id,
         source_type=source_type,
-        intent_key=intent_key or _intent_key(source_type, str(media.id), None),
+        intent_key=intent_key or build_intent_key(source_type, str(media.id), None),
         requested_url=None,
         canonical_source_url=None,
         provider=None,
@@ -1582,7 +1584,7 @@ def _reused_url_attempt_status(media: Media) -> str:
     return _ATTEMPT_SUCCEEDED
 
 
-def _create_attempt(
+def create_attempt(
     db: Session,
     *,
     media: Media,
@@ -1638,7 +1640,7 @@ def _clone_attempt_for_media(
     intent_key: str | None = None,
     idempotency_key: str | None = None,
 ) -> MediaSourceAttempt:
-    return _create_attempt(
+    return create_attempt(
         db,
         media=media,
         viewer_id=viewer_id,
@@ -1776,7 +1778,7 @@ def _raise_if_source_action_not_reacquirable(
             "Source retry is not available for this terminal failure. Provide a new source.",
         )
     if (
-        attempt.source_type in source_types.NON_REACQUIRABLE_FILE_SOURCE_TYPES
+        attempt.source_type in source_types.NON_REACQUIRABLE_ARTIFACT_SOURCE_TYPES
         and error_code in _NON_REACQUIRABLE_FILE_ERROR_CODES
     ):
         raise ConflictError(
@@ -1930,12 +1932,12 @@ def enqueue_podcast_episode_transcript_source_attempt(
     if latest is not None and latest.status in _IN_FLIGHT_ATTEMPT_STATUSES:
         return True
 
-    attempt = _create_attempt(
+    attempt = create_attempt(
         db,
         media=media,
         viewer_id=viewer_id,
         source_type=source_types.PODCAST_EPISODE_TRANSCRIPT,
-        intent_key=_intent_key(source_types.PODCAST_EPISODE_TRANSCRIPT, str(media.id), None),
+        intent_key=build_intent_key(source_types.PODCAST_EPISODE_TRANSCRIPT, str(media.id), None),
         requested_url=media.requested_url,
         canonical_source_url=media.canonical_source_url,
         provider=media.provider,
@@ -2404,27 +2406,36 @@ def _run_podcast_episode_transcript(
     return result
 
 
-def _run_browser_article_capture(
+def _run_prepared_html_article(
     db: Session,
     media_id: UUID,
     attempt: MediaSourceAttempt,
+    *,
+    source_storage_path: str | None,
+    extract_embeds: bool,
     request_id: str | None,
-) -> dict[str, object]:
+) -> tuple[str, UUID, UUID, list[tuple[UUID, UUID]]]:
+    """Shared HTML-in-storage body path for browser-capture and email.
+
+    Streams derived HTML from ``storage_path`` in the attempt payload, sanitises,
+    fragments, and marks ready for reading. Does NOT commit — the caller commits so
+    caller-specific writes land atomically with mark_ready. Returns
+    ``(canonical_text, fragment_id, owner_user_id, queued_children)``.
+
+    Caller-specific concerns are NOT included here:
+    - Fetching ``source_storage_path`` (browser only; ``None`` skips the R2 read).
+    - ``extract_embeds`` / ``replace_document_embed_artifact`` (browser ``True``,
+      email ``False``).
+    - ``_persist_browser_article_metadata`` / title update (browser only).
+    """
     media = db.execute(select(Media).where(Media.id == media_id).with_for_update()).scalar()
     if media is None:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-    if media.kind != MediaKind.web_article.value:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_KIND,
-            "Browser article capture must target web_article media.",
-        )
+
     payload = dict(attempt.source_payload or {})
     storage_path = str(payload.get("storage_path") or "")
     if not storage_path:
-        raise ApiError(ApiErrorCode.E_INTERNAL, "Missing browser article source artifact.")
-    source_storage_path = str(payload.get("source_storage_path") or "")
-    if not source_storage_path:
-        raise ApiError(ApiErrorCode.E_INTERNAL, "Missing browser article source markup artifact.")
+        raise ApiError(ApiErrorCode.E_INTERNAL, "Missing article source artifact.")
 
     begin_extraction(db, media)
     db.commit()
@@ -2432,17 +2443,33 @@ def _run_browser_article_capture(
     storage_client = get_storage_client()
     try:
         content_html = b"".join(storage_client.stream_object(storage_path)).decode("utf-8")
-        source_html = b"".join(storage_client.stream_object(source_storage_path)).decode("utf-8")
     except UnicodeDecodeError as exc:
         raise InvalidRequestError(
             ApiErrorCode.E_SANITIZATION_FAILED,
-            "Captured article source is not valid UTF-8.",
+            "Article source is not valid UTF-8.",
         ) from exc
     except StorageError as exc:
         raise ApiError(
             ApiErrorCode.E_STORAGE_ERROR,
-            "Captured article source is missing from storage.",
+            "Article source is missing from storage.",
         ) from exc
+
+    source_html: str | None = None
+    if source_storage_path:
+        try:
+            source_html = b"".join(
+                storage_client.stream_object(source_storage_path)
+            ).decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise InvalidRequestError(
+                ApiErrorCode.E_SANITIZATION_FAILED,
+                "Article source markup is not valid UTF-8.",
+            ) from exc
+        except StorageError as exc:
+            raise ApiError(
+                ApiErrorCode.E_STORAGE_ERROR,
+                "Article source markup is missing from storage.",
+            ) from exc
 
     try:
         prepared = prepare_web_article_fragment(
@@ -2451,19 +2478,19 @@ def _run_browser_article_capture(
             base_url=str(attempt.requested_url or media.requested_url or ""),
             fragment_idx=0,
             media_title=str(payload.get("title") or media.title or ""),
-            extract_embeds=True,
+            extract_embeds=extract_embeds,
         )
     except ValueError as exc:
         raise ApiError(
             ApiErrorCode.E_SANITIZATION_FAILED,
-            "Captured article could not be sanitized.",
+            "Article could not be sanitized.",
         ) from exc
 
     canonical_text = prepared.canonical_text
     if not canonical_text.strip():
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST,
-            "Captured article has no readable text.",
+            "Article has no readable text.",
         )
 
     media = db.execute(select(Media).where(Media.id == media_id).with_for_update()).scalar()
@@ -2472,7 +2499,7 @@ def _run_browser_article_capture(
 
     owner_user_id = attempt.created_by_user_id or media.created_by_user_id
     if owner_user_id is None:
-        raise ApiError(ApiErrorCode.E_INTERNAL, "Browser article capture is missing an owner.")
+        raise ApiError(ApiErrorCode.E_INTERNAL, "Article attempt is missing an owner.")
     delete_web_article_artifacts(
         db,
         owner_user_id=owner_user_id,
@@ -2489,24 +2516,24 @@ def _run_browser_article_capture(
     db.add(fragment)
     db.flush()
     insert_fragment_blocks(db, fragment.id, prepared.fragment_blocks)
-    from nexus.services.document_embeds import replace_document_embed_artifact
 
-    queued_children = replace_document_embed_artifact(
-        db,
-        owner_user_id=owner_user_id,
-        media_id=media_id,
-        source_attempt_id=attempt.id,
-        fragment_id=fragment.id,
-        document_embeds=prepared.document_embeds,
-        extraction_error_code=prepared.document_embed_extraction_error_code,
-        extraction_error_message=prepared.document_embed_extraction_error_message,
-        request_id=request_id,
-    )
+    if extract_embeds:
+        from nexus.services.document_embeds import replace_document_embed_artifact
 
-    title = str(payload.get("title") or "").strip()
-    if title:
-        media.title = title[:255]
-    _persist_browser_article_metadata(db, media, payload)
+        queued_children = replace_document_embed_artifact(
+            db,
+            owner_user_id=owner_user_id,
+            media_id=media_id,
+            source_attempt_id=attempt.id,
+            fragment_id=fragment.id,
+            document_embeds=prepared.document_embeds,
+            extraction_error_code=prepared.document_embed_extraction_error_code,
+            extraction_error_message=prepared.document_embed_extraction_error_message,
+            request_id=request_id,
+        )
+    else:
+        queued_children = []
+
     mark_ready_for_reading(db, media)
     replace_media_apparatus(
         db,
@@ -2530,8 +2557,20 @@ def _run_browser_article_capture(
         edges=prepared.apparatus_edges,
     )
     fragment_id = fragment.id
-    db.commit()
+    # No commit here: the caller commits so caller-specific writes (browser title +
+    # byline/excerpt/site_name credits) land in the SAME transaction as
+    # mark_ready_for_reading / apparatus — no ready-before-byline window on a crash.
+    # Child-embed enqueue also runs post-commit in the caller.
+    return canonical_text, fragment_id, owner_user_id, queued_children
 
+
+def _enqueue_prepared_html_children(
+    db: Session,
+    queued_children: list[tuple[UUID, UUID]],
+    owner_user_id: UUID,
+    request_id: str | None,
+) -> None:
+    """Enqueue child-media ingest jobs for promoted document embeds (post-commit)."""
     for child_media_id, child_attempt_id in queued_children:
         enqueue_accepted_source_attempt(
             db,
@@ -2541,12 +2580,104 @@ def _run_browser_article_capture(
             request_id=request_id,
         )
 
+
+def _run_browser_article_capture(
+    db: Session,
+    media_id: UUID,
+    attempt: MediaSourceAttempt,
+    request_id: str | None,
+) -> dict[str, object]:
+    media = db.execute(select(Media).where(Media.id == media_id).with_for_update()).scalar()
+    if media is None:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+    if media.kind != MediaKind.web_article.value:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_KIND,
+            "Browser article capture must target web_article media.",
+        )
+    payload = dict(attempt.source_payload or {})
+    storage_path = str(payload.get("storage_path") or "")
+    if not storage_path:
+        raise ApiError(ApiErrorCode.E_INTERNAL, "Missing browser article source artifact.")
+    source_storage_path = str(payload.get("source_storage_path") or "")
+    if not source_storage_path:
+        raise ApiError(ApiErrorCode.E_INTERNAL, "Missing browser article source markup artifact.")
+
+    _canonical_text, fragment_id, owner_user_id, queued_children = _run_prepared_html_article(
+        db,
+        media_id,
+        attempt,
+        source_storage_path=source_storage_path,
+        extract_embeds=True,
+        request_id=request_id,
+    )
+
+    # Browser-only: title + byline/excerpt/site_name from payload. These persist in the
+    # SAME commit as mark_ready_for_reading / apparatus (the shared helper deferred it).
+    media = db.execute(select(Media).where(Media.id == media_id).with_for_update()).scalar()
+    if media is None:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+    title = str(payload.get("title") or "").strip()
+    if title:
+        media.title = title[:255]
+    _persist_browser_article_metadata(db, media, payload)
+    db.commit()
+    _enqueue_prepared_html_children(db, queued_children, owner_user_id, request_id)
+
     return {
         "status": "success",
         "source_type": source_types.BROWSER_ARTICLE_CAPTURE,
         "post_success_index": "web_article",
         "fragment_id": str(fragment_id),
         "metadata_enrichment": True,
+    }
+
+
+def _run_email_message(
+    db: Session,
+    media_id: UUID,
+    attempt: MediaSourceAttempt,
+    request_id: str | None,
+) -> dict[str, object]:
+    """Run the email_message source attempt via the shared HTML pipeline.
+
+    ``source_storage_path=None`` skips the second R2 read; ``extract_embeds=False``
+    means no child media are created (D-9). Sender credit was written at accept
+    time — ``_persist_browser_article_metadata`` is not called.
+    """
+    media = db.execute(select(Media).where(Media.id == media_id).with_for_update()).scalar()
+    if media is None:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+    if media.kind != MediaKind.web_article.value:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_KIND,
+            "Email message must target web_article media.",
+        )
+    payload = dict(attempt.source_payload or {})
+    if not payload.get("has_content"):
+        # No text content was available at accept time; mark failed at extract.
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Email has no readable text content.",
+        )
+
+    _canonical_text, fragment_id, owner_user_id, queued_children = _run_prepared_html_article(
+        db,
+        media_id,
+        attempt,
+        source_storage_path=None,
+        extract_embeds=False,
+        request_id=request_id,
+    )
+    db.commit()
+    _enqueue_prepared_html_children(db, queued_children, owner_user_id, request_id)
+
+    return {
+        "status": "success",
+        "source_type": source_types.EMAIL_MESSAGE,
+        "post_success_index": "web_article",
+        "fragment_id": str(fragment_id),
+        "metadata_enrichment": False,
     }
 
 
@@ -3027,7 +3158,7 @@ def _parse_source_action_intent_key(intent_key: str) -> dict[str, str] | None:
     }
 
 
-def _intent_key(
+def build_intent_key(
     source_type: object,
     url: str,
     target_ref: object,

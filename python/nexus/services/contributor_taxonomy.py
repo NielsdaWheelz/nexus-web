@@ -30,11 +30,26 @@ CONTRIBUTOR_RESOLUTION_STATUSES = frozenset(
         "unverified",
     }
 )
-# Only true name-authority files assert identity during resolution. Provider
-# accounts (podcast_index/rss/youtube/gutenberg) are provenance, never identity
-# keys — cross-provider duplicates are reconciled by explicit merge (D-EXT/N9).
+# Two classes of authority resolve identity during contributor lookup:
+#
+# 1. Bibliographic name-authority files (orcid/isni/viaf/wikidata/openalex/lcnaf):
+#    globally scoped, cross-authority identity claims — an ORCID for one work and
+#    an ISNI for another can be merged by a human; they assert the same real person.
+#
+# 2. Stable self-asserted single-authority network identity (email):
+#    resolves ONLY within its own (authority, external_key) pair. An email sender
+#    address is stable and self-asserted: the second issue from the same address is
+#    provably the same sender. Resolution here is idempotency — the same address
+#    maps to the same contributor — NOT cross-authority merge. ``email`` never
+#    merges with an ORCID contributor; ``email``→``email`` is deduplication.
+#    ``rss`` stays weak because its per-feed identifier is provenance (the product
+#    does not resolve senders by RSS feed id), while ``email`` is strong because
+#    sender idempotency is the whole point of the Post Room.
+#
+# Provider accounts (podcast_index/rss/youtube/gutenberg) are provenance, never
+# identity keys — cross-provider duplicates are reconciled by explicit merge.
 STRONG_CONTRIBUTOR_EXTERNAL_ID_AUTHORITIES = frozenset(
-    {"orcid", "isni", "viaf", "wikidata", "openalex", "lcnaf"}
+    {"orcid", "isni", "viaf", "wikidata", "openalex", "lcnaf", "email"}
 )
 CONTRIBUTOR_EXTERNAL_ID_AUTHORITIES = STRONG_CONTRIBUTOR_EXTERNAL_ID_AUTHORITIES | frozenset(
     {"podcast_index", "rss", "youtube", "gutenberg"}

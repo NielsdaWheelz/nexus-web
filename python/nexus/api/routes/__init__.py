@@ -114,6 +114,10 @@ def create_api_router() -> APIRouter:
         api_router.include_router(podcasts_router)
     api_router.include_router(internal_libraries_router)
     api_router.include_router(internal_ingest_router)
+    if settings.email_ingest_enabled:
+        from nexus.api.routes.email_ingest import router as email_ingest_router
+
+        api_router.include_router(email_ingest_router)
 
     # Browser-callable SSE event streams (all under /stream/) + the BFF
     # stream-token mint. Tags are self-declared on each router.

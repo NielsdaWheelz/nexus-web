@@ -62,3 +62,13 @@ X_API_AUTHOR_THREAD_MAX_POSTS=1000
 # STRIPE_PLUS_PRICE_ID=
 # STRIPE_AI_PLUS_PRICE_ID=
 # STRIPE_AI_PRO_PRICE_ID=
+
+# Post Room: private email ingest address (Cloudflare Email Worker).
+# Set EMAIL_INGEST_ENABLED=true once DNS MX + Email Routing + worker are deployed.
+# All four non-defaulted keys are required when enabled in staging/prod.
+EMAIL_INGEST_ENABLED=false
+# EMAIL_INGEST_HMAC_SECRET=<generate-with: python -c "import secrets; print(secrets.token_hex(32))">
+# EMAIL_INGEST_ADDRESS_SLUG=<local-part of the ingest address, e.g. "letters-abc123">
+# EMAIL_INGEST_DOMAIN=<mail domain configured in Cloudflare Email Routing, e.g. "mail.example.com">
+# EMAIL_INGEST_OWNER_USER_ID=<prod-user-uuid>
+# EMAIL_INGEST_MAX_BYTES=2097152  # raw-MIME cap; endpoint re-check + worker bounce. Default 2 MB.
