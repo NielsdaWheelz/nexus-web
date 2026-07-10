@@ -57,7 +57,7 @@ async function sendChat(page: Page, text: string): Promise<string> {
     { timeout: 30_000 },
   );
   await input.fill(text);
-  await page.getByRole("button", { name: "Send message" }).click();
+  await page.getByRole("button", { name: "SEND", exact: true }).click();
   const response = await responsePromise;
   const body = await response.text();
   expect(response.ok(), body).toBeTruthy();

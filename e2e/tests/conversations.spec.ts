@@ -436,7 +436,8 @@ test.describe("conversations", () => {
       const input = conversationPane.getByRole("textbox", { name: "Ask anything" });
       await input.fill("E2E selected quote follow-up");
       const sendButton = conversationPane.getByRole("button", {
-        name: "Send fork reply",
+        name: "SEND",
+        exact: true,
       });
       await expect(sendButton).toBeEnabled({ timeout: 15_000 });
       await sendButton.click();
