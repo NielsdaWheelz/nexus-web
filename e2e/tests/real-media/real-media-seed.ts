@@ -10,7 +10,7 @@ import { openAddContentPanel } from "../add-content";
 import { stateChangingApiHeaders } from "../api";
 import { openEvidencePane } from "../reader";
 import { selectFreshVisibleTextSnippet } from "../selection";
-import { runE2eWorkerOnce } from "../worker";
+import { runE2eWorkerOnce, startE2eWorkerUntilMediaReady } from "../worker";
 import {
   ACTIVE_WORKSPACE_PANE_SELECTOR,
   activeWorkspacePane,
@@ -301,91 +301,57 @@ export async function drainRealMediaWorkerForMediaReady(
   page: Page,
   mediaId: string,
 ) {
-  const deadline = Date.now() + REAL_MEDIA_WORKER_DRAIN_TIMEOUT_MS;
-  let workerIterations = 0;
-  let last: unknown = null;
-  let stdout = "";
-  let stderr = "";
+  assertRealMediaStorageIsLocal();
 
-  // justify-polling: media refresh completion is produced by the external worker
-  // loop. Each 200ms pass drives one real worker iteration, then observes the
-  // supported media API until the 120s fixture budget expires.
-  while (Date.now() < deadline) {
-    const workerResult = runRealMediaWorkerOnce(mediaId);
-    workerIterations += workerResult.worker_iterations ?? 0;
-    stdout = workerResult.stdout;
-    stderr = workerResult.stderr;
+  // A single long-lived worker subprocess loops run_once() in-process until this
+  // media reaches a terminal ingest state. Scoping the worker to
+  // `ingest_media_source` (see startE2eWorkerUntilMediaReady) means a refresh /
+  // re-ingest job is never starved behind the unrelated LLM side-effect backlog
+  // (enrich_metadata / media_unit_build / synapse_scan /
+  // contributor_reconciliation) that prior ingests leave queued, and amortizing
+  // the subprocess spawn removes the per-iteration `uv run` cost that pushed the
+  // wall-clock budget over the edge on a loaded box.
+  const workerResult = await startE2eWorkerUntilMediaReady({
+    mediaId,
+    allowedNexusEnvs: ["local"],
+    extraEnv: {
+      REAL_MEDIA_PROVIDER_FIXTURES: "1",
+      REAL_MEDIA_FIXTURE_DIR:
+        process.env.REAL_MEDIA_FIXTURE_DIR ?? REAL_MEDIA_FIXTURE_DIR,
+    },
+    deadlineSeconds: Math.floor(REAL_MEDIA_WORKER_DRAIN_TIMEOUT_MS / 1000),
+  });
 
-    const response = await page.request.get(`/api/media/${mediaId}`);
-    if (response.ok()) {
-      const payload = (await response.json()) as {
-        data: { processing_status: string; retrieval_status?: string | null };
-      };
-      const processingStatus = payload.data.processing_status;
-      const retrievalStatus = payload.data.retrieval_status ?? "pending";
-      last = {
-        processing_status: processingStatus,
-        retrieval_status: retrievalStatus,
-        index_status: workerResult.index_status,
-        chunk_count: workerResult.chunk_count,
-        evidence_count: workerResult.evidence_count,
-        embedding_count: workerResult.embedding_count,
-      };
-      if (
-        retrievalStatus === "ready" &&
-        processingStatus === "ready_for_reading" &&
-        workerResult.index_status === "ready" &&
-        (workerResult.chunk_count ?? 0) > 0 &&
-        (workerResult.evidence_count ?? 0) > 0 &&
-        (workerResult.embedding_count ?? 0) > 0
-      ) {
-        return {
-          status: "success",
-          retrieval_status: retrievalStatus,
-          processing_status: processingStatus,
-          index_status: workerResult.index_status,
-          chunk_count: workerResult.chunk_count,
-          evidence_count: workerResult.evidence_count,
-          embedding_count: workerResult.embedding_count,
-          worker_iterations: workerIterations,
-          last,
-          stdout,
-          stderr,
-        };
-      }
-      if (
-        processingStatus === "failed" ||
-        ["failed", "no_text", "ocr_required"].includes(retrievalStatus) ||
-        ["failed", "no_text", "ocr_required"].includes(
-          workerResult.index_status ?? "",
-        )
-      ) {
-        return {
-          status: "failed",
-          retrieval_status: retrievalStatus,
-          processing_status: processingStatus,
-          index_status: workerResult.index_status,
-          chunk_count: workerResult.chunk_count,
-          evidence_count: workerResult.evidence_count,
-          embedding_count: workerResult.embedding_count,
-          worker_iterations: workerIterations,
-          last,
-          stdout,
-          stderr,
-        };
-      }
-    } else {
-      last = `${response.status()} ${await response.text()}`;
-    }
-    await page.waitForTimeout(REAL_MEDIA_WORKER_POLL_MS);
+  // Parity check against the public media API the product actually serves:
+  // retrieval_status mirrors the content-index status the worker just wrote.
+  let retrievalStatus = workerResult.index_status ?? "pending";
+  const response = await page.request.get(`/api/media/${mediaId}`);
+  if (response.ok()) {
+    const payload = (await response.json()) as {
+      data: { processing_status: string; retrieval_status?: string | null };
+    };
+    retrievalStatus = payload.data.retrieval_status ?? retrievalStatus;
   }
 
   return {
-    status: "timeout",
-    worker_iterations: workerIterations,
-    last,
-    stdout,
-    stderr,
+    status: workerResult.status,
+    retrieval_status: retrievalStatus,
+    processing_status: workerResult.processing_status ?? undefined,
+    index_status: workerResult.index_status,
+    chunk_count: workerResult.chunk_count,
+    evidence_count: workerResult.evidence_count,
+    embedding_count: workerResult.embedding_count,
+    worker_iterations: workerResult.worker_iterations,
+    last: {
+      processing_status: workerResult.processing_status,
+      retrieval_status: retrievalStatus,
+      index_status: workerResult.index_status,
+      chunk_count: workerResult.chunk_count,
+      evidence_count: workerResult.evidence_count,
+      embedding_count: workerResult.embedding_count,
+    },
+    stdout: workerResult.stdout,
+    stderr: workerResult.stderr,
   };
 }
 

@@ -48,6 +48,23 @@ interface StartE2eWorkerUntilChatRunTerminalOptions extends RunE2eWorkerOnceOpti
   chatRunId: string;
 }
 
+interface StartE2eWorkerUntilMediaReadyOptions extends RunE2eWorkerOnceOptions {
+  mediaId: string;
+  deadlineSeconds?: number;
+}
+
+export interface E2eWorkerMediaReadyResult {
+  status: "success" | "failed" | "timeout";
+  processing_status: string | null;
+  index_status: string | null;
+  chunk_count: number;
+  evidence_count: number;
+  embedding_count: number;
+  worker_iterations: number;
+  stdout: string;
+  stderr: string;
+}
+
 function assertAllowedNexusEnv(allowedNexusEnvs: readonly string[]): string {
   const nexusEnv = process.env.NEXUS_ENV ?? "local";
   if (!allowedNexusEnvs.includes(nexusEnv)) {
@@ -337,6 +354,190 @@ else:
             ? result.chatRunStatus
             : null,
         index: null,
+        stdout: stdout.slice(-4000),
+        stderr: stderr.slice(-4000),
+      });
+    });
+  });
+}
+
+export function startE2eWorkerUntilMediaReady({
+  mediaId,
+  allowedNexusEnvs = ["local", "test"],
+  extraEnv = {},
+  deadlineSeconds = 110,
+}: StartE2eWorkerUntilMediaReadyOptions): Promise<E2eWorkerMediaReadyResult> {
+  const databaseUrl = assertLocalDatabaseUrl();
+  const nexusEnv = assertAllowedNexusEnv(allowedNexusEnvs);
+  const deadline = Math.max(Math.floor(deadlineSeconds), 1);
+  const workerEnv = {
+    ...buildE2eAppRuntimeEnv(process.env),
+    DATABASE_URL: databaseUrl,
+    NEXUS_ENV: nexusEnv,
+    // Media readiness — ready_for_reading with a ready content index carrying
+    // chunks, evidence spans, and embeddings — is produced entirely inside the
+    // `ingest_media_source` job handler (extract -> chunk -> embed -> index all
+    // run in-handler). Scope this drain worker to that single kind so it does
+    // not spend its budget claiming the older, unrelated LLM side-effect backlog
+    // (enrich_metadata / media_unit_build / synapse_scan /
+    // contributor_reconciliation) that ingest leaves queued and that the
+    // media-ready drains never run to completion. Under the full config
+    // allowlist the newest refresh/re-ingest row sits behind dozens of those
+    // older jobs and is never reached before the drain budget expires.
+    WORKER_ALLOWED_JOB_KINDS: "ingest_media_source",
+    ...extraEnv,
+    NEXUS_E2E_WORKER_MEDIA_ID: mediaId,
+    NEXUS_E2E_WORKER_DEADLINE_SECONDS: String(deadline),
+  };
+  assertLocalStorageEndpoint(workerEnv);
+
+  const child = spawn(
+    "uv",
+    [
+      "run",
+      "--project",
+      "python",
+      "python",
+      "-c",
+      `
+import json
+import os
+import time
+
+import psycopg
+
+from apps.worker.main import create_worker
+
+database_url = os.environ["DATABASE_URL"].replace("postgresql+psycopg://", "postgresql://", 1)
+media_id = os.environ["NEXUS_E2E_WORKER_MEDIA_ID"]
+deadline = time.monotonic() + float(os.environ["NEXUS_E2E_WORKER_DEADLINE_SECONDS"])
+worker = create_worker()
+conn = psycopg.connect(database_url, autocommit=True)
+iterations = 0
+state = None
+status = "timeout"
+
+state_sql = """
+    SELECT
+        m.processing_status::text,
+        COALESCE(mcis.status, 'pending'),
+        count(DISTINCT cc.id),
+        count(DISTINCT es.id),
+        count(DISTINCT ce.id)
+    FROM media m
+    LEFT JOIN content_index_states mcis ON mcis.owner_kind = 'media' AND mcis.owner_id = m.id
+    LEFT JOIN content_chunks cc ON cc.owner_kind = 'media' AND cc.owner_id = m.id
+    LEFT JOIN evidence_spans es ON es.owner_kind = 'media' AND es.owner_id = m.id
+    LEFT JOIN content_embeddings ce ON ce.chunk_id = cc.id
+    WHERE m.id = %s::uuid
+    GROUP BY m.processing_status, mcis.status
+"""
+
+
+def read_state():
+    with conn.cursor() as cur:
+        cur.execute(state_sql, (media_id,))
+        row = cur.fetchone()
+    if row is None:
+        return None
+    return {
+        "processing_status": row[0],
+        "index_status": row[1],
+        "chunk_count": row[2],
+        "evidence_count": row[3],
+        "embedding_count": row[4],
+    }
+
+
+while time.monotonic() < deadline:
+    processed = bool(worker.run_once())
+    if processed:
+        iterations += 1
+    state = read_state()
+    if state is not None:
+        ready = (
+            state["index_status"] == "ready"
+            and state["processing_status"] == "ready_for_reading"
+            and state["chunk_count"] > 0
+            and state["evidence_count"] > 0
+            and state["embedding_count"] > 0
+        )
+        failed = (
+            state["processing_status"] == "failed"
+            or state["index_status"] in ("failed", "no_text", "ocr_required")
+        )
+        if ready:
+            status = "success"
+            break
+        if failed:
+            status = "failed"
+            break
+    if not processed:
+        time.sleep(0.1)
+
+result = {"status": status, "worker_iterations": iterations}
+result.update(
+    state
+    or {
+        "processing_status": None,
+        "index_status": None,
+        "chunk_count": 0,
+        "evidence_count": 0,
+        "embedding_count": 0,
+    }
+)
+print(json.dumps(result, sort_keys=True))
+`,
+    ],
+    { cwd: ROOT_DIR, env: workerEnv },
+  );
+  let stdout = "";
+  let stderr = "";
+  const timer = setTimeout(
+    () => child.kill("SIGKILL"),
+    (deadline + 15) * 1000,
+  );
+
+  return new Promise((resolve, reject) => {
+    child.stdout.on("data", (chunk: unknown) => {
+      stdout += String(chunk);
+    });
+    child.stderr.on("data", (chunk: unknown) => {
+      stderr += String(chunk);
+    });
+    child.on("error", (error: Error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.on("close", (code: number | null, signal: string | null) => {
+      clearTimeout(timer);
+      if (code !== 0) {
+        reject(
+          new Error(stderr || stdout || `worker exited with ${signal ?? code}`),
+        );
+        return;
+      }
+      const lines = stdout.trim().split(/\r?\n/).filter(Boolean);
+      const parsed = JSON.parse(lines[lines.length - 1] ?? "{}") as Record<
+        string,
+        unknown
+      >;
+      const statusValue = String(parsed.status ?? "timeout");
+      resolve({
+        status:
+          statusValue === "success" || statusValue === "failed"
+            ? statusValue
+            : "timeout",
+        processing_status:
+          typeof parsed.processing_status === "string"
+            ? parsed.processing_status
+            : null,
+        index_status:
+          typeof parsed.index_status === "string" ? parsed.index_status : null,
+        chunk_count: Number(parsed.chunk_count ?? 0),
+        evidence_count: Number(parsed.evidence_count ?? 0),
+        embedding_count: Number(parsed.embedding_count ?? 0),
+        worker_iterations: Number(parsed.worker_iterations ?? 0),
         stdout: stdout.slice(-4000),
         stderr: stderr.slice(-4000),
       });
