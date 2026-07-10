@@ -1,22 +1,24 @@
 "use client";
 
-import { useMemo, type Ref } from "react";
+import { type Ref } from "react";
 import { MarkdownMessage } from "@/components/ui/MarkdownMessage";
-import { toReaderCitationData } from "@/lib/conversations/citations";
 import {
   conversationMessageText,
   type ConversationMessage,
 } from "@/lib/conversations/types";
+import type { ReaderCitationData } from "@/lib/conversations/readerCitation";
 import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
 import type { ResourceActivation } from "@/lib/resources/activation";
 import styles from "./MessageRow.module.css";
 
 export default function AssistantEvidenceDisclosure({
   message,
+  citations,
   answerRef,
   onCitationActivate,
 }: {
   message: ConversationMessage;
+  citations: ReaderCitationData[];
   answerRef?: Ref<HTMLDivElement>;
   onCitationActivate?: (
     activation: ResourceActivation,
@@ -25,10 +27,6 @@ export default function AssistantEvidenceDisclosure({
   ) => void;
 }) {
   const answerContent = conversationMessageText(message);
-  const citations = useMemo(
-    () => (message.citations ?? []).map(toReaderCitationData),
-    [message.citations],
-  );
   return (
     <div ref={answerRef} className={styles.assistantBody}>
       <MarkdownMessage

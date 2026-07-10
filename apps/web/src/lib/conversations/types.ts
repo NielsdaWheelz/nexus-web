@@ -194,6 +194,7 @@ export interface AssistantTrustTrail {
     final_chars: number | null;
     started_at: string | null;
     completed_at: string | null;
+    total_cost_usd_micros: number | null;
   } | null;
   prompt: {
     id: string;

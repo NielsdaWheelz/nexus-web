@@ -8,7 +8,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowUp, Quote, Square, X } from "lucide-react";
+import { Quote, Square, X } from "lucide-react";
 import { apiFetch } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createRandomId } from "@/lib/createRandomId";
@@ -233,7 +233,6 @@ export default function ChatComposer({
   // Render
   // --------------------------------------------------------------------------
 
-  const sendLabel = branchDraft ? "Send fork reply" : "Send message";
   const composerDisabled = sending;
   const sendDisabled = sending || Boolean(disabledReason);
 
@@ -313,19 +312,10 @@ export default function ChatComposer({
             </Button>
           ) : (
             <Button
-              variant="primary"
-              size="md"
+              variant="ghost"
+              size="sm"
               className={styles.sendButton}
-              iconOnly={!branchDraft}
-              leadingIcon={branchDraft ? <ArrowUp size={16} aria-hidden="true" /> : undefined}
               onClick={handleSend}
-              aria-label={
-                sending
-                  ? branchDraft
-                    ? "Sending fork reply"
-                    : "Sending message"
-                  : sendLabel
-              }
               disabled={
                 sendDisabled ||
                 !content.trim() ||
@@ -333,7 +323,7 @@ export default function ChatComposer({
                 !modelSelectionReady
               }
             >
-              {branchDraft ? sendLabel : <ArrowUp size={18} aria-hidden="true" />}
+              {sending ? "SENDING" : "SEND"}
             </Button>
           )}
         </div>

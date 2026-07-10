@@ -43,7 +43,6 @@ describe("toReaderCitationData", () => {
   it("builds a media reader target from media_id + locator", () => {
     expect(toReaderCitationData(mediaCitation())).toEqual({
       index: 1,
-      color: "yellow",
       preview: {
         title: "Source title",
         excerpt: "matched source text",
@@ -146,7 +145,6 @@ describe("toReaderCitationData", () => {
       ),
     ).toEqual({
       index: 1,
-      color: "yellow",
       preview: {
         title: "Source title",
         excerpt: "matched source text",

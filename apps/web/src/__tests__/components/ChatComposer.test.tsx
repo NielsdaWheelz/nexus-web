@@ -258,7 +258,7 @@ describe("ChatComposer", () => {
     const message = screen.getByRole("textbox", { name: "Ask anything" });
     await user.click(message);
     await user.keyboard("Explain this quote");
-    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await user.click(screen.getByRole("button", { name: "SEND" }));
 
     await waitFor(() => {
       expect(chatRunCalls(fetchMock)).toHaveLength(1);
@@ -311,7 +311,7 @@ describe("ChatComposer", () => {
     const message = screen.getByRole("textbox", { name: "Ask anything" });
     await user.click(message);
     await user.keyboard("Use the platform key");
-    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await user.click(screen.getByRole("button", { name: "SEND" }));
 
     await waitFor(() => {
       expect(chatRunCalls(fetchMock)).toHaveLength(1);
@@ -394,7 +394,7 @@ describe("ChatComposer", () => {
     const message = screen.getByRole("textbox", { name: "Ask anything" });
     await user.click(message);
     await user.keyboard("Take this branch");
-    await user.click(screen.getByRole("button", { name: "Send fork reply" }));
+    await user.click(screen.getByRole("button", { name: "SEND" }));
 
     await waitFor(() => {
       expect(chatRunCalls(fetchMock)).toHaveLength(1);
@@ -499,7 +499,7 @@ describe("ChatComposer", () => {
     const message = screen.getByRole("textbox", { name: "Ask anything" });
     await user.click(message);
     await user.keyboard("Fork from the whole answer");
-    await user.click(screen.getByRole("button", { name: "Send fork reply" }));
+    await user.click(screen.getByRole("button", { name: "SEND" }));
 
     await waitFor(() => {
       expect(chatRunCalls(fetchMock)).toHaveLength(1);
@@ -530,7 +530,7 @@ describe("ChatComposer", () => {
     const message = screen.getByRole("textbox", { name: "Ask anything" });
     await user.click(message);
     await user.keyboard("Start a new root chat");
-    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await user.click(screen.getByRole("button", { name: "SEND" }));
 
     await waitFor(() => {
       expect(chatRunCalls(fetchMock)).toHaveLength(1);
@@ -590,7 +590,7 @@ describe("ChatComposer", () => {
     const message = screen.getByRole("textbox", { name: "Ask anything" });
     await user.click(message);
     await user.keyboard("First message into the doc chat");
-    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await user.click(screen.getByRole("button", { name: "SEND" }));
 
     await waitFor(() => {
       expect(chatRunCalls(fetchMock)).toHaveLength(1);
@@ -627,7 +627,7 @@ describe("ChatComposer", () => {
     const message = screen.getByRole("textbox", { name: "Ask anything" });
     await user.click(message);
     await user.keyboard("This should not send");
-    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await user.click(screen.getByRole("button", { name: "SEND" }));
 
     await waitFor(() => {
       expect(onResolveConversation).toHaveBeenCalledOnce();
@@ -676,6 +676,53 @@ describe("ChatComposer", () => {
     expect(screen.queryByText(/^scope/i)).not.toBeInTheDocument();
   });
 
+  it("flips the send button to SENDING while the chat run is in flight (D-3, R-6)", async () => {
+    const user = userEvent.setup();
+    let releaseRun: () => void = () => {};
+    const runGate = new Promise<void>((resolve) => {
+      releaseRun = resolve;
+    });
+    const fetchMock = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = pathOf(input);
+        if (path === "/api/models") {
+          return jsonResponse({ data: MODELS });
+        }
+        if (path === "/api/chat-runs" && init?.method === "POST") {
+          await runGate;
+          return jsonResponse(
+            chatRunResponse(JSON.parse(String(init.body)) as ChatRunCreateRequest),
+          );
+        }
+        throw new Error(`Unexpected fetch call: ${path}`);
+      },
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<ChatComposer conversationId="conversation-1" />);
+
+    // Idle: the send action is a text "SEND" button (no ArrowUp icon).
+    const sendButton = await screen.findByRole("button", { name: "SEND" });
+
+    const message = screen.getByRole("textbox", { name: "Ask anything" });
+    await user.click(message);
+    await user.keyboard("Hold the line while it sends");
+    await user.click(sendButton);
+
+    // In-flight: the same button reads "SENDING" (the visible text is the
+    // accessible name — no separate aria-label, per D-3/R-6).
+    expect(
+      await screen.findByRole("button", { name: "SENDING" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "SEND" })).toBeNull();
+
+    // Resolve the run; the button returns to "SEND".
+    releaseRun();
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "SEND" })).toBeInTheDocument();
+    });
+  });
+
   it("keeps the composer controls inside a 320px mobile width without horizontal scrolling", async () => {
     installChatComposerFetchMock();
     setViewportWidth(320);
@@ -697,7 +744,7 @@ describe("ChatComposer", () => {
     expect(
       screen.queryByRole("combobox", { name: "Web search mode" }),
     ).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Send message" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "SEND" })).toBeVisible();
 
     const host = screen.getByTestId("mobile-composer-host");
     expect(host.clientWidth).toBe(320);

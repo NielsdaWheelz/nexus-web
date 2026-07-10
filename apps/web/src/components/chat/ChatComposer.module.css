@@ -11,14 +11,14 @@
   flex-direction: column;
   gap: var(--space-2);
   padding: var(--space-3);
-  background: var(--surface-2);
-  border: 1px solid var(--edge);
-  border-radius: var(--radius-2xl);
-  transition: border-color var(--duration-fast) var(--ease-glide);
+  background: var(--surface-1);
+  border-top: 1px solid var(--edge-subtle);
+  border-radius: var(--radius-lg);
+  transition: border-top-color var(--duration-fast) var(--ease-glide);
 }
 
 .composerShell:focus-within {
-  border-color: var(--accent);
+  border-top-color: var(--accent);
 }
 
 .composerError {
@@ -50,11 +50,12 @@
   gap: var(--space-1);
   max-width: 100%;
   padding: var(--space-1) var(--space-2);
-  background: var(--surface-canvas);
-  border: 1px solid var(--edge);
+  border: 1px solid var(--edge-subtle);
   border-radius: var(--radius-md);
   color: var(--ink-muted);
   font-size: var(--text-xs);
+  font-variant-caps: all-small-caps;
+  letter-spacing: var(--tracking-wider);
 }
 
 .pendingRefLabel {
@@ -87,9 +88,5 @@
     width: 100%;
     max-width: none;
     padding: var(--space-3);
-  }
-
-  .composerShell {
-    border-radius: var(--radius-xl);
   }
 }

@@ -3,10 +3,7 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import HoverPreview, { HOVER_PREVIEW_DELAY_MS } from "@/components/ui/HoverPreview";
 import { truncateText } from "@/lib/conversations/display";
-import type {
-  ReaderCitationColor,
-  ReaderCitationPreview,
-} from "@/lib/conversations/readerCitation";
+import type { ReaderCitationPreview } from "@/lib/conversations/readerCitation";
 import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
 import {
   hrefForResourceActivation,
@@ -14,25 +11,14 @@ import {
 } from "@/lib/resources/activation";
 import styles from "./ReaderCitation.module.css";
 
-const colorClass = {
-  yellow: styles.yellow,
-  green: styles.green,
-  blue: styles.blue,
-  pink: styles.pink,
-  purple: styles.purple,
-  neutral: styles.neutral,
-} satisfies Record<ReaderCitationColor, string>;
-
 export default function ReaderCitation({
   index,
-  color,
   preview,
   activation,
   target,
   onActivate,
 }: {
   index: number;
-  color: ReaderCitationColor;
   preview: ReaderCitationPreview;
   activation: ResourceActivation;
   target: ReaderSourceTarget | null;
@@ -148,7 +134,7 @@ export default function ReaderCitation({
       </>
     ) : null;
 
-  const className = `${styles.citation} ${colorClass[color]} ${
+  const className = `${styles.citation} ${
     activationTarget || href ? "" : styles.unavailable
   }`.trim();
 

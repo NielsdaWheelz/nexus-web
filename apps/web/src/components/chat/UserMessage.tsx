@@ -5,7 +5,6 @@ import { FeedbackNotice } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import type { ConversationMessage } from "@/lib/conversations/types";
 import { conversationMessageText } from "@/lib/conversations/types";
-import { collapseWhitespace } from "@/lib/collapseWhitespace";
 import styles from "./MessageRow.module.css";
 
 export default function UserMessage({
@@ -24,7 +23,6 @@ export default function UserMessage({
   onRetryAssistantResponse?: (assistantMessageId: string) => void;
 }) {
   const text = conversationMessageText(message);
-  const presentation = userPromptPresentation(text);
   const content = text || (message.status === "pending" ? "..." : "");
 
   return (
@@ -34,16 +32,12 @@ export default function UserMessage({
       data-role="user"
     >
       <div
-        className={`${styles.userPrompt} ${
-          presentation === "compact"
-            ? styles.userPromptCompact
-            : styles.userPromptExpanded
-        }`}
+        className={styles.userPrompt}
         role="group"
         aria-label="User prompt"
-        data-presentation={presentation}
       >
-        <div className={styles.userPromptHeader}>
+        <div className={styles.userKicker}>
+          <span className={styles.userAttribution}>You</span>
           {retryAssistantMessageId && onRetryAssistantResponse ? (
             <Button
               variant="ghost"
@@ -56,7 +50,6 @@ export default function UserMessage({
               Retry
             </Button>
           ) : null}
-          <span className={styles.userAttribution}>You</span>
         </div>
         <span className={styles.userPromptBody}>{content}</span>
       </div>
@@ -70,13 +63,4 @@ export default function UserMessage({
       <span className={styles.timestamp}>{timestampLabel}</span>
     </div>
   );
-}
-
-function userPromptPresentation(content: string): "compact" | "expanded" {
-  const visible = collapseWhitespace(content);
-  if (visible.length > 320) return "expanded";
-  if (/[\r\n]/.test(content)) return "expanded";
-  if (content.includes("```") || content.includes("~~~")) return "expanded";
-  if (/\S{81,}/.test(content)) return "expanded";
-  return "compact";
 }

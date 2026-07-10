@@ -472,6 +472,7 @@ class TrustRunOut(BaseModel):
     final_chars: int | None = None
     started_at: datetime | None = None
     completed_at: datetime | None = None
+    total_cost_usd_micros: int | None = None
 
     model_config = ConfigDict(extra="forbid")
 

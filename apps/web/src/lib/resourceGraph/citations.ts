@@ -10,10 +10,7 @@
 import { isRetrievalLocator } from "@/lib/api/sse/locators";
 import type { CitationOut } from "@/lib/conversations/citationOut";
 import { hrefForResourceActivation } from "@/lib/resources/activation";
-import {
-  readerCitationColorForIndex,
-  type ReaderCitationData,
-} from "@/lib/conversations/readerCitation";
+import type { ReaderCitationData } from "@/lib/conversations/readerCitation";
 import { type ReaderSourceTarget } from "@/lib/conversations/readerTarget";
 
 function readerTargetForCitation(c: CitationOut): ReaderSourceTarget | null {
@@ -58,7 +55,6 @@ export function toReaderCitationData(c: CitationOut): ReaderCitationData {
   const target = readerTargetForCitation(c);
   return {
     index: c.ordinal,
-    color: readerCitationColorForIndex(c.ordinal),
     preview: {
       title: c.snapshot?.title ?? "",
       ...(c.snapshot?.summary_md != null ? { summary: c.snapshot.summary_md } : {}),

@@ -1,0 +1,48 @@
+/* MessageFootnotes — scholarly footnote list at the foot of machine turns. */
+
+.footnotes {
+  border-top: 1px solid var(--edge-subtle);
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+}
+
+.footnoteList {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: var(--space-1);
+}
+
+.footnoteEntry {
+  font-size: var(--text-xs);
+  color: var(--ink-muted);
+  min-width: 0;
+}
+
+.footnoteLink {
+  display: inline;
+  color: var(--ink-muted);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  font: inherit;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+.footnoteLink:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+  border-radius: var(--radius-xs);
+}
+
+.footnoteTitle {
+  /* inherits from .footnoteLink */
+}
+
+.footnoteMeta {
+  color: var(--ink-faint);
+}

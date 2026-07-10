@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from typing import Any, cast
 from uuid import UUID
 
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import visible_conversation_ids_cte_sql
@@ -15,6 +15,7 @@ from nexus.db.models import (
     ChatRun,
     ChatRunEvent,
     Conversation,
+    LLMCall,
     Message,
     MessageRerankLedger,
     MessageRetrieval,
@@ -114,6 +115,16 @@ def build_assistant_trust_trails(
             .order_by(ChatRunEvent.seq.desc())
         ):
             done_payloads.setdefault(event.run_id, cast(dict[str, Any], event.payload))
+
+    # SUM all call costs for each run (retries included — each incurs cost).
+    cost_by_run: dict[UUID, int | None] = {}
+    if run_ids:
+        for owner_id, total in db.execute(
+            select(LLMCall.owner_id, func.sum(LLMCall.total_cost_usd_micros).label("total"))
+            .where(LLMCall.owner_kind == "chat_run", LLMCall.owner_id.in_(run_ids))
+            .group_by(LLMCall.owner_id)
+        ):
+            cost_by_run[owner_id] = total
 
     prompt_by_message = {
         row.assistant_message_id: row
@@ -507,6 +518,7 @@ def build_assistant_trust_trails(
                     final_chars=cast(int | None, done_payload.get("final_chars")),
                     started_at=run.started_at,
                     completed_at=run.completed_at,
+                    total_cost_usd_micros=cost_by_run.get(run.id),
                 )
                 if run is not None and model is not None
                 else None

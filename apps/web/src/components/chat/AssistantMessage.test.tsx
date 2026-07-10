@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import type { ConversationMessage, MessageToolCall } from "@/lib/conversations/types";
+import type { CitationOut } from "@/lib/conversations/citationOut";
 import AssistantMessage from "./AssistantMessage";
 
 function writeToolCall(
@@ -214,6 +215,7 @@ describe("AssistantMessage", () => {
         final_chars: 11,
         started_at: null,
         completed_at: null,
+        total_cost_usd_micros: null,
       },
       prompt: {
         id: "prompt-1",
@@ -591,5 +593,127 @@ describe("AssistantMessage", () => {
       "datetime",
       "2026-06-03T00:00:00Z",
     );
+  });
+
+  // --- Colophon + footnotes gating (S3 / AC-4 / AC-5 / AC-6) ----------------
+
+  function citationFixture(): CitationOut {
+    return {
+      ordinal: 1,
+      role: "context",
+      target_ref: {
+        type: "content_chunk",
+        id: "33333333-3333-4333-8333-333333333333",
+      },
+      activation: {
+        resourceRef: "content_chunk:33333333-3333-4333-8333-333333333333",
+        kind: "route",
+        href: "/reader/source",
+        unresolvedReason: null,
+      },
+      media_id: null,
+      locator: null,
+      deep_link: "/reader/source",
+      snapshot: {
+        title: "Source title",
+        excerpt: "Quoted evidence",
+        section_label: "Section",
+        result_type: "content_chunk",
+        summary_md: null,
+      },
+    };
+  }
+
+  function completedWithRun(): ConversationMessage {
+    const message = assistantMessage("The answer [1].");
+    message.citations = [citationFixture()];
+    message.trust_trail = {
+      ...message.trust_trail!,
+      run: {
+        run_id: "run-1",
+        model_id: "model-1",
+        provider: "anthropic",
+        model_name: "claude-sonnet-4-6",
+        reasoning_mode: "medium",
+        key_mode: "auto",
+        status: "complete",
+        usage: { input_tokens: 3200, output_tokens: 1100 },
+        error_code: null,
+        final_chars: 15,
+        started_at: null,
+        completed_at: null,
+        total_cost_usd_micros: 14_123,
+      },
+    };
+    return message;
+  }
+
+  it("renders the colophon and footnotes on a completed turn with a run (AC-4/AC-5/AC-6)", () => {
+    render(
+      <AssistantMessage
+        message={completedWithRun()}
+        forkOptions={[]}
+        errorLabel="The response failed."
+      />,
+    );
+
+    // Colophon: model uppercased, tokens, cost, and source count (AC-5/AC-6).
+    const colophon = screen.getByLabelText("Generation provenance");
+    expect(colophon).toHaveTextContent("CLAUDE-SONNET-4-6");
+    expect(colophon).toHaveTextContent("3.2K IN / 1.1K OUT");
+    expect(colophon).toHaveTextContent("$0.014");
+    expect(colophon).toHaveTextContent("1 SOURCE");
+
+    // Footnotes: the <ol aria-label="Sources"> with one entry (AC-4).
+    expect(screen.getByRole("list", { name: "Sources" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: /1\. Source title/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("omits the colophon while the turn is streaming (AC-5)", () => {
+    const message = completedWithRun();
+    message.status = "pending";
+
+    render(
+      <AssistantMessage
+        message={message}
+        forkOptions={[]}
+        errorLabel="The response failed."
+      />,
+    );
+
+    expect(screen.queryByLabelText("Generation provenance")).toBeNull();
+  });
+
+  it("omits the colophon on an errored turn (AC-5)", () => {
+    const message = completedWithRun();
+    message.status = "error";
+    message.error_code = "E_LLM_BAD_REQUEST";
+
+    render(
+      <AssistantMessage
+        message={message}
+        forkOptions={[]}
+        errorLabel="The response failed."
+      />,
+    );
+
+    expect(screen.queryByLabelText("Generation provenance")).toBeNull();
+  });
+
+  it("omits the colophon when the completed turn has no run data (AC-5)", () => {
+    const message = completedWithRun();
+    message.trust_trail = { ...message.trust_trail!, run: null };
+
+    render(
+      <AssistantMessage
+        message={message}
+        forkOptions={[]}
+        errorLabel="The response failed."
+      />,
+    );
+
+    expect(screen.queryByLabelText("Generation provenance")).toBeNull();
   });
 });

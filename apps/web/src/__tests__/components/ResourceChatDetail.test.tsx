@@ -306,7 +306,7 @@ describe("ResourceChatDetail", () => {
         "Wait for the assistant response to finish before sending.",
       ),
     ).toBeVisible();
-    const sendButton = screen.getByRole("button", { name: "Send message" });
+    const sendButton = screen.getByRole("button", { name: "SEND" });
     expect(sendButton).toBeDisabled();
 
     await user.type(screen.getByRole("textbox", { name: "Ask anything" }), "Hi");
@@ -359,7 +359,7 @@ describe("ResourceChatDetail", () => {
     expect(
       await screen.findByText("Loading conversation history before sending."),
     ).toBeVisible();
-    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "SEND" })).toBeDisabled();
   });
 
   it("sends existing resource chat continuations with an assistant parent anchor", async () => {
@@ -438,7 +438,7 @@ describe("ResourceChatDetail", () => {
 
     const textbox = await screen.findByRole("textbox", { name: "Ask anything" });
     await user.type(textbox, "Follow up");
-    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await user.click(screen.getByRole("button", { name: "SEND" }));
 
     await waitFor(() => {
       expect(
@@ -589,7 +589,7 @@ describe("ResourceChatDetail", () => {
 
     const textbox = await screen.findByRole("textbox", { name: "Ask anything" });
     await user.type(textbox, "Hi");
-    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await user.click(screen.getByRole("button", { name: "SEND" }));
 
     await waitFor(() => {
       expect(
@@ -689,7 +689,7 @@ describe("ResourceChatDetail", () => {
 
     const textbox = await screen.findByRole("textbox", { name: "Ask anything" });
     await user.type(textbox, "Hi");
-    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await user.click(screen.getByRole("button", { name: "SEND" }));
 
     // The quote was attached on this send (chip held it at resolve time)...
     await waitFor(() => {
@@ -812,7 +812,7 @@ describe("ResourceChatDetail", () => {
 
     const textbox = await screen.findByRole("textbox", { name: "Ask anything" });
     await user.type(textbox, "Second question");
-    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await user.click(screen.getByRole("button", { name: "SEND" }));
     await waitFor(() => {
       expect(
         vi.mocked(fetch).mock.calls.some(

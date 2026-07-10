@@ -868,7 +868,7 @@ describe("Conversation", () => {
     const input = screen.getByRole("textbox", { name: "Ask anything" });
     await user.click(input);
     await user.keyboard("Plain question");
-    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await user.click(screen.getByRole("button", { name: "SEND" }));
 
     await waitFor(() => {
       expect(
@@ -964,7 +964,7 @@ describe("Conversation", () => {
     const input = screen.getByRole("textbox", { name: "Ask anything" });
     await user.click(input);
     await user.keyboard("Continue from the leaf");
-    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await user.click(screen.getByRole("button", { name: "SEND" }));
 
     await waitFor(() => {
       expect(
@@ -1022,7 +1022,7 @@ describe("Conversation", () => {
         "Wait for the assistant response to finish before sending.",
       ),
     ).toBeVisible();
-    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "SEND" })).toBeDisabled();
     expect(
       fetchMock.mock.calls.filter(
         ([input, init]) =>
@@ -1058,7 +1058,7 @@ describe("Conversation", () => {
     expect(
       await screen.findByText("Loading conversation history before sending."),
     ).toBeVisible();
-    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "SEND" })).toBeDisabled();
     expect(screen.getByRole("textbox", { name: "Ask anything" })).toBeVisible();
   });
 
@@ -1089,7 +1089,7 @@ describe("Conversation", () => {
     expect(
       await screen.findByText("Failed to load conversation"),
     ).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Send message" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "SEND" })).toBeNull();
     expect(
       screen.queryByRole("textbox", { name: "Ask anything" }),
     ).toBeNull();

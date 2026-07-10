@@ -8,7 +8,6 @@ function renderCitation(preview: ReaderCitationPreview) {
   return render(
     <ReaderCitation
       index={1}
-      color="yellow"
       preview={preview}
       activation={{
         resourceRef: "media:media-1",

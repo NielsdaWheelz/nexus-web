@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import { GitBranch, RefreshCcw, Search } from "lucide-react";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
@@ -17,9 +17,12 @@ import type {
 import { conversationMessageText } from "@/lib/conversations/types";
 import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
 import type { ResourceActivation } from "@/lib/resources/activation";
+import { toReaderCitationData } from "@/lib/conversations/citations";
 import AssistantSelectionPopover from "./AssistantSelectionPopover";
 import AssistantEvidenceDisclosure from "./AssistantEvidenceDisclosure";
 import AssistantTrustInspector, { AssistantWriteTrail } from "./AssistantTrustInspector";
+import Colophon from "./Colophon";
+import MessageFootnotes from "./MessageFootnotes";
 import ForkStrip from "./ForkStrip";
 import StreamingGutterCue from "./StreamingGutterCue";
 import { useAssistantSelectionBranch } from "./useAssistantSelectionBranch";
@@ -55,6 +58,11 @@ export default function AssistantMessage({
   const display = useRenderEnvironment();
   const assistantText = conversationMessageText(message);
   const toolCalls = message.trust_trail?.tool_calls ?? [];
+  // Citations memoized once at this level; shared by EvidenceDisclosure + MessageFootnotes.
+  const citations = useMemo(
+    () => (message.citations ?? []).map(toReaderCitationData),
+    [message.citations],
+  );
   const canBranchFromAssistant =
     message.status === "complete" && Boolean(onReplyToAssistant);
   const canResendAssistant =
@@ -143,10 +151,15 @@ export default function AssistantMessage({
         {renderAssistantBody ? (
           <AssistantEvidenceDisclosure
             message={message}
+            citations={citations}
             answerRef={answerRef}
             onCitationActivate={onCitationActivate}
           />
         ) : null}
+        <MessageFootnotes
+          citations={citations}
+          onCitationActivate={onCitationActivate}
+        />
         {message.trust_trail ? (
           <AssistantWriteTrail
             conversationId={message.trust_trail.conversation_id}
@@ -157,6 +170,23 @@ export default function AssistantMessage({
           <AssistantTrustInspector
             trustTrail={message.trust_trail}
             onCitationActivate={onCitationActivate}
+          />
+        ) : null}
+        {message.status === "complete" && message.trust_trail?.run ? (
+          <Colophon
+            modelName={message.trust_trail.run.model_name}
+            inputTokens={
+              typeof message.trust_trail.run.usage?.input_tokens === "number"
+                ? message.trust_trail.run.usage.input_tokens
+                : null
+            }
+            outputTokens={
+              typeof message.trust_trail.run.usage?.output_tokens === "number"
+                ? message.trust_trail.run.usage.output_tokens
+                : null
+            }
+            totalCostUsdMicros={message.trust_trail.run.total_cost_usd_micros}
+            sourceCount={citations.length}
           />
         ) : null}
       </MachineText>

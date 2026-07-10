@@ -1,28 +1,12 @@
 .citation {
   font-family: inherit;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 14px;
-  height: 14px;
-  margin: 0 2px;
-  padding: 0 3px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  font-size: 0.65em;
-  line-height: 1;
-  font-weight: var(--weight-semibold);
+  display: inline;
+  font-size: 0.75em;
   vertical-align: super;
+  color: inherit;
   cursor: pointer;
   user-select: none;
   text-decoration: none;
-  color: var(--ink);
-  background: var(--surface-2);
-  transition: outline-color var(--duration-fast) var(--ease-glide);
-}
-
-.citation + .citation {
-  margin-left: 6px;
 }
 
 .citation:focus-visible {
@@ -30,35 +14,9 @@
   outline-offset: 2px;
 }
 
-.yellow {
-  background: var(--highlight-yellow);
-}
-
-.green {
-  background: var(--highlight-green);
-}
-
-.blue {
-  background: var(--highlight-blue);
-}
-
-.pink {
-  background: var(--highlight-pink);
-}
-
-.purple {
-  background: var(--highlight-purple);
-}
-
-.neutral {
-  background: var(--surface-2);
-  color: var(--ink-muted);
-}
-
 .unavailable {
   cursor: default;
   color: var(--ink-faint);
-  background: var(--surface-2);
   opacity: 0.6;
 }
 

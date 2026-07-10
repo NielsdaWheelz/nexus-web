@@ -187,7 +187,6 @@ function CitationAwareLink({
     return (
       <ReaderCitation
         index={citation.index}
-        color={citation.color}
         preview={citation.preview}
         activation={citation.activation}
         target={citation.target}
