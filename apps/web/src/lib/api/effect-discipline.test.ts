@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import ts from "typescript";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 
 const RAW_FETCH_FILES = new Set([
   "src/lib/api/client.ts",
@@ -55,8 +55,14 @@ function repoPath(path: string): string {
   return relative(process.cwd(), path).split(sep).join("/");
 }
 
+// Parsing every .ts/.tsx AST under src/ is the dominant cost in this suite and
+// is shared verbatim by several tests. Parse once and memoize so no single test
+// re-pays the (growing) full-tree parse and trips the per-test timeout.
+let cachedSources: Source[] | null = null;
+
 function readSources(): Source[] {
-  return sourceFiles(join(process.cwd(), "src")).map((path) => {
+  if (cachedSources) return cachedSources;
+  cachedSources = sourceFiles(join(process.cwd(), "src")).map((path) => {
     const source = readFileSync(path, "utf8");
     return {
       path: repoPath(path),
@@ -69,6 +75,7 @@ function readSources(): Source[] {
       ),
     };
   });
+  return cachedSources;
 }
 
 function sourceText(path: string): string {
@@ -291,6 +298,12 @@ function formatFullPaneRuntimeDependency(
 }
 
 describe("effect discipline source shape", () => {
+  // Warm the shared AST cache under the (longer) hook timeout so the parse cost
+  // is paid once, outside any individual test's timeout budget.
+  beforeAll(() => {
+    readSources();
+  });
+
   it("keeps the browser API client navigation-free", () => {
     expect(sourceText("src/lib/api/client.ts")).not.toMatch(
       /window\.location|location\.(assign|replace|href)|router\.(push|replace)|redirectToLoginForCurrentLocation|buildLoginUrlForCurrentLocation|client-return-target|next\/navigation/,
