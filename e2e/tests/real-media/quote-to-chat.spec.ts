@@ -86,19 +86,53 @@ test("@real-media desktop selected quote opens new chat pane with attached conte
   await expect(
     conversationPane.getByRole("textbox", { name: /ask anything/i }),
   ).toBeVisible({ timeout: 10_000 });
-  await expect(
-    conversationPane.getByLabel("Attached to next message"),
-  ).toContainText(selectedText);
 
-  const afterExacts = await existingHighlightExacts(page, fragmentId);
-  expect(afterExacts).toContain(selectedText);
+  // Post-cutover, the quoted highlight is attached as a conversation-level
+  // context ref at creation time (initial_context_refs); the composer's
+  // "Attached to next message" chips are only for refs staged onto an already
+  // open chat. Assert the attached context through the production contract:
+  // the selection persists as a highlight and the reference-backed
+  // conversations endpoint lists the new chat under that highlight.
+  const afterHighlightsResponse = await page.request.get(
+    `/api/fragments/${fragmentId}/highlights`,
+  );
+  expect(afterHighlightsResponse.ok()).toBeTruthy();
+  const afterHighlightsPayload = (await afterHighlightsResponse.json()) as {
+    data: { highlights: Array<{ id: string; exact?: string | null }> };
+  };
+  const quotedHighlight = afterHighlightsPayload.data.highlights.find(
+    (highlight) => (highlight.exact ?? "") === selectedText,
+  );
+  expect(
+    quotedHighlight,
+    `Expected the quoted selection "${selectedText}" to be persisted as a highlight.`,
+  ).toBeDefined();
+  const quotedHighlightUri = `highlight:${quotedHighlight!.id}`;
+
+  await expect
+    .poll(
+      async () => {
+        const response = await page.request.get(
+          `/api/conversations?has_context_ref=${encodeURIComponent(quotedHighlightUri)}&limit=100`,
+        );
+        if (!response.ok()) {
+          return 0;
+        }
+        const payload = (await response.json()) as {
+          data: Array<{ id: string }>;
+        };
+        return payload.data.length;
+      },
+      { intervals: [500], timeout: 15_000 },
+    )
+    .toBeGreaterThan(0);
 
   writeRealMediaTrace(testInfo, "real-web-quote-to-chat-desktop-trace.json", {
     fixture_id: "web-nasa-water-on-moon",
     media_id: mediaId,
     selected_text_length: selectedText.length,
     highlight_count_before: beforeExacts.length,
-    highlight_count_after: afterExacts.length,
+    highlight_count_after: afterHighlightsPayload.data.highlights.length,
   });
 });
 
