@@ -11,7 +11,16 @@ import { isRecord } from "@/lib/validation";
  * it is never popped twice (C7). Keep this hook mounted across the overlay's
  * open/close (don't unmount it with the overlay) — it stays strict-mode safe and
  * covers every close path, since it reacts to `active` rather than to unmount.
+ *
+ * Dirty guard: `onDismiss` may return a `DismissDecision`. `"accepted"` (or
+ * `void`) dismisses as before. `"blocked"` keeps the overlay open — because the
+ * browser already popped our synthetic entry when it fired popstate, we
+ * immediately re-push the marker so a second, immediate Back cannot navigate
+ * away while the overlay shows its confirmation. Existing `void`-returning
+ * consumers are unaffected.
  */
+
+export type DismissDecision = "accepted" | "blocked";
 
 const MARKER = "__nexusOverlayHistory";
 
@@ -19,7 +28,14 @@ function hasMarker(): boolean {
   return isRecord(history.state) && history.state[MARKER] === true;
 }
 
-export function useHistoryDismiss(active: boolean, onDismiss: () => void): void {
+function pushMarker(): void {
+  history.pushState({ ...(isRecord(history.state) ? history.state : {}), [MARKER]: true }, "");
+}
+
+export function useHistoryDismiss(
+  active: boolean,
+  onDismiss: () => DismissDecision | void,
+): void {
   const onDismissRef = useRef(onDismiss);
   onDismissRef.current = onDismiss;
   const entryActiveRef = useRef(false);
@@ -49,13 +65,25 @@ export function useHistoryDismiss(active: boolean, onDismiss: () => void): void 
       return;
     }
     if (!hasMarker()) {
-      history.pushState({ ...(isRecord(history.state) ? history.state : {}), [MARKER]: true }, "");
+      pushMarker();
     }
     entryActiveRef.current = true;
     const onPopState = () => {
-      // Back button: the browser already removed our entry; just dismiss.
+      // Back button: the browser already removed our entry.
+      const decision = onDismissRef.current();
+      if (decision === "blocked") {
+        // Dirty guard vetoed the dismissal. Our synthetic entry is already gone
+        // (the browser popped it to fire this event), so re-arm it now — a
+        // second immediate Back must not navigate away while the confirmation
+        // is shown. We still own an entry to pop on UI close, so keep the
+        // listener attached and entryActiveRef true.
+        if (!hasMarker()) {
+          pushMarker();
+        }
+        return;
+      }
+      // Accepted (or void): dismissal ran; nothing left to pop.
       entryActiveRef.current = false;
-      onDismissRef.current();
     };
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);

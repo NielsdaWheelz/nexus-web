@@ -80,4 +80,53 @@ describe("useHistoryDismiss", () => {
     await flushMicrotasks();
     expect(history.back).not.toHaveBeenCalled(); // nothing left to pop
   });
+
+  const markerSet = () =>
+    (history.state as { __nexusOverlayHistory?: boolean } | null)?.__nexusOverlayHistory === true;
+
+  it("re-arms the marker on a blocked Back so a second Back cannot navigate away", () => {
+    const onDismiss = vi.fn(() => "blocked" as const);
+    renderHook(() => useHistoryDismiss(true, onDismiss));
+    expect(history.pushState).toHaveBeenCalledTimes(1); // initial arm
+
+    // Back: the browser pops our synthetic entry (marker gone) then fires popstate.
+    fakeState = null;
+    act(() => window.dispatchEvent(new PopStateEvent("popstate")));
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+    expect(history.pushState).toHaveBeenCalledTimes(2); // re-armed
+    expect(markerSet()).toBe(true);
+
+    // A second immediate Back: pops the re-armed entry, fires popstate again.
+    fakeState = null;
+    act(() => window.dispatchEvent(new PopStateEvent("popstate")));
+    expect(onDismiss).toHaveBeenCalledTimes(2);
+    expect(history.pushState).toHaveBeenCalledTimes(3); // re-armed again → still on page
+    expect(markerSet()).toBe(true);
+  });
+
+  it("does not re-arm when a Back is accepted", () => {
+    const onDismiss = vi.fn(() => "accepted" as const);
+    renderHook(() => useHistoryDismiss(true, onDismiss));
+    expect(history.pushState).toHaveBeenCalledTimes(1);
+
+    fakeState = null;
+    act(() => window.dispatchEvent(new PopStateEvent("popstate")));
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+    expect(history.pushState).toHaveBeenCalledTimes(1); // no re-arm
+  });
+
+  it("pops the re-armed entry when finally closed via UI after a blocked Back", async () => {
+    const onDismiss = vi.fn(() => "blocked" as const);
+    const { rerender } = renderHook(({ active }) => useHistoryDismiss(active, onDismiss), {
+      initialProps: { active: true },
+    });
+
+    fakeState = null;
+    act(() => window.dispatchEvent(new PopStateEvent("popstate")));
+    expect(history.pushState).toHaveBeenCalledTimes(2); // re-armed, marker restored
+
+    rerender({ active: false });
+    await flushMicrotasks();
+    expect(history.back).toHaveBeenCalledTimes(1); // the re-armed entry is popped
+  });
 });

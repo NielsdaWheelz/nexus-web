@@ -1,10 +1,10 @@
 "use client";
 
-import { useRef, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useRef, type CSSProperties, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { cx } from "@/lib/ui/cx";
 import { useDialogOverlay } from "@/lib/ui/useDialogOverlay";
-import { useHistoryDismiss } from "@/lib/ui/useHistoryDismiss";
+import { useHistoryDismiss, type DismissDecision } from "@/lib/ui/useHistoryDismiss";
 import { useKeyboardInset } from "@/lib/ui/useKeyboardInset";
 import styles from "./MobileSheet.module.css";
 
@@ -15,7 +15,14 @@ interface MobileSheetProps {
   active: boolean;
   /** Backdrop tap, drag-past-threshold, back button. */
   onDismiss: () => void;
-  /** Escape override (default: onDismiss). Palette uses this to pop a level. */
+  /**
+   * Dirty guard consulted before backdrop tap, drag-dismiss, back button, and
+   * Escape (when no `onEscape` override). Return "blocked" to keep the sheet
+   * open (e.g. to show a discard confirmation); "accepted" or absent dismisses
+   * via `onDismiss`.
+   */
+  onDismissRequest?: () => DismissDecision;
+  /** Escape override (default: the dismiss request). Palette uses this to pop a level. */
   onEscape?: () => void;
   ariaLabel: string;
   children: ReactNode;
@@ -54,6 +61,7 @@ interface MobileSheetProps {
 export default function MobileSheet({
   active,
   onDismiss,
+  onDismissRequest,
   onEscape,
   ariaLabel,
   children,
@@ -72,15 +80,23 @@ export default function MobileSheet({
   const dragStartRef = useRef<number | null>(null);
   const inset = useKeyboardInset();
 
+  // Route every dismissal path (backdrop, drag, back button, default Escape)
+  // through the optional dirty guard. No guard ⇒ plain dismiss (unchanged).
+  const requestDismiss = useCallback((): DismissDecision => {
+    const decision = onDismissRequest ? onDismissRequest() : "accepted";
+    if (decision === "accepted") onDismiss();
+    return decision;
+  }, [onDismissRequest, onDismiss]);
+
   useDialogOverlay({
     ref: panelRef,
     active,
-    onDismiss: onEscape ?? onDismiss,
+    onDismiss: onEscape ?? requestDismiss,
     initialFocus,
     returnFocusFallback,
     focusKey,
   });
-  useHistoryDismiss(active && historyDismiss, onDismiss);
+  useHistoryDismiss(active && historyDismiss, requestDismiss);
 
   function onPointerDown(event: React.PointerEvent) {
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
@@ -97,7 +113,7 @@ export default function MobileSheet({
     dragStartRef.current = null;
     if (start === null || !panelRef.current) return;
     panelRef.current.style.transform = "";
-    if (event.clientY - start > DRAG_DISMISS_PX) onDismiss();
+    if (event.clientY - start > DRAG_DISMISS_PX) requestDismiss();
   }
 
   if (!active) return null;
@@ -108,7 +124,7 @@ export default function MobileSheet({
       data-scrim={scrim}
       data-testid={backdropTestId}
       role="presentation"
-      onClick={onDismiss}
+      onClick={requestDismiss}
     >
       <section
         ref={panelRef}
