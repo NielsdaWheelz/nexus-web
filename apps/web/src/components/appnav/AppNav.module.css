@@ -26,28 +26,32 @@
 }
 
 .brand {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2);
-  padding: var(--space-4) var(--space-3);
+  /* Left pad = scroll pad (space-2) + item pad (space-3) so the 20px mark box
+     lands on the nav icon column (center x=30) by construction. */
+  padding: var(--space-4) var(--space-3) var(--space-4)
+    calc(var(--space-2) + var(--space-3));
 }
 
 .brandLink {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-3);
   min-width: 0;
   color: var(--ink);
   text-decoration: none;
   font-size: var(--text-lg);
   font-weight: var(--weight-semibold);
-  letter-spacing: -0.01em;
+  letter-spacing: var(--tracking-tight);
 }
 
 .brandMark {
   flex-shrink: 0;
-  color: var(--ink);
+  color: var(--accent);
 }
 
 .brandText {
@@ -85,6 +89,36 @@
 .collapsed .brand {
   justify-content: center;
   padding: var(--space-4) var(--space-2);
+}
+
+.collapsed .brandText {
+  display: none;
+}
+
+/* Collapsed: the chevron leaves flow and crossfades over the mark, so the
+   lone brand mark sits on the true rail center (x=24) like every nav icon.
+   At rest the mark shows and takes clicks; on reveal (rail hover / button
+   focus) the chevron fades in and becomes the click target. */
+.collapsed .collapseButton {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  pointer-events: none;
+}
+
+.collapsed .brandLink {
+  transition: opacity var(--duration-fast) var(--ease-glide);
+}
+
+.collapsed:hover .collapseButton,
+.collapsed:has(.collapseButton:focus-visible) .collapseButton {
+  pointer-events: auto;
+}
+
+.collapsed:hover .brandLink,
+.collapsed:has(.collapseButton:focus-visible) .brandLink {
+  opacity: 0;
+  pointer-events: none;
 }
 
 /* ── Command bar (rail + sheet) ─────────────────────────── */
@@ -524,7 +558,7 @@
 }
 
 .topBarBrand {
-  color: var(--ink);
+  color: var(--accent);
 }
 
 .topBarAdd {

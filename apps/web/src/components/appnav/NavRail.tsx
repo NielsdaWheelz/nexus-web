@@ -91,7 +91,7 @@ export default function NavRail({
           onClick={(event) => onNavigate(event, "/libraries")}
         >
           <AsterismMark size={20} className={styles.brandMark} />
-          {!collapsed && <span className={styles.brandText}>Nexus</span>}
+          <span className={styles.brandText}>Nexus</span>
         </Link>
         <button
           type="button"

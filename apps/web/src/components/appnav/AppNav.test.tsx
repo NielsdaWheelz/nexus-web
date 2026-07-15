@@ -112,6 +112,10 @@ describe("AppNav (desktop rail)", () => {
     // Visible labels are hidden when collapsed, but the accessible name must survive.
     expect(screen.getByRole("link", { name: "Libraries" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Oracle" })).toBeInTheDocument();
+    // Same for the brand: the "Nexus" wordmark is CSS-hidden (not unmounted),
+    // yet the brand link keeps its accessible name.
+    expect(screen.getByText("Nexus")).not.toBeVisible();
+    expect(screen.getByRole("link", { name: "Nexus — Home" })).toBeInTheDocument();
   });
 
   it("opens the launcher from the command bar (no lane seed)", () => {
