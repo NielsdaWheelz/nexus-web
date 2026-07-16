@@ -7,7 +7,7 @@
  * legend, the bare-URL hard-signal row, and the embedded Add/Create panels that
  * push inside the same dialog. No vi.mock of internal modules.
  */
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
@@ -84,6 +84,28 @@ function renderLauncher() {
             workspacePrimaryMetrics={workspacePrimaryMetrics}
             initialState={createDefaultWorkspaceState("/libraries", workspacePrimaryMetrics)}
           >
+            <Launcher />
+          </WorkspaceStoreProvider>
+        </FeedbackProvider>
+      </KeybindingsProvider>,
+    ),
+  );
+}
+
+// Render an opener button alongside the Launcher so return-focus has a real trigger
+// to restore to (or deliberately not, on a navigating dispatch).
+function renderLauncherWithOpener() {
+  return render(
+    withRenderEnvironment(
+      <KeybindingsProvider>
+        <FeedbackProvider>
+          <WorkspaceStoreProvider
+            workspacePrimaryMetrics={workspacePrimaryMetrics}
+            initialState={createDefaultWorkspaceState("/libraries", workspacePrimaryMetrics)}
+          >
+            <button type="button" data-testid="launcher-opener">
+              Opener
+            </button>
             <Launcher />
           </WorkspaceStoreProvider>
         </FeedbackProvider>
@@ -314,6 +336,53 @@ describe("Launcher — prefetch-on-intent", () => {
     fireEvent.mouseMove(oracle);
 
     expect(preloadPane).toHaveBeenCalledWith("oracle");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Return-focus: a navigating dispatch must not yank focus back to the opener (it
+// fights the destination it just navigated to); dismissal keeps the a11y contract.
+// ---------------------------------------------------------------------------
+
+describe("Launcher — return-focus on close", () => {
+  it("does NOT restore opener focus after a navigating command", async () => {
+    renderLauncherWithOpener();
+    const opener = screen.getByTestId("launcher-opener");
+    opener.focus();
+    expect(opener).toHaveFocus();
+
+    open({ lane: "go" });
+    const dialog = await screen.findByRole("dialog", { name: "Launcher" });
+    const combobox = within(dialog).getByRole("combobox", { name: "Search, add, or ask" });
+    // Initial focus moves into the box — this is the moment the opener is captured.
+    await waitFor(() => expect(combobox).toHaveFocus());
+
+    // "Libraries" is an in-app href row: selecting it navigates and closes.
+    await userEvent.click(await within(dialog).findByRole("option", { name: /Libraries/i }));
+
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Launcher" })).not.toBeInTheDocument(),
+    );
+    // Focus was released to the destination, not restored to the opener.
+    expect(opener).not.toHaveFocus();
+  });
+
+  it("restores opener focus on Escape (dismissal is unchanged)", async () => {
+    renderLauncherWithOpener();
+    const opener = screen.getByTestId("launcher-opener");
+    opener.focus();
+
+    open({ lane: "go" });
+    const dialog = await screen.findByRole("dialog", { name: "Launcher" });
+    const combobox = within(dialog).getByRole("combobox", { name: "Search, add, or ask" });
+    await waitFor(() => expect(combobox).toHaveFocus());
+
+    await userEvent.keyboard("{Escape}");
+
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Launcher" })).not.toBeInTheDocument(),
+    );
+    expect(opener).toHaveFocus();
   });
 });
 

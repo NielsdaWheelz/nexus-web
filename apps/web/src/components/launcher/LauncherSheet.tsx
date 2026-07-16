@@ -26,6 +26,7 @@ export default function LauncherSheet({
       layer="palette"
       panelClassName={styles.sheetSkin}
       initialFocus={(container) => container.querySelector<HTMLElement>('[role="combobox"]')}
+      skipReturnFocus={controller.shouldSuppressReturnFocusOnClose}
       focusKey={controller.page.kind}
     >
       {controller.page.kind === "add" ? (

@@ -135,18 +135,14 @@ test.describe("author journeys", () => {
       kinds.getByRole("button", { name: "Documents", exact: true }),
     ).toHaveAttribute("aria-pressed", "false");
 
-    // The search box is present and immediately usable (enabled after hydration).
-    // NOTE: AC 29 also calls for the box to *own focus* on this landing. The
-    // committed frontend does not deliver that through the Launcher path — its
-    // `autoFocus` is inert (the SSR input renders `disabled` until hydration, so
-    // the browser skips autofocus and it is never re-applied), and the Launcher's
-    // `useReturnFocus` moves focus to <body> as it closes after the client-side
-    // navigation. Landing focus therefore needs a coordinated SearchPaneBody +
-    // Launcher return-focus fix (frontend/F1), so this journey does not assert
-    // `toBeFocused` — doing so would be a permanently red assertion against a gap
-    // no transport/e2e change can close. See harness notes.
+    // The search box is present, usable, and owns focus on this landing (AC 29). The
+    // SSR input renders `disabled` until hydration (so its `autoFocus` is inert); the
+    // fix is coordinated — SearchPaneBody focuses the box on the mount flip in response
+    // to a Launcher-set request, and the Launcher suppresses its own return-focus on a
+    // navigating close so it doesn't yank focus back to <body>.
     const searchInput = searchPane.getByLabel("Search content");
     await expect(searchInput).toBeEnabled();
+    await expect(searchInput).toBeFocused();
 
     // The cutover's core AC-29 guarantee: after landing + hydration (awaited above
     // via the pressed chip and the enabled input), the blank People surface has fired

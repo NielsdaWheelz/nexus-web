@@ -6,6 +6,10 @@ import SearchPaneBody from "./SearchPaneBody";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
 import { SEARCH_KINDS, SEARCH_KIND_LABELS } from "@/lib/search/kinds";
+import {
+  consumeSearchInputFocus,
+  requestSearchInputFocus,
+} from "@/lib/search/pendingSearchFocus";
 
 function pathOf(input: RequestInfo | URL): string {
   if (input instanceof Request) {
@@ -74,7 +78,13 @@ function stubEmptySearch() {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  // Drain any pending focus request so it can't leak into the next test.
+  consumeSearchInputFocus();
 });
+
+function nextFrame(): Promise<void> {
+  return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+}
 
 describe("SearchPaneBody filter chips", () => {
   it("adds a format filter as a removable applied chip, then removes it", async () => {
@@ -172,5 +182,44 @@ describe("SearchPaneBody filter chips", () => {
       }
       expect(screen.getByText("No results found.")).toBeInTheDocument();
     });
+  });
+});
+
+// The Launcher "Go to Authors"/"Search" commands set a one-shot focus request before
+// navigating; SearchPaneBody consumes it on the mount flip and focuses the box only for
+// a blank landing. Ordinary arrivals (no request) and text landings must not grab focus.
+describe("SearchPaneBody navigated-landing focus", () => {
+  it("focuses the search box on a requested blank landing", async () => {
+    stubEmptySearch();
+    requestSearchInputFocus(); // the Launcher navigation just declared intent to type
+    renderSearch("/search?kinds=people");
+
+    const input = await screen.findByLabelText("Search content");
+    await waitFor(() => expect(input).toHaveFocus());
+  });
+
+  it("does not focus when the landing carries a query", async () => {
+    stubEmptySearch();
+    requestSearchInputFocus();
+    renderSearch("/search?q=foo");
+
+    const input = await screen.findByLabelText("Search content");
+    await waitFor(() => expect(input).toBeEnabled());
+    expect(input).toHaveValue("foo");
+    // Let the mount-flip effect + its rAF run; focus must stay off the box.
+    await nextFrame();
+    await nextFrame();
+    expect(input).not.toHaveFocus();
+  });
+
+  it("does not focus a blank landing that no navigation requested (restore / back-forward)", async () => {
+    stubEmptySearch();
+    renderSearch("/search?kinds=people"); // no requestSearchInputFocus()
+
+    const input = await screen.findByLabelText("Search content");
+    await waitFor(() => expect(input).toBeEnabled());
+    await nextFrame();
+    await nextFrame();
+    expect(input).not.toHaveFocus();
   });
 });

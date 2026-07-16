@@ -13,6 +13,7 @@ import { buildItemActions } from "@/lib/launcher/actions";
 import {
   dispatchTarget,
   isAndroidShellRestrictedHref,
+  targetNavigates,
   type LauncherDispatchCtx,
 } from "@/lib/launcher/dispatch";
 import { OPEN_LAUNCHER_EVENT, type OpenLauncherDetail } from "@/lib/launcher/launcherEvents";
@@ -99,6 +100,7 @@ export interface LauncherController {
   trailing(item: LauncherItem): void;
   askCurrent(): void;
   close(): void;
+  shouldSuppressReturnFocusOnClose(): boolean; // read at close: true after a navigating dispatch
 }
 
 export function useLauncherController(): LauncherController {
@@ -117,8 +119,17 @@ export function useLauncherController(): LauncherController {
   const [oracleRows, setOracleRows] = useState<LauncherOracleRow[]>([]);
   const oracleFetchedAt = useRef(0);
   const oracleVersion = useRef(0);
+  // Close reason for the dialog's return-focus. Reset to the a11y default (restore the
+  // opener) on every open; a navigating dispatch flips it true just before it closes so
+  // the surface's useReturnFocus doesn't yank focus back from the destination.
+  const suppressReturnFocusRef = useRef(false);
 
   const { state, runtimeTitleByPaneId, activatePane, closePane, restorePane } = useWorkspaceStore();
+
+  useEffect(() => {
+    if (open) suppressReturnFocusRef.current = false;
+  }, [open]);
+
   const input = useMemo(() => parseLauncherInput(query), [query]);
   // A typed leading sigil wins over a chip override; both fall back to the blended `all`.
   const lane = input.explicitLane ?? laneOverride ?? "all";
@@ -379,6 +390,7 @@ export function useLauncherController(): LauncherController {
         // stay open — do NOT call setOpen(false)
         return;
       }
+      suppressReturnFocusRef.current = targetNavigates(target);
       setOpen(false);
       logSelection(item);
       void dispatchTarget(target, dispatchCtx).catch(fail);
@@ -404,6 +416,7 @@ export function useLauncherController(): LauncherController {
         setPage({ kind: "root" });
         return;
       }
+      suppressReturnFocusRef.current = targetNavigates(action.target);
       setOpen(false);
       void dispatchTarget(action.target, dispatchCtx).catch(fail);
     },
@@ -426,6 +439,7 @@ export function useLauncherController(): LauncherController {
 
   const askCurrent = useCallback(() => {
     if (!input.text) return;
+    suppressReturnFocusRef.current = true; // ask opens a new chat pane
     setOpen(false);
     void dispatchTarget({ kind: "ask", text: input.text }, dispatchCtx).catch(fail);
   }, [input.text, dispatchCtx, fail]);
@@ -460,6 +474,10 @@ export function useLauncherController(): LauncherController {
 
   const back = useCallback(() => setPage({ kind: "root" }), []);
   const close = useCallback(() => setOpen(false), []);
+  const shouldSuppressReturnFocusOnClose = useCallback(
+    () => suppressReturnFocusRef.current,
+    [],
+  );
 
   // --- Triggers: open event, deep link, global hotkeys ---
   useEffect(() => {
@@ -566,5 +584,6 @@ export function useLauncherController(): LauncherController {
     trailing,
     askCurrent,
     close,
+    shouldSuppressReturnFocusOnClose,
   };
 }

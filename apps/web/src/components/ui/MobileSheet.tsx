@@ -39,6 +39,8 @@ interface MobileSheetProps {
   /** Forwarded to useDialogOverlay. */
   initialFocus?: (container: HTMLElement) => HTMLElement | null;
   returnFocusFallback?: () => HTMLElement | null;
+  /** Read at close time; true ⇒ skip return-focus (destination already claimed it). */
+  skipReturnFocus?: () => boolean;
   focusKey?: unknown;
 
   /** Skin on the panel (e.g. palette glass). Geometry stays in MobileSheet.module.css. */
@@ -71,6 +73,7 @@ export default function MobileSheet({
   historyDismiss = true,
   initialFocus,
   returnFocusFallback,
+  skipReturnFocus,
   focusKey,
   panelClassName,
   backdropTestId,
@@ -94,6 +97,7 @@ export default function MobileSheet({
     onDismiss: onEscape ?? requestDismiss,
     initialFocus,
     returnFocusFallback,
+    skipReturnFocus,
     focusKey,
   });
   useHistoryDismiss(active && historyDismiss, requestDismiss);
