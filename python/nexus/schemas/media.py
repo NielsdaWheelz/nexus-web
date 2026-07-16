@@ -46,6 +46,7 @@ class CapabilitiesOut(BaseModel):
     can_retry: bool = False
     can_refresh_source: bool = False
     can_retry_metadata: bool = False
+    can_edit_authors: bool = False
     can_read_embeds: bool = False
 
 

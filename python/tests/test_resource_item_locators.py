@@ -1,32 +1,27 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import pytest
 from pydantic import ValidationError
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from nexus.db.models import DailyNotePage
 from nexus.errors import ApiError, ApiErrorCode
-from nexus.schemas.contributors import ContributorMergeRequest
 from nexus.schemas.notes import CreatePageRequest
 from nexus.schemas.resource_items import (
-    ContributorHandleLocatorIn,
     DailyNoteDateLocatorIn,
     DailyNoteTodayLocatorIn,
     ResourceLocatorResolveRequest,
     ResourceRefLocatorIn,
 )
 from nexus.services import notes
-from nexus.services.contributor_credits import replace_media_contributor_credits
-from nexus.services.contributors import merge_contributor
 from nexus.services.resource_items.locators import (
     resolve_resource_locator,
     resolve_resource_locators,
 )
-from tests.factories import create_test_media_in_library, get_user_default_library
 
 pytestmark = pytest.mark.integration
 
@@ -82,45 +77,6 @@ def test_batch_locator_resolution_preserves_input_order(
     ]
     assert results[0].resource_item.scheme == "page"
     assert results[1].resource_item.ref == f"page:{page.id}"
-
-
-def test_contributor_handle_locator_returns_survivor_resource_item(
-    db_session: Session,
-    bootstrapped_user: UUID,
-) -> None:
-    source_id, source_handle = _visible_contributor(
-        db_session,
-        bootstrapped_user,
-        display_name=f"Locator Merge Source {uuid4()}",
-    )
-    target_id, target_handle = _visible_contributor(
-        db_session,
-        bootstrapped_user,
-        display_name=f"Locator Merge Target {uuid4()}",
-    )
-    actor_user_id = uuid4()
-    db_session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": actor_user_id})
-
-    merge_contributor(
-        db_session,
-        actor_user_id=actor_user_id,
-        actor_roles=frozenset({"contributor_curator"}),
-        contributor_handle=source_handle,
-        request=ContributorMergeRequest(target_handle=target_handle),
-    )
-
-    result = resolve_resource_locator(
-        db_session,
-        viewer_id=bootstrapped_user,
-        locator=ContributorHandleLocatorIn(
-            kind="contributor_handle",
-            handle=source_handle,
-        ),
-    )
-
-    assert result.resource_item.ref == f"contributor:{target_id}"
-    assert result.canonical_href == f"/authors/{target_handle}"
-    assert result.resource_item.id != source_id
 
 
 def test_daily_note_date_locator_is_idempotent(
@@ -210,42 +166,3 @@ def test_daily_locator_rejects_invalid_timezone(
         )
 
     assert error.value.code == ApiErrorCode.E_INVALID_REQUEST
-
-
-def _visible_contributor(
-    db: Session,
-    user_id: UUID,
-    *,
-    display_name: str,
-) -> tuple[UUID, str]:
-    library_id = get_user_default_library(db, user_id)
-    assert library_id is not None
-    media_id = create_test_media_in_library(
-        db,
-        user_id,
-        library_id,
-        title=f"{display_name} Work",
-    )
-    replace_media_contributor_credits(
-        db,
-        media_id=media_id,
-        credits=[
-            {
-                "name": display_name,
-                "role": "author",
-                "source": "test",
-            }
-        ],
-    )
-    row = db.execute(
-        text(
-            """
-            SELECT c.id, c.handle
-            FROM contributor_credits cc
-            JOIN contributors c ON c.id = cc.contributor_id
-            WHERE cc.media_id = :media_id
-            """
-        ),
-        {"media_id": media_id},
-    ).one()
-    return row[0], row[1]

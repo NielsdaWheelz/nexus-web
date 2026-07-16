@@ -26,7 +26,7 @@ from nexus.schemas.search import (
     SearchResultSourceOut,
 )
 from nexus.services import media_intelligence
-from nexus.services.contributors import resolve_canonical_contributor_ids
+from nexus.services.contributors import resolve_contributor_ids_by_handles
 from nexus.services.locator_resolver import locator_from_resolution, resolve_evidence_span
 from nexus.services.search.constants import (
     CANDIDATES_PER_TYPE,
@@ -165,10 +165,12 @@ def search(db: Session, viewer_id: UUID, query: SearchQuery) -> SearchResponse:
             db, q, list(result_types), transaction_active_at_entry=transaction_active_at_entry
         )
 
-    # Filter by canonical contributor ids so a merged handle returns the survivor's content.
-    # None = no contributor filter requested; an empty list = requested handles resolved to nothing.
+    # None = no contributor filter requested; an empty list = requested handles
+    # resolved to nothing (unknown handles drop — D-29), which matches nothing.
     contributor_ids = (
-        resolve_canonical_contributor_ids(db, contributor_handles) if contributor_handles else None
+        list(resolve_contributor_ids_by_handles(db, contributor_handles).values())
+        if contributor_handles
+        else None
     )
 
     # Execute search queries per type and collect results

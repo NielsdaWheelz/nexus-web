@@ -220,6 +220,8 @@ def get_media_for_viewer(
     db: Session,
     viewer_id: UUID,
     media_id: UUID,
+    *,
+    is_admin: bool = False,
 ) -> MediaOut:
     """Get media by ID if readable by viewer.
 
@@ -240,7 +242,7 @@ def get_media_for_viewer(
     if not can_read_media(db, viewer_id, media_id):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
 
-    rows = list_media_for_viewer_by_ids(db, viewer_id, [media_id])
+    rows = list_media_for_viewer_by_ids(db, viewer_id, [media_id], is_admin=is_admin)
     if not rows:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
     return rows[0]
@@ -250,6 +252,8 @@ def list_media_for_viewer_by_ids(
     db: Session,
     viewer_id: UUID,
     media_ids: list[UUID],
+    *,
+    is_admin: bool = False,
 ) -> list[MediaOut]:
     """Batch-hydrate viewer-visible media rows by ID, preserving input order."""
     if not media_ids:
@@ -311,6 +315,7 @@ def list_media_for_viewer_by_ids(
             contributors=contributors_by_media.get(media_id, []),
             chapters=chapters_by_media.get(media_id, []),
             pdf_quote_ready=pdf_readiness.get(media_id, False),
+            is_admin=is_admin,
         )
         media.document_embed_summary = embed_summaries_by_media.get(media_id)
         media_list.append(media)
@@ -384,6 +389,7 @@ def _media_out_from_row(
     contributors: list[ContributorCreditOut],
     chapters: list[PodcastEpisodeChapterOut] | None = None,
     pdf_quote_ready: bool = False,
+    is_admin: bool = False,
 ) -> MediaOut:
     processing_status = _status_to_str(row["processing_status"])
     capabilities = derive_capabilities(
@@ -398,6 +404,7 @@ def _media_out_from_row(
         retrieval_status=row["retrieval_status"],
         can_delete=bool(row.get("can_delete")),
         is_creator=bool(row.get("is_creator")),
+        is_admin=is_admin,
         requested_url_exists=bool(row.get("has_requested_url"))
         and not (
             row["kind"] == MediaKind.web_article.value and row.get("provider") == "browser_capture"
@@ -593,6 +600,7 @@ def list_visible_media(
     search: str | None = None,
     cursor: str | None = None,
     limit: int = 50,
+    is_admin: bool = False,
 ) -> tuple[list[MediaOut], str | None]:
     """List viewer-visible media across all provenance paths with keyset pagination."""
     if limit <= 0:
@@ -665,6 +673,7 @@ def list_visible_media(
             contributors=contributors_by_media.get(media_id, []),
             chapters=chapters_by_media.get(media_id, []),
             pdf_quote_ready=pdf_readiness.get(media_id, False),
+            is_admin=is_admin,
         )
         media.document_embed_summary = embed_summaries_by_media.get(media_id)
         media_list.append(media)

@@ -37,6 +37,7 @@ LLM client lifecycle:
 """
 
 import json
+import re
 from contextlib import asynccontextmanager
 from urllib.parse import urlparse
 from uuid import UUID
@@ -251,6 +252,11 @@ def create_app(skip_auth_middleware: bool = False) -> FastAPI:
     app.add_exception_handler(StarletteHTTPException, http_exception_handler)
     app.add_exception_handler(Exception, unhandled_exception_handler)
 
+    # The five author-surface endpoints return 422 for structural/bounds
+    # validation failures (author-dedup spec §6 / D-10); the rest of the wire
+    # keeps its established 400 convention.
+    author_surface_422_re = re.compile(r"^/contributors(?:/|$)|^/media/[^/]+/authors$")
+
     # Handle JSON parsing errors specifically
     @app.exception_handler(RequestValidationError)
     async def validation_exception_handler(
@@ -263,8 +269,9 @@ def create_app(skip_auth_middleware: bool = False) -> FastAPI:
             method=request.method,
             errors=exc.errors(),
         )
+        status_code = 422 if author_surface_422_re.search(request.url.path) else 400
         return JSONResponse(
-            status_code=400,
+            status_code=status_code,
             content=error_response(ApiErrorCode.E_INVALID_REQUEST, "Invalid request body"),
         )
 

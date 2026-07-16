@@ -7,13 +7,15 @@ pytestmark = pytest.mark.unit
 
 
 def _podcast_payload() -> dict[str, object]:
+    # Credits ride the snake-strict ContributorCreditIn v2 (D-4); the scaffold
+    # normalizer still strips stale output-shaped fields until S4 deletes it.
     return {
         "provider_podcast_id": "podcast-1",
         "title": "Podcast",
         "feed_url": "https://example.com/feed.xml",
         "contributors": [
             {
-                "creditedName": "Host",
+                "credited_name": "Host",
                 "role": "host",
                 "contributorHandle": "stale-output-field",
             }
