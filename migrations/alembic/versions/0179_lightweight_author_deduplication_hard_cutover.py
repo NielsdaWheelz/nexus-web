@@ -277,6 +277,8 @@ _ACTIVE_STATUSES = frozenset({"unverified", "verified"})
 _FULL_EMAIL_RE = re.compile(r"[^@\s]+@[^@\s]+")
 _EMBEDDED_EMAIL_RE = re.compile(r"[^\s@]+@[^\s@]+\.[^\s@]+")
 _URL_MARKERS = ("http://", "https://")
+# FROZEN byte-identical copy of contributor_taxonomy._EMAIL_STRIP_EDGE_CHARS.
+_EMAIL_STRIP_EDGE_CHARS = ' \t\n\r\f\v<>()[]{}"“”,.;:!?|/\\@·•-–—'
 
 
 def _is_full_email(text: str) -> bool:
@@ -292,6 +294,76 @@ def _contains_url(text: str) -> bool:
     if any(marker in lowered for marker in _URL_MARKERS):
         return True
     return any(token.startswith("www.") for token in lowered.split())
+
+
+def _strip_embedded_email_addresses(value: str) -> str:
+    """FROZEN byte-identical copy of
+    ``contributor_taxonomy.strip_embedded_email_addresses`` (same
+    ``_EMBEDDED_EMAIL_RE`` and ``_EMAIL_STRIP_EDGE_CHARS``). Pinned vectors, which
+    must hold in BOTH copies: 'Jane Doe <jane@x.com>' -> 'Jane Doe';
+    'Jane (jane@x.com) Doe' -> 'Jane Doe'; 'Dr. Jane Doe. <j@x.co>' ->
+    'Dr. Jane Doe'; 'jane@x.com' -> ''; 'mailto:jane@x.com' -> ''; ' <a@b.c> '
+    -> ''; 'user@ handle-like non-domain' and 'name @ home' -> unchanged."""
+
+    without = _EMBEDDED_EMAIL_RE.sub(" ", value)
+    if without == value:
+        return value
+    return " ".join(without.split()).strip(_EMAIL_STRIP_EDGE_CHARS)
+
+
+def _sanitized_email_local_display_from_embedded(cleaned: str) -> str:
+    """Empty-remainder fallback: the sanitized local part of the first embedded
+    address (the shape the runtime email adapter emits), with wrappers and a
+    ``mailto:`` prefix stripped. Used only when stripping the embedded address(es)
+    leaves no human remainder, so a purely-address display still yields a name."""
+
+    match = _EMBEDDED_EMAIL_RE.search(cleaned)
+    if match is None:
+        return ""
+    local = match.group(0).split("@", 1)[0].strip(_EMAIL_STRIP_EDGE_CHARS)
+    if local[:7].lower() == "mailto:":
+        local = local[7:]
+    return _clean_contributor_display(local)
+
+
+def _display_is_tainted(text: str, key_literals: set[str]) -> bool:
+    return _contains_email(text) or _contains_url(text) or text in key_literals
+
+
+def _derive_privacy_safe_display(raw: str, key_literals: set[str]) -> tuple[str | None, str]:
+    """The single privacy-safe display derivation shared by preflight (phase 1)
+    and the identity collapse (phase 2), so the gate and the cleanup can never
+    disagree about which displays are salvageable. Returns ``(display, kind)``;
+    ``display`` is ``None`` when the value is unusable and cutover must hard-block.
+
+    - a bare full email re-derives to its sanitized local part (existing rule);
+    - an embedded email is stripped to its human remainder, else falls back to the
+      sanitized local part of the embedded address;
+    - a URL or bare provider-key display has no re-derivation rule and blocks.
+
+    kinds: 'blank' | 'bare_email' | 'stripped_embedded' | 'local_fallback'
+           | 'embedded' | 'url_or_key' | 'clean'.
+    """
+
+    cleaned = _clean_contributor_display(raw)
+    if not cleaned:
+        return None, "blank"
+    if _is_full_email(cleaned):
+        rederived = _sanitized_email_local_display(cleaned)
+        if rederived and not _display_is_tainted(rederived, key_literals):
+            return rederived, "bare_email"
+        return None, "bare_email"
+    if _contains_email(cleaned):
+        stripped = _clean_contributor_display(_strip_embedded_email_addresses(cleaned))
+        if stripped and not _display_is_tainted(stripped, key_literals):
+            return stripped, "stripped_embedded"
+        fallback = _sanitized_email_local_display_from_embedded(cleaned)
+        if fallback and not _display_is_tainted(fallback, key_literals):
+            return fallback, "local_fallback"
+        return None, "embedded"
+    if _display_is_tainted(cleaned, key_literals):
+        return None, "url_or_key"
+    return cleaned, "clean"
 
 
 # ---------------------------------------------------------------------------
@@ -618,35 +690,26 @@ def _phase1_preflight(bind) -> None:
     if count:
         _fail("preflight", f"{count} contributor_credits rows with negative ordinal")
 
-    # 6. Names that cannot survive cleaning: blank displays; displays carrying
-    # an address/URL/provider key with no re-derivation rule (only a display
-    # that IS a full email re-derives, to the sanitized local part); unusable
-    # or still-tainted re-derivations; blank credited names. Key equality is
+    # 6. Names that cannot survive cleaning: blank displays; displays carrying an
+    # address/URL/provider key that the phase-2 privacy cleanup cannot
+    # deterministically sanitize. A bare full email re-derives to its sanitized
+    # local part; an embedded email is stripped to its human remainder (else to
+    # the sanitized local part of the address). A URL or bare provider key has no
+    # re-derivation rule and blocks. This shares _derive_privacy_safe_display with
+    # phase 2 so the gate and the cleanup can never disagree; key equality is
     # checked against every stored key literal, raw AND canonical.
     key_literals = _stored_key_privacy_literals(bind)
     for row in bind.execute(sa.text("SELECT id, display_name FROM contributors")).fetchall():
-        cleaned = _clean_contributor_display(row[1])
-        if not cleaned:
+        display, kind = _derive_privacy_safe_display(row[1], key_literals)
+        if display is not None:
+            continue
+        if kind == "blank":
             _fail("preflight", f"contributor {row[0]} has a blank display name")
-        if _is_full_email(cleaned):
-            rederived = _sanitized_email_local_display(cleaned)
-            if not rederived:
-                _fail(
-                    "preflight",
-                    f"contributor {row[0]} email display re-derivation yields an unusable name",
-                )
-            if _contains_email(rederived) or _contains_url(rederived) or rederived in key_literals:
-                _fail(
-                    "preflight",
-                    f"contributor {row[0]} email display re-derivation still carries an"
-                    " address/URL/provider key",
-                )
-        elif _contains_email(cleaned) or _contains_url(cleaned) or cleaned in key_literals:
-            _fail(
-                "preflight",
-                f"contributor {row[0]} display carries an address/URL/provider key"
-                " with no re-derivation rule",
-            )
+        _fail(
+            "preflight",
+            f"contributor {row[0]} display carries an address/URL/provider key that"
+            f" cannot be sanitized by any re-derivation rule ({kind})",
+        )
     count = bind.execute(sa.text("SELECT count(*) FROM contributor_credits")).scalar()
     if count:
         blank = bind.execute(
@@ -818,8 +881,12 @@ def _phase2_identity_collapse(bind) -> _CollapseResult:
     status_of: dict[str, str] = {}
     merged_into: dict[str, str | None] = {}
     created_of: dict[str, object] = {}
+    # Stored external-key literals (raw + canonical); the privacy rules taint any
+    # display/alias equal to one. Computed once here and reused for aliases below.
+    external_key_literals = _stored_key_privacy_literals(bind)
     display_truncated = 0
     display_rederived = 0
+    display_stripped = 0
     for row in contributors:
         cid = str(row[0])
         ids.append(cid)
@@ -827,20 +894,24 @@ def _phase2_identity_collapse(bind) -> _CollapseResult:
         status_of[cid] = row[3]
         merged_into[cid] = str(row[4]) if row[4] is not None else None
         created_of[cid] = row[5]
-        display = _clean_contributor_display(row[2])
-        if _is_full_email(display):
-            display = _sanitized_email_local_display(display)
+        # Preflight already proved every display is salvageable via the SAME
+        # derivation, so a None here is a defect, not expected data.
+        display, kind = _derive_privacy_safe_display(row[2], external_key_literals)
+        if display is None:
+            _fail("collapse", f"contributor {cid}: display sanitization unusable ({kind})")
+        if kind in ("bare_email", "local_fallback"):
             display_rederived += 1
-            if not display:
-                _fail("collapse", f"contributor {cid}: email display re-derivation unusable")
+        elif kind == "stripped_embedded":
+            display_stripped += 1
         if len(display) > _MAX_NAME_CODE_POINTS:
             display = display[:_MAX_NAME_CODE_POINTS]
             display_truncated += 1
         display_of[cid] = display
-    if display_truncated or display_rederived:
+    if display_truncated or display_rederived or display_stripped:
         _report(
             f"collapse: displays cleaned — {display_truncated} truncated to 200 code points,"
-            f" {display_rederived} email displays re-derived to sanitized local parts"
+            f" {display_rederived} email displays re-derived to sanitized local parts,"
+            f" {display_stripped} embedded-email displays stripped to a name remainder"
         )
 
     def _row_order(cid: str) -> tuple:
@@ -853,7 +924,6 @@ def _phase2_identity_collapse(bind) -> _CollapseResult:
     # Load + clean aliases; classify; apply privacy removal (contains-semantics
     # for addresses/URLs; equality against every stored key literal, raw or
     # canonical — aliases are searchable extras, so removal is always safe).
-    external_key_literals = _stored_key_privacy_literals(bind)
     alias_rows = bind.execute(
         sa.text(
             "SELECT id, contributor_id, alias, source, created_at"
@@ -872,7 +942,17 @@ def _phase2_identity_collapse(bind) -> _CollapseResult:
         if not literal:
             alias_removed_blank += 1
             continue
-        if _contains_email(literal) or _contains_url(literal) or literal in external_key_literals:
+        if _contains_email(literal):
+            # Strip the embedded address(es), keeping the human remainder as a
+            # searchable alias (the stripped address itself never becomes an
+            # alias). It then re-enters the normal dedupe with its own flag.
+            literal = _clean_contributor_display(_strip_embedded_email_addresses(literal))
+        if (
+            not literal
+            or _contains_email(literal)
+            or _contains_url(literal)
+            or literal in external_key_literals
+        ):
             alias_removed_privacy += 1
             continue
         aliases.append(

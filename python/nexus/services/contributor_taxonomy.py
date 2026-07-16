@@ -186,6 +186,34 @@ def contributor_match_key(value: str) -> str:
     return " ".join(text.split())
 
 
+# An embedded email address is a local part, ``@``, and a dotted domain. It must
+# never survive in a display name, alias, credited name, log, or DTO (spec §5).
+# ``strip_embedded_email_addresses`` removes every such address together with the
+# common wrappers that the address token's own ``[^\s@]`` runs already swallow
+# (angle brackets, parentheses, brackets, a ``mailto:`` prefix), then trims the
+# separators / dangling punctuation left behind at the value's edges. A value
+# that carries no embedded address is returned unchanged, so an ordinary name
+# keeps its own punctuation. Migration 0179 embeds a FROZEN byte-identical copy
+# of this regex, edge-char set, and function; keep them in lockstep.
+_EMBEDDED_EMAIL_RE: Final = re.compile(r"[^\s@]+@[^\s@]+\.[^\s@]+")
+_EMAIL_STRIP_EDGE_CHARS: Final = ' \t\n\r\f\v<>()[]{}"“”,.;:!?|/\\@·•-–—'
+
+
+def strip_embedded_email_addresses(value: str) -> str:
+    """Remove embedded email addresses and their wrappers, keeping the remainder.
+
+    Returns the human remainder with dangling separators/wrappers trimmed, or the
+    empty string when the value was only an address (with wrappers). A value that
+    contains no embedded address is returned unchanged — ordinary-name
+    punctuation is never touched. The result never contains an embedded address.
+    """
+
+    without = _EMBEDDED_EMAIL_RE.sub(" ", value)
+    if without == value:
+        return value
+    return " ".join(without.split()).strip(_EMAIL_STRIP_EDGE_CHARS)
+
+
 # ---------------------------------------------------------------------------
 # ContributorHandle brand
 # ---------------------------------------------------------------------------
@@ -367,6 +395,12 @@ def build_observation(
             display = clean_contributor_display(entry.credited_name)[
                 :MAX_CONTRIBUTOR_NAME_CODE_POINTS
             ]
+            # §5 privacy: a full email address never becomes a credited name. Strip
+            # any embedded address, keeping the human remainder; an entry that is
+            # only an address yields nothing and is omitted (invalid keys/names are
+            # omitted). The email lane's own sanitized local-part fallback carries
+            # no ``@`` and is left untouched.
+            display = strip_embedded_email_addresses(display)
             if not display:
                 continue
             match_key = contributor_match_key(display)

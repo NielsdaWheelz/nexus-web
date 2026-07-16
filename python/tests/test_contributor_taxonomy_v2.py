@@ -28,6 +28,7 @@ from nexus.services.contributor_taxonomy import (
     contributor_handle_candidates,
     contributor_match_key,
     parse_contributor_handle,
+    strip_embedded_email_addresses,
     try_parse_contributor_handle,
 )
 
@@ -115,6 +116,52 @@ def test_clean_display_preserves_default_ignorable_that_match_key_strips() -> No
 
 def test_clean_display_preserves_case_punctuation_and_diacritics() -> None:
     assert clean_contributor_display("José O'Brien") == "José O'Brien"
+
+
+# ---------------------------------------------------------------------------
+# strip_embedded_email_addresses: §5 privacy — no address survives as a name
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        # embedded address with a human remainder -> remainder kept, wrappers gone
+        ("Jane Doe <jane@x.com>", "Jane Doe"),
+        ("Jane (jane@x.com) Doe", "Jane Doe"),
+        ("Jane [jane@x.com] Doe", "Jane Doe"),
+        # the prod-blocking shape: name phrase + trailing separator + <address>
+        ("Dr. Jane Doe. <j@x.co>", "Dr. Jane Doe"),
+        ("Word Word of Word. <someone@domain.tld>", "Word Word of Word"),
+        # address-only values (any wrapper) -> empty; caller drops / falls back
+        ("jane@x.com", ""),
+        ("mailto:jane@x.com", ""),
+        (" <a@b.c> ", ""),
+        ("(jane@x.com)", ""),
+        # internal name punctuation is preserved when an address is removed
+        ("Jean-Paul Q. <jp@x.io>", "Jean-Paul Q"),
+        ("O'Brien <ob@x.io>", "O'Brien"),
+    ],
+)
+def test_strip_embedded_email_addresses_vectors(value: str, expected: str) -> None:
+    result = strip_embedded_email_addresses(value)
+    assert result == expected
+    # The result never carries an embedded (dotted) address.
+    assert "@" not in result or "." not in result.split("@", 1)[1]
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "user@ handle-like non-domain",  # space after @ -> not a domain
+        "name @ home",  # spaces around @ -> not an address
+        "Jane Doe",  # ordinary name, no @ at all
+        "R&B @ Night",  # @ with no dotted domain
+        "Jane Q. Doe",  # trailing "." must survive when NO address is present
+    ],
+)
+def test_strip_embedded_email_addresses_leaves_non_addresses_untouched(value: str) -> None:
+    assert strip_embedded_email_addresses(value) == value
 
 
 # ---------------------------------------------------------------------------
@@ -469,3 +516,27 @@ def test_build_observation_dedup_is_per_role_not_global() -> None:
     )
     assert isinstance(batch, ObservedRoleSlices)
     assert len(batch.credits) == 2
+
+
+def test_build_observation_strips_embedded_address_from_credited_name() -> None:
+    # §5 privacy: an embedded address is stripped; the human remainder is kept.
+    batch, _ = build_observation({"author": [RawCreditEntry("Jane Doe <jane@x.com>")]})
+    assert isinstance(batch, ObservedRoleSlices)
+    assert batch.credits[0].credited_name == "Jane Doe"
+    assert "@" not in batch.credits[0].credited_name
+
+
+def test_build_observation_drops_address_only_credited_name() -> None:
+    # A credited name that is only an address yields nothing and is omitted.
+    batch, _ = build_observation({"author": [RawCreditEntry("jane@x.com")]})
+    assert batch is NOT_OBSERVED
+    batch2, _ = build_observation({"author": [RawCreditEntry("mailto:jane@x.com")]})
+    assert batch2 is NOT_OBSERVED
+
+
+def test_build_observation_keeps_email_lane_local_part_untouched() -> None:
+    # The email adapter's sanitized local-part fallback carries no "@" and must
+    # pass through unchanged (the strip never touches a non-address name).
+    batch, _ = build_observation({"author": [RawCreditEntry("jane.doe")]})
+    assert isinstance(batch, ObservedRoleSlices)
+    assert batch.credits[0].credited_name == "jane.doe"

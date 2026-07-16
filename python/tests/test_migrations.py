@@ -14502,8 +14502,9 @@ class TestMigration0177GrandAtlas:
 #   every authority disposition (orcid/isni/viaf/wikidata/openalex/lcnaf kept,
 #   email->email_address, youtube->youtube_channel channel-kept + ambiguous-video
 #   dropped, podcast_index/rss/gutenberg dropped); source_ref.x_user_id recovery
-#   onto the survivor; merged+tombstoned total disposition; email-as-display and
-#   URL-alias privacy cleanup; manual+machine author salvage (flag true) and
+#   onto the survivor; merged+tombstoned total disposition; email-as-display,
+#   embedded-address display (usable remainder stripped + kept, and address-only
+#   local-part fallback), and URL-alias privacy cleanup; manual+machine author salvage (flag true) and
 #   machine-only media (flag false); translator/host/guest (media + podcast +
 #   gutenberg targets); >20 author slice truncated to dense 20; a no-survivor
 #   HUSK (tombstoned, unique name) whose pin/version/view-state/edge/suppression/
@@ -14512,7 +14513,8 @@ class TestMigration0177GrandAtlas:
 #   machine-source display alias flipped to resolving; machine-vs-machine
 #   salvage recency (newer MAX(updated_at) wins; exact tie falls to source name
 #   ascending); a junk contributor-scoped memo (uuid never a contributor) that
-#   survives untouched; an embedded-address alias removed by privacy cleanup;
+#   survives untouched; an embedded-address alias STRIPPED (not removed) to its
+#   human remainder by privacy cleanup;
 #   collapsed edge ids inside prompt assemblies + meta events rebinding to the
 #   collision winner; reconciliation
 #   runs/candidates/identity-events/background_jobs deleted; and every §8 + D-18
@@ -15069,12 +15071,50 @@ def _build_0179_success_fixture(session: Session) -> dict:
     _insert_alias(
         session, cid=ids["priv"], alias="https://example.com/~jane", source="web_article_byline"
     )
-    # an address EMBEDDED in prose (not a full-value email) must also be removed
+    # an address EMBEDDED in prose (not a full-value email): the address is
+    # stripped and the human remainder ("Jane Doe") is KEPT as a searchable alias,
+    # never dropped and never left carrying the address.
     _insert_alias(
         session,
         cid=ids["priv"],
         alias="Jane Doe <jane.doe@example.com>",
         source="web_article_byline",
+    )
+
+    # 5a. PRIVACY — an embedded address in the DISPLAY with a usable human
+    #     remainder: the migration strips the address + its <> wrapper + the
+    #     dangling trailing separator and keeps the name ("Dr. Jane Roe"), rather
+    #     than blocking cutover. Its only alias is the same embedded-address prose
+    #     (the prod-dominant machine display shape) -> stripped, not dropped, then
+    #     flipped to the resolving canonical display alias.
+    ids["priv_embed"] = uuid4()
+    _insert_contributor(
+        session,
+        cid=ids["priv_embed"],
+        handle="priv-embed-e0",
+        display="Dr. Jane Roe. <jane.roe@example.org>",
+        created_at=_ts(2020),
+        with_display_alias=False,
+    )
+    _insert_alias(
+        session,
+        cid=ids["priv_embed"],
+        alias="Dr. Jane Roe. <jane.roe@example.org>",
+        source="metadata_enrichment",
+        alias_kind="display",
+    )
+
+    # 5a'. PRIVACY — an embedded-address-ONLY display (no human remainder after
+    #      stripping): falls back to the sanitized local-part rule ("solo"), never
+    #      blocks cutover, and never leaks the address as display or alias text.
+    ids["priv_embed_only"] = uuid4()
+    _insert_contributor(
+        session,
+        cid=ids["priv_embed_only"],
+        handle="priv-embed-only-o0",
+        display="< solo@example.net >",
+        created_at=_ts(2020),
+        with_display_alias=False,
     )
 
     # =====================================================================
@@ -16343,6 +16383,43 @@ class TestMigration0179LightweightAuthorDedup:
                 )
                 >= 1
             )
+
+    def test_embedded_email_display_stripped_to_remainder(self, migrated):
+        engine, ids = migrated
+        with Session(engine) as s:
+            # usable human remainder kept; address, wrapper and trailing "."
+            # separator all gone.
+            assert (
+                self._scalar(
+                    s, "SELECT display_name FROM contributors WHERE id = :c", c=ids["priv_embed"]
+                )
+                == "Dr. Jane Roe"
+            )
+            # no alias for this contributor carries an address
+            assert (
+                self._scalar(
+                    s,
+                    "SELECT count(*) FROM contributor_aliases"
+                    " WHERE contributor_id = :c AND alias LIKE '%@%'",
+                    c=ids["priv_embed"],
+                )
+                == 0
+            )
+            # the sanitized remainder is the resolving canonical display alias
+            assert (
+                self._scalar(
+                    s,
+                    "SELECT count(*) FROM contributor_aliases WHERE contributor_id = :c"
+                    " AND resolves_identity AND alias = 'Dr. Jane Roe'",
+                    c=ids["priv_embed"],
+                )
+                >= 1
+            )
+            # embedded-address-only display falls back to the sanitized local part
+            solo = self._scalar(
+                s, "SELECT display_name FROM contributors WHERE id = :c", c=ids["priv_embed_only"]
+            )
+            assert solo == "solo" and "@" not in solo
 
     # === credit salvage ====================================================
     def test_manual_salvage_sets_flag_and_drops_machine(self, migrated):
