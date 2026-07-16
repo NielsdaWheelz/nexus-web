@@ -2,7 +2,9 @@ import type { ResourceDescriptor } from "@/lib/api/resource";
 
 // Paint-adjacent prefetch deadline for the server fetcher — never paint-blocking:
 // callFastAPI aborts the upstream here, a timed-out seed is omitted, and the client
-// useResource fetches normally. Shared with the bootstrap server data root.
+// useResource fetches normally. Shared with the bootstrap's best-effort seeds
+// (workspace session + pane resources); the required reader-profile read rides the
+// normal server-request deadline instead.
 export const PREFETCH_OPTS = { timeoutMs: 500 } as const;
 
 // One fetch-and-parse over a ResourceDescriptor with the transport injected —

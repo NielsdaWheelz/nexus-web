@@ -301,6 +301,9 @@
   width: 100%;
   min-height: 100%;
   padding: var(--space-4);
+  transition:
+    background-color var(--duration-base) var(--ease-glide),
+    color var(--duration-base) var(--ease-glide);
 }
 
 .readerContentInner {
@@ -344,6 +347,7 @@
   --reader-border-subtle: #ece8df;
   --reader-accent: #7d5e35;
   --reader-accent-hover: #634a29;
+  color-scheme: light;
   background-color: var(--reader-bg);
   color: var(--reader-text);
 }
@@ -359,6 +363,7 @@
   --reader-border-subtle: #1f1d18;
   --reader-accent: #c4a472;
   --reader-accent-hover: #d4b687;
+  color-scheme: dark;
   background-color: var(--reader-bg);
   color: var(--reader-text);
 }
@@ -735,18 +740,27 @@
   padding: var(--space-3);
   text-align: left;
   white-space: normal;
-  border-color: var(--edge-subtle);
+  background-color: var(--reader-surface, var(--surface-2));
+  color: var(--reader-text, var(--ink));
+  border-color: var(--reader-border, var(--edge-subtle));
+}
+
+/* Outscore Button's .secondary:hover so hover stays inside the reader palette
+   (the app-theme hover tint would flash light inside a dark reading canvas). */
+.readerContentRoot .segmentButton:hover:not(:disabled) {
+  background-color: var(--reader-bg-secondary, var(--surface-hover));
+  border-color: var(--reader-border, var(--edge-strong));
 }
 
 .segmentButtonActive {
-  border-color: var(--accent);
+  border-color: var(--reader-accent, var(--accent));
 }
 
 .segmentMeta {
   display: flex;
   gap: var(--space-2);
   font-size: var(--text-xs);
-  color: var(--ink-faint);
+  color: var(--reader-text-muted, var(--ink-faint));
 }
 
 .segmentText {
@@ -760,9 +774,9 @@
   justify-content: space-between;
   gap: var(--space-2);
   padding: var(--space-2) var(--space-1);
-  border-top: 1px solid var(--edge-subtle);
-  border-bottom: 1px solid var(--edge-subtle);
-  color: var(--ink-faint);
+  border-top: 1px solid var(--reader-border-subtle, var(--edge-subtle));
+  border-bottom: 1px solid var(--reader-border-subtle, var(--edge-subtle));
+  color: var(--reader-text-muted, var(--ink-faint));
 }
 
 .inlineChapterTitle {

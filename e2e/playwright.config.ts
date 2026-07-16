@@ -13,6 +13,10 @@ applySupabasePublicEnv(ROOT_DIR, process.env);
 
 const WEB_PORT = process.env.WEB_PORT ?? "3000";
 const API_PORT = process.env.API_PORT ?? "8000";
+// AC-1 recovery E2E fault injector (e2e/reader-profile-upstream-proxy.ts). `make web-e2e`
+// points FASTAPI_BASE_URL here; the proxy forwards on to the real API_PORT and is transparent
+// unless a test arms it, so every project below safely shares the one Next.js instance.
+const READER_PROXY_PORT = process.env.READER_PROXY_PORT ?? "8010";
 const REAL_MEDIA_ENABLED = process.env.E2E_REAL_MEDIA === "1";
 const RUNTIME_ENV = REAL_MEDIA_ENABLED ? "local" : "test";
 
@@ -58,7 +62,20 @@ export default defineConfig({
       : [
           {
             name: "chromium",
-            grepInvert: /@real-media/,
+            grepInvert: /@real-media|@recovery/,
+            use: {
+              ...devices["Desktop Chrome"],
+              storageState: ".auth/user.json",
+            },
+            dependencies: ["setup"],
+          },
+          // AC-1: the reader-profile bootstrap recovery proof runs against the counted
+          // test-process upstream (reader-profile-upstream-proxy.ts), not a mock or route
+          // interception. Split into its own project (rather than folded into "chromium")
+          // so armed/reset proxy state never straddles unrelated tests sharing the worker.
+          {
+            name: "recovery",
+            grep: /@recovery/,
             use: {
               ...devices["Desktop Chrome"],
               storageState: ".auth/user.json",
@@ -68,6 +85,19 @@ export default defineConfig({
         ]),
   ],
   webServer: [
+    // Started first (Playwright starts webServer entries in order, waiting for each one's
+    // readiness before starting the next): the proxy has no dependency on FastAPI being up
+    // yet, so it is always listening before Next boots and can start proxying immediately.
+    {
+      command: `cd .. && make reader-profile-upstream-proxy-e2e`,
+      url: `http://localhost:${READER_PROXY_PORT}/__e2e/health`,
+      reuseExistingServer: false,
+      timeout: 30_000,
+      env: {
+        READER_PROXY_PORT,
+        API_PORT,
+      },
+    },
     {
       command: `cd .. && make web-e2e`,
       url: `http://localhost:${WEB_PORT}`,

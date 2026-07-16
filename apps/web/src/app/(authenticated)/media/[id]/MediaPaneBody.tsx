@@ -630,11 +630,7 @@ export default function MediaPaneBody() {
   const requestedStartMs = target?.kind === "t" ? Number(target.value) : null;
   const feedback = useFeedback();
   const isMobileViewport = useIsMobileViewport();
-  const {
-    profile: readerProfile,
-    save: saveReaderProfile,
-    updateTheme,
-  } = useReaderContext();
+  const { profile: readerProfile, setTheme, setFocusMode } = useReaderContext();
   const attentionTracker = useAttentionTracker({ mediaId: id });
   const scrollRestoreAppliedRef = useRef(false);
   const lastSavedTextAnchorOffsetRef = useRef<number | null>(null);
@@ -4240,7 +4236,7 @@ export default function MediaPaneBody() {
               : current === "paragraph"
                 ? "sentence"
                 : "off";
-        saveReaderProfile({ focus_mode: next });
+        setFocusMode(next);
         return;
       }
       if (event.key === "Escape" && !event.shiftKey) {
@@ -4256,14 +4252,14 @@ export default function MediaPaneBody() {
         readerProfile.focus_mode !== "off"
       ) {
         event.preventDefault();
-        saveReaderProfile({ focus_mode: "off" });
+        setFocusMode("off");
       }
     }
     window.addEventListener("keydown", handleKeydown);
     return () => {
       window.removeEventListener("keydown", handleKeydown);
     };
-  }, [clearTarget, readerProfile.focus_mode, saveReaderProfile, targetStatus]);
+  }, [clearTarget, readerProfile.focus_mode, setFocusMode, targetStatus]);
 
   // Selection-active mirror on the reader root so focus mode dimming auto-suspends.
   useEffect(() => {
@@ -4567,7 +4563,7 @@ export default function MediaPaneBody() {
             ? "Light theme (current)"
             : "Light theme",
         disabled: readerProfile.theme === "light",
-        onSelect: () => updateTheme("light"),
+        onSelect: () => setTheme("light"),
       });
       readerOptions.push({
         id: "reader-theme-dark",
@@ -4576,7 +4572,13 @@ export default function MediaPaneBody() {
             ? "Dark theme (current)"
             : "Dark theme",
         disabled: readerProfile.theme === "dark",
-        onSelect: () => updateTheme("dark"),
+        onSelect: () => setTheme("dark"),
+      });
+    } else if (isPdf && canRead) {
+      readerOptions.push({
+        id: "reader-pdf-source-colors",
+        label: "PDF pages keep their source colors",
+        disabled: true,
       });
     }
 
@@ -4596,6 +4598,7 @@ export default function MediaPaneBody() {
     handleRetryMetadata,
     handleRetryProcessing,
     isMobileViewport,
+    isPdf,
     isTranscriptMedia,
     isReflowableReader,
     loadLibraryPickerLibraries,
@@ -4608,7 +4611,7 @@ export default function MediaPaneBody() {
     retryMetadataBusy,
     retryProcessingBusy,
     canRead,
-    updateTheme,
+    setTheme,
   ]);
 
   const closeSecondaryOnMobile = useCallback(() => {
@@ -5737,6 +5740,8 @@ export default function MediaPaneBody() {
       fragments={fragments}
       activeFragment={activeTranscriptFragment}
       renderedHtml={renderedHtml}
+      readerSurfaceClassName={readerSurfaceClassName}
+      readerSurfaceStyle={readerSurfaceStyle}
       evidenceHighlightId={
         resolvedEvidence?.resolver.kind === "transcript"
           ? resolvedEvidenceHighlightId

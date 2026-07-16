@@ -1,30 +1,32 @@
 "use client";
 
-import {
-  createContext,
-  useContext,
-  useMemo,
-  type ReactNode,
-} from "react";
+import { createContext, useContext, useMemo, type ReactNode } from "react";
 import { useReaderProfile } from "./useReaderProfile";
-import type { ReaderFontFamily, ReaderProfile, ReaderTheme } from "./types";
-import { DEFAULT_READER_PROFILE } from "./types";
+import type { ReaderProfilePersistence } from "./readerProfileSync";
+import type {
+  ReaderFocusMode,
+  ReaderFontFamily,
+  ReaderHyphenation,
+  ReaderProfile,
+  ReaderTheme,
+} from "./types";
 
-interface ReaderContextValue {
+/** The public reader-profile capability: semantic intent only, no raw save. */
+export interface ReaderProfileCapability {
+  /** Optimistic desired profile; drives pixels. */
   profile: ReaderProfile;
-  error: string | null;
-  saving: boolean;
-  save: (updates: Partial<ReaderProfile>) => void;
-  updateTheme: (theme: ReaderTheme) => void;
-  updateFontFamily: (fontFamily: ReaderFontFamily) => void;
-  updateFontSize: (fontSizePx: number) => void;
-  updateLineHeight: (lineHeight: number) => void;
-  updateColumnWidth: (columnWidthCh: number) => void;
+  persistence: ReaderProfilePersistence;
+  setTheme: (value: ReaderTheme) => void;
+  setFontFamily: (value: ReaderFontFamily) => void;
+  setFocusMode: (value: ReaderFocusMode) => void;
+  setHyphenation: (value: ReaderHyphenation) => void;
+  setFontSize: (value: number) => void;
+  setLineHeight: (value: number) => void;
+  setColumnWidth: (value: number) => void;
+  retrySave: () => void;
 }
 
-const ReaderContext = createContext<ReaderContextValue | null>(null);
-
-const NOOP = () => {};
+const ReaderContext = createContext<ReaderProfileCapability | null>(null);
 
 export function ReaderProvider({
   children,
@@ -33,62 +35,33 @@ export function ReaderProvider({
   children: ReactNode;
   initialProfile: ReaderProfile;
 }) {
-  const {
-    profile,
-    error,
-    saving,
-    save,
-    updateTheme,
-    updateFontFamily,
-    updateFontSize,
-    updateLineHeight,
-    updateColumnWidth,
-  } = useReaderProfile({ initialProfile });
+  const { profile, persistence, intend, retrySave } = useReaderProfile(initialProfile);
 
-  const value = useMemo<ReaderContextValue>(
+  const value = useMemo<ReaderProfileCapability>(
     () => ({
       profile,
-      error,
-      saving,
-      save,
-      updateTheme,
-      updateFontFamily,
-      updateFontSize,
-      updateLineHeight,
-      updateColumnWidth,
+      persistence,
+      setTheme: (theme) => intend({ theme }),
+      setFontFamily: (font_family) => intend({ font_family }),
+      setFocusMode: (focus_mode) => intend({ focus_mode }),
+      setHyphenation: (hyphenation) => intend({ hyphenation }),
+      setFontSize: (font_size_px) => intend({ font_size_px }),
+      setLineHeight: (line_height) => intend({ line_height }),
+      setColumnWidth: (column_width_ch) => intend({ column_width_ch }),
+      retrySave,
     }),
-    [
-      profile,
-      error,
-      saving,
-      save,
-      updateTheme,
-      updateFontFamily,
-      updateFontSize,
-      updateLineHeight,
-      updateColumnWidth,
-    ]
+    [intend, persistence, profile, retrySave],
   );
 
-  return (
-    <ReaderContext.Provider value={value}>{children}</ReaderContext.Provider>
-  );
+  return <ReaderContext.Provider value={value}>{children}</ReaderContext.Provider>;
 }
 
-export function useReaderContext(): ReaderContextValue {
+export function useReaderContext(): ReaderProfileCapability {
   const ctx = useContext(ReaderContext);
   if (!ctx) {
-    return {
-      profile: DEFAULT_READER_PROFILE,
-      error: null,
-      saving: false,
-      save: NOOP,
-      updateTheme: NOOP,
-      updateFontFamily: NOOP,
-      updateFontSize: NOOP,
-      updateLineHeight: NOOP,
-      updateColumnWidth: NOOP,
-    };
+    // The profile is a required bootstrap seed; absence is a wiring defect,
+    // never a default.
+    throw new Error("useReaderContext requires a ReaderProvider");
   }
   return ctx;
 }

@@ -1,7 +1,7 @@
 # Nexus Development Makefile
 # Run `make help` for available commands.
 
-.PHONY: help setup dev down logs clean api api-e2e web web-e2e worker migrate migrate-test migrate-down seed seed-real-media-e2e \
+.PHONY: help setup dev down logs clean api api-e2e web web-e2e reader-profile-upstream-proxy-e2e worker migrate migrate-test migrate-down seed seed-real-media-e2e \
 	check check-back type-back check-front check-android check-workflows format format-back fix-front build build-android build-android-release build-icons check-bundle audit \
 	test-unit test test-back-unit test-back-integration test-front-unit test-front-browser \
 	test-android test-migrations test-supabase test-e2e-env test-real-media test-provider-runtime test-live-providers test-e2e test-e2e-ui test-csp \
@@ -42,6 +42,10 @@ R2_REGION ?= us-east-1
 
 WEB_PORT ?= 3000
 API_PORT ?= 8000
+# AC-1 recovery E2E fault injector (e2e/reader-profile-upstream-proxy.ts). Test-tier-only:
+# `web-e2e` points FASTAPI_BASE_URL here instead of directly at API_PORT, and the proxy
+# forwards on to the real API_PORT. Transparent when unarmed, so every e2e project shares it.
+READER_PROXY_PORT ?= 8010
 PLAYWRIGHT_ARGS ?=
 LLM_CALLING_DIR ?= ../llm-calling
 
@@ -56,6 +60,7 @@ help:
 	@echo "  make api-e2e            - Start FastAPI without reload for Playwright E2E"
 	@echo "  make web                - Start Next.js on WEB_PORT (default 3000)"
 	@echo "  make web-e2e            - Build and start Next.js for Playwright E2E"
+	@echo "  make reader-profile-upstream-proxy-e2e - Start the AC-1 recovery E2E fault-injector proxy"
 	@echo "  make worker             - Start the Postgres queue worker"
 	@echo ""
 	@echo "Routine gates:"
@@ -219,7 +224,7 @@ web:
 
 web-e2e:
 	cd apps/web && \
-		export FASTAPI_BASE_URL=http://localhost:$(API_PORT); \
+		export FASTAPI_BASE_URL=http://localhost:$(READER_PROXY_PORT); \
 		export NEXUS_ENV=$${NEXUS_ENV:-test}; \
 		export NEXT_PUBLIC_SUPABASE_URL=$${NEXT_PUBLIC_SUPABASE_URL:-$(SUPABASE_URL)}; \
 		export NEXT_PUBLIC_SUPABASE_ANON_KEY=$${NEXT_PUBLIC_SUPABASE_ANON_KEY:-$(SUPABASE_ANON_KEY)}; \
@@ -230,6 +235,16 @@ web-e2e:
 		export PORT=$(WEB_PORT); \
 		bun run build; \
 		bun run start
+
+# AC-1 recovery E2E fault injector: started as a third Playwright webServer entry, ahead of
+# `web-e2e` in e2e/playwright.config.ts, so it is already listening before Next boots. See
+# e2e/reader-profile-upstream-proxy.ts for behavior; it is test-process-only and never touches
+# apps/web or python/.
+reader-profile-upstream-proxy-e2e:
+	cd e2e && \
+		READER_PROXY_PORT=$(READER_PROXY_PORT) \
+		API_PORT=$(API_PORT) \
+		bunx tsx reader-profile-upstream-proxy.ts
 
 worker:
 	cd python && PYTHONPATH=$$PWD:$$PWD/.. DATABASE_URL=$(DATABASE_URL) \
@@ -459,10 +474,10 @@ test-e2e:
 	./scripts/with_test_services.sh ./scripts/with_supabase_services.sh --require-admin make _test-e2e-raw
 
 _test-e2e-raw:
-	@echo "Running e2e with API_PORT=$(API_PORT) WEB_PORT=$(WEB_PORT)" && \
+	@echo "Running e2e with API_PORT=$(API_PORT) WEB_PORT=$(WEB_PORT) READER_PROXY_PORT=$(READER_PROXY_PORT)" && \
 	cd e2e && \
-	API_PORT=$(API_PORT) WEB_PORT=$(WEB_PORT) NEXUS_ENV=test E2E_REAL_MEDIA=0 bunx playwright install --with-deps chromium && \
-	API_PORT=$(API_PORT) WEB_PORT=$(WEB_PORT) NEXUS_ENV=test E2E_REAL_MEDIA=0 bun run test:e2e -- $(PLAYWRIGHT_ARGS)
+	API_PORT=$(API_PORT) WEB_PORT=$(WEB_PORT) READER_PROXY_PORT=$(READER_PROXY_PORT) NEXUS_ENV=test E2E_REAL_MEDIA=0 bunx playwright install --with-deps chromium && \
+	API_PORT=$(API_PORT) WEB_PORT=$(WEB_PORT) READER_PROXY_PORT=$(READER_PROXY_PORT) NEXUS_ENV=test E2E_REAL_MEDIA=0 bun run test:e2e -- $(PLAYWRIGHT_ARGS)
 
 test-csp:
 	make test-e2e-env
@@ -476,10 +491,10 @@ _test-csp-raw:
 	API_PORT=$(API_PORT) WEB_PORT=$(WEB_PORT) NEXUS_ENV=test E2E_REAL_MEDIA=0 bun run test:csp -- $(PLAYWRIGHT_ARGS)
 
 _test-real-media-e2e-raw:
-	@echo "Running real-media e2e with API_PORT=$(API_PORT) WEB_PORT=$(WEB_PORT)" && \
+	@echo "Running real-media e2e with API_PORT=$(API_PORT) WEB_PORT=$(WEB_PORT) READER_PROXY_PORT=$(READER_PROXY_PORT)" && \
 	cd e2e && \
-	API_PORT=$(API_PORT) WEB_PORT=$(WEB_PORT) NEXUS_ENV=local E2E_REAL_MEDIA=1 bunx playwright install --with-deps chromium && \
-	API_PORT=$(API_PORT) WEB_PORT=$(WEB_PORT) NEXUS_ENV=local E2E_REAL_MEDIA=1 \
+	API_PORT=$(API_PORT) WEB_PORT=$(WEB_PORT) READER_PROXY_PORT=$(READER_PROXY_PORT) NEXUS_ENV=local E2E_REAL_MEDIA=1 bunx playwright install --with-deps chromium && \
+	API_PORT=$(API_PORT) WEB_PORT=$(WEB_PORT) READER_PROXY_PORT=$(READER_PROXY_PORT) NEXUS_ENV=local E2E_REAL_MEDIA=1 \
 	REAL_MEDIA_PROVIDER_FIXTURES=1 \
 	REAL_MEDIA_FIXTURE_DIR=$$PWD/../python/tests/fixtures/real_media \
 	bun run test:e2e -- --project=real-media $(PLAYWRIGHT_ARGS)
@@ -490,10 +505,10 @@ test-e2e-ui:
 	./scripts/with_test_services.sh ./scripts/with_supabase_services.sh --require-admin make _test-e2e-ui-raw
 
 _test-e2e-ui-raw:
-	@echo "Running e2e ui with API_PORT=$(API_PORT) WEB_PORT=$(WEB_PORT)" && \
+	@echo "Running e2e ui with API_PORT=$(API_PORT) WEB_PORT=$(WEB_PORT) READER_PROXY_PORT=$(READER_PROXY_PORT)" && \
 	cd e2e && \
-	API_PORT=$(API_PORT) WEB_PORT=$(WEB_PORT) NEXUS_ENV=test E2E_REAL_MEDIA=0 bunx playwright install chromium && \
-	API_PORT=$(API_PORT) WEB_PORT=$(WEB_PORT) NEXUS_ENV=test E2E_REAL_MEDIA=0 bunx playwright test --ui
+	API_PORT=$(API_PORT) WEB_PORT=$(WEB_PORT) READER_PROXY_PORT=$(READER_PROXY_PORT) NEXUS_ENV=test E2E_REAL_MEDIA=0 bunx playwright install chromium && \
+	API_PORT=$(API_PORT) WEB_PORT=$(WEB_PORT) READER_PROXY_PORT=$(READER_PROXY_PORT) NEXUS_ENV=test E2E_REAL_MEDIA=0 bunx playwright test --ui
 
 verify:
 	make check

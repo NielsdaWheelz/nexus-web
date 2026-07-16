@@ -1,0 +1,26 @@
+.region {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  min-height: 100dvh;
+  padding: var(--space-6);
+  text-align: center;
+}
+
+.region:focus {
+  outline: none;
+}
+
+.heading {
+  margin: 0;
+  font-size: var(--text-lg);
+  color: var(--ink);
+}
+
+.body {
+  margin: 0;
+  max-width: 40ch;
+  color: var(--ink-muted);
+}

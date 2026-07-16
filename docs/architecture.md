@@ -1006,15 +1006,24 @@ the driver. New devs frequently look in `page.tsx` for behavior that lives in
   conversation context, library tools) are runtime-published sidebars.
 - **First paint: stream, don't gate.** The `(authenticated)` layout runs only
   **local** work (`verifySession`, header-derived `loadRenderEnvironment`) above a
-  `<Suspense fallback={<AuthenticatedShellSkeleton/>}>`; `WorkspaceBootstrapGate`
-  awaits the data root inside the boundary and streams the shell in. The first HTTP
-  flush is the chrome skeleton (nav-rail placeholder + pane region in `PaneLoadingState`)
+  `<Suspense fallback={<AuthenticatedShellSkeleton/>}>`, itself wrapped in
+  `AuthenticatedWorkspaceErrorBoundary` (a client class boundary — a same-segment
+  `error.tsx` cannot catch its own layout); `WorkspaceBootstrapGate` awaits the data
+  root inside the boundary and streams the shell in. The first HTTP flush is the
+  chrome skeleton (nav-rail placeholder + pane region in `PaneLoadingState`)
   — **data never gates TTFB**. The data root (`loadWorkspaceBootstrap`) is parallel and
-  restore-aware: two concurrent `Promise.all` waves — (1) reader profile + saved session
-  + the URL pane's speculative resource seed, then (2) the remaining restored visible
-  panes — returning `{ initialHref, readerProfile, initialState, resources }` (a
-  hydration cache keyed exactly as each pane's `useResource` reads it). Every fetch is
+  restore-aware: two concurrent `Promise.all` waves — (1) the reader profile — a
+  **required** read on the normal 30 s server-request deadline, since it seeds
+  `ReaderProvider` and workspace width restoration, so a failed or malformed read
+  rejects the whole bootstrap rather than fabricating a default — alongside the
+  best-effort saved session and the URL pane's speculative resource seed, then
+  (2) the remaining restored visible panes — returning
+  `{ initialHref, readerProfile, initialState, resources }` (a hydration cache keyed
+  exactly as each pane's `useResource` reads it). Session and pane seeds stay
   best-effort under a deadline; a timed-out seed degrades to the normal client fetch.
+  A rejected bootstrap surfaces as the error boundary's accessible Retry UI, which
+  re-issues the Server Component request (`router.refresh()`) before resetting the
+  boundary.
 - **Server-side restore (no round-trip, no flash).** Device identity is a server-owned
   httpOnly `nx_device` cookie minted in middleware (`lib/auth/deviceCookie.ts`) —
   request-forwarded so this SSR sees it, response-set for future requests. The data root

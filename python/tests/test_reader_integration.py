@@ -5,6 +5,7 @@ from uuid import UUID, uuid4
 
 import pytest
 import structlog
+from fastapi.testclient import TestClient
 from sqlalchemy import event, text
 from sqlalchemy.engine import Engine
 
@@ -19,6 +20,15 @@ from tests.utils.db import DirectSessionManager
 pytestmark = pytest.mark.integration
 
 READER_STATE_NO_STORE = "private, no-store"
+READER_PROFILE_FIELDS = {
+    "theme",
+    "font_family",
+    "font_size_px",
+    "line_height",
+    "column_width_ch",
+    "focus_mode",
+    "hyphenation",
+}
 
 
 def _add_media_to_user_library(auth_client, user_id, media_id):
@@ -147,7 +157,9 @@ def _build_reader_state_payload(media_kind: str, fragment_ids: list[UUID]) -> di
 class TestGetReaderProfile:
     """GET /me/reader-profile."""
 
-    def test_get_reader_profile_returns_defaults_when_empty(self, auth_client):
+    def test_get_reader_profile_returns_defaults_when_empty(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
 
@@ -155,13 +167,45 @@ class TestGetReaderProfile:
 
         assert resp.status_code == 200
         data = resp.json()["data"]
+        assert set(data.keys()) == READER_PROFILE_FIELDS, "exactly the seven fields, no updated_at"
         assert data["theme"] == "light"
-        assert data["font_family"] in ("serif", "sans")
-        assert 12 <= data["font_size_px"] <= 28
-        assert 1.2 <= data["line_height"] <= 2.2
+        assert data["font_family"] == "serif"
+        assert data["font_size_px"] == 16
+        assert data["line_height"] == 1.5
+        assert data["column_width_ch"] == 65
         assert data["focus_mode"] == "off"
         assert data["hyphenation"] == "auto"
-        assert "updated_at" in data
+
+        with direct_db.session() as session:
+            row_count = session.execute(
+                text("SELECT COUNT(*) FROM reader_profiles WHERE user_id = :user_id"),
+                {"user_id": user_id},
+            ).scalar_one()
+        assert row_count == 0, "an absent-row GET must not insert a row"
+
+    def test_missing_row_get_matches_first_partial_patch_untouched_defaults(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        missing_row_resp = auth_client.get("/me/reader-profile", headers=auth_headers(user_id))
+        assert missing_row_resp.status_code == 200
+        missing_row_data = missing_row_resp.json()["data"]
+
+        patch_resp = auth_client.patch(
+            "/me/reader-profile",
+            json={"hyphenation": "off"},
+            headers=auth_headers(user_id),
+        )
+        assert patch_resp.status_code == 200
+        patched_data = patch_resp.json()["data"]
+
+        assert patched_data["hyphenation"] == "off"
+        for field in READER_PROFILE_FIELDS - {"hyphenation"}:
+            assert patched_data[field] == missing_row_data[field], field
+
+        direct_db.register_cleanup("reader_profiles", "user_id", user_id)
 
     def test_get_reader_profile_returns_persisted_values(self, auth_client):
         user_id = create_test_user_id()
@@ -211,6 +255,7 @@ class TestPatchReaderProfile:
 
         assert resp.status_code == 200
         data = resp.json()["data"]
+        assert set(data.keys()) == READER_PROFILE_FIELDS, "the exact complete seven-field profile"
         assert data["theme"] == "dark"
         assert data["font_size_px"] == 16
         assert data["line_height"] == 1.5
@@ -233,6 +278,78 @@ class TestPatchReaderProfile:
         data = resp.json()["data"]
         assert data["hyphenation"] == "off"
         assert data["focus_mode"] == "off"
+
+    def test_patch_reader_profile_rejects_empty_patch(self, auth_client):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        resp = auth_client.patch(
+            "/me/reader-profile",
+            json={},
+            headers=auth_headers(user_id),
+        )
+
+        assert resp.status_code == 400
+
+    def test_patch_reader_profile_rejects_explicit_null(self, auth_client):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        resp = auth_client.patch(
+            "/me/reader-profile",
+            json={"theme": None},
+            headers=auth_headers(user_id),
+        )
+
+        assert resp.status_code == 400
+
+    def test_patch_reader_profile_rejects_numeric_string_font_size(self, auth_client):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        resp = auth_client.patch(
+            "/me/reader-profile",
+            json={"font_size_px": "16"},
+            headers=auth_headers(user_id),
+        )
+
+        assert resp.status_code == 400
+
+    def test_patch_reader_profile_rejects_non_integer_numeric_font_size(self, auth_client):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        resp = auth_client.patch(
+            "/me/reader-profile",
+            json={"font_size_px": 16.5},
+            headers=auth_headers(user_id),
+        )
+
+        assert resp.status_code == 400
+
+    def test_patch_reader_profile_rejects_numeric_string_column_width(self, auth_client):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        resp = auth_client.patch(
+            "/me/reader-profile",
+            json={"column_width_ch": "65"},
+            headers=auth_headers(user_id),
+        )
+
+        assert resp.status_code == 400
+
+    def test_patch_reader_profile_rejects_numeric_string_line_height(self, auth_client):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        resp = auth_client.patch(
+            "/me/reader-profile",
+            json={"line_height": "1.5"},
+            headers=auth_headers(user_id),
+        )
+
+        assert resp.status_code == 400
 
     def test_patch_reader_profile_rejects_invalid_focus_mode(self, auth_client):
         user_id = create_test_user_id()
@@ -314,6 +431,133 @@ class TestPatchReaderProfile:
         data = resp.json()["data"]
         assert data["theme"] == "dark"
         assert data["font_size_px"] == 20
+
+
+class TestReaderProfileConcurrency:
+    """Real concurrent first-PATCH inserts on reader_profiles."""
+
+    def test_concurrent_first_patch_inserts_retry_to_one_row(
+        self, auth_client, direct_db: DirectSessionManager, engine: Engine
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        def competing_insert() -> None:
+            with direct_db.session() as session:
+                session.execute(
+                    text("""
+                        INSERT INTO reader_profiles (
+                            user_id, theme, font_size_px, line_height,
+                            font_family, column_width_ch, focus_mode, hyphenation
+                        )
+                        VALUES (:user_id, 'light', 16, 1.5, 'serif', 65, 'off', 'auto')
+                    """),
+                    {"user_id": user_id},
+                )
+                session.commit()
+
+        remove_hook = _one_shot_before_execute(
+            engine, "INSERT INTO reader_profiles", competing_insert
+        )
+        try:
+            resp = auth_client.patch(
+                "/me/reader-profile",
+                json={"theme": "dark"},
+                headers=auth_headers(user_id),
+            )
+        finally:
+            remove_hook()
+        direct_db.register_cleanup("reader_profiles", "user_id", user_id)
+
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert set(data.keys()) == READER_PROFILE_FIELDS
+        assert data["theme"] == "dark"
+        assert data["font_family"] == "serif"
+
+        with direct_db.session() as session:
+            row_count = session.execute(
+                text("SELECT COUNT(*) FROM reader_profiles WHERE user_id = :user_id"),
+                {"user_id": user_id},
+            ).scalar_one()
+        assert row_count == 1, "the retried attempt must merge onto the winner, not duplicate it"
+
+
+class TestReaderProfileNoStorePrivate:
+    """Cache-Control: private, no-store on /me/reader-profile, per spec AC-8."""
+
+    def test_get_reader_profile_200_is_no_store(self, auth_client):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        resp = auth_client.get("/me/reader-profile", headers=auth_headers(user_id))
+
+        assert resp.status_code == 200
+        assert resp.headers["cache-control"] == READER_STATE_NO_STORE
+
+    def test_patch_reader_profile_200_is_no_store(self, auth_client):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        resp = auth_client.patch(
+            "/me/reader-profile",
+            json={"theme": "dark"},
+            headers=auth_headers(user_id),
+        )
+
+        assert resp.status_code == 200
+        assert resp.headers["cache-control"] == READER_STATE_NO_STORE
+
+    def test_patch_reader_profile_400_is_no_store(self, auth_client):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        resp = auth_client.patch(
+            "/me/reader-profile",
+            json={},
+            headers=auth_headers(user_id),
+        )
+
+        assert resp.status_code == 400
+        assert resp.headers["cache-control"] == READER_STATE_NO_STORE
+
+    def test_get_reader_profile_401_is_no_store(self, auth_client):
+        resp = auth_client.get("/me/reader-profile")
+
+        assert resp.status_code == 401
+        assert resp.headers["cache-control"] == READER_STATE_NO_STORE
+
+    def test_get_reader_profile_raw_500_is_stamped_no_store(self, auth_client, monkeypatch):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        # justify-mock: the subject under test is the middleware-owned 500
+        # stamp (spec reader-profile-persistence-hard-cutover.md AC-8), not
+        # the service; a raw RuntimeError exercises the same unhandled path
+        # a real defect would take. Patched on nexus.services.reader, the
+        # exact module nexus.api.routes.me calls into as `reader_service`.
+        def _boom(db, user_id):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(reader_service, "get_reader_profile", _boom)
+
+        # raise_server_exceptions=False as a defensive belt: the private
+        # no-store middleware should fully absorb the exception itself and
+        # never let it reach the test transport, but this guards the
+        # assertion below rather than a raised exception if that's wrong.
+        no_raise_client = TestClient(auth_client.app, raise_server_exceptions=False)
+        resp = no_raise_client.get("/me/reader-profile", headers=auth_headers(user_id))
+
+        assert resp.status_code == 500
+        body = resp.json()
+        assert body["error"]["code"] == "E_INTERNAL"
+        assert resp.headers["cache-control"] == READER_STATE_NO_STORE
+
+    def test_non_matching_path_has_no_cache_control_header(self, auth_client):
+        resp = auth_client.get("/health")
+
+        assert resp.status_code == 200
+        assert "cache-control" not in resp.headers
 
 
 def _cursor_body(locator: dict, base_revision: int) -> dict:

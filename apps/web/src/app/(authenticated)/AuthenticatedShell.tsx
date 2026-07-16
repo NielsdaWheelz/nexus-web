@@ -12,6 +12,7 @@ import UnauthenticatedApiBoundary from "@/lib/auth/UnauthenticatedApiBoundary";
 import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
 import { WalknoteSessionProvider } from "@/lib/walknotes/walknoteSession";
 import { ReaderProvider } from "@/lib/reader/ReaderContext";
+import { ReaderProfileSaveFeedback } from "@/lib/reader/ReaderProfileSaveFeedback";
 import { KeybindingsProvider } from "@/lib/keybindingsProvider";
 import { RenderEnvironmentProvider } from "@/lib/renderEnvironment/provider";
 import { WorkspaceStoreProvider } from "@/lib/workspace/store";
@@ -48,6 +49,7 @@ export default function AuthenticatedShell({
         <ResourceCacheProvider value={resources}>
           <KeybindingsProvider>
             <ReaderProvider initialProfile={readerProfile}>
+              <ReaderProfileSaveFeedback />
               <AuthenticatedWorkspace initialState={initialState} />
             </ReaderProvider>
           </KeybindingsProvider>

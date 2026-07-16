@@ -51,6 +51,15 @@ interface FeedbackContextValue {
     dedupeKey?: string;
     duration?: number;
   }) => void;
+  /** Permanently dismiss any owned toast whose dedupeKey matches. No-op if none exists. */
+  dismissByDedupeKey: (key: string) => void;
+  /**
+   * Acquire a scoped presentation lease for a dedupeKey: while at least one
+   * lease is held, a toast with that dedupeKey is not rendered or announced,
+   * but its record stays owned by the provider. Leases compose by count;
+   * returns a release function that is idempotent per call.
+   */
+  suppressDedupeKey: (key: string) => () => void;
 }
 
 const FeedbackContext = createContext<FeedbackContextValue | null>(null);
@@ -142,6 +151,11 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
   const toastsRef = useRef<ToastFeedback[]>([]);
   const nextId = useRef(1);
   const timers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
+  // Lease counts per dedupeKey for suppressDedupeKey. Source of truth lives in
+  // the ref (so acquire/release counting is synchronous and unaffected by
+  // React batching); suppressTick only forces a re-render to re-evaluate it.
+  const suppressCounts = useRef<Map<string, number>>(new Map());
+  const [, setSuppressTick] = useState(0);
 
   const clearTimer = useCallback((id: number) => {
     const timer = timers.current.get(id);
@@ -150,6 +164,11 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
       timers.current.delete(id);
     }
   }, []);
+
+  const isSuppressed = useCallback(
+    (dedupeKey?: string) => Boolean(dedupeKey && (suppressCounts.current.get(dedupeKey) ?? 0) > 0),
+    []
+  );
 
   const dismiss = useCallback(
     (id: number) => {
@@ -168,13 +187,17 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
     [clearTimer]
   );
 
+  // A suppressed toast's dismiss timer is cleared while hidden (like the
+  // visibilitychange pause below) so it is never auto-dismissed invisibly;
+  // releasing the last lease reschedules a fresh full-duration timer.
   const scheduleDismiss = useCallback(
-    (toast: Pick<ToastFeedback, "id" | "duration">) => {
+    (toast: Pick<ToastFeedback, "id" | "duration" | "dedupeKey">) => {
       clearTimer(toast.id);
       if (toast.duration <= 0) return;
+      if (isSuppressed(toast.dedupeKey)) return;
       timers.current.set(toast.id, setTimeout(() => dismiss(toast.id), toast.duration));
     },
-    [clearTimer, dismiss]
+    [clearTimer, dismiss, isSuppressed]
   );
 
   const show = useCallback(
@@ -196,7 +219,7 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
           );
           toastsRef.current = updatedToasts;
           setToasts(updatedToasts);
-          scheduleDismiss({ id: existing.id, duration });
+          scheduleDismiss({ id: existing.id, duration, dedupeKey: feedback.dedupeKey });
           return;
         }
       }
@@ -220,7 +243,49 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
     },
     [clearTimer, scheduleDismiss]
   );
-  const value = useMemo(() => ({ show }), [show]);
+
+  const dismissByDedupeKey = useCallback(
+    (key: string) => {
+      const existing = toastsRef.current.find((toast) => toast.dedupeKey === key);
+      if (existing) dismiss(existing.id);
+    },
+    [dismiss]
+  );
+
+  const suppressDedupeKey = useCallback(
+    (key: string) => {
+      const previousCount = suppressCounts.current.get(key) ?? 0;
+      suppressCounts.current.set(key, previousCount + 1);
+      if (previousCount === 0) {
+        for (const toast of toastsRef.current) {
+          if (toast.dedupeKey === key) clearTimer(toast.id);
+        }
+      }
+      setSuppressTick((tick) => tick + 1);
+
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        const count = suppressCounts.current.get(key) ?? 0;
+        if (count <= 1) {
+          suppressCounts.current.delete(key);
+          for (const toast of toastsRef.current) {
+            if (toast.dedupeKey === key) scheduleDismiss(toast);
+          }
+        } else {
+          suppressCounts.current.set(key, count - 1);
+        }
+        setSuppressTick((tick) => tick + 1);
+      };
+    },
+    [clearTimer, scheduleDismiss]
+  );
+
+  const value = useMemo(
+    () => ({ show, dismissByDedupeKey, suppressDedupeKey }),
+    [show, dismissByDedupeKey, suppressDedupeKey]
+  );
 
   useEffect(() => {
     const timerMap = timers.current;
@@ -250,53 +315,55 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
     <FeedbackContext.Provider value={value}>
       {children}
       <div className={styles.toastViewport} aria-label="Notifications">
-        {toasts.map((toast) => (
-          <div
-            key={toast.id}
-            className={`${styles.toast} ${styles[toast.severity]} ${
-              toast.exiting ? styles.exiting : ""
-            }`}
-            role={roleFor(toast.severity)}
-            aria-live={toast.severity === "error" ? "assertive" : "polite"}
-            aria-atomic="true"
-            onMouseEnter={() => clearTimer(toast.id)}
-            onFocusCapture={() => clearTimer(toast.id)}
-            onMouseLeave={() => scheduleDismiss(toast)}
-            onBlurCapture={() => scheduleDismiss(toast)}
-          >
-            <div className={styles.icon}>{iconFor(toast.severity)}</div>
-            <div className={styles.body}>
-              <div className={styles.title}>{toast.title}</div>
-              {toast.message ? <div className={styles.message}>{toast.message}</div> : null}
-              {toast.requestId ? (
-                <div className={styles.meta}>Nexus request ID: {toast.requestId}</div>
-              ) : null}
-              {toast.action ? (
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  className={styles.action}
-                  onClick={() => {
-                    toast.action?.onClick();
-                    dismiss(toast.id);
-                  }}
-                >
-                  {toast.action.label}
-                </Button>
-              ) : null}
-            </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              iconOnly
-              className={styles.dismiss}
-              onClick={() => dismiss(toast.id)}
-              aria-label={`Dismiss ${toast.title}`}
+        {toasts
+          .filter((toast) => !isSuppressed(toast.dedupeKey))
+          .map((toast) => (
+            <div
+              key={toast.id}
+              className={`${styles.toast} ${styles[toast.severity]} ${
+                toast.exiting ? styles.exiting : ""
+              }`}
+              role={roleFor(toast.severity)}
+              aria-live={toast.severity === "error" ? "assertive" : "polite"}
+              aria-atomic="true"
+              onMouseEnter={() => clearTimer(toast.id)}
+              onFocusCapture={() => clearTimer(toast.id)}
+              onMouseLeave={() => scheduleDismiss(toast)}
+              onBlurCapture={() => scheduleDismiss(toast)}
             >
-              <X size={16} aria-hidden="true" />
-            </Button>
-          </div>
-        ))}
+              <div className={styles.icon}>{iconFor(toast.severity)}</div>
+              <div className={styles.body}>
+                <div className={styles.title}>{toast.title}</div>
+                {toast.message ? <div className={styles.message}>{toast.message}</div> : null}
+                {toast.requestId ? (
+                  <div className={styles.meta}>Nexus request ID: {toast.requestId}</div>
+                ) : null}
+                {toast.action ? (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className={styles.action}
+                    onClick={() => {
+                      toast.action?.onClick();
+                      dismiss(toast.id);
+                    }}
+                  >
+                    {toast.action.label}
+                  </Button>
+                ) : null}
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                iconOnly
+                className={styles.dismiss}
+                onClick={() => dismiss(toast.id)}
+                aria-label={`Dismiss ${toast.title}`}
+              >
+                <X size={16} aria-hidden="true" />
+              </Button>
+            </div>
+          ))}
       </div>
     </FeedbackContext.Provider>
   );

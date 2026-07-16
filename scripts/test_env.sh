@@ -245,6 +245,29 @@ test_env_resolve_app_ports() {
     test_env_resolve_web_port
 }
 
+# AC-1 recovery E2E fault injector (e2e/reader-profile-upstream-proxy.ts). Resolved the same
+# way as API_PORT/WEB_PORT so parallel local runs/CI shards never collide; `make web-e2e` routes
+# FASTAPI_BASE_URL through it and playwright.config.ts starts it as a third webServer entry.
+test_env_resolve_reader_proxy_port() {
+    local preferred_port
+    local max_port
+
+    preferred_port="${TEST_READER_PROXY_PORT:-${READER_PROXY_PORT:-8010}}"
+    test_env_validate_port "$preferred_port" "TEST_READER_PROXY_PORT/READER_PROXY_PORT"
+    if [ -n "${TEST_READER_PROXY_PORT:-}" ]; then
+        max_port="$preferred_port"
+    else
+        max_port=$((preferred_port + 100))
+    fi
+    test_env_resolve_port \
+        "reader-profile-upstream-proxy" \
+        READER_PROXY_PORT \
+        "$preferred_port" \
+        "$max_port" \
+        "nexus-test-reader-proxy-port-locks" \
+        TEST_READER_PROXY_PORT_LOCK_DIR
+}
+
 test_env_wait_for_port_close() {
     local port="$1"
     local label="${2:-service}"

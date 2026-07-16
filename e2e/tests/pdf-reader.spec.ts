@@ -678,4 +678,29 @@ test.describe("pdf reader", () => {
     await expect(page.getByRole("img", { name: "PDF page" })).toBeVisible();
   });
 
+  // AC-6, PDF slice: the reader-theme quick switch is absent for PDFs and the
+  // resource menu instead states the source-colors affordance explicitly.
+  test("pdf resource menu keeps source colors and hides reader theme quick switches", async ({
+    page,
+  }, testInfo) => {
+    const seeded = readSeededPdfMedia();
+    const deviceId = workspaceE2eDeviceId(testInfo, "e2e-pdf-reader");
+    await gotoSinglePaneWorkspace(page, deviceId, `/media/${seeded.media_id}`);
+    await expect(pdfControlsToolbar(page)).toBeVisible({ timeout: 20_000 });
+
+    const optionsTrigger = activeWorkspacePane(page)
+      .getByRole("button", { name: "Options" })
+      .first();
+    await expect(optionsTrigger).toBeVisible();
+    await optionsTrigger.click();
+
+    const sourceColorsRow = page.getByRole("menuitem", {
+      name: "PDF pages keep their source colors",
+    });
+    await expect(sourceColorsRow).toBeVisible();
+    await expect(sourceColorsRow).toBeDisabled();
+
+    await expect(page.getByRole("menuitem", { name: /light theme/i })).toHaveCount(0);
+    await expect(page.getByRole("menuitem", { name: /dark theme/i })).toHaveCount(0);
+  });
 });

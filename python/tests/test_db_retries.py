@@ -174,3 +174,20 @@ def test_retry_serializable_reraises_after_exhausting_integrity_retries() -> Non
         retry_serializable(db, "test_op", op, retries=3)  # type: ignore[arg-type]
     assert attempts["n"] == 3, f"expected exactly 3 attempts, got {attempts['n']}"
     assert db.rollbacks == 3
+
+
+def test_retry_serializable_retries_reader_profile_pkey_race_then_succeeds() -> None:
+    """A concurrent first PATCH-insert race on reader_profiles is retryable,
+    not a defect: the whole attempt reruns so the SELECT observes the winner."""
+    db = _FakeSession()
+    attempts = {"n": 0}
+
+    def op():
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise _integrity_error("reader_profiles_pkey")
+        return "ok"
+
+    assert retry_serializable(db, "test_op", op) == "ok"  # type: ignore[arg-type]
+    assert attempts["n"] == 2
+    assert db.rollbacks == 1

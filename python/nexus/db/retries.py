@@ -11,10 +11,13 @@ from nexus.db.errors import integrity_constraint_name, is_serialization_failure
 from nexus.db.session import use_serializable_if_available
 
 # Named uniqueness constraints whose violation is a legitimate concurrent-insert
-# race rather than a defect: the author resolver's exact-batch operation (spec
-# lightweight-author-deduplication-hard-cutover.md §2.7) and the pre-existing
-# replay-memo constraint both retry the whole operation on a first-sight race.
-AUTHOR_RETRYABLE_UNIQUE_CONSTRAINTS = frozenset(
+# race rather than a defect, owner-neutral across callers: the author
+# resolver's exact-batch operation (spec
+# lightweight-author-deduplication-hard-cutover.md §2.7), the pre-existing
+# replay-memo constraint, and the reader profile's first-PATCH insert (spec
+# reader-profile-persistence-hard-cutover.md §6) all retry the whole operation
+# on a first-sight race.
+RETRYABLE_UNIQUE_CONSTRAINTS = frozenset(
     {
         "uq_contributors_handle",
         "uq_contributor_aliases_owner_normalized",
@@ -26,6 +29,7 @@ AUTHOR_RETRYABLE_UNIQUE_CONSTRAINTS = frozenset(
         "uq_contributor_credits_gutenberg_ordinal",
         "uq_contributor_credits_gutenberg_contributor_role",
         "uix_resource_mutations_client_id",
+        "reader_profiles_pkey",
     }
 )
 
@@ -36,7 +40,7 @@ def retry_serializable[T](db: Session, label: str, op: Callable[[], T], *, retri
     Each attempt sets SERIALIZABLE (when no transaction is open) and runs ``op``;
     a serialization failure rolls back and retries, up to ``retries`` total
     attempts, then re-raises. An ``IntegrityError`` against one of the named
-    ``AUTHOR_RETRYABLE_UNIQUE_CONSTRAINTS`` is treated the same way — it is a
+    ``RETRYABLE_UNIQUE_CONSTRAINTS`` is treated the same way — it is a
     concurrent first-sight insert race, not a defect. Any other
     ``OperationalError`` or ``IntegrityError`` rolls back and re-raises
     immediately. ``op`` must reload its working rows and commit on each call so
@@ -54,7 +58,7 @@ def retry_serializable[T](db: Session, label: str, op: Callable[[], T], *, retri
         except IntegrityError as exc:
             db.rollback()
             constraint_name = integrity_constraint_name(exc)
-            if constraint_name not in AUTHOR_RETRYABLE_UNIQUE_CONSTRAINTS or attempt == retries - 1:
+            if constraint_name not in RETRYABLE_UNIQUE_CONSTRAINTS or attempt == retries - 1:
                 raise
     # justify-defect: the loop returns or raises on the final attempt.
     raise AssertionError(f"{label} retry loop exhausted")
