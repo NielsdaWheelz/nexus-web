@@ -378,15 +378,6 @@ class ListeningStateUpsertRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class ListeningStateBatchUpsertRequest(BaseModel):
-    """Body for POST /media/listening-state/batch."""
-
-    media_ids: list[UUID] = Field(min_length=1, max_length=1000)
-    is_completed: bool
-
-    model_config = ConfigDict(extra="forbid")
-
-
 class TranscriptForecastBatchItemRequest(BaseModel):
     """One media forecast request for POST /media/transcript/forecasts."""
 

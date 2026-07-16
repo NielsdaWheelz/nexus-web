@@ -8,6 +8,7 @@ Session continuity is a 30-minute gap rule on ``last_active_at`` serialized by
 ``FOR UPDATE`` on the open session row.
 """
 
+from dataclasses import dataclass
 from typing import cast
 from uuid import UUID
 
@@ -73,52 +74,67 @@ def record_attention(
 ) -> None:
     """Continue the open session for (viewer, media) or open a new one.
 
+    Public single-operation boundary for the reader route: owns its own
+    transaction. The consumption listening-heartbeat facade instead composes the
+    dwell write inside its own transaction via :func:`record_attention_in_txn`.
+    """
+    with transaction(db):
+        record_attention_in_txn(db, viewer_id, media_id, block)
+
+
+def record_attention_in_txn(
+    db: Session,
+    viewer_id: UUID,
+    media_id: UUID,
+    block: AttentionBlock,
+) -> None:
+    """In-transaction dwell write, composable inside a caller-owned mutation.
+
     Validates media visibility itself: attention-only reader-state writes never
     touch the cursor service, so no other owner has vouched for access.
     """
     # A Python list bound through the JSONB param (not a pre-serialized string):
     # double-encoding would store a jsonb *string* and trip the array CHECK.
     spans_value = [span.model_dump(mode="json") for span in block.spans_touched]
-    with transaction(db):
-        if not can_read_media(db, viewer_id, media_id):
-            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-        open_session_id = db.execute(
-            _SELECT_OPEN_SESSION_SQL,
+    if not can_read_media(db, viewer_id, media_id):
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+    open_session_id = db.execute(
+        _SELECT_OPEN_SESSION_SQL,
+        {
+            "user_id": viewer_id,
+            "media_id": media_id,
+            "gap_seconds": ATTENTION_SESSION_GAP_SECONDS,
+        },
+    ).scalar_one_or_none()
+
+    if open_session_id is None:
+        db.execute(
+            _INSERT_SESSION_SQL,
             {
                 "user_id": viewer_id,
                 "media_id": media_id,
-                "gap_seconds": ATTENTION_SESSION_GAP_SECONDS,
-            },
-        ).scalar_one_or_none()
-
-        if open_session_id is None:
-            db.execute(
-                _INSERT_SESSION_SQL,
-                {
-                    "user_id": viewer_id,
-                    "media_id": media_id,
-                    "device_id": block.device_id,
-                    "dwell_ms": block.dwell_ms_delta,
-                    "progression": block.progression,
-                    "spans": spans_value,
-                },
-            )
-            return
-
-        # R-1: a pure no-op save (no dwell, no progression, no spans) on an
-        # existing open session touches nothing.
-        if block.dwell_ms_delta == 0 and block.progression is None and not block.spans_touched:
-            return
-
-        db.execute(
-            _UPDATE_SESSION_SQL,
-            {
-                "session_id": open_session_id,
+                "device_id": block.device_id,
                 "dwell_ms": block.dwell_ms_delta,
                 "progression": block.progression,
                 "spans": spans_value,
             },
         )
+        return
+
+    # R-1: a pure no-op save (no dwell, no progression, no spans) on an
+    # existing open session touches nothing.
+    if block.dwell_ms_delta == 0 and block.progression is None and not block.spans_touched:
+        return
+
+    db.execute(
+        _UPDATE_SESSION_SQL,
+        {
+            "session_id": open_session_id,
+            "dwell_ms": block.dwell_ms_delta,
+            "progression": block.progression,
+            "spans": spans_value,
+        },
+    )
 
 
 def set_consumption_override(
@@ -227,6 +243,62 @@ def consumption_state(
         # else: leave the default unread.
 
     return result
+
+
+@dataclass(frozen=True)
+class SessionAggregate:
+    """Narrowed reading-session aggregate the consumption projection consumes."""
+
+    max_progression: float | None
+    total_dwell_ms: int
+    max_session_dwell_ms: int
+
+
+def session_aggregates(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    media_ids: list[UUID],
+) -> dict[UUID, SessionAggregate]:
+    """Per-media reading-session aggregates (max progression, total dwell, and
+    max single-session dwell). Keeps ``reading_sessions`` reads inside attention;
+    the consumption projection combines these with explicit/listening state."""
+    if not media_ids:
+        return {}
+    rows = db.execute(
+        text("""
+            SELECT
+                media_id,
+                MAX(max_progression) AS max_progression,
+                COALESCE(SUM(dwell_ms), 0) AS total_dwell_ms,
+                COALESCE(MAX(dwell_ms), 0) AS max_session_dwell_ms
+            FROM reading_sessions
+            WHERE user_id = :viewer_id AND media_id = ANY(:ids)
+            GROUP BY media_id
+        """),
+        {"viewer_id": viewer_id, "ids": media_ids},
+    ).fetchall()
+    return {
+        UUID(str(row[0])): SessionAggregate(
+            max_progression=float(row[1]) if row[1] is not None else None,
+            total_dwell_ms=int(row[2]),
+            max_session_dwell_ms=int(row[3]),
+        )
+        for row in rows
+    }
+
+
+def delete_media_state(db: Session, media_id: UUID) -> None:
+    """Delete every reading-session row for a media (media teardown only).
+
+    In-transaction helper composed by media teardown inside its owning
+    deletion transaction (spec §3): attention stays the sole writer of
+    ``reading_sessions``.
+    """
+    db.execute(
+        text("DELETE FROM reading_sessions WHERE media_id = :media_id"),
+        {"media_id": media_id},
+    )
 
 
 def attention_on_day(

@@ -6947,19 +6947,33 @@ upgrade now
 
         in_progress_put = auth_client.put(
             f"/media/{in_progress_media_id}/listening-state",
-            json={"position_ms": 900_000, "duration_ms": 1_800_000},
+            json={
+                "positionMs": 900_000,
+                "durationMs": {"kind": "Present", "value": 1_800_000},
+                "playbackSpeed": 1.0,
+                "dwellMsDelta": 0,
+                "deviceId": "podcast-test",
+                "expectedWriteRevision": 0,
+                "expectedResetEpoch": 0,
+                "heartbeatGeneration": str(uuid4()),
+                "heartbeatSequence": 1,
+            },
             headers=auth_headers(user_id),
         )
-        assert in_progress_put.status_code == 204, (
+        assert in_progress_put.status_code == 200, (
             "position write should succeed before state-filter assertions; "
             f"got {in_progress_put.status_code}: {in_progress_put.text}"
         )
-        played_put = auth_client.put(
-            f"/media/{played_media_id}/listening-state",
-            json={"is_completed": True},
+        played_put = auth_client.post(
+            "/consumption/commands",
+            json={
+                "kind": "EnsureMediaFinished",
+                "clientMutationId": str(uuid4()),
+                "mediaId": str(played_media_id),
+            },
             headers=auth_headers(user_id),
         )
-        assert played_put.status_code == 204, (
+        assert played_put.status_code == 200, (
             "manual mark-as-played should succeed before state-filter assertions; "
             f"got {played_put.status_code}: {played_put.text}"
         )
@@ -7093,12 +7107,16 @@ upgrade now
         )
         assert alpha_episodes_response.status_code == 200
         alpha_rows = alpha_episodes_response.json()["data"]
-        mark_played_response = auth_client.put(
-            f"/media/{alpha_rows[0]['id']}/listening-state",
-            json={"is_completed": True},
+        mark_played_response = auth_client.post(
+            "/consumption/commands",
+            json={
+                "kind": "EnsureMediaFinished",
+                "clientMutationId": str(uuid4()),
+                "mediaId": str(alpha_rows[0]["id"]),
+            },
             headers=auth_headers(user_id),
         )
-        assert mark_played_response.status_code == 204, (
+        assert mark_played_response.status_code == 200, (
             "marking one alpha episode played should leave one unplayed for count assertions; "
             f"got {mark_played_response.status_code}: {mark_played_response.text}"
         )
@@ -7246,12 +7264,16 @@ upgrade now
             headers=auth_headers(user_id),
         )
         assert bravo_episodes.status_code == 200
-        mark_bravo_played = auth_client.put(
-            f"/media/{bravo_episodes.json()['data'][0]['id']}/listening-state",
-            json={"is_completed": True},
+        mark_bravo_played = auth_client.post(
+            "/consumption/commands",
+            json={
+                "kind": "EnsureMediaFinished",
+                "clientMutationId": str(uuid4()),
+                "mediaId": str(bravo_episodes.json()["data"][0]["id"]),
+            },
             headers=auth_headers(user_id),
         )
-        assert mark_bravo_played.status_code == 204, (
+        assert mark_bravo_played.status_code == 200, (
             "marking bravo played should succeed before has_new assertions, "
             f"got {mark_bravo_played.status_code}: {mark_bravo_played.text}"
         )

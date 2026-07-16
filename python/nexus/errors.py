@@ -105,6 +105,11 @@ class ApiErrorCode(str, Enum):
         "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH"  # 409 - Key reused with different payload
     )
 
+    # Consumption/Lectern errors (409)
+    E_MEDIA_DELETING = "E_MEDIA_DELETING"  # 409 - target media has a teardown intent
+    E_STALE_LISTENING_REVISION = "E_STALE_LISTENING_REVISION"  # 409 - heartbeat CAS mismatch
+    E_LIMIT = "E_LIMIT"  # 409 - Lectern aggregate row limit exceeded
+
     # Streaming errors
     E_CLIENT_DISCONNECT = "E_CLIENT_DISCONNECT"  # stream aborted by client
     E_ORPHANED_PENDING = "E_ORPHANED_PENDING"  # sweeper cleanup
@@ -257,6 +262,10 @@ ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
     ApiErrorCode.E_RATE_LIMITED: 429,
     ApiErrorCode.E_TOKEN_BUDGET_EXCEEDED: 429,
     ApiErrorCode.E_IDEMPOTENCY_KEY_REPLAY_MISMATCH: 409,
+    # Consumption/Lectern errors
+    ApiErrorCode.E_MEDIA_DELETING: 409,
+    ApiErrorCode.E_STALE_LISTENING_REVISION: 409,
+    ApiErrorCode.E_LIMIT: 409,
     # Streaming errors
     ApiErrorCode.E_CLIENT_DISCONNECT: 499,
     ApiErrorCode.E_ORPHANED_PENDING: 500,

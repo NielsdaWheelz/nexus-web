@@ -94,11 +94,17 @@ def _create_podcast_episode_media_with_podcast_id(
         )
         session.commit()
 
-    direct_db.register_cleanup("consumption_queue_items", "media_id", media_id)
-    direct_db.register_cleanup("podcast_listening_states", "media_id", media_id)
-    direct_db.register_cleanup("podcast_episodes", "media_id", media_id)
-    direct_db.register_cleanup("media", "id", media_id)
+    # Mig 0181 made the user/media FKs on consumption_queue_items and
+    # podcast_listening_states non-cascading, so the child rows must be deleted
+    # before the media row: register parents first (LIFO deletes them last).
     direct_db.register_cleanup("podcasts", "id", podcast_id)
+    direct_db.register_cleanup("media", "id", media_id)
+    direct_db.register_cleanup("podcast_episodes", "media_id", media_id)
+    direct_db.register_cleanup("podcast_listening_states", "media_id", media_id)
+    direct_db.register_cleanup("consumption_queue_items", "media_id", media_id)
+    # A listening heartbeat also piggybacks a reading_sessions dwell row.
+    direct_db.register_cleanup("consumption_overrides", "media_id", media_id)
+    direct_db.register_cleanup("reading_sessions", "media_id", media_id)
     return podcast_id, media_id
 
 
@@ -115,8 +121,9 @@ def _create_web_article_media(direct_db: DirectSessionManager, *, title: str) ->
             )
         )
         session.commit()
-    direct_db.register_cleanup("consumption_queue_items", "media_id", media_id)
+    # Non-cascading media FK (mig 0181): delete the queue rows before the media.
     direct_db.register_cleanup("media", "id", media_id)
+    direct_db.register_cleanup("consumption_queue_items", "media_id", media_id)
     return media_id
 
 
@@ -338,12 +345,23 @@ class TestConsumptionQueueApi:
             str(media_b),
         ]
 
+        # New revision-fenced heartbeat contract (spec §5.4).
         put_state = auth_client.put(
             f"/media/{media_a}/listening-state",
             headers=auth_headers(user_id),
-            json={"position_ms": 5_000, "playback_speed": 1.25},
+            json={
+                "positionMs": 5_000,
+                "durationMs": {"kind": "Absent"},
+                "playbackSpeed": 1.25,
+                "dwellMsDelta": 0,
+                "deviceId": "queue-test",
+                "expectedWriteRevision": 0,
+                "expectedResetEpoch": 0,
+                "heartbeatGeneration": str(uuid4()),
+                "heartbeatSequence": 1,
+            },
         )
-        assert put_state.status_code == 204
+        assert put_state.status_code == 200, put_state.text
 
         queue_response = auth_client.get("/queue", headers=auth_headers(user_id))
         assert queue_response.status_code == 200

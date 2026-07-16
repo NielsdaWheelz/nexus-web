@@ -478,18 +478,25 @@ class TestListeningAttentionRoute:
 
         self._add_media_to_user_library(auth_client, user_id, media_id)
 
+        # New heartbeat contract (spec §5.4): the dwell write is piggybacked on
+        # the revision-fenced listening PUT inside one transaction.
         resp = auth_client.put(
             f"/media/{media_id}/listening-state",
             json={
-                "position_ms": 60_000,
-                "duration_ms": 600_000,
-                "playback_speed": 1.0,
-                "dwell_ms_delta": 15_000,
-                "device_id": "device-audio",
+                "positionMs": 60_000,
+                "durationMs": {"kind": "Present", "value": 600_000},
+                "playbackSpeed": 1.0,
+                "dwellMsDelta": 15_000,
+                "deviceId": "device-audio",
+                "expectedWriteRevision": 0,
+                "expectedResetEpoch": 0,
+                "heartbeatGeneration": str(uuid4()),
+                "heartbeatSequence": 1,
             },
             headers=auth_headers(user_id),
         )
-        assert resp.status_code == 204
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["data"]["listeningState"]["writeRevision"] == 1
 
         rows = _session_rows(direct_db, user_id, media_id)
         assert len(rows) == 1

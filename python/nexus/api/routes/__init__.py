@@ -24,6 +24,7 @@ from nexus.api.routes.highlights import router as highlights_router
 from nexus.api.routes.internal_ingest import router as internal_ingest_router
 from nexus.api.routes.internal_libraries import router as internal_libraries_router
 from nexus.api.routes.keys import router as keys_router
+from nexus.api.routes.lectern import router as lectern_router
 from nexus.api.routes.libraries import router as libraries_router
 from nexus.api.routes.library_dossier import router as library_dossier_router
 from nexus.api.routes.listening_state import router as listening_state_router
@@ -106,6 +107,10 @@ def create_api_router() -> APIRouter:
     api_router.include_router(users_router)
     api_router.include_router(walknotes_router)
     api_router.include_router(atlas_router)
+    # Lectern command ports (GET /lectern, POST /lectern/commands,
+    # POST /consumption/commands). The listening heartbeat keeps its
+    # /media/{id}/listening-state paths on listening_state_router above.
+    api_router.include_router(lectern_router)
     # The consumption queue serves web articles, epubs, and PDFs regardless of the
     # podcast feature flag, so it is registered unconditionally.
     api_router.include_router(queue_router)
