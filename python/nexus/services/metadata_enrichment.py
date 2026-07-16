@@ -31,7 +31,14 @@ from nexus.config import Settings, get_settings
 from nexus.db.models import Media
 from nexus.llm_catalog import require_catalog_model, require_model_capabilities
 from nexus.logging import get_logger
-from nexus.services.contributor_credits import replace_machine_derived_media_author_credits
+from nexus.services.contributor_credits import load_contributor_credits_for_media
+from nexus.services.contributor_taxonomy import (
+    NOT_OBSERVED,
+    ContributorObservationBatch,
+    ObservedRoleSlices,
+    RawCreditEntry,
+    build_observation,
+)
 
 logger = get_logger(__name__)
 
@@ -53,9 +60,15 @@ _METADATA_REASONING_PREFERENCE: tuple[ReasoningEffort, ...] = (
 
 @dataclass(frozen=True)
 class MetadataMergeResult:
-    """Observable outcome of applying one validated enrichment payload."""
+    """Observable outcome of applying one validated enrichment payload.
+
+    ``author_observation`` is the typed author batch derived from the payload;
+    ``merge_enrichment`` no longer writes credits (spec 2.4). The caller commits
+    the non-author fields, then runs the fresh-session author op with it.
+    """
 
     accepted_fields: tuple[str, ...]
+    author_observation: ContributorObservationBatch = NOT_OBSERVED
 
 
 class MetadataEnrichmentOutput(BaseModel):
@@ -468,23 +481,17 @@ Rules:
 
 
 def get_current_author_names(db: Session, media: Media) -> list[str]:
-    """Return current author credits in presentation order."""
-    rows = db.execute(
-        text(
-            """
-            SELECT credited_name
-            FROM contributor_credits
-            WHERE media_id = :media_id
-              AND role = 'author'
-              AND credited_name IS NOT NULL
-              AND btrim(credited_name) <> ''
-            ORDER BY ordinal ASC, credited_name ASC
-            LIMIT 20
-            """
-        ),
-        {"media_id": media.id},
-    ).fetchall()
-    return [str(row[0]).strip() for row in rows if str(row[0]).strip()]
+    """Return current author credited names in presentation order.
+
+    Reads through the canonical credit relation (``contributor_credits``), the one
+    query owner — no raw credit SQL lives here (spec §3).
+    """
+    credits = load_contributor_credits_for_media(db, [media.id]).get(media.id, [])
+    return [
+        credit.credited_name.strip()
+        for credit in credits
+        if credit.role == "author" and credit.credited_name.strip()
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -518,6 +525,7 @@ def merge_enrichment(
     The validated provider payload overwrites every accepted field it includes.
     """
     accepted_fields: list[str] = []
+    author_observation: ContributorObservationBatch = NOT_OBSERVED
 
     if "title" in enrichment:
         title = enrichment["title"]
@@ -528,19 +536,23 @@ def merge_enrichment(
     if "authors" in enrichment:
         authors = enrichment["authors"]
         if isinstance(authors, list):
-            names = [
-                name.strip()[:255]
-                for name in authors[:20]
+            entries = [
+                RawCreditEntry(credited_name=name, raw_role=None)
+                for name in authors
                 if isinstance(name, str) and name.strip()
             ]
-            if names:
-                replace_machine_derived_media_author_credits(
-                    db,
-                    media_id=media.id,
-                    names=names,
-                    source="metadata_enrichment",
-                )
-                accepted_fields.append("authors")
+            if entries:
+                # build_observation owns cleaning/dedupe/truncation; the credit
+                # write itself is the caller's fresh-session author op (spec 2.4).
+                author_observation, truncation = build_observation({"author": entries})
+                if truncation:
+                    logger.info(
+                        "metadata_enrichment_authors_truncated",
+                        media_id=str(media.id),
+                        truncated=truncation,
+                    )
+                if isinstance(author_observation, ObservedRoleSlices):
+                    accepted_fields.append("authors")
 
     if "publisher" in enrichment:
         publisher = enrichment["publisher"]
@@ -571,7 +583,10 @@ def merge_enrichment(
         media.metadata_enriched_at = now
         media.updated_at = now
 
-    return MetadataMergeResult(accepted_fields=tuple(accepted_fields))
+    return MetadataMergeResult(
+        accepted_fields=tuple(accepted_fields),
+        author_observation=author_observation,
+    )
 
 
 # ---------------------------------------------------------------------------

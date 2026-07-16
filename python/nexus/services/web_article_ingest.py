@@ -14,7 +14,13 @@ from sqlalchemy.orm import Session
 from nexus.db.models import Fragment, Media, MediaKind, ProcessingStatus
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
-from nexus.services.contributor_credits import replace_media_contributor_credits
+from nexus.services.contributor_taxonomy import (
+    NOT_OBSERVED,
+    ContributorObservationBatch,
+    RawCreditEntry,
+    build_observation,
+)
+from nexus.services.contributors import MediaTarget, replace_observed_role_slices
 from nexus.services.document_embeds import replace_document_embed_artifact
 from nexus.services.fragment_blocks import insert_fragment_blocks
 from nexus.services.media_deletion import (
@@ -255,10 +261,8 @@ def _do_ingest(
     if ingest_result.title:
         media.title = ingest_result.title[:255]
 
-    _persist_web_metadata(db, media, ingest_result)
-
-    if mark_terminal_media_state:
-        mark_ready_for_reading(db, media)
+    _persist_web_metadata(media, ingest_result)
+    author_observation = _build_web_article_observation(ingest_result)
 
     replace_media_apparatus(
         db,
@@ -285,6 +289,23 @@ def _do_ingest(
     fragment_id = fragment.id
     media_language = media.language
     db.commit()
+
+    # End the source transaction, then the fresh-session author mutation, then
+    # cross ready (spec 2.4). NOT_OBSERVED returns before any session opens and
+    # preserves any prior byline. In the worker path ``run_source_attempt`` owns
+    # the ready transition; the author op still lands first because it completes
+    # before this handler returns.
+    replace_observed_role_slices(
+        target=MediaTarget(media_id),
+        observation=author_observation,
+        source="web_article_byline",
+    )
+
+    if mark_terminal_media_state:
+        media = db.get(Media, media_id)
+        if media is not None:
+            mark_ready_for_reading(db, media)
+            db.commit()
 
     if queued_children:
         from nexus.services.media_source_ingest import enqueue_accepted_source_attempt
@@ -347,26 +368,7 @@ def mark_web_article_failed(
     )
 
 
-def _persist_web_metadata(db: Session, media: Media, ingest_result: IngestResult) -> None:
-    byline = ingest_result.byline.strip() if ingest_result.byline else ""
-    byline = re.sub(r"^by\s+", "", byline, flags=re.IGNORECASE)
-    names = re.split(r"\s*[,;]\s*|\s+and\s+", byline, flags=re.IGNORECASE) if byline else []
-    replace_media_contributor_credits(
-        db,
-        media_id=media.id,
-        source="web_article_byline",
-        credits=[
-            {
-                "name": name.strip()[:255],
-                "role": "author",
-                "ordinal": i,
-                "source": "web_article_byline",
-            }
-            for i, name in enumerate(names)
-            if name.strip()
-        ],
-    )
-
+def _persist_web_metadata(media: Media, ingest_result: IngestResult) -> None:
     if ingest_result.excerpt and not media.description:
         media.description = ingest_result.excerpt[:2000]
 
@@ -375,6 +377,32 @@ def _persist_web_metadata(db: Session, media: Media, ingest_result: IngestResult
 
     if ingest_result.published_time and not media.published_date:
         media.published_date = ingest_result.published_time[:64]
+
+
+def _split_byline_names(byline_raw: str | None) -> list[str]:
+    byline = byline_raw.strip() if byline_raw else ""
+    byline = re.sub(r"^by\s+", "", byline, flags=re.IGNORECASE)
+    # Byline people-splitting is unchanged (D-31 reverses only the PDF rule).
+    names = re.split(r"\s*[,;]\s*|\s+and\s+", byline, flags=re.IGNORECASE) if byline else []
+    return [name.strip() for name in names if name.strip()]
+
+
+def _build_web_article_observation(ingest_result: IngestResult) -> ContributorObservationBatch:
+    """Structured/captured byline -> one ``{author}`` observation, no identity key.
+
+    A web article carries no typed durable actor key today (spec 5), so the
+    observation never claims one. An empty byline is ``not_observed`` (absent
+    data preserves prior credits), never an erase.
+    """
+    names = _split_byline_names(ingest_result.byline)
+    if not names:
+        return NOT_OBSERVED
+    batch, truncated = build_observation(
+        {"author": [RawCreditEntry(credited_name=name) for name in names]}
+    )
+    if truncated:
+        logger.info("web_article_author_truncated", truncated=truncated)
+    return batch
 
 
 def _try_set_canonical_url(

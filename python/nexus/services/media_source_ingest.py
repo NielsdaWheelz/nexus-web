@@ -35,6 +35,7 @@ from nexus.errors import (
     NotFoundError,
 )
 from nexus.jobs.queue import enqueue_job
+from nexus.logging import get_logger
 from nexus.schemas.media import FromUrlResponse
 from nexus.services import (
     library_entries,
@@ -44,12 +45,22 @@ from nexus.services import (
 from nexus.services import (
     media_source_types as source_types,
 )
-from nexus.services.contributor_credits import replace_media_contributor_credits
+from nexus.services.contributor_taxonomy import (
+    NOT_OBSERVED,
+    ContributorObservationBatch,
+    RawCreditEntry,
+    build_observation,
+)
+from nexus.services.contributors import MediaTarget, replace_observed_role_slices
 from nexus.services.file_ingest_validation import (
     has_valid_file_signature,
     validate_file_ingest_request,
 )
 from nexus.services.fragment_blocks import insert_fragment_blocks
+from nexus.services.media_author_observation_seam import (
+    attach_author_observation,
+    take_author_observations,
+)
 from nexus.services.media_deletion import (
     delete_document_storage_objects,
     delete_duplicate_document_media,
@@ -96,6 +107,8 @@ from nexus.storage.paths import (
     build_upload_staging_storage_path,
     get_file_extension,
 )
+
+logger = get_logger(__name__)
 
 _ATTEMPT_ACCEPTED = MediaSourceAttemptStatus.accepted.value
 _ATTEMPT_QUEUED = MediaSourceAttemptStatus.queued.value
@@ -992,11 +1005,50 @@ def run_source_attempt(
             "error_message": error_message,
         }
 
+    # Drain the author observations the handler attached before touching the
+    # result again: they hold credited names and must never reach the logged /
+    # returned job result (D-43).
+    observations = take_author_observations(result)
+
     db.expire_all()
     media = db.get(Media, terminal_media_id)
     attempt = db.get(MediaSourceAttempt, attempt_id)
     if attempt is None:
         return {"status": "success", "reason": "attempt_deleted_after_dedupe"}
+
+    if media is None or media.processing_status != ProcessingStatus.failed:
+        # Commit the source work WITHOUT crossing ready, then apply each author
+        # observation through the facade in a fresh session (spec 2.4). A failure
+        # here fails the attempt + media and the user-facing source refresh
+        # retries; a crash instead leaves the attempt running and the job's
+        # lease-expiry retry re-runs the source work (AC 9). Either path rebuilds
+        # the observations, and the resolver's deterministic convergence +
+        # no-DML-when-unchanged make re-application safe; ready is only crossed
+        # after every author op commits.
+        db.commit()
+        try:
+            for observed_media_id, observation, source in observations:
+                replace_observed_role_slices(
+                    target=MediaTarget(observed_media_id or terminal_media_id),
+                    observation=observation,
+                    source=source,
+                )
+        except Exception as exc:
+            db.rollback()
+            _finish_failed_attempt(db, attempt_id, terminal_media_id, exc)
+            _sync_document_embed_targets(db, terminal_media_id)
+            error_code, error_message = _source_error_fields(exc)
+            return {
+                "status": "failed",
+                "error_code": error_code,
+                "error_message": error_message,
+            }
+        # The author op committed on its own fresh session; refresh the media
+        # state before crossing ready. ``attempt`` (already validated non-None
+        # above) is untouched by the author op — reload it lazily on write.
+        db.expire_all()
+        media = db.get(Media, terminal_media_id)
+
     if media is not None and media.processing_status == ProcessingStatus.failed:
         attempt.status = _ATTEMPT_FAILED
         attempt.error_code = media.last_error_code
@@ -2418,8 +2470,10 @@ def _run_prepared_html_article(
     """Shared HTML-in-storage body path for browser-capture and email.
 
     Streams derived HTML from ``storage_path`` in the attempt payload, sanitises,
-    fragments, and marks ready for reading. Does NOT commit — the caller commits so
-    caller-specific writes land atomically with mark_ready. Returns
+    fragments, and persists apparatus. Does NOT commit and does NOT mark ready —
+    the caller commits its caller-specific writes, and the source-attempt runner
+    crosses ready only after the attached author observation applies in a fresh
+    session (spec 2.4). Returns
     ``(canonical_text, fragment_id, owner_user_id, queued_children)``.
 
     Caller-specific concerns are NOT included here:
@@ -2534,7 +2588,6 @@ def _run_prepared_html_article(
     else:
         queued_children = []
 
-    mark_ready_for_reading(db, media)
     replace_media_apparatus(
         db,
         media_id=media_id,
@@ -2557,9 +2610,12 @@ def _run_prepared_html_article(
         edges=prepared.apparatus_edges,
     )
     fragment_id = fragment.id
-    # No commit here: the caller commits so caller-specific writes (browser title +
-    # byline/excerpt/site_name credits) land in the SAME transaction as
-    # mark_ready_for_reading / apparatus — no ready-before-byline window on a crash.
+    # No commit and no mark_ready here: the caller commits its writes (browser
+    # title + byline/excerpt/site_name) with the body/apparatus, the runner then
+    # applies the attached author observation in a fresh session, and only after
+    # that success does the runner terminal block cross ready (spec 2.4). A crash
+    # in between leaves the attempt running + media extracting, and the
+    # lease-expiry re-run repeats this source work and converges (AC 9).
     # Child-embed enqueue also runs post-commit in the caller.
     return canonical_text, fragment_id, owner_user_id, queued_children
 
@@ -2612,25 +2668,28 @@ def _run_browser_article_capture(
         request_id=request_id,
     )
 
-    # Browser-only: title + byline/excerpt/site_name from payload. These persist in the
-    # SAME commit as mark_ready_for_reading / apparatus (the shared helper deferred it).
+    # Browser-only: title + byline/excerpt/site_name from payload. These persist in
+    # the same commit as the body/apparatus; the runner crosses ready afterwards,
+    # once the attached author observation has applied (spec 2.4).
     media = db.execute(select(Media).where(Media.id == media_id).with_for_update()).scalar()
     if media is None:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
     title = str(payload.get("title") or "").strip()
     if title:
         media.title = title[:255]
-    _persist_browser_article_metadata(db, media, payload)
+    observation = _persist_browser_article_metadata(db, media, payload)
     db.commit()
     _enqueue_prepared_html_children(db, queued_children, owner_user_id, request_id)
 
-    return {
+    result: dict[str, object] = {
         "status": "success",
         "source_type": source_types.BROWSER_ARTICLE_CAPTURE,
         "post_success_index": "web_article",
         "fragment_id": str(fragment_id),
         "metadata_enrichment": True,
     }
+    attach_author_observation(result, observation=observation, source="web_article_capture")
+    return result
 
 
 def _run_email_message(
@@ -2879,7 +2938,13 @@ def _persist_browser_article_metadata(
     db: Session,
     media: Media,
     payload: dict[str, object],
-) -> None:
+) -> ContributorObservationBatch:
+    """Persist captured article metadata and build the ``author`` observation.
+
+    Returns the observation for the runner to apply through the author facade in
+    a fresh session; the byline split keeps today's ``[,;]`` + ``and`` rule
+    (D-31 reverses only the PDF delimiter, not the web byline lanes).
+    """
     excerpt = str(payload.get("excerpt") or "").strip()
     site_name = str(payload.get("site_name") or "").strip()
     published_time = str(payload.get("published_time") or "").strip()
@@ -2891,24 +2956,24 @@ def _persist_browser_article_metadata(
     if published_time:
         media.published_date = published_time[:64]
     if not byline:
-        return
+        return NOT_OBSERVED
 
     clean_byline = re.sub(r"^by\s+", "", byline, flags=re.IGNORECASE)
-    credits: list[dict[str, object]] = []
-    for ordinal, name in enumerate(
-        re.split(r"\s*[,;]\s*|\s+and\s+", clean_byline, flags=re.IGNORECASE)
-    ):
-        if name.strip():
-            credits.append(
-                {
-                    "name": name.strip(),
-                    "role": "author",
-                    "ordinal": ordinal,
-                    "source": "web_article_capture",
-                    "source_ref": {"media_id": str(media.id)},
-                }
-            )
-    replace_media_contributor_credits(db, media_id=media.id, credits=credits)
+    names = [
+        name.strip()
+        for name in re.split(r"\s*[,;]\s*|\s+and\s+", clean_byline, flags=re.IGNORECASE)
+        if name.strip()
+    ]
+    observation, truncated = build_observation(
+        {"author": [RawCreditEntry(credited_name=name) for name in names]}
+    )
+    if truncated:
+        logger.info(
+            "web_article_capture_author_truncated",
+            media_id=str(media.id),
+            truncated=truncated,
+        )
+    return observation
 
 
 def _finish_failed_attempt(

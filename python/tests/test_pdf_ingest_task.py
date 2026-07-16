@@ -504,3 +504,127 @@ class TestIngestPdfTask:
         assert refreshed.last_error_code == "E_INGEST_FAILED"
         assert refreshed.page_count == 2
         assert refreshed.plain_text is not None
+
+
+def _make_pdf_with_author(author: str, text_content: str = "Body") -> bytes:
+    import fitz
+
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((72, 72), text_content, fontsize=12)
+    doc.set_metadata({"author": author, "title": "Authored PDF"})
+    data = doc.tobytes()
+    doc.close()
+    return data
+
+
+class TestIngestPdfAuthorStep:
+    """The fresh-session author step wired into the PDF task (D-13, spec 2.4).
+
+    The task and the facade's fresh author session share the test connection so
+    the author op's writes are visible and roll back with the test. Asserts the
+    order contract — ready only after the author op commits (AC 9) — and that the
+    automatic lane writes no ``resource_mutations`` (D-43).
+    """
+
+    @staticmethod
+    def _both_factories(db_session: Session):
+        factory = task_session_factory(db_session)
+        return (
+            patch("nexus.tasks.ingest_pdf.get_session_factory", return_value=factory),
+            patch("nexus.services.contributors.get_session_factory", return_value=factory),
+        )
+
+    @staticmethod
+    def _credit_names(db_session: Session, media_id) -> list[str]:
+        return list(
+            db_session.execute(
+                text(
+                    "SELECT credited_name FROM contributor_credits "
+                    "WHERE media_id = :mid AND role = 'author' ORDER BY ordinal"
+                ),
+                {"mid": media_id},
+            ).scalars()
+        )
+
+    @staticmethod
+    def _mutation_count(db_session: Session) -> int:
+        return db_session.execute(text("SELECT count(*) FROM resource_mutations")).scalar_one()
+
+    def test_ingest_pdf_persists_author_credit_and_marks_ready(self, db_session: Session):
+        storage = FakeStorageClient()
+        media = _create_extracting_pdf(db_session, storage, _make_pdf_with_author("Ada Lovelace"))
+        mid = media.id
+        before = self._mutation_count(db_session)
+
+        task_patch, facade_patch = self._both_factories(db_session)
+        with (
+            task_patch,
+            facade_patch,
+            patch("nexus.tasks.ingest_pdf.get_storage_client", return_value=storage),
+        ):
+            from nexus.tasks.ingest_pdf import ingest_pdf
+
+            result = ingest_pdf(str(mid))
+
+        assert result["status"] == "success"
+        db_session.expire_all()
+        assert db_session.get(Media, mid).processing_status == ProcessingStatus.ready_for_reading
+        assert self._credit_names(db_session, mid) == ["Ada Lovelace"]
+        # Automatic lanes never write resource_mutations (D-43).
+        assert self._mutation_count(db_session) == before
+
+    def test_author_step_failure_gates_ready_and_retry_converges(self, db_session: Session):
+        storage = FakeStorageClient()
+        media = _create_extracting_pdf(
+            db_session, storage, _make_pdf_with_author("Grace Hopper; Grace Hopper")
+        )
+        mid = media.id
+        before = self._mutation_count(db_session)
+
+        from nexus.services import contributors
+
+        real = contributors.replace_observed_role_slices
+        calls = {"n": 0}
+
+        def flaky(**kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("author step boom")
+            return real(**kwargs)
+
+        task_patch, facade_patch = self._both_factories(db_session)
+        with (
+            task_patch,
+            facade_patch,
+            patch("nexus.tasks.ingest_pdf.get_storage_client", return_value=storage),
+            patch.object(contributors, "replace_observed_role_slices", side_effect=flaky),
+        ):
+            from nexus.tasks.ingest_pdf import ingest_pdf
+
+            # First attempt: the author step raises, so ready is never crossed and
+            # no credit is written.
+            with pytest.raises(RuntimeError):
+                ingest_pdf(str(mid))
+            db_session.expire_all()
+            assert (
+                db_session.get(Media, mid).processing_status != ProcessingStatus.ready_for_reading
+            )
+            assert self._credit_names(db_session, mid) == []
+
+            # The durable job re-dispatches the attempt from extraction; the same
+            # source work reruns, the author op converges, ready crosses, and the
+            # deduped slice is exactly one row.
+            db_session.execute(
+                text("UPDATE media SET processing_status = 'extracting' WHERE id = :id"),
+                {"id": mid},
+            )
+            db_session.flush()
+            result = ingest_pdf(str(mid))
+
+        assert result["status"] == "success"
+        assert calls["n"] == 2
+        db_session.expire_all()
+        assert db_session.get(Media, mid).processing_status == ProcessingStatus.ready_for_reading
+        assert self._credit_names(db_session, mid) == ["Grace Hopper"]
+        assert self._mutation_count(db_session) == before

@@ -25,6 +25,7 @@ from nexus.errors import (
 from nexus.logging import get_logger
 from nexus.services.api_key_resolver import resolve_api_key, update_user_key_status
 from nexus.services.chat_run_usage import usage_tokens
+from nexus.services.contributors import MediaTarget, replace_observed_role_slices
 from nexus.services.llm_ledger import LlmCallOwner, observed_generate
 from nexus.services.metadata_dispatch import try_enqueue_metadata_enrichment
 from nexus.services.metadata_enrichment import (
@@ -299,6 +300,18 @@ def enrich_metadata(
             if resolved.mode == "byok":
                 update_user_key_status(db, resolved.user_key_id, "valid")
             db.commit()
+
+            # Fresh-session author op (spec 2.4, D-14). Non-author enrichment is
+            # already durable; the author slice is replaced on the facade's own
+            # serializable session. This job is max_attempts=1, so a crash here
+            # loses this enrichment's authors until the next refresh (accepted
+            # 80/20). NOT_OBSERVED returns without touching credits; a failure
+            # propagates to the worker boundary, which marks failure_stage=metadata.
+            replace_observed_role_slices(
+                target=MediaTarget(media.id),
+                observation=merge_result.author_observation,
+                source="metadata_enrichment",
+            )
 
             if budget_reserved:
                 actual_tokens = usage_tokens(response.usage)["total_tokens"]

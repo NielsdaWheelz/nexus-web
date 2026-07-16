@@ -219,6 +219,36 @@ def load_contributor_credits_for_podcasts(
     return credits_by_podcast
 
 
+def current_gutenberg_author_names(
+    db: Session,
+    ebook_ids: list[int],
+) -> dict[int, tuple[str, ...]]:
+    """Ordered current author credited names per Gutenberg ebook (author role only).
+
+    Backs the catalog sync's change detection (D-15): an ebook whose parsed author
+    names differ from its stored slice is reprocessed; unchanged ebooks do zero
+    credit DML. Read-only; the credit rows themselves mutate only via the facade.
+    """
+    if not ebook_ids:
+        return {}
+    names_by_ebook: dict[int, list[str]] = {}
+    rows = db.execute(
+        text(
+            """
+            SELECT project_gutenberg_catalog_ebook_id, credited_name
+            FROM contributor_credits
+            WHERE project_gutenberg_catalog_ebook_id = ANY(:ebook_ids)
+              AND role = 'author'
+            ORDER BY project_gutenberg_catalog_ebook_id ASC, ordinal ASC
+            """
+        ),
+        {"ebook_ids": ebook_ids},
+    ).fetchall()
+    for ebook_id, credited_name in rows:
+        names_by_ebook.setdefault(int(ebook_id), []).append(str(credited_name))
+    return {ebook_id: tuple(names) for ebook_id, names in names_by_ebook.items()}
+
+
 def _credit_out(row: Any) -> ContributorCreditOut:
     return ContributorCreditOut(
         contributor_handle=row[1],

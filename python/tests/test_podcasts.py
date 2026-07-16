@@ -640,7 +640,6 @@ def _podcast_payload(provider_podcast_id: str, title: str) -> dict:
             {
                 "credited_name": "The Author",
                 "role": "author",
-                "source": "podcast_index",
             }
         ],
         "feed_url": f"https://feeds.example.com/{provider_podcast_id}.xml",
@@ -736,8 +735,10 @@ class TestPodcastDiscovery:
         assert item["contributors"][0]["credited_name"] == preview_author
         assert item["contributors"][0]["contributor_display_name"] == preview_author
         assert item["contributors"][0]["role"] == "author"
-        assert item["contributors"][0]["source"] == "podcast_index"
-        assert item["contributors"][0]["resolution_status"] == "unverified"
+        # `source`/`resolution_status` were dropped from the embedded credit DTO
+        # (D-33); the narrowed shape carries no storage/provenance facts.
+        assert "source" not in item["contributors"][0]
+        assert "resolution_status" not in item["contributors"][0]
         assert "episodes" not in item, "discovery response leaked episode rows"
         assert "media_id" not in item, "discovery response leaked media identity"
         with direct_db.session() as session:
@@ -776,12 +777,18 @@ class TestPodcastDiscovery:
         discovered = discover_response.json()["data"][0]
         assert discovered["contributors"], "test setup must discover contributor previews"
 
+        # The subscribe payload rides the snake-strict ContributorCreditIn v2 (D-4):
+        # the client maps the discovery response's embedded credits down to the typed
+        # input shape (credited_name/role), exactly as toPodcastContributorInputs does.
         subscribe_response = auth_client.post(
             "/podcasts/subscriptions",
             json={
                 "provider_podcast_id": discovered["provider_podcast_id"],
                 "title": discovered["title"],
-                "contributors": discovered["contributors"],
+                "contributors": [
+                    {"credited_name": credit["credited_name"], "role": credit["role"]}
+                    for credit in discovered["contributors"]
+                ],
                 "feed_url": discovered["feed_url"],
                 "website_url": discovered["website_url"],
                 "image_url": discovered["image_url"],
@@ -792,7 +799,7 @@ class TestPodcastDiscovery:
         )
 
         assert subscribe_response.status_code == 200, (
-            f"subscribe should accept its own discovery response contributor shape, "
+            f"subscribe should accept the typed contributor payload, "
             f"got {subscribe_response.status_code}: {subscribe_response.text}"
         )
 
@@ -862,310 +869,312 @@ class TestPodcastDiscovery:
         assert item["provider_podcast_id"] == provider_podcast_id
 
 
-class TestPodcastEnsure:
-    def test_ensure_rejects_author_scalar(self, auth_client):
+class TestPodcastContributorObservation:
+    """Subscribe/OPML contributor observation lane (spec 2.1/2.4/2.5, D-3/D-4/D-5)."""
+
+    @staticmethod
+    def _podcast_credits(direct_db, podcast_id) -> set[tuple[str, str]]:
+        with direct_db.session() as session:
+            return set(
+                session.execute(
+                    text(
+                        "SELECT role, credited_name FROM contributor_credits"
+                        " WHERE podcast_id = :podcast_id"
+                    ),
+                    {"podcast_id": podcast_id},
+                ).fetchall()
+            )
+
+    def test_subscribe_creates_typed_role_slices_and_author_refresh_preserves_them(
+        self, auth_client, direct_db
+    ):
+        # AC-11: a typed role-capable podcast payload creates host/guest/translator
+        # slices; a later author-only refresh replaces only the author slice and
+        # preserves the undeclared roles.
         user_id = create_test_user_id()
         _bootstrap_user(auth_client, user_id)
-        payload = _podcast_payload(f"ensure-author-scalar-{uuid4()}", "Author Scalar Podcast")
-        payload["author"] = "Author Scalar"
 
-        response = auth_client.post(
-            "/podcasts/ensure",
-            json=payload,
-            headers=auth_headers(user_id),
+        payload = _podcast_payload(f"role-slices-{uuid4()}", "Role Slices Podcast")
+        payload["contributors"] = [
+            {"credited_name": "Ada Host", "role": "host"},
+            {"credited_name": "Ben Guest", "role": "guest"},
+            {"credited_name": "Cy Translator", "role": "translator"},
+        ]
+        podcast_id = UUID(_subscribe(auth_client, user_id, payload)["podcast_id"])
+
+        assert self._podcast_credits(direct_db, podcast_id) == {
+            ("host", "Ada Host"),
+            ("guest", "Ben Guest"),
+            ("translator", "Cy Translator"),
+        }
+
+        # Author-only refresh: managedRoles = {author}, so only the author slice is
+        # replaced; host/guest/translator are undeclared and survive.
+        _subscribe(
+            auth_client,
+            user_id,
+            {**payload, "contributors": [{"credited_name": "Dee Author", "role": "author"}]},
+        )
+        assert self._podcast_credits(direct_db, podcast_id) == {
+            ("author", "Dee Author"),
+            ("host", "Ada Host"),
+            ("guest", "Ben Guest"),
+            ("translator", "Cy Translator"),
+        }
+
+    def test_subscribe_empty_contributors_preserves_prior_credits(self, auth_client, direct_db):
+        # D-5: automatic sources cannot assert an empty slice; an empty/absent
+        # payload is not_observed and preserves prior credits (was: erase).
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+
+        payload = _podcast_payload(f"preserve-{uuid4()}", "Preserve Podcast")
+        payload["contributors"] = [{"credited_name": "Stable Author", "role": "author"}]
+        podcast_id = UUID(_subscribe(auth_client, user_id, payload)["podcast_id"])
+
+        _subscribe(auth_client, user_id, {**payload, "contributors": []})
+
+        assert self._podcast_credits(direct_db, podcast_id) == {("author", "Stable Author")}
+
+    def test_subscribe_author_step_writes_no_resource_mutations(self, auth_client, direct_db):
+        # D-43/AC-9: the automatic contributor observation is unreplayable and must
+        # never write resource_mutations (a stable job key may legitimately observe
+        # different authors later; background lanes have no user).
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+
+        payload = _podcast_payload(f"no-memo-{uuid4()}", "No Memo Podcast")
+        payload["contributors"] = [{"credited_name": "Memoless Author", "role": "author"}]
+        podcast_id = UUID(_subscribe(auth_client, user_id, payload)["podcast_id"])
+
+        with direct_db.session() as session:
+            memo_count = int(
+                session.execute(
+                    text(
+                        "SELECT count(*) FROM resource_mutations WHERE mutation_scope LIKE :scope"
+                    ),
+                    {"scope": f"%{podcast_id}%"},
+                ).scalar_one()
+            )
+        assert memo_count == 0, (
+            "automatic podcast contributor observation must write no resource_mutations (D-43)"
         )
 
+    def test_subscribe_rejects_unknown_contributor_field(self, auth_client):
+        # D-4: the subscribe payload is snake-strict; a dropped server fact (source)
+        # on a contributor is an unknown field -> 400 E_INVALID_REQUEST.
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+
+        payload = _podcast_payload(f"strict-{uuid4()}", "Strict Podcast")
+        payload["contributors"] = [
+            {"credited_name": "X", "role": "author", "source": "podcast_index"}
+        ]
+        response = auth_client.post(
+            "/podcasts/subscriptions", json=payload, headers=auth_headers(user_id)
+        )
         assert response.status_code == 400
         assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
 
-    def test_ensure_returns_existing_local_podcast_id_by_provider_id(self, auth_client, direct_db):
+    def test_no_podcast_author_correction_endpoint(self, auth_client):
+        # AC-18: podcast credits are machine-owned; there is deliberately no podcast
+        # manual author-correction endpoint (only media has PUT /media/{id}/authors).
         user_id = create_test_user_id()
         _bootstrap_user(auth_client, user_id)
 
-        provider_podcast_id = f"ensure-provider-{uuid4()}"
-        payload = _podcast_payload(provider_podcast_id, "Provider Match Podcast")
-        podcast_id = uuid4()
-
-        with direct_db.session() as session:
-            session.execute(
-                text(
-                    """
-                    INSERT INTO podcasts (
-                        id,
-                        provider,
-                        provider_podcast_id,
-                        title,
-                        feed_url,
-                        website_url,
-                        image_url,
-                        description
-                    )
-                    VALUES (
-                        :id,
-                        'podcast_index',
-                        :provider_podcast_id,
-                        :title,
-                        :feed_url,
-                        :website_url,
-                        :image_url,
-                        :description
-                    )
-                    """
-                ),
-                {
-                    "id": podcast_id,
-                    "provider_podcast_id": payload["provider_podcast_id"],
-                    "title": "Old Title",
-                    "feed_url": payload["feed_url"],
-                    "website_url": payload["website_url"],
-                    "image_url": payload["image_url"],
-                    "description": "Old Description",
-                },
+        podcast_id = UUID(
+            _subscribe(
+                auth_client,
+                user_id,
+                _podcast_payload(f"machine-owned-{uuid4()}", "Machine Owned"),
+            )["podcast_id"]
+        )
+        for method in ("put", "patch", "post"):
+            response = getattr(auth_client, method)(
+                f"/podcasts/{podcast_id}/authors",
+                json={"clientMutationId": "x", "mode": "manual", "authors": []},
+                headers=auth_headers(user_id),
             )
-            session.commit()
-
-        response = auth_client.post(
-            "/podcasts/ensure",
-            json=payload,
-            headers=auth_headers(user_id),
-        )
-        assert response.status_code == 200, (
-            f"ensure failed unexpectedly: {response.status_code} {response.text}"
-        )
-        assert response.json()["data"]["podcast_id"] == str(podcast_id)
-
-        with direct_db.session() as session:
-            podcast_row = session.execute(
-                text(
-                    """
-                    SELECT title, description
-                    FROM podcasts
-                    WHERE id = :podcast_id
-                    """
-                ),
-                {"podcast_id": podcast_id},
-            ).fetchone()
-            subscription_count = int(
-                session.execute(
-                    text(
-                        """
-                        SELECT COUNT(*)
-                        FROM podcast_subscriptions
-                        WHERE podcast_id = :podcast_id
-                        """
-                    ),
-                    {"podcast_id": podcast_id},
-                ).scalar_one()
+            assert response.status_code in (404, 405), (
+                f"{method.upper()} /podcasts/{{id}}/authors must not exist, "
+                f"got {response.status_code}"
             )
-        assert podcast_row == (
-            payload["title"],
-            payload["description"],
-        )
-        assert subscription_count == 0
 
-    def test_ensure_falls_back_to_existing_local_podcast_id_by_feed_url(
-        self, auth_client, direct_db
+    def test_opml_import_does_not_call_provider_inside_write_transaction(
+        self, auth_client, monkeypatch
     ):
+        # D-3 / spec 2.7: OPML previously performed the provider HTTP lookup inside
+        # the podcast-write transaction. The lookup must now run with NO open DB
+        # transaction; assert the write-transaction depth is zero at lookup time.
+        from contextlib import contextmanager
+
+        import nexus.services.podcasts.subscriptions as subscriptions_module
+
         user_id = create_test_user_id()
         _bootstrap_user(auth_client, user_id)
 
-        payload = _podcast_payload(f"ensure-feed-{uuid4()}", "Feed Match Podcast")
-        podcast_id = uuid4()
+        real_transaction = subscriptions_module.transaction
+        transaction_depth = {"value": 0}
+        lookup_transaction_depths: list[int] = []
 
-        with direct_db.session() as session:
-            session.execute(
-                text(
-                    """
-                    INSERT INTO podcasts (
-                        id,
-                        provider,
-                        provider_podcast_id,
-                        title,
-                        feed_url,
-                        website_url,
-                        image_url,
-                        description
-                    )
-                    VALUES (
-                        :id,
-                        'podcast_index',
-                        :provider_podcast_id,
-                        :title,
-                        :feed_url,
-                        :website_url,
-                        :image_url,
-                        :description
-                    )
-                    """
-                ),
-                {
-                    "id": podcast_id,
-                    "provider_podcast_id": f"opml-{uuid4()}",
-                    "title": "Imported Podcast",
-                    "feed_url": payload["feed_url"],
-                    "website_url": None,
-                    "image_url": None,
-                    "description": None,
-                },
-            )
-            session.commit()
+        @contextmanager
+        def tracking_transaction(db):
+            transaction_depth["value"] += 1
+            try:
+                with real_transaction(db):
+                    yield
+            finally:
+                transaction_depth["value"] -= 1
 
+        def spy_lookup(self, feed_url):
+            _ = self, feed_url
+            lookup_transaction_depths.append(transaction_depth["value"])
+            return {"title": "Networked Podcast", "author": "Networked Author"}
+
+        monkeypatch.setattr(subscriptions_module, "transaction", tracking_transaction)
+        monkeypatch.setattr(
+            "nexus.services.podcasts.provider.PodcastIndexClient.lookup_podcast_by_feed_url",
+            spy_lookup,
+            raising=False,
+        )
+
+        feed_url = f"https://feeds.example.com/{uuid4()}-network.xml"
+        opml_payload = _build_opml_document(
+            [f'    <outline type="rss" text="Networked" xmlUrl="{feed_url}" />']
+        )
         response = auth_client.post(
-            "/podcasts/ensure",
-            json=payload,
+            "/podcasts/import/opml",
+            json={
+                "opml": opml_payload.decode("utf-8"),
+                "default_library_ids": [],
+                "per_feed_library_ids": {},
+            },
             headers=auth_headers(user_id),
         )
-        assert response.status_code == 200, (
-            f"ensure failed unexpectedly: {response.status_code} {response.text}"
+        assert response.status_code == 200, response.text
+        assert response.json()["data"]["imported"] == 1
+        assert lookup_transaction_depths == [0], (
+            "provider lookup must run with no open write transaction (spec 2.7); "
+            f"observed transaction depths {lookup_transaction_depths}"
         )
-        assert response.json()["data"]["podcast_id"] == str(podcast_id)
 
-        with direct_db.session() as session:
-            podcast_row = session.execute(
-                text(
-                    """
-                    SELECT provider_podcast_id, title, image_url, description
-                    FROM podcasts
-                    WHERE id = :podcast_id
-                    """
-                ),
-                {"podcast_id": podcast_id},
-            ).fetchone()
-            subscription_count = int(
-                session.execute(
-                    text(
-                        """
-                        SELECT COUNT(*)
-                        FROM podcast_subscriptions
-                        WHERE podcast_id = :podcast_id
-                        """
-                    ),
-                    {"podcast_id": podcast_id},
-                ).scalar_one()
-            )
-        assert podcast_row == (
-            payload["provider_podcast_id"],
-            payload["title"],
-            payload["image_url"],
-            payload["description"],
-        )
-        assert subscription_count == 0
-
-    def test_ensure_creates_one_local_podcast_without_subscription_or_library_membership(
-        self, auth_client, direct_db
+    def test_opml_import_observes_provider_author_and_preserves_known_feed(
+        self, auth_client, monkeypatch, direct_db
     ):
+        # A newly-imported OPML feed with a provider author creates that credit via
+        # the post-commit facade step (spec 2.1). Re-importing the now-known feed
+        # sends no payload, so the credit is preserved rather than erased (D-5).
         user_id = create_test_user_id()
         _bootstrap_user(auth_client, user_id)
-        _ensure_library_entries_table(direct_db)
 
-        payload = _podcast_payload(f"ensure-create-{uuid4()}", "Create Podcast")
+        feed_url = f"https://feeds.example.com/{uuid4()}-opml-author.xml"
 
-        first_response = auth_client.post(
-            "/podcasts/ensure",
-            json=payload,
-            headers=auth_headers(user_id),
-        )
-        second_response = auth_client.post(
-            "/podcasts/ensure",
-            json=payload,
-            headers=auth_headers(user_id),
-        )
+        def fake_lookup(self, url):
+            _ = self, url
+            return {"title": "OPML Author Podcast", "author": "OPML Provider Author"}
 
-        assert first_response.status_code == 200, (
-            f"first ensure failed unexpectedly: {first_response.status_code} {first_response.text}"
+        monkeypatch.setattr(
+            "nexus.services.podcasts.provider.PodcastIndexClient.lookup_podcast_by_feed_url",
+            fake_lookup,
+            raising=False,
         )
-        assert second_response.status_code == 200, (
-            "second ensure should be idempotent, "
-            f"got {second_response.status_code}: {second_response.text}"
+        opml_payload = _build_opml_document(
+            [f'    <outline type="rss" text="OPML Author" xmlUrl="{feed_url}" />']
         )
-
-        first_podcast_id = first_response.json()["data"]["podcast_id"]
-        second_podcast_id = second_response.json()["data"]["podcast_id"]
-        assert first_podcast_id == second_podcast_id
+        import_body = {
+            "opml": opml_payload.decode("utf-8"),
+            "default_library_ids": [],
+            "per_feed_library_ids": {},
+        }
+        first = auth_client.post(
+            "/podcasts/import/opml", json=import_body, headers=auth_headers(user_id)
+        )
+        assert first.status_code == 200, first.text
 
         with direct_db.session() as session:
-            podcast_count = int(
-                session.execute(
-                    text(
-                        """
-                        SELECT COUNT(*)
-                        FROM podcasts
-                        WHERE provider = 'podcast_index'
-                          AND provider_podcast_id = :provider_podcast_id
-                        """
-                    ),
-                    {"provider_podcast_id": payload["provider_podcast_id"]},
-                ).scalar_one()
-            )
-            subscription_count = int(
-                session.execute(
-                    text(
-                        """
-                        SELECT COUNT(*)
-                        FROM podcast_subscriptions
-                        WHERE podcast_id = :podcast_id
-                        """
-                    ),
-                    {"podcast_id": first_podcast_id},
-                ).scalar_one()
-            )
-            library_entry_count = int(
-                session.execute(
-                    text(
-                        """
-                        SELECT COUNT(*)
-                        FROM library_entries
-                        WHERE podcast_id = :podcast_id
-                        """
-                    ),
-                    {"podcast_id": first_podcast_id},
-                ).scalar_one()
-            )
-        assert podcast_count == 1
-        assert subscription_count == 0
-        assert library_entry_count == 0
+            podcast_id = session.execute(
+                text("SELECT id FROM podcasts WHERE feed_url = :feed_url"),
+                {"feed_url": feed_url},
+            ).scalar_one()
+        assert self._podcast_credits(direct_db, podcast_id) == {("author", "OPML Provider Author")}
 
-    def test_ensure_empty_contributors_clears_provider_owned_credits(self, auth_client, direct_db):
+        # Re-import the now-known feed: no provider lookup / no payload -> preserved.
+        second = auth_client.post(
+            "/podcasts/import/opml", json=import_body, headers=auth_headers(user_id)
+        )
+        assert second.status_code == 200, second.text
+        assert self._podcast_credits(direct_db, podcast_id) == {("author", "OPML Provider Author")}
+
+    def test_opml_import_reports_author_observation_failure_per_feed(
+        self, auth_client, monkeypatch, direct_db
+    ):
+        # The subscription commits before the post-commit author observation, so a
+        # failed observation must not fail the import — but the outcome must be
+        # honest: the feed counts as imported AND an error row names it (nothing
+        # else re-observes podcast-level credits until a resubscribe/re-import).
         user_id = create_test_user_id()
         _bootstrap_user(auth_client, user_id)
-        payload = _podcast_payload(f"ensure-empty-contributors-{uuid4()}", "Empty Authors")
-        payload["contributors"] = [{"credited_name": "Stale Show Author", "role": "author"}]
 
-        first_response = auth_client.post(
-            "/podcasts/ensure",
-            json=payload,
+        feed_url = f"https://feeds.example.com/{uuid4()}-opml-author-failure.xml"
+
+        def fake_lookup(self, url):
+            _ = self, url
+            return {"title": "OPML Failure Podcast", "author": "Doomed Author"}
+
+        monkeypatch.setattr(
+            "nexus.services.podcasts.provider.PodcastIndexClient.lookup_podcast_by_feed_url",
+            fake_lookup,
+            raising=False,
+        )
+
+        def failing_observation(podcast_id, contributors):
+            _ = podcast_id, contributors
+            raise RuntimeError("simulated author-op failure")
+
+        monkeypatch.setattr(
+            "nexus.services.podcasts.subscriptions.observe_podcast_contributor_credits",
+            failing_observation,
+        )
+
+        opml_payload = _build_opml_document(
+            [f'    <outline type="rss" text="OPML Failure" xmlUrl="{feed_url}" />']
+        )
+        response = auth_client.post(
+            "/podcasts/import/opml",
+            json={
+                "opml": opml_payload.decode("utf-8"),
+                "default_library_ids": [],
+                "per_feed_library_ids": {},
+            },
             headers=auth_headers(user_id),
         )
-        assert first_response.status_code == 200, (
-            f"initial ensure failed unexpectedly: {first_response.status_code} "
-            f"{first_response.text}"
-        )
-        podcast_id = UUID(first_response.json()["data"]["podcast_id"])
-
-        second_response = auth_client.post(
-            "/podcasts/ensure",
-            json={**payload, "contributors": []},
-            headers=auth_headers(user_id),
-        )
-        assert second_response.status_code == 200, (
-            f"empty ensure failed unexpectedly: {second_response.status_code} "
-            f"{second_response.text}"
-        )
+        assert response.status_code == 200, response.text
+        data = response.json()["data"]
+        assert data["imported"] == 1, "the committed subscription survives the author-op failure"
+        assert [
+            (err["feed_url"], "contributor" in err["error"].lower()) for err in data["errors"]
+        ] == [(feed_url, True)], data["errors"]
 
         with direct_db.session() as session:
-            rows = session.execute(
+            subscription_status = session.execute(
                 text(
                     """
-                    SELECT source, credited_name
-                    FROM contributor_credits
-                    WHERE podcast_id = :podcast_id
-                    ORDER BY source, credited_name
+                    SELECT ps.status
+                    FROM podcast_subscriptions ps
+                    JOIN podcasts p ON p.id = ps.podcast_id
+                    WHERE ps.user_id = :user_id AND p.feed_url = :feed_url
                     """
                 ),
-                {"podcast_id": podcast_id},
-            ).fetchall()
-
-        assert rows == []
+                {"user_id": user_id, "feed_url": feed_url},
+            ).scalar_one()
+            podcast_id = session.execute(
+                text("SELECT id FROM podcasts WHERE feed_url = :feed_url"),
+                {"feed_url": feed_url},
+            ).scalar_one()
+        assert subscription_status == "active"
+        assert self._podcast_credits(direct_db, podcast_id) == set(), (
+            "no credit lands when the observation failed"
+        )
 
 
 class TestPodcastSubscriptionSyncLifecycle:
@@ -4401,6 +4410,112 @@ class TestPodcastEpisodeMetadataPersistence:
         assert media["description"] == "Show notes for the metadata-rich episode."
         assert media["published_date"] == "2026-03-02T06:00:00Z"
         assert media["language"] == "en"
+
+    def test_sync_inherits_podcast_author_when_episode_has_none(
+        self, auth_client, monkeypatch, direct_db
+    ):
+        # D-16: an episode with no author text inherits the podcast-level author
+        # credited names (read via the canonical relation), never an erase.
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+
+        provider_podcast_id = f"episode-inherit-{uuid4()}"
+        payload = _podcast_payload(provider_podcast_id, "Inheritance Podcast")
+        payload["contributors"] = [{"credited_name": "Show Level Author", "role": "author"}]
+        episodes = [
+            {
+                "provider_episode_id": "ep-inherit-1",
+                "guid": "guid-inherit-1",
+                "title": "Authorless Episode",
+                "audio_url": "https://cdn.example.com/episode-inherit.mp3",
+                "published_at": "2026-03-02T06:00:00Z",
+                "duration_seconds": 120,
+                "transcript_segments": None,
+            }
+        ]
+        _mock_podcast_index(
+            monkeypatch,
+            podcasts=[payload],
+            episodes_by_podcast={provider_podcast_id: episodes},
+        )
+
+        subscribe_data = _subscribe(auth_client, user_id, payload)
+        podcast_id = UUID(subscribe_data["podcast_id"])
+        _run_subscription_sync(direct_db, user_id, podcast_id, run_transcription_jobs=False)
+
+        with direct_db.session() as session:
+            media_id = session.execute(
+                text("SELECT media_id FROM podcast_episodes WHERE podcast_id = :podcast_id"),
+                {"podcast_id": podcast_id},
+            ).scalar_one()
+
+        media = auth_client.get(f"/media/{media_id}", headers=auth_headers(user_id)).json()["data"]
+        assert [credit["credited_name"] for credit in media["contributors"]] == [
+            "Show Level Author"
+        ]
+
+    def test_pinned_episode_authors_survive_rss_refresh(self, auth_client, monkeypatch, direct_db):
+        # AC-13: a manual (pinned) episode author slice survives an automatic RSS
+        # author refresh; the facade drops `author` from the managed set while pinned.
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+
+        provider_podcast_id = f"episode-pin-{uuid4()}"
+        payload = _podcast_payload(provider_podcast_id, "Pinned Episode Podcast")
+        episode = {
+            "provider_episode_id": "ep-pin-1",
+            "guid": "guid-pin-1",
+            "title": "Pinnable Episode",
+            "authors": ["Original RSS Author"],
+            "audio_url": "https://cdn.example.com/episode-pin.mp3",
+            "published_at": "2026-03-02T06:00:00Z",
+            "duration_seconds": 120,
+            "transcript_segments": None,
+        }
+        _mock_podcast_index(
+            monkeypatch,
+            podcasts=[payload],
+            episodes_by_podcast={provider_podcast_id: [episode]},
+        )
+
+        subscribe_data = _subscribe(auth_client, user_id, payload)
+        podcast_id = UUID(subscribe_data["podcast_id"])
+        _run_subscription_sync(direct_db, user_id, podcast_id, run_transcription_jobs=False)
+
+        with direct_db.session() as session:
+            media_id = session.execute(
+                text("SELECT media_id FROM podcast_episodes WHERE podcast_id = :podcast_id"),
+                {"podcast_id": podcast_id},
+            ).scalar_one()
+
+        # Pin the episode's author slice to an explicit human via the media PUT.
+        put_response = auth_client.put(
+            f"/media/{media_id}/authors",
+            json={
+                "clientMutationId": f"pin-{uuid4()}",
+                "mode": "manual",
+                "authors": [
+                    {
+                        "creditedName": "Pinned Human",
+                        "binding": {"kind": "new", "displayName": "Pinned Human"},
+                    }
+                ],
+            },
+            headers=auth_headers(user_id),
+        )
+        assert put_response.status_code == 200, put_response.text
+        assert put_response.json()["data"]["authorMode"] == "manual"
+
+        # A later RSS refresh observes different authors; the pin must win. Re-subscribe
+        # resets the subscription to pending so the sync re-runs and re-observes.
+        episode["authors"] = ["New RSS Author"]
+        _subscribe(auth_client, user_id, payload)
+        _run_subscription_sync(direct_db, user_id, podcast_id, run_transcription_jobs=False)
+
+        media = auth_client.get(f"/media/{media_id}", headers=auth_headers(user_id)).json()["data"]
+        assert [credit["credited_name"] for credit in media["contributors"]] == ["Pinned Human"], (
+            "a pinned episode author slice must survive an automatic RSS refresh (AC-13)"
+        )
 
 
 def _run_active_subscription_poll(direct_db: DirectSessionManager, *, limit: int = 100) -> dict:

@@ -12,7 +12,10 @@ from pathlib import Path
 
 import pytest
 
+from nexus.services.contributor_taxonomy import NotObserved, ObservedRoleSlices
 from nexus.services.email_ingest_service import (
+    _build_email_sender_observation,
+    _parse_from_header,
     _synthesize_message_id,
     extract_email_html,
     normalize_message_id,
@@ -207,3 +210,59 @@ class TestEmailIngestNegativeGates:
         from nexus.services.contributor_taxonomy import STRONG_CONTRIBUTOR_EXTERNAL_ID_AUTHORITIES
 
         assert "email" in STRONG_CONTRIBUTOR_EXTERNAL_ID_AUTHORITIES
+
+
+def _from_message(from_header: str):
+    import email
+    import email.policy
+
+    return email.message_from_string(f"From: {from_header}\n\nbody", policy=email.policy.default)
+
+
+class TestParseFromHeaderPrivacy:
+    def test_display_name_used_when_present(self):
+        assert _parse_from_header(_from_message("Ada Lovelace <ada@example.com>")) == (
+            "Ada Lovelace",
+            "ada@example.com",
+        )
+
+    def test_local_part_fallback_when_no_display_name(self):
+        assert _parse_from_header(_from_message("<ada@example.com>")) == ("ada", "ada@example.com")
+
+    def test_full_address_never_becomes_display_name(self):
+        # A display name that is itself an address must fall back to the local part
+        # so the full address never leaks into display/alias text (spec 5).
+        name, addr = _parse_from_header(_from_message("alice@substack.com <alice@substack.com>"))
+        assert addr == "alice@substack.com"
+        assert name == "alice"
+        assert "@" not in name
+
+    def test_missing_address_returns_none(self):
+        assert _parse_from_header(_from_message("Ada Lovelace")) is None
+
+
+class TestBuildEmailSenderObservation:
+    def test_address_is_identity_key_not_display(self):
+        batch = _build_email_sender_observation("Ada Lovelace", "ada@example.com")
+        assert isinstance(batch, ObservedRoleSlices)
+        assert batch.managed_roles == frozenset({"author"})
+        credit = batch.credits[0]
+        assert credit.credited_name == "Ada Lovelace"
+        assert "@" not in credit.credited_name
+        assert credit.identity_key is not None
+        assert credit.identity_key.authority == "email_address"
+        assert credit.identity_key.key == "ada@example.com"
+
+    def test_address_is_canonicalized_lowercase(self):
+        batch = _build_email_sender_observation("Ada", "  Ada@Example.COM ")
+        assert isinstance(batch, ObservedRoleSlices)
+        assert batch.credits[0].identity_key is not None
+        assert batch.credits[0].identity_key.key == "ada@example.com"
+
+    def test_invalid_address_omits_key(self):
+        batch = _build_email_sender_observation("Ada", "not-an-address")
+        assert isinstance(batch, ObservedRoleSlices)
+        assert batch.credits[0].identity_key is None
+
+    def test_blank_name_is_not_observed(self):
+        assert isinstance(_build_email_sender_observation("   ", "ada@example.com"), NotObserved)

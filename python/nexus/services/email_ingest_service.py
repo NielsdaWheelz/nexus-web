@@ -20,8 +20,15 @@ from nexus.db.models import Media, MediaKind, ProcessingStatus
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.services import library_entries
 from nexus.services import media_source_types as source_types
-from nexus.services.contributor_credits import replace_media_contributor_credits
-from nexus.services.contributor_taxonomy import display_contributor_name
+from nexus.services.contributor_taxonomy import (
+    NOT_OBSERVED,
+    ContributorObservationBatch,
+    RawCreditEntry,
+    RawIdentityClaim,
+    build_observation,
+    display_contributor_name,
+)
+from nexus.services.contributors import MediaTarget, replace_observed_role_slices
 from nexus.storage.client import StorageError, get_storage_client
 from nexus.storage.paths import build_source_artifact_storage_path
 
@@ -178,14 +185,57 @@ def extract_email_html(raw_body: bytes) -> tuple[str, str | None, str | None]:
 
 
 def _parse_from_header(msg: email.message.Message) -> tuple[str, str] | None:
-    """Return (display_name, normalized_address) from From:, or None if absent/unparseable."""
+    """Return (display_name, normalized_address) from From:, or None if absent/unparseable.
+
+    The full address never becomes the display name (spec 5 privacy rule): when the
+    header carries no display name — or a display name that is itself an address —
+    the sanitized local part is used instead.
+    """
     from_header = msg.get("From", "")
     display_name_raw, addr = parseaddr(str(from_header))
     addr = addr.strip().lower()
     if not addr or "@" not in addr:
         return None
-    name = display_contributor_name(display_name_raw or addr.split("@")[0])
+    local_part = addr.split("@")[0]
+    candidate = (display_name_raw or "").strip()
+    if not candidate or "@" in candidate:
+        candidate = local_part
+    name = display_contributor_name(candidate) or local_part
     return name, addr
+
+
+def _build_email_sender_observation(
+    sender_name: str, sender_address: str
+) -> ContributorObservationBatch:
+    """Sender display (never the full address) + ``email_address`` key -> ``{author}``.
+
+    The normalized address is the exact identity key so two issues from the same
+    sender resolve to one contributor; it is a key only, never display/alias text.
+    """
+    batch, _truncated = build_observation(
+        {
+            "author": [
+                RawCreditEntry(
+                    credited_name=sender_name,
+                    identity_claims=(RawIdentityClaim("email_address", sender_address),),
+                )
+            ]
+        }
+    )
+    return batch
+
+
+def _apply_email_sender_credit(media_id: UUID, observation: ContributorObservationBatch) -> None:
+    """Run the fresh-session author mutation for a resolved email media id.
+
+    ``NOT_OBSERVED`` is a no-op. Safe to re-run on the duplicate path: the resolver
+    performs no DML when the persisted author facts already match (D-27).
+    """
+    replace_observed_role_slices(
+        target=MediaTarget(media_id),
+        observation=observation,
+        source="email",
+    )
 
 
 class EmailAcceptance:
@@ -232,6 +282,13 @@ def accept_email_message(
     if message_id is None:
         message_id = _synthesize_message_id(raw_body)
 
+    # Build the sender author observation up front so the author op runs on every
+    # path, including the duplicate short-circuit (D-27).
+    from_pair = _parse_from_header(msg)
+    author_observation: ContributorObservationBatch = (
+        _build_email_sender_observation(*from_pair) if from_pair is not None else NOT_OBSERVED
+    )
+
     # --- Dedupe at Media layer (AC-2: before any attempt is created) ---
     existing = db.execute(
         select(Media).where(
@@ -240,6 +297,10 @@ def accept_email_message(
         )
     ).scalar_one_or_none()
     if existing is not None:
+        # A first attempt may have crashed after the media commit but before the
+        # author op; the provider retry lands here. Re-run it (same Message-ID =>
+        # same observation => no DML) so the credit is never lost (D-27).
+        _apply_email_sender_credit(existing.id, author_observation)
         return EmailAcceptance(media_id=existing.id, outcome="duplicate")
 
     # --- Extract HTML and metadata ---
@@ -267,7 +328,6 @@ def accept_email_message(
         except Exception:
             pass
 
-    from_pair = _parse_from_header(msg)
     if from_pair is None:
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST,
@@ -306,6 +366,7 @@ def accept_email_message(
             )
         ).scalar_one_or_none()
         if raced is not None:
+            _apply_email_sender_credit(raced.id, author_observation)
             return EmailAcceptance(media_id=raced.id, outcome="duplicate")
         raise
 
@@ -348,6 +409,11 @@ def accept_email_message(
     library_entries.ensure_media_in_default_library(db, owner_user_id, media.id)
     db.commit()
 
+    # Fresh-session author op right after the media transaction commits, before
+    # upload/enqueue, so the sender credit survives a later storage failure and
+    # the duplicate-path retry converges (D-27).
+    _apply_email_sender_credit(media.id, author_observation)
+
     # Upload HTML to R2.
     storage_client = get_storage_client()
     try:
@@ -366,21 +432,6 @@ def accept_email_message(
                 error_message=str(exc),
             )
         return EmailAcceptance(media_id=media.id, outcome="accepted")
-
-    # Resolve sender contributor credit (authority='email' — strong identity, D-3).
-    replace_media_contributor_credits(
-        db,
-        media_id=media.id,
-        credits=[
-            {
-                "name": sender_name,
-                "role": "author",
-                "ordinal": 0,
-                "external_ids": [{"authority": "email", "external_key": sender_address}],
-            }
-        ],
-        source="email",
-    )
 
     # Enqueue ingest job (public spine wrapper; failure_stage='extract').
     enqueue_accepted_source_attempt(

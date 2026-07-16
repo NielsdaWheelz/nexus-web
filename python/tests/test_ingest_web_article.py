@@ -11,14 +11,23 @@ These tests use pytest-httpserver for deterministic HTTP fixtures.
 No live internet access in CI gating tests.
 """
 
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.db.models import Fragment, MediaKind, ProcessingStatus
+from nexus.db.models import Fragment, MediaKind, ProcessingStatus, ResourceMutation
+from nexus.services import contributors
+from nexus.services.contributor_taxonomy import (
+    NOT_OBSERVED,
+    ContributorObservation,
+    ObservedRoleSlices,
+)
 from nexus.services.media_source_ingest import accept_url_source
+from nexus.services.web_article_artifacts import delete_web_article_artifacts
+from tests.factories import create_test_media
 from tests.helpers import create_test_user_id
 from tests.reader_apparatus_corpus import (
     expected_counts,
@@ -26,6 +35,7 @@ from tests.reader_apparatus_corpus import (
     fixture_cases_by_real_media_contract,
     fixture_text,
 )
+from tests.utils.db import DirectSessionManager
 
 pytestmark = pytest.mark.integration
 
@@ -813,3 +823,142 @@ def _count_rows(db: Session, table: str, where: str, **params: object) -> int:
 def httpserver_listen_address():
     """Configure httpserver to listen on localhost."""
     return ("127.0.0.1", 0)  # Random available port
+
+
+# =============================================================================
+# Refresh keeps prior author facts (spec 2.4 refresh, AC 10, AC 13, spec 2.8)
+# =============================================================================
+
+
+class TestRefreshPreservesAuthorFacts:
+    """Regression for the re-ingest/refresh artifacts wipe: it must delete
+    content artifacts ONLY. Prior credits (all roles), the manual author pin,
+    and the media's author-edit replay memos survive the wipe — refresh keeps
+    the prior list until a post-commit observation replaces it (spec 2.4), a
+    byline-less re-fetch preserves it outright (AC 10), and a pinned author
+    slice survives every automatic author lane (AC 13)."""
+
+    def test_artifact_wipe_preserves_credits_pin_and_memos(self, direct_db: DirectSessionManager):
+        user_id = create_test_user_id()
+        with direct_db.session() as session:
+            _create_user(session, user_id)
+            media_id = create_test_media(session)
+            session.add(
+                Fragment(
+                    media_id=media_id,
+                    idx=0,
+                    html_sanitized="<p>old body</p>",
+                    canonical_text="old body",
+                    created_at=datetime.now(UTC),
+                )
+            )
+            session.commit()
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("resource_mutations", "user_id", user_id)
+
+        # Prior state: an automatic author + translator from an earlier parse …
+        contributors.replace_observed_role_slices(
+            target=contributors.MediaTarget(media_id),
+            observation=ObservedRoleSlices(
+                managed_roles=frozenset({"author", "translator"}),
+                credits=(
+                    ContributorObservation("Prior Author", "author", None, None),
+                    ContributorObservation("Prior Translator", "translator", None, None),
+                ),
+            ),
+            source="web_article_byline",
+        )
+        with direct_db.session() as session:
+            for contributor_id in session.execute(
+                text("SELECT DISTINCT contributor_id FROM contributor_credits WHERE media_id = :m"),
+                {"m": media_id},
+            ).scalars():
+                direct_db.register_cleanup("contributors", "id", contributor_id)
+                direct_db.register_cleanup("contributor_aliases", "contributor_id", contributor_id)
+                direct_db.register_cleanup(
+                    "contributor_external_ids", "contributor_id", contributor_id
+                )
+                direct_db.register_cleanup("contributor_credits", "contributor_id", contributor_id)
+
+        # … plus a manual pin and its author-edit replay memo (spec 2.8: the memo
+        # lives until the media is deleted, not until it is refreshed).
+        with direct_db.session() as session:
+            session.execute(
+                text("UPDATE media SET authors_manually_managed = true WHERE id = :m"),
+                {"m": media_id},
+            )
+            session.add(
+                ResourceMutation(
+                    user_id=user_id,
+                    mutation_scope=f"media:{media_id}:authors",
+                    client_mutation_id="cm-refresh-regression-1",
+                    request_hash="a" * 64,
+                    changed_lanes={},
+                    response_json={"authors": []},
+                )
+            )
+            session.commit()
+
+        # The refresh-shaped wipe (used by web re-ingest, source requeue, browser
+        # re-capture, and X refresh) runs inside the new source transaction.
+        with direct_db.session() as session:
+            delete_web_article_artifacts(
+                session,
+                owner_user_id=user_id,
+                media_id=media_id,
+                include_content_index=True,
+            )
+            session.commit()
+
+        def _facts(session) -> tuple[list[tuple[str, str]], bool, int]:
+            credits = session.execute(
+                text(
+                    "SELECT credited_name, role FROM contributor_credits"
+                    " WHERE media_id = :m ORDER BY ordinal"
+                ),
+                {"m": media_id},
+            ).fetchall()
+            pinned = session.execute(
+                text("SELECT authors_manually_managed FROM media WHERE id = :m"),
+                {"m": media_id},
+            ).scalar_one()
+            memos = session.execute(
+                text("SELECT count(*) FROM resource_mutations WHERE mutation_scope = :s"),
+                {"s": f"media:{media_id}:authors"},
+            ).scalar_one()
+            return [tuple(row) for row in credits], bool(pinned), int(memos)
+
+        prior = (
+            [("Prior Author", "author"), ("Prior Translator", "translator")],
+            True,
+            1,
+        )
+        with direct_db.session() as session:
+            fragment_count = session.execute(
+                text("SELECT count(*) FROM fragments WHERE media_id = :m"), {"m": media_id}
+            ).scalar_one()
+            assert int(fragment_count) == 0, "the wipe must still delete content artifacts"
+            assert _facts(session) == prior, "the wipe must not touch author facts"
+
+        # AC 10 at the refresh seam: the re-fetch had no byline -> NOT_OBSERVED
+        # preserves the prior slice it would previously have found already erased.
+        contributors.replace_observed_role_slices(
+            target=contributors.MediaTarget(media_id),
+            observation=NOT_OBSERVED,
+            source="web_article_byline",
+        )
+        with direct_db.session() as session:
+            assert _facts(session) == prior
+
+        # AC 13: the pin still holds after refresh — a re-fetched byline cannot
+        # displace the manual author slice (non-author roles stay lane-managed).
+        contributors.replace_observed_role_slices(
+            target=contributors.MediaTarget(media_id),
+            observation=ObservedRoleSlices(
+                managed_roles=frozenset({"author"}),
+                credits=(ContributorObservation("Refetched Author", "author", None, None),),
+            ),
+            source="web_article_byline",
+        )
+        with direct_db.session() as session:
+            assert _facts(session) == prior

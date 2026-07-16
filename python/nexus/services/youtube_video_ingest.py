@@ -14,7 +14,15 @@ from nexus.config import get_settings
 from nexus.db.models import Media, MediaKind, ProcessingStatus
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
-from nexus.services.contributor_credits import replace_media_contributor_credits
+from nexus.services.contributor_taxonomy import (
+    NOT_OBSERVED,
+    ContributorObservationBatch,
+    RawCreditEntry,
+    RawIdentityClaim,
+    build_observation,
+)
+from nexus.services.contributors import MediaTarget, replace_observed_role_slices
+from nexus.services.media_processing_state import mark_ready_for_reading
 from nexus.services.transcript_segments import normalize_transcript_segments
 from nexus.services.transcripts.current import (
     set_media_transcript_state,
@@ -95,8 +103,9 @@ def run_youtube_video_ingest(
         raise ApiError(ApiErrorCode.E_INGEST_FAILED, error_message)
 
     metadata = fetch_youtube_metadata(provider_video_id)
+    author_observation: ContributorObservationBatch = NOT_OBSERVED
     if metadata is not None:
-        _persist_youtube_metadata(db, media_id, metadata)
+        author_observation = _persist_youtube_metadata(db, media_id, metadata)
 
     try:
         transcript_result = fetch_youtube_transcript(provider_video_id)
@@ -107,13 +116,15 @@ def run_youtube_video_ingest(
 
         if transcript_status == "completed" and transcript_segments:
             now = datetime.now(UTC)
+            # Defer ready here unconditionally so the fresh-session author
+            # mutation lands before this media crosses ready (spec 2.4).
             write_current_transcript(
                 db,
                 media_id=media_id,
                 request_reason="episode_open",
                 transcript_coverage="full",
                 transcript_segments=transcript_segments,
-                mark_media_ready=mark_media_ready,
+                mark_media_ready=False,
                 now=now,
             )
             media = db.get(Media, media_id)
@@ -127,6 +138,20 @@ def run_youtube_video_ingest(
                 media.external_playback_url = watch_url
             media.updated_at = now
             db.commit()
+
+            replace_observed_role_slices(
+                target=MediaTarget(media_id),
+                observation=author_observation,
+                source="youtube_metadata",
+            )
+
+            # Direct callers own the ready transition; the source-attempt runner
+            # passes ``mark_media_ready=False`` and marks ready after the handler.
+            if mark_media_ready:
+                media = db.get(Media, media_id)
+                if media is not None:
+                    mark_ready_for_reading(db, media)
+                    db.commit()
             logger.info(
                 "youtube_video_ingest_success",
                 media_id=str(media_id),
@@ -164,6 +189,10 @@ def run_youtube_video_ingest(
                 else "Transcription failed"
             )
 
+        # Deliberate: the built author observation is dropped on transcript
+        # failure. The media never crosses ready (spec 2.4 gate holds), no lane
+        # applies author ops to failed media, and a later successful attempt
+        # rebuilds the observation from re-fetched metadata and converges.
         _mark_transcript_failed(db, media_id, error_code, error_message)
         logger.info(
             "youtube_video_ingest_failed",
@@ -260,6 +289,11 @@ def fetch_youtube_metadata(provider_video_id: str) -> dict[str, str] | None:
     channel_title = str(snippet.get("channelTitle") or "").strip()
     if channel_title:
         metadata["author"] = channel_title
+    # snippet.channelId is already in this response (no extra HTTP, spec 5); it
+    # is the exact youtube_channel identity key for the author observation.
+    channel_id = str(snippet.get("channelId") or "").strip()
+    if channel_id:
+        metadata["channel_id"] = channel_id
     published_at = str(snippet.get("publishedAt") or "").strip()
     if published_at:
         metadata["published_date"] = published_at
@@ -302,10 +336,18 @@ def _normalize_terminal_error_code(raw_value: Any) -> str | None:
     return ApiErrorCode.E_TRANSCRIPTION_FAILED.value
 
 
-def _persist_youtube_metadata(db: Session, media_id: UUID, metadata: dict[str, str]) -> None:
+def _persist_youtube_metadata(
+    db: Session, media_id: UUID, metadata: dict[str, str]
+) -> ContributorObservationBatch:
+    """Persist YouTube metadata fields and return the author observation.
+
+    Credits are no longer written here; the caller runs the fresh-session author
+    mutation after the source transaction commits. Absent channel title is
+    ``not_observed`` (no erase).
+    """
     media = db.get(Media, media_id)
     if media is None:
-        return
+        return NOT_OBSERVED
 
     title = metadata.get("title")
     if title and str(media.title or "").startswith("YouTube Video "):
@@ -326,23 +368,23 @@ def _persist_youtube_metadata(db: Session, media_id: UUID, metadata: dict[str, s
     author = metadata.get("author")
     if author and not media.publisher:
         media.publisher = author[:255]
-    replace_media_contributor_credits(
-        db,
-        media_id=media_id,
-        source="youtube_metadata",
-        credits=[
-            {
-                "name": author[:255],
-                "role": "author",
-                "ordinal": 0,
-                "source": "youtube_metadata",
-            }
-        ]
-        if author
-        else [],
-    )
 
     media.updated_at = datetime.now(UTC)
+    return _build_youtube_observation(author, metadata.get("channel_id"))
+
+
+def _build_youtube_observation(
+    channel_title: str | None, channel_id: str | None
+) -> ContributorObservationBatch:
+    if not channel_title:
+        return NOT_OBSERVED
+    claims = (RawIdentityClaim("youtube_channel", channel_id),) if channel_id else ()
+    batch, truncated = build_observation(
+        {"author": [RawCreditEntry(credited_name=channel_title, identity_claims=claims)]}
+    )
+    if truncated:
+        logger.info("youtube_author_truncated", truncated=truncated)
+    return batch
 
 
 def _mark_transcript_failed(db: Session, media_id: UUID, error_code: str, message: str) -> None:

@@ -211,7 +211,6 @@ def list_subscriptions(
                         JOIN contributors c ON c.id = cc.contributor_id
                         LEFT JOIN contributor_aliases ca ON ca.contributor_id = c.id
                         WHERE cc.podcast_id = p.id
-                          AND c.status NOT IN ('merged', 'tombstoned')
                           AND (
                                 cc.credited_name ILIKE :q_pattern
                                 OR c.display_name ILIKE :q_pattern

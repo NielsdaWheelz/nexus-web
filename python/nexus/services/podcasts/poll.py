@@ -25,6 +25,7 @@ from nexus.logging import get_logger
 from nexus.schemas.podcast import (
     PodcastSubscriptionSyncRefreshOut,
 )
+from nexus.services.contributors import MediaTarget, replace_observed_role_slices
 
 from ._normalize import (
     parse_iso_datetime,
@@ -574,7 +575,7 @@ def run_podcast_subscription_sync_now(
 
         sync_now = datetime.now(UTC)
         with transaction(db):
-            ingested_episode_count, reused_episode_count = sync_subscription_ingest(
+            ingest_result = sync_subscription_ingest(
                 db=db,
                 viewer_id=user_id,
                 podcast_id=podcast_id,
@@ -582,6 +583,24 @@ def run_podcast_subscription_sync_now(
                 selected_episodes=selected_episodes,
                 now=sync_now,
             )
+
+        # The ingest transaction is closed; now apply each touched episode's author
+        # slice through the facade in a fresh session (spec 2.4, D-16). This gates
+        # completion: a failed author op raises, the sync is marked failed below,
+        # and the JOB completes without a job-level retry (the failed result is not
+        # in failed_result_statuses and a retry could not re-claim a 'failed' sync
+        # anyway). Durable convergence (AC 9) is the next periodic poll — it
+        # re-marks any non-running sync 'pending' — or a user refresh; both re-run
+        # the sync, rebuild observations for reused episodes, and re-apply them,
+        # which the resolver's determinism + no-DML-when-unchanged make safe.
+        for media_id, observation in ingest_result.author_observations:
+            replace_observed_role_slices(
+                target=MediaTarget(media_id),
+                observation=observation,
+                source="rss",
+            )
+
+        with transaction(db):
             _mark_subscription_sync_completed(
                 db,
                 user_id=user_id,
@@ -592,8 +611,8 @@ def run_podcast_subscription_sync_now(
 
         return SubscriptionSyncResult(
             sync_status="source_limited" if source_limited else "complete",
-            ingested_episode_count=ingested_episode_count,
-            reused_episode_count=reused_episode_count,
+            ingested_episode_count=ingest_result.ingested_episode_count,
+            reused_episode_count=ingest_result.reused_episode_count,
             source_limited=source_limited,
         )
     except ApiError as exc:

@@ -18,17 +18,22 @@ from nexus.db.models import (
     ProcessingStatus,
 )
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
+from nexus.logging import get_logger
 from nexus.services.content_indexing import IndexOwner, delete_content_index
 from nexus.services.epub_ingest import (
     EpubExtractionError,
     EpubExtractionResult,
     extract_epub_artifacts,
 )
-from nexus.services.epub_metadata import persist_epub_metadata
+from nexus.services.epub_metadata import build_epub_author_observation, persist_epub_metadata
+from nexus.services.media_author_observation_seam import attach_author_observation
 from nexus.services.reader_apparatus import delete_media_apparatus
 from nexus.storage.client import get_storage_client
 
+logger = get_logger(__name__)
+
 _MAX_ERROR_MSG_LEN = 1000
+_EPUB_AUTHOR_SOURCE = "epub_opf"
 
 
 def confirm_ingest_for_viewer(
@@ -96,7 +101,7 @@ def materialize_epub_source(
     assert isinstance(result, EpubExtractionResult)
     persist_epub_metadata(db, media, result)
     db.flush()
-    return {
+    response: dict[str, object] = {
         "status": "success",
         "chapter_count": result.chapter_count,
         "toc_node_count": result.toc_node_count,
@@ -104,6 +109,11 @@ def materialize_epub_source(
         "title": result.title,
         "metadata_enrichment": True,
     }
+    observation, truncated = build_epub_author_observation(result)
+    if truncated:
+        logger.info("epub_author_truncation", media_id=str(media_id), truncated=truncated)
+    attach_author_observation(response, observation=observation, source=_EPUB_AUTHOR_SOURCE)
+    return response
 
 
 def delete_extraction_artifacts(db: Session, media_id: UUID) -> list[str]:

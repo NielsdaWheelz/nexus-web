@@ -128,6 +128,7 @@ include = [
     "nexus/services/image_proxy.py",
     "nexus/services/image_validation.py",
     "nexus/services/ingest_recovery.py",
+    "nexus/services/media_author_observation_seam.py",
     "nexus/services/media_intelligence.py",
     "nexus/services/media_processing_state.py",
     "nexus/services/message_trust_trails.py",

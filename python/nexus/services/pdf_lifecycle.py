@@ -11,6 +11,8 @@ from sqlalchemy.orm import Session
 
 from nexus.db.models import Media, ProcessingStatus
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
+from nexus.logging import get_logger
+from nexus.services.media_author_observation_seam import attach_author_observation
 from nexus.services.pdf_indexing import index_pdf_evidence
 from nexus.services.pdf_ingest import (
     PdfExtractionError,
@@ -18,10 +20,13 @@ from nexus.services.pdf_ingest import (
     PdfSourcePackageArtifact,
     extract_pdf_artifacts,
 )
-from nexus.services.pdf_metadata import persist_pdf_metadata
+from nexus.services.pdf_metadata import build_pdf_author_observation, persist_pdf_metadata
 from nexus.storage.client import get_storage_client
 
+logger = get_logger(__name__)
+
 _MAX_ERROR_MSG_LEN = 1000
+_PDF_AUTHOR_SOURCE = "pdf_metadata"
 
 
 def confirm_pdf_ingest(
@@ -107,6 +112,10 @@ def materialize_pdf_source(
     }
     if not result.has_text:
         response["warning_error_code"] = "E_PDF_TEXT_UNAVAILABLE"
+    observation, truncated = build_pdf_author_observation(result)
+    if truncated:
+        logger.info("pdf_author_truncation", media_id=str(media_id), truncated=truncated)
+    attach_author_observation(response, observation=observation, source=_PDF_AUTHOR_SOURCE)
     return response
 
 

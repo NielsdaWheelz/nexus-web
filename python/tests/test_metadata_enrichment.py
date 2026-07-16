@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 from nexus.config import Settings
 from nexus.llm_catalog import require_catalog_model
+from nexus.services.contributor_taxonomy import NOT_OBSERVED, ObservedRoleSlices
 from nexus.services.metadata_enrichment import (
     MetadataEnrichmentOutput,
     build_enrichment_prompt,
@@ -329,3 +330,73 @@ def test_merge_enrichment_overwrites_by_default():
     assert media.published_date == "2025-01"
     assert media.language == "fr"
     assert media.metadata_enriched_at is not None
+    # No authors in the payload: nothing to observe, nothing written.
+    assert result.author_observation is NOT_OBSERVED
+
+
+def _author_merge_media() -> SimpleNamespace:
+    return SimpleNamespace(
+        id="media-id",
+        title="Old Title",
+        publisher=None,
+        description=None,
+        published_date=None,
+        language=None,
+        metadata_enriched_at=None,
+        updated_at=None,
+    )
+
+
+def test_merge_enrichment_builds_author_observation_without_writing():
+    # merge_enrichment no longer writes credits (spec 2.4): it returns a typed
+    # observation the caller applies on a fresh session. Passing a bare
+    # SimpleNamespace as the db proves the author branch touches no database.
+    media = _author_merge_media()
+
+    result = merge_enrichment(
+        SimpleNamespace(),
+        media,
+        {"authors": ["Jane Doe", "  Ada  Lovelace  "]},
+    )
+
+    assert "authors" in result.accepted_fields
+    assert isinstance(result.author_observation, ObservedRoleSlices)
+    assert result.author_observation.managed_roles == frozenset({"author"})
+    assert [credit.credited_name for credit in result.author_observation.credits] == [
+        "Jane Doe",
+        "Ada Lovelace",
+    ]
+    assert all(credit.role == "author" for credit in result.author_observation.credits)
+    # An accepted author fact still stamps the enrichment timestamp.
+    assert media.metadata_enriched_at is not None
+
+
+def test_merge_enrichment_absent_authors_is_not_observed():
+    media = _author_merge_media()
+
+    result = merge_enrichment(SimpleNamespace(), media, {"title": "New Title"})
+
+    assert "authors" not in result.accepted_fields
+    assert result.author_observation is NOT_OBSERVED
+
+
+def test_merge_enrichment_empty_author_list_is_not_observed():
+    # An empty parse can never assert "no authors" for an automatic source (D-5);
+    # it maps to NOT_OBSERVED so prior credits are preserved downstream.
+    media = _author_merge_media()
+
+    result = merge_enrichment(SimpleNamespace(), media, {"authors": []})
+
+    assert "authors" not in result.accepted_fields
+    assert result.author_observation is NOT_OBSERVED
+
+
+def test_merge_enrichment_does_not_consult_media_author_pin():
+    # The pin is enforced by the facade, not here — merge_enrichment must not
+    # special-case it. The media object has no authors_manually_managed attribute,
+    # so any pin read would raise AttributeError.
+    media = _author_merge_media()
+
+    result = merge_enrichment(SimpleNamespace(), media, {"authors": ["Solo Author"]})
+
+    assert isinstance(result.author_observation, ObservedRoleSlices)

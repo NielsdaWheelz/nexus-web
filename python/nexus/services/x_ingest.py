@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from time import perf_counter
@@ -17,7 +18,13 @@ from nexus.db.models import Fragment, Media, MediaKind, ProcessingStatus
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError
 from nexus.logging import get_logger
 from nexus.services import library_entries
-from nexus.services.contributor_credits import replace_media_contributor_credits
+from nexus.services.contributor_taxonomy import (
+    ContributorObservationBatch,
+    RawCreditEntry,
+    RawIdentityClaim,
+    build_observation,
+)
+from nexus.services.contributors import MediaTarget, replace_observed_role_slices
 from nexus.services.fragment_blocks import FragmentBlockSpec, insert_fragment_blocks
 from nexus.services.media_processing_state import mark_ready_for_reading
 from nexus.services.metadata_dispatch import try_enqueue_metadata_enrichment
@@ -71,6 +78,46 @@ class _WebArticleIndexTarget:
     fragments: list[Fragment]
     reason: str
     language: str | None
+
+
+def _apply_x_author_observations(
+    observations: Sequence[tuple[UUID, ContributorObservationBatch, str]],
+) -> None:
+    """Fresh-session author mutation per materialized X media (spec 2.4).
+
+    Runs after the source transaction commits and before the handler returns, so
+    the terminal thread/post media crosses ready only after its author op lands.
+    A failure raises and fails the source attempt + media; recovery is the
+    user-facing source refresh (a crash instead leaves the attempt running and
+    the lease-expiry job retry re-runs the source work). Either path rebuilds
+    every observation — including reused quoted-post media — and converges.
+    """
+    for media_id, observation, source in observations:
+        replace_observed_role_slices(
+            target=MediaTarget(media_id), observation=observation, source=source
+        )
+
+
+def _build_x_author_observation(display_name: str, x_user_id: str) -> ContributorObservationBatch:
+    """Snapshot display name + ``x_user`` numeric-id key -> one ``{author}`` batch.
+
+    The numeric user id already captured on the snapshot is promoted to the exact
+    identity key (D-24); the X username/handle is never an identity key. An
+    invalid id is omitted by ``build_observation`` and the name still stands.
+    """
+    batch, truncated = build_observation(
+        {
+            "author": [
+                RawCreditEntry(
+                    credited_name=display_name,
+                    identity_claims=(RawIdentityClaim("x_user", x_user_id),),
+                )
+            ]
+        }
+    )
+    if truncated:
+        logger.info("x_author_truncated", truncated=truncated)
+    return batch
 
 
 def materialize_x_author_thread_media(
@@ -181,6 +228,10 @@ def _refresh_x_author_thread_media_for_viewer(
 
     now = datetime.now(UTC)
     created_index_targets: list[_WebArticleIndexTarget] = []
+    # (media_id, observation, source) tuples the source-attempt runner replaces
+    # via one fresh-session author mutation each, after the source transaction
+    # commits and before the media crosses ready (spec 2.4).
+    author_observations: list[tuple[UUID, ContributorObservationBatch, str]] = []
     quoted_media_ids: dict[str, UUID] = {}
     for quoted_id, quoted_post in snapshot.quoted_posts.items():
         quote_media, quote_fragment, quote_created = _create_or_reuse_x_snapshot_post_media(
@@ -192,6 +243,20 @@ def _refresh_x_author_thread_media_for_viewer(
             now=now,
         )
         quoted_media_ids[quoted_id] = quote_media.id
+        # Observe the quoted author on REUSE too, not just creation: a crash
+        # between the source commit and the author op would otherwise reuse the
+        # quoted media on retry (quote_created=False) and never re-append its
+        # observation, losing the author forever (AC 9). Re-application is free
+        # when unchanged (no-DML) and the facade respects a manual pin.
+        quoted_author = snapshot.users.get(quoted_post.author_id)
+        if quoted_author is not None:
+            author_observations.append(
+                (
+                    quote_media.id,
+                    _build_x_author_observation(quoted_author.name, quoted_author.id),
+                    "x_api_quoted_post",
+                )
+            )
         if quote_created and quote_fragment is not None:
             created_index_targets.append(
                 _WebArticleIndexTarget(
@@ -248,18 +313,12 @@ def _refresh_x_author_thread_media_for_viewer(
             prepared_fragment.fragment.id,
             prepared_fragment.fragment_blocks,
         )
-    replace_media_contributor_credits(
-        db,
-        media_id=media.id,
-        credits=[
-            {
-                "name": snapshot.author.name[:255],
-                "handle": snapshot.author.username[:255],
-                "role": "author",
-                "source": "x_api_author_thread",
-                "source_ref": {"media_id": str(media.id), "x_user_id": snapshot.author.id},
-            }
-        ],
+    author_observations.append(
+        (
+            media.id,
+            _build_x_author_observation(snapshot.author.name, snapshot.author.id),
+            "x_api_author_thread",
+        )
     )
     replace_media_apparatus(
         db,
@@ -318,6 +377,8 @@ def _refresh_x_author_thread_media_for_viewer(
         snapshot=snapshot,
     )
     db.commit()
+
+    _apply_x_author_observations(author_observations)
 
     return {
         "media_id": str(media.id),
@@ -423,19 +484,10 @@ def _refresh_x_post_media_for_viewer(
         prepared_fragment.fragment_blocks,
     )
     author = snapshot.users.get(snapshot.post.author_id)
+    author_observations: list[tuple[UUID, ContributorObservationBatch, str]] = []
     if author is not None:
-        replace_media_contributor_credits(
-            db,
-            media_id=media.id,
-            credits=[
-                {
-                    "name": author.name[:255],
-                    "handle": author.username[:255],
-                    "role": "author",
-                    "source": "x_api_post",
-                    "source_ref": {"media_id": str(media.id), "x_user_id": author.id},
-                }
-            ],
+        author_observations.append(
+            (media.id, _build_x_author_observation(author.name, author.id), "x_api_post")
         )
     replace_media_apparatus(
         db,
@@ -480,6 +532,8 @@ def _refresh_x_post_media_for_viewer(
         snapshot=snapshot,
     )
     db.commit()
+
+    _apply_x_author_observations(author_observations)
 
     return {
         "media_id": str(media.id),
@@ -571,21 +625,9 @@ def _create_or_reuse_x_snapshot_post_media(
         prepared_fragment.fragment.id,
         prepared_fragment.fragment_blocks,
     )
-    author = snapshot.users.get(post.author_id)
-    if author is not None:
-        replace_media_contributor_credits(
-            db,
-            media_id=media.id,
-            credits=[
-                {
-                    "name": author.name[:255],
-                    "handle": author.username[:255],
-                    "role": "author",
-                    "source": "x_api_quoted_post",
-                    "source_ref": {"media_id": str(media.id), "x_user_id": author.id},
-                }
-            ],
-        )
+    # The author observation for this quoted-post media (created OR reused) is
+    # built by the thread-refresh caller and applied post-commit via
+    # _apply_x_author_observations; no credit is written in this transaction.
     replace_media_apparatus(
         db,
         media_id=media.id,

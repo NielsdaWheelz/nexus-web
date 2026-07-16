@@ -18,6 +18,7 @@ from nexus.db.models import (
     Fragment,
     FragmentBlock,
     Media,
+    ProcessingStatus,
 )
 from nexus.errors import ApiErrorCode
 from nexus.services.epub_ingest import (
@@ -51,10 +52,12 @@ def _build_opf(
     spine_items: list[tuple[str, str, str]] | None = None,
     nav_id: str | None = None,
     ncx_id: str | None = None,
+    creators: list[str] | None = None,
 ) -> str:
     """Build an OPF package document.
 
     spine_items: [(manifest_id, href, media_type), ...]
+    creators: dc:creator display names, one element per author.
     """
     if spine_items is None:
         spine_items = [("ch1", "chapter1.xhtml", "application/xhtml+xml")]
@@ -76,6 +79,8 @@ def _build_opf(
     toc_attr = f' toc="{ncx_id}"' if ncx_id else ""
 
     title_el = f"    <dc:title>{title}</dc:title>" if title else ""
+    creator_els = "\n".join(f"    <dc:creator>{name}</dc:creator>" for name in (creators or []))
+    metadata_lines = "\n".join(line for line in (title_el, creator_els) if line)
 
     return f"""\
 <?xml version="1.0" encoding="UTF-8"?>
@@ -83,7 +88,7 @@ def _build_opf(
          xmlns:dc="http://purl.org/dc/elements/1.1/"
          version="3.0">
   <metadata>
-{title_el}
+{metadata_lines}
   </metadata>
   <manifest>
 {chr(10).join(manifest_lines)}
@@ -1038,3 +1043,149 @@ class TestEpubExtractCommitsArtifactsAtomically:
         assert _count_fragments(db_session, mid) == 0
         assert _count_fragment_blocks(db_session, mid) == 0
         assert _count_toc_nodes(db_session, mid) == 0
+
+
+class TestBuildEpubAuthorObservation:
+    """`build_epub_author_observation` — the EPUB `author` observation.
+
+    Each OPF `dc:creator` is one credited name; only semicolons split a single
+    creator string, so `Last, First` stays one name (D-31). Asserts observation
+    shape, not DB effect.
+    """
+
+    @staticmethod
+    def _observe(creators: list[str]):
+        from nexus.services.epub_metadata import build_epub_author_observation
+
+        return build_epub_author_observation(EpubExtractionResult(creators=creators))
+
+    def test_each_creator_is_one_name_comma_preserved(self):
+        from nexus.services.contributor_taxonomy import ObservedRoleSlices
+
+        batch, truncated = self._observe(["Herman Melville", "Melville, Herman"])
+        assert isinstance(batch, ObservedRoleSlices)
+        assert batch.managed_roles == frozenset({"author"})
+        assert [c.credited_name for c in batch.credits] == ["Herman Melville", "Melville, Herman"]
+        assert truncated == {}
+
+    def test_semicolon_inside_a_creator_splits(self):
+        from nexus.services.contributor_taxonomy import ObservedRoleSlices
+
+        batch, _ = self._observe(["Alice; Bob", "Carol"])
+        assert isinstance(batch, ObservedRoleSlices)
+        assert [c.credited_name for c in batch.credits] == ["Alice", "Bob", "Carol"]
+
+    def test_no_creators_is_not_observed(self):
+        from nexus.services.contributor_taxonomy import NotObserved
+
+        for creators in ([], ["", "   "]):
+            batch, truncated = self._observe(creators)
+            assert isinstance(batch, NotObserved)
+            assert truncated == {}
+
+
+class TestIngestEpubAuthorStep:
+    """The fresh-session author step wired into the EPUB task (D-13, spec 2.4).
+
+    The task and the facade's fresh author session share the test connection so
+    the author op's writes are visible and roll back with the test. Asserts the
+    order contract — ready only after the author op commits (AC 9) — and that the
+    automatic lane writes no ``resource_mutations`` (D-43).
+    """
+
+    @staticmethod
+    def _extracting_epub(db_session: Session, storage: FakeStorageClient, creators: list[str]):
+        epub = _make_epub(
+            {
+                "OEBPS/content.opf": _build_opf(
+                    spine_items=[("ch1", "chapter1.xhtml", "application/xhtml+xml")],
+                    creators=creators,
+                ),
+                "OEBPS/chapter1.xhtml": _build_chapter_xhtml("<p>Chapter One content here.</p>"),
+            },
+        )
+        mid = _create_media_with_epub(db_session, storage, epub)
+        db_session.execute(
+            text("UPDATE media SET processing_status = 'extracting' WHERE id = :id"),
+            {"id": mid},
+        )
+        db_session.flush()
+        return mid
+
+    @staticmethod
+    def _both_factories(db_session: Session):
+        factory = task_session_factory(db_session)
+        return (
+            patch("nexus.tasks.ingest_epub.get_session_factory", return_value=factory),
+            patch("nexus.services.contributors.get_session_factory", return_value=factory),
+        )
+
+    @staticmethod
+    def _credit_names(db_session: Session, media_id) -> list[str]:
+        return list(
+            db_session.execute(
+                text(
+                    "SELECT credited_name FROM contributor_credits "
+                    "WHERE media_id = :mid AND role = 'author' ORDER BY ordinal"
+                ),
+                {"mid": media_id},
+            ).scalars()
+        )
+
+    @staticmethod
+    def _mutation_count(db_session: Session) -> int:
+        return db_session.execute(text("SELECT count(*) FROM resource_mutations")).scalar_one()
+
+    def test_ingest_epub_persists_author_credits_and_marks_ready(self, db_session: Session):
+        storage = FakeStorageClient()
+        mid = self._extracting_epub(db_session, storage, ["Herman Melville", "Melville, Herman"])
+        before = self._mutation_count(db_session)
+
+        task_patch, facade_patch = self._both_factories(db_session)
+        with (
+            task_patch,
+            facade_patch,
+            patch("nexus.tasks.ingest_epub.get_storage_client", return_value=storage),
+        ):
+            from nexus.tasks.ingest_epub import ingest_epub
+
+            result = ingest_epub(str(mid))
+
+        assert result["status"] == "success"
+        db_session.expire_all()
+        assert db_session.get(Media, mid).processing_status == ProcessingStatus.ready_for_reading
+        # `Last, First` stays one name (D-31): two distinct creators, two credits.
+        assert self._credit_names(db_session, mid) == ["Herman Melville", "Melville, Herman"]
+        assert self._mutation_count(db_session) == before
+
+    def test_author_step_failure_gates_ready_and_writes_no_credits(self, db_session: Session):
+        # An author-step failure fails the attempt so the durable job retries;
+        # ready is never crossed and no credit is written (AC 9). Convergence of
+        # the retried author op is covered by the PDF lane test — the facade is
+        # shared and EPUB re-extraction is not idempotent at this task level.
+        storage = FakeStorageClient()
+        mid = self._extracting_epub(db_session, storage, ["Ada Lovelace"])
+        before = self._mutation_count(db_session)
+
+        from nexus.services import contributors
+
+        task_patch, facade_patch = self._both_factories(db_session)
+        with (
+            task_patch,
+            facade_patch,
+            patch("nexus.tasks.ingest_epub.get_storage_client", return_value=storage),
+            patch.object(
+                contributors,
+                "replace_observed_role_slices",
+                side_effect=RuntimeError("author boom"),
+            ),
+        ):
+            from nexus.tasks.ingest_epub import ingest_epub
+
+            with pytest.raises(RuntimeError):
+                ingest_epub(str(mid))
+
+        db_session.expire_all()
+        assert db_session.get(Media, mid).processing_status != ProcessingStatus.ready_for_reading
+        assert self._credit_names(db_session, mid) == []
+        assert self._mutation_count(db_session) == before
