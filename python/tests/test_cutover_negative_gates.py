@@ -1937,7 +1937,6 @@ _CONTRIBUTOR_SURFACE_ROOTS = (
     _PY_ROOT / "services" / "contributors.py",
     _PY_ROOT / "services" / "_contributor_identity.py",
     _PY_ROOT / "services" / "_contributor_credit_writes.py",
-    _PY_ROOT / "services" / "_contributor_replay.py",
     _PY_ROOT / "services" / "contributor_taxonomy.py",
     _PY_ROOT / "api" / "routes" / "contributors.py",
     _WEB_ROOT / "lib" / "contributors",
@@ -1951,7 +1950,6 @@ _AUTHOR_AGGREGATE_ROOTS = (
     _PY_ROOT / "services" / "contributors.py",
     _PY_ROOT / "services" / "_contributor_identity.py",
     _PY_ROOT / "services" / "_contributor_credit_writes.py",
-    _PY_ROOT / "services" / "_contributor_replay.py",
     _PY_ROOT / "services" / "contributor_taxonomy.py",
 )
 

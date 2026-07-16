@@ -25,6 +25,7 @@ dependencies = [
     "provider-runtime",
     "web-search-tool",
     "boto3>=1.43.7",
+    "uuid6>=2025.0.1",
 ]
 
 [project.optional-dependencies]
@@ -93,6 +94,7 @@ include = [
     "nexus/cli.py",
     "nexus/config.py",
     "nexus/errors.py",
+    "nexus/ids.py",
     "nexus/jobs/registry.py",
     "nexus/jobs/worker.py",
     "nexus/logging.py",
@@ -114,7 +116,6 @@ include = [
     "nexus/services/content_indexing.py",
     "nexus/services/_contributor_credit_writes.py",
     "nexus/services/_contributor_identity.py",
-    "nexus/services/_contributor_replay.py",
     "nexus/services/contributor_credits.py",
     "nexus/services/contributor_taxonomy.py",
     "nexus/services/contributors.py",
@@ -148,6 +149,7 @@ include = [
     "nexus/services/reader_navigation.py",
     "nexus/services/redact.py",
     "nexus/services/resource_graph",
+    "nexus/services/resource_mutation_replay.py",
     "nexus/services/retrieval_citation.py",
     "nexus/services/rss_transcript_fetch.py",
     "nexus/services/run_kit.py",

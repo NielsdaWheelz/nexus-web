@@ -1,11 +1,13 @@
 """Source-scanning guards for the author-aggregate ownership boundaries (spec §3, D-39).
 
 The aggregate is: the ``contributors`` facade, the visibly private
-``_contributor_identity`` / ``_contributor_credit_writes`` / ``_contributor_replay``
-modules, and the pure ``contributor_taxonomy`` leaf. These gates assert the
-structural invariants of the lightweight-author-deduplication cutover so a future
-edit that reintroduces a savepoint, an explicit lock, a random handle, a second
-credit-write path, or a session-taking mutation facade fails CI.
+``_contributor_identity`` / ``_contributor_credit_writes`` modules, and the pure
+``contributor_taxonomy`` leaf. Replay memos are shared cross-domain mechanics
+(``services/resource_mutation_replay``), not part of this aggregate. These
+gates assert the structural invariants of the lightweight-author-deduplication
+cutover so a future edit that reintroduces a savepoint, an explicit lock, a
+random handle, a second credit-write path, or a session-taking mutation facade
+fails CI.
 """
 
 import ast
@@ -23,7 +25,6 @@ AUTHOR_AGGREGATE = (
     "services/contributors.py",
     "services/_contributor_identity.py",
     "services/_contributor_credit_writes.py",
-    "services/_contributor_replay.py",
     "services/contributor_taxonomy.py",
 )
 
@@ -74,7 +75,7 @@ def test_facade_composes_private_modules_and_public_read_relation() -> None:
     for module in (
         "nexus.services._contributor_identity",
         "nexus.services._contributor_credit_writes",
-        "nexus.services._contributor_replay",
+        "nexus.services.resource_mutation_replay",
         "nexus.services.contributor_credits",
     ):
         assert f"from {module} import" in src, f"facade must compose {module}"
@@ -97,16 +98,17 @@ def test_private_author_modules_are_imported_only_by_the_facade() -> None:
     assert offenders == [], f"private author modules imported outside the facade: {offenders}"
 
 
-def test_replay_module_feeds_only_user_mutations() -> None:
-    # D-43 static half: _contributor_replay symbols appear only in the two
-    # replayable user mutations; automatic lanes never touch resource_mutations.
+def test_replay_helpers_feed_only_user_mutations() -> None:
+    # D-43 static half: resource_mutation_replay's lookup/record calls appear
+    # only in the two replayable user mutations; automatic lanes never touch
+    # resource_mutations.
     tree = ast.parse(_read("services/contributors.py"))
     replay_callers = {
         fn.name
         for fn in ast.walk(tree)
         if isinstance(fn, ast.FunctionDef)
         and any(
-            isinstance(node, ast.Name) and node.id in ("_lookup_memo", "_record_memo")
+            isinstance(node, ast.Name) and node.id in ("lookup_replay", "record_replay")
             for node in ast.walk(fn)
         )
     }
@@ -318,18 +320,3 @@ def test_credit_write_sql_only_in_credit_writes() -> None:
         if _CREDIT_WRITE_SQL_RE.search(src) and relative != "services/_contributor_credit_writes.py"
     )
     assert offenders == [], f"contributor_credits write SQL outside the writer: {offenders}"
-
-
-def test_replay_module_referenced_only_by_the_facade() -> None:
-    # D-43 static half: _contributor_replay is composed solely by the facade, so
-    # automatic lanes provably never reach the replay memo (they write no
-    # resource_mutations). The general private-module import gate covers this too;
-    # this is the named S9 assertion over every reference, not just imports.
-    offenders = [
-        relative
-        for relative, src in _nexus_sources().items()
-        if relative != "services/contributors.py"
-        and not relative.startswith("services/_contributor_replay")
-        and "_contributor_replay" in src
-    ]
-    assert offenders == [], f"_contributor_replay referenced outside the facade: {offenders}"

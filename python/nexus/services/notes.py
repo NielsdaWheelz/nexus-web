@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 from datetime import date, datetime
 from typing import Any, cast
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -21,7 +18,6 @@ from nexus.db.models import (
     Page,
     PinnedObjectRef,
     ResourceEdge,
-    ResourceMutation,
 )
 from nexus.db.retries import retry_serializable
 from nexus.errors import ApiError, ApiErrorCode, ConflictError, NotFoundError
@@ -52,6 +48,11 @@ from nexus.services.resource_graph.refs import (
 )
 from nexus.services.resource_graph.schemas import EdgeCreate
 from nexus.services.resource_items import surfaces, versions
+from nexus.services.resource_mutation_replay import (
+    canonical_json_bytes,
+    lookup_replay,
+    record_replay,
+)
 
 pm_doc_from_text = note_bodies.pm_doc_from_text
 pm_doc_from_markdown_projection = note_bodies.pm_doc_from_markdown_projection
@@ -195,6 +196,11 @@ def quick_capture(
     time_zone: str = "UTC",
 ) -> NoteBlockOut:
     local_date = request.local_date or _today_in_time_zone(time_zone)
+    request_bytes = canonical_json_bytes(request.model_dump(mode="json", by_alias=True))
+    # Resolved (and committed) before the retried op: it owns its own retry
+    # loop, and nesting two retry_serializable scopes would make it ambiguous
+    # which layer retries what (docs/rules/retries.md). Re-resolving on a
+    # retry would only re-find the same daily page.
     page, _stored_time_zone = _resolve_daily_page_with_retry(
         db,
         viewer_id,
@@ -202,58 +208,71 @@ def quick_capture(
         time_zone=time_zone,
     )
     scope = f"resource:{_page_ref(page.id).uri}:quick_capture"
-    response = _replay_note_response(db, viewer_id, scope, request.client_mutation_id, request)
-    if response is not None:
+
+    def op() -> NoteBlockOut:
+        replay = lookup_replay(
+            db,
+            viewer_id=viewer_id,
+            scope=scope,
+            client_mutation_id=request.client_mutation_id,
+            request_bytes=request_bytes,
+        )
+        if replay is not None:
+            return NoteBlockOut.model_validate(replay)
+
+        block = _upsert_note_body(db, viewer_id, request.id, request.body_pm_json)
+        source = _page_ref(page.id)
+        target = _note_ref(block.id)
+        if _ordered_edge_to_target(db, viewer_id, source, target) is None:
+            surface = surfaces.get_surface(db, viewer_id=viewer_id, source=source)
+            graph_adjacency.replace_ordered_targets(
+                db,
+                user_id=viewer_id,
+                source=source,
+                targets=[
+                    graph_adjacency.OrderedTarget(
+                        target=ResourceRef(
+                            scheme=cast(ResourceScheme, item.target.scheme),
+                            id=item.target.id,
+                        ),
+                        source_order_key=item.source_order_key,
+                    )
+                    for item in surface.ordered_items
+                ]
+                + [
+                    graph_adjacency.OrderedTarget(
+                        target=target,
+                        source_order_key=_next_order_key(db, viewer_id, source),
+                    )
+                ],
+            )
+            _bump_version(db, viewer_id, source, "outgoing_edges")
+        enqueue_note_reindex(db, note_block_id=block.id, reason="quick_capture")
+        response = NoteBlockOut(
+            id=block.id,
+            parent_block_id=None,
+            order_key=None,
+            body_pm_json=block.body_pm_json,
+            body_text=block.body_text,
+            created_at=block.created_at,
+            updated_at=block.updated_at,
+            version_by_lane=versions.versions_for_ref(
+                db, viewer_id=viewer_id, ref=_note_ref(block.id)
+            ),
+        )
+        record_replay(
+            db,
+            viewer_id=viewer_id,
+            scope=scope,
+            client_mutation_id=request.client_mutation_id,
+            request_bytes=request_bytes,
+            response_json=response.model_dump(mode="json", by_alias=True),
+            changed_lanes={scope: True},
+        )
+        db.commit()
         return response
 
-    block = _upsert_note_body(db, viewer_id, request.id, request.body_pm_json)
-    source = _page_ref(page.id)
-    target = _note_ref(block.id)
-    if _ordered_edge_to_target(db, viewer_id, source, target) is None:
-        surface = surfaces.get_surface(db, viewer_id=viewer_id, source=source)
-        graph_adjacency.replace_ordered_targets(
-            db,
-            user_id=viewer_id,
-            source=source,
-            targets=[
-                graph_adjacency.OrderedTarget(
-                    target=ResourceRef(
-                        scheme=cast(ResourceScheme, item.target.scheme),
-                        id=item.target.id,
-                    ),
-                    source_order_key=item.source_order_key,
-                )
-                for item in surface.ordered_items
-            ]
-            + [
-                graph_adjacency.OrderedTarget(
-                    target=target,
-                    source_order_key=_next_order_key(db, viewer_id, source),
-                )
-            ],
-        )
-        _bump_version(db, viewer_id, source, "outgoing_edges")
-    enqueue_note_reindex(db, note_block_id=block.id, reason="quick_capture")
-    response = NoteBlockOut(
-        id=block.id,
-        parent_block_id=None,
-        order_key=None,
-        body_pm_json=block.body_pm_json,
-        body_text=block.body_text,
-        created_at=block.created_at,
-        updated_at=block.updated_at,
-        version_by_lane=versions.versions_for_ref(db, viewer_id=viewer_id, ref=_note_ref(block.id)),
-    )
-    _record_mutation(
-        db,
-        viewer_id,
-        scope,
-        request.client_mutation_id,
-        request,
-        response.model_dump(mode="json", by_alias=True),
-    )
-    db.commit()
-    return response
+    return retry_serializable(db, "quick_capture", op)
 
 
 def append_note_block_to_page(
@@ -360,50 +379,65 @@ def set_highlight_note_body_pm_json(
     body_pm_json: dict[str, Any],
     client_mutation_id: str,
 ) -> NoteBlockOut:
-    get_highlight_for_visible_read_or_404(db, viewer_id, highlight_id)
     request_payload = {"blockId": str(block_id), "bodyPmJson": body_pm_json}
     scope = f"highlight_note:{highlight_id}"
-    replay = _replay_note_response(db, viewer_id, scope, client_mutation_id, request_payload)
-    if replay is not None:
-        return replay
+    request_bytes = canonical_json_bytes(request_payload)
 
-    existing = graph_highlight_notes.first_note_block_for_highlight(db, viewer_id, highlight_id)
-    if existing is not None and existing.id != block_id:
-        raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Highlight note block id mismatch")
-
-    block = _upsert_note_body(db, viewer_id, block_id, body_pm_json)
-    enqueue_note_reindex(db, note_block_id=block.id, reason="highlight_note")
-    if existing is None:
-        create_edge(
+    def op() -> NoteBlockOut:
+        # D-44 order: visibility (404) before replay lookup, on every attempt.
+        get_highlight_for_visible_read_or_404(db, viewer_id, highlight_id)
+        replay = lookup_replay(
             db,
             viewer_id=viewer_id,
-            input=EdgeCreate(
-                source=ResourceRef(scheme="highlight", id=highlight_id),
-                target=_note_ref(block.id),
-                kind="context",
-                origin="highlight_note",
+            scope=scope,
+            client_mutation_id=client_mutation_id,
+            request_bytes=request_bytes,
+        )
+        if replay is not None:
+            return NoteBlockOut.model_validate(replay)
+
+        existing = graph_highlight_notes.first_note_block_for_highlight(db, viewer_id, highlight_id)
+        if existing is not None and existing.id != block_id:
+            raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Highlight note block id mismatch")
+
+        block = _upsert_note_body(db, viewer_id, block_id, body_pm_json)
+        enqueue_note_reindex(db, note_block_id=block.id, reason="highlight_note")
+        if existing is None:
+            create_edge(
+                db,
+                viewer_id=viewer_id,
+                input=EdgeCreate(
+                    source=ResourceRef(scheme="highlight", id=highlight_id),
+                    target=_note_ref(block.id),
+                    kind="context",
+                    origin="highlight_note",
+                ),
+            )
+        response = NoteBlockOut(
+            id=block.id,
+            parent_block_id=None,
+            order_key=None,
+            body_pm_json=block.body_pm_json,
+            body_text=block.body_text,
+            created_at=block.created_at,
+            updated_at=block.updated_at,
+            version_by_lane=versions.versions_for_ref(
+                db, viewer_id=viewer_id, ref=_note_ref(block.id)
             ),
         )
-    response = NoteBlockOut(
-        id=block.id,
-        parent_block_id=None,
-        order_key=None,
-        body_pm_json=block.body_pm_json,
-        body_text=block.body_text,
-        created_at=block.created_at,
-        updated_at=block.updated_at,
-        version_by_lane=versions.versions_for_ref(db, viewer_id=viewer_id, ref=_note_ref(block.id)),
-    )
-    _record_mutation(
-        db,
-        viewer_id,
-        scope,
-        client_mutation_id,
-        request_payload,
-        response.model_dump(mode="json", by_alias=True),
-    )
-    db.commit()
-    return response
+        record_replay(
+            db,
+            viewer_id=viewer_id,
+            scope=scope,
+            client_mutation_id=client_mutation_id,
+            request_bytes=request_bytes,
+            response_json=response.model_dump(mode="json", by_alias=True),
+            changed_lanes={scope: True},
+        )
+        db.commit()
+        return response
+
+    return retry_serializable(db, "set_highlight_note_body_pm_json", op)
 
 
 def delete_highlight_note(
@@ -619,54 +653,3 @@ def _ordered_edge_to_target(
             ResourceEdge.source_order_key.is_not(None),
         )
     )
-
-
-def _replay_note_response(
-    db: Session,
-    viewer_id: UUID,
-    scope: str,
-    client_mutation_id: str,
-    request_payload: object,
-) -> NoteBlockOut | None:
-    replay = db.scalar(
-        select(ResourceMutation).where(
-            ResourceMutation.user_id == viewer_id,
-            ResourceMutation.mutation_scope == scope,
-            ResourceMutation.client_mutation_id == client_mutation_id,
-        )
-    )
-    if replay is None:
-        return None
-    if replay.request_hash != _hash_payload(request_payload):
-        raise ConflictError(
-            ApiErrorCode.E_IDEMPOTENCY_KEY_REPLAY_MISMATCH,
-            "Resource mutation id was reused with a different request",
-        )
-    return NoteBlockOut.model_validate(replay.response_json)
-
-
-def _record_mutation(
-    db: Session,
-    viewer_id: UUID,
-    scope: str,
-    client_mutation_id: str,
-    request_payload: object,
-    response_json: dict[str, object],
-) -> None:
-    db.add(
-        ResourceMutation(
-            user_id=viewer_id,
-            mutation_scope=scope,
-            client_mutation_id=client_mutation_id,
-            request_hash=_hash_payload(request_payload),
-            changed_lanes={scope: True},
-            response_json=response_json,
-        )
-    )
-
-
-def _hash_payload(payload: object) -> str:
-    if isinstance(payload, BaseModel):
-        payload = payload.model_dump(mode="json", by_alias=True)
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
