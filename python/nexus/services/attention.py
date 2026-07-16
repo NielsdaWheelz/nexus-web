@@ -1,15 +1,16 @@
-"""Attention ledger — sole writer of ``reading_sessions`` and
-``consumption_overrides`` and sole derivation owner of read-state.
+"""Attention ledger — sole writer of ``reading_sessions`` and sole owner of the
+document-session dwell aggregate the consumption projection consumes.
 
-Read-state derivation lives here (``consumption_state``) and nowhere else; it
-reads only the two ledger tables — the pre-cutover resume/listening stores are
-seeded once by the migration and never consulted again (hard-cutover doctrine).
-Session continuity is a 30-minute gap rule on ``last_active_at`` serialized by
-``FOR UPDATE`` on the open session row.
+Attention no longer owns explicit read-state overrides: the consumption package
+(``services/consumption/_state_store.py``) is the sole writer and reader of the
+explicit read-state override table (spec lectern-player-lifecycle-hard-cutover.md
+§3). Attention exposes only its narrowed session aggregates + recency to that
+projection. Session continuity is a 30-minute gap rule on ``last_active_at``
+serialized by ``FOR UPDATE`` on the open session row.
 """
 
 from dataclasses import dataclass
-from typing import cast
+from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import bindparam, text
@@ -19,19 +20,15 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import can_read_media
 from nexus.db.session import transaction
 from nexus.errors import ApiErrorCode, NotFoundError
-from nexus.schemas.attention import AttentionBlock, ConsumptionStateOut
-from nexus.schemas.media import MediaReadState
+from nexus.schemas.attention import AttentionBlock
 
 # Product constant, not config (D-3): two saves > 30 minutes apart open separate
 # reading episodes.
 ATTENTION_SESSION_GAP_SECONDS = 1800
-# A single session at/above this dwell reads "in progress".
-SESSION_DWELL_IN_PROGRESS_MS = 30_000
-# Total dwell across sessions at/above this reads "finished" regardless of
-# progression (a deliberate floor for long-form skims).
-DOC_DWELL_FINISHED_MS = 120_000
-# Committed progression at/above this reads "finished".
-FINISHED_PROGRESSION = 0.95
+# The read-state thresholds (session/total dwell, progression) moved to the
+# consumption projection (services/consumption/_projection.py), which now owns the
+# combined explicit + listening + session derivation. Attention exposes only the
+# raw session aggregates below.
 
 _INSERT_SESSION_SQL = text("""
     INSERT INTO reading_sessions (
@@ -137,114 +134,6 @@ def record_attention_in_txn(
     )
 
 
-def set_consumption_override(
-    db: Session,
-    viewer_id: UUID,
-    media_id: UUID,
-    status: str,
-) -> None:
-    """Upsert the explicit read-state override for (viewer, media)."""
-    with transaction(db):
-        if not can_read_media(db, viewer_id, media_id):
-            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-        db.execute(
-            text("""
-                INSERT INTO consumption_overrides (user_id, media_id, status)
-                VALUES (:user_id, :media_id, :status)
-                ON CONFLICT (user_id, media_id)
-                DO UPDATE SET status = EXCLUDED.status, created_at = now()
-            """),
-            {"user_id": viewer_id, "media_id": media_id, "status": status},
-        )
-
-
-def delete_consumption_override(
-    db: Session,
-    viewer_id: UUID,
-    media_id: UUID,
-) -> None:
-    """Remove the override for (viewer, media); idempotent (204 either way)."""
-    with transaction(db):
-        if not can_read_media(db, viewer_id, media_id):
-            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-        db.execute(
-            text("""
-                DELETE FROM consumption_overrides
-                WHERE user_id = :user_id AND media_id = :media_id
-            """),
-            {"user_id": viewer_id, "media_id": media_id},
-        )
-
-
-def consumption_state(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    media_ids: list[UUID],
-) -> dict[UUID, ConsumptionStateOut]:
-    """Derive read-state for a batch of media. Override wins; else session
-    aggregate; else unread. Two queries total, no legacy table reads."""
-    if not media_ids:
-        return {}
-
-    result: dict[UUID, ConsumptionStateOut] = {
-        media_id: ConsumptionStateOut(status="unread", progress_fraction=None)
-        for media_id in media_ids
-    }
-
-    override_rows = db.execute(
-        text("""
-            SELECT media_id, status
-            FROM consumption_overrides
-            WHERE user_id = :viewer_id AND media_id = ANY(:ids)
-        """),
-        {"viewer_id": viewer_id, "ids": media_ids},
-    ).fetchall()
-    overridden: set[UUID] = set()
-    for row in override_rows:
-        media_id = UUID(str(row[0]))
-        overridden.add(media_id)
-        # consumption_overrides.status is CHECK-constrained to ('unread', 'finished').
-        result[media_id] = ConsumptionStateOut(
-            status=cast(MediaReadState, row[1]), progress_fraction=None
-        )
-
-    remaining = [media_id for media_id in media_ids if media_id not in overridden]
-    if not remaining:
-        return result
-
-    agg_rows = db.execute(
-        text("""
-            SELECT
-                media_id,
-                MAX(max_progression) AS max_progression,
-                COALESCE(SUM(dwell_ms), 0) AS total_dwell_ms,
-                COALESCE(MAX(dwell_ms), 0) AS max_session_dwell_ms
-            FROM reading_sessions
-            WHERE user_id = :viewer_id AND media_id = ANY(:ids)
-            GROUP BY media_id
-        """),
-        {"viewer_id": viewer_id, "ids": remaining},
-    ).fetchall()
-    for row in agg_rows:
-        media_id = UUID(str(row[0]))
-        max_progression = float(row[1]) if row[1] is not None else None
-        total_dwell_ms = int(row[2])
-        max_session_dwell_ms = int(row[3])
-
-        if (
-            max_progression is not None and max_progression >= FINISHED_PROGRESSION
-        ) or total_dwell_ms >= DOC_DWELL_FINISHED_MS:
-            result[media_id] = ConsumptionStateOut(status="finished", progress_fraction=None)
-        elif max_session_dwell_ms >= SESSION_DWELL_IN_PROGRESS_MS:
-            result[media_id] = ConsumptionStateOut(
-                status="in_progress", progress_fraction=max_progression
-            )
-        # else: leave the default unread.
-
-    return result
-
-
 @dataclass(frozen=True)
 class SessionAggregate:
     """Narrowed reading-session aggregate the consumption projection consumes."""
@@ -286,6 +175,41 @@ def session_aggregates(
         )
         for row in rows
     }
+
+
+def reading_recency(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    media_ids: list[UUID],
+) -> dict[UUID, datetime]:
+    """Per-media document-reading recency (MAX ``last_active_at``). Keeps
+    ``reading_sessions`` reads inside attention; the media projection uses this for
+    a document's ``last_engaged_at``."""
+    if not media_ids:
+        return {}
+    rows = db.execute(
+        text("""
+            SELECT media_id, MAX(last_active_at)
+            FROM reading_sessions
+            WHERE user_id = :viewer_id AND media_id = ANY(:ids)
+            GROUP BY media_id
+        """),
+        {"viewer_id": viewer_id, "ids": media_ids},
+    ).fetchall()
+    return {UUID(str(row[0])): row[1] for row in rows}
+
+
+def reading_recency_subquery_sql(*, user_param: str, media_expr: str) -> str:
+    """Scalar subquery -> MAX ``last_active_at`` of the viewer's reading sessions for
+    ``media_expr``. Composed by adopters (e.g. library recency) so ``reading_sessions``
+    reads stay inside attention."""
+    return f"""(
+        SELECT MAX(rs_recency.last_active_at)
+        FROM reading_sessions rs_recency
+        WHERE rs_recency.user_id = {user_param}
+          AND rs_recency.media_id = {media_expr}
+    )"""
 
 
 def delete_media_state(db: Session, media_id: UUID) -> None:

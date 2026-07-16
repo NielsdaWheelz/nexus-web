@@ -1538,14 +1538,17 @@ class TestListLibraryMedia:
             session.commit()
 
         direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("reading_sessions", "media_id", media_id)
-        direct_db.register_cleanup("podcast_listening_states", "media_id", media_id)
         direct_db.register_cleanup("podcast_subscriptions", "podcast_id", podcast_id)
         direct_db.register_cleanup("podcast_episode_chapters", "media_id", media_id)
         direct_db.register_cleanup("media_transcript_states", "media_id", media_id)
         direct_db.register_cleanup("podcast_episodes", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
         direct_db.register_cleanup("podcasts", "id", podcast_id)
+        # Registered LAST so LIFO teardown deletes these BEFORE their media: migration
+        # 0181 made the reading_sessions/podcast_listening_states -> media FKs
+        # non-cascading, so they no longer disappear with the media row.
+        direct_db.register_cleanup("reading_sessions", "media_id", media_id)
+        direct_db.register_cleanup("podcast_listening_states", "media_id", media_id)
 
         add_resp = auth_client.post(
             f"/libraries/{library_id}/media",

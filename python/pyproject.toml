@@ -112,7 +112,7 @@ include = [
     "nexus/services/conversation_branches.py",
     "nexus/services/chat_context_refs.py",
     "nexus/services/chat_prompt.py",
-    "nexus/services/consumption_queue.py",
+    "nexus/services/consumption",
     "nexus/services/content_indexing.py",
     "nexus/services/_contributor_credit_writes.py",
     "nexus/services/_contributor_identity.py",

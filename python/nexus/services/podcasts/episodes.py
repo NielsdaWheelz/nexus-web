@@ -16,6 +16,7 @@ from nexus.errors import (
 )
 from nexus.schemas.media import MediaOut
 from nexus.services import media as media_service
+from nexus.services.consumption import service as consumption_service
 
 PODCAST_EPISODE_STATES = {"all", "unplayed", "in_progress", "played"}
 PODCAST_EPISODE_SORT_OPTIONS = {"newest", "oldest", "duration_asc", "duration_desc"}
@@ -99,19 +100,24 @@ def list_podcast_episodes_for_viewer(
                     pe.media_id,
                     pe.published_at,
                     pe.duration_seconds,
-                    CASE
-                        WHEN pls.is_completed IS TRUE THEN 'played'
-                        WHEN COALESCE(pls.position_ms, 0) > 0 THEN 'in_progress'
-                        ELSE 'unplayed'
-                    END AS episode_state
+                    {
+                    consumption_service.episode_state_case_sql(
+                        listening_alias="pls", override_alias="co", episode_alias="pe"
+                    )
+                } AS episode_state
                 FROM podcast_episodes pe
                 JOIN visible_media vm
                   ON vm.media_id = pe.media_id
                 JOIN media m
                   ON m.id = pe.media_id
-                LEFT JOIN podcast_listening_states pls
-                  ON pls.user_id = :viewer_id
-                 AND pls.media_id = pe.media_id
+                {
+                    consumption_service.episode_state_joins_sql(
+                        user_param=":viewer_id",
+                        media_expr="pe.media_id",
+                        listening_alias="pls",
+                        override_alias="co",
+                    )
+                }
                 WHERE {" AND ".join(where_clauses)}
             )
             SELECT media_id, episode_state

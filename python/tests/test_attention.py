@@ -13,6 +13,7 @@ from sqlalchemy import text
 from nexus.db.models import Media, MediaKind, ProcessingStatus
 from nexus.schemas.attention import AttentionBlock
 from nexus.services import attention
+from nexus.services.consumption import service as consumption_service
 from tests.factories import add_library_entry_only, create_test_library
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
@@ -93,10 +94,12 @@ def _session_rows(direct_db: DirectSessionManager, user_id: UUID, media_id: UUID
 
 
 def _consumption(direct_db: DirectSessionManager, user_id: UUID, media_id: UUID):
+    # Read-state is now derived by the consumption projection (docs read attention's
+    # session aggregates); attention no longer owns read-state.
     with direct_db.session() as session:
-        return attention.consumption_state(session, viewer_id=user_id, media_ids=[media_id])[
-            media_id
-        ]
+        return consumption_service.media_read_states(
+            session, viewer_id=user_id, media_ids=[media_id]
+        )[media_id]
 
 
 class TestRecordAttention:
@@ -193,29 +196,29 @@ class TestRecordAttention:
 class TestConsumptionState:
     def test_unread_with_no_sessions(self, direct_db: DirectSessionManager):
         user_id, media_id = _seed_user_and_media(direct_db)
-        assert _consumption(direct_db, user_id, media_id).status == "unread"
+        assert _consumption(direct_db, user_id, media_id).state == "unread"
 
     def test_finished_from_progression(self, direct_db: DirectSessionManager):
         user_id, media_id = _seed_user_and_media(direct_db)
         _record(direct_db, user_id, media_id, dwell=5_000, progression=0.96)
-        assert _consumption(direct_db, user_id, media_id).status == "finished"
+        assert _consumption(direct_db, user_id, media_id).state == "finished"
 
     def test_finished_from_total_dwell(self, direct_db: DirectSessionManager):
         user_id, media_id = _seed_user_and_media(direct_db)
         _record(direct_db, user_id, media_id, dwell=130_000, progression=0.1)
-        assert _consumption(direct_db, user_id, media_id).status == "finished"
+        assert _consumption(direct_db, user_id, media_id).state == "finished"
 
     def test_in_progress_from_session_dwell(self, direct_db: DirectSessionManager):
         user_id, media_id = _seed_user_and_media(direct_db)
         _record(direct_db, user_id, media_id, dwell=35_000, progression=0.4)
         state = _consumption(direct_db, user_id, media_id)
-        assert state.status == "in_progress"
+        assert state.state == "in_progress"
         assert state.progress_fraction == pytest.approx(0.4, abs=1e-6)
 
     def test_short_dwell_stays_unread(self, direct_db: DirectSessionManager):
         user_id, media_id = _seed_user_and_media(direct_db)
         _record(direct_db, user_id, media_id, dwell=10_000, progression=None)
-        assert _consumption(direct_db, user_id, media_id).status == "unread"
+        assert _consumption(direct_db, user_id, media_id).state == "unread"
 
     def test_override_wins_over_session(self, direct_db: DirectSessionManager):
         user_id, media_id = _seed_user_and_media(direct_db)
@@ -230,8 +233,10 @@ class TestConsumptionState:
             )
             session.commit()
         state = _consumption(direct_db, user_id, media_id)
-        assert state.status == "unread"
-        assert state.progress_fraction is None
+        # New model: an explicit override changes STATE only; the derived progress
+        # fraction stays as-is (spec §5.2 / consumption projection).
+        assert state.state == "unread"
+        assert state.progress_fraction == pytest.approx(1.0, abs=1e-6)
 
 
 class TestAttentionOnDay:
@@ -257,81 +262,10 @@ class TestAttentionOnDay:
         assert pairs == [(media_id, 100_000)]
 
 
-class TestConsumptionOverrideRoute:
-    def _add_media_to_user_library(self, auth_client, user_id: UUID, media_id: UUID) -> None:
-        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
-        library_id = me_resp.json()["data"]["default_library_id"]
-        auth_client.post(
-            f"/libraries/{library_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_id),
-        )
-
-    def test_post_and_delete_override(self, auth_client, direct_db: DirectSessionManager):
-        user_id = create_test_user_id()
-        media_id = uuid4()
-        with direct_db.session() as session:
-            session.add(
-                Media(
-                    id=media_id,
-                    kind=MediaKind.web_article.value,
-                    title="Override Route Media",
-                    processing_status=ProcessingStatus.ready_for_reading,
-                )
-            )
-            session.commit()
-        direct_db.register_cleanup("media", "id", media_id)
-        direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("consumption_overrides", "media_id", media_id)
-        direct_db.register_cleanup("reading_sessions", "media_id", media_id)
-
-        self._add_media_to_user_library(auth_client, user_id, media_id)
-
-        post_resp = auth_client.post(
-            f"/media/{media_id}/consumption-override",
-            json={"status": "finished"},
-            headers=auth_headers(user_id),
-        )
-        assert post_resp.status_code == 204
-
-        with direct_db.session() as session:
-            state = attention.consumption_state(session, viewer_id=user_id, media_ids=[media_id])
-        assert state[media_id].status == "finished"
-
-        delete_resp = auth_client.delete(
-            f"/media/{media_id}/consumption-override",
-            headers=auth_headers(user_id),
-        )
-        assert delete_resp.status_code == 204
-
-        with direct_db.session() as session:
-            state = attention.consumption_state(session, viewer_id=user_id, media_ids=[media_id])
-        assert state[media_id].status == "unread"
-
-    def test_delete_is_idempotent(self, auth_client, direct_db: DirectSessionManager):
-        user_id = create_test_user_id()
-        media_id = uuid4()
-        with direct_db.session() as session:
-            session.add(
-                Media(
-                    id=media_id,
-                    kind=MediaKind.web_article.value,
-                    title="Idempotent Override Media",
-                    processing_status=ProcessingStatus.ready_for_reading,
-                )
-            )
-            session.commit()
-        direct_db.register_cleanup("media", "id", media_id)
-        direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("consumption_overrides", "media_id", media_id)
-
-        self._add_media_to_user_library(auth_client, user_id, media_id)
-
-        resp = auth_client.delete(
-            f"/media/{media_id}/consumption-override",
-            headers=auth_headers(user_id),
-        )
-        assert resp.status_code == 204
+# The explicit read-state override is no longer an attention route: it moved to the
+# consumption command port (SetUnread / EnsureMediaFinished), covered by
+# tests/test_consumption_commands.py. The old /media/{id}/consumption-override route
+# is deleted (lectern-player-lifecycle-hard-cutover.md §7).
 
 
 class TestReaderAttentionRoute:

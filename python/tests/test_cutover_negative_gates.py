@@ -1700,32 +1700,39 @@ def test_no_reader_connections_surface():
 
 
 # =============================================================================
-# Attention ledger hard cutover: read-state derivation is consolidated into
-# services.attention; the old enrich functions are gone; attention.py holds no
-# legacy-table fallback (attention-ledger-hard-cutover.md §13)
+# Attention ledger cutover, superseded by lectern-player-lifecycle-hard-cutover.md
+# §3: read-state derivation moved OUT of attention into the consumption projection;
+# attention is now the sole writer of reading_sessions ONLY and no longer touches
+# consumption_overrides. The old enrich functions remain gone.
 # =============================================================================
 
 _ATTENTION_SERVICE = _PY_ROOT / "services" / "attention.py"
 
 
 def test_enrich_media_read_state_absent_from_production():
-    # G-1: the collection read-state owner is now consumption_state.
+    # The collection read-state owner is now the consumption projection.
     hits = _grep(r"enrich_media_read_state", _PY_ROOT, _WEB_ROOT)
     assert not hits, f"enrich_media_read_state survives in production:\n{_fmt(hits)}"
 
 
 def test_doc_and_audio_read_state_helpers_absent_from_production():
-    # G-2: the per-medium derivation helpers are replaced by consumption_state.
+    # The per-medium derivation helpers are replaced by the consumption projection.
     hits = _grep(r"_doc_read_state|_audio_read_state", _PY_ROOT, _WEB_ROOT)
     assert not hits, f"_doc_read_state/_audio_read_state survive in production:\n{_fmt(hits)}"
 
 
 def test_attention_service_has_no_legacy_table_fallback():
-    # G-8: consumption_state derives only from reading_sessions +
-    # consumption_overrides; the old tables are seeded once by the migration and
-    # never read here (hard-cutover doctrine).
+    # Attention reads only its own reading_sessions; it never touches the listening
+    # or resume tables (hard-cutover doctrine).
     hits = _grep(r"reader_media_state|podcast_listening_states", _ATTENTION_SERVICE)
     assert not hits, f"attention.py reads a legacy read-state table:\n{_fmt(hits)}"
+
+
+def test_attention_service_does_not_reference_consumption_overrides():
+    # lectern-player-lifecycle §3: consumption owns explicit overrides now; attention
+    # neither writes nor reads consumption_overrides.
+    hits = _grep(r"consumption_overrides", _ATTENTION_SERVICE)
+    assert not hits, f"attention.py still references consumption_overrides:\n{_fmt(hits)}"
 
 
 # =============================================================================
@@ -1844,15 +1851,75 @@ def test_lectern_old_modules_deleted():
 
 
 def test_lectern_queue_table_sole_writer():
-    # G-7: only the queue service writes the table; media_deletion.py is the
-    # allowed cascade cleaner and db/models.py is the ORM schema owner.
+    # Superseded by lectern-player-lifecycle-hard-cutover.md §8 AC-15: the Lectern
+    # membership/order table's sole owner is now services/consumption/_lectern_store.py
+    # (db/models.py is the ORM schema owner). media_deletion.py is TEMPORARILY still
+    # allowlisted as the last-reference cleaner; the media-teardown unit removes its
+    # direct write in favor of the consumption owner's all-users delete.
     hits = _excluding(
         _grep(r"\bconsumption_queue_items\b", _PY_ROOT),
-        "services/consumption_queue.py",
+        "services/consumption/_lectern_store.py",
         "services/media_deletion.py",
         "db/models.py",
     )
     assert not hits, f"consumption_queue_items written outside its owner:\n{_fmt(hits)}"
+
+
+# =============================================================================
+# Lectern + global player lifecycle hard cutover
+# (lectern-player-lifecycle-hard-cutover.md §7 delete map, §8 AC-15)
+# =============================================================================
+
+_CONSUMPTION_TABLE_WRITE = r"(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+"
+
+
+def test_consumption_overrides_sole_writer():
+    # §8 AC-15: explicit-state DML lives only in the consumption state store.
+    # media_deletion.py does NOT write consumption_overrides today (verified).
+    hits = _excluding(
+        _grep(_CONSUMPTION_TABLE_WRITE + r"consumption_overrides", _PY_ROOT),
+        "services/consumption/_state_store.py",
+    )
+    assert not hits, f"consumption_overrides written outside its owner:\n{_fmt(hits)}"
+
+
+def test_podcast_listening_states_sole_writer():
+    # §8 AC-15: listening position/duration/speed DML lives only in the listening
+    # store. media_deletion.py is TEMPORARILY allowlisted as the last-reference
+    # cleaner; the media-teardown unit removes its direct delete.
+    hits = _excluding(
+        _grep(_CONSUMPTION_TABLE_WRITE + r"podcast_listening_states", _PY_ROOT),
+        "services/consumption/_listening_store.py",
+        "services/media_deletion.py",
+    )
+    assert not hits, f"podcast_listening_states written outside its owner:\n{_fmt(hits)}"
+
+
+def test_lectern_player_deleted_modules_absent():
+    # §7 delete map: the pre-cutover queue/listening services, queue schema, and the
+    # queue + consumption-override routes are gone (owners extracted first).
+    for rel_path in (
+        "python/nexus/services/consumption_queue.py",
+        "python/nexus/services/listening_state.py",
+        "python/nexus/schemas/queue.py",
+        "python/nexus/api/routes/queue.py",
+        "python/nexus/api/routes/consumption.py",
+    ):
+        assert not (_REPO_ROOT / rel_path).exists(), f"{rel_path} must be deleted"
+
+
+def test_lectern_player_deleted_imports_absent():
+    # No live import path to the deleted queue/listening service or queue schema.
+    hits = _grep(
+        r"\bnexus\.services\.consumption_queue\b"
+        r"|from nexus\.services import[^\n]*\bconsumption_queue\b"
+        r"|\bnexus\.services\.listening_state\b"
+        r"|from nexus\.services import[^\n]*\blistening_state\b"
+        r"|\bnexus\.schemas\.queue\b"
+        r"|from nexus\.schemas\.queue\b",
+        _PY_ROOT,
+    )
+    assert not hits, f"import of a deleted queue/listening module survives:\n{_fmt(hits)}"
 
 
 # ---------------------------------------------------------------------------

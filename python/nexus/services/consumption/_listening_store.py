@@ -10,6 +10,7 @@ back and surface ``E_STALE_LISTENING_REVISION`` with no writes (spec §5.4).
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import text
@@ -74,6 +75,25 @@ def load_states(db: Session, *, viewer_id: UUID, media_ids: list[UUID]) -> dict[
         {"viewer_id": viewer_id, "media_ids": media_ids},
     ).mappings()
     return {UUID(str(row["media_id"])): _row_from_mapping(row) for row in rows}
+
+
+def load_recency(db: Session, *, viewer_id: UUID, media_ids: list[UUID]) -> dict[UUID, datetime]:
+    """Per-media listening-row ``updated_at`` (engagement recency). One row per
+    (viewer, media), so this is the row's own timestamp. Media without a listening
+    row are simply absent from the map."""
+    if not media_ids:
+        return {}
+    rows = db.execute(
+        text(
+            """
+            SELECT media_id, updated_at
+            FROM podcast_listening_states
+            WHERE user_id = :viewer_id AND media_id = ANY(:media_ids)
+            """
+        ),
+        {"viewer_id": viewer_id, "media_ids": media_ids},
+    ).fetchall()
+    return {UUID(str(row[0])): row[1] for row in rows}
 
 
 def record_heartbeat_in_txn(

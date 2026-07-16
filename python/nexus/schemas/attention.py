@@ -1,10 +1,8 @@
-"""Attention-ledger schemas: dwell blocks, override verb, derived read-state."""
+"""Attention-ledger schemas: dwell blocks piggybacked on reader/listening saves."""
 
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
-
-from nexus.schemas.media import MediaReadState
 
 
 class TextSpan(BaseModel):
@@ -35,17 +33,3 @@ class AttentionBlock(BaseModel):
     device_id: str = Field(max_length=128)
     spans_touched: list[SpanItem] = Field(default_factory=list)
     progression: float | None = Field(default=None, ge=0.0, le=1.0)
-
-
-class ConsumptionStateOut(BaseModel):
-    """Derived read-state for one media item (override wins over sessions)."""
-
-    status: MediaReadState
-    progress_fraction: float | None = None
-
-
-class ConsumptionOverrideRequest(BaseModel):
-    """Body for POST /media/{id}/consumption-override."""
-
-    model_config = ConfigDict(extra="forbid")
-    status: Literal["unread", "finished"]

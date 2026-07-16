@@ -22,6 +22,7 @@ from nexus.schemas.podcast import (
     PodcastSubscriptionStatusOut,
 )
 from nexus.services import library_entries
+from nexus.services.consumption import service as consumption_service
 from nexus.services.contributor_credits import (
     load_contributor_credits_for_podcasts,
     podcast_credit_text_match_sql,
@@ -151,17 +152,22 @@ def list_subscriptions(
                     pe.podcast_id,
                     pe.media_id,
                     pe.published_at,
-                    CASE
-                        WHEN pls.is_completed IS TRUE THEN 'played'
-                        WHEN COALESCE(pls.position_ms, 0) > 0 THEN 'in_progress'
-                        ELSE 'unplayed'
-                    END AS episode_state
+                    {
+                consumption_service.episode_state_case_sql(
+                    listening_alias="pls", override_alias="co", episode_alias="pe"
+                )
+            } AS episode_state
                 FROM podcast_episodes pe
                 JOIN visible_media vm
                   ON vm.media_id = pe.media_id
-                LEFT JOIN podcast_listening_states pls
-                  ON pls.user_id = :user_id
-                 AND pls.media_id = pe.media_id
+                {
+                consumption_service.episode_state_joins_sql(
+                    user_param=":user_id",
+                    media_expr="pe.media_id",
+                    listening_alias="pls",
+                    override_alias="co",
+                )
+            }
             ),
             subscription_aggregates AS (
                 SELECT

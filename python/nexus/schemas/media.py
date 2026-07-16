@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, JsonValue, model_validator
+from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, JsonValue
 
 from nexus.schemas.contributors import ContributorCreditOut
 
@@ -218,10 +218,11 @@ class MediaOut(BaseModel):
     description_html: str | None = None
     description_text: str | None = None
     metadata_enriched_at: datetime | None = None
-    # Derived per-viewer read-state (attention ledger). Populated post-hoc by
-    # `services.attention.consumption_state` (applied in `services.media`) for
-    # viewer-scoped listings; absent (None) only on contexts that never derive it
-    # (e.g. SSE snapshots). For documents, "unread" means no reading session yet.
+    # Derived per-viewer read-state. Populated post-hoc by the consumption
+    # projection (`services.consumption.media_read_states`, applied in
+    # `services.media`) for viewer-scoped listings; absent (None) only on contexts
+    # that never derive it (e.g. SSE snapshots). For documents, "unread" means no
+    # reading session yet.
     read_state: MediaReadState | None = None
     progress_fraction: float | None = Field(default=None, ge=0.0, le=1.0)
     last_engaged_at: datetime | None = None
@@ -347,33 +348,6 @@ class TranscriptRequestBatchRequest(BaseModel):
     reason: TranscriptRequestReason = "episode_open"
 
     model_config = ConfigDict(extra="forbid")
-
-
-class ListeningStateUpsertRequest(BaseModel):
-    """Body for PUT /media/{id}/listening-state."""
-
-    position_ms: int | None = Field(default=None, ge=0)
-    duration_ms: int | None = Field(default=None, ge=0)
-    playback_speed: float | None = Field(default=None, gt=0)
-    is_completed: bool | None = None
-    # Attention ledger: elapsed listening dwell since the last persist and the
-    # originating device. Both optional — absent for clients that predate the
-    # ledger; when present the route records an attention session.
-    dwell_ms_delta: int | None = Field(default=None, ge=0)
-    device_id: str | None = Field(default=None, max_length=128)
-
-    @model_validator(mode="after")
-    def validate_has_mutation_field(self) -> "ListeningStateUpsertRequest":
-        if (
-            self.position_ms is None
-            and self.duration_ms is None
-            and self.playback_speed is None
-            and self.is_completed is None
-        ):
-            raise ValueError(
-                "At least one of position_ms, duration_ms, playback_speed, or is_completed is required"
-            )
-        return self
 
     model_config = ConfigDict(extra="forbid")
 

@@ -7,6 +7,8 @@ only through the ``service`` boundary that delegates here.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import text
@@ -25,6 +27,7 @@ from nexus.schemas.consumption import (
     OpenPaneActivation,
     ReadableActivation,
 )
+from nexus.schemas.media import MediaReadState
 from nexus.schemas.presence import Absent, Present, absent, presence_from_nullable, present
 from nexus.services import attention
 from nexus.services.consumption import _listening_store, _state_store
@@ -235,6 +238,169 @@ def _doc_state(
     if aggregate.max_session_dwell_ms >= _SESSION_DWELL_IN_PROGRESS_MS:
         return "InProgress", progress
     return "Unread", progress
+
+
+# ---------------------------------------------------------------------------
+# Collection read-state projection (adopters read through the service boundary)
+# ---------------------------------------------------------------------------
+
+# The kinds whose read-state derives from the listening threshold rather than
+# attention document sessions. AUDIO_KINDS died with consumption_queue.py; the
+# projection owns this derivation now (spec §7 delete map).
+_AUDIO_READ_STATE_KINDS = frozenset({MediaKind.podcast_episode.value})
+
+_STATE_TO_READ_STATE: dict[ConsumptionStateValue, MediaReadState] = {
+    "Unread": "unread",
+    "InProgress": "in_progress",
+    "Finished": "finished",
+}
+
+
+@dataclass(frozen=True)
+class MediaReadStateOut:
+    """Per-media collection read-state: explicit override wins, else the audio
+    listening threshold (podcast episodes) or attention document aggregates."""
+
+    state: MediaReadState
+    progress_fraction: float | None
+
+
+def media_read_states(
+    db: Session, *, viewer_id: UUID, media_ids: list[UUID]
+) -> dict[UUID, MediaReadStateOut]:
+    """Batch read-state for arbitrary media (MediaOut listings, episode surfaces).
+
+    Explicit override is the highest-priority input; otherwise podcast episodes
+    derive from the listening threshold (position/duration with the projection-only
+    95% signal, no ``is_completed`` side effect) and everything else from the
+    attention document aggregates. Override changes state only; progress stays
+    derived (spec §5.2)."""
+    if not media_ids:
+        return {}
+    kinds = _media_kinds(db, media_ids)
+    overrides = _state_store.load_overrides(db, viewer_id=viewer_id, media_ids=media_ids)
+    audio_ids = [mid for mid in media_ids if kinds.get(mid) in _AUDIO_READ_STATE_KINDS]
+    doc_ids = [mid for mid in media_ids if kinds.get(mid) not in _AUDIO_READ_STATE_KINDS]
+    listening = _listening_store.load_states(db, viewer_id=viewer_id, media_ids=audio_ids)
+    durations = _episode_durations(db, audio_ids)
+    aggregates = attention.session_aggregates(db, viewer_id=viewer_id, media_ids=doc_ids)
+
+    result: dict[UUID, MediaReadStateOut] = {}
+    for media_id in media_ids:
+        if kinds.get(media_id) in _AUDIO_READ_STATE_KINDS:
+            state, progress = _audio_state(listening.get(media_id), durations.get(media_id))
+        else:
+            state, progress = _doc_state(aggregates.get(media_id))
+        override = overrides.get(media_id)
+        if override is not None:
+            state = override
+        result[media_id] = MediaReadStateOut(
+            state=_STATE_TO_READ_STATE[state],
+            progress_fraction=progress.value if isinstance(progress, Present) else None,
+        )
+    return result
+
+
+def listening_recency(
+    db: Session, *, viewer_id: UUID, media_ids: list[UUID]
+) -> dict[UUID, datetime]:
+    """Per-media listening-engagement recency (owner-scoped read for MediaOut)."""
+    return _listening_store.load_recency(db, viewer_id=viewer_id, media_ids=media_ids)
+
+
+def _media_kinds(db: Session, media_ids: list[UUID]) -> dict[UUID, str]:
+    if not media_ids:
+        return {}
+    rows = db.execute(
+        text("SELECT id, kind FROM media WHERE id = ANY(:ids)"),
+        {"ids": media_ids},
+    ).fetchall()
+    return {UUID(str(row[0])): str(row[1]) for row in rows}
+
+
+def _episode_durations(db: Session, media_ids: list[UUID]) -> dict[UUID, int]:
+    if not media_ids:
+        return {}
+    rows = db.execute(
+        text(
+            """
+            SELECT media_id, duration_seconds
+            FROM podcast_episodes
+            WHERE media_id = ANY(:ids) AND duration_seconds IS NOT NULL
+            """
+        ),
+        {"ids": media_ids},
+    ).fetchall()
+    return {UUID(str(row[0])): int(row[1]) for row in rows}
+
+
+# ---------------------------------------------------------------------------
+# Episode-state SQL fragment builders (podcast list/detail/library adopters
+# compose these; the raw consumption-table reads live only here, spec §8 AC-15).
+# ---------------------------------------------------------------------------
+
+
+def episode_state_case_sql(*, listening_alias: str, override_alias: str, episode_alias: str) -> str:
+    """CASE expression -> ``played`` | ``in_progress`` | ``unplayed`` for a podcast
+    episode. Explicit override is highest-priority (``finished`` -> played,
+    ``unread`` -> unplayed); otherwise the audio read-model: ``is_completed`` or the
+    projection-only 95% progression -> played, any position -> in_progress, else
+    unplayed. Requires the joins from :func:`episode_state_joins_sql` and an
+    episode alias exposing ``duration_seconds``."""
+    duration_ms = (
+        f"COALESCE({listening_alias}.duration_ms, {episode_alias}.duration_seconds * 1000)"
+    )
+    return f"""
+        CASE
+            WHEN {override_alias}.status = 'finished' THEN 'played'
+            WHEN {override_alias}.status = 'unread' THEN 'unplayed'
+            WHEN {listening_alias}.is_completed IS TRUE THEN 'played'
+            WHEN {duration_ms} > 0
+                 AND {listening_alias}.position_ms::float8 / {duration_ms}
+                     >= {_FINISHED_PROGRESSION}
+                THEN 'played'
+            WHEN COALESCE({listening_alias}.position_ms, 0) > 0 THEN 'in_progress'
+            ELSE 'unplayed'
+        END
+    """
+
+
+def episode_state_joins_sql(
+    *, user_param: str, media_expr: str, listening_alias: str, override_alias: str
+) -> str:
+    """LEFT JOINs binding the viewer's listening row and explicit override for
+    ``media_expr`` (e.g. ``pe.media_id``). ``user_param`` is the bound viewer id
+    parameter (e.g. ``:viewer_id``)."""
+    return f"""
+        LEFT JOIN podcast_listening_states {listening_alias}
+          ON {listening_alias}.user_id = {user_param}
+         AND {listening_alias}.media_id = {media_expr}
+        LEFT JOIN consumption_overrides {override_alias}
+          ON {override_alias}.user_id = {user_param}
+         AND {override_alias}.media_id = {media_expr}
+    """
+
+
+def listening_recency_subquery_sql(*, user_param: str, media_expr: str) -> str:
+    """Scalar subquery -> the viewer's listening-row ``updated_at`` for one media."""
+    return f"""(
+        SELECT ls_recency.updated_at
+        FROM podcast_listening_states ls_recency
+        WHERE ls_recency.user_id = {user_param}
+          AND ls_recency.media_id = {media_expr}
+    )"""
+
+
+def listening_recency_max_subquery_sql(*, user_param: str, podcast_expr: str) -> str:
+    """Scalar subquery -> MAX listening ``updated_at`` across a podcast's episodes."""
+    return f"""(
+        SELECT MAX(ls_pod.updated_at)
+        FROM podcast_episodes pe_ls
+        JOIN podcast_listening_states ls_pod
+          ON ls_pod.user_id = {user_param}
+         AND ls_pod.media_id = pe_ls.media_id
+        WHERE pe_ls.podcast_id = {podcast_expr}
+    )"""
 
 
 def _load_chapters(db: Session, media_id: UUID) -> list[ChapterOut]:

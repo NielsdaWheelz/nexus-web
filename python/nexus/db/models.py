@@ -6415,9 +6415,10 @@ class ReadingSession(Base):
 class ConsumptionOverride(Base):
     """Explicit per-viewer read-state override (highest-priority signal).
 
-    Written solely by ``services.attention.set_consumption_override`` /
-    ``delete_consumption_override``. Vocabulary is 'unread' | 'finished' only —
-    'in_progress' is a derived state, not a user gesture.
+    Written and read solely by the consumption owner
+    ``services.consumption._state_store`` (media teardown composes its all-users
+    delete). Vocabulary is 'unread' | 'finished' only — 'in_progress' is a derived
+    state, not a user gesture.
     """
 
     __tablename__ = "consumption_overrides"

@@ -12,6 +12,7 @@ lifecycle cleanup and the trusted ensure path.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from functools import partial
 from typing import Literal, cast
 from uuid import UUID
@@ -93,6 +94,70 @@ def get_listening_state(db: Session, viewer_id: UUID, media_id: UUID) -> Listeni
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
     row = _listening_store.load_state(db, viewer_id=viewer_id, media_id=media_id)
     return _projection.to_listening_state_out(row)
+
+
+def media_read_states(
+    db: Session, *, viewer_id: UUID, media_ids: list[UUID]
+) -> dict[UUID, _projection.MediaReadStateOut]:
+    """Batch collection read-state for arbitrary media (MediaOut/episode surfaces).
+
+    The one read boundary adopters use for read-state; the projection owns the
+    explicit-override + listening-threshold + attention-aggregate derivation."""
+    return _projection.media_read_states(db, viewer_id=viewer_id, media_ids=media_ids)
+
+
+def listening_recency(
+    db: Session, *, viewer_id: UUID, media_ids: list[UUID]
+) -> dict[UUID, datetime]:
+    """Per-media listening-engagement recency (owner-scoped read for MediaOut)."""
+    return _projection.listening_recency(db, viewer_id=viewer_id, media_ids=media_ids)
+
+
+def get_lectern_item_for_media(
+    db: Session, *, viewer_id: UUID, media_id: UUID
+) -> tuple[UUID, str] | None:
+    """The viewer's Lectern ``(item_id, title)`` for a media, or ``None`` (assistant
+    add echoes the resulting row whether it was newly ensured or already present)."""
+    return _lectern_store.find_item_for_media(db, viewer_id=viewer_id, media_id=media_id)
+
+
+# ---------------------------------------------------------------------------
+# Episode-state SQL fragments (podcast list/detail/library adopters compose these
+# through the service boundary; the raw table reads stay inside _projection).
+# ---------------------------------------------------------------------------
+
+
+def episode_state_case_sql(*, listening_alias: str, override_alias: str, episode_alias: str) -> str:
+    """CASE expr deriving ``played``|``in_progress``|``unplayed`` (see _projection)."""
+    return _projection.episode_state_case_sql(
+        listening_alias=listening_alias,
+        override_alias=override_alias,
+        episode_alias=episode_alias,
+    )
+
+
+def episode_state_joins_sql(
+    *, user_param: str, media_expr: str, listening_alias: str, override_alias: str
+) -> str:
+    """LEFT JOINs binding the viewer's listening + override rows for ``media_expr``."""
+    return _projection.episode_state_joins_sql(
+        user_param=user_param,
+        media_expr=media_expr,
+        listening_alias=listening_alias,
+        override_alias=override_alias,
+    )
+
+
+def listening_recency_subquery_sql(*, user_param: str, media_expr: str) -> str:
+    """Scalar subquery -> the viewer's listening-row recency for one media."""
+    return _projection.listening_recency_subquery_sql(user_param=user_param, media_expr=media_expr)
+
+
+def listening_recency_max_subquery_sql(*, user_param: str, podcast_expr: str) -> str:
+    """Scalar subquery -> MAX listening recency across a podcast's episodes."""
+    return _projection.listening_recency_max_subquery_sql(
+        user_param=user_param, podcast_expr=podcast_expr
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -488,6 +553,28 @@ def ensure_missing_items_in_txn(
     return _lectern_store.ensure_missing_in_txn(
         db, viewer_id=viewer_id, media_ids=media_ids, source=source
     )
+
+
+def remove_lectern_item(viewer_id: UUID, item_id: UUID) -> None:
+    """Remove one viewer Lectern row, tolerating an already-removed item.
+
+    Service-internal (assistant undo of a trusted add); no replay memo. Fresh
+    session + one serializable txn with the viewer lock (invariant 7)."""
+    fresh = _fresh_session()
+    try:
+        retry_serializable(
+            fresh,
+            "remove_lectern_item",
+            partial(_remove_lectern_item_op, fresh, viewer_id, item_id),
+        )
+    finally:
+        fresh.close()
+
+
+def _remove_lectern_item_op(db: Session, viewer_id: UUID, item_id: UUID) -> None:
+    _lock_viewer(db, viewer_id)
+    _lectern_store.remove_item_if_present_in_txn(db, viewer_id=viewer_id, item_id=item_id)
+    db.commit()
 
 
 def delete_media_consumption_state_in_txn(db: Session, *, media_id: UUID) -> None:

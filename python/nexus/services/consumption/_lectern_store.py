@@ -249,6 +249,47 @@ def remove_item_in_txn(db: Session, *, viewer_id: UUID, item_id: UUID) -> UUID:
     return item_id
 
 
+def remove_item_if_present_in_txn(db: Session, *, viewer_id: UUID, item_id: UUID) -> UUID | None:
+    """Delete one viewer row if it exists (idempotent), re-densifying positions.
+
+    Returns the removed id, or ``None`` when the row is already absent. Used by
+    the trusted assistant-undo path, which tolerates a manually removed item."""
+    row = db.execute(
+        text("SELECT id FROM consumption_queue_items WHERE id = :item_id AND user_id = :viewer_id"),
+        {"item_id": item_id, "viewer_id": viewer_id},
+    ).fetchone()
+    if row is None:
+        return None
+    db.execute(
+        text("DELETE FROM consumption_queue_items WHERE id = :item_id AND user_id = :viewer_id"),
+        {"item_id": item_id, "viewer_id": viewer_id},
+    )
+    _normalize_positions(db, viewer_id=viewer_id)
+    return item_id
+
+
+def find_item_for_media(db: Session, *, viewer_id: UUID, media_id: UUID) -> tuple[UUID, str] | None:
+    """The viewer's Lectern ``(item_id, media title)`` for a media (visible or
+    hidden), or ``None`` when the media is not on the viewer's Lectern. Used by the
+    assistant add tool to echo the resulting row after a trusted ensure."""
+    row = db.execute(
+        text(
+            """
+            SELECT q.id, m.title
+            FROM consumption_queue_items q
+            JOIN media m ON m.id = q.media_id
+            WHERE q.user_id = :viewer_id AND q.media_id = :media_id
+            ORDER BY q.position ASC
+            LIMIT 1
+            """
+        ),
+        {"viewer_id": viewer_id, "media_id": media_id},
+    ).fetchone()
+    if row is None:
+        return None
+    return UUID(str(row[0])), str(row[1])
+
+
 def set_order_in_txn(db: Session, *, viewer_id: UUID, item_ids: list[UUID]) -> None:
     """Permute only the visible rows into the requested order, leaving hidden rows
     in their latent slots. Requires the exact visible permutation."""

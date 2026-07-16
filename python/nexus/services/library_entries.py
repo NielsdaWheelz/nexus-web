@@ -33,7 +33,9 @@ from nexus.schemas.library import (
 )
 from nexus.schemas.media import MediaLibrariesResponse
 from nexus.schemas.podcast import PodcastSubscriptionVisibleLibraryOut
+from nexus.services import attention
 from nexus.services import library_governance as governance
+from nexus.services.consumption import service as consumption_service
 from nexus.services.contributor_credits import (
     load_contributor_credits_for_podcasts,
     visible_credit_rows_sql,
@@ -71,32 +73,31 @@ _RESONANCE_RECENCY_HALF_LIFE_DAYS = 14.0
 # media entry's reading sessions / listening state (podcast episodes are still
 # `media_id` library entries), and a podcast entry's MAX listening-state recency
 # across its visible episodes. NULL when the target was never engaged.
-_LAST_ENGAGED_AT_SQL = """
+# Engagement recency composes the attention owner's reading-session recency and the
+# consumption owner's listening recency; the raw consumption/attention table reads
+# live only in their owners (spec §3 / §8 AC-15).
+_LAST_ENGAGED_AT_SQL = f"""
     CASE
-        WHEN le.media_id IS NOT NULL THEN (
-            SELECT NULLIF(
-                GREATEST(
-                    COALESCE((
-                        SELECT MAX(rs.last_active_at)
-                        FROM reading_sessions rs
-                        WHERE rs.user_id = :viewer_id AND rs.media_id = m.id
-                    ), '-infinity'::timestamptz),
-                    COALESCE(pls.updated_at, '-infinity'::timestamptz)
-                ),
-                '-infinity'::timestamptz
-            )
-            FROM media m
-            LEFT JOIN podcast_listening_states pls
-              ON pls.user_id = :viewer_id AND pls.media_id = m.id
-            WHERE m.id = le.media_id
+        WHEN le.media_id IS NOT NULL THEN NULLIF(
+            GREATEST(
+                COALESCE(
+                    {
+    attention.reading_recency_subquery_sql(user_param=":viewer_id", media_expr="le.media_id")
+}, '-infinity'::timestamptz),
+                COALESCE(
+                    {
+    consumption_service.listening_recency_subquery_sql(
+        user_param=":viewer_id", media_expr="le.media_id"
+    )
+}, '-infinity'::timestamptz)
+            ),
+            '-infinity'::timestamptz
         )
-        WHEN le.podcast_id IS NOT NULL THEN (
-            SELECT MAX(pls.updated_at)
-            FROM podcast_episodes pe
-            JOIN podcast_listening_states pls
-              ON pls.user_id = :viewer_id AND pls.media_id = pe.media_id
-            WHERE pe.podcast_id = le.podcast_id
-        )
+        WHEN le.podcast_id IS NOT NULL THEN {
+    consumption_service.listening_recency_max_subquery_sql(
+        user_param=":viewer_id", podcast_expr="le.podcast_id"
+    )
+}
         ELSE NULL
     END
 """
@@ -579,14 +580,23 @@ def _hydrate_entries(
                     SELECT
                         pe.podcast_id,
                         COUNT(*) FILTER (
-                            WHERE pls.is_completed IS NOT TRUE
-                              AND COALESCE(pls.position_ms, 0) = 0
+                            WHERE {
+                    consumption_service.episode_state_case_sql(
+                        listening_alias="pls", override_alias="co", episode_alias="pe"
+                    )
+                } = 'unplayed'
                         ) AS unplayed_count,
                         MAX(pls.updated_at) AS last_listened_at
                     FROM podcast_episodes pe
                     JOIN visible_media vm ON vm.media_id = pe.media_id
-                    LEFT JOIN podcast_listening_states pls
-                      ON pls.user_id = :viewer_id AND pls.media_id = pe.media_id
+                    {
+                    consumption_service.episode_state_joins_sql(
+                        user_param=":viewer_id",
+                        media_expr="pe.media_id",
+                        listening_alias="pls",
+                        override_alias="co",
+                    )
+                }
                     WHERE pe.podcast_id = ANY(:podcast_ids)
                     GROUP BY pe.podcast_id
                 )
