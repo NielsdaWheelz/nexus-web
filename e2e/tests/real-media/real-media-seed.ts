@@ -307,8 +307,8 @@ export async function drainRealMediaWorkerForMediaReady(
   // media reaches a terminal ingest state. Scoping the worker to
   // `ingest_media_source` (see startE2eWorkerUntilMediaReady) means a refresh /
   // re-ingest job is never starved behind the unrelated LLM side-effect backlog
-  // (enrich_metadata / media_unit_build / synapse_scan /
-  // contributor_reconciliation) that prior ingests leave queued, and amortizing
+  // (enrich_metadata / media_unit_build / synapse_scan) that prior ingests
+  // leave queued, and amortizing
   // the subprocess spawn removes the per-iteration `uv run` cost that pushed the
   // wall-clock budget over the edge on a loaded box.
   const workerResult = await startE2eWorkerUntilMediaReady({
