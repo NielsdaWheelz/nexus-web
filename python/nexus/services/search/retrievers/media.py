@@ -9,6 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import visible_media_ids_cte_sql, visible_podcast_ids_cte_sql
+from nexus.services.contributor_credits import credit_target_filter_exists_sql
 from nexus.services.search.projection import _truncate_snippet
 from nexus.services.search.results import (
     InternalSearchResult,
@@ -49,20 +50,16 @@ def _search_media(
         content_kind_filter = "AND m.kind NOT IN ('podcast_episode', 'video')"
 
     if contributor_ids is not None or roles:
-        credit_clauses = ["cc_filter.media_id = m.id"]
         if contributor_ids is not None:
-            credit_clauses.append("cc_filter.contributor_id = ANY(:contributor_ids)")
             params["contributor_ids"] = contributor_ids
         if roles:
-            credit_clauses.append("cc_filter.role = ANY(:roles)")
             params["roles"] = roles
-        contributor_credit_filter = f"""
-            AND EXISTS (
-                SELECT 1
-                FROM contributor_credits cc_filter
-                WHERE {" AND ".join(credit_clauses)}
-            )
-        """
+        contributor_credit_filter = credit_target_filter_exists_sql(
+            "media_id",
+            "m.id",
+            filter_contributor_ids=contributor_ids is not None,
+            filter_roles=bool(roles),
+        )
 
     scope_clause = scope_filter_sql(scope_type, scope_id, "media")
     if isinstance(scope_clause, ScopeUnsupported):
@@ -160,20 +157,16 @@ def _search_podcasts(
     contributor_credit_filter = ""
 
     if contributor_ids is not None or roles:
-        credit_clauses = ["cc_filter.podcast_id = p.id"]
         if contributor_ids is not None:
-            credit_clauses.append("cc_filter.contributor_id = ANY(:contributor_ids)")
             params["contributor_ids"] = contributor_ids
         if roles:
-            credit_clauses.append("cc_filter.role = ANY(:roles)")
             params["roles"] = roles
-        contributor_credit_filter = f"""
-            AND EXISTS (
-                SELECT 1
-                FROM contributor_credits cc_filter
-                WHERE {" AND ".join(credit_clauses)}
-            )
-        """
+        contributor_credit_filter = credit_target_filter_exists_sql(
+            "podcast_id",
+            "p.id",
+            filter_contributor_ids=contributor_ids is not None,
+            filter_roles=bool(roles),
+        )
 
     scope_clause = scope_filter_sql(scope_type, scope_id, "podcast")
     if isinstance(scope_clause, ScopeUnsupported):

@@ -31,6 +31,10 @@ from nexus.auth.permissions import (
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas.retrieval import retrieval_locator_json
 from nexus.services import library_entries
+from nexus.services.contributor_credits import (
+    media_author_credits_join_sql,
+    media_author_names_agg_sql,
+)
 from nexus.services.locator_resolver import locator_from_resolution, resolve_evidence_span
 from nexus.services.media_read_map import load_media_document_summary
 from nexus.services.resource_graph.highlight_notes import linked_note_blocks_for_highlights
@@ -39,12 +43,10 @@ from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 INLINE_THRESHOLD_CHARS = 1500
 
 # Joined media author aggregation, shared by media and highlight loads.
-_AUTHORS_SQL = (
-    "COALESCE("
-    "NULLIF(string_agg(DISTINCT cc.credited_name, ', ' ORDER BY cc.credited_name), ''),"
-    " ''"
-    ") AS authors"
-)
+# Byline label for resolved media/quote rows: composed from the canonical credit
+# read owner so the sole raw ``contributor_credits`` read lives there (spec §3).
+_AUTHORS_SQL = media_author_names_agg_sql()
+_AUTHORS_JOIN_SQL = media_author_credits_join_sql("m.id")
 
 
 @dataclass(frozen=True)
@@ -491,7 +493,7 @@ def _load_media(db: Session, items: list[ResourceRef], *, viewer_id: UUID) -> li
             f"""
             SELECT m.id, m.title, m.kind, {_AUTHORS_SQL}
             FROM media m
-            LEFT JOIN contributor_credits cc ON cc.media_id = m.id AND cc.role = 'author'
+            {_AUTHORS_JOIN_SQL}
             WHERE m.id = ANY(:ids)
             GROUP BY m.id, m.title, m.kind
             """
@@ -756,7 +758,7 @@ def _load_highlight(
             SELECT h.id, h.exact, h.prefix, h.suffix, m.title, {_AUTHORS_SQL}
             FROM highlights h
             JOIN media m ON m.id = h.anchor_media_id
-            LEFT JOIN contributor_credits cc ON cc.media_id = m.id AND cc.role = 'author'
+            {_AUTHORS_JOIN_SQL}
             WHERE h.id = ANY(:ids)
             GROUP BY h.id, h.exact, h.prefix, h.suffix, m.title
             """

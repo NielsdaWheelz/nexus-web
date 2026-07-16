@@ -361,9 +361,9 @@ current **library-intelligence** head/revision subgraph
 (`library_intelligence_artifacts`, `library_intelligence_artifact_revisions`,
 `library_intelligence_revision_events`).
 
-**Contributors** — `contributors` (canonical identity, self-FK for merges),
-`contributor_aliases`, `contributor_external_ids`, `contributor_credits`,
-`contributor_identity_events` (audit trail).
+**Contributors** — `contributors` (canonical identity; every row is active,
+there is no self-FK, no merge/split/tombstone, and no status column),
+`contributor_aliases`, `contributor_external_ids`, `contributor_credits`.
 
 **Notes** — `pages` (title only), `daily_note_pages`, `note_blocks`
 (ProseMirror JSON + generated text only), `resource_versions`,
@@ -510,13 +510,15 @@ Task catalog (each is a thin handler in `tasks/` that wraps a service):
 (periodic), `reconcile_stale_ingest_media_job` (periodic),
 `sync_gutenberg_catalog_job` (periodic), `prune_background_jobs_job`
 (periodic), `purge_expired_auth_handoff_codes` (periodic),
-`backfill_default_library_closure_job`, `contributor_reconciliation`.
+`backfill_default_library_closure_job`.
 
-Contributor reconciliation is the dedupe proposal layer for author identity. It
-runs after source ingest, metadata enrichment, podcast identity writes, and
-podcast episode syncs; persists scored duplicate candidates with deterministic
-evidence; and accepts proposals only by calling the contributor merge contract.
-Rejecting a pair suppresses future pending proposals for that pair.
+Author identity is resolved inline, synchronously, inside each ingest/enrichment
+lane — there is no separate contributor-dedupe job, proposal table, or merge
+contract. `services/contributors.py` is the sole author-mutation facade: a
+resolver keyed on exact stable key → confirmed alias → new contributor
+(§8.6) runs in the same fresh SERIALIZABLE-retried transaction that replaces a
+lane's observed role slice, so duplicate identity is prevented at write time
+rather than proposed and reconciled after the fact.
 
 > Gotcha: only `enrich_metadata` and `media_unit_build` declare
 > `failed_result_statuses`. Other ingest tasks that *return* `{"status":"failed"}`
@@ -901,28 +903,33 @@ predicates in `auth/permissions.py`; the search/object readers read
 ### 8.6 Contributors
 
 A canonical authorship graph split across single owners: `contributor_taxonomy.py`
-(leaf — role/status/authority vocabularies + name normalizers), `contributors.py`
-(identity: resolve/create, merge, split, tombstone, aliases, external IDs, handle gen,
-the Authors directory), and `contributor_credits.py` (the credit junction only).
-`contributors` (person/org/group) carry searchable `contributor_aliases`, authority
-`contributor_external_ids` (orcid/isni/viaf/…, globally unique per authority), and
-`contributor_credits` attaching a contributor to exactly one media/podcast/Gutenberg-ebook.
-Credit resolution prefers explicit id → **strong** external-id (only true authority files
-— orcid/isni/viaf/wikidata/openalex/lcnaf — assert identity; provider IDs and `source_ref`
-are provenance, never identity) → confirmed alias → new unverified contributor. `split`,
-`tombstone`, and `merge` are all implemented with an audit trail
-(`contributor_identity_events`) and run under `run_identity_write` (SERIALIZABLE + bounded
-retry). `merge` redirects a duplicate into a survivor — repointing credits/aliases/external-ids,
-writing a confirmed `source="merge"` alias so name-only reingest resolves to the survivor, and
-repointing every `contributor:<id>` graph endpoint onto the survivor via
-`resource_graph.edges.repoint_edges` (which drops rows that would collapse into a self-edge or
-duplicate an existing pair). Visibility predicates (`visible_podcast_ids_cte_sql`,
-`visible_content_credit_rows_sql`, `visible_contributor_ids_cte_sql`) live solely in
-`auth/permissions.py`; persisted-chat-ref checks live in `chat_context_refs.py`.
-Surfaced in the UI as the `/authors` faceted **directory** (peer of Libraries — work counts,
-role/kind/content-kind/status facets, works|name sort, cursor paging) and author chips linking
-to `/authors/{handle}`; the detail pane offers curator-gated alias/external-id/split/tombstone
-edits and merge.
+(leaf — role vocabulary, name normalizers/handle generation, no DB import),
+`contributors.py` (the public author-operations facade: search, contributor
+detail, distinct works, ref resolve/hydrate for panes, observed role-slice
+replacement, media-author PUT/reset, rename, and the transaction-scoped
+target-cleanup/orphan-prune helpers — no second identity/write path exists),
+two private collaborators it alone calls (`_contributor_identity.py` for
+identity-row resolution/creation/alias attachment, `_contributor_credit_writes.py`
+for all credit-row DML and the media manual/automatic pin), `_contributor_replay.py`
+(forced-new-edit replay memos), and `contributor_credits.py` (the read-side
+credit junction: canonical credit relation + visible-work queries). Every final
+`contributors` row is active — there is no self-FK, status, merge, split, or
+tombstone; duplicates were collapsed once by migration 0179 and never merge at
+runtime. `contributor_aliases` (searchable names, `resolves_identity` marks
+which ones bind a future observation) and `contributor_external_ids` (orcid/
+isni/viaf/…, globally unique per authority) support identity; `contributor_credits`
+attaches a contributor to exactly one media/podcast/Gutenberg-ebook role slice.
+Credit resolution prefers explicit id → exact stable key → confirmed alias →
+new contributor, and runs inline inside the same fresh SERIALIZABLE-retried
+transaction (`retry_serializable`, D-11 constraint allowlist) that replaces a
+lane's declared observed role slice — there is no separate dedupe job, proposal
+table, or merge contract (§ job registry, below). Visibility predicates
+(`visible_podcast_ids_cte_sql`, `visible_content_credit_rows_sql`,
+`visible_contributor_ids_cte_sql`) live solely in `auth/permissions.py`;
+persisted-chat-ref checks live in `chat_context_refs.py`. There is no `/authors`
+directory or root Authors pane; author search lives in the universal Launcher
+at `/search?kinds=people`, and author chips link to the `/authors/{handle}`
+detail-only pane (works list, curator-gated rename).
 
 ### 8.7 Notes
 

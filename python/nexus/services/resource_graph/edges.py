@@ -17,7 +17,7 @@ from collections.abc import Sequence
 from typing import cast
 from uuid import UUID
 
-from sqlalchemy import and_, delete, or_, select
+from sqlalchemy import and_, delete, select
 from sqlalchemy.orm import Session
 
 from nexus.db.models import ResourceEdge
@@ -170,72 +170,6 @@ def replace_edges_for_origin(
     return [_edge_out(row) for row in rows]
 
 
-def repoint_edges(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    from_ref: ResourceRef,
-    to_ref: ResourceRef,
-) -> int:
-    """Rewrite every edge endpoint from ``from_ref`` to ``to_ref`` (identity merges, §9.6).
-
-    All kinds move; ordinals and snapshots are untouched. The moving row is
-    dropped (explicit SELECT first, no ``ON CONFLICT``) when it would (a) become
-    a self-edge — ``from_ref`` sits at both endpoints, or one endpoint already
-    equals ``to_ref`` (§5.4 has no self-links); or (b) duplicate an existing bare
-    pair. For ``origin=user`` bare rows the reverse pair is probed too, since
-    user links are undirected (§5.4) — a merge must not leave a symmetric pair
-    that double-renders. Returns the number of edges that touched ``from_ref``
-    (moved plus dropped).
-    """
-    rows = (
-        db.execute(
-            select(ResourceEdge)
-            .where(
-                ResourceEdge.user_id == viewer_id,
-                or_(_source_is(from_ref), _target_is(from_ref)),
-            )
-            .order_by(ResourceEdge.created_at.asc(), ResourceEdge.id.asc())
-        )
-        .scalars()
-        .all()
-    )
-    for row in rows:
-        new_source = (
-            to_ref
-            if _endpoint_matches(row.source_scheme, row.source_id, from_ref)
-            else (ResourceRef(scheme=cast("ResourceScheme", row.source_scheme), id=row.source_id))
-        )
-        new_target = (
-            to_ref
-            if _endpoint_matches(row.target_scheme, row.target_id, from_ref)
-            else (ResourceRef(scheme=cast("ResourceScheme", row.target_scheme), id=row.target_id))
-        )
-        if new_source == new_target:
-            # A merge that collapses both endpoints onto one ref would mint a
-            # self-edge (e.g. a user link A->B when merging A into B); drop it.
-            db.delete(row)
-            db.flush()
-            continue
-        if row.ordinal is None and _bare_pair_collides(
-            db,
-            viewer_id=viewer_id,
-            source=new_source,
-            target=new_target,
-            origin=row.origin,
-            exclude_id=row.id,
-        ):
-            db.delete(row)
-            db.flush()
-            continue
-        row.source_scheme = new_source.scheme
-        row.source_id = new_source.id
-        row.target_scheme = new_target.scheme
-        row.target_id = new_target.id
-        db.flush()
-    return len(rows)
-
-
 # ---------- internals ---------------------------------------------------------
 
 
@@ -245,10 +179,6 @@ def _source_is(ref: ResourceRef):
 
 def _target_is(ref: ResourceRef):
     return and_(ResourceEdge.target_scheme == ref.scheme, ResourceEdge.target_id == ref.id)
-
-
-def _endpoint_matches(scheme: str, resource_id: UUID, ref: ResourceRef) -> bool:
-    return scheme == ref.scheme and resource_id == ref.id
 
 
 def _validate_edge_input(db: Session, *, viewer_id: UUID, edge: EdgeCreate) -> None:
@@ -301,34 +231,6 @@ def _existing_source_order_id(
             ResourceEdge.source_order_key == order_key,
         )
     ).scalar_one_or_none()
-
-
-def _bare_pair_collides(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    source: ResourceRef,
-    target: ResourceRef,
-    origin: str,
-    exclude_id: UUID,
-) -> bool:
-    """Would a bare ``source->target`` row duplicate one already stored (≠ ``exclude_id``)?
-
-    Directed for machine origins; undirected for ``origin=user`` (§5.4), matching
-    ``create_edge``'s both-direction check so a repoint cannot leave a symmetric
-    user-link duplicate.
-    """
-    directed = _existing_bare_pair_id(
-        db, viewer_id=viewer_id, source=source, target=target, origin=origin
-    )
-    if directed is not None and directed != exclude_id:
-        return True
-    if origin != "user":
-        return False
-    reverse = _existing_bare_pair_id(
-        db, viewer_id=viewer_id, source=target, target=source, origin=origin
-    )
-    return reverse is not None and reverse != exclude_id
 
 
 def _existing_ordinal_id(

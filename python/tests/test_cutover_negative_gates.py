@@ -1912,3 +1912,164 @@ def test_amanuensis_does_not_widen_llm_calls_owner_kind():
     # The owner_kind CHECK block must not enumerate an assistant-write owner.
     window = models[max(0, idx - 800) : idx + 800]
     assert "assistant_write" not in window, "llm_calls owner_kind widened by amanuensis"
+
+
+# #############################################################################
+# Lightweight author-deduplication hard cutover (§9 docs/deployment, §10 AC 35/36)
+#
+# Same grep idiom as above: each gate scans python/nexus + apps/web/src and
+# asserts a dropped author/reconciliation symbol is ABSENT, or a must-REMAIN
+# owner is PRESENT. Migrations (repo-root migrations/ — including the historical
+# 0169 identity-event migration and the frozen 0179 rewrite that keeps its own
+# local copies of repoint/handle logic) and python/tests/ (the test_migrations
+# fixtures) live OUTSIDE the scanned roots, so none of that immutable history can
+# appear in a hit; only apps/web/src *.test.{ts,tsx} files need excluding.
+# #############################################################################
+
+# The credit-DTO + author-aggregate surface. A dropped credit field
+# (resolution_status / source_ref / confidence) or a legacy/random handle digest
+# can only meaningfully regress here; scoping to these owners keeps the gate off
+# the unrelated reader/apparatus/document_embeds columns of the same name (e.g.
+# lib/reader/documentMap.ts, schemas/reader_apparatus.py, services/document_embeds.py).
+_CONTRIBUTOR_SURFACE_ROOTS = (
+    _PY_ROOT / "schemas" / "contributors.py",
+    _PY_ROOT / "services" / "contributor_credits.py",
+    _PY_ROOT / "services" / "contributors.py",
+    _PY_ROOT / "services" / "_contributor_identity.py",
+    _PY_ROOT / "services" / "_contributor_credit_writes.py",
+    _PY_ROOT / "services" / "_contributor_replay.py",
+    _PY_ROOT / "services" / "contributor_taxonomy.py",
+    _PY_ROOT / "api" / "routes" / "contributors.py",
+    _WEB_ROOT / "lib" / "contributors",
+    _WEB_ROOT / "components" / "contributors",
+)
+
+# The private author aggregate: where handle digests are minted (SHA-256 +
+# deterministic ladder, never uuid4/md5 — D-7) and the fresh-session +
+# SERIALIZABLE-retry discipline lives with no explicit locks (spec §2.7/§3, D-22).
+_AUTHOR_AGGREGATE_ROOTS = (
+    _PY_ROOT / "services" / "contributors.py",
+    _PY_ROOT / "services" / "_contributor_identity.py",
+    _PY_ROOT / "services" / "_contributor_credit_writes.py",
+    _PY_ROOT / "services" / "_contributor_replay.py",
+    _PY_ROOT / "services" / "contributor_taxonomy.py",
+)
+
+
+_INLINE_CODE_SPAN = re.compile(r"`+[^`]*`+")
+
+
+def _backticked(token: str, line: str) -> bool:
+    # A prose doc-mention wraps the symbol in backticks (``token``); a live code
+    # reference never does. Lets the schemas/contributors.py "removed vs. legacy
+    # shape" docstrings and the taxonomy "never ``uuid4()``" note narrate the
+    # dropped primitives without tripping the gate. The check is per-occurrence, not
+    # per-line: a line mixing a live reference with a backticked mention is NOT
+    # skipped (LOW-1) — we strip every inline-code span (single or doubled
+    # backticks) and only skip when no bare occurrence of the token survives.
+    if f"`{token}" not in line:
+        return False
+    return token not in _INLINE_CODE_SPAN.sub("", line)
+
+
+def test_author_dedup_dropped_symbols_absent():
+    # AC 35: the reconciliation vertical, identity events, merge/tombstone
+    # columns, dead taxonomy helpers, merged-chain readers, the scaffold credit
+    # writers, the upstream preview fabricator, the external-key FTS text column,
+    # the legacy handle-for-name digest, the status/kind vocab, and the directory
+    # route are all gone from live code.
+    pattern = "|".join(
+        (
+            r"\bcontributor_reconciliation\b",
+            r"\bContributorIdentityEvent\b",
+            r"\bmerged_into_contributor_id\b",
+            r"\bCONFIRMED_ALIAS_SOURCES\b",
+            r"\bnormalize_contributor_name\b",
+            r"\bresolve_canonical_contributor_ids\b",
+            r"\bupstream_contributor_credit_previews_for_names\b",
+            r"\breplace_\w*contributor_credits\w*\b",
+            r"\bexternal_id_text\b",
+            r"\bcontributor_handle_for_name\b",
+            r"\bContributorStatus\b",
+            r"\bContributorKind\b",
+            r"contributors/directory",
+        )
+    )
+    hits = _filtered(pattern, _PY_ROOT, _WEB_ROOT, exclude=_FRONTEND_TEST)
+    assert not hits, f"author-dedup dropped symbol present in live code:\n{_fmt(hits)}"
+
+
+def test_cutover_scaffold_marker_absent():
+    # The bridge symbols kept importable across S2->S5 carried a CUTOVER-SCAFFOLD
+    # marker; S5 deletes them, so the marker itself must be gone (never ships).
+    hits = _filtered(r"CUTOVER-SCAFFOLD", _PY_ROOT, _WEB_ROOT, exclude=_FRONTEND_TEST)
+    assert not hits, f"CUTOVER-SCAFFOLD bridge marker still in live code:\n{_fmt(hits)}"
+
+
+def test_runtime_repoint_edges_absent():
+    # The last runtime caller (identity merge/split) is deleted with the
+    # reconciliation vertical; migration 0179 keeps only a frozen local rewrite
+    # (outside the scan roots), so no live repoint_edges symbol may remain.
+    hits = _filtered(r"\brepoint_edges\b", _PY_ROOT, _WEB_ROOT, exclude=_FRONTEND_TEST)
+    assert not hits, f"runtime repoint_edges still present:\n{_fmt(hits)}"
+
+
+def test_dropped_credit_fields_absent_from_contributor_surface():
+    # D-33: the narrowed embedded credit DTO drops resolution_status / source_ref /
+    # confidence. Scan only the contributor credit surface so the unrelated reader/
+    # apparatus/document_embeds columns of the same name are untouched; allow the
+    # schemas/contributors.py docstrings that narrate the removal (backticked).
+    offenders: list[_Hit] = []
+    for token in ("resolution_status", "source_ref", "confidence"):
+        for hit in _grep(rf"\b{token}\b", *_CONTRIBUTOR_SURFACE_ROOTS):
+            if _FRONTEND_TEST.search(hit.path) or _backticked(token, hit.text):
+                continue
+            offenders.append(hit)
+    assert not offenders, f"dropped credit field on the contributor surface:\n{_fmt(offenders)}"
+
+
+def test_author_aggregate_uses_no_random_weak_digest_or_lock():
+    # AC 35 (random handle fallback) + spec §2.7/§3 (no locks). Handles are
+    # SHA-256 + deterministic ladder — never uuid4()/md5(); a true collision is a
+    # defect. SERIALIZABLE + bounded retry only — no explicit/advisory locks. The
+    # ownership-guard suite AST-gates these too; this is the greppable restatement
+    # (backticked prose like the "never ``uuid4()``" docstring is allowed).
+    offenders: list[_Hit] = []
+    for token in ("uuid4", "md5", "with_for_update", "pg_advisory"):
+        for hit in _grep(rf"\b{token}\b", *_AUTHOR_AGGREGATE_ROOTS):
+            if _backticked(token, hit.text):
+                continue
+            offenders.append(hit)
+    assert not offenders, (
+        f"random/weak/locking primitive in the author aggregate:\n{_fmt(offenders)}"
+    )
+
+
+def test_max_credits_per_managed_role_pinned_in_both_languages():
+    # D-6: the 20-cap literal is mirrored in the Python taxonomy leaf and the TS
+    # constants module (Python annotates it ``: Final``; both must read = 20).
+    cap = re.compile(r"MAX_CREDITS_PER_MANAGED_ROLE\s*(?::\s*\w+\s*)?=\s*20\b")
+    py = (_PY_ROOT / "services" / "contributor_taxonomy.py").read_text(encoding="utf-8")
+    ts = (_WEB_ROOT / "lib" / "contributors" / "constants.ts").read_text(encoding="utf-8")
+    assert cap.search(py), "contributor_taxonomy.py is missing MAX_CREDITS_PER_MANAGED_ROLE = 20"
+    assert cap.search(ts), "constants.ts is missing MAX_CREDITS_PER_MANAGED_ROLE = 20"
+
+
+def test_author_error_code_present_in_backend_and_feedback():
+    # D-10: E_AUTHOR_ALREADY_LISTED is a real error code and has user copy in the
+    # Feedback title map (must not be silently dropped by an over-eager sweep).
+    errors = (_PY_ROOT / "errors.py").read_text(encoding="utf-8")
+    feedback = (_WEB_ROOT / "components" / "feedback" / "Feedback.tsx").read_text(encoding="utf-8")
+    assert "E_AUTHOR_ALREADY_LISTED" in errors, "errors.py dropped E_AUTHOR_ALREADY_LISTED"
+    assert "E_AUTHOR_ALREADY_LISTED" in feedback, (
+        "Feedback title map dropped E_AUTHOR_ALREADY_LISTED"
+    )
+
+
+def test_reserved_contributor_handle_segments_present_in_both_languages():
+    # The reserved collection segments (directory / reconciliation-candidates) are
+    # shadowed in both the Python taxonomy and the TS handle grammar.
+    py = (_PY_ROOT / "services" / "contributor_taxonomy.py").read_text(encoding="utf-8")
+    ts = (_WEB_ROOT / "lib" / "contributors" / "handle.ts").read_text(encoding="utf-8")
+    assert "RESERVED_CONTRIBUTOR_HANDLE_SEGMENTS" in py, "taxonomy dropped reserved-segment set"
+    assert "RESERVED_CONTRIBUTOR_HANDLE_SEGMENTS" in ts, "handle.ts dropped reserved-segment set"

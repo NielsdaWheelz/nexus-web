@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Literal
+# Re-exported so the many search retrievers keep importing the credit rollup from
+# this shared-fragments module, while the sole raw ``contributor_credits`` read
+# lives in the canonical credit read owner (spec §3; S9 single-owner sweep).
+from nexus.services.contributor_credits import (
+    contributor_credits_rollup_cte_sql as contributor_credits_rollup_cte_sql,
+)
 
 # Recency half-life term appended to the document hybrid score (media only). Notes omit
 # it so a note's age never reorders it. Whitespace/placement here is load-bearing: the
@@ -125,50 +130,5 @@ def hybrid_content_chunk_tail_sql(
         """
 
 
-def contributor_credits_rollup_cte_sql(owner_column: Literal["media_id", "podcast_id"]) -> str:
-    """Return SQL for a CTE that pre-aggregates contributor credits per owner row.
-
-    owner_column selects the `contributor_credits` foreign key to group by. It is a
-    fixed internal literal, never user input, so interpolating it into SQL is safe.
-
-    The per-credit JSON is the narrowed embedded ``ContributorCreditOut`` (D-33):
-    handle, display name, href, credited name, role, raw role, and order — no credit
-    id, source, or nested full contributor. ``contributor_search_text`` composes
-    credited name + display name + every human alias; external keys never enter it
-    (AC 24), so the media/podcast FTS blobs that embed it also carry no keys (a
-    deliberate, accepted ranking delta).
-    """
-    return f"""
-        SELECT
-            cc.{owner_column},
-            jsonb_agg(
-                jsonb_build_object(
-                    'credited_name', cc.credited_name,
-                    'role', cc.role,
-                    'raw_role', cc.raw_role,
-                    'ordinal', cc.ordinal,
-                    'contributor_handle', c.handle,
-                    'contributor_display_name', c.display_name,
-                    'href', '/authors/' || c.handle
-                )
-                ORDER BY cc.ordinal ASC, cc.created_at ASC, cc.id ASC
-            ) AS contributor_credits,
-            string_agg(
-                concat_ws(
-                    ' ',
-                    cc.credited_name,
-                    c.display_name,
-                    COALESCE(alias_text.aliases, '')
-                ),
-                ' '
-            ) AS contributor_search_text
-        FROM contributor_credits cc
-        JOIN contributors c ON c.id = cc.contributor_id
-        LEFT JOIN (
-            SELECT contributor_id, string_agg(alias, ' ') AS aliases
-            FROM contributor_aliases
-            GROUP BY contributor_id
-        ) alias_text ON alias_text.contributor_id = c.id
-        WHERE cc.{owner_column} IS NOT NULL
-        GROUP BY cc.{owner_column}
-    """
+# contributor_credits_rollup_cte_sql now lives in the canonical credit read owner
+# (nexus.services.contributor_credits) and is re-exported at the top of this module.

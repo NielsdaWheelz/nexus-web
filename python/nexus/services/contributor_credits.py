@@ -13,7 +13,7 @@ relation.
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import Any, Literal, cast
 from uuid import UUID
 
 from sqlalchemy import text
@@ -147,6 +147,110 @@ def podcast_credit_text_match_sql(podcast_id_expr: str = "p.id") -> str:
                 OR ca.alias ILIKE :q_pattern
           )
     )"""
+
+
+def contributor_credits_rollup_cte_sql(owner_column: Literal["media_id", "podcast_id"]) -> str:
+    """Return SQL for a CTE that pre-aggregates contributor credits per owner row.
+
+    owner_column selects the ``contributor_credits`` foreign key to group by. It is a
+    fixed internal literal, never user input, so interpolating it into SQL is safe.
+
+    The per-credit JSON is the narrowed embedded ``ContributorCreditOut`` (D-33):
+    handle, display name, href, credited name, role, raw role, and order — no credit
+    id, source, or nested full contributor. ``contributor_search_text`` composes
+    credited name + display name + every human alias; external keys never enter it
+    (AC 24), so the media/podcast FTS blobs that embed it also carry no keys (a
+    deliberate, accepted ranking delta). Consumed by the search retrievers/service.
+    """
+    return f"""
+        SELECT
+            cc.{owner_column},
+            jsonb_agg(
+                jsonb_build_object(
+                    'credited_name', cc.credited_name,
+                    'role', cc.role,
+                    'raw_role', cc.raw_role,
+                    'ordinal', cc.ordinal,
+                    'contributor_handle', c.handle,
+                    'contributor_display_name', c.display_name,
+                    'href', '/authors/' || c.handle
+                )
+                ORDER BY cc.ordinal ASC, cc.created_at ASC, cc.id ASC
+            ) AS contributor_credits,
+            string_agg(
+                concat_ws(
+                    ' ',
+                    cc.credited_name,
+                    c.display_name,
+                    COALESCE(alias_text.aliases, '')
+                ),
+                ' '
+            ) AS contributor_search_text
+        FROM contributor_credits cc
+        JOIN contributors c ON c.id = cc.contributor_id
+        LEFT JOIN (
+            SELECT contributor_id, string_agg(alias, ' ') AS aliases
+            FROM contributor_aliases
+            GROUP BY contributor_id
+        ) alias_text ON alias_text.contributor_id = c.id
+        WHERE cc.{owner_column} IS NOT NULL
+        GROUP BY cc.{owner_column}
+    """
+
+
+def credit_target_filter_exists_sql(
+    owner_column: Literal["media_id", "podcast_id"],
+    owner_id_expr: str,
+    *,
+    filter_contributor_ids: bool,
+    filter_roles: bool,
+) -> str:
+    """``AND EXISTS (…)`` predicate: the outer target row has a matching credit.
+
+    Backs the media/podcast/library search retrievers' author/role filters. Binds
+    ``:contributor_ids`` and/or ``:roles`` only when the corresponding flag is set
+    (the caller supplies those params). ``owner_id_expr`` is the outer query's
+    target-id SQL expression (e.g. ``m.id``); ``owner_column`` is a fixed internal
+    literal. Returns ``''`` when no credit predicate is requested.
+    """
+    if not (filter_contributor_ids or filter_roles):
+        return ""
+    clauses = [f"cc_filter.{owner_column} = {owner_id_expr}"]
+    if filter_contributor_ids:
+        clauses.append("cc_filter.contributor_id = ANY(:contributor_ids)")
+    if filter_roles:
+        clauses.append("cc_filter.role = ANY(:roles)")
+    return f"""
+            AND EXISTS (
+                SELECT 1
+                FROM contributor_credits cc_filter
+                WHERE {" AND ".join(clauses)}
+            )
+        """
+
+
+def media_author_names_agg_sql() -> str:
+    """Aggregate expression: comma-joined distinct author credited names ``AS authors``.
+
+    Pairs with :func:`media_author_credits_join_sql`; the outer query GROUPs BY its
+    own media columns. Backs the resource-graph media/quote resolvers' byline label.
+    """
+    return (
+        "COALESCE("
+        "NULLIF(string_agg(DISTINCT cc.credited_name, ', ' ORDER BY cc.credited_name), ''),"
+        " ''"
+        ") AS authors"
+    )
+
+
+def media_author_credits_join_sql(media_id_expr: str = "m.id") -> str:
+    """``LEFT JOIN`` onto author-role credits for :func:`media_author_names_agg_sql`.
+
+    ``media_id_expr`` is the outer query's media-id SQL expression.
+    """
+    return (
+        f"LEFT JOIN contributor_credits cc ON cc.media_id = {media_id_expr} AND cc.role = 'author'"
+    )
 
 
 def load_contributor_credits_for_media(

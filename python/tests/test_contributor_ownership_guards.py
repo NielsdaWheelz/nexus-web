@@ -36,22 +36,14 @@ MUTATION_FACADES = (
 )
 
 # Raw contributor_credits SQL is allowed only in the canonical read owner and the
-# visibility owner (spec §3; migrations live outside nexus/ and are exempt).
+# visibility owner (spec §3; migrations live outside nexus/ and are exempt). The
+# S9 sweep emptied the former pending-rewrite allowlist: every read consumer
+# (search retrievers/service, resource-graph resolvers, podcast subscriptions)
+# now composes the owner's SQL builders, so reintroducing ``FROM
+# contributor_credits`` into any other file fails CI.
 RAW_CREDIT_SQL_OWNERS = {
     "services/contributor_credits.py",
     "auth/permissions.py",
-}
-# These four read consumers still carry inline credit SQL, pending their S9
-# rewrite onto the canonical relation (or promotion of ``search/sql.py``'s rollup
-# to a permanent RAW_CREDIT_SQL_OWNER). The S5 read-consumer rewrite already
-# moved every other file off raw credit SQL, so those files are now held to the
-# regular composition-honesty gate below — reintroducing ``FROM
-# contributor_credits`` into e.g. ``browse.py`` fails CI. S9 shrinks this to empty.
-RAW_CREDIT_SQL_PENDING_REWRITE = {
-    "services/resource_graph/resolve.py",
-    "services/search/retrievers/library_content.py",
-    "services/search/retrievers/media.py",
-    "services/search/sql.py",
 }
 
 _RAW_CREDIT_SQL_RE = re.compile(
@@ -188,13 +180,11 @@ def test_no_uuid4_in_author_aggregate() -> None:
 def test_raw_credit_sql_only_in_canonical_owners() -> None:
     # Spec §3: raw contributor_credits reads live in the canonical query owner
     # (and the visibility owner backing it); writes are ORM-only in the private
-    # credit-writes module. The pending set shrinks to empty by S5/S9.
+    # credit-writes module. The S9 pending-rewrite allowlist is now empty.
     offenders = sorted(
         relative
         for relative, src in _nexus_sources().items()
-        if _RAW_CREDIT_SQL_RE.search(src)
-        and relative not in RAW_CREDIT_SQL_OWNERS
-        and relative not in RAW_CREDIT_SQL_PENDING_REWRITE
+        if _RAW_CREDIT_SQL_RE.search(src) and relative not in RAW_CREDIT_SQL_OWNERS
     )
     assert offenders == [], f"raw contributor_credits SQL outside its owners: {offenders}"
 
@@ -209,6 +199,23 @@ def test_credit_row_construction_only_in_credit_writes() -> None:
         and "ContributorCredit(" in src
     ]
     assert offenders == [], f"ContributorCredit constructed outside the writer: {offenders}"
+
+
+def test_identity_rows_constructed_only_in_identity_writer() -> None:
+    # Spec §3 bans direct contributor/alias/key DML from adapters/routes, symmetric
+    # with the credit ban above. Contributor/ContributorAlias/ContributorExternalId
+    # ORM rows are inserted only by the private identity writer; adapters emit typed
+    # observations, never ORM rows. (models.py defines the classes and lives outside
+    # services/; the facade deletes but never constructs identity rows.)
+    identity_ctor_re = re.compile(r"\b(?:Contributor|ContributorAlias|ContributorExternalId)\(")
+    offenders = [
+        relative
+        for relative, src in _nexus_sources().items()
+        if relative.startswith("services/")
+        and relative != "services/_contributor_identity.py"
+        and identity_ctor_re.search(src)
+    ]
+    assert offenders == [], f"identity row constructed outside the identity writer: {offenders}"
 
 
 def test_mutation_facades_accept_no_session() -> None:
@@ -265,3 +272,64 @@ def test_podcast_visibility_cte_lives_only_in_permissions() -> None:
         and "le.podcast_id" in src
     ]
     assert offenders == [], f"inline podcast-visibility CTE outside permissions.py: {offenders}"
+
+
+# =============================================================================
+# S9 final ownership pass (spec §2.7/§3, D-22/D-43): call-site + write-SQL sweeps
+# =============================================================================
+
+_SESSION_ARG_NAMES = {"db", "session", "db_session"}
+
+_CREDIT_WRITE_SQL_RE = re.compile(
+    r"\b(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+contributor_credits\b", re.IGNORECASE
+)
+
+
+def test_no_call_site_passes_a_session_to_a_mutation_facade() -> None:
+    # Spec 2.7/D-22: the mutation facades own their fresh sessions; no caller may
+    # thread a db/session into them (the no-db signature is checked above; this is
+    # the call-site half). AST over nexus/: a session arg is any positional Name or
+    # keyword named db/session/db_session.
+    offenders: list[str] = []
+    for relative, src in _nexus_sources().items():
+        for node in ast.walk(ast.parse(src)):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
+            if name not in MUTATION_FACADES:
+                continue
+            passes_session = any(
+                isinstance(arg, ast.Name) and arg.id in _SESSION_ARG_NAMES for arg in node.args
+            ) or any(kw.arg in _SESSION_ARG_NAMES for kw in node.keywords)
+            if passes_session:
+                offenders.append(f"{relative}:{node.lineno} {name}")
+    assert offenders == [], f"mutation facade called with a session: {offenders}"
+
+
+def test_credit_write_sql_only_in_credit_writes() -> None:
+    # Spec §3: contributor_credits INSERT/UPDATE/DELETE live only in the private
+    # ORM writer. (Raw credit READS have their own owner set above; migrations,
+    # outside nexus/, keep their own frozen DML.) Complements
+    # test_credit_row_construction_only_in_credit_writes (ORM construction).
+    offenders = sorted(
+        relative
+        for relative, src in _nexus_sources().items()
+        if _CREDIT_WRITE_SQL_RE.search(src) and relative != "services/_contributor_credit_writes.py"
+    )
+    assert offenders == [], f"contributor_credits write SQL outside the writer: {offenders}"
+
+
+def test_replay_module_referenced_only_by_the_facade() -> None:
+    # D-43 static half: _contributor_replay is composed solely by the facade, so
+    # automatic lanes provably never reach the replay memo (they write no
+    # resource_mutations). The general private-module import gate covers this too;
+    # this is the named S9 assertion over every reference, not just imports.
+    offenders = [
+        relative
+        for relative, src in _nexus_sources().items()
+        if relative != "services/contributors.py"
+        and not relative.startswith("services/_contributor_replay")
+        and "_contributor_replay" in src
+    ]
+    assert offenders == [], f"_contributor_replay referenced outside the facade: {offenders}"
