@@ -147,6 +147,10 @@ test.describe("youtube transcript media", () => {
     const highlightedSegments = transcriptContent.locator("[data-active-highlight-ids]");
     const beforeLinkedRowCount = await linkedRows.count();
     const beforeHighlightedCount = await highlightedSegments.count();
+    // The author byline + video embed + capped segment list push the transcript
+    // reader surface below the initial fold; bring it into view so the selection
+    // helper (which reads visible client rects and never scrolls) can find text.
+    await transcriptContent.scrollIntoViewIfNeeded();
     const selectedText = await selectFreshVisibleTextSnippet(
       page,
       activePaneSelector(
