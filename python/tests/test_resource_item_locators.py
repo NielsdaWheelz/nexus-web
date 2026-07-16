@@ -12,6 +12,7 @@ from nexus.db.models import DailyNotePage
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.schemas.notes import CreatePageRequest
 from nexus.schemas.resource_items import (
+    ContributorHandleLocatorIn,
     DailyNoteDateLocatorIn,
     DailyNoteTodayLocatorIn,
     ResourceLocatorResolveRequest,
@@ -163,6 +164,27 @@ def test_daily_locator_rejects_invalid_timezone(
                 local_date=date(2026, 6, 19),
                 time_zone="Not/A_Zone",
             ),
+        )
+
+    assert error.value.code == ApiErrorCode.E_INVALID_REQUEST
+
+
+@pytest.mark.parametrize(
+    "handle",
+    ["directory", "reconciliation-candidates", "Not A Handle", "trailing-"],
+)
+def test_contributor_handle_locator_rejects_reserved_and_malformed(
+    db_session: Session,
+    bootstrapped_user: UUID,
+    handle: str,
+) -> None:
+    # Reserved segments and non-canonical handles fail the parse before any DB
+    # read, so they never capture a contributor row (D-26).
+    with pytest.raises(ApiError) as error:
+        resolve_resource_locator(
+            db_session,
+            viewer_id=bootstrapped_user,
+            locator=ContributorHandleLocatorIn(kind="contributor_handle", handle=handle),
         )
 
     assert error.value.code == ApiErrorCode.E_INVALID_REQUEST

@@ -41,23 +41,17 @@ RAW_CREDIT_SQL_OWNERS = {
     "services/contributor_credits.py",
     "auth/permissions.py",
 }
-# CUTOVER-SCAFFOLD (deleted in S5): legacy read consumers and adapter deletion
-# hooks still carry inline credit SQL until their S4/S5 rewrites move them onto
-# the canonical relation. S9 shrinks this set to empty.
+# These four read consumers still carry inline credit SQL, pending their S9
+# rewrite onto the canonical relation (or promotion of ``search/sql.py``'s rollup
+# to a permanent RAW_CREDIT_SQL_OWNER). The S5 read-consumer rewrite already
+# moved every other file off raw credit SQL, so those files are now held to the
+# regular composition-honesty gate below — reintroducing ``FROM
+# contributor_credits`` into e.g. ``browse.py`` fails CI. S9 shrinks this to empty.
 RAW_CREDIT_SQL_PENDING_REWRITE = {
-    "services/browse.py",
-    "services/gutenberg.py",
-    "services/library_entries.py",
-    "services/media_deletion.py",
-    "services/media_related.py",
-    "services/metadata_enrichment.py",
-    "services/podcasts/subscriptions_query.py",
     "services/resource_graph/resolve.py",
-    "services/search/retrievers/contributors.py",
     "services/search/retrievers/library_content.py",
     "services/search/retrievers/media.py",
     "services/search/sql.py",
-    "services/web_article_artifacts.py",
 }
 
 _RAW_CREDIT_SQL_RE = re.compile(

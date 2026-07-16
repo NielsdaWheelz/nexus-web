@@ -325,6 +325,9 @@ def get_search_result(
         )
 
     if result_type == "contributor":
+        # Durable-ref re-resolution (chat citation chip refresh): use BROAD
+        # visibility so a contributor reachable only via a viewer-owned graph edge
+        # (zero visible credits) still re-materializes instead of dropping (M2).
         matches = _search_contributors(
             db,
             viewer_id,
@@ -336,6 +339,7 @@ def get_search_result(
             [],
             [],
             1,
+            broad_visibility=True,
         )
         if not matches:
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")

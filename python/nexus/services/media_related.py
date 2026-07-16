@@ -33,6 +33,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import visible_media_ids_cte_sql
+from nexus.services.contributor_credits import visible_credit_rows_sql
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_graph.resolve import resolve_refs
 from nexus.services.resource_graph.schemas import ConnectionEndpoint
@@ -190,26 +191,26 @@ def _shared_author_media(
 ) -> list[tuple[UUID, int]]:
     """Other visible media sharing an ``author`` contributor with the target.
 
-    Joins the target's ``author`` credits to other media's ``author`` credits on
-    ``contributor_id`` (the same identity ``resolve._load_media`` aggregates),
-    counts the distinct shared author contributors per peer, scoped to visible
-    media, with the target excluded.
+    Self-joins the canonical visible-credit relation (spec §4) on ``contributor_id``
+    (the same identity ``resolve._load_media`` aggregates) restricted to the
+    ``author`` role, counts the distinct shared author contributors per peer, and
+    excludes the target. Both sides ride the visible-credit relation, so a peer is
+    only surfaced through credits on media the viewer can see.
     """
     rows = db.execute(
         text(
             f"""
-            WITH visible_media AS ({visible_media_ids_cte_sql()})
+            WITH visible_credits AS ({visible_credit_rows_sql()})
             SELECT other.media_id AS peer_media_id,
                    COUNT(DISTINCT other.contributor_id) AS shared_authors
-            FROM contributor_credits target
-            JOIN contributor_credits other
+            FROM visible_credits target
+            JOIN visible_credits other
               ON other.contributor_id = target.contributor_id
              AND other.role = 'author'
              AND other.media_id IS NOT NULL
              AND other.media_id <> :media_id
             WHERE target.media_id = :media_id
               AND target.role = 'author'
-              AND other.media_id IN (SELECT media_id FROM visible_media)
             GROUP BY other.media_id
             ORDER BY shared_authors DESC, peer_media_id ASC
             LIMIT :limit

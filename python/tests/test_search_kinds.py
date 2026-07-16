@@ -10,7 +10,7 @@ import pytest
 
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.schemas.search import ALL_RESULT_TYPES
-from nexus.services.contributor_taxonomy import CONTRIBUTOR_ROLES
+from nexus.services.contributor_taxonomy import CONTRIBUTOR_ROLE_SET
 from nexus.services.search.kinds import (
     ALL_KINDS,
     CREDIT_KINDS,
@@ -268,7 +268,9 @@ def test_validate_formats_rejects_out_of_vocab() -> None:
 def test_validate_roles_accepts_taxonomy_and_dedups() -> None:
     assert validate_roles(["author", "editor", "author"]) == ("author", "editor")
     # Strict role validation reuses the contributor taxonomy vocab.
-    assert all(role in CONTRIBUTOR_ROLES for role in validate_roles(sorted(CONTRIBUTOR_ROLES)))
+    assert all(
+        role in CONTRIBUTOR_ROLE_SET for role in validate_roles(sorted(CONTRIBUTOR_ROLE_SET))
+    )
 
 
 def test_validate_roles_normalizes_case_and_whitespace() -> None:

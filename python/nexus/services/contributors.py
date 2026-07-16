@@ -565,27 +565,6 @@ def prune_contributors_if_orphaned(db: Session, *, contributor_ids: Iterable[UUI
 
 
 # ---------------------------------------------------------------------------
-# CUTOVER-SCAFFOLD (deleted in S5)
-# ---------------------------------------------------------------------------
-
-
-def get_contributor_by_handle(
-    db: Session,
-    contributor_handle: str,
-    viewer_id: UUID | None = None,
-) -> Contributor:
-    # CUTOVER-SCAFFOLD (deleted in S5): agent_tools/app_search still imports this
-    # legacy read; S5 re-renders contributor context from get_contributor_detail
-    # fields (D-38).
-    if viewer_id is not None:
-        return _load_visible_contributor_by_handle(db, contributor_handle, viewer_id)
-    contributor = db.scalar(select(Contributor).where(Contributor.handle == contributor_handle))
-    if contributor is None:
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Contributor not found")
-    return contributor
-
-
-# ---------------------------------------------------------------------------
 # Private helpers
 # ---------------------------------------------------------------------------
 

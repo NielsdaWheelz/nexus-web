@@ -1113,7 +1113,7 @@ def _load_contributor(db: Session, items: list[ResourceRef]) -> list[LoadedResou
     """Contributors are global identity rows: any existing row resolves."""
     ids = [ref.id for ref in items]
     rows = db.execute(
-        text("SELECT id, display_name, disambiguation FROM contributors WHERE id = ANY(:ids)"),
+        text("SELECT id, display_name FROM contributors WHERE id = ANY(:ids)"),
         {"ids": ids},
     ).fetchall()
     by_id = {row[0]: row for row in rows}
@@ -1128,7 +1128,8 @@ def _load_contributor(db: Session, items: list[ResourceRef]) -> list[LoadedResou
                 uri=ref.uri,
                 scheme="contributor",
                 title=str(row[1]),
-                citation_label=str(row[2]) if row[2] is not None else None,
+                # D-30: display name is the whole label; no disambiguation summary.
+                citation_label=None,
             )
         )
     return out
@@ -1377,8 +1378,8 @@ def _present(loaded: LoadedResource) -> ResolvedResource:
     if scheme == "contributor":
         return ResolvedResource(
             uri=loaded.uri,
-            label=loaded.title or "",
-            summary=loaded.citation_label or "",  # disambiguation, when set
+            label=loaded.title or "",  # D-30: display name is the whole label
+            summary="",
             inline_body=None,
             fetch_hint="",
         )

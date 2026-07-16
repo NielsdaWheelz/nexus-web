@@ -17,19 +17,11 @@ snake_case: the narrowed :class:`ContributorCreditOut` (D-33) carries no aliases
 and rides the snake ``ok(by_alias=False)`` wire. The podcast subscribe payload
 rides the same snake surface via the snake-strict :class:`ContributorCreditIn`
 (v2, D-4).
-
-Several rich legacy DTOs (``ContributorOut`` and its alias/external-id parts, the
-role/kind/status literals) survive here as ``# CUTOVER-SCAFFOLD`` purely so the
-search-package and podcast consumers keep importing them until they migrate to
-the canonical relation in S4/S5; they are deleted then.
 """
 
 from __future__ import annotations
 
-from datetime import datetime
-from decimal import Decimal
 from typing import Annotated, Literal
-from uuid import UUID
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
@@ -277,91 +269,3 @@ class ContributorWorkPageOut(BaseModel):
     next_cursor: str | None = Field(default=None, alias="nextCursor")
 
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
-
-
-# ---------------------------------------------------------------------------
-# CUTOVER-SCAFFOLD (deleted in S4/S5)
-#
-# The rich legacy contributor DTOs plus the podcast credit-payload stripper below
-# are kept importable only so the still-legacy search-package (schemas/search.py,
-# services/search/*), contributor_credits.py read owner, and podcast subscribe
-# schema keep collecting until they migrate to the canonical relation. No new
-# code should read these.
-# ---------------------------------------------------------------------------
-
-ContributorKind = Literal["person", "organization", "group", "unknown"]
-ContributorStatus = Literal["unverified", "verified", "tombstoned", "merged"]
-ContributorAliasKind = Literal[
-    "display",
-    "credited",
-    "legal",
-    "pseudonym",
-    "transliteration",
-    "search",
-]
-
-
-class ContributorAliasOut(BaseModel):
-    id: UUID
-    alias: str
-    normalized_alias: str = Field(serialization_alias="normalizedAlias")
-    sort_name: str | None = Field(None, serialization_alias="sortName")
-    alias_kind: ContributorAliasKind = Field(serialization_alias="aliasKind")
-    locale: str | None = None
-    script: str | None = None
-    source: str
-    confidence: Decimal | None = None
-    is_primary: bool = Field(serialization_alias="isPrimary")
-
-    model_config = ConfigDict(from_attributes=True, populate_by_name=True, extra="forbid")
-
-
-class ContributorExternalIdOut(BaseModel):
-    id: UUID
-    authority: str
-    external_key: str = Field(serialization_alias="externalKey")
-    external_url: str | None = Field(None, serialization_alias="externalUrl")
-    source: str
-
-    model_config = ConfigDict(from_attributes=True, populate_by_name=True, extra="forbid")
-
-
-class ContributorOut(BaseModel):
-    handle: str
-    href: str = ""
-    display_name: str = Field(serialization_alias="displayName")
-    sort_name: str = Field(serialization_alias="sortName")
-    kind: ContributorKind
-    status: ContributorStatus
-    disambiguation: str | None = None
-    aliases: list[ContributorAliasOut] = Field(default_factory=list)
-    external_ids: list[ContributorExternalIdOut] = Field(
-        default_factory=list,
-        serialization_alias="externalIds",
-    )
-    created_at: datetime | None = Field(None, serialization_alias="createdAt")
-    updated_at: datetime | None = Field(None, serialization_alias="updatedAt")
-
-    model_config = ConfigDict(from_attributes=True, populate_by_name=True, extra="forbid")
-
-
-def contributor_credit_write_payload(value: object) -> object:
-    if not isinstance(value, dict):
-        return value
-
-    return {
-        key: item
-        for key, item in value.items()
-        if key
-        not in {
-            "id",
-            "contributor",
-            "contributor_handle",
-            "contributorHandle",
-            "contributor_display_name",
-            "contributorDisplayName",
-            "href",
-            "resolution_status",
-            "resolutionStatus",
-        }
-    }

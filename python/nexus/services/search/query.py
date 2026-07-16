@@ -14,7 +14,7 @@ from typing import Literal
 from uuid import UUID
 
 from nexus.errors import ApiErrorCode, InvalidRequestError
-from nexus.services.contributor_taxonomy import CONTRIBUTOR_ROLES
+from nexus.services.contributor_taxonomy import CONTRIBUTOR_ROLE_SET
 from nexus.services.search import kinds
 from nexus.services.search.constants import DEFAULT_LIMIT
 from nexus.services.search.kinds import MediaFormat, SearchKind
@@ -126,7 +126,7 @@ def _validate_dedup[T](
 def _normalize_role(token: str) -> str | None:
     """A contributor role is valid iff it is in the taxonomy vocab (strict, no coercion)."""
     role = str(token or "").strip().lower()
-    return role if role in CONTRIBUTOR_ROLES else None
+    return role if role in CONTRIBUTOR_ROLE_SET else None
 
 
 def _dedup_strings(values: list[str] | None) -> tuple[str, ...]:

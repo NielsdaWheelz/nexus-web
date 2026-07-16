@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID
@@ -35,8 +35,12 @@ from nexus.schemas.retrieval import (
 )
 from nexus.services import media_intelligence
 from nexus.services.chat_run_citations import prune_tool_call_retrievals
-from nexus.services.contributor_taxonomy import CONTRIBUTOR_ROLES
-from nexus.services.contributors import get_contributor_by_handle
+from nexus.services.contributor_credits import distinct_visible_works_sql
+from nexus.services.contributor_taxonomy import (
+    CONTRIBUTOR_ROLES_ORDERED,
+    try_parse_contributor_handle,
+)
+from nexus.services.contributors import get_contributor_detail
 from nexus.services.media_intelligence import MediaUnit
 from nexus.services.resource_graph.context import (
     conversation_has_note_search_scope_refs,
@@ -120,7 +124,7 @@ APP_SEARCH_TOOL_DEFINITION: dict[str, Any] = {
             },
             "roles": {
                 "type": ["array", "null"],
-                "items": {"type": "string", "enum": sorted(CONTRIBUTOR_ROLES)},
+                "items": {"type": "string", "enum": sorted(CONTRIBUTOR_ROLES_ORDERED)},
                 "description": (
                     "Optional contributor roles to filter credited content. "
                     "Use null or [] for no role filter."
@@ -1169,27 +1173,48 @@ def _render_podcast_context(
 def _render_contributor_context(
     db: Session, viewer_id: UUID, contributor_handle: object
 ) -> str | None:
-    handle = str(contributor_handle or "").strip()
-    if not handle:
+    """Render a contributor citation from the narrowed public detail read (D-38).
+
+    Exposes display name, human other names, and a visible distinct-work count —
+    never ``sort_name``/``kind``/``disambiguation`` (those columns are gone) or
+    any external key.
+    """
+    handle = try_parse_contributor_handle(str(contributor_handle or "").strip())
+    if handle is None:
         return None
     try:
-        contributor = get_contributor_by_handle(db, handle, viewer_id=viewer_id)
+        detail = get_contributor_detail(db, viewer_id=viewer_id, contributor_handle=handle)
     except NotFoundError:
         return None
 
     lines = [
         '<app_search_result type="contributor">',
-        f"<contributor_handle>{xml_escape(handle)}</contributor_handle>",
-        f"<display_name>{xml_escape(contributor.display_name)}</display_name>",
+        f"<contributor_handle>{xml_escape(detail.handle)}</contributor_handle>",
+        f"<display_name>{xml_escape(detail.display_name)}</display_name>",
     ]
-    if contributor.sort_name:
-        lines.append(f"<sort_name>{xml_escape(contributor.sort_name)}</sort_name>")
-    if contributor.kind:
-        lines.append(f"<kind>{xml_escape(contributor.kind)}</kind>")
-    if contributor.disambiguation:
-        lines.append(f"<disambiguation>{xml_escape(contributor.disambiguation)}</disambiguation>")
+    lines.extend(f"<other_name>{xml_escape(name)}</other_name>" for name in detail.other_names)
+    lines.append(
+        f"<work_count>{_contributor_visible_work_count(db, viewer_id, handle)}</work_count>"
+    )
     lines.append("</app_search_result>")
     return "\n".join(lines)
+
+
+def _contributor_visible_work_count(db: Session, viewer_id: UUID, handle: str) -> int:
+    """Distinct visible work count for a contributor via the canonical relation."""
+    count = db.execute(
+        text(
+            f"""
+            WITH works AS ({distinct_visible_works_sql()})
+            SELECT count(*)
+            FROM works w
+            JOIN contributors c ON c.id = w.contributor_id
+            WHERE c.handle = :handle
+            """
+        ),
+        {"viewer_id": viewer_id, "handle": handle},
+    ).scalar_one()
+    return int(count)
 
 
 def _append_contributors_xml(lines: list[str], contributors: list[dict[str, Any]]) -> None:
@@ -1207,10 +1232,7 @@ def _contributor_credit_labels(contributors: list[dict[str, Any]]) -> list[str]:
     for credit in contributors:
         credited_name = str(credit.get("credited_name") or "").strip()
         role = str(credit.get("role") or "").strip()
-        contributor = credit.get("contributor")
-        display_name = ""
-        if isinstance(contributor, Mapping):
-            display_name = str(contributor.get("display_name") or "").strip()
+        display_name = str(credit.get("contributor_display_name") or "").strip()
         label = credited_name or display_name
         if not label:
             continue

@@ -19,7 +19,8 @@ import pytest
 import nexus.services.media_related as media_related
 import nexus.services.semantic_chunks as semantic_chunks
 import nexus.services.structured_synthesis as structured_synthesis
-from nexus.services.contributor_credits import replace_media_contributor_credits
+from nexus.services import contributors as contributors_service
+from nexus.services.contributor_taxonomy import ContributorObservation, ObservedRoleSlices
 from tests.factories import create_searchable_media
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
@@ -61,14 +62,21 @@ def _seed_media(direct_db: DirectSessionManager, user_id: UUID, *, title: str, t
 
 
 def _set_author(direct_db: DirectSessionManager, media_id: UUID, *, name: str) -> None:
-    with direct_db.session() as session:
-        replace_media_contributor_credits(
-            session,
-            media_id=media_id,
-            credits=[{"credited_name": name, "role": "author", "ordinal": 0}],
-            source="test",
-        )
-        session.commit()
+    # Observe a single author via the facade (fresh session inside). The
+    # contributor/alias rows it creates are cleaned with the media row's credits
+    # (tests.utils.db deletes contributor_credits by media_id on media teardown).
+    contributors_service.replace_observed_role_slices(
+        target=contributors_service.MediaTarget(media_id),
+        observation=ObservedRoleSlices(
+            managed_roles=frozenset({"author"}),
+            credits=(
+                ContributorObservation(
+                    credited_name=name, role="author", raw_role=None, identity_key=None
+                ),
+            ),
+        ),
+        source="epub_opf",
+    )
 
 
 def _ban_provider_calls(monkeypatch: pytest.MonkeyPatch) -> None:

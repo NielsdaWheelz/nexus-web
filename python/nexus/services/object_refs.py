@@ -17,8 +17,8 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import (
     can_read_conversation,
     can_read_highlight,
+    credited_visible_contributor_ids_cte_sql,
     visible_content_credit_rows_sql,
-    visible_contributor_ids_cte_sql,
     visible_media_ids_cte_sql,
     visible_podcast_ids_cte_sql,
 )
@@ -415,12 +415,16 @@ def search_object_refs(
                 return results
 
     if _search_includes(object_types, "contributor"):
+        # The picker demands the narrow credited-visible predicate (spec §2.8, D-8):
+        # a retained key owner or graph-referenced identity with zero visible credits
+        # never surfaces here. Matching spans display name, every human alias, and
+        # visible credited names — never an external identity key (spec §4).
         contributor_rows = db.execute(
             text(
                 f"""
                 WITH
                     visible_contributor_credits AS ({visible_content_credit_rows_sql()}),
-                    visible_contributors AS ({visible_contributor_ids_cte_sql()}),
+                    credited_visible AS ({credited_visible_contributor_ids_cte_sql()}),
                     alias_text AS (
                         SELECT contributor_id, string_agg(alias, ' ') AS aliases
                         FROM contributor_aliases
@@ -428,28 +432,16 @@ def search_object_refs(
                     )
                 SELECT c.id
                 FROM contributors c
-                JOIN visible_contributors vc ON vc.contributor_id = c.id
+                JOIN credited_visible cv ON cv.contributor_id = c.id
                 LEFT JOIN alias_text ON alias_text.contributor_id = c.id
-                WHERE c.status IN ('unverified', 'verified')
-                  AND (
+                WHERE (
                         c.display_name ILIKE :pattern
-                        OR COALESCE(c.sort_name, '') ILIKE :pattern
-                        OR COALESCE(c.disambiguation, '') ILIKE :pattern
                         OR COALESCE(alias_text.aliases, '') ILIKE :pattern
                         OR EXISTS (
                             SELECT 1
                             FROM visible_contributor_credits cc_match
                             WHERE cc_match.contributor_id = c.id
                               AND cc_match.credited_name ILIKE :pattern
-                        )
-                        OR EXISTS (
-                            SELECT 1
-                            FROM contributor_external_ids cei
-                            WHERE cei.contributor_id = c.id
-                              AND (
-                                    cei.external_key ILIKE :pattern
-                                    OR COALESCE(cei.external_url, '') ILIKE :pattern
-                              )
                         )
                   )
                 ORDER BY c.display_name ASC, c.id ASC

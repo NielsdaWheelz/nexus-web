@@ -202,14 +202,16 @@ class TestEmailIngestNegativeGates:
         assert "prepare_web_article_fragment" not in svc
         assert "prepare_web_article_fragment" not in route
 
-    def test_g6_email_in_strong_authorities(self):
-        """G-6: 'email' is in STRONG_CONTRIBUTOR_EXTERNAL_ID_AUTHORITIES."""
+    def test_g6_email_address_is_a_contributor_identity_key_authority(self):
+        """G-6: 'email_address' is a stable identity-key authority (successor of the
+        legacy STRONG_CONTRIBUTOR_EXTERNAL_ID_AUTHORITIES set, deleted post-cutover).
+        """
         taxonomy = self._read("python/nexus/services/contributor_taxonomy.py")
-        # Confirm it's in the strong set literal
-        assert '"email"' in taxonomy or "'email'" in taxonomy
-        from nexus.services.contributor_taxonomy import STRONG_CONTRIBUTOR_EXTERNAL_ID_AUTHORITIES
+        # Confirm it's in the authority-precedence tuple literal
+        assert '"email_address"' in taxonomy or "'email_address'" in taxonomy
+        from nexus.services.contributor_taxonomy import CONTRIBUTOR_KEY_AUTHORITIES
 
-        assert "email" in STRONG_CONTRIBUTOR_EXTERNAL_ID_AUTHORITIES
+        assert "email_address" in CONTRIBUTOR_KEY_AUTHORITIES
 
 
 def _from_message(from_header: str):

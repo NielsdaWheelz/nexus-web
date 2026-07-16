@@ -180,7 +180,6 @@ def _contributor_ref(db: Session, *, name: str) -> ResourceRef:
         id=uuid4(),
         handle=f"{name.lower().replace(' ', '-')}-{uuid4().hex[:8]}",
         display_name=name,
-        sort_name=name,
     )
     db.add(contributor)
     db.commit()

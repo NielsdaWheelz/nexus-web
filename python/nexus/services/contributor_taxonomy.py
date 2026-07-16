@@ -13,89 +13,9 @@ from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final, NewType
 
-CONTRIBUTOR_ROLES = frozenset(
-    {
-        "author",
-        "editor",
-        "translator",
-        "host",
-        "guest",
-        "narrator",
-        "creator",
-        "producer",
-        "publisher",
-        "channel",
-        "organization",
-        "unknown",
-    }
-)
-CONTRIBUTOR_RESOLUTION_STATUSES = frozenset(
-    {
-        "external_id",
-        "manual",
-        "confirmed_alias",
-        "unverified",
-    }
-)
-# Two classes of authority resolve identity during contributor lookup:
-#
-# 1. Bibliographic name-authority files (orcid/isni/viaf/wikidata/openalex/lcnaf):
-#    globally scoped, cross-authority identity claims — an ORCID for one work and
-#    an ISNI for another can be merged by a human; they assert the same real person.
-#
-# 2. Stable self-asserted single-authority network identity (email):
-#    resolves ONLY within its own (authority, external_key) pair. An email sender
-#    address is stable and self-asserted: the second issue from the same address is
-#    provably the same sender. Resolution here is idempotency — the same address
-#    maps to the same contributor — NOT cross-authority merge. ``email`` never
-#    merges with an ORCID contributor; ``email``→``email`` is deduplication.
-#    ``rss`` stays weak because its per-feed identifier is provenance (the product
-#    does not resolve senders by RSS feed id), while ``email`` is strong because
-#    sender idempotency is the whole point of the Post Room.
-#
-# Provider accounts (podcast_index/rss/youtube/gutenberg) are provenance, never
-# identity keys — cross-provider duplicates are reconciled by explicit merge.
-STRONG_CONTRIBUTOR_EXTERNAL_ID_AUTHORITIES = frozenset(
-    {"orcid", "isni", "viaf", "wikidata", "openalex", "lcnaf", "email"}
-)
-CONTRIBUTOR_EXTERNAL_ID_AUTHORITIES = STRONG_CONTRIBUTOR_EXTERNAL_ID_AUTHORITIES | frozenset(
-    {"podcast_index", "rss", "youtube", "gutenberg"}
-)
-# Alias sources trusted enough to resolve a name to an existing contributor.
-# "merge" is written by merge_contributor so post-merge name-only reingest
-# resolves to the survivor instead of re-duplicating.
-CONFIRMED_ALIAS_SOURCES = frozenset({"manual", "curated", "user", "merge"})
-
-
-def normalize_contributor_role(value: str | None) -> str:
-    role = " ".join(str(value or "author").strip().lower().replace("_", " ").split())
-    return role if role in CONTRIBUTOR_ROLES else "unknown"
-
-
-def normalize_contributor_name(value: str) -> str:
-    return " ".join(value.strip().split()).lower()
-
-
-def display_contributor_name(value: str) -> str:
-    return " ".join(value.strip().split())
-
-
-def normalize_resolution_status(value: object, *, default: str) -> str:
-    status = str(value or default).strip()
-    return status if status in CONTRIBUTOR_RESOLUTION_STATUSES else default
-
-
-# ---------------------------------------------------------------------------
-# Lightweight author-deduplication foundations (v2)
-#
-# Everything below is add-only groundwork for the hard cutover. It shares no
-# state with the legacy normalizers above; new code depends only on these
-# symbols. The module stays a pure stdlib leaf.
-# ---------------------------------------------------------------------------
-
 # Closed role vocabulary, author first, then by descending precedence for the
-# byline. The legacy ``CONTRIBUTOR_ROLES`` frozenset above keeps its members for
-# existing callers; this tuple owns ordering for the new byline/appending rules.
+# byline. ``CONTRIBUTOR_ROLE_SET`` is the derived membership set for validation;
+# ``CONTRIBUTOR_ROLES_ORDERED`` owns ordering for the byline/appending rules.
 CONTRIBUTOR_ROLES_ORDERED: Final[tuple[str, ...]] = (
     "author",
     "editor",
@@ -110,7 +30,17 @@ CONTRIBUTOR_ROLES_ORDERED: Final[tuple[str, ...]] = (
     "organization",
     "unknown",
 )
-_ORDERED_ROLE_SET: Final[frozenset[str]] = frozenset(CONTRIBUTOR_ROLES_ORDERED)
+CONTRIBUTOR_ROLE_SET: Final[frozenset[str]] = frozenset(CONTRIBUTOR_ROLES_ORDERED)
+
+
+def normalize_contributor_role(value: str | None) -> str:
+    role = " ".join(str(value or "author").strip().lower().replace("_", " ").split())
+    return role if role in CONTRIBUTOR_ROLE_SET else "unknown"
+
+
+def display_contributor_name(value: str) -> str:
+    return " ".join(value.strip().split())
+
 
 # One shared adapter/domain/UI cap (per role slice, not per target).
 MAX_CREDITS_PER_MANAGED_ROLE: Final = 20
@@ -327,7 +257,7 @@ class ContributorObservation:
                 f"ContributorObservation.credited_name exceeds "
                 f"{MAX_CONTRIBUTOR_NAME_CODE_POINTS} code points"
             )
-        if self.role not in _ORDERED_ROLE_SET:
+        if self.role not in CONTRIBUTOR_ROLE_SET:
             raise ValueError(f"Unknown contributor role: {self.role!r}")
         if self.raw_role is not None and not (0 < len(self.raw_role) <= MAX_RAW_ROLE_LENGTH):
             raise ValueError("ContributorObservation.raw_role out of bounds")
@@ -343,7 +273,7 @@ class ObservedRoleSlices:
     def __post_init__(self) -> None:
         if not self.managed_roles:
             raise ValueError("ObservedRoleSlices.managed_roles must be nonempty")
-        unknown = self.managed_roles - _ORDERED_ROLE_SET
+        unknown = self.managed_roles - CONTRIBUTOR_ROLE_SET
         if unknown:
             raise ValueError(f"Unknown managed roles: {sorted(unknown)}")
         counts: dict[str, int] = {}

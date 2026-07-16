@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from nexus.db.models import (
     Contributor,
+    ContributorCredit,
     EvidenceSpan,
     Fragment,
     Highlight,
@@ -39,7 +40,7 @@ from nexus.db.models import (
 from nexus.services import oracle_corpus
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.content_indexing import rebuild_fragment_content_index
-from nexus.services.contributor_credits import replace_media_contributor_credits
+from nexus.services.contributor_taxonomy import contributor_match_key
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
 from nexus.services.resource_graph.resolve import (
@@ -58,6 +59,35 @@ from tests.factories import (
 )
 
 pytestmark = pytest.mark.integration
+
+
+def seed_media_author_credits(
+    db: Session, *, media_id: UUID, names: list[str], source: str = "manual"
+) -> None:
+    """Insert author credits directly.
+
+    Post-cutover the legacy ``replace_*_contributor_credits`` writers are gone;
+    credit DML flows only through the author facade's fresh-session ops, which are
+    unusable against an uncommitted test session. These read-path tests only need
+    the ``credited_name`` byline, so seed the rows directly.
+    """
+    for ordinal, name in enumerate(names):
+        contributor = Contributor(id=uuid4(), handle=f"{uuid4().hex[:12]}", display_name=name)
+        db.add(contributor)
+        db.flush()
+        db.add(
+            ContributorCredit(
+                id=uuid4(),
+                contributor_id=contributor.id,
+                media_id=media_id,
+                credited_name=name,
+                normalized_credited_name=contributor_match_key(name),
+                role="author",
+                ordinal=ordinal,
+                source=source,
+            )
+        )
+    db.commit()
 
 
 def _resolve(db: Session, uri: str, *, viewer_id: UUID) -> ResolvedResource:
@@ -444,12 +474,7 @@ def test_resolve_media_returns_label_summary_and_pointer_only_body(
         pages=["first page words. ", "second page text. "],
         title="Dune",
     )
-    replace_media_contributor_credits(
-        db_session,
-        media_id=media_id,
-        credits=[{"name": "Frank Herbert", "role": "author"}],
-        source="manual",
-    )
+    seed_media_author_credits(db_session, media_id=media_id, names=["Frank Herbert"])
     db_session.commit()
 
     resolved = _resolve(db_session, f"media:{media_id}", viewer_id=bootstrapped_user)
@@ -857,12 +882,7 @@ def test_resolve_highlight_returns_enriched_quote(db_session: Session, bootstrap
     media_id = create_test_media_in_library(
         db_session, bootstrapped_user, library_id, title="Highlight Source"
     )
-    replace_media_contributor_credits(
-        db_session,
-        media_id=media_id,
-        credits=[{"name": "Ada Lovelace", "role": "author"}],
-        source="manual",
-    )
+    seed_media_author_credits(db_session, media_id=media_id, names=["Ada Lovelace"])
     exact = "first quote line\nsecond quote line"
     highlight_id = _make_highlight_with_anchor(
         db_session,
@@ -1170,7 +1190,6 @@ def test_resolve_contributor_returns_display_name(db_session: Session, bootstrap
         id=uuid4(),
         handle=f"ada-lovelace-{uuid4().hex[:8]}",
         display_name="Ada Lovelace",
-        sort_name="Lovelace, Ada",
     )
     db_session.add(contributor)
     db_session.commit()
