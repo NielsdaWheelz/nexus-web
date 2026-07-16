@@ -60,6 +60,8 @@ export type PaneResourceStatus =
 
 interface PaneRuntimeContextValue {
   paneId: string;
+  /** Workspace-host pane activity; owners use it for adoption-versus-handoff. */
+  isActive: boolean;
   href: string;
   pathname: string;
   routeId: string;
@@ -92,6 +94,7 @@ const PaneRouterNavigationContext = createContext<{
 
 interface PaneRuntimeProviderProps {
   paneId: string;
+  isActive: boolean;
   href: string;
   routeId: string;
   routeKey?: string;
@@ -189,6 +192,7 @@ function runPaneNavigation(
 
 export function PaneRuntimeProvider({
   paneId,
+  isActive,
   href,
   routeId,
   routeKey: routeKeyProp,
@@ -362,6 +366,7 @@ export function PaneRuntimeProvider({
   const value = useMemo<PaneRuntimeContextValue>(
     () => ({
       paneId,
+      isActive,
       href,
       pathname: parsed.pathname,
       routeId,
@@ -391,6 +396,7 @@ export function PaneRuntimeProvider({
       closeSecondaryPane,
       setSecondarySurface,
       paneId,
+      isActive,
       parsed.pathname,
       parsed.searchParams,
       pathParams,

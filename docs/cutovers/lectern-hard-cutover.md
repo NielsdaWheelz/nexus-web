@@ -419,7 +419,7 @@ now filters to audio kinds internally. The FE function rename tracks:
 **File:** `apps/web/src/components/LecternNextPrompt.tsx`
 
 `MediaPaneBody.tsx` does not currently store `total_progression` in React state —
-the value is computed inside the scroll-save callback (`saveReaderResumeState`) and
+the value is computed inside the scroll-capture callback (now `reportReaderMovement`, post reader-progress-continuity cutover) and
 the initial value is restore-only. A new state variable is added:
 ```typescript
 const [currentTotalProgression, setCurrentTotalProgression] = useState<number | null>(null);
@@ -534,7 +534,7 @@ scanning forward).
 the server already has the query.
 
 **D-7. Reader prompt is threshold-based on saved state, not scroll-event.**
-`MediaPaneBody` already fires `saveReaderResumeState` which writes
+`MediaPaneBody` already captures reader movement (now `reportReaderMovement`, post reader-progress-continuity cutover) which writes
 `locator.locations.total_progression`. A new `currentTotalProgression` state variable
 (§7.7) mirrors this value in React; a `useEffect` watching it fires the fetch — no
 new scroll event listener, no intersection observer.

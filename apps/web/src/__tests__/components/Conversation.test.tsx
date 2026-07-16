@@ -453,6 +453,7 @@ function renderPane(
   render(
     <PaneRuntimeProvider
       paneId="pane-1"
+      isActive={true}
       href={href}
       routeId={href === "/conversations/new" ? "conversation-new" : "conversation"}
       routeKey={routeKey}
@@ -1149,6 +1150,7 @@ describe("Conversation", () => {
     const tree = (secondaryPane: WorkspaceAttachedSecondaryPaneState | null) => (
       <PaneRuntimeProvider
         paneId="pane-1"
+        isActive={true}
         href="/conversations/conversation-1"
         routeId="conversation"
         routeKey={

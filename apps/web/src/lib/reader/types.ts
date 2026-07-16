@@ -4,8 +4,8 @@
  * Backend contract assumptions:
  * - GET /api/me/reader-profile returns { data: ReaderProfile }
  * - PATCH /api/me/reader-profile accepts Partial<ReaderProfile>
- * - GET /api/media/{id}/reader-state returns { data: ReaderResumeState | null }
- * - PUT /api/media/{id}/reader-state accepts ReaderResumeState | null
+ * - Reader cursor GET/PUT snapshots live in `readerProgress.ts`; the locator
+ *   inside them is the `ReaderResumeState` decoded here.
  */
 
 export type ReaderTheme = "light" | "dark";
@@ -206,6 +206,13 @@ function parseLocations(value: unknown): ReaderResumeLocations | null {
   return locations;
 }
 
+export const QUOTE_MAX_CODE_POINTS = 256;
+export const QUOTE_CONTEXT_MAX_CODE_POINTS = 128;
+
+function withinCodePointBound(value: string | null, maxCodePoints: number): boolean {
+  return value === null || [...value].length <= maxCodePoints;
+}
+
 function parseTextContext(value: unknown): ReaderResumeTextContext | null {
   if (!isRecord(value)) {
     return null;
@@ -218,6 +225,13 @@ function parseTextContext(value: unknown): ReaderResumeTextContext | null {
   const quotePrefix = parseNullableStringField(value.quote_prefix);
   const quoteSuffix = parseNullableStringField(value.quote_suffix);
   if (!quote.ok || !quotePrefix.ok || !quoteSuffix.ok) {
+    return null;
+  }
+  if (
+    !withinCodePointBound(quote.value, QUOTE_MAX_CODE_POINTS) ||
+    !withinCodePointBound(quotePrefix.value, QUOTE_CONTEXT_MAX_CODE_POINTS) ||
+    !withinCodePointBound(quoteSuffix.value, QUOTE_CONTEXT_MAX_CODE_POINTS)
+  ) {
     return null;
   }
   const text: ReaderResumeTextContext = {

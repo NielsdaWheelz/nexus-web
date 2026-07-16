@@ -43,6 +43,7 @@ function readingPane(readingId: string) {
   return (
     <PaneRuntimeProvider
       paneId="pane-1"
+      isActive={true}
       href={href}
       routeId="oracleReading"
       routeKey={resolvePaneRouteIdentity(href).routeKey}
@@ -600,6 +601,7 @@ describe("OracleReadingPaneBody", () => {
     const concordancePane = (status: string) => (
       <PaneRuntimeProvider
         paneId="pane-1"
+        isActive={true}
         href={concordanceHref}
         routeId="oracleReading"
         routeKey={resolvePaneRouteIdentity(concordanceHref).routeKey}
@@ -651,6 +653,7 @@ describe("OracleReadingPaneBody", () => {
       return (
         <PaneRuntimeProvider
           paneId="pane-1"
+          isActive={true}
           href={href}
           routeId="oracleReading"
           routeKey={resolvePaneRouteIdentity(href).routeKey}

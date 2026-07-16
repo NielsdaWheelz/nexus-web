@@ -837,6 +837,8 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  /* Anchor for the reader-progress handoff and sync-error overlays. */
+  position: relative;
 }
 
 /* --- Reader frame --- */
@@ -847,6 +849,92 @@
   min-width: 0;
   min-height: 0;
   position: relative;
+}
+
+/* --- Reader progress continuity (handoff + sync error) --- */
+
+.readerProgressLiveRegion {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.readerProgressHandoff {
+  position: absolute;
+  top: var(--space-3);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 4;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: center;
+  gap: var(--space-1) var(--space-3);
+  max-width: min(92%, 44rem);
+  padding: var(--space-2) var(--space-3);
+  background-color: var(--reader-bg-secondary, var(--surface-2));
+  border: 1px solid var(--reader-border, var(--edge));
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-2, 0 2px 8px rgb(0 0 0 / 0.12));
+  color: var(--reader-text-secondary, var(--ink-muted));
+  font-size: var(--text-sm);
+}
+
+.readerProgressHandoffTitle {
+  color: var(--reader-text, var(--ink));
+}
+
+.readerProgressHandoffError {
+  color: var(--warning);
+}
+
+.readerProgressHandoffActions {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.readerProgressHandoffButton {
+  border: 0;
+  padding: 0;
+  background: none;
+  color: var(--accent);
+  font-size: var(--text-sm);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+.readerProgressHandoffButton:disabled {
+  color: var(--ink-faint);
+  cursor: default;
+  text-decoration: none;
+}
+
+.readerProgressHandoffDivider {
+  color: var(--ink-faint);
+}
+
+.readerProgressSyncError {
+  position: absolute;
+  bottom: var(--space-3);
+  right: var(--space-3);
+  z-index: 4;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  background-color: var(--reader-bg-secondary, var(--surface-2));
+  border: 1px solid var(--reader-border, var(--edge));
+  border-radius: var(--radius-md);
+  color: var(--reader-text-muted, var(--ink-faint));
+  font-size: var(--text-sm);
 }
 
 .readerSecondaryBody {

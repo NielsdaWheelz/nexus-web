@@ -195,6 +195,7 @@ function AuthorsHarness() {
   return (
     <PaneRuntimeProvider
       paneId="pane-1"
+      isActive={true}
       href={href}
       routeId="authors"
       routeKey={resolvePaneRouteIdentity(href).routeKey}

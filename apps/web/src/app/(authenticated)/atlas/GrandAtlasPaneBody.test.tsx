@@ -99,6 +99,7 @@ function atlasPane(over: { href?: string; onNavigatePane?: () => void } = {}) {
   return (
     <PaneRuntimeProvider
       paneId="pane-1"
+      isActive={true}
       href={href}
       routeId="atlas"
       routeKey={resolvePaneRouteIdentity(href).routeKey}

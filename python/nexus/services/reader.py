@@ -1,6 +1,5 @@
 """Reader profile and per-media reader state service layer."""
 
-import json
 from datetime import UTC, datetime
 from typing import Any, cast
 from uuid import UUID
@@ -9,13 +8,23 @@ from pydantic import TypeAdapter, ValidationError
 from sqlalchemy import bindparam, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.engine import CursorResult
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import can_read_media, visible_media_ids_cte_sql
-from nexus.db.models import Media, MediaKind, ReaderMediaState, ReaderProfile
-from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
-from nexus.schemas.attention import AttentionBlock
-from nexus.schemas.reader import ReaderProfileOut, ReaderProfilePatch, ReaderResumeState
+from nexus.auth.permissions import visible_media_ids_cte_sql
+from nexus.db.errors import integrity_constraint_name
+from nexus.db.models import MediaKind, ReaderProfile
+from nexus.db.retries import retry_serializable
+from nexus.errors import ApiError, ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
+from nexus.schemas.reader import (
+    CursorWrite,
+    ReaderCursorEmpty,
+    ReaderCursorPositioned,
+    ReaderCursorSnapshot,
+    ReaderProfileOut,
+    ReaderProfilePatch,
+    ReaderResumeState,
+)
 
 DEFAULT_THEME = "light"
 DEFAULT_FONT_SIZE_PX = 16
@@ -25,8 +34,12 @@ DEFAULT_COLUMN_WIDTH_CH = 65
 DEFAULT_FOCUS_MODE = "off"
 DEFAULT_HYPHENATION = "auto"
 READER_RESUME_STATE_ADAPTER = TypeAdapter(ReaderResumeState)
+# The final, explicitly named media FK on reader_media_state (see migration
+# 0180). Runtime race normalization matches this exact name.
+READER_MEDIA_STATE_MEDIA_FK = "fk_reader_media_state_media"
+READER_MEDIA_STATE_UNIQUE = "uq_reader_media_state_user_media"
 _VISIBLE_MEDIA_IDS_CTE_SQL = visible_media_ids_cte_sql().strip()
-_LOCK_VISIBLE_READER_MEDIA_SQL = text(f"""
+_SELECT_VISIBLE_READER_MEDIA_KIND_SQL = text(f"""
 WITH visible_media AS (
     {_VISIBLE_MEDIA_IDS_CTE_SQL}
 )
@@ -36,26 +49,21 @@ WHERE md.id = :media_id
   AND EXISTS (
       SELECT 1 FROM visible_media WHERE media_id = md.id
   )
-FOR UPDATE
 """)
-_SELECT_READER_MEDIA_STATE_ID_SQL = text("""
-    SELECT id
+_SELECT_READER_MEDIA_STATE_SQL = text("""
+    SELECT id, locator, revision
     FROM reader_media_state
     WHERE user_id = :viewer_id AND media_id = :media_id
 """)
 _INSERT_READER_MEDIA_STATE_SQL = text("""
-    INSERT INTO reader_media_state (user_id, media_id, locator)
-    VALUES (:viewer_id, :media_id, CAST(:locator AS jsonb))
+    INSERT INTO reader_media_state (user_id, media_id, locator, revision)
+    VALUES (:viewer_id, :media_id, CAST(:locator AS jsonb), 1)
 """).bindparams(bindparam("locator", type_=JSONB))
 _UPDATE_READER_MEDIA_STATE_SQL = text("""
     UPDATE reader_media_state
-    SET locator = CAST(:locator AS jsonb), updated_at = now()
-    WHERE id = :state_id
+    SET locator = CAST(:locator AS jsonb), revision = revision + 1, updated_at = now()
+    WHERE id = :state_id AND revision = :base_revision
 """).bindparams(bindparam("locator", type_=JSONB))
-_DELETE_READER_MEDIA_STATE_SQL = text("""
-    DELETE FROM reader_media_state
-    WHERE id = :state_id
-""")
 
 
 def _expected_reader_state_kind(media_kind: str) -> str | None:
@@ -88,85 +96,56 @@ def _validate_reader_state_for_media(media_kind: str, locator: ReaderResumeState
         )
 
 
-def _deserialize_reader_state(
-    locator_payload: object | None,
+def _snapshot_from_row(
+    locator_payload: object,
+    revision: int,
     *,
     media_kind: str,
-) -> ReaderResumeState | None:
-    """Validate stored reader state."""
-
-    if locator_payload is None:
-        return None
+) -> ReaderCursorPositioned:
+    """Validate a trusted stored cursor row; invalid rows are defects."""
 
     try:
         locator = READER_RESUME_STATE_ADAPTER.validate_python(locator_payload)
-    except ValidationError as exc:
-        raise ApiError(
-            ApiErrorCode.E_INTERNAL,
-            "Stored reader state is invalid",
-        ) from exc
-
-    try:
         _validate_reader_state_for_media(media_kind, locator)
-    except InvalidRequestError as exc:
+    except (ValidationError, InvalidRequestError) as exc:
         raise ApiError(
             ApiErrorCode.E_INTERNAL,
             "Stored reader state is invalid",
         ) from exc
-    return locator
+    if revision < 1:
+        raise ApiError(
+            ApiErrorCode.E_INTERNAL,
+            "Stored reader state revision is invalid",
+        )
+    return ReaderCursorPositioned(revision=revision, locator=locator)
 
 
-def parse_reader_state_with_attention(
-    raw_body: bytes,
-) -> tuple[ReaderResumeState | None, AttentionBlock | None]:
-    """Parse a PUT /media/{id}/reader-state request body into (locator, attention).
+def _cursor_conflict(current: ReaderCursorSnapshot) -> ConflictError:
+    return ConflictError(
+        ApiErrorCode.E_READER_STATE_CONFLICT,
+        "Reader cursor was updated elsewhere",
+        details={"current": current.model_dump(mode="json")},
+    )
 
-    An empty body is rejected; a bare JSON ``null`` clears the locator and carries
-    no attention (returns ``(None, None)``). A body is self-describing:
-    - an envelope ``{"locator": ..., "attention": ...}`` (either key present)
-      unpacks both fields independently. A null ``locator`` in the envelope
-      clears/omits the resume position but the ``attention`` block is still
-      returned and recorded — a fresh document with no saved position (locator
-      null) accrues dwell on first open, so do NOT collapse this to ``(None,
-      None)``;
-    - anything else is validated as a bare ``ReaderResumeState`` with no
-      attention (a save that carries only a resume position).
-    """
-    if not raw_body:
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Reader state body is required.")
-    try:
-        payload = json.loads(raw_body)
-    except json.JSONDecodeError as exc:
+
+def _visible_media_kind(db: Session, viewer_id: UUID, media_id: UUID) -> str:
+    """Resolve the media kind for a visible readable media row or raise."""
+
+    media_kind = db.execute(
+        _SELECT_VISIBLE_READER_MEDIA_KIND_SQL,
+        {"viewer_id": viewer_id, "media_id": media_id},
+    ).scalar_one_or_none()
+    if media_kind is None:
+        db.rollback()
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+    if _expected_reader_state_kind(str(media_kind)) is None:
+        # Forward-defensive: every current MediaKind maps to a reader kind.
+        db.rollback()
         raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST, "Reader state body must be valid JSON."
-        ) from exc
-    if payload is None:
-        return None, None
-
-    if isinstance(payload, dict) and ("locator" in payload or "attention" in payload):
-        locator_raw = payload.get("locator")
-        attention_raw = payload.get("attention")
-        try:
-            locator = (
-                READER_RESUME_STATE_ADAPTER.validate_python(locator_raw)
-                if locator_raw is not None
-                else None
-            )
-            attention = (
-                AttentionBlock.model_validate(attention_raw) if attention_raw is not None else None
-            )
-        except ValidationError as exc:
-            raise InvalidRequestError(
-                ApiErrorCode.E_INVALID_REQUEST, "Invalid reader state payload."
-            ) from exc
-        return (None, attention) if locator is None else (locator, attention)
-
-    try:
-        return READER_RESUME_STATE_ADAPTER.validate_python(payload), None
-    except ValidationError as exc:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST, "Invalid reader state payload."
-        ) from exc
+            ApiErrorCode.E_INVALID_REQUEST,
+            f"Reader state is not supported for media kind '{media_kind}'",
+        )
+    return str(media_kind)
 
 
 def get_reader_profile(db: Session, user_id: UUID) -> ReaderProfileOut:
@@ -214,83 +193,123 @@ def patch_reader_profile(db: Session, user_id: UUID, patch: ReaderProfilePatch) 
     return ReaderProfileOut.model_validate(profile)
 
 
-def get_reader_media_state(
-    db: Session, viewer_id: UUID, media_id: UUID
-) -> ReaderResumeState | None:
-    """Get per-media reader resume state."""
-    if not can_read_media(db, viewer_id, media_id):
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-
-    media = db.query(Media).filter(Media.id == media_id).first()
-    if media is None:
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-
-    state = (
-        db.query(ReaderMediaState.locator)
-        .filter(
-            ReaderMediaState.user_id == viewer_id,
-            ReaderMediaState.media_id == media_id,
-        )
-        .first()
-    )
-    if state is None or state.locator is None:
-        return None
-    return _deserialize_reader_state(state.locator, media_kind=media.kind)
+def get_reader_cursor(db: Session, viewer_id: UUID, media_id: UUID) -> ReaderCursorSnapshot:
+    """Get the canonical cursor snapshot for (viewer, media)."""
+    media_kind = _visible_media_kind(db, viewer_id, media_id)
+    row = db.execute(
+        _SELECT_READER_MEDIA_STATE_SQL,
+        {"viewer_id": viewer_id, "media_id": media_id},
+    ).first()
+    if row is None:
+        return ReaderCursorEmpty()
+    return _snapshot_from_row(row.locator, row.revision, media_kind=media_kind)
 
 
-def put_reader_media_state(
+def _reconcile_first_insert_race(
     db: Session,
     viewer_id: UUID,
     media_id: UUID,
-    locator: ReaderResumeState | None,
-) -> ReaderResumeState | None:
-    """Replace per-media reader resume state."""
-    # justify-concurrency: request transactions are READ COMMITTED; locking the
-    # one visible media row serializes reader-state writes for that media and
-    # prevents a concurrent media delete from racing the reader_media_state FK.
-    media_kind = db.execute(
-        _LOCK_VISIBLE_READER_MEDIA_SQL,
+    write: CursorWrite,
+) -> ReaderCursorPositioned:
+    """A concurrent first insert won; resolve to idempotent success or conflict."""
+    media_kind = _visible_media_kind(db, viewer_id, media_id)
+    row = db.execute(
+        _SELECT_READER_MEDIA_STATE_SQL,
         {"viewer_id": viewer_id, "media_id": media_id},
-    ).scalar_one_or_none()
-    if media_kind is None:
-        db.rollback()
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-
-    if locator is not None:
-        _validate_reader_state_for_media(str(media_kind), locator)
-
-    locator_payload = locator.model_dump(mode="json") if locator else None
-    state_id = db.execute(
-        _SELECT_READER_MEDIA_STATE_ID_SQL,
-        {"viewer_id": viewer_id, "media_id": media_id},
-    ).scalar_one_or_none()
-
-    if locator_payload is None:
-        if state_id is not None:
-            result = cast(
-                CursorResult[Any],
-                db.execute(_DELETE_READER_MEDIA_STATE_SQL, {"state_id": state_id}),
-            )
-            assert result.rowcount == 1
-        db.commit()
-        return None
-
-    if state_id is None:
-        db.execute(
-            _INSERT_READER_MEDIA_STATE_SQL,
-            {"viewer_id": viewer_id, "media_id": media_id, "locator": locator_payload},
+    ).first()
+    db.rollback()
+    if row is None:
+        raise ApiError(
+            ApiErrorCode.E_INTERNAL,
+            "Reader cursor uniqueness race left no winning row",
         )
+    current = _snapshot_from_row(row.locator, row.revision, media_kind=media_kind)
+    if current.locator == write.locator:
+        return current
+    raise _cursor_conflict(current)
+
+
+def put_reader_cursor(
+    db: Session,
+    viewer_id: UUID,
+    media_id: UUID,
+    write: CursorWrite,
+) -> ReaderCursorPositioned:
+    """Conditionally replace the canonical cursor for (viewer, media).
+
+    Semantics against the current row:
+    - Empty + base 0: create at revision 1;
+    - equal desired locator at any base: idempotent success at the current
+      revision, no mutation;
+    - matching base: replace, revision + 1;
+    - stale base: 409 conflict carrying the exact current snapshot.
+    """
+
+    def attempt() -> ReaderCursorPositioned:
+        media_kind = _visible_media_kind(db, viewer_id, media_id)
+        try:
+            _validate_reader_state_for_media(media_kind, write.locator)
+        except InvalidRequestError:
+            db.rollback()
+            raise
+        row = db.execute(
+            _SELECT_READER_MEDIA_STATE_SQL,
+            {"viewer_id": viewer_id, "media_id": media_id},
+        ).first()
+        if row is None:
+            if write.base_revision != 0:
+                db.rollback()
+                raise _cursor_conflict(ReaderCursorEmpty())
+            db.execute(
+                _INSERT_READER_MEDIA_STATE_SQL,
+                {
+                    "viewer_id": viewer_id,
+                    "media_id": media_id,
+                    "locator": write.locator.model_dump(mode="json"),
+                },
+            )
+            db.commit()
+            return ReaderCursorPositioned(revision=1, locator=write.locator)
+
+        current = _snapshot_from_row(row.locator, row.revision, media_kind=media_kind)
+        if current.locator == write.locator:
+            db.rollback()
+            return current
+        if write.base_revision != current.revision:
+            db.rollback()
+            raise _cursor_conflict(current)
+        result = cast(
+            CursorResult[Any],
+            db.execute(
+                _UPDATE_READER_MEDIA_STATE_SQL,
+                {
+                    "state_id": row.id,
+                    "base_revision": current.revision,
+                    "locator": write.locator.model_dump(mode="json"),
+                },
+            ),
+        )
+        # justify-defect: SERIALIZABLE already read this row at this revision;
+        # a concurrent change surfaces as a serialization failure, not rowcount 0.
+        assert result.rowcount == 1
         db.commit()
-        return locator
+        return ReaderCursorPositioned(revision=current.revision + 1, locator=write.locator)
 
-    result = cast(
-        CursorResult[Any],
-        db.execute(
-            _UPDATE_READER_MEDIA_STATE_SQL,
-            {"state_id": state_id, "locator": locator_payload},
-        ),
-    )
-    assert result.rowcount == 1
-
-    db.commit()
-    return locator
+    try:
+        return retry_serializable(db, "reader_cursor_write", attempt)
+    except IntegrityError as exc:
+        constraint = integrity_constraint_name(exc)
+        db.rollback()
+        if constraint == READER_MEDIA_STATE_UNIQUE:
+            return _reconcile_first_insert_race(db, viewer_id, media_id, write)
+        if constraint == READER_MEDIA_STATE_MEDIA_FK:
+            # Media deletion can win immediately before a first cursor INSERT.
+            visible_kind = db.execute(
+                _SELECT_VISIBLE_READER_MEDIA_KIND_SQL,
+                {"viewer_id": viewer_id, "media_id": media_id},
+            ).scalar_one_or_none()
+            db.rollback()
+            if visible_kind is None:
+                raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found") from exc
+            raise
+        raise

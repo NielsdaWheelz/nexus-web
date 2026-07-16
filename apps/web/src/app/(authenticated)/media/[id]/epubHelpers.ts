@@ -46,25 +46,6 @@ export function resolveSectionAnchorId(
   return null;
 }
 
-export function buildEpubLocationHref(
-  mediaId: string,
-  sectionId: string,
-  options?: {
-    fragmentId?: string | null;
-    highlightId?: string | null;
-  }
-): string {
-  const params = new URLSearchParams();
-  params.set("loc", sectionId);
-  if (options?.fragmentId) {
-    params.set("fragment", options.fragmentId);
-  }
-  if (options?.highlightId) {
-    params.set("highlight", options.highlightId);
-  }
-  return `/media/${mediaId}?${params.toString()}`;
-}
-
 const EPUB_LINK_ORIGIN = "https://epub.local";
 const URI_SCHEME_RE = /^[a-zA-Z][a-zA-Z\d+.-]*:/;
 

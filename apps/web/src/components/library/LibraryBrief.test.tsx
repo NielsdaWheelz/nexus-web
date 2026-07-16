@@ -248,6 +248,7 @@ function renderBriefAt(href: string) {
   render(
     <PaneRuntimeProvider
       paneId="pane-library"
+      isActive={true}
       href={href}
       routeId={identity.routeId}
       routeKey={identity.routeKey}

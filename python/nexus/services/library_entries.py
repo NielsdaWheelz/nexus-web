@@ -65,22 +65,24 @@ _RESONANCE_RECENCY_HALF_LIFE_DAYS = 14.0
 
 # Per-entry most-recent engagement instant, in SQL, for ordering. Mirrors the two
 # authoritative sources `_hydrate_entries`/`services.media` read post-hoc: a direct
-# media entry's reader/listening state (podcast episodes are still `media_id`
-# library entries), and a podcast entry's MAX listening-state recency across its
-# visible episodes. NULL when the target was never engaged.
+# media entry's reading sessions / listening state (podcast episodes are still
+# `media_id` library entries), and a podcast entry's MAX listening-state recency
+# across its visible episodes. NULL when the target was never engaged.
 _LAST_ENGAGED_AT_SQL = """
     CASE
         WHEN le.media_id IS NOT NULL THEN (
             SELECT NULLIF(
                 GREATEST(
-                    COALESCE(rms.updated_at, '-infinity'::timestamptz),
+                    COALESCE((
+                        SELECT MAX(rs.last_active_at)
+                        FROM reading_sessions rs
+                        WHERE rs.user_id = :viewer_id AND rs.media_id = m.id
+                    ), '-infinity'::timestamptz),
                     COALESCE(pls.updated_at, '-infinity'::timestamptz)
                 ),
                 '-infinity'::timestamptz
             )
             FROM media m
-            LEFT JOIN reader_media_state rms
-              ON rms.user_id = :viewer_id AND rms.media_id = m.id
             LEFT JOIN podcast_listening_states pls
               ON pls.user_id = :viewer_id AND pls.media_id = m.id
             WHERE m.id = le.media_id

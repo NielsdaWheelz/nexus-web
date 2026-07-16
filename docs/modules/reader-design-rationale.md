@@ -98,11 +98,28 @@ touching app theme tokens.
 - all reflowable reader appearance comes from this single source of truth
   across web article, transcript, and epub readers
 
-### per-media resume
+### per-media progress
 
-- `reader_media_state` stores resume only
-- the reader-state API is `ReaderResumeState | null`
-- `null` clears stored resume for that media
+- `reader_media_state` stores one canonical cursor row per user/media: a
+  non-null jsonb `locator` and a monotonic bigint `revision` (starts `1`,
+  authoritative — `updated_at` is metadata only, not a conflict token)
+- `GET /api/media/{id}/reader-state` returns exactly
+  `{state:"Empty",revision:0}` or `{state:"Positioned",revision>=1,locator}`,
+  never raw `null`
+- `PUT /api/media/{id}/reader-state` takes the one strict envelope
+  `{cursor?: {locator, base_revision}, attention?}` — at least one block is
+  required; old bare locators, extra fields, and a top-level `null` clear are
+  rejected with `400`
+- a matching `base_revision` replaces the cursor and increments `revision`; a
+  stale `base_revision` returns `409` with the exact current snapshot and
+  mutates nothing; attention-only writes return `204` and never touch the
+  cursor row
+- `useReaderProgress` is the single browser-side coordinator that serializes
+  and coalesces cursor writes (single-flight, latest-only, revision-aware);
+  event-driven revalidation on pane activation, visibility, focus, `pageshow`,
+  and `online` lets a clean, dormant reader auto-adopt a newer cursor from
+  another device, while an active or locally dirty reader is offered the
+  handoff instead of being teleported
 - text readers persist explicit targets plus `locations` and quote context
 - pdf persists `page`, `page_progression`, `zoom`, and coarse `position`
 - the shipped contract is discriminated by `kind` and rejects removed flat
@@ -152,6 +169,17 @@ changes.
 - pdf restores saved page, intra-page progression, and zoom on open and
   persists later page changes without reopening the document file
 
+Bare routes resume the canonical cursor internally rather than through URL
+state: the stable entry `/media/:id` never redirects to progress parameters.
+Cold-mount precedence is fresh feature-owned hash/evidence/highlight target,
+then the Positioned canonical cursor, then a coarse cold `?loc`/`?fragment`
+query only when the cursor is Empty, then the default readable source. A
+copied or bookmarked coarse link should not silently override real saved
+progress; when the canonical cursor supersedes a cold query, pane-local
+replace strips only `loc`/`fragment` and preserves unrelated query state and
+hash. Ordinary scrolling never writes the URL, and live pane Back/Forward
+navigates without persisting merely because history moved it.
+
 ### epub request surface
 
 - epub navigation is sourced from `GET /api/media/{id}/navigation`
@@ -168,11 +196,14 @@ required automated coverage includes:
 
 - reader settings persistence
 - web article canonical locator resume after profile typography reflow
-- epub `?loc` precedence over saved resume
+- epub `#loc-` hash deep link precedence over saved resume
+- a cold `?loc`/`?fragment` query loses to an existing Positioned cursor
 - epub delayed-hydration no-snap-back after manual scroll
 - epub intra-section locator resume after reload
 - pdf page + zoom + intra-page locator resume after reload
 - pdf in-session page persistence without file reopen
+- clean, dormant cross-device re-entry auto-applies a newer cursor without
+  remount; active/dirty re-entry shows the handoff
 - reader-to-chat quote flow sends a durable `highlight:` reference and, when
   the highlight has nonblank exact text, a transient `reader_selection`
   carrying `media_id` + `highlight_id`
@@ -180,9 +211,9 @@ required automated coverage includes:
 ## validation commands
 
 ```bash
-cd apps/web && bunx vitest run --project unit src/lib/reader/useReaderResumeState.test.tsx src/lib/reader/types.test.ts src/lib/media/readerNavigation.test.ts
+cd apps/web && bunx vitest run --project unit src/lib/reader/readerProgress.test.ts src/lib/reader/readerLocationHref.test.ts src/lib/reader/types.test.ts src/lib/media/readerNavigation.test.ts
 cd apps/web && bunx vitest run --project unit src/lib/conversations/chatRunBody.test.ts src/lib/api/sse/events.test.ts src/lib/conversations/citations.test.ts
 cd apps/web && bunx vitest run --project browser 'src/app/(authenticated)/media/[id]/MediaPaneBody.test.tsx' 'src/app/(authenticated)/media/[id]/TextDocumentReader.test.tsx' src/components/reader/ReaderDocumentMapOverviewRail.test.tsx src/components/reader/document-map/ReaderDocumentMapHighlightsLens.test.tsx src/__tests__/components/ResourceChatDetail.test.tsx
-make test-e2e PLAYWRIGHT_ARGS='tests/reader-resume.spec.ts --project=chromium'
+make test-e2e PLAYWRIGHT_ARGS='tests/reader-progress-continuity.spec.ts --project=chromium'
 make test-e2e PLAYWRIGHT_ARGS='tests/quote-attach-references.spec.ts tests/pdf-reader.spec.ts --project=chromium'
 ```

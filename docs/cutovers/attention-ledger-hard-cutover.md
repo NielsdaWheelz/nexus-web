@@ -3,6 +3,17 @@
 **Status:** Spec · Rev 1 · 2026-07-07
 **Type:** Hard cutover — no legacy code, no fallbacks, no compat shims.
 
+**Reader-state note (2026-07-16):** `reader-progress-continuity-hard-cutover.md`
+(migration 0180) replaced the reader-state PUT this spec extends. The route now
+takes the strict envelope `{cursor?: {locator, base_revision}, attention?}`;
+attention-only requests return `204` and never touch the `reader_media_state`
+cursor row — `services/attention.py` validates media visibility itself rather
+than the locator write implicitly covering it. §D-1's claim that "the locator
+save is already the attention-worthy event," the "What is NOT deleted" note
+below describing `services/reader.py`'s bare-locator/null-clear parsing, and
+step S2's `parse_reader_state_with_attention` plan describe the superseded
+pre-cutover shape and are retained as historical implementation record only.
+
 ## One-line
 
 Record every contiguous reading and listening episode as a first-class `reading_sessions` row; derive read-state from sessions + one explicit override verb; make `services/attention.py` the sole writer of both tables and `consumption_state(user_id, media_ids)` the sole derivation function for collection queries.

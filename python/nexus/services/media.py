@@ -470,7 +470,7 @@ def _apply_consumption_state(
             media.progress_fraction = state.progress_fraction
 
     # Engagement recency: audio rows take their listening-state recency, documents
-    # their resume-state recency (one batched query per source).
+    # their reading-session recency (one batched query per source).
     audio_media_ids = [media.id for media in media_outs if media.listening_state is not None]
     doc_media_ids = [media.id for media in media_outs if media.listening_state is None]
 
@@ -498,9 +498,10 @@ def _apply_consumption_state(
             for row in db.execute(
                 text(
                     """
-                    SELECT media_id, updated_at
-                    FROM reader_media_state
+                    SELECT media_id, MAX(last_active_at)
+                    FROM reading_sessions
                     WHERE user_id = :viewer_id AND media_id = ANY(:ids)
+                    GROUP BY media_id
                     """
                 ),
                 {"viewer_id": viewer_id, "ids": doc_media_ids},

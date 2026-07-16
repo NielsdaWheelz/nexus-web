@@ -28,9 +28,7 @@ type EpubRestoreSource =
   | "resume_total_progression"
   | "resume_position"
   | "default"
-  | "history"
-  | "manual_section"
-  | "internal_link";
+  | "manual_section";
 
 export type EpubRestoreRequest = {
   sectionId: string;

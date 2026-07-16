@@ -289,12 +289,37 @@ pure black/white to reduce halation under long sessions.
   content sets its own colors; only the chrome around the canvas adopts
   reader theme tokens
 
-### per-media resume
+### per-media progress
 
-- `reader_media_state` stores resume only
-- `GET/PUT /api/media/{id}/reader-state` uses `ReaderResumeState | null`
-- `null` clears the stored resume state for that media
-- `ReaderResumeState` is a discriminated union:
+- `reader_media_state` stores one canonical cursor row per user/media: a
+  non-null jsonb `locator`, a monotonic bigint `revision` (starts `1`), and
+  explicitly named non-cascading FKs (`fk_reader_media_state_user`,
+  `fk_reader_media_state_media`). `updated_at` is metadata, not a conflict
+  token; `revision` is authority.
+- `GET /api/media/{id}/reader-state` returns exactly
+  `{state:"Empty",revision:0}` or `{state:"Positioned",revision>=1,locator}` —
+  never raw `null`. An unsupported (future) media kind returns
+  `400 E_INVALID_REQUEST`; missing/inaccessible media returns masked
+  `404 E_MEDIA_NOT_FOUND`.
+- `PUT /api/media/{id}/reader-state` takes the one strict envelope
+  `{cursor?: {locator, base_revision}, attention?}`, requiring at least one
+  block. Extra fields, old bare locators, and a top-level `null` clear are
+  rejected with `400`.
+  - Empty + `base_revision: 0` creates revision `1`.
+  - A matching `base_revision` replaces the cursor at `revision + 1`.
+  - An equal desired locator is idempotent success at the current revision.
+  - A stale `base_revision` returns `409 E_READER_STATE_CONFLICT` with
+    `error.details.current` set to the exact current snapshot; nothing is
+    mutated.
+  - Attention-only requests return `204` and never touch the cursor row.
+  - A combined request commits the cursor first in its own transaction, then
+    makes a best-effort attention attempt in its own transaction; a cursor
+    conflict writes no attention, and a committed cursor still returns `200`
+    even if the attention attempt fails.
+- All reader-state responses carry `Cache-Control: private, no-store`, via an
+  exact-path FastAPI middleware and the matching header on the Next reader-state
+  BFF route.
+- `ReaderResumeState` (the `locator` payload) is a discriminated union:
   - `pdf`: `page`, `page_progression`, `zoom`, `position`
   - `web`: `target.fragment_id`, `locations`, `text`
   - `transcript`: `target.fragment_id`, `locations`, `text`
@@ -302,6 +327,35 @@ pure black/white to reduce halation under long sessions.
     `target.anchor_id`, `locations`, `text`
 - the backend and frontend both reject blank strings, removed flat fields,
   unknown keys, invalid ranges, and media-kind mismatches
+- quote context is bounded consistently in backend schemas and the frontend
+  strict decoder: `quote` is at most 256 Unicode code points; `quote_prefix`
+  and `quote_suffix` are at most 128 each. Oversized values are rejected, not
+  truncated.
+- `useReaderProgress` is the single browser-side coordinator: single-flight,
+  latest-only, revision-aware, with a `500ms` idle / `5s` maximum-wait save
+  window and event-driven revalidation on pane activation, `visibilitychange`,
+  focus, `pageshow`, and `online`. Pure decoding, equality, and
+  conflict/adoption decisions live in `apps/web/src/lib/reader/readerProgress.ts`.
+  A clean, dormant reader auto-adopts a newer remote cursor; an active or
+  locally dirty reader shows the handoff (`Go to most recent position` /
+  `Stay at this position`) instead of teleporting.
+
+### progress precedence and URL repair
+
+- the stable entry is `/media/:id`; it never redirects to progress
+  parameters
+- cold-mount precedence: fresh feature-owned hash/evidence/highlight/apparatus
+  target -> Positioned canonical cursor -> coarse cold `?loc`/`?fragment` only
+  when the cursor is Empty -> default readable source
+- when the canonical cursor supersedes a cold coarse query, pane-local
+  replace removes only `loc` and `fragment`, preserving `apparatus`,
+  unrelated query state, and hash
+- ordinary scrolling never writes the URL; live pane Back/Forward navigates
+  the mounted reader without persisting merely because history moved it
+- reader href/repair construction is centralized in
+  `apps/web/src/lib/reader/readerLocationHref.ts`, including the Reader Copy
+  pane link, which strips only coarse `loc`/`fragment` and preserves
+  feature-owned `apparatus` and other query/hash intent
 
 ### layered restore order
 
@@ -413,6 +467,10 @@ required e2e coverage includes:
 - epub intra-section locator resume after reload
 - pdf page + zoom + intra-page locator resume after reload
 - pdf page changes persisting without reopening the file
+- cold `?loc`/`?fragment` loses to an existing Positioned cursor, and repair
+  preserves unrelated query/hash state
+- clean, dormant cross-device re-entry auto-applies a newer cursor without
+  remounting; active/dirty re-entry shows the handoff instead of teleporting
 - reader-to-chat quote flow sends a durable `highlight:` reference and, when
   the highlight has nonblank exact text, a transient `reader_selection`
   carrying `media_id` and `highlight_id`
@@ -427,9 +485,9 @@ supporting test infra:
 ## validation commands
 
 ```bash
-cd apps/web && bunx vitest run --project unit src/lib/reader/useReaderResumeState.test.tsx src/lib/reader/types.test.ts src/lib/media/readerNavigation.test.ts
+cd apps/web && bunx vitest run --project unit src/lib/reader/readerProgress.test.ts src/lib/reader/readerLocationHref.test.ts src/lib/reader/types.test.ts src/lib/media/readerNavigation.test.ts
 cd apps/web && bunx vitest run --project unit src/lib/conversations/chatRunBody.test.ts src/lib/api/sse/events.test.ts src/lib/conversations/citations.test.ts
 cd apps/web && bunx vitest run --project browser 'src/app/(authenticated)/media/[id]/MediaPaneBody.test.tsx' 'src/app/(authenticated)/media/[id]/TextDocumentReader.test.tsx' src/components/reader/ReaderDocumentMapOverviewRail.test.tsx src/components/reader/document-map/ReaderDocumentMapHighlightsLens.test.tsx
-make test-e2e PLAYWRIGHT_ARGS='tests/reader-resume.spec.ts --project=chromium'
+make test-e2e PLAYWRIGHT_ARGS='tests/reader-progress-continuity.spec.ts --project=chromium'
 make test-e2e PLAYWRIGHT_ARGS='tests/quote-attach-references.spec.ts tests/pdf-reader.spec.ts --project=chromium'
 ```

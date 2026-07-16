@@ -1,16 +1,24 @@
 """Integration tests for reader profile and per-media reader state."""
 
+from collections.abc import Callable
 from uuid import UUID, uuid4
 
 import pytest
+import structlog
 from sqlalchemy import event, text
+from sqlalchemy.engine import Engine
 
+import nexus.app as app_module
 from nexus.db.models import Fragment, Media, MediaKind, ProcessingStatus, ReaderMediaState
+from nexus.errors import ApiErrorCode, ConflictError, NotFoundError
+from nexus.schemas.reader import CursorWrite
 from nexus.services import reader as reader_service
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
 
 pytestmark = pytest.mark.integration
+
+READER_STATE_NO_STORE = "private, no-store"
 
 
 def _add_media_to_user_library(auth_client, user_id, media_id):
@@ -59,11 +67,14 @@ def _create_ready_reader_media(
 
 
 def _register_media_cleanup(direct_db: DirectSessionManager, media_id: UUID) -> None:
-    """Register cleanup for media-scoped rows created here."""
-    direct_db.register_cleanup("reader_media_state", "media_id", media_id)
-    direct_db.register_cleanup("fragments", "media_id", media_id)
-    direct_db.register_cleanup("library_entries", "media_id", media_id)
+    """Register cleanup for media-scoped rows created here.
+
+    Cleanup runs in reverse registration order; the media row must go last
+    because the reader-state media FK is deliberately non-cascading."""
     direct_db.register_cleanup("media", "id", media_id)
+    direct_db.register_cleanup("library_entries", "media_id", media_id)
+    direct_db.register_cleanup("fragments", "media_id", media_id)
+    direct_db.register_cleanup("reader_media_state", "media_id", media_id)
 
 
 def _build_reader_state_payload(media_kind: str, fragment_ids: list[UUID]) -> dict:
@@ -305,10 +316,68 @@ class TestPatchReaderProfile:
         assert data["font_size_px"] == 20
 
 
-class TestReaderState:
-    """GET/PUT /media/{media_id}/reader-state."""
+def _cursor_body(locator: dict, base_revision: int) -> dict:
+    return {"cursor": {"locator": locator, "base_revision": base_revision}}
 
-    def test_get_reader_state_returns_null_when_empty(
+
+def _attention_body(
+    dwell_ms: int = 1_000,
+    progression: float | None = 0.5,
+) -> dict:
+    return {
+        "dwell_ms_delta": dwell_ms,
+        "device_id": "device-test",
+        "spans_touched": [],
+        "progression": progression,
+    }
+
+
+def _session_count(direct_db: DirectSessionManager, user_id: UUID, media_id: UUID) -> int:
+    with direct_db.session() as session:
+        return session.execute(
+            text("""
+                SELECT COUNT(*) FROM reading_sessions
+                WHERE user_id = :user_id AND media_id = :media_id
+            """),
+            {"user_id": user_id, "media_id": media_id},
+        ).scalar_one()
+
+
+def _cursor_row(
+    direct_db: DirectSessionManager, user_id: UUID, media_id: UUID
+) -> tuple[dict, int] | None:
+    with direct_db.session() as session:
+        row = session.execute(
+            text("""
+                SELECT locator, revision FROM reader_media_state
+                WHERE user_id = :user_id AND media_id = :media_id
+            """),
+            {"user_id": user_id, "media_id": media_id},
+        ).first()
+    return None if row is None else (row.locator, row.revision)
+
+
+def _one_shot_before_execute(
+    engine: Engine, statement_marker: str, callback: Callable[[], None]
+) -> Callable[[], None]:
+    """Run ``callback`` once, immediately before the first statement containing
+    ``statement_marker`` executes. Returns a remover for the hook."""
+    fired = {"done": False}
+
+    def hook(conn, cursor, statement, parameters, context, executemany):
+        if fired["done"] or statement_marker not in statement:
+            return
+        fired["done"] = True
+        callback()
+
+    event.listen(engine, "before_cursor_execute", hook)
+    return lambda: event.remove(engine, "before_cursor_execute", hook)
+
+
+class TestReaderCursorGet:
+    """GET /media/{media_id}/reader-state."""
+
+    def test_get_returns_empty_snapshot_when_no_cursor(
         self, auth_client, direct_db: DirectSessionManager
     ):
         user_id = create_test_user_id()
@@ -324,9 +393,10 @@ class TestReaderState:
         )
 
         assert resp.status_code == 200
-        assert resp.json()["data"] is None
+        assert resp.json()["data"] == {"state": "Empty", "revision": 0}
+        assert resp.headers["cache-control"] == READER_STATE_NO_STORE
 
-    def test_get_reader_state_fails_loudly_for_invalid_stored_resume_payload(
+    def test_get_fails_loudly_for_invalid_stored_locator(
         self, auth_client, direct_db: DirectSessionManager
     ):
         user_id = create_test_user_id()
@@ -344,10 +414,7 @@ class TestReaderState:
                 ReaderMediaState(
                     user_id=user_id,
                     media_id=media_id,
-                    locator={
-                        "source": "fragment-2",
-                        "text_offset": 84,
-                    },
+                    locator={"source": "fragment-2", "text_offset": 84},
                 )
             )
             session.commit()
@@ -359,8 +426,9 @@ class TestReaderState:
 
         assert resp.status_code == 500
         assert resp.json()["error"]["code"] == "E_INTERNAL"
+        assert resp.headers["cache-control"] == READER_STATE_NO_STORE
 
-    def test_get_reader_state_fails_loudly_for_persisted_kind_mismatch(
+    def test_get_fails_loudly_for_persisted_kind_mismatch(
         self, auth_client, direct_db: DirectSessionManager
     ):
         user_id = create_test_user_id()
@@ -391,6 +459,44 @@ class TestReaderState:
         assert resp.status_code == 500
         assert resp.json()["error"]["code"] == "E_INTERNAL"
 
+    def test_get_fails_loudly_for_non_positive_stored_revision(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        with direct_db.session() as session:
+            media_id, fragment_ids = _create_ready_reader_media(
+                session,
+                kind=MediaKind.web_article.value,
+            )
+
+        _register_media_cleanup(direct_db, media_id)
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        payload = _build_reader_state_payload(MediaKind.web_article.value, fragment_ids)
+        with direct_db.session() as session:
+            session.add(ReaderMediaState(user_id=user_id, media_id=media_id, locator=payload))
+            session.flush()
+            session.execute(
+                text("""
+                    UPDATE reader_media_state SET revision = 0
+                    WHERE user_id = :user_id AND media_id = :media_id
+                """),
+                {"user_id": user_id, "media_id": media_id},
+            )
+            session.commit()
+
+        resp = auth_client.get(
+            f"/media/{media_id}/reader-state",
+            headers=auth_headers(user_id),
+        )
+
+        assert resp.status_code == 500
+        assert resp.json()["error"]["code"] == "E_INTERNAL"
+
+
+class TestReaderCursorPut:
+    """PUT /media/{media_id}/reader-state cursor semantics."""
+
     @pytest.mark.parametrize(
         "media_kind",
         [
@@ -400,7 +506,7 @@ class TestReaderState:
             MediaKind.video.value,
         ],
     )
-    def test_put_reader_state_round_trips_new_resume_state(
+    def test_put_creates_cursor_at_revision_one_and_round_trips(
         self,
         auth_client,
         direct_db: DirectSessionManager,
@@ -417,137 +523,69 @@ class TestReaderState:
 
         put_resp = auth_client.put(
             f"/media/{media_id}/reader-state",
-            json=payload,
+            json=_cursor_body(payload, 0),
             headers=auth_headers(user_id),
         )
 
         assert put_resp.status_code == 200
-        assert put_resp.json()["data"] == payload
-
-        get_resp = auth_client.get(
-            f"/media/{media_id}/reader-state",
-            headers=auth_headers(user_id),
-        )
-
-        assert get_resp.status_code == 200
-        assert get_resp.json()["data"] == payload
-
-    def test_put_reader_state_allows_clearing_with_null(
-        self, auth_client, direct_db: DirectSessionManager
-    ):
-        user_id = create_test_user_id()
-        with direct_db.session() as session:
-            media_id, fragment_ids = _create_ready_reader_media(
-                session,
-                kind=MediaKind.web_article.value,
-            )
-
-        _register_media_cleanup(direct_db, media_id)
-        _add_media_to_user_library(auth_client, user_id, media_id)
-
-        payload = _build_reader_state_payload(MediaKind.web_article.value, fragment_ids)
-        set_resp = auth_client.put(
-            f"/media/{media_id}/reader-state",
-            json=payload,
-            headers=auth_headers(user_id),
-        )
-
-        assert set_resp.status_code == 200
-
-        clear_resp = auth_client.put(
-            f"/media/{media_id}/reader-state",
-            content="null",
-            headers={**auth_headers(user_id), "content-type": "application/json"},
-        )
-
-        assert clear_resp.status_code == 200
-        assert clear_resp.json()["data"] is None
-        get_resp = auth_client.get(
-            f"/media/{media_id}/reader-state",
-            headers=auth_headers(user_id),
-        )
-
-        assert get_resp.status_code == 200
-        assert get_resp.json()["data"] is None
-
-    def test_put_reader_state_does_not_stale_update_when_existing_row_is_deleted(
-        self,
-        auth_client,
-        direct_db: DirectSessionManager,
-    ):
-        user_id = create_test_user_id()
-        with direct_db.session() as session:
-            media_id, fragment_ids = _create_ready_reader_media(
-                session,
-                kind=MediaKind.web_article.value,
-            )
-
-        _register_media_cleanup(direct_db, media_id)
-        _add_media_to_user_library(auth_client, user_id, media_id)
-
-        payload = _build_reader_state_payload(MediaKind.web_article.value, fragment_ids)
-        set_resp = auth_client.put(
-            f"/media/{media_id}/reader-state",
-            json=payload,
-            headers=auth_headers(user_id),
-        )
-        assert set_resp.status_code == 200
-
-        replacement_payload = {
-            **payload,
-            "locations": {**payload["locations"], "text_offset": 99, "position": 4},
+        assert put_resp.json()["data"] == {
+            "state": "Positioned",
+            "revision": 1,
+            "locator": payload,
         }
-        replacement = reader_service.READER_RESUME_STATE_ADAPTER.validate_python(
-            replacement_payload
+        assert put_resp.headers["cache-control"] == READER_STATE_NO_STORE
+
+        get_resp = auth_client.get(
+            f"/media/{media_id}/reader-state",
+            headers=auth_headers(user_id),
         )
 
+        assert get_resp.status_code == 200
+        assert get_resp.json()["data"] == {
+            "state": "Positioned",
+            "revision": 1,
+            "locator": payload,
+        }
+
+    def test_put_with_current_base_increments_once(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
         with direct_db.session() as session:
-            deleted_before_flush = False
+            media_id, fragment_ids = _create_ready_reader_media(
+                session,
+                kind=MediaKind.web_article.value,
+            )
 
-            def delete_existing_row_before_orm_flush(
-                _orm_session,
-                _flush_context,
-                _instances,
-            ):
-                nonlocal deleted_before_flush
-                if deleted_before_flush:
-                    return
-                deleted_before_flush = True
-                with direct_db.session() as cleanup_session:
-                    cleanup_session.execute(
-                        text("""
-                            DELETE FROM reader_media_state
-                            WHERE user_id = :user_id AND media_id = :media_id
-                        """),
-                        {"user_id": user_id, "media_id": media_id},
-                    )
-                    cleanup_session.commit()
+        _register_media_cleanup(direct_db, media_id)
+        _add_media_to_user_library(auth_client, user_id, media_id)
 
-            event.listen(session, "before_flush", delete_existing_row_before_orm_flush)
-            try:
-                result = reader_service.put_reader_media_state(
-                    session,
-                    user_id,
-                    media_id,
-                    replacement,
-                )
-            finally:
-                event.remove(session, "before_flush", delete_existing_row_before_orm_flush)
+        payload_a = _build_reader_state_payload(MediaKind.web_article.value, fragment_ids)
+        payload_b = {
+            **payload_a,
+            "locations": {**payload_a["locations"], "text_offset": 99, "position": 3},
+        }
 
-        assert result == replacement
-        with direct_db.session() as session:
-            stored = session.execute(
-                text("""
-                    SELECT locator
-                    FROM reader_media_state
-                    WHERE user_id = :user_id AND media_id = :media_id
-                """),
-                {"user_id": user_id, "media_id": media_id},
-            ).scalar_one()
+        first = auth_client.put(
+            f"/media/{media_id}/reader-state",
+            json=_cursor_body(payload_a, 0),
+            headers=auth_headers(user_id),
+        )
+        second = auth_client.put(
+            f"/media/{media_id}/reader-state",
+            json=_cursor_body(payload_b, 1),
+            headers=auth_headers(user_id),
+        )
 
-        assert stored == replacement_payload
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert second.json()["data"] == {
+            "state": "Positioned",
+            "revision": 2,
+            "locator": payload_b,
+        }
 
-    def test_put_reader_state_rejects_missing_body_without_clearing(
+    def test_put_equal_locator_is_idempotent_at_any_base(
         self, auth_client, direct_db: DirectSessionManager
     ):
         user_id = create_test_user_id()
@@ -561,185 +599,257 @@ class TestReaderState:
         _add_media_to_user_library(auth_client, user_id, media_id)
 
         payload = _build_reader_state_payload(MediaKind.web_article.value, fragment_ids)
-        set_resp = auth_client.put(
+        auth_client.put(
             f"/media/{media_id}/reader-state",
-            json=payload,
-            headers=auth_headers(user_id),
-        )
-        missing_body_resp = auth_client.put(
-            f"/media/{media_id}/reader-state",
-            headers=auth_headers(user_id),
-        )
-        get_resp = auth_client.get(
-            f"/media/{media_id}/reader-state",
+            json=_cursor_body(payload, 0),
             headers=auth_headers(user_id),
         )
 
-        assert set_resp.status_code == 200
-        assert missing_body_resp.status_code == 400
-        assert missing_body_resp.json()["error"]["code"] == "E_INVALID_REQUEST"
-        assert get_resp.status_code == 200
-        assert get_resp.json()["data"] == payload
+        retry = auth_client.put(
+            f"/media/{media_id}/reader-state",
+            json=_cursor_body(payload, 999),
+            headers=auth_headers(user_id),
+        )
+
+        assert retry.status_code == 200
+        assert retry.json()["data"] == {
+            "state": "Positioned",
+            "revision": 1,
+            "locator": payload,
+        }
+        assert _cursor_row(direct_db, user_id, media_id) == (payload, 1)
+
+    def test_put_stale_base_conflicts_with_current_snapshot_and_mutates_nothing(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        with direct_db.session() as session:
+            media_id, fragment_ids = _create_ready_reader_media(
+                session,
+                kind=MediaKind.web_article.value,
+            )
+
+        _register_media_cleanup(direct_db, media_id)
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        payload_a = _build_reader_state_payload(MediaKind.web_article.value, fragment_ids)
+        payload_b = {
+            **payload_a,
+            "locations": {**payload_a["locations"], "text_offset": 7, "position": 1},
+        }
+        auth_client.put(
+            f"/media/{media_id}/reader-state",
+            json=_cursor_body(payload_a, 0),
+            headers=auth_headers(user_id),
+        )
+
+        stale = auth_client.put(
+            f"/media/{media_id}/reader-state",
+            json=_cursor_body(payload_b, 0),
+            headers=auth_headers(user_id),
+        )
+
+        assert stale.status_code == 409
+        error = stale.json()["error"]
+        assert error["code"] == "E_READER_STATE_CONFLICT"
+        assert error["details"]["current"] == {
+            "state": "Positioned",
+            "revision": 1,
+            "locator": payload_a,
+        }
+        assert stale.headers["cache-control"] == READER_STATE_NO_STORE
+        assert _cursor_row(direct_db, user_id, media_id) == (payload_a, 1)
+
+    def test_put_positive_base_against_empty_conflicts_with_empty_snapshot(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        with direct_db.session() as session:
+            media_id, fragment_ids = _create_ready_reader_media(
+                session,
+                kind=MediaKind.web_article.value,
+            )
+
+        _register_media_cleanup(direct_db, media_id)
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        payload = _build_reader_state_payload(MediaKind.web_article.value, fragment_ids)
+        resp = auth_client.put(
+            f"/media/{media_id}/reader-state",
+            json=_cursor_body(payload, 3),
+            headers=auth_headers(user_id),
+        )
+
+        assert resp.status_code == 409
+        assert resp.json()["error"]["details"]["current"] == {"state": "Empty", "revision": 0}
+        assert _cursor_row(direct_db, user_id, media_id) is None
 
     @pytest.mark.parametrize(
-        ("media_kind", "payload", "label"),
+        ("body_builder", "label"),
         [
+            (lambda payload: payload, "old bare locator body"),
+            (lambda payload: {"locator": payload}, "old flat envelope"),
+            (lambda payload: None, "top-level null (removed public clear)"),
             (
-                MediaKind.web_article.value,
-                {
-                    "source": "fragment-2",
-                    "text_offset": 84,
-                },
-                "removed flat payloads are rejected",
+                lambda payload: {"cursor": {"locator": payload}},
+                "missing base revision",
             ),
             (
-                MediaKind.web_article.value,
-                {
-                    "kind": "web",
-                    "target": {"fragment_id": "frag-1"},
-                    "locations": {
-                        "text_offset": 12,
-                        "progression": 0.1,
-                        "total_progression": 0.2,
-                        "position": 1,
-                    },
-                    "text": {"quote": "q", "quote_prefix": None, "quote_suffix": None},
-                    "unexpected_field": "unexpected",
-                },
-                "unknown fields are rejected",
+                lambda payload: {"cursor": {"locator": None, "base_revision": 0}},
+                "null cursor locator",
             ),
             (
-                MediaKind.web_article.value,
-                {
-                    "kind": "web",
-                    "target": {"fragment_id": "   "},
-                    "locations": {
-                        "text_offset": 12,
-                        "progression": 0.1,
-                        "total_progression": 0.2,
-                        "position": 1,
-                    },
-                    "text": {"quote": "q", "quote_prefix": None, "quote_suffix": None},
-                },
-                "blank fragment ids are rejected",
+                lambda payload: {"cursor": {"locator": payload, "base_revision": -1}},
+                "negative base revision",
             ),
             (
-                MediaKind.web_article.value,
-                {
-                    "kind": "web",
-                    "target": {"fragment_id": "frag-1"},
-                    "locations": {
-                        "text_offset": 12,
-                        "progression": 0.1,
-                        "total_progression": 0.2,
-                        "position": 1,
-                    },
-                    "text": {"quote": None, "quote_prefix": "before ", "quote_suffix": None},
+                lambda payload: {
+                    "cursor": {"locator": payload, "base_revision": 0},
+                    "unexpected": True,
                 },
-                "quote context requires quote text",
+                "extra envelope fields",
             ),
             (
-                MediaKind.epub.value,
-                {
-                    "kind": "epub",
-                    "target": {
-                        "section_id": "chapter-1",
-                        "href_path": "   ",
-                        "anchor_id": None,
-                    },
-                    "locations": {
-                        "text_offset": 12,
-                        "progression": 0.1,
-                        "total_progression": 0.2,
-                        "position": 1,
-                    },
-                    "text": {"quote": "q", "quote_prefix": None, "quote_suffix": None},
-                },
-                "blank href_path is rejected",
+                lambda payload: {"cursor": {"locator": payload, "base_revision": 0, "extra": 1}},
+                "extra cursor fields",
             ),
+            (lambda payload: {}, "empty envelope (no block)"),
             (
-                MediaKind.epub.value,
-                {
-                    "kind": "epub",
-                    "target": {
-                        "section_id": "chapter-1",
-                        "href_path": "chapter-1.xhtml",
-                        "anchor_id": "   ",
-                    },
-                    "locations": {
-                        "text_offset": 12,
-                        "progression": 0.1,
-                        "total_progression": 0.2,
-                        "position": 1,
-                    },
-                    "text": {"quote": "q", "quote_prefix": None, "quote_suffix": None},
-                },
-                "blank anchor ids are rejected",
-            ),
-            (
-                MediaKind.video.value,
-                {
-                    "kind": "transcript",
-                    "target": {"fragment_id": "frag-1"},
-                    "locations": {
-                        "text_offset": -1,
-                        "progression": 0.1,
-                        "total_progression": 0.2,
-                        "position": 1,
-                    },
-                    "text": {"quote": "q", "quote_prefix": None, "quote_suffix": None},
-                },
-                "negative text offsets are rejected",
-            ),
-            (
-                MediaKind.pdf.value,
-                {
-                    "kind": "pdf",
-                    "page": 0,
-                    "page_progression": None,
-                    "zoom": 1.25,
-                    "position": None,
-                },
-                "page must be positive",
-            ),
-            (
-                MediaKind.pdf.value,
-                {
-                    "kind": "pdf",
-                    "page": 3,
-                    "page_progression": 1.2,
-                    "zoom": 1.25,
-                    "position": None,
-                },
-                "page progression range is enforced",
+                lambda payload: {"cursor": None, "attention": None},
+                "both blocks null",
             ),
         ],
     )
-    def test_put_reader_state_rejects_invalid_resume_payloads(
+    def test_put_rejects_removed_and_malformed_envelopes(
         self,
         auth_client,
         direct_db: DirectSessionManager,
-        media_kind: str,
-        payload: dict,
+        body_builder,
         label: str,
     ):
         user_id = create_test_user_id()
         with direct_db.session() as session:
-            media_id, _ = _create_ready_reader_media(session, kind=media_kind)
+            media_id, fragment_ids = _create_ready_reader_media(
+                session,
+                kind=MediaKind.web_article.value,
+            )
+
+        _register_media_cleanup(direct_db, media_id)
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        payload = _build_reader_state_payload(MediaKind.web_article.value, fragment_ids)
+        auth_client.put(
+            f"/media/{media_id}/reader-state",
+            json=_cursor_body(payload, 0),
+            headers=auth_headers(user_id),
+        )
+
+        resp = auth_client.put(
+            f"/media/{media_id}/reader-state",
+            json=body_builder(payload),
+            headers=auth_headers(user_id),
+        )
+
+        assert resp.status_code == 400, (
+            f"Expected 400 for {label} but got {resp.status_code}: {resp.json()}"
+        )
+        assert resp.headers["cache-control"] == READER_STATE_NO_STORE
+        assert _cursor_row(direct_db, user_id, media_id) == (payload, 1)
+
+    def test_put_rejects_missing_body_without_writing(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        with direct_db.session() as session:
+            media_id, _ = _create_ready_reader_media(
+                session,
+                kind=MediaKind.web_article.value,
+            )
 
         _register_media_cleanup(direct_db, media_id)
         _add_media_to_user_library(auth_client, user_id, media_id)
 
         resp = auth_client.put(
             f"/media/{media_id}/reader-state",
-            json=payload,
+            headers=auth_headers(user_id),
+        )
+
+        assert resp.status_code == 400
+        assert _cursor_row(direct_db, user_id, media_id) is None
+
+    @pytest.mark.parametrize(
+        ("quote_field", "length", "label"),
+        [
+            ("quote", 257, "quote above 256 code points"),
+            ("quote_prefix", 129, "quote_prefix above 128 code points"),
+            ("quote_suffix", 129, "quote_suffix above 128 code points"),
+        ],
+    )
+    def test_put_rejects_oversized_quote_context(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+        quote_field: str,
+        length: int,
+        label: str,
+    ):
+        user_id = create_test_user_id()
+        with direct_db.session() as session:
+            media_id, fragment_ids = _create_ready_reader_media(
+                session,
+                kind=MediaKind.web_article.value,
+            )
+
+        _register_media_cleanup(direct_db, media_id)
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        payload = _build_reader_state_payload(MediaKind.web_article.value, fragment_ids)
+        # Astral (non-BMP) characters: the bound counts code points, not bytes.
+        payload["text"] = {
+            "quote": "q",
+            "quote_prefix": None,
+            "quote_suffix": None,
+            quote_field: "\U0001f4d6" * length,
+        }
+
+        resp = auth_client.put(
+            f"/media/{media_id}/reader-state",
+            json=_cursor_body(payload, 0),
             headers=auth_headers(user_id),
         )
 
         assert resp.status_code == 400, (
-            f"Expected 400 for invalid reader-state payload ({label}) but got "
-            f"{resp.status_code}: {resp.json()}"
+            f"Expected 400 for {label} but got {resp.status_code}: {resp.json()}"
         )
+        assert _cursor_row(direct_db, user_id, media_id) is None
+
+    def test_put_accepts_quote_context_at_exact_bounds(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        with direct_db.session() as session:
+            media_id, fragment_ids = _create_ready_reader_media(
+                session,
+                kind=MediaKind.web_article.value,
+            )
+
+        _register_media_cleanup(direct_db, media_id)
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        payload = _build_reader_state_payload(MediaKind.web_article.value, fragment_ids)
+        payload["text"] = {
+            "quote": "\U0001f4d6" * 256,
+            "quote_prefix": "p" * 128,
+            "quote_suffix": "s" * 128,
+        }
+
+        resp = auth_client.put(
+            f"/media/{media_id}/reader-state",
+            json=_cursor_body(payload, 0),
+            headers=auth_headers(user_id),
+        )
+
+        assert resp.status_code == 200
 
     @pytest.mark.parametrize(
         ("media_kind", "payload_kind"),
@@ -749,7 +859,7 @@ class TestReaderState:
             (MediaKind.video.value, MediaKind.epub.value),
         ],
     )
-    def test_put_reader_state_rejects_kind_mismatch_for_media(
+    def test_put_rejects_kind_mismatch_for_media(
         self,
         auth_client,
         direct_db: DirectSessionManager,
@@ -766,16 +876,14 @@ class TestReaderState:
         payload = _build_reader_state_payload(payload_kind, fragment_ids)
         resp = auth_client.put(
             f"/media/{media_id}/reader-state",
-            json=payload,
+            json=_cursor_body(payload, 0),
             headers=auth_headers(user_id),
         )
 
         assert resp.status_code == 400
         assert resp.json()["error"]["code"] == "E_INVALID_REQUEST"
 
-    def test_patch_reader_state_method_is_not_supported(
-        self, auth_client, direct_db: DirectSessionManager
-    ):
+    def test_patch_method_is_not_supported(self, auth_client, direct_db: DirectSessionManager):
         user_id = create_test_user_id()
         with direct_db.session() as session:
             media_id, fragment_ids = _create_ready_reader_media(session)
@@ -785,7 +893,7 @@ class TestReaderState:
 
         resp = auth_client.patch(
             f"/media/{media_id}/reader-state",
-            json=_build_reader_state_payload(MediaKind.epub.value, fragment_ids),
+            json=_cursor_body(_build_reader_state_payload(MediaKind.epub.value, fragment_ids), 0),
             headers=auth_headers(user_id),
         )
 
@@ -813,9 +921,538 @@ class TestReaderState:
         )
         put_resp = auth_client.put(
             f"/media/{media_id}/reader-state",
-            json=_build_reader_state_payload(MediaKind.epub.value, fragment_ids),
+            json=_cursor_body(_build_reader_state_payload(MediaKind.epub.value, fragment_ids), 0),
+            headers=auth_headers(user_b),
+        )
+        attention_resp = auth_client.put(
+            f"/media/{media_id}/reader-state",
+            json={"attention": _attention_body()},
             headers=auth_headers(user_b),
         )
 
         assert get_resp.status_code == 404
         assert put_resp.status_code == 404
+        assert attention_resp.status_code == 404
+        assert get_resp.headers["cache-control"] == READER_STATE_NO_STORE
+        assert put_resp.headers["cache-control"] == READER_STATE_NO_STORE
+
+    def test_validation_logs_redact_request_values(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+        log_sink: list[dict],
+        monkeypatch,
+    ):
+        user_id = create_test_user_id()
+        with direct_db.session() as session:
+            media_id, fragment_ids = _create_ready_reader_media(
+                session,
+                kind=MediaKind.web_article.value,
+            )
+
+        _register_media_cleanup(direct_db, media_id)
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        # The module-level logger proxy was cached before log_sink reconfigured
+        # structlog; rebind so the validation handler routes into the sink.
+        monkeypatch.setattr(app_module, "logger", structlog.get_logger("nexus.app"))
+
+        sentinel = "REDACTION-SENTINEL-QUOTE"
+        payload = _build_reader_state_payload(MediaKind.web_article.value, fragment_ids)
+        payload["text"] = {
+            "quote": sentinel + "x" * 300,
+            "quote_prefix": None,
+            "quote_suffix": None,
+        }
+
+        resp = auth_client.put(
+            f"/media/{media_id}/reader-state",
+            json=_cursor_body(payload, 0),
+            headers=auth_headers(user_id),
+        )
+
+        assert resp.status_code == 400
+        validation_events = [
+            event_dict
+            for event_dict in log_sink
+            if event_dict.get("event") == "request_validation_failed"
+        ]
+        assert validation_events, "validation failure must be logged"
+        assert sentinel not in str(log_sink)
+
+
+class TestReaderAttentionIsolation:
+    """Attention writes never create, revise, or replace cursor state."""
+
+    def test_attention_only_returns_204_and_never_touches_cursor(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        with direct_db.session() as session:
+            media_id, _ = _create_ready_reader_media(
+                session,
+                kind=MediaKind.web_article.value,
+            )
+
+        _register_media_cleanup(direct_db, media_id)
+        direct_db.register_cleanup("reading_sessions", "media_id", media_id)
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        resp = auth_client.put(
+            f"/media/{media_id}/reader-state",
+            json={"attention": _attention_body(dwell_ms=5_000)},
+            headers=auth_headers(user_id),
+        )
+
+        assert resp.status_code == 204
+        assert resp.headers["cache-control"] == READER_STATE_NO_STORE
+        assert _cursor_row(direct_db, user_id, media_id) is None
+        assert _session_count(direct_db, user_id, media_id) == 1
+
+    def test_attention_only_does_not_revise_existing_cursor(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        with direct_db.session() as session:
+            media_id, fragment_ids = _create_ready_reader_media(
+                session,
+                kind=MediaKind.web_article.value,
+            )
+
+        _register_media_cleanup(direct_db, media_id)
+        direct_db.register_cleanup("reading_sessions", "media_id", media_id)
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        payload = _build_reader_state_payload(MediaKind.web_article.value, fragment_ids)
+        auth_client.put(
+            f"/media/{media_id}/reader-state",
+            json=_cursor_body(payload, 0),
+            headers=auth_headers(user_id),
+        )
+        with direct_db.session() as session:
+            updated_at_before = session.execute(
+                text("""
+                    SELECT updated_at FROM reader_media_state
+                    WHERE user_id = :user_id AND media_id = :media_id
+                """),
+                {"user_id": user_id, "media_id": media_id},
+            ).scalar_one()
+
+        resp = auth_client.put(
+            f"/media/{media_id}/reader-state",
+            json={"attention": _attention_body(dwell_ms=5_000)},
+            headers=auth_headers(user_id),
+        )
+
+        assert resp.status_code == 204
+        assert _cursor_row(direct_db, user_id, media_id) == (payload, 1)
+        with direct_db.session() as session:
+            updated_at_after = session.execute(
+                text("""
+                    SELECT updated_at FROM reader_media_state
+                    WHERE user_id = :user_id AND media_id = :media_id
+                """),
+                {"user_id": user_id, "media_id": media_id},
+            ).scalar_one()
+        assert updated_at_after == updated_at_before
+
+    def test_combined_write_records_cursor_and_attention(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        with direct_db.session() as session:
+            media_id, fragment_ids = _create_ready_reader_media(
+                session,
+                kind=MediaKind.web_article.value,
+            )
+
+        _register_media_cleanup(direct_db, media_id)
+        direct_db.register_cleanup("reading_sessions", "media_id", media_id)
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        payload = _build_reader_state_payload(MediaKind.web_article.value, fragment_ids)
+        resp = auth_client.put(
+            f"/media/{media_id}/reader-state",
+            json={
+                **_cursor_body(payload, 0),
+                "attention": _attention_body(dwell_ms=7_000),
+            },
+            headers=auth_headers(user_id),
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["data"]["revision"] == 1
+        assert _session_count(direct_db, user_id, media_id) == 1
+
+    def test_combined_write_with_cursor_conflict_records_no_attention(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        with direct_db.session() as session:
+            media_id, fragment_ids = _create_ready_reader_media(
+                session,
+                kind=MediaKind.web_article.value,
+            )
+
+        _register_media_cleanup(direct_db, media_id)
+        direct_db.register_cleanup("reading_sessions", "media_id", media_id)
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        payload_a = _build_reader_state_payload(MediaKind.web_article.value, fragment_ids)
+        payload_b = {
+            **payload_a,
+            "locations": {**payload_a["locations"], "text_offset": 7, "position": 1},
+        }
+        auth_client.put(
+            f"/media/{media_id}/reader-state",
+            json=_cursor_body(payload_a, 0),
+            headers=auth_headers(user_id),
+        )
+
+        resp = auth_client.put(
+            f"/media/{media_id}/reader-state",
+            json={
+                **_cursor_body(payload_b, 0),
+                "attention": _attention_body(dwell_ms=7_000),
+            },
+            headers=auth_headers(user_id),
+        )
+
+        assert resp.status_code == 409
+        assert _session_count(direct_db, user_id, media_id) == 0
+
+    def test_combined_write_returns_cursor_success_when_attention_fails(
+        self, auth_client, direct_db: DirectSessionManager, engine: Engine
+    ):
+        user_id = create_test_user_id()
+        with direct_db.session() as session:
+            media_id, fragment_ids = _create_ready_reader_media(
+                session,
+                kind=MediaKind.web_article.value,
+            )
+
+        _register_media_cleanup(direct_db, media_id)
+        direct_db.register_cleanup("reading_sessions", "media_id", media_id)
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        payload = _build_reader_state_payload(MediaKind.web_article.value, fragment_ids)
+
+        def fail_attention_write() -> None:
+            raise RuntimeError("injected attention write failure")
+
+        remove_hook = _one_shot_before_execute(
+            engine, "INSERT INTO reading_sessions", fail_attention_write
+        )
+        try:
+            resp = auth_client.put(
+                f"/media/{media_id}/reader-state",
+                json={
+                    **_cursor_body(payload, 0),
+                    "attention": _attention_body(dwell_ms=7_000),
+                },
+                headers=auth_headers(user_id),
+            )
+        finally:
+            remove_hook()
+
+        assert resp.status_code == 200
+        assert resp.json()["data"] == {
+            "state": "Positioned",
+            "revision": 1,
+            "locator": payload,
+        }
+        assert _cursor_row(direct_db, user_id, media_id) == (payload, 1)
+        assert _session_count(direct_db, user_id, media_id) == 0
+
+
+class TestReaderCursorConcurrency:
+    """Real concurrent first inserts, updates, and delete-vs-first-save."""
+
+    def _seed(self, auth_client, direct_db, *, kind=MediaKind.web_article.value):
+        user_id = create_test_user_id()
+        with direct_db.session() as session:
+            media_id, fragment_ids = _create_ready_reader_media(session, kind=kind)
+        _register_media_cleanup(direct_db, media_id)
+        _add_media_to_user_library(auth_client, user_id, media_id)
+        return user_id, media_id, fragment_ids
+
+    def test_concurrent_first_inserts_same_locator_are_idempotent(
+        self, auth_client, direct_db: DirectSessionManager, engine: Engine
+    ):
+        user_id, media_id, fragment_ids = self._seed(auth_client, direct_db)
+        payload = _build_reader_state_payload(MediaKind.web_article.value, fragment_ids)
+
+        def competing_insert() -> None:
+            with direct_db.session() as session:
+                session.execute(
+                    text("""
+                        INSERT INTO reader_media_state (user_id, media_id, locator, revision)
+                        VALUES (:user_id, :media_id, CAST(:locator AS jsonb), 1)
+                    """),
+                    {
+                        "user_id": user_id,
+                        "media_id": media_id,
+                        "locator": reader_service.READER_RESUME_STATE_ADAPTER.dump_json(
+                            reader_service.READER_RESUME_STATE_ADAPTER.validate_python(payload)
+                        ).decode(),
+                    },
+                )
+                session.commit()
+
+        remove_hook = _one_shot_before_execute(
+            engine, "INSERT INTO reader_media_state", competing_insert
+        )
+        try:
+            resp = auth_client.put(
+                f"/media/{media_id}/reader-state",
+                json=_cursor_body(payload, 0),
+                headers=auth_headers(user_id),
+            )
+        finally:
+            remove_hook()
+
+        assert resp.status_code == 200
+        assert resp.json()["data"] == {
+            "state": "Positioned",
+            "revision": 1,
+            "locator": payload,
+        }
+        assert _cursor_row(direct_db, user_id, media_id) == (payload, 1)
+
+    def test_concurrent_first_inserts_different_locator_conflict(
+        self, auth_client, direct_db: DirectSessionManager, engine: Engine
+    ):
+        user_id, media_id, fragment_ids = self._seed(auth_client, direct_db)
+        payload_ours = _build_reader_state_payload(MediaKind.web_article.value, fragment_ids)
+        payload_winner = {
+            **payload_ours,
+            "locations": {**payload_ours["locations"], "text_offset": 1, "position": 1},
+        }
+
+        def competing_insert() -> None:
+            with direct_db.session() as session:
+                session.execute(
+                    text("""
+                        INSERT INTO reader_media_state (user_id, media_id, locator, revision)
+                        VALUES (:user_id, :media_id, CAST(:locator AS jsonb), 1)
+                    """),
+                    {
+                        "user_id": user_id,
+                        "media_id": media_id,
+                        "locator": reader_service.READER_RESUME_STATE_ADAPTER.dump_json(
+                            reader_service.READER_RESUME_STATE_ADAPTER.validate_python(
+                                payload_winner
+                            )
+                        ).decode(),
+                    },
+                )
+                session.commit()
+
+        remove_hook = _one_shot_before_execute(
+            engine, "INSERT INTO reader_media_state", competing_insert
+        )
+        try:
+            resp = auth_client.put(
+                f"/media/{media_id}/reader-state",
+                json=_cursor_body(payload_ours, 0),
+                headers=auth_headers(user_id),
+            )
+        finally:
+            remove_hook()
+
+        assert resp.status_code == 409
+        assert resp.json()["error"]["details"]["current"] == {
+            "state": "Positioned",
+            "revision": 1,
+            "locator": payload_winner,
+        }
+        assert _cursor_row(direct_db, user_id, media_id) == (payload_winner, 1)
+
+    def test_concurrent_update_yields_one_accepted_and_one_conflict(
+        self, auth_client, direct_db: DirectSessionManager, engine: Engine
+    ):
+        user_id, media_id, fragment_ids = self._seed(auth_client, direct_db)
+        payload_a = _build_reader_state_payload(MediaKind.web_article.value, fragment_ids)
+        payload_b = {
+            **payload_a,
+            "locations": {**payload_a["locations"], "text_offset": 11, "position": 1},
+        }
+        payload_c = {
+            **payload_a,
+            "locations": {**payload_a["locations"], "text_offset": 22, "position": 2},
+        }
+        seeded = auth_client.put(
+            f"/media/{media_id}/reader-state",
+            json=_cursor_body(payload_a, 0),
+            headers=auth_headers(user_id),
+        )
+        assert seeded.status_code == 200
+
+        def competing_update() -> None:
+            with direct_db.session() as session:
+                session.execute(
+                    text("""
+                        UPDATE reader_media_state
+                        SET locator = CAST(:locator AS jsonb),
+                            revision = revision + 1,
+                            updated_at = now()
+                        WHERE user_id = :user_id AND media_id = :media_id
+                    """),
+                    {
+                        "user_id": user_id,
+                        "media_id": media_id,
+                        "locator": reader_service.READER_RESUME_STATE_ADAPTER.dump_json(
+                            reader_service.READER_RESUME_STATE_ADAPTER.validate_python(payload_c)
+                        ).decode(),
+                    },
+                )
+                session.commit()
+
+        remove_hook = _one_shot_before_execute(
+            engine, "UPDATE reader_media_state", competing_update
+        )
+        try:
+            resp = auth_client.put(
+                f"/media/{media_id}/reader-state",
+                json=_cursor_body(payload_b, 1),
+                headers=auth_headers(user_id),
+            )
+        finally:
+            remove_hook()
+
+        assert resp.status_code == 409
+        assert resp.json()["error"]["details"]["current"] == {
+            "state": "Positioned",
+            "revision": 2,
+            "locator": payload_c,
+        }
+        assert _cursor_row(direct_db, user_id, media_id) == (payload_c, 2)
+
+    def test_delete_racing_first_save_returns_masked_404(
+        self, auth_client, direct_db: DirectSessionManager, engine: Engine
+    ):
+        user_id, media_id, fragment_ids = self._seed(auth_client, direct_db)
+        payload = _build_reader_state_payload(MediaKind.web_article.value, fragment_ids)
+
+        def competing_media_delete() -> None:
+            with direct_db.session() as session:
+                for table in ("library_entries", "fragments"):
+                    session.execute(
+                        text(f"DELETE FROM {table} WHERE media_id = :media_id"),  # noqa: S608
+                        {"media_id": media_id},
+                    )
+                session.execute(
+                    text("DELETE FROM media WHERE id = :media_id"),
+                    {"media_id": media_id},
+                )
+                session.commit()
+
+        remove_hook = _one_shot_before_execute(
+            engine, "INSERT INTO reader_media_state", competing_media_delete
+        )
+        try:
+            resp = auth_client.put(
+                f"/media/{media_id}/reader-state",
+                json=_cursor_body(payload, 0),
+                headers=auth_headers(user_id),
+            )
+        finally:
+            remove_hook()
+
+        assert resp.status_code == 404
+        assert resp.json()["error"]["code"] == "E_MEDIA_NOT_FOUND"
+        assert _cursor_row(direct_db, user_id, media_id) is None
+
+    def test_unique_race_normalization_at_read_committed_isolation(
+        self, auth_client, direct_db: DirectSessionManager, engine: Engine
+    ):
+        """Exercise the named-constraint IntegrityError branch directly: with an
+        outer transaction already open the serializable upgrade is skipped, so
+        the racing insert surfaces as the unique violation itself."""
+        user_id, media_id, fragment_ids = self._seed(auth_client, direct_db)
+        payload = _build_reader_state_payload(MediaKind.web_article.value, fragment_ids)
+        locator = reader_service.READER_RESUME_STATE_ADAPTER.validate_python(payload)
+        payload_winner = {
+            **payload,
+            "locations": {**payload["locations"], "text_offset": 1, "position": 1},
+        }
+
+        def competing_insert() -> None:
+            with direct_db.session() as session:
+                session.execute(
+                    text("""
+                        INSERT INTO reader_media_state (user_id, media_id, locator, revision)
+                        VALUES (:user_id, :media_id, CAST(:locator AS jsonb), 1)
+                    """),
+                    {
+                        "user_id": user_id,
+                        "media_id": media_id,
+                        "locator": reader_service.READER_RESUME_STATE_ADAPTER.dump_json(
+                            reader_service.READER_RESUME_STATE_ADAPTER.validate_python(
+                                payload_winner
+                            )
+                        ).decode(),
+                    },
+                )
+                session.commit()
+
+        remove_hook = _one_shot_before_execute(
+            engine, "INSERT INTO reader_media_state", competing_insert
+        )
+        try:
+            with direct_db.session() as session:
+                # Open the transaction first so retry_serializable cannot
+                # upgrade isolation; the INSERT then raises the unique
+                # violation that production normalizes by constraint name.
+                session.execute(text("SELECT 1"))
+                with pytest.raises(ConflictError) as excinfo:
+                    reader_service.put_reader_cursor(
+                        session,
+                        user_id,
+                        media_id,
+                        CursorWrite(locator=locator, base_revision=0),
+                    )
+        finally:
+            remove_hook()
+
+        assert excinfo.value.code == ApiErrorCode.E_READER_STATE_CONFLICT
+        assert excinfo.value.details["current"]["revision"] == 1
+        assert excinfo.value.details["current"]["locator"] == payload_winner
+
+    def test_media_fk_race_normalization_at_read_committed_isolation(
+        self, auth_client, direct_db: DirectSessionManager, engine: Engine
+    ):
+        user_id, media_id, fragment_ids = self._seed(auth_client, direct_db)
+        payload = _build_reader_state_payload(MediaKind.web_article.value, fragment_ids)
+        locator = reader_service.READER_RESUME_STATE_ADAPTER.validate_python(payload)
+
+        def competing_media_delete() -> None:
+            with direct_db.session() as session:
+                for table in ("library_entries", "fragments"):
+                    session.execute(
+                        text(f"DELETE FROM {table} WHERE media_id = :media_id"),  # noqa: S608
+                        {"media_id": media_id},
+                    )
+                session.execute(
+                    text("DELETE FROM media WHERE id = :media_id"),
+                    {"media_id": media_id},
+                )
+                session.commit()
+
+        remove_hook = _one_shot_before_execute(
+            engine, "INSERT INTO reader_media_state", competing_media_delete
+        )
+        try:
+            with direct_db.session() as session:
+                session.execute(text("SELECT 1"))
+                with pytest.raises(NotFoundError) as excinfo:
+                    reader_service.put_reader_cursor(
+                        session,
+                        user_id,
+                        media_id,
+                        CursorWrite(locator=locator, base_revision=0),
+                    )
+        finally:
+            remove_hook()
+
+        assert excinfo.value.code == ApiErrorCode.E_MEDIA_NOT_FOUND

@@ -71,6 +71,7 @@ function withPaneRuntime(node: ReactNode) {
   return (
     <PaneRuntimeProvider
       paneId="pane-1"
+      isActive={true}
       href={href}
       routeId="lectern"
       routeKey={resolvePaneRouteIdentity(href).routeKey}

@@ -37,6 +37,7 @@ LLM client lifecycle:
 """
 
 import json
+import re
 from contextlib import asynccontextmanager
 from urllib.parse import urlparse
 from uuid import UUID
@@ -69,6 +70,9 @@ from nexus.responses import (
 from nexus.services.bootstrap import ensure_user_and_default_library
 
 logger = get_logger(__name__)
+
+# Exact reader-state path: /media/{id}/reader-state and nothing else.
+READER_STATE_PATH_RE = re.compile(r"/media/[^/]+/reader-state")
 
 
 async def validate_json_request_body(request: Request) -> JSONResponse | None:
@@ -256,12 +260,20 @@ def create_app(skip_auth_middleware: bool = False) -> FastAPI:
     async def validation_exception_handler(
         request: Request, exc: RequestValidationError
     ) -> JSONResponse:
-        """Handle request validation errors (including malformed JSON)."""
+        """Handle request validation errors (including malformed JSON).
+
+        Logged errors are redacted to location/type only: the pydantic ``input``
+        and ``ctx`` values echo request content (reader locators, quote context,
+        URL targets) and must never reach logs.
+        """
         logger.warning(
             "request_validation_failed",
             path=request.url.path,
             method=request.method,
-            errors=exc.errors(),
+            errors=[
+                {"type": err.get("type"), "loc": err.get("loc"), "msg": err.get("msg")}
+                for err in exc.errors()
+            ],
         )
         return JSONResponse(
             status_code=400,
@@ -361,6 +373,18 @@ def create_app(skip_auth_middleware: bool = False) -> FastAPI:
                 app_public_url=settings.app_public_url,
                 stream_base_url=settings.effective_stream_base_url,
             )
+
+    # Reader-state responses are never cacheable: the cursor is revalidated
+    # event-driven and a cached snapshot would defeat revision arbitration.
+    # Registered after every other create_app middleware so it runs outermost
+    # here and stamps every reader-state response, including auth failures,
+    # exception-handler output, and validation errors.
+    @app.middleware("http")
+    async def reader_state_no_store(request: Request, call_next):
+        response = await call_next(request)
+        if READER_STATE_PATH_RE.fullmatch(request.url.path):
+            response.headers["Cache-Control"] = "private, no-store"
+        return response
 
     return app
 

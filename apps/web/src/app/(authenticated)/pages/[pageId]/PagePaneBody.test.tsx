@@ -427,6 +427,7 @@ describe("PagePaneBody daily-note chrome options", () => {
       <FeedbackProvider>
         <PaneRuntimeProvider
           paneId="pane-chrome-test"
+          isActive={true}
           href={href}
           routeId={identity.routeId}
           routeKey={identity.routeKey}
@@ -639,6 +640,7 @@ function renderPagePane(pageId: string, initialPage: NotePage) {
     <FeedbackProvider>
       <PaneRuntimeProvider
         paneId="pane-1"
+        isActive={true}
         href={href}
         routeId={identity.routeId}
         routeKey={identity.routeKey}

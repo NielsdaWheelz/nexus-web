@@ -13,6 +13,7 @@ from sqlalchemy import text
 from nexus.db.models import Media, MediaKind, ProcessingStatus
 from nexus.schemas.attention import AttentionBlock
 from nexus.services import attention
+from tests.factories import add_library_entry_only, create_test_library
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
 
@@ -24,6 +25,10 @@ def _seed_user_and_media(
     *,
     kind: str = MediaKind.web_article.value,
 ) -> tuple[UUID, UUID]:
+    """Seed a user plus a media item the user can read.
+
+    ``record_attention`` validates media visibility itself, so the media must
+    be reachable through a library the user belongs to."""
     user_id = uuid4()
     media_id = uuid4()
     with direct_db.session() as session:
@@ -36,10 +41,16 @@ def _seed_user_and_media(
                 processing_status=ProcessingStatus.ready_for_reading,
             )
         )
+        session.flush()
+        library_id = create_test_library(session, user_id)
+        add_library_entry_only(session, library_id, media_id)
         session.commit()
     # Parent-first registration; LIFO teardown deletes children first.
     direct_db.register_cleanup("users", "id", user_id)
+    direct_db.register_cleanup("libraries", "id", library_id)
+    direct_db.register_cleanup("memberships", "library_id", library_id)
     direct_db.register_cleanup("media", "id", media_id)
+    direct_db.register_cleanup("library_entries", "media_id", media_id)
     direct_db.register_cleanup("reading_sessions", "media_id", media_id)
     direct_db.register_cleanup("consumption_overrides", "media_id", media_id)
     return user_id, media_id
@@ -356,16 +367,19 @@ class TestReaderAttentionRoute:
         self._add_media_to_user_library(auth_client, user_id, media_id)
 
         body = {
-            "locator": {
-                "kind": "web",
-                "target": {"fragment_id": "fragment-1"},
-                "locations": {
-                    "text_offset": 42,
-                    "progression": None,
-                    "total_progression": 0.5,
-                    "position": 2,
+            "cursor": {
+                "locator": {
+                    "kind": "web",
+                    "target": {"fragment_id": "fragment-1"},
+                    "locations": {
+                        "text_offset": 42,
+                        "progression": None,
+                        "total_progression": 0.5,
+                        "position": 2,
+                    },
+                    "text": {"quote": "hello", "quote_prefix": None, "quote_suffix": None},
                 },
-                "text": {"quote": "hello", "quote_prefix": None, "quote_suffix": None},
+                "base_revision": 0,
             },
             "attention": {
                 "dwell_ms_delta": 45_000,
@@ -385,7 +399,7 @@ class TestReaderAttentionRoute:
         assert len(rows) == 1
         assert rows[0][0] == 45_000
 
-    def test_reader_put_without_attention_is_noop_for_sessions(
+    def test_reader_cursor_put_without_attention_is_noop_for_sessions(
         self, auth_client, direct_db: DirectSessionManager
     ):
         user_id = create_test_user_id()
@@ -407,7 +421,7 @@ class TestReaderAttentionRoute:
 
         self._add_media_to_user_library(auth_client, user_id, media_id)
 
-        bare_locator = {
+        locator = {
             "kind": "web",
             "target": {"fragment_id": "fragment-1"},
             "locations": {
@@ -420,11 +434,15 @@ class TestReaderAttentionRoute:
         }
         resp = auth_client.put(
             f"/media/{media_id}/reader-state",
-            json=bare_locator,
+            json={"cursor": {"locator": locator, "base_revision": 0}},
             headers=auth_headers(user_id),
         )
         assert resp.status_code == 200
-        assert resp.json()["data"] == bare_locator
+        assert resp.json()["data"] == {
+            "state": "Positioned",
+            "revision": 1,
+            "locator": locator,
+        }
         assert _session_rows(direct_db, user_id, media_id) == []
 
 

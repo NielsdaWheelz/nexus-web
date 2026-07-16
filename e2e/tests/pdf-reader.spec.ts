@@ -28,6 +28,17 @@ interface PdfReaderResumeState {
   zoom: number | null;
 }
 
+// Wire contract: GET/PUT never return a bare locator or null. Empty has no
+// locator at all; Positioned always carries one alongside the revision used
+// for conditional writes.
+type ReaderCursorSnapshot =
+  | { state: "Empty"; revision: 0 }
+  | { state: "Positioned"; revision: number; locator: PdfReaderResumeState };
+
+interface ReaderStateResponse {
+  data: ReaderCursorSnapshot;
+}
+
 interface MediaStatusSnapshot {
   processing_status?: string;
   retrieval_status?: string | null;
@@ -128,17 +139,35 @@ async function waitForPdfMediaReady(page: Page, mediaId: string): Promise<void> 
   );
 }
 
+async function fetchReaderState(page: Page, mediaId: string): Promise<ReaderCursorSnapshot> {
+  const response = await page.request.get(`/api/media/${mediaId}/reader-state`);
+  if (!response.ok()) {
+    const responseBody = await readResponseText(response);
+    throw new Error(
+      `GET /api/media/${mediaId}/reader-state failed with ${response.status()}: ${responseBody}`,
+    );
+  }
+  const payload = (await response.json()) as ReaderStateResponse;
+  return payload.data;
+}
+
+// There is no clear/delete semantics: a cursor row can only be replaced, never
+// removed. Every write is a conditional replace against the current revision
+// (0 when Empty), so this always reads the live snapshot immediately before
+// writing.
 async function putReaderState(
   page: Page,
   mediaId: string,
-  locator: PdfReaderResumeState | null,
-): Promise<void> {
+  locator: PdfReaderResumeState,
+): Promise<ReaderCursorSnapshot> {
+  const current = await fetchReaderState(page, mediaId);
+  const baseRevision = current.state === "Empty" ? 0 : current.revision;
   const response = await page.request.put(`/api/media/${mediaId}/reader-state`, {
-    data: locator,
+    data: { cursor: { locator, base_revision: baseRevision } },
     headers: stateChangingApiHeaders(),
   });
   if (response.ok()) {
-    return;
+    return (JSON.parse(await response.text()) as ReaderStateResponse).data;
   }
 
   const responseBody = await readResponseText(response);

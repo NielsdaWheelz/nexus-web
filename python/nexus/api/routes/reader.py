@@ -7,13 +7,16 @@ envelope. All paths are `/media/{media_id}/...`.
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Query, Response
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
+from nexus.logging import get_logger
 from nexus.responses import ok, success_response
 from nexus.schemas.media import MediaEvidenceResponse
+from nexus.schemas.reader import ReaderProgressWrite
 from nexus.services import (
     attention,
     epub_read,
@@ -23,6 +26,8 @@ from nexus.services import (
     reader_navigation,
 )
 from nexus.services import reader as reader_service
+
+logger = get_logger(__name__)
 
 router = APIRouter(tags=["media"])
 
@@ -93,30 +98,42 @@ def get_reader_state(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    """Get per-media reader state."""
-    result = reader_service.get_reader_media_state(db, viewer.user_id, media_id)
-    return success_response(result.model_dump(mode="json") if result else None)
+    """Get the canonical cursor snapshot (Empty or Positioned, never raw null)."""
+    return ok(reader_service.get_reader_cursor(db, viewer.user_id, media_id))
 
 
 @router.put("/media/{media_id}/reader-state")
-async def put_reader_state(
+def put_reader_state(
     media_id: UUID,
-    request: Request,
+    payload: ReaderProgressWrite,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-) -> dict:
-    """Replace per-media reader state. An empty body is rejected; JSON ``null`` clears it.
+) -> Response:
+    """Conditionally replace the cursor and/or record attention.
 
-    An optional ``attention`` block rides the same PUT and is dispatched to the
-    attention ledger after the locator write (the locator write validates access).
+    The cursor write commits (or conflicts) first in its own transaction; a
+    cursor conflict writes no attention. The attention attempt then runs in its
+    own transaction and is best effort for a combined request: a committed
+    cursor still returns 200 so the client never retries the ambiguous dwell
+    delta. Attention-only requests validate media visibility themselves and
+    return 204.
     """
-    locator, attention_block = reader_service.parse_reader_state_with_attention(
-        await request.body()
-    )
-    result = reader_service.put_reader_media_state(db, viewer.user_id, media_id, locator)
-    if attention_block is not None:
-        attention.record_attention(db, viewer.user_id, media_id, attention_block)
-    return success_response(result.model_dump(mode="json") if result else None)
+    snapshot = None
+    if payload.cursor is not None:
+        snapshot = reader_service.put_reader_cursor(db, viewer.user_id, media_id, payload.cursor)
+    if payload.attention is not None:
+        try:
+            attention.record_attention(db, viewer.user_id, media_id, payload.attention)
+        except Exception:
+            if snapshot is None:
+                raise
+            logger.warning(
+                "reader_attention_write_failed_after_cursor_commit",
+                media_id=str(media_id),
+            )
+    if snapshot is None:
+        return Response(status_code=204)
+    return JSONResponse(content=ok(snapshot))
 
 
 @router.get("/media/{media_id}/file")

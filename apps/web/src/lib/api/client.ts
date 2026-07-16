@@ -18,13 +18,21 @@ export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
   readonly requestId?: string;
+  readonly details?: Record<string, unknown>;
 
-  constructor(status: number, code: string, message: string, requestId?: string) {
+  constructor(
+    status: number,
+    code: string,
+    message: string,
+    requestId?: string,
+    details?: Record<string, unknown>,
+  ) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.code = code;
     this.requestId = requestId;
+    this.details = details;
   }
 }
 
@@ -51,6 +59,7 @@ interface ErrorResponse {
     code: string;
     message: string;
     request_id?: string;
+    details?: Record<string, unknown>;
   };
 }
 
@@ -63,7 +72,8 @@ function isErrorResponse(body: unknown): body is ErrorResponse {
     isRecord(body.error) &&
     typeof body.error.code === "string" &&
     typeof body.error.message === "string" &&
-    (body.error.request_id === undefined || typeof body.error.request_id === "string")
+    (body.error.request_id === undefined || typeof body.error.request_id === "string") &&
+    (body.error.details === undefined || isRecord(body.error.details))
   );
 }
 
@@ -132,7 +142,8 @@ async function parseApiResponse<T>(response: Response): Promise<T> {
         response.status,
         body.error.code,
         body.error.message,
-        body.error.request_id
+        body.error.request_id,
+        body.error.details
       );
     }
     throw new ApiError(

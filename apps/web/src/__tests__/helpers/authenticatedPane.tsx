@@ -58,6 +58,7 @@ export function renderHydratedPane({
       <ResourceCacheProvider value={resources}>
         <PaneRuntimeProvider
           paneId={paneId}
+          isActive={true}
           href={href}
           routeId={identity.routeId}
           routeKey={identity.routeKey}

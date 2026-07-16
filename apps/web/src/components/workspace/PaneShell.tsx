@@ -25,6 +25,7 @@ import SecondaryPaneShell from "@/components/workspace/SecondaryPaneShell";
 import { useResizeHandle } from "@/components/workspace/useResizeHandle";
 import { useMobileChrome } from "@/lib/workspace/mobileChrome";
 import { copyText } from "@/lib/ui/copyText";
+import { stripCoarseReaderQuery } from "@/lib/reader/readerLocationHref";
 import type { Folio } from "@/lib/ui/folio";
 import { standingHeadForRoute } from "@/lib/navigation/standingHead";
 import {
@@ -291,10 +292,13 @@ export default function PaneShell({
   }, [isMobile, effectiveToolbar]);
 
   const copyPaneLink = useCallback(() => {
+    // Copied pane URLs are entry links, not progress permalinks: strip only
+    // the coarse reader fields while preserving feature-owned query and hash.
+    const repaired = stripCoarseReaderQuery(href);
     const link =
       typeof window === "undefined"
-        ? href
-        : new URL(href, window.location.origin).toString();
+        ? repaired
+        : new URL(repaired, window.location.origin).toString();
     copyText(link);
   }, [href]);
   const paneMenuOptions = useMemo<ActionMenuOption[]>(() => {

@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  buildEpubLocationHref,
   resolveEpubInternalLinkTarget,
   resolveSectionAnchorId,
   type NavigationTocNodeLike,
@@ -100,18 +99,5 @@ describe("resolveSectionAnchorId", () => {
     ];
 
     expect(resolveSectionAnchorId("section-1", null, toc)).toBe("toc-anchor");
-  });
-});
-
-describe("buildEpubLocationHref", () => {
-  it("builds canonical reader location hrefs", () => {
-    expect(
-      buildEpubLocationHref("media-1", "section-1", {
-        fragmentId: "fragment-1",
-        highlightId: "highlight-1",
-      }),
-    ).toBe(
-      "/media/media-1?loc=section-1&fragment=fragment-1&highlight=highlight-1",
-    );
   });
 });

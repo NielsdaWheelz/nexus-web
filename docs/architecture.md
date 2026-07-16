@@ -993,7 +993,9 @@ the driver. New devs frequently look in `page.tsx` for behavior that lives in
   Routes resolve via a pure model (`paneRouteModel.ts`) plus metadata table
   (`paneRouteTable.ts`) bound to React bodies (`paneRenderRegistry.tsx`). Bodies talk
   to the shell only through `paneRuntime.tsx` hooks (`usePaneRouter`, `usePaneParam`,
-  `useSetPaneTitle`, `usePaneSecondary`). Secondary panes (Document Map,
+  `useSetPaneTitle`, `usePaneSecondary`; `usePaneRuntime().isActive` exposes the
+  host's pane-activity capability, which reader progress uses for adoption-versus-
+  handoff arbitration). Secondary panes (Document Map,
   conversation context, library tools) are runtime-published sidebars.
 - **First paint: stream, don't gate.** The `(authenticated)` layout runs only
   **local** work (`verifySession`, header-derived `loadRenderEnvironment`) above a

@@ -32,6 +32,7 @@ function StatefulSearchPane({ initialHref }: { initialHref: string }) {
   return (
     <PaneRuntimeProvider
       paneId="pane-1"
+      isActive={true}
       href={href}
       routeId="search"
       routeKey={resolvePaneRouteIdentity(href).routeKey}

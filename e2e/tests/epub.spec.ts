@@ -156,8 +156,15 @@ type ReaderResumeState =
   | EpubReaderResumeState
   | PdfReaderResumeState;
 
+// Wire contract: GET/PUT never return a bare locator or null. Empty has no
+// locator at all; Positioned always carries one alongside the revision used
+// for conditional writes.
+type ReaderCursorSnapshot =
+  | { state: "Empty"; revision: 0 }
+  | { state: "Positioned"; revision: number; locator: ReaderResumeState };
+
 interface ReaderStateResponse {
-  data: ReaderResumeState | null;
+  data: ReaderCursorSnapshot;
 }
 
 interface EpubNavigationResponse {
@@ -260,20 +267,26 @@ function isEpubReaderResumeState(
 async function fetchReaderState(
   page: Page,
   mediaId: string
-): Promise<ReaderResumeState | null> {
+): Promise<ReaderCursorSnapshot> {
   const response = await page.request.get(`/api/media/${mediaId}/reader-state`);
   expect(response.ok()).toBeTruthy();
   const payload = (await response.json()) as ReaderStateResponse;
   return payload.data;
 }
 
+// There is no clear/delete semantics: a cursor row can only be replaced, never
+// removed. Every write is a conditional replace against the current revision
+// (0 when Empty), so this always reads the live snapshot immediately before
+// writing.
 async function putReaderState(
   page: Page,
   mediaId: string,
-  locator: ReaderResumeState | null
-): Promise<ReaderResumeState | null> {
+  locator: ReaderResumeState
+): Promise<ReaderCursorSnapshot> {
+  const current = await fetchReaderState(page, mediaId);
+  const baseRevision = current.state === "Empty" ? 0 : current.revision;
   const response = await page.request.put(`/api/media/${mediaId}/reader-state`, {
-    data: locator,
+    data: { cursor: { locator, base_revision: baseRevision } },
     headers: stateChangingApiHeaders(),
   });
   const body = await response.text();
@@ -631,7 +644,25 @@ test.describe("epub", () => {
 
   test.beforeEach(async ({ page }) => {
     const seed = readSeededEpubMedia();
-    await putReaderState(page, seed.media_id, null);
+    const firstSection = await findSectionByLabel(page, seed.media_id, seed.chapter_titles[0]);
+    // There is no clear/delete under the new contract (a cursor row can only be
+    // replaced, never removed), so "no meaningful saved position" is expressed
+    // as a cursor at the very beginning of the book rather than an Empty
+    // cursor. Every test in this file that passes an explicit section into
+    // `gotoEpubReader` targets this same first section, so a Positioned cursor
+    // here is indistinguishable from Empty for their cold-query precedence.
+    await putReaderState(
+      page,
+      seed.media_id,
+      buildEpubReaderState(firstSection, {
+        locations: {
+          text_offset: 0,
+          progression: 0,
+          total_progression: 0,
+          position: 1,
+        },
+      })
+    );
   });
 
   test("upload EPUB", async ({ page }, testInfo) => {
@@ -775,7 +806,7 @@ test.describe("epub", () => {
       .toBe(true);
   });
 
-  test("explicit loc query wins over saved EPUB resume locator", async ({
+  test("saved EPUB resume locator wins over a cold loc query and strips it from the URL", async ({
     page,
   }, testInfo) => {
     const seed = readSeededEpubMedia();
@@ -784,35 +815,35 @@ test.describe("epub", () => {
 
     await putReaderState(page, seed.media_id, buildEpubReaderState(secondSection));
 
+    // A cold `?loc=` query now loses to an existing Positioned cursor: the
+    // canonical cursor (second section) wins, and the pane strips the stale
+    // `loc` param with a pane-local replace instead of honoring it.
     let activePane = await gotoEpubReader(page, testInfo, seed.media_id, firstSection.section_id);
     await expect(
-      activePane.getByRole("heading", { name: seed.chapter_titles[0] })
+      activePane.getByRole("heading", { name: seed.chapter_titles[1] })
     ).toBeVisible({ timeout: 30_000 });
     await expect
       .poll(() => new URL(page.url()).searchParams.get("loc"))
-      .toBe(firstSection.section_id);
-    await expect
-      .poll(async () => {
-        const locator = await fetchReaderState(page, seed.media_id);
-        return isEpubReaderResumeState(locator) ? locator.target.section_id : null;
-      })
-      .toBe(firstSection.section_id);
+      .toBeNull();
 
-    const savedLocator = await fetchReaderState(page, seed.media_id);
-    expect(isEpubReaderResumeState(savedLocator)).toBe(true);
-    if (!isEpubReaderResumeState(savedLocator)) {
+    // Mere navigation is not durable progress: programmatic application
+    // suppresses save echo, so the saved cursor still points at the second
+    // section.
+    const savedSnapshot = await fetchReaderState(page, seed.media_id);
+    expect(savedSnapshot.state).toBe("Positioned");
+    if (savedSnapshot.state !== "Positioned" || !isEpubReaderResumeState(savedSnapshot.locator)) {
       throw new Error("Expected an EPUB reader resume state.");
     }
-    expect(savedLocator.target).toEqual({
-      section_id: firstSection.section_id,
-      href_path: firstSection.href_path,
+    expect(savedSnapshot.locator.target).toEqual({
+      section_id: secondSection.section_id,
+      href_path: secondSection.href_path,
       anchor_id: null,
     });
 
     await page.reload();
     activePane = activeWorkspacePane(page);
     await expect(
-      activePane.getByRole("heading", { name: seed.chapter_titles[0] })
+      activePane.getByRole("heading", { name: seed.chapter_titles[1] })
     ).toBeVisible({ timeout: 15_000 });
   });
 

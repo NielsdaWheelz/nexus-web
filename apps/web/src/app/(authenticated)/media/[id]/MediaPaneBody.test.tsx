@@ -127,16 +127,6 @@ vi.mock("@/lib/player/usePodcastTrackSeeding", () => ({
   usePodcastTrackSeeding: () => {},
 }));
 
-vi.mock("@/lib/reader/useReaderResumeState", () => ({
-  useReaderResumeState: () => ({
-    state: null,
-    loading: false,
-    error: null,
-    load: vi.fn(),
-    save: vi.fn(),
-  }),
-}));
-
 vi.mock("@/lib/media/useLibraryMembership", () => ({
   useLibraryMembership: () => ({
     libraries: [],
@@ -701,6 +691,7 @@ function renderMediaPane(
     <FeedbackProvider>
       <PaneRuntimeProvider
         paneId="pane-1"
+        isActive={true}
         href={href}
         routeId={identity.routeId}
         routeKey={identity.routeKey}
@@ -757,71 +748,88 @@ describe("MediaPaneBody pane sizing", () => {
     for (const fn of Object.values(testState.readerContextFns)) {
       fn.mockReset();
     }
-    testState.apiFetch.mockImplementation(async (input: unknown) => {
-      const path = pathOf(input);
-      if (path === "/api/media/media-1") {
-        return jsonResponse(mediaResponse());
-      }
-      if (path === "/api/media/media-1/fragments") {
-        return jsonResponse(fragmentResponse());
-      }
-      if (path === "/api/media/media-1/navigation") {
-        return jsonResponse({
-          media_id: "media-1",
-          kind: testState.mediaKind,
-          sections: [
-            {
-              section_id: "section-1",
-              label: "Section 1",
-              ordinal: 0,
-              fragment_id: "fragment-1",
-              fragment_idx: 0,
-              level: 1,
-              depth: 0,
-              start_offset: 0,
-              end_offset: 0,
-              href_path: "chapter-1.xhtml",
-              href_fragment: null,
-              anchor_id: null,
-              char_count: 0,
-            },
-          ],
-          toc_nodes: navigationTocNodes(),
-          landmarks: [],
-          page_list: [],
-        });
-      }
-      if (path === "/api/media/media-1/document-map") {
-        return jsonResponse(readerDocumentMapResponse());
-      }
-      if (path === "/api/media/media-1/sections/section-1") {
-        return jsonResponse({
-          section_id: "section-1",
-          label: "Section 1",
-          fragment_id: "fragment-1",
-          fragment_idx: 0,
-          href_path: "chapter-1.xhtml",
-          anchor_id: null,
-          source_node_id: null,
-          source: "spine",
-          ordinal: 0,
-          prev_section_id: null,
-          next_section_id: null,
-          html_sanitized: testState.fragmentHtml,
-          canonical_text: testState.fragmentCanonicalText,
-          char_count: 0,
-          word_count: 2,
-          created_at: "2026-01-01T00:00:00Z",
-        });
-      }
-      if (path === "/api/media/media-1/highlights") {
-        return jsonResponse({ highlights: [] });
-      }
-      if (path === "/api/fragments/fragment-1/highlights") {
-        return jsonResponse({ highlights: [] });
-      }
-      throw new Error(`Unexpected API call: ${path}`);
-    });
+    testState.apiFetch.mockImplementation(
+      async (input: unknown, init?: RequestInit) => {
+        const path = pathOf(input);
+        if (path === "/api/media/media-1") {
+          return jsonResponse(mediaResponse());
+        }
+        if (path === "/api/media/media-1/reader-state") {
+          if (init?.method === "PUT") {
+            const body = init.body ? JSON.parse(String(init.body)) : {};
+            if (body.cursor) {
+              return jsonResponse({
+                state: "Positioned",
+                revision: 1,
+                locator: body.cursor.locator,
+              });
+            }
+            // Attention-only PUT: no cursor body, no content.
+            return undefined;
+          }
+          return jsonResponse({ state: "Empty", revision: 0 });
+        }
+        if (path === "/api/media/media-1/fragments") {
+          return jsonResponse(fragmentResponse());
+        }
+        if (path === "/api/media/media-1/navigation") {
+          return jsonResponse({
+            media_id: "media-1",
+            kind: testState.mediaKind,
+            sections: [
+              {
+                section_id: "section-1",
+                label: "Section 1",
+                ordinal: 0,
+                fragment_id: "fragment-1",
+                fragment_idx: 0,
+                level: 1,
+                depth: 0,
+                start_offset: 0,
+                end_offset: 0,
+                href_path: "chapter-1.xhtml",
+                href_fragment: null,
+                anchor_id: null,
+                char_count: 0,
+              },
+            ],
+            toc_nodes: navigationTocNodes(),
+            landmarks: [],
+            page_list: [],
+          });
+        }
+        if (path === "/api/media/media-1/document-map") {
+          return jsonResponse(readerDocumentMapResponse());
+        }
+        if (path === "/api/media/media-1/sections/section-1") {
+          return jsonResponse({
+            section_id: "section-1",
+            label: "Section 1",
+            fragment_id: "fragment-1",
+            fragment_idx: 0,
+            href_path: "chapter-1.xhtml",
+            anchor_id: null,
+            source_node_id: null,
+            source: "spine",
+            ordinal: 0,
+            prev_section_id: null,
+            next_section_id: null,
+            html_sanitized: testState.fragmentHtml,
+            canonical_text: testState.fragmentCanonicalText,
+            char_count: 0,
+            word_count: 2,
+            created_at: "2026-01-01T00:00:00Z",
+          });
+        }
+        if (path === "/api/media/media-1/highlights") {
+          return jsonResponse({ highlights: [] });
+        }
+        if (path === "/api/fragments/fragment-1/highlights") {
+          return jsonResponse({ highlights: [] });
+        }
+        throw new Error(`Unexpected API call: ${path}`);
+      },
+    );
     vi.stubGlobal(
       "ResizeObserver",
       class ResizeObserverMock {

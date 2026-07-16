@@ -14486,3 +14486,337 @@ class TestMigration0177GrandAtlas:
         finally:
             reset_test_schema()
             engine.dispose()
+
+
+class TestMigration0180ReaderProgressContinuity:
+    """0180 cuts reader_media_state to one non-null locator plus a revision
+    conflict token, recreates its FKs under stable non-cascading names, and
+    backfills a zero-dwell reading_sessions row for cursors that lack one."""
+
+    @pytest.fixture(scope="class")
+    def head_engine(self):
+        reset_test_schema()
+        result = run_alembic_command("upgrade head")
+        if result.returncode != 0:
+            pytest.fail(f"Migration upgrade failed: {result.stderr}")
+        engine = create_engine(get_test_database_url())
+        yield engine
+        engine.dispose()
+        reset_test_schema()
+
+    def test_head_locator_not_null_revision_default_and_legacy_check_dropped(self, head_engine):
+        with Session(head_engine) as session:
+            columns = {
+                row[0]: row
+                for row in session.execute(
+                    text(
+                        """
+                        SELECT column_name, is_nullable, data_type, column_default
+                        FROM information_schema.columns
+                        WHERE table_name = 'reader_media_state'
+                          AND column_name IN ('locator', 'revision')
+                        """
+                    )
+                ).fetchall()
+            }
+            constraints = {
+                row[0]
+                for row in session.execute(
+                    text(
+                        "SELECT conname FROM pg_constraint"
+                        " WHERE conrelid = 'reader_media_state'::regclass"
+                    )
+                ).fetchall()
+            }
+
+        assert columns["locator"][1] == "NO", columns["locator"]
+        assert columns["revision"][1] == "NO", columns["revision"]
+        assert columns["revision"][2] == "bigint", columns["revision"]
+        assert columns["revision"][3] is not None and "1" in columns["revision"][3]
+        assert "ck_reader_media_state_locator" not in constraints
+
+        # The NOT NULL is real, not just metadata: a NULL-locator insert is rejected.
+        with Session(head_engine) as session:
+            user_id = uuid4()
+            media_id = uuid4()
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.execute(
+                text(
+                    "INSERT INTO media (id, kind, title, processing_status)"
+                    " VALUES (:id, 'web_article', 'M', 'ready_for_reading')"
+                ),
+                {"id": media_id},
+            )
+            session.commit()
+
+            with pytest.raises(IntegrityError):
+                session.execute(
+                    text(
+                        "INSERT INTO reader_media_state (id, user_id, media_id, locator)"
+                        " VALUES (:id, :user_id, :media_id, NULL)"
+                    ),
+                    {"id": uuid4(), "user_id": user_id, "media_id": media_id},
+                )
+                session.commit()
+            session.rollback()
+
+            session.execute(text("DELETE FROM media WHERE id = :id"), {"id": media_id})
+            session.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
+            session.commit()
+
+    def test_head_foreign_keys_are_stable_named_and_non_cascading(self, head_engine):
+        with Session(head_engine) as session:
+            fk_rows = session.execute(
+                text(
+                    "SELECT conname, confdeltype FROM pg_constraint"
+                    " WHERE conrelid = 'reader_media_state'::regclass AND contype = 'f'"
+                )
+            ).fetchall()
+
+        fk_by_name = {row[0]: row[1] for row in fk_rows}
+        assert set(fk_by_name) == {"fk_reader_media_state_user", "fk_reader_media_state_media"}
+        assert fk_by_name["fk_reader_media_state_user"] == "a", (
+            "user FK must be NO ACTION: there is no product user-delete flow yet"
+        )
+        assert fk_by_name["fk_reader_media_state_media"] == "a", (
+            "media FK must be NO ACTION: media deletion already removes child rows itself"
+        )
+
+    def test_upgrade_deletes_null_locator_rows_and_versions_survivors(self):
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0178")
+            assert result.returncode == 0, f"upgrade 0178 failed: {result.stderr}"
+
+            null_locator_user = uuid4()
+            null_locator_media = uuid4()
+            surviving_user = uuid4()
+            surviving_media = uuid4()
+
+            with Session(engine) as session:
+                for user_id, media_id in (
+                    (null_locator_user, null_locator_media),
+                    (surviving_user, surviving_media),
+                ):
+                    session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+                    session.execute(
+                        text(
+                            "INSERT INTO media (id, kind, title, processing_status)"
+                            " VALUES (:id, 'web_article', 'M', 'ready_for_reading')"
+                        ),
+                        {"id": media_id},
+                    )
+                session.execute(
+                    text(
+                        "INSERT INTO reader_media_state (id, user_id, media_id, locator)"
+                        " VALUES (:id, :user_id, :media_id, NULL)"
+                    ),
+                    {
+                        "id": uuid4(),
+                        "user_id": null_locator_user,
+                        "media_id": null_locator_media,
+                    },
+                )
+                session.execute(
+                    text(
+                        "INSERT INTO reader_media_state (id, user_id, media_id, locator)"
+                        " VALUES (:id, :user_id, :media_id, CAST(:locator AS jsonb))"
+                    ),
+                    {
+                        "id": uuid4(),
+                        "user_id": surviving_user,
+                        "media_id": surviving_media,
+                        "locator": json.dumps({"kind": "pdf", "page": 1, "zoom": 1.0}),
+                    },
+                )
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+
+            with Session(engine) as session:
+                null_row = session.execute(
+                    text("SELECT 1 FROM reader_media_state WHERE user_id = :u AND media_id = :m"),
+                    {"u": null_locator_user, "m": null_locator_media},
+                ).scalar_one_or_none()
+                surviving_revision = session.execute(
+                    text(
+                        "SELECT revision FROM reader_media_state"
+                        " WHERE user_id = :u AND media_id = :m"
+                    ),
+                    {"u": surviving_user, "m": surviving_media},
+                ).scalar_one_or_none()
+
+            assert null_row is None, (
+                "null-locator rows were the removed clear semantics and must be deleted"
+            )
+            assert surviving_revision == 1
+        finally:
+            reset_test_schema()
+            engine.dispose()
+
+    def test_backfill_seeds_zero_dwell_sessions_for_cursors_without_one(self):
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0178")
+            assert result.returncode == 0, f"upgrade 0178 failed: {result.stderr}"
+
+            user_id = uuid4()
+            # No prior session: must gain a zero-dwell '__migrated__' session.
+            fresh_media_id = uuid4()
+            # Already has a session: the NOT EXISTS guard must add nothing more.
+            covered_media_id = uuid4()
+
+            cursor_updated_at = datetime(2026, 7, 1, 12, 0, 0, tzinfo=UTC)
+            existing_session_id = uuid4()
+
+            with Session(engine) as session:
+                session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+                for media_id, kind in (
+                    (fresh_media_id, "web_article"),
+                    (covered_media_id, "web_article"),
+                ):
+                    session.execute(
+                        text(
+                            "INSERT INTO media (id, kind, title, processing_status)"
+                            " VALUES (:id, :kind, 'M', 'ready_for_reading')"
+                        ),
+                        {"id": media_id, "kind": kind},
+                    )
+
+                def _insert_cursor(media_id, locator: dict) -> None:
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO reader_media_state (id, user_id, media_id, locator, updated_at)
+                            VALUES (:id, :user_id, :media_id, CAST(:locator AS jsonb), :updated_at)
+                            """
+                        ),
+                        {
+                            "id": uuid4(),
+                            "user_id": user_id,
+                            "media_id": media_id,
+                            "locator": json.dumps(locator),
+                            "updated_at": cursor_updated_at,
+                        },
+                    )
+
+                _insert_cursor(
+                    fresh_media_id,
+                    {"kind": "web", "locations": {"total_progression": 0.75}},
+                )
+                _insert_cursor(
+                    covered_media_id,
+                    {"kind": "web", "locations": {"total_progression": 0.5}},
+                )
+
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO reading_sessions (
+                            id, user_id, media_id, device_id,
+                            started_at, last_active_at, dwell_ms, max_progression, spans
+                        )
+                        VALUES (
+                            :id, :user_id, :media_id, 'device-1',
+                            now(), now(), 45000, 0.9, '[]'::jsonb
+                        )
+                        """
+                    ),
+                    {"id": existing_session_id, "user_id": user_id, "media_id": covered_media_id},
+                )
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+
+            with Session(engine) as session:
+                fresh_sessions = session.execute(
+                    text(
+                        "SELECT device_id, dwell_ms, started_at, last_active_at, max_progression"
+                        " FROM reading_sessions WHERE user_id = :u AND media_id = :m"
+                    ),
+                    {"u": user_id, "m": fresh_media_id},
+                ).fetchall()
+                covered_sessions = session.execute(
+                    text(
+                        "SELECT id, device_id FROM reading_sessions"
+                        " WHERE user_id = :u AND media_id = :m"
+                    ),
+                    {"u": user_id, "m": covered_media_id},
+                ).fetchall()
+
+            assert len(fresh_sessions) == 1
+            device_id, dwell_ms, started_at, last_active_at, max_progression = fresh_sessions[0]
+            assert device_id == "__migrated__"
+            assert dwell_ms == 0
+            assert started_at == cursor_updated_at
+            assert last_active_at == cursor_updated_at
+            assert max_progression == pytest.approx(0.75)
+
+            assert len(covered_sessions) == 1, "NOT EXISTS guard must not add a second session"
+            assert covered_sessions[0][0] == existing_session_id
+            assert covered_sessions[0][1] == "device-1"
+        finally:
+            reset_test_schema()
+            engine.dispose()
+
+    def test_backfill_pdf_locator_without_locations_key_yields_null_max_progression(self):
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0178")
+            assert result.returncode == 0, f"upgrade 0178 failed: {result.stderr}"
+
+            user_id = uuid4()
+            pdf_media_id = uuid4()
+            cursor_updated_at = datetime(2026, 7, 1, 12, 0, 0, tzinfo=UTC)
+
+            with Session(engine) as session:
+                session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+                session.execute(
+                    text(
+                        "INSERT INTO media (id, kind, title, processing_status)"
+                        " VALUES (:id, 'pdf', 'M', 'ready_for_reading')"
+                    ),
+                    {"id": pdf_media_id},
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO reader_media_state (id, user_id, media_id, locator, updated_at)
+                        VALUES (:id, :user_id, :media_id, CAST(:locator AS jsonb), :updated_at)
+                        """
+                    ),
+                    {
+                        "id": uuid4(),
+                        "user_id": user_id,
+                        "media_id": pdf_media_id,
+                        "locator": json.dumps({"kind": "pdf", "page": 3, "zoom": 1.0}),
+                        "updated_at": cursor_updated_at,
+                    },
+                )
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+
+            with Session(engine) as session:
+                pdf_sessions = session.execute(
+                    text(
+                        "SELECT device_id, dwell_ms, max_progression"
+                        " FROM reading_sessions WHERE user_id = :u AND media_id = :m"
+                    ),
+                    {"u": user_id, "m": pdf_media_id},
+                ).fetchall()
+
+            assert len(pdf_sessions) == 1
+            pdf_device_id, pdf_dwell_ms, pdf_max_progression = pdf_sessions[0]
+            assert pdf_device_id == "__migrated__"
+            assert pdf_dwell_ms == 0
+            assert pdf_max_progression is None
+        finally:
+            reset_test_schema()
+            engine.dispose()

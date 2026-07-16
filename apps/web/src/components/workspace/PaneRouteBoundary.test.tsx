@@ -34,6 +34,7 @@ function renderBoundary(input: {
   render(
     <PaneRuntimeProvider
       paneId="pane-1"
+      isActive={true}
       href="/settings"
       routeId="settings"
       routeKey="settings:/settings"
@@ -75,6 +76,7 @@ function renderIntentBoundary(input: {
     <ResourceCacheContext.Provider value={cache}>
       <PaneRuntimeProvider
         paneId="pane-1"
+        isActive={true}
         href="/settings"
         routeId="settings"
         routeKey="settings:/settings"

@@ -27,6 +27,7 @@ function Runtime({
   return (
     <PaneRuntimeProvider
       paneId="pane-1"
+      isActive={true}
       href={href}
       routeId={identity.routeId}
       routeKey={identity.routeKey}

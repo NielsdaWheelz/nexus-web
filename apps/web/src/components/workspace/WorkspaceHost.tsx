@@ -184,6 +184,7 @@ function ResolvedPaneRouteView({ route }: { route: ResolvedPaneRoute }) {
 
 const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
   paneId,
+  isActive,
   href,
   route,
   routeKey,
@@ -206,6 +207,7 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
   children,
 }: {
   paneId: string;
+  isActive: boolean;
   href: string;
   route: ResolvedPaneRoute;
   routeKey: string;
@@ -291,6 +293,7 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
   return (
     <PaneRuntimeProvider
       paneId={paneId}
+      isActive={isActive}
       href={href}
       routeId={route.id}
       routeKey={routeKey}
@@ -1205,6 +1208,7 @@ function WorkspaceHost() {
             >
               <PaneRuntimeFrame
                 paneId={pane.paneId}
+                isActive={pane.isActive}
                 href={pane.href}
                 route={pane.route}
                 routeKey={pane.routeKey}

@@ -24,6 +24,7 @@ function withPaneRuntime(node: ReactNode) {
   return (
     <PaneRuntimeProvider
       paneId="pane-1"
+      isActive={true}
       href={href}
       routeId="conversations"
       routeKey={resolvePaneRouteIdentity(href).routeKey}

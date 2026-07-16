@@ -18,6 +18,39 @@ interface ReaderDocumentMapSeed {
   far_exact: string;
 }
 
+interface ReaderTextLocations {
+  text_offset: number | null;
+  progression: number | null;
+  total_progression: number | null;
+  position: number | null;
+}
+
+interface ReaderTextQuote {
+  quote: string | null;
+  quote_prefix: string | null;
+  quote_suffix: string | null;
+}
+
+interface WebReaderResumeState {
+  kind: "web";
+  target: {
+    fragment_id: string;
+  };
+  locations: ReaderTextLocations;
+  text: ReaderTextQuote;
+}
+
+// Wire contract: GET/PUT never return a bare locator or null. Empty has no
+// locator at all; Positioned always carries one alongside the revision used
+// for conditional writes.
+type ReaderCursorSnapshot =
+  | { state: "Empty"; revision: 0 }
+  | { state: "Positioned"; revision: number; locator: WebReaderResumeState };
+
+interface ReaderStateResponse {
+  data: ReaderCursorSnapshot;
+}
+
 function readReaderDocumentMapSeed(): ReaderDocumentMapSeed {
   const seedPath = path.join(
     __dirname,
@@ -61,16 +94,47 @@ function railMarker(page: Page, highlightId: string): Locator {
   );
 }
 
+// There is no clear/delete semantics under the new contract (a cursor row can
+// only be replaced, never removed), so "no meaningful saved position" is
+// expressed as a cursor at the very beginning of the document (the near
+// fragment, which is fragment 0) rather than an Empty cursor. That reproduces
+// the same "only fragment 0 is rendered on open" behavior this test needs,
+// via a conditional write against the current revision.
+async function resetReaderStateToDocumentStart(
+  page: Page,
+  mediaId: string,
+  fragmentId: string,
+): Promise<void> {
+  const currentResponse = await page.request.get(`/api/media/${mediaId}/reader-state`);
+  expect(currentResponse.ok()).toBeTruthy();
+  const current = ((await currentResponse.json()) as ReaderStateResponse).data;
+  const baseRevision = current.state === "Empty" ? 0 : current.revision;
+
+  const locator: WebReaderResumeState = {
+    kind: "web",
+    target: { fragment_id: fragmentId },
+    locations: {
+      text_offset: 0,
+      progression: 0,
+      total_progression: 0,
+      position: 1,
+    },
+    text: { quote: null, quote_prefix: null, quote_suffix: null },
+  };
+
+  const resetResponse = await page.request.put(`/api/media/${mediaId}/reader-state`, {
+    data: { cursor: { locator, base_revision: baseRevision } },
+    headers: stateChangingApiHeaders(),
+  });
+  expect(resetResponse.ok()).toBeTruthy();
+}
+
 test.describe("reader Document Map overview rail", () => {
   test("rail shows markers across the whole document and jumps to an off-screen highlight", async ({
     page,
   }, testInfo) => {
     const seed = readReaderDocumentMapSeed();
-    const resetResponse = await page.request.put(`/api/media/${seed.media_id}/reader-state`, {
-      data: null,
-      headers: stateChangingApiHeaders(),
-    });
-    expect(resetResponse.ok()).toBeTruthy();
+    await resetReaderStateToDocumentStart(page, seed.media_id, seed.near_fragment_id);
 
     await page.setViewportSize({ width: 1280, height: 900 });
     await gotoSinglePaneWorkspace(

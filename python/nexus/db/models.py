@@ -6447,7 +6447,13 @@ class CommandPaletteUsage(Base):
 
 
 class ReaderMediaState(Base):
-    """Per user + media reader state."""
+    """The one canonical reader cursor per user + media.
+
+    ``revision`` is the only conflict token (monotonic, starts at 1);
+    ``updated_at`` is metadata. FKs are explicitly named and non-cascading:
+    media deletion removes child rows itself, and there is no user-delete flow,
+    so the user FK restricts deletion until that lifecycle is designed.
+    """
 
     __tablename__ = "reader_media_state"
 
@@ -6458,15 +6464,20 @@ class ReaderMediaState(Base):
     )
     user_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
+        ForeignKey("users.id", name="fk_reader_media_state_user"),
         nullable=False,
     )
     media_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("media.id", ondelete="CASCADE"),
+        ForeignKey("media.id", name="fk_reader_media_state_media"),
         nullable=False,
     )
-    locator: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
+    locator: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    revision: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+        server_default=text("1"),
+    )
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -6480,10 +6491,6 @@ class ReaderMediaState(Base):
 
     __table_args__ = (
         UniqueConstraint("user_id", "media_id", name="uq_reader_media_state_user_media"),
-        CheckConstraint(
-            "locator IS NULL OR (jsonb_typeof(locator) = 'object' AND locator <> '{}'::jsonb)",
-            name="ck_reader_media_state_locator",
-        ),
         Index("idx_reader_media_state_media", "media_id"),
     )
 

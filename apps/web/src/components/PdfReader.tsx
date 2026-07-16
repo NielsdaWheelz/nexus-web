@@ -137,6 +137,10 @@ export interface PdfReaderControlActions {
   goToNextPage: () => void;
   zoomIn: () => void;
   zoomOut: () => void;
+  /** Later addressable cursor application (page/progression/zoom), no remount. */
+  applyResumeState: (resume: PdfReaderResumeState) => boolean;
+  /** Synchronous freshest-position capture for lifecycle promotion. */
+  captureResumeState: () => PdfReaderResumeState | null;
 }
 
 interface PdfHighlightListResponse {
@@ -626,6 +630,15 @@ export default function PdfReader({
       nextZoom: number,
       nextPageProgression: number | null,
     ) => {
+      // Programmatic application (initial seed or a later addressable cursor)
+      // must not echo as movement: hold publishes until the pending page and
+      // intra-page progression have been consumed by the viewer.
+      if (
+        pendingViewerPageRef.current !== null ||
+        pendingStartPageProgressionRef.current !== null
+      ) {
+        return;
+      }
       onResumeStateChangeRef.current?.({
         kind: "pdf",
         position: nextPageNumber,
@@ -768,9 +781,12 @@ export default function PdfReader({
       metrics.pageHeight - container.clientHeight,
     );
     if (maxLocalScroll === 0) {
-      return 0;
+      return null;
     }
-    return clamp(localScrollTop / maxLocalScroll, 0, 1);
+    const progression = clamp(localScrollTop / maxLocalScroll, 0, 1);
+    // Top-of-page is the locator's null progression; publishing 0 here would
+    // false-dirty against a stored null and echo a write on initial apply.
+    return progression === 0 ? null : progression;
   }, [readPageMetrics]);
   const publishCurrentResumeLocator = useCallback(
     (nextPageNumber = pageNumberRef.current, nextZoom = zoomRef.current) => {
@@ -2313,6 +2329,45 @@ export default function PdfReader({
     });
   }, [publishCurrentResumeLocator]);
 
+  const applyResumeState = useCallback(
+    (resume: PdfReaderResumeState): boolean => {
+      if (!pdfViewerRef.current || numPages <= 0) {
+        return false;
+      }
+      pendingStartPageProgressionRef.current = resume.page_progression;
+      const nextZoom =
+        resume.zoom !== null ? clamp(resume.zoom, MIN_ZOOM, MAX_ZOOM) : null;
+      const zoomChanged =
+        nextZoom !== null && Math.abs(nextZoom - zoomRef.current) > 0.001;
+      if (zoomChanged) {
+        zoomRef.current = nextZoom;
+        setZoom(nextZoom);
+      }
+      const boundedPage = clamp(resume.page, 1, numPages);
+      if (boundedPage !== pageNumberRef.current) {
+        void goToPage(boundedPage);
+      } else if (!zoomChanged) {
+        // Nothing re-renders, so the pending progression must apply now.
+        applyStartPageProgression();
+      }
+      return true;
+    },
+    [applyStartPageProgression, goToPage, numPages],
+  );
+
+  const captureResumeState = useCallback((): PdfReaderResumeState | null => {
+    if (numPages <= 0) {
+      return null;
+    }
+    return {
+      kind: "pdf",
+      position: pageNumberRef.current,
+      page: pageNumberRef.current,
+      page_progression: readCurrentPageProgression(),
+      zoom: zoomRef.current,
+    };
+  }, [numPages, readCurrentPageProgression]);
+
   useEffect(() => {
     if (!onControlsReady) {
       return;
@@ -2322,11 +2377,21 @@ export default function PdfReader({
       goToNextPage,
       zoomIn,
       zoomOut,
+      applyResumeState,
+      captureResumeState,
     });
     return () => {
       onControlsReady(null);
     };
-  }, [goToNextPage, goToPreviousPage, onControlsReady, zoomIn, zoomOut]);
+  }, [
+    applyResumeState,
+    captureResumeState,
+    goToNextPage,
+    goToPreviousPage,
+    onControlsReady,
+    zoomIn,
+    zoomOut,
+  ]);
 
   useEffect(() => {
     if (!onControlsStateChange) {

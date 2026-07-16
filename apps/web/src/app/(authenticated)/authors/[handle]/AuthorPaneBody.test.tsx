@@ -398,6 +398,7 @@ function authorPane(
   return (
     <PaneRuntimeProvider
       paneId="pane-1"
+      isActive={true}
       href={href}
       routeId="author"
       routeKey={resolvePaneRouteIdentity(href).routeKey}

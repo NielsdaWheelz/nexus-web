@@ -149,7 +149,6 @@ import { canonicalCpLength } from "@/lib/reader/textOffsets";
 import {
   isPdfReaderResumeState,
   isReflowableReaderResumeState,
-  type EpubReaderResumeState,
   type ReaderResumeState,
 } from "@/lib/reader/types";
 import {
@@ -170,7 +169,19 @@ import {
   scrollElementIntoPaneView,
   scrollToCanonicalTextAnchor,
 } from "./paneTextAnchor";
-import { useReaderResumeState } from "@/lib/reader/useReaderResumeState";
+import {
+  useReaderProgress,
+  type ApplyCursorCommand,
+  type ApplyCursorResult,
+  type ReaderCapability,
+} from "@/lib/reader/useReaderProgress";
+import { snapshotLocator } from "@/lib/reader/readerProgress";
+import {
+  buildReaderLocationHref,
+  hasCoarseReaderQuery,
+  stripCoarseReaderQuery,
+} from "@/lib/reader/readerLocationHref";
+import ReaderProgressHandoff from "./ReaderProgressHandoff";
 import { useAttentionTracker } from "@/lib/reader/useAttentionTracker";
 import { useGlobalPlayer } from "@/lib/player/globalPlayer";
 import {
@@ -234,7 +245,6 @@ import type { ContributorCredit } from "@/lib/contributors/types";
 import ResourceThumb from "@/components/ui/ResourceThumb";
 import { buildCompactMediaPaneTitle } from "./mediaFormatting";
 import {
-  buildEpubLocationHref,
   type NavigationTocNodeLike,
   resolveEpubInternalLinkTarget,
   resolveSectionAnchorId,
@@ -586,22 +596,18 @@ export default function MediaPaneBody() {
     markActive,
     clearTarget,
   } = useReaderTarget(id);
-  const requestedFragmentId =
-    target?.kind === "fragment"
-      ? target.value
-      : paneSearchParams.get("fragment")?.trim() || null;
+  // Fresh feature-owned targets (hash/pulse) versus coarse cold-query fields:
+  // a Positioned canonical cursor beats the cold query, never the fresh target.
+  const freshFragmentTargetId =
+    target?.kind === "fragment" ? target.value : null;
+  const coldQueryFragmentId = paneSearchParams.get("fragment")?.trim() || null;
   const requestedHighlightId =
     target?.kind === "highlight" ? target.value : null;
   const requestedApparatusStableKey =
     paneSearchParams.get("apparatus")?.trim() || null;
   const requestedEvidenceId = target?.kind === "evidence" ? target.value : null;
-  const requestedLocParam = paneSearchParams.get("loc")?.trim() ?? "";
-  const requestedReaderLoc =
-    target?.kind === "loc"
-      ? target.value
-      : requestedLocParam.length > 0
-        ? requestedLocParam
-        : null;
+  const freshReaderLocTarget = target?.kind === "loc" ? target.value : null;
+  const coldQueryReaderLoc = paneSearchParams.get("loc")?.trim() || null;
   const requestedPdfPageNumber =
     target?.kind === "page" ? Number(target.value) : null;
   const requestedStartMs = target?.kind === "t" ? Number(target.value) : null;
@@ -613,61 +619,17 @@ export default function MediaPaneBody() {
     updateTheme,
   } = useReaderContext();
   const attentionTracker = useAttentionTracker({ mediaId: id });
-  const {
-    state: readerResumeState,
-    loading: liveReaderResumeStateLoading,
-    save: saveReaderResumeState,
-  } = useReaderResumeState({
-    mediaId: id,
-    debounceMs: 500,
-    attention: attentionTracker,
-  });
-  const [initialReaderResumeState, setInitialReaderResumeState] = useState<
-    ReaderResumeState | null | undefined
-  >(undefined);
-  const initialReaderResumeStateLoading =
-    initialReaderResumeState === undefined;
-  const initialPdfResumeState = isPdfReaderResumeState(initialReaderResumeState)
-    ? initialReaderResumeState
-    : null;
-  const initialTextResumeState = isReflowableReaderResumeState(
-    initialReaderResumeState,
-  )
-    ? initialReaderResumeState
-    : null;
-  const initialEpubResumeState =
-    initialReaderResumeState?.kind === "epub"
-      ? (initialReaderResumeState as EpubReaderResumeState)
-      : null;
-  const readerResumeSource =
-    initialTextResumeState?.kind === "epub"
-      ? initialTextResumeState.target.href_path
-      : (initialTextResumeState?.target.fragment_id ?? null);
-  const readerResumeTextOffset =
-    initialTextResumeState?.locations.text_offset ?? null;
-  const readerResumeQuote = initialTextResumeState?.text.quote ?? null;
-  const readerResumeQuotePrefix =
-    initialTextResumeState?.text.quote_prefix ?? null;
-  const readerResumeQuoteSuffix =
-    initialTextResumeState?.text.quote_suffix ?? null;
-  const readerResumeProgression =
-    initialTextResumeState?.locations.progression ?? null;
-  const readerResumeTotalProgression =
-    initialTextResumeState?.locations.total_progression ?? null;
-  const readerResumePosition =
-    initialTextResumeState?.locations.position ?? null;
   const scrollRestoreAppliedRef = useRef(false);
   const lastSavedTextAnchorOffsetRef = useRef<number | null>(null);
+  // One-shot: URL-driven (history/cold-query) navigation seeds the capture
+  // baseline instead of persisting; only genuine input after it may promote.
+  const suppressNextTextCaptureRef = useRef(false);
   const [textRestoreSettled, setTextRestoreSettled] = useState(false);
   const [readerLayoutReady, setReaderLayoutReady] = useState(false);
   // End-of-document Lectern prompt (§7.7): mirror committed total_progression into
   // React so a threshold effect can offer the next readable queue entry.
   const [currentTotalProgression, setCurrentTotalProgression] = useState<number | null>(null);
   const [nextReadableItem, setNextReadableItem] = useState<ConsumptionQueueItem | null>(null);
-
-  useEffect(() => {
-    setInitialReaderResumeState(undefined);
-  }, [id]);
 
   useEffect(() => {
     setCurrentTotalProgression(null);
@@ -720,20 +682,6 @@ export default function MediaPaneBody() {
     setNextReadableItem(null);
   }, [id, nextReadableItem, openInNewPane]);
 
-  useEffect(() => {
-    if (
-      liveReaderResumeStateLoading ||
-      initialReaderResumeState !== undefined
-    ) {
-      return;
-    }
-    setInitialReaderResumeState(readerResumeState);
-  }, [
-    initialReaderResumeState,
-    liveReaderResumeStateLoading,
-    readerResumeState,
-  ]);
-
   // ---- Core data state ----
   const [media, setMedia] = useState<Media | null>(null);
   const [loading, setLoading] = useState(media === null);
@@ -776,6 +724,141 @@ export default function MediaPaneBody() {
   const appliedEpubNavigationRef = useRef<ReaderNavigationSection[] | null>(
     null,
   );
+
+  // ==========================================================================
+  // Reader progress coordinator — capability, cursor authority, cold-query rule
+  // ==========================================================================
+
+  const isEpub = media?.kind === "epub";
+  const isPdf = media?.kind === "pdf";
+  const isTranscriptMedia =
+    media?.kind === "podcast_episode" || media?.kind === "video";
+  const canRead = media
+    ? isTranscriptMedia
+      ? Boolean(media.capabilities?.can_read)
+      : canReadMediaDocument(media)
+    : false;
+  const readerLocatorKind: ReaderResumeState["kind"] | null = !media
+    ? null
+    : isPdf
+      ? "pdf"
+      : isEpub
+        ? "epub"
+        : isTranscriptMedia
+          ? "transcript"
+          : media.kind === "web_article"
+            ? "web"
+            : null;
+  const readerCapability = useMemo<ReaderCapability>(
+    () =>
+      canRead && readerLocatorKind
+        ? { state: "Readable", mediaId: id, locatorKind: readerLocatorKind }
+        : { state: "Unavailable" },
+    [canRead, id, readerLocatorKind],
+  );
+  // Format-owned capture/apply land further down; the coordinator reads them
+  // through these refs at call time.
+  const captureCurrentLocatorRef = useRef<() => ReaderResumeState | null>(
+    () => null,
+  );
+  const applyCursorCommandRef = useRef<
+    (command: ApplyCursorCommand) => Promise<ApplyCursorResult>
+  >(() => Promise.resolve("failed"));
+  const readerProgress = useReaderProgress({
+    capability: readerCapability,
+    isPaneActive: paneRuntime?.isActive ?? true,
+    attention: attentionTracker,
+    captureCurrentLocator: useCallback(
+      () => captureCurrentLocatorRef.current(),
+      [],
+    ),
+    applyCursor: useCallback(
+      (command: ApplyCursorCommand) => applyCursorCommandRef.current(command),
+      [],
+    ),
+  });
+  const reportReaderMovement = readerProgress.reportMovement;
+  const noteGenuineReaderInput = readerProgress.noteGenuineInput;
+  const initialReaderResumeStateLoading =
+    readerCapability.state === "Readable" &&
+    readerProgress.initialSnapshot === undefined &&
+    readerProgress.status !== "load_failed";
+  const initialReaderResumeState: ReaderResumeState | null | undefined =
+    readerProgress.initialSnapshot !== undefined
+      ? snapshotLocator(readerProgress.initialSnapshot)
+      : initialReaderResumeStateLoading
+        ? undefined
+        : null;
+  // A remote cursor application re-arms the same restore machinery the cold
+  // mount uses; while one is pending, its locator supersedes the initial seed.
+  const [remoteApplyLocator, setRemoteApplyLocator] =
+    useState<ReaderResumeState | null>(null);
+  const initialPdfResumeState = isPdfReaderResumeState(initialReaderResumeState)
+    ? initialReaderResumeState
+    : null;
+  const initialTextResumeState = isReflowableReaderResumeState(
+    initialReaderResumeState,
+  )
+    ? initialReaderResumeState
+    : null;
+  const initialEpubResumeState =
+    initialTextResumeState?.kind === "epub" ? initialTextResumeState : null;
+  const restoreTextLocator = isReflowableReaderResumeState(remoteApplyLocator)
+    ? remoteApplyLocator
+    : initialTextResumeState;
+  const readerResumeSource =
+    restoreTextLocator?.kind === "epub"
+      ? restoreTextLocator.target.href_path
+      : (restoreTextLocator?.target.fragment_id ?? null);
+  const readerResumeTextOffset =
+    restoreTextLocator?.locations.text_offset ?? null;
+  const readerResumeQuote = restoreTextLocator?.text.quote ?? null;
+  const readerResumeQuotePrefix =
+    restoreTextLocator?.text.quote_prefix ?? null;
+  const readerResumeQuoteSuffix =
+    restoreTextLocator?.text.quote_suffix ?? null;
+  const readerResumeProgression =
+    restoreTextLocator?.locations.progression ?? null;
+  const readerResumeTotalProgression =
+    restoreTextLocator?.locations.total_progression ?? null;
+  const readerResumePosition = restoreTextLocator?.locations.position ?? null;
+
+  // Cold-query precedence: a Positioned canonical cursor supersedes coarse
+  // `?loc`/`?fragment`; the repair strips only those fields with a pane-local
+  // replace, preserving apparatus, unrelated query intent, and hash. Later
+  // query changes (live Back/Forward, in-app pushes) always navigate.
+  const paneHref = paneRuntime?.href ?? null;
+  const paneRouterReplace = paneRuntime?.router.replace;
+  const [coldQueryMode, setColdQueryMode] = useState<"pending" | "open">(
+    "pending",
+  );
+  useEffect(() => {
+    setColdQueryMode("pending");
+  }, [id]);
+  useEffect(() => {
+    if (
+      coldQueryMode !== "pending" ||
+      readerProgress.initialSnapshot === undefined
+    ) {
+      return;
+    }
+    if (
+      readerProgress.initialSnapshot.state === "Positioned" &&
+      paneHref !== null &&
+      hasCoarseReaderQuery(paneHref)
+    ) {
+      paneRouterReplace?.(stripCoarseReaderQuery(paneHref));
+      // Stay pending until the repaired href flows back through the pane.
+      return;
+    }
+    setColdQueryMode("open");
+  }, [coldQueryMode, paneHref, paneRouterReplace, readerProgress.initialSnapshot]);
+  const requestedFragmentId =
+    freshFragmentTargetId ??
+    (coldQueryMode === "open" ? coldQueryFragmentId : null);
+  const requestedReaderLoc =
+    freshReaderLocTarget ??
+    (coldQueryMode === "open" ? coldQueryReaderLoc : null);
 
   // Request-version guard for stale highlight responses.
   const highlightVersionRef = useRef(0);
@@ -1062,17 +1145,8 @@ export default function MediaPaneBody() {
   }, [clearPendingMobileSelectionPublish]);
 
   // ---- Derived state ----
-  const isEpub = media?.kind === "epub";
-  const isPdf = media?.kind === "pdf";
-  const isTranscriptMedia =
-    media?.kind === "podcast_episode" || media?.kind === "video";
   const transcriptState = media?.transcript_state ?? null;
   const transcriptCoverage = media?.transcript_coverage ?? null;
-  const canRead = media
-    ? isTranscriptMedia
-      ? Boolean(media.capabilities?.can_read)
-      : canReadMediaDocument(media)
-    : false;
   const readerLayoutKey = `${readerProfile.font_family}:${readerProfile.font_size_px}:${readerProfile.line_height}:${readerProfile.column_width_ch}`;
   const focusModeEnabled = readerProfile.focus_mode !== "off";
   const playbackSource = media?.playback_source ?? null;
@@ -1825,6 +1899,11 @@ export default function MediaPaneBody() {
     const section = epubSections.find((item) => item.section_id === locParam);
     if (!section) return;
     appliedRequestedReaderLocRef.current = locParam;
+    // URL-driven navigation (history, cold query) is not genuine reading
+    // input: the first capture after it seeds the baseline instead of
+    // persisting. Direct TOC commands pre-mark appliedRequestedReaderLocRef
+    // and never reach this branch.
+    suppressNextTextCaptureRef.current = true;
     beginRestoreSession("opening_target");
     setActiveSectionId(section.section_id);
     setEpubRestoreRequest(
@@ -1850,6 +1929,7 @@ export default function MediaPaneBody() {
     webSectionScrollKeyRef.current = null;
     scrollRestoreAppliedRef.current = false;
     lastSavedTextAnchorOffsetRef.current = null;
+    suppressNextTextCaptureRef.current = false;
     pendingApparatusPulseRef.current = null;
     setFocusedApparatusItemId(null);
     setHoveredApparatusItemId(null);
@@ -1936,11 +2016,12 @@ export default function MediaPaneBody() {
     }
 
     const cancelPendingRestore = () => {
+      noteGenuineReaderInput();
       cancelRestoreSession();
     };
     const handleKeyDown = (event: KeyboardEvent) => {
       if (isUserScrollKey(event)) {
-        cancelRestoreSession();
+        cancelPendingRestore();
       }
     };
 
@@ -1957,7 +2038,13 @@ export default function MediaPaneBody() {
       container.removeEventListener("touchmove", cancelPendingRestore);
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [activeContent?.fragmentId, cancelRestoreSession, isPdf, restorePhase]);
+  }, [
+    activeContent?.fragmentId,
+    cancelRestoreSession,
+    isPdf,
+    noteGenuineReaderInput,
+    restorePhase,
+  ]);
 
   // Restore text locators for web, transcript, and EPUB content.
   useEffect(() => {
@@ -2177,7 +2264,184 @@ export default function MediaPaneBody() {
     updateRestorePhase,
   ]);
 
-  // Persist text locators for web, transcript, and EPUB content.
+  // Build the current-position locator for web, transcript, and EPUB content.
+  const buildTextLocatorAtOffset = useCallback(
+    (anchorOffset: number): ReaderResumeState | null => {
+      if (!activeContent || !activeTextSource) {
+        return null;
+      }
+      const quoteWindow = buildCanonicalQuoteWindow(
+        activeContent.canonicalText,
+        anchorOffset,
+      );
+      const activeLength = canonicalCpLength(activeContent.canonicalText);
+      const absoluteOffset = activeTextStartOffset + anchorOffset;
+      const locations = {
+        text_offset: anchorOffset,
+        progression:
+          activeLength > 0 ? Math.min(1, anchorOffset / activeLength) : 0,
+        total_progression:
+          totalTextLength > 0
+            ? Math.min(1, absoluteOffset / totalTextLength)
+            : 0,
+        position: Math.floor(absoluteOffset / READER_POSITION_BUCKET_CP) + 1,
+      };
+      const text = {
+        quote: quoteWindow.quote,
+        quote_prefix: quoteWindow.quotePrefix,
+        quote_suffix: quoteWindow.quoteSuffix,
+      };
+      if (isEpub) {
+        if (!activeEpubSection?.href_path) {
+          return null;
+        }
+        return {
+          kind: "epub",
+          target: {
+            section_id: activeEpubSection.section_id,
+            href_path: activeEpubSection.href_path,
+            anchor_id: activeTextAnchor,
+          },
+          locations,
+          text,
+        };
+      }
+      return {
+        kind: isTranscriptMedia ? "transcript" : "web",
+        target: { fragment_id: activeTextSource },
+        locations,
+        text,
+      };
+    },
+    [
+      activeContent,
+      activeEpubSection,
+      activeTextAnchor,
+      activeTextSource,
+      activeTextStartOffset,
+      isEpub,
+      isTranscriptMedia,
+      totalTextLength,
+    ],
+  );
+
+  // Stable reader viewport focus target after a handoff button resolves.
+  const focusReaderViewport = useCallback(() => {
+    const container = isPdf
+      ? pdfContentRef.current
+      : getPaneScrollContainer(contentRef.current);
+    if (!container) {
+      return;
+    }
+    if (!container.hasAttribute("tabindex")) {
+      container.setAttribute("tabindex", "-1");
+    }
+    container.focus({ preventScroll: true });
+  }, [isPdf]);
+
+  // Synchronous freshest-position capture (lifecycle promotion and `Stay at
+  // this position`). PDF reads the viewer; text formats read the live scroll.
+  captureCurrentLocatorRef.current = () => {
+    if (isPdf) {
+      return pdfControlsRef.current?.captureResumeState() ?? null;
+    }
+    if (!activeContent || !activeTextSource || isMismatchDisabled) {
+      return null;
+    }
+    const container = getPaneScrollContainer(contentRef.current);
+    const cursor = cursorRef.current;
+    if (!container || !cursor) {
+      return null;
+    }
+    const anchorOffset = findFirstVisibleCanonicalOffset(container, cursor);
+    if (anchorOffset === null) {
+      return null;
+    }
+    return buildTextLocatorAtOffset(anchorOffset);
+  };
+
+  // Format-owned addressable application of a remote cursor. PDF applies
+  // through the live viewer; text formats re-arm the shared restore machinery
+  // and complete through the restore-phase watcher below.
+  const pendingCursorApplyRef = useRef<{
+    resolve: (result: ApplyCursorResult) => void;
+  } | null>(null);
+  applyCursorCommandRef.current = (command: ApplyCursorCommand) => {
+    const locator = command.locator;
+    if (readerCapability.state !== "Readable" || locator.kind !== readerCapability.locatorKind) {
+      return Promise.resolve<ApplyCursorResult>("failed");
+    }
+    if (locator.kind === "pdf") {
+      return Promise.resolve<ApplyCursorResult>(
+        pdfControlsRef.current?.applyResumeState(locator) ? "applied" : "failed",
+      );
+    }
+    // The user (or clean-dormant adoption) chose the canonical position; a
+    // still-active feature target no longer owns the viewport.
+    clearTarget();
+    return new Promise<ApplyCursorResult>((resolve) => {
+      pendingCursorApplyRef.current?.resolve("cancelled_by_user");
+      pendingCursorApplyRef.current = { resolve };
+      if (locator.kind === "epub") {
+        if (!epubSections || epubSections.length === 0) {
+          pendingCursorApplyRef.current = null;
+          resolve("failed");
+          return;
+        }
+        const request = resolveInitialEpubRestoreRequest({
+          requestedSectionId: null,
+          resumeState: locator,
+          sections: epubSections,
+          readerPositionBucketCp: READER_POSITION_BUCKET_CP,
+        });
+        if (!request) {
+          pendingCursorApplyRef.current = null;
+          resolve("failed");
+          return;
+        }
+        beginRestoreSession("resolving");
+        setActiveSectionId(request.sectionId);
+        setEpubRestoreRequest(request);
+        return;
+      }
+      beginRestoreSession("resolving");
+      if (locator.kind === "transcript") {
+        setActiveTranscriptFragmentId(locator.target.fragment_id);
+      }
+      setRemoteApplyLocator(locator);
+    });
+  };
+
+  // Completion for text-format cursor application: the shared restore session
+  // settles or is cancelled by genuine input. A settle that never physically
+  // scrolled is a failed application — the target is retained for Retry.
+  useEffect(() => {
+    const pending = pendingCursorApplyRef.current;
+    if (!pending) {
+      return;
+    }
+    if (restorePhase === "settled" || restorePhase === "cancelled") {
+      pendingCursorApplyRef.current = null;
+      setRemoteApplyLocator(null);
+      pending.resolve(
+        restorePhase === "cancelled"
+          ? "cancelled_by_user"
+          : scrollRestoreAppliedRef.current
+            ? "applied"
+            : "failed",
+      );
+    }
+  }, [restorePhase]);
+
+  useEffect(() => {
+    return () => {
+      pendingCursorApplyRef.current?.resolve("failed");
+      pendingCursorApplyRef.current = null;
+      setRemoteApplyLocator(null);
+    };
+  }, [id]);
+
+  // Capture genuine text movement for web, transcript, and EPUB content.
   useEffect(() => {
     if (
       isPdf ||
@@ -2220,64 +2484,20 @@ export default function MediaPaneBody() {
         if (lastSavedTextAnchorOffsetRef.current === anchorOffset) {
           return;
         }
+        if (suppressNextTextCaptureRef.current) {
+          suppressNextTextCaptureRef.current = false;
+          lastSavedTextAnchorOffsetRef.current = anchorOffset;
+          return;
+        }
         lastSavedTextAnchorOffsetRef.current = anchorOffset;
-        const quoteWindow = buildCanonicalQuoteWindow(
-          activeContent.canonicalText,
-          anchorOffset,
-        );
-        const activeLength = canonicalCpLength(activeContent.canonicalText);
-        const absoluteOffset = activeTextStartOffset + anchorOffset;
-        const locations = {
-          text_offset: anchorOffset,
-          progression:
-            activeLength > 0 ? Math.min(1, anchorOffset / activeLength) : 0,
-          total_progression:
-            totalTextLength > 0
-              ? Math.min(1, absoluteOffset / totalTextLength)
-              : 0,
-          position: Math.floor(absoluteOffset / READER_POSITION_BUCKET_CP) + 1,
-        };
-        setCurrentTotalProgression(locations.total_progression);
-        const text = {
-          quote: quoteWindow.quote,
-          quote_prefix: quoteWindow.quotePrefix,
-          quote_suffix: quoteWindow.quoteSuffix,
-        };
-
-        if (isEpub && activeEpubSection?.href_path) {
-          saveReaderResumeState({
-            kind: "epub",
-            target: {
-              section_id: activeEpubSection.section_id,
-              href_path: activeEpubSection.href_path,
-              anchor_id: activeTextAnchor,
-            },
-            locations,
-            text,
-          });
+        const locator = buildTextLocatorAtOffset(anchorOffset);
+        if (!locator) {
           return;
         }
-
-        if (isTranscriptMedia) {
-          saveReaderResumeState({
-            kind: "transcript",
-            target: {
-              fragment_id: activeTextSource,
-            },
-            locations,
-            text,
-          });
-          return;
+        if (locator.kind !== "pdf") {
+          setCurrentTotalProgression(locator.locations.total_progression);
         }
-
-        saveReaderResumeState({
-          kind: "web",
-          target: {
-            fragment_id: activeTextSource,
-          },
-          locations,
-          text,
-        });
+        reportReaderMovement(locator);
       });
     };
 
@@ -2292,17 +2512,14 @@ export default function MediaPaneBody() {
   }, [
     isPdf,
     activeContent,
-    activeEpubSection,
-    activeTextAnchor,
     activeTextSource,
-    activeTextStartOffset,
+    buildTextLocatorAtOffset,
     initialReaderResumeStateLoading,
     isEpub,
-    saveReaderResumeState,
+    reportReaderMovement,
     isMismatchDisabled,
     isTranscriptMedia,
     textRestoreSettled,
-    totalTextLength,
   ]);
 
   // Scroll to anchor target after section content loads.
@@ -3631,7 +3848,7 @@ export default function MediaPaneBody() {
       );
       if (!section) return;
       appliedRequestedReaderLocRef.current = sectionId;
-      paneRouterPush?.(buildEpubLocationHref(id, sectionId));
+      paneRouterPush?.(buildReaderLocationHref(id, { loc: sectionId }));
       beginRestoreSession("opening_target");
       setEpubRestoreRequest(
         buildManualSectionRestoreRequest(sectionId, anchorId),
@@ -3667,9 +3884,12 @@ export default function MediaPaneBody() {
         origin: "manual",
       });
       setActiveWebSectionId(section.section_id);
-      const params = new URLSearchParams({ loc: section.section_id });
-      params.set("fragment", section.fragment_id);
-      paneRouterPush?.(`/media/${id}?${params.toString()}`);
+      paneRouterPush?.(
+        buildReaderLocationHref(id, {
+          loc: section.section_id,
+          fragmentId: section.fragment_id,
+        }),
+      );
     },
     [
       cancelRestoreSession,
@@ -3744,8 +3964,9 @@ export default function MediaPaneBody() {
         return;
       }
 
-      const params = new URLSearchParams({ fragment: locator.fragment_id });
-      paneRouterPush?.(`/media/${id}?${params.toString()}`);
+      paneRouterPush?.(
+        buildReaderLocationHref(id, { fragmentId: locator.fragment_id }),
+      );
       setTarget({
         kind: "fragment",
         value: locator.fragment_id,
@@ -5140,8 +5361,7 @@ export default function MediaPaneBody() {
         return;
       }
 
-      const params = new URLSearchParams({ fragment: fragmentId });
-      paneRouterPush?.(`/media/${id}?${params.toString()}`);
+      paneRouterPush?.(buildReaderLocationHref(id, { fragmentId }));
       pendingDocumentMapPulseRef.current = { fragmentId, target };
       setTarget({ kind: "fragment", value: fragmentId, origin: "manual" });
     },
@@ -5206,7 +5426,7 @@ export default function MediaPaneBody() {
           occurrenceKey: item.occurrence_key,
         };
         setTarget({ kind: "fragment", value: fragmentId, origin: "manual" });
-        paneRouterPush?.(`/media/${id}?fragment=${fragmentId}`);
+        paneRouterPush?.(buildReaderLocationHref(id, { fragmentId }));
         return;
       }
       if (lensId === "citations") {
@@ -5427,6 +5647,28 @@ export default function MediaPaneBody() {
     );
   }
 
+  const readerProgressLoadFailed = (
+    <div className={styles.notReady} data-testid="reader-progress-load-failed">
+      <p>Couldn&apos;t load your reading position.</p>
+      <Button variant="primary" size="md" onClick={readerProgress.retryLoad}>
+        Retry
+      </Button>
+    </div>
+  );
+
+  const readerProgressOverlay =
+    readerCapability.state === "Readable" ? (
+      <ReaderProgressHandoff
+        handoff={readerProgress.handoff}
+        announcement={readerProgress.announcement}
+        saveFailed={readerProgress.saveFailed}
+        onAccept={readerProgress.acceptRemoteCursor}
+        onStay={readerProgress.stayAtLocalPosition}
+        onRetrySave={readerProgress.retrySave}
+        focusReaderViewport={focusReaderViewport}
+      />
+    ) : null;
+
   const transcriptPaneBody = !canRead ? (
     <TranscriptStatePanel
       mediaId={media.id}
@@ -5434,6 +5676,8 @@ export default function MediaPaneBody() {
       transcriptCoverage={transcriptCoverage}
       onTranscriptStateChange={handleTranscriptStateChange}
     />
+  ) : readerProgress.status === "load_failed" ? (
+    readerProgressLoadFailed
   ) : (
     <TranscriptContentPanel
       mediaId={media.id}
@@ -5618,6 +5862,8 @@ export default function MediaPaneBody() {
                 </>
               )}
             </div>
+          ) : readerProgress.status === "load_failed" ? (
+            readerProgressLoadFailed
           ) : isPdf ? (
             initialReaderResumeStateLoading ? (
               <div className={styles.notReady}>
@@ -5626,7 +5872,7 @@ export default function MediaPaneBody() {
             ) : (
               <div className={styles.readerFrame}>
                 <PdfReader
-                  key={`${id}:${activeRequestedPdfPageNumber ?? resolvedPdfPageNumber ?? "resume"}`}
+                  key={id}
                   mediaId={id}
                   contentRef={pdfContentRef}
                   focusedHighlightId={focusState.focusedId}
@@ -5678,7 +5924,11 @@ export default function MediaPaneBody() {
                       : (initialPdfResumeState?.page_progression ?? undefined)
                   }
                   startZoom={initialPdfResumeState?.zoom ?? undefined}
-                  onResumeStateChange={saveReaderResumeState}
+                  onResumeStateChange={(resume) => {
+                    if (resume) {
+                      reportReaderMovement(resume);
+                    }
+                  }}
                 />
               </div>
             )
@@ -5729,6 +5979,7 @@ export default function MediaPaneBody() {
               onContentBlur={handleContentBlur}
             />
           )}
+          {readerProgressOverlay}
           {!isTranscriptMedia && canRead && nextReadableItem ? (
             <LecternNextPrompt
               title={nextReadableItem.title}

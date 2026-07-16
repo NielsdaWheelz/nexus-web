@@ -192,6 +192,7 @@ function runtime(
   return (
     <PaneRuntimeProvider
       paneId="pane-1"
+      isActive={true}
       href={href}
       routeId={identity.routeId}
       routeKey={identity.routeKey}
@@ -249,6 +250,7 @@ describe("PaneRuntimeProvider", () => {
     render(
       <PaneRuntimeProvider
         paneId="pane-1"
+        isActive={true}
         href={LIBRARY_HREF}
         routeId={identity.routeId}
         routeKey={identity.routeKey}
@@ -277,6 +279,7 @@ describe("PaneRuntimeProvider", () => {
     render(
       <PaneRuntimeProvider
         paneId="pane-1"
+        isActive={true}
         href={LIBRARY_HREF}
         routeId={identity.routeId}
         routeKey={identity.routeKey}
@@ -307,6 +310,7 @@ describe("PaneRuntimeProvider", () => {
     render(
       <PaneRuntimeProvider
         paneId="pane-1"
+        isActive={true}
         href={LIBRARY_HREF}
         routeId={identity.routeId}
         routeKey={identity.routeKey}
@@ -336,6 +340,7 @@ describe("PaneRuntimeProvider", () => {
     render(
       <PaneRuntimeProvider
         paneId="pane-1"
+        isActive={true}
         href={LIBRARY_HREF}
         routeId={identity.routeId}
         routeKey={identity.routeKey}
@@ -364,6 +369,7 @@ describe("PaneRuntimeProvider", () => {
     render(
       <PaneRuntimeProvider
         paneId="pane-1"
+        isActive={true}
         href={LIBRARY_HREF}
         routeId={identity.routeId}
         routeKey={identity.routeKey}
@@ -393,6 +399,7 @@ describe("PaneRuntimeProvider", () => {
     const identity = resolvePaneRouteIdentity(LIBRARY_HREF);
     const stableProps = {
       paneId: "pane-1",
+      isActive: true,
       href: LIBRARY_HREF,
       routeId: identity.routeId,
       routeKey: identity.routeKey,
@@ -425,6 +432,7 @@ describe("PaneRuntimeProvider", () => {
     const identity = resolvePaneRouteIdentity(LIBRARY_HREF);
     const stableProps = {
       paneId: "pane-1",
+      isActive: true,
       href: LIBRARY_HREF,
       routeId: identity.routeId,
       routeKey: identity.routeKey,
@@ -479,6 +487,7 @@ describe("PaneRuntimeProvider", () => {
     render(
       <PaneRuntimeProvider
         paneId="pane-1"
+        isActive={true}
         href={LIBRARY_HREF}
         routeId={identity.routeId}
         routeKey={identity.routeKey}
@@ -512,6 +521,7 @@ describe("PaneRuntimeProvider", () => {
     render(
       <PaneRuntimeProvider
         paneId="pane-1"
+        isActive={true}
         href={MEDIA_HREF_1}
         routeId={identity.routeId}
         routeKey={identity.routeKey}
@@ -555,6 +565,7 @@ describe("PaneRuntimeProvider", () => {
     render(
       <PaneRuntimeProvider
         paneId="pane-1"
+        isActive={true}
         href={LIBRARY_HREF}
         routeId={identity.routeId}
         routeKey={identity.routeKey}

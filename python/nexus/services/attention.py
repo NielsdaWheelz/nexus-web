@@ -73,13 +73,15 @@ def record_attention(
 ) -> None:
     """Continue the open session for (viewer, media) or open a new one.
 
-    Callers (reader-state / listening-state routes) have already validated
-    viewer access to ``media_id``; this function only writes the ledger.
+    Validates media visibility itself: attention-only reader-state writes never
+    touch the cursor service, so no other owner has vouched for access.
     """
     # A Python list bound through the JSONB param (not a pre-serialized string):
     # double-encoding would store a jsonb *string* and trip the array CHECK.
     spans_value = [span.model_dump(mode="json") for span in block.spans_touched]
     with transaction(db):
+        if not can_read_media(db, viewer_id, media_id):
+            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
         open_session_id = db.execute(
             _SELECT_OPEN_SESSION_SQL,
             {

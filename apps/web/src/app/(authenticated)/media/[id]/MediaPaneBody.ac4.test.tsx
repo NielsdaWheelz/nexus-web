@@ -43,16 +43,6 @@ vi.mock("@/lib/reader/ReaderContext", () => ({
   }),
 }));
 
-vi.mock("@/lib/reader/useReaderResumeState", () => ({
-  useReaderResumeState: () => ({
-    state: null,
-    loading: false,
-    error: null,
-    load: vi.fn(),
-    save: vi.fn(),
-  }),
-}));
-
 vi.mock("@/lib/media/useLibraryMembership", () => ({
   useLibraryMembership: () => ({
     libraries: [],
@@ -147,6 +137,17 @@ describe("MediaPaneBody AC-4 hydration hit", () => {
     const fetchMock = stubFetch(async (input) => {
       if (fetchInputPath(input) === `/api/media/${MEDIA_ID}`) {
         throw new Error(`media resource fetched: ${String(input)}`);
+      }
+      // The seeded media is non-readable (can_read: false), so the reader
+      // progress coordinator never opens cursor authority and this path is
+      // not expected to be requested; the stub covers it defensively so a
+      // change in readability doesn't silently fall through to the empty
+      // catch-all below and fail snapshot parsing.
+      if (fetchInputPath(input) === `/api/media/${MEDIA_ID}/reader-state`) {
+        return new Response(
+          JSON.stringify({ data: { state: "Empty", revision: 0 } }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
       }
       return new Response("{}", {
         status: 200,

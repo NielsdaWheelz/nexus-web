@@ -160,12 +160,16 @@ class ReaderTextLocations(ReaderStateModel):
     position: int | None = Field(ge=1)
 
 
+QUOTE_MAX_CODE_POINTS = 256
+QUOTE_CONTEXT_MAX_CODE_POINTS = 128
+
+
 class ReaderQuoteContext(ReaderStateModel):
     """Quote-context fields shared by non-PDF reader states."""
 
-    quote: str | None
-    quote_prefix: str | None
-    quote_suffix: str | None
+    quote: str | None = Field(max_length=QUOTE_MAX_CODE_POINTS)
+    quote_prefix: str | None = Field(max_length=QUOTE_CONTEXT_MAX_CODE_POINTS)
+    quote_suffix: str | None = Field(max_length=QUOTE_CONTEXT_MAX_CODE_POINTS)
 
     @model_validator(mode="after")
     def validate_quote_context(self) -> "ReaderQuoteContext":
@@ -251,12 +255,45 @@ ReaderResumeState = Annotated[
 ]
 
 
-class ReaderStateWithAttention(BaseModel):
-    """Envelope for PUT /media/{id}/reader-state: the resume locator plus an
-    optional attention block. A bare (top-level ``kind``) locator body is also
-    accepted for saves that carry no attention (see
-    ``services.reader.parse_reader_state_with_attention``)."""
+class ReaderCursorEmpty(BaseModel):
+    """Snapshot for a user/media pair with no persisted cursor.
+
+    Revision ``0`` is an API sentinel only; it is never persisted."""
 
     model_config = ConfigDict(extra="forbid")
-    locator: ReaderResumeState | None = None
+    state: Literal["Empty"] = "Empty"
+    revision: Literal[0] = 0
+
+
+class ReaderCursorPositioned(BaseModel):
+    """Snapshot of the one canonical cursor for a user/media pair."""
+
+    model_config = ConfigDict(extra="forbid")
+    state: Literal["Positioned"] = "Positioned"
+    revision: int = Field(ge=1)
+    locator: ReaderResumeState
+
+
+ReaderCursorSnapshot = ReaderCursorEmpty | ReaderCursorPositioned
+
+
+class CursorWrite(BaseModel):
+    """Conditional cursor replacement against an acknowledged base revision."""
+
+    model_config = ConfigDict(extra="forbid")
+    locator: ReaderResumeState
+    base_revision: int = Field(ge=0)
+
+
+class ReaderProgressWrite(BaseModel):
+    """The one strict envelope for PUT /media/{id}/reader-state."""
+
+    model_config = ConfigDict(extra="forbid")
+    cursor: CursorWrite | None = None
     attention: AttentionBlock | None = None
+
+    @model_validator(mode="after")
+    def require_at_least_one_block(self) -> "ReaderProgressWrite":
+        if self.cursor is None and self.attention is None:
+            raise ValueError("cursor or attention is required")
+        return self
