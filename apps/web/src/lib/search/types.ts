@@ -67,7 +67,6 @@ export interface SearchContributorResult extends SearchBaseResult {
   contributor: {
     handle: string;
     display_name: string;
-    status: string | null;
   };
 }
 

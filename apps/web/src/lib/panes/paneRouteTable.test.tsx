@@ -31,6 +31,17 @@ describe("pane route table", () => {
     expect(route.definition?.bodyMode).toBe("standard");
   });
 
+  it("has no root Authors directory route and rejects reserved handle segments", () => {
+    // The /authors directory pane is deleted (author-dedup §7 / D-26); the root
+    // and the reserved collection segments the handle space shadows fall to the
+    // unsupported placeholder rather than mounting an author detail pane.
+    expect(resolvePaneRoute("/authors").id).toBe("unsupported");
+    expect(resolvePaneRoute("/authors/directory").id).toBe("unsupported");
+    expect(resolvePaneRoute("/authors/reconciliation-candidates").id).toBe(
+      "unsupported",
+    );
+  });
+
   it("resolves page routes as document panes", () => {
     const route = resolvePaneRoute(`/pages/${PAGE_ID}`);
 

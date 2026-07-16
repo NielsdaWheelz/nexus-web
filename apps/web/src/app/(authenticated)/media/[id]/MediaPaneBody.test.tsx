@@ -892,6 +892,15 @@ describe("MediaPaneBody pane sizing", () => {
     },
   );
 
+  it("renders the media authors byline with an empty-author state", async () => {
+    testState.mediaKind = "web_article";
+    renderMediaPane();
+
+    expect(await screen.findByTestId("html-renderer")).toBeInTheDocument();
+    expect(screen.getByText("Authors")).toBeInTheDocument();
+    expect(screen.getByText("No authors")).toBeInTheDocument();
+  });
+
   it("loads web article fragments once", async () => {
     testState.mediaKind = "web_article";
     renderMediaPane();

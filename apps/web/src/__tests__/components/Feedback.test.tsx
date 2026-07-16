@@ -69,6 +69,28 @@ describe("feedback layer", () => {
     });
   });
 
+  it("maps the author-dedup error codes to their frozen DP-1 titles", () => {
+    expect(
+      toFeedback(new ApiError(422, "E_AUTHOR_ALREADY_LISTED", "duplicate", "req-a"), {
+        fallback: "Couldn't save your changes.",
+      }),
+    ).toEqual({
+      severity: "error",
+      title: "That author is already listed for this role.",
+      requestId: "req-a",
+    });
+
+    expect(
+      toFeedback(new ApiError(409, "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH", "replay", "req-b"), {
+        fallback: "Couldn't save your changes.",
+      }),
+    ).toEqual({
+      severity: "error",
+      title: "That author change changed. Reload and try again.",
+      requestId: "req-b",
+    });
+  });
+
   it("renders inline errors as alerts with support metadata", () => {
     render(
       <FeedbackNotice

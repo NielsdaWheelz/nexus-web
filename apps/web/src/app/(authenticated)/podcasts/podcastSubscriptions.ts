@@ -126,14 +126,13 @@ export type PodcastSubscribeResult = {
   window_size: number;
 };
 
+// v2 subscribe payload (D-4): the strict snake-case `ContributorCreditIn`. The
+// server owns ordinal (list order), source, source_ref, and confidence — the
+// client sends only the observed credit facts.
 type ContributorCreditInput = {
   credited_name: string;
   role: string;
   raw_role?: string;
-  ordinal?: number;
-  source: string;
-  source_ref?: Record<string, unknown>;
-  confidence?: string | number;
 };
 
 export function toPodcastContributorInputs(
@@ -142,8 +141,7 @@ export function toPodcastContributorInputs(
   return contributors.map((credit) => {
     const creditedName = credit.credited_name.trim();
     const role = credit.role?.trim();
-    const source = credit.source?.trim();
-    if (!creditedName || !role || !source) {
+    if (!creditedName || !role) {
       throw new Error("Contributor credit payload is malformed");
     }
 
@@ -151,12 +149,6 @@ export function toPodcastContributorInputs(
       credited_name: creditedName,
       role,
       ...(credit.raw_role?.trim() ? { raw_role: credit.raw_role.trim() } : {}),
-      ...(typeof credit.ordinal === "number"
-        ? { ordinal: credit.ordinal }
-        : {}),
-      source,
-      ...(credit.source_ref ? { source_ref: credit.source_ref } : {}),
-      ...(credit.confidence != null ? { confidence: credit.confidence } : {}),
     };
   });
 }

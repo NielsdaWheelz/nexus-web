@@ -1,200 +1,194 @@
 import { type ApiPath, apiFetch } from "@/lib/api/client";
-import {
-  contributorDirectoryResource,
-  contributorReconciliationCandidatesResource,
-  type ContributorDirectoryResourceParams,
-  type ContributorReconciliationCandidatesResourceParams,
-  contributorResource,
-  contributorWorksResource,
-} from "@/lib/api/resource";
+import { parseContributorHandle } from "@/lib/contributors/handle";
 import type {
-  ContributorDirectoryPage,
-  ContributorReconciliationCandidatesPage,
-  ContributorReconciliationCandidate,
-  ContributorSummary,
-  ContributorWork,
+  ContributorDetail,
+  ContributorRenameBody,
+  ContributorSearchItem,
+  ContributorSearchPage,
+  ContributorWorkItem,
+  ContributorWorkPage,
+  MediaAuthorCredit,
+  MediaAuthors,
+  MediaAuthorsPutBody,
 } from "@/lib/contributors/types";
 
-interface ContributorsResponse {
-  data: {
-    contributors: ContributorSummary[];
+// Every inbound handle is branded via parseContributorHandle at this decode
+// boundary (D-45): a non-canonical handle from the wire is a defect, surfaced as a
+// throw here rather than propagated as a bare string into the UI.
+
+interface Envelope<T> {
+  data: T;
+}
+
+function encode(value: string): string {
+  return encodeURIComponent(value);
+}
+
+function decodeSearchItem(raw: unknown): ContributorSearchItem {
+  const item = raw as {
+    handle: string;
+    href: string;
+    displayName: string;
+    workCount: number;
+    workExamples?: Array<{ title: string; href: string }> | null;
+    matchedAlias?: string | null;
+  };
+  return {
+    handle: parseContributorHandle(item.handle),
+    href: item.href,
+    displayName: item.displayName,
+    workCount: item.workCount,
+    workExamples: Array.isArray(item.workExamples)
+      ? item.workExamples.map((example) => ({ title: example.title, href: example.href }))
+      : [],
+    matchedAlias: item.matchedAlias ?? null,
   };
 }
 
-interface ContributorResponse {
-  data: ContributorSummary;
-}
-
-interface ContributorWorksResponse {
-  data: {
-    works: ContributorWork[];
+function decodeDetail(raw: unknown): ContributorDetail {
+  const detail = raw as {
+    handle: string;
+    href: string;
+    displayName: string;
+    otherNames?: string[] | null;
+    canRename: boolean;
+  };
+  return {
+    handle: parseContributorHandle(detail.handle),
+    href: detail.href,
+    displayName: detail.displayName,
+    otherNames: Array.isArray(detail.otherNames) ? detail.otherNames : [],
+    canRename: Boolean(detail.canRename),
   };
 }
 
-interface ContributorReconciliationCandidatesResponse {
-  data: ContributorReconciliationCandidatesPage;
+function decodeWorkItem(raw: unknown): ContributorWorkItem {
+  const work = raw as {
+    title: string;
+    href: string;
+    contentKind: string;
+    date?: string | null;
+    roleFacts?: Array<{ creditedName: string; role: string; rawRole?: string | null }> | null;
+  };
+  return {
+    title: work.title,
+    href: work.href,
+    contentKind: work.contentKind,
+    date: work.date ?? null,
+    roleFacts: Array.isArray(work.roleFacts)
+      ? work.roleFacts.map((fact) => ({
+          creditedName: fact.creditedName,
+          role: fact.role,
+          rawRole: fact.rawRole ?? null,
+        }))
+      : [],
+  };
 }
 
-interface ContributorWorksFilters {
-  role?: string;
-  contentKind?: string;
-  query?: string;
+function decodeMediaAuthorCredit(raw: unknown): MediaAuthorCredit {
+  const credit = raw as {
+    contributorHandle: string;
+    href: string;
+    displayName: string;
+    creditedName: string;
+  };
+  return {
+    contributorHandle: parseContributorHandle(credit.contributorHandle),
+    href: credit.href,
+    displayName: credit.displayName,
+    creditedName: credit.creditedName,
+  };
+}
+
+function decodeMediaAuthors(raw: unknown): MediaAuthors {
+  const authors = raw as {
+    authorMode: "automatic" | "manual";
+    authors?: unknown[] | null;
+    canEditAuthors: boolean;
+  };
+  return {
+    authorMode: authors.authorMode,
+    authors: Array.isArray(authors.authors) ? authors.authors.map(decodeMediaAuthorCredit) : [],
+    canEditAuthors: Boolean(authors.canEditAuthors),
+  };
+}
+
+export interface ContributorSearchOptions {
+  cursor?: string;
   limit?: number;
+  signal?: AbortSignal;
 }
 
-export async function fetchContributors(query: string): Promise<ContributorSummary[]> {
+export async function fetchContributorSearch(
+  query: string,
+  options: ContributorSearchOptions = {},
+): Promise<ContributorSearchPage> {
   const params = new URLSearchParams();
-  const trimmed = query.trim();
-  if (trimmed) {
-    params.set("q", trimmed);
-  }
-  const suffix = params.toString();
-  const response = await apiFetch<ContributorsResponse>(
-    suffix ? `/api/contributors?${suffix}` : "/api/contributors",
-    { cache: "no-store" }
+  params.set("q", query.trim());
+  if (options.cursor) params.set("cursor", options.cursor);
+  if (options.limit !== undefined) params.set("limit", String(options.limit));
+  const path = `/api/contributors?${params.toString()}` as ApiPath;
+  const response = await apiFetch<Envelope<{ contributors?: unknown[]; nextCursor?: string | null }>>(
+    path,
+    { cache: "no-store", signal: options.signal },
   );
-  return Array.isArray(response.data.contributors) ? response.data.contributors : [];
+  return {
+    contributors: Array.isArray(response.data.contributors)
+      ? response.data.contributors.map(decodeSearchItem)
+      : [],
+    nextCursor: response.data.nextCursor ?? null,
+  };
 }
 
-export async function fetchContributorDirectory(
-  params: ContributorDirectoryResourceParams
-): Promise<ContributorDirectoryPage> {
-  const response = await apiFetch<{ data: ContributorDirectoryPage }>(
-    contributorDirectoryResource.clientPath(params),
-    { cache: "no-store" }
+export async function fetchContributorDetail(handle: string): Promise<ContributorDetail> {
+  const response = await apiFetch<Envelope<unknown>>(
+    `/api/contributors/${encode(handle)}` as ApiPath,
+    { cache: "no-store" },
   );
-  return response.data;
+  return decodeDetail(response.data);
 }
 
-export async function fetchContributor(handle: string): Promise<ContributorSummary> {
-  const response = await apiFetch<ContributorResponse>(
-    contributorResource.clientPath({ handle }),
-    { cache: "no-store" }
-  );
-  return response.data;
+export interface ContributorWorksOptions {
+  cursor?: string;
+  limit?: number;
 }
 
 export async function fetchContributorWorks(
   handle: string,
-  filters: ContributorWorksFilters = {}
-): Promise<ContributorWork[]> {
-  const response = await apiFetch<ContributorWorksResponse>(
-    contributorWorksResource.clientPath({
-      handle,
-      role: filters.role,
-      contentKind: filters.contentKind,
-      query: filters.query,
-      limit: filters.limit,
-    }),
-    { cache: "no-store" }
-  );
-  return Array.isArray(response.data.works) ? response.data.works : [];
-}
-
-export async function fetchContributorReconciliationCandidates(
-  params: ContributorReconciliationCandidatesResourceParams
-): Promise<ContributorReconciliationCandidatesPage> {
-  const response = await apiFetch<ContributorReconciliationCandidatesResponse>(
-    contributorReconciliationCandidatesResource.clientPath(params),
-    { cache: "no-store" }
-  );
-  return response.data;
-}
-
-async function contributorMutation(
-  path: ApiPath,
-  init: RequestInit
-): Promise<ContributorSummary> {
-  const response = await apiFetch<ContributorResponse>(path, init);
-  return response.data;
-}
-
-export async function mergeContributor(
-  handle: string,
-  targetHandle: string
-): Promise<ContributorSummary> {
-  return contributorMutation(`/api/contributors/${encodeURIComponent(handle)}/merge`, {
-    method: "POST",
-    body: JSON.stringify({ target_handle: targetHandle }),
+  options: ContributorWorksOptions = {},
+): Promise<ContributorWorkPage> {
+  const params = new URLSearchParams();
+  if (options.cursor) params.set("cursor", options.cursor);
+  if (options.limit !== undefined) params.set("limit", String(options.limit));
+  const suffix = params.toString();
+  const path = `/api/contributors/${encode(handle)}/works${suffix ? `?${suffix}` : ""}` as ApiPath;
+  const response = await apiFetch<Envelope<{ works?: unknown[]; nextCursor?: string | null }>>(path, {
+    cache: "no-store",
   });
+  return {
+    works: Array.isArray(response.data.works) ? response.data.works.map(decodeWorkItem) : [],
+    nextCursor: response.data.nextCursor ?? null,
+  };
 }
 
-export async function acceptContributorReconciliationCandidate(
-  candidateId: string
-): Promise<ContributorSummary> {
-  return contributorMutation(
-    `/api/contributors/reconciliation-candidates/${encodeURIComponent(candidateId)}/accept`,
-    { method: "POST" }
+export async function putMediaAuthors(
+  mediaId: string,
+  body: MediaAuthorsPutBody,
+): Promise<MediaAuthors> {
+  const response = await apiFetch<Envelope<unknown>>(
+    `/api/media/${encode(mediaId)}/authors` as ApiPath,
+    { method: "PUT", body: JSON.stringify(body) },
   );
+  return decodeMediaAuthors(response.data);
 }
 
-export async function rejectContributorReconciliationCandidate(
-  candidateId: string
-): Promise<ContributorReconciliationCandidate> {
-  const response = await apiFetch<{ data: ContributorReconciliationCandidate }>(
-    `/api/contributors/reconciliation-candidates/${encodeURIComponent(candidateId)}/reject`,
-    { method: "POST" }
+export async function patchContributorDisplayName(
+  handle: string,
+  body: ContributorRenameBody,
+): Promise<ContributorDetail> {
+  const response = await apiFetch<Envelope<unknown>>(
+    `/api/contributors/${encode(handle)}` as ApiPath,
+    { method: "PATCH", body: JSON.stringify(body) },
   );
-  return response.data;
-}
-
-export async function tombstoneContributor(handle: string): Promise<ContributorSummary> {
-  return contributorMutation(`/api/contributors/${encodeURIComponent(handle)}/tombstone`, {
-    method: "POST",
-  });
-}
-
-export async function splitContributor(
-  handle: string,
-  body: {
-    display_name: string;
-    credit_ids?: string[];
-    alias_ids?: string[];
-    external_id_ids?: string[];
-  }
-): Promise<ContributorSummary> {
-  return contributorMutation(`/api/contributors/${encodeURIComponent(handle)}/split`, {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
-}
-
-export async function addContributorAlias(
-  handle: string,
-  body: { alias: string; alias_kind?: string; source?: string }
-): Promise<ContributorSummary> {
-  return contributorMutation(`/api/contributors/${encodeURIComponent(handle)}/aliases`, {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
-}
-
-export async function deleteContributorAlias(
-  handle: string,
-  aliasId: string
-): Promise<ContributorSummary> {
-  return contributorMutation(
-    `/api/contributors/${encodeURIComponent(handle)}/aliases/${encodeURIComponent(aliasId)}`,
-    { method: "DELETE" }
-  );
-}
-
-export async function addContributorExternalId(
-  handle: string,
-  body: { authority: string; external_key: string; external_url?: string; source?: string }
-): Promise<ContributorSummary> {
-  return contributorMutation(`/api/contributors/${encodeURIComponent(handle)}/external-ids`, {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
-}
-
-export async function deleteContributorExternalId(
-  handle: string,
-  externalIdId: string
-): Promise<ContributorSummary> {
-  return contributorMutation(
-    `/api/contributors/${encodeURIComponent(handle)}/external-ids/${encodeURIComponent(externalIdId)}`,
-    { method: "DELETE" }
-  );
+  return decodeDetail(response.data);
 }

@@ -17,7 +17,8 @@ describe("standingHeadForRoute", () => {
     expect(standingHeadForRoute("libraries")).toBe("Libraries");
     expect(standingHeadForRoute("library")).toBe("Libraries");
     expect(standingHeadForRoute("media")).toBe("Libraries");
-    expect(standingHeadForRoute("authors")).toBe("Authors");
+    // The root /authors directory route is gone; the author detail route keeps
+    // the "Authors" standing head (author-dedup §7).
     expect(standingHeadForRoute("author")).toBe("Authors");
     expect(standingHeadForRoute("podcasts")).toBe("Podcasts");
     expect(standingHeadForRoute("podcastDetail")).toBe("Podcasts");

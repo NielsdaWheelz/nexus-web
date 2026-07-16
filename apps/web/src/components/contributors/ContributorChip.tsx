@@ -1,11 +1,24 @@
 "use client";
 
-import { isProdBuild } from "@/lib/build-mode";
-import type { ContributorCredit, ContributorSummary } from "@/lib/contributors/types";
+import type { ContributorCredit } from "@/lib/contributors/types";
 import { formatContributorRole } from "@/lib/contributors/formatting";
 import { contributorAuthorHref } from "@/lib/contributors/routes";
 import { cx } from "@/lib/ui/cx";
 import styles from "./ContributorChip.module.css";
+
+// A single credited name (pill retired, §0.5 / D-9): a name with a handle is an
+// inline link to author detail; a handle-less text fact (podcast preview) is plain
+// inline text. Names are `dir="auto"` so RTL names read correctly; the role, when
+// shown, is app chrome (not `dir="auto"`). No border, no radius, no fill.
+
+// `ContributorSummary` is a minimal shape kept only for the few call sites that pass
+// a resolved contributor rather than a credit.
+interface ContributorSummary {
+  handle?: string | null;
+  contributor_handle?: string | null;
+  display_name?: string | null;
+  href?: string | null;
+}
 
 interface ContributorChipProps {
   credit?: ContributorCredit;
@@ -25,23 +38,12 @@ export default function ContributorChip({
     contributor?.contributor_handle?.trim() ||
     contributor?.handle?.trim() ||
     "";
-  if (!handle) {
-    if (!isProdBuild()) {
-      throw new Error("ContributorChip requires a contributor handle");
-    }
-    return null;
-  }
 
   const creditedName = credit?.credited_name?.trim();
   const displayName =
-    credit?.contributor_display_name?.trim() ||
-    contributor?.display_name?.trim() ||
-    "";
+    credit?.contributor_display_name?.trim() || contributor?.display_name?.trim() || "";
   const label = creditedName || displayName;
   if (!label) {
-    if (!isProdBuild()) {
-      throw new Error("ContributorChip requires a contributor display label");
-    }
     return null;
   }
 
@@ -50,36 +52,33 @@ export default function ContributorChip({
     creditedName && displayName && creditedName !== displayName
       ? `${creditedName} (${displayName})`
       : label;
-  const isUnlinkedCredit = Boolean(
-    credit && !credit.id && credit.resolution_status === "unverified"
+
+  const nameNode = (
+    <span className={styles.label} dir="auto">
+      {label}
+    </span>
   );
-  if (isUnlinkedCredit) {
+  const roleNode = roleLabel ? <span className={styles.role}>{roleLabel}</span> : null;
+
+  if (!handle) {
     return (
-      <span className={cx(styles.chip, className)} title={title}>
-        <span className={styles.label}>{label}</span>
-        {roleLabel ? <span className={styles.role}>{roleLabel}</span> : null}
+      <span className={cx(styles.name, className)} title={title}>
+        {nameNode}
+        {roleNode}
       </span>
     );
   }
 
-  const suppliedHref = credit?.href?.trim() || contributor?.href?.trim() || "";
-  if (credit && !suppliedHref) {
-    if (!isProdBuild()) {
-      throw new Error("ContributorChip requires a contributor href");
-    }
-    return null;
-  }
-  const href = suppliedHref || contributorAuthorHref(handle);
-
+  const href = credit?.href?.trim() || contributor?.href?.trim() || contributorAuthorHref(handle);
   return (
     <a
       href={href}
-      className={cx(styles.chip, className)}
+      className={cx(styles.link, className)}
       title={title}
       data-pane-title-hint={label}
     >
-      <span className={styles.label}>{label}</span>
-      {roleLabel ? <span className={styles.role}>{roleLabel}</span> : null}
+      {nameNode}
+      {roleNode}
     </a>
   );
 }

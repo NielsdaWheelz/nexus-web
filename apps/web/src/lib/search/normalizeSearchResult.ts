@@ -6,7 +6,6 @@ import {
 import type { ContributorCredit } from "@/lib/contributors/types";
 import { hasLegacyArtifactIdentityKey } from "@/lib/currentArtifactIdentity";
 import { normalizeResourceActivation } from "@/lib/resources/activation";
-import { isRecord } from "@/lib/validation";
 import {
   RESULT_TYPE_VALUES,
   type SearchApiResult,
@@ -75,43 +74,25 @@ function normalizeContributorCredit(value: unknown): ContributorCredit | null {
     return null;
   }
   const credit = value as Record<string, unknown>;
-  const contributorHandle = stringField(credit, "contributor_handle");
-  const contributorDisplayName = stringField(credit, "contributor_display_name");
+  // Narrowed embedded credit (D-33): only credited_name + role are required. A
+  // handle-less / href-less credit is a legitimate text fact (podcast previews,
+  // D-9); source/source_ref/confidence/resolution_status are gone from the wire.
   const creditedName = stringField(credit, "credited_name");
   const role = stringField(credit, "role");
-  const href = stringField(credit, "href");
-  const source = stringField(credit, "source");
-  let nestedDisplayName = "";
-  if (typeof credit.contributor === "object" && credit.contributor !== null) {
-    const contributor = credit.contributor as Record<string, unknown>;
-    nestedDisplayName = stringField(contributor, "display_name");
-  }
-  const displayName = contributorDisplayName || nestedDisplayName;
-  if (
-    !contributorHandle ||
-    !displayName ||
-    !creditedName ||
-    !role ||
-    !href ||
-    !source
-  ) {
+  if (!creditedName || !role) {
     return null;
   }
+  const contributorHandle = stringField(credit, "contributor_handle");
+  const contributorDisplayName = stringField(credit, "contributor_display_name");
+  const href = stringField(credit, "href");
   return {
-    contributor_handle: contributorHandle,
-    contributor_display_name: displayName,
+    ...(contributorHandle ? { contributor_handle: contributorHandle } : {}),
+    ...(contributorDisplayName ? { contributor_display_name: contributorDisplayName } : {}),
     credited_name: creditedName,
     role,
     raw_role: nullableStringField(credit, "raw_role"),
+    ...(href ? { href } : {}),
     ordinal: typeof credit.ordinal === "number" ? credit.ordinal : null,
-    source,
-    source_ref: isRecord(credit.source_ref) ? credit.source_ref : null,
-    confidence:
-      typeof credit.confidence === "string" ||
-      typeof credit.confidence === "number"
-        ? credit.confidence
-        : null,
-    href,
   };
 }
 
@@ -278,7 +259,6 @@ export function normalizeSearchResult(result: unknown): SearchApiResult | null {
         contributor: {
           handle: contributor.handle,
           display_name: stringField(contributor, "display_name"),
-          status: nullableStringField(contributor, "status"),
         },
       };
     }

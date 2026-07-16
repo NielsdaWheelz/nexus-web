@@ -1,7 +1,7 @@
 "use client";
 
 import MediaImage from "@/components/ui/MediaImage";
-import ContributorCreditList from "@/components/contributors/ContributorCreditList";
+import ContributorRoleGroups from "@/components/contributors/ContributorRoleGroups";
 import { formatSubscriptionPlaybackSummary } from "@/lib/player/subscriptionPlaybackSpeed";
 import { pluralize } from "@/lib/text/pluralize";
 import type { PodcastDetailResponse } from "../podcastSubscriptions";
@@ -39,10 +39,9 @@ export default function PodcastSummaryCard({
           </span>
         )}
         <div className={styles.summaryCopy}>
-          <ContributorCreditList
+          <ContributorRoleGroups
             credits={detail.podcast.contributors}
             className={styles.summaryByline}
-            maxVisible={3}
           />
           <p className={styles.summaryDescription}>
             {detail.podcast.description?.trim() || "No summary from source."}

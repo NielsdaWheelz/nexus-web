@@ -30,6 +30,7 @@ export interface MediaProcessingSnapshot {
     can_refresh_source?: boolean;
     can_retry_metadata?: boolean;
     can_read_embeds?: boolean;
+    can_edit_authors?: boolean;
   };
   transcript_state?: TranscriptState;
   transcript_coverage?: TranscriptCoverage;
@@ -106,6 +107,7 @@ function parseCapabilities(
   const canRefreshSource = optionalBoolean(value, "can_refresh_source");
   const canRetryMetadata = optionalBoolean(value, "can_retry_metadata");
   const canReadEmbeds = optionalBoolean(value, "can_read_embeds");
+  const canEditAuthors = optionalBoolean(value, "can_edit_authors");
   if (
     canRead === null ||
     canHighlight === null ||
@@ -117,7 +119,8 @@ function parseCapabilities(
     (canRetry === undefined && "can_retry" in value) ||
     (canRefreshSource === undefined && "can_refresh_source" in value) ||
     (canRetryMetadata === undefined && "can_retry_metadata" in value) ||
-    (canReadEmbeds === undefined && "can_read_embeds" in value)
+    (canReadEmbeds === undefined && "can_read_embeds" in value) ||
+    (canEditAuthors === undefined && "can_edit_authors" in value)
   ) {
     return undefined;
   }
@@ -137,6 +140,9 @@ function parseCapabilities(
       ? { can_retry_metadata: canRetryMetadata }
       : {}),
     ...(canReadEmbeds !== undefined ? { can_read_embeds: canReadEmbeds } : {}),
+    ...(canEditAuthors !== undefined
+      ? { can_edit_authors: canEditAuthors }
+      : {}),
   };
 }
 

@@ -99,10 +99,6 @@ const PANE_ROUTE_META: Record<PaneRouteId, PaneRouteMeta> = {
     icon: Search,
     getChrome: () => ({ title: "Search" }),
   },
-  authors: {
-    icon: UserRound,
-    getChrome: () => ({ title: "Authors" }),
-  },
   author: {
     icon: UserRound,
     getChrome: () => ({ title: "Author" }),

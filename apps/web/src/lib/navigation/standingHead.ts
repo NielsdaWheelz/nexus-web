@@ -11,7 +11,6 @@ const ROUTE_SECTION = {
   libraries: "libraries",
   library: "libraries",
   media: "libraries",
-  authors: "authors",
   author: "authors",
   podcasts: "podcasts",
   podcastDetail: "podcasts",

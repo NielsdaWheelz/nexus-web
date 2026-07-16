@@ -52,7 +52,6 @@ const HOST_CREDIT = {
   contributor_display_name: "Host",
   credited_name: "Host",
   role: "author",
-  source: "test",
   href: "/authors/host",
 };
 
@@ -279,9 +278,6 @@ describe("normalizeSearchResult happy-path adaptation", () => {
         role: "author",
         raw_role: null,
         ordinal: null,
-        source_ref: null,
-        confidence: null,
-        source: "test",
         href: "/authors/host",
       },
     ]);
@@ -306,7 +302,6 @@ describe("normalizeSearchResult happy-path adaptation", () => {
       contributor: {
         handle: "ursula-le-guin",
         display_name: "Ursula K. Le Guin",
-        status: "verified",
       },
     });
 
@@ -315,8 +310,9 @@ describe("normalizeSearchResult happy-path adaptation", () => {
       type: "contributor",
       typeLabel: "author",
       primaryText: "Ursula K. Le Guin",
-      sourceMeta: "verified",
     });
+    // Author rows carry no status/kind after the cutover.
+    expect(row.sourceMeta).toBeNull();
   });
 
   it("adapts a web_result row as displayable resolvable evidence", () => {
@@ -695,8 +691,40 @@ describe("normalizeSearchResult malformed-locator-geometry rejections", () => {
   });
 });
 
-describe("normalizeSearchResult contributor-credit rejections", () => {
-  it("rejects a podcast row whose contributor credit is missing href", () => {
+describe("normalizeSearchResult contributor-credit handling", () => {
+  it("accepts a handle-less, href-less preview credit as a text fact (D-9)", () => {
+    const row = adapt({
+      type: "podcast",
+      id: "podcast-preview-credit",
+      score: 0.64,
+      snippet: "preview credit",
+      title: "Preview Credit",
+      source_label: "Preview Credit",
+      media_id: null,
+      media_kind: null,
+      activationHref: "/podcasts/podcast-preview-credit",
+      context_ref: { type: "podcast", id: "podcast-preview-credit" },
+      contributors: [
+        {
+          contributor_display_name: "Preview Host",
+          credited_name: "Preview Host",
+          role: "host",
+        },
+      ],
+    });
+
+    expect(row.contributorCredits).toEqual([
+      {
+        contributor_display_name: "Preview Host",
+        credited_name: "Preview Host",
+        role: "host",
+        raw_role: null,
+        ordinal: null,
+      },
+    ]);
+  });
+
+  it("rejects a credit missing the required credited_name/role facts", () => {
     expect(
       normalize({
         type: "podcast",
@@ -711,11 +739,9 @@ describe("normalizeSearchResult contributor-credit rejections", () => {
         context_ref: { type: "podcast", id: "podcast-bad-credit" },
         contributors: [
           {
-            contributor_handle: "missing-href",
-            contributor_display_name: "Missing Href",
-            credited_name: "Missing Href",
-            role: "host",
-            source: "test",
+            contributor_handle: "missing-facts",
+            contributor_display_name: "Missing Facts",
+            href: "/authors/missing-facts",
           },
         ],
       }),

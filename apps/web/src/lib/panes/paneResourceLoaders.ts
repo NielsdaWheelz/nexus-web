@@ -18,6 +18,61 @@ import type { ResourceFetcher } from "@/lib/api/resourceTransport";
 import type { PaneRouteId, RouteParams } from "@/lib/panes/paneRouteModel";
 import { normalizeBlock, normalizePageSummary } from "@/lib/notes/normalize";
 import { shouldLoadInitialMediaFragments } from "@/lib/media/documentReadiness";
+import { parseContributorHandle } from "@/lib/contributors/handle";
+import type {
+  ContributorDetail,
+  ContributorWorkItem,
+} from "@/lib/contributors/types";
+
+// The author pane's composed first-paint seed: the lightweight contributor
+// detail plus the first page of distinct works (D-25 cursor pagination). Decoded
+// here so the server seed, the client mount, and prefetch all agree on the typed,
+// brand-checked shape (D-45 — handle parsed at this boundary).
+export interface AuthorPaneSeed {
+  detail: ContributorDetail;
+  works: ContributorWorkItem[];
+  worksNextCursor: string | null;
+}
+
+function decodeAuthorDetail(raw: unknown): ContributorDetail {
+  const detail = raw as {
+    handle: string;
+    href: string;
+    displayName: string;
+    otherNames?: string[] | null;
+    canRename?: boolean;
+  };
+  return {
+    handle: parseContributorHandle(detail.handle),
+    href: detail.href,
+    displayName: detail.displayName,
+    otherNames: Array.isArray(detail.otherNames) ? detail.otherNames : [],
+    canRename: Boolean(detail.canRename),
+  };
+}
+
+function decodeAuthorWork(raw: unknown): ContributorWorkItem {
+  const work = raw as {
+    title: string;
+    href: string;
+    contentKind: string;
+    date?: string | null;
+    roleFacts?: Array<{ creditedName: string; role: string; rawRole?: string | null }> | null;
+  };
+  return {
+    title: work.title,
+    href: work.href,
+    contentKind: work.contentKind,
+    date: work.date ?? null,
+    roleFacts: Array.isArray(work.roleFacts)
+      ? work.roleFacts.map((fact) => ({
+          creditedName: fact.creditedName,
+          role: fact.role,
+          rawRole: fact.rawRole ?? null,
+        }))
+      : [],
+  };
+}
 
 // One transport-agnostic loader per prefetchable pane — the single definition of
 // "fetch and compose this pane's first-paint data." The server bootstrap seed, the
@@ -76,25 +131,21 @@ export const paneResourceLoaders: Partial<Record<PaneRouteId, PaneResourceLoader
 
   author: {
     cacheKey: (p) => contributorResource.cacheKey({ handle: p.handle }),
-    load: async (request, p) => {
-      const [contributorEnv, worksEnv] = await Promise.all([
+    load: async (request, p): Promise<AuthorPaneSeed> => {
+      const [detailEnv, worksEnv] = await Promise.all([
+        request<{ handle: string }, { data: unknown }>(contributorResource, {
+          handle: p.handle,
+        }),
         request<
-          { handle: string },
-          { data: { aliases?: unknown[]; external_ids?: unknown[] } }
-        >(contributorResource, { handle: p.handle }),
-        request<{ handle: string; limit: number }, { data: { works?: unknown[] } }>(
-          contributorWorksResource,
-          { handle: p.handle, limit: AUTHOR_WORKS_LIMIT },
-        ),
+          { handle: string; limit: number },
+          { data: { works?: unknown[]; nextCursor?: string | null } }
+        >(contributorWorksResource, { handle: p.handle, limit: AUTHOR_WORKS_LIMIT }),
       ]);
-      const contributor = contributorEnv.data;
       const works = Array.isArray(worksEnv.data.works) ? worksEnv.data.works : [];
       return {
-        contributor,
-        aliases: contributor.aliases ?? [],
-        externalIds: contributor.external_ids ?? [],
-        works,
-        workFilterOptions: works,
+        detail: decodeAuthorDetail(detailEnv.data),
+        works: works.map(decodeAuthorWork),
+        worksNextCursor: worksEnv.data.nextCursor ?? null,
       };
     },
   },
