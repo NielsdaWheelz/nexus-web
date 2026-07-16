@@ -16,6 +16,8 @@ from sqlalchemy.orm import Session
 
 from nexus.db.retries import retry_serializable
 from nexus.jobs.queue import (
+    JobExecutionContext,
+    RescheduleRequested,
     claim_next_job,
     complete_job,
     dead_letter_expired_job,
@@ -23,6 +25,7 @@ from nexus.jobs.queue import (
     fail_job,
     get_job,
     heartbeat_job,
+    reschedule_running_job,
 )
 from nexus.jobs.registry import (
     JobDefinition,
@@ -141,7 +144,41 @@ class JobWorker:
         )
 
         try:
-            handler_result = definition.handler(payload=claimed.payload)
+            context = JobExecutionContext(
+                job_id=claimed.id,
+                worker_id=self.worker_id,
+                attempt_no=claimed.attempts,
+            )
+            handler_result = definition.handler(payload=claimed.payload, context=context)
+
+            if isinstance(handler_result, RescheduleRequested):
+                with self.session_factory() as db:
+                    rescheduled = reschedule_running_job(
+                        db,
+                        job_id=claimed.id,
+                        worker_id=self.worker_id,
+                        attempt_no=claimed.attempts,
+                        available_at=handler_result.available_at,
+                        payload=handler_result.payload,
+                    )
+                    db.commit()
+                if rescheduled:
+                    logger.info(
+                        "worker_job_rescheduled",
+                        worker_id=self.worker_id,
+                        job_id=str(claimed.id),
+                        kind=claimed.kind,
+                        available_at=handler_result.available_at.isoformat(),
+                    )
+                else:
+                    logger.warning(
+                        "worker_job_reschedule_rejected_lost_ownership",
+                        worker_id=self.worker_id,
+                        job_id=str(claimed.id),
+                        kind=claimed.kind,
+                    )
+                return True
+
             result_payload = _normalize_result_payload(handler_result)
             failed_result_statuses = set(definition.failed_result_statuses)
             if str(result_payload.get("status") or "") in failed_result_statuses:

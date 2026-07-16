@@ -11,12 +11,12 @@ from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 
 from nexus.config import get_settings
-from nexus.jobs.queue import JobRow
+from nexus.jobs.queue import JobExecutionContext, JobRow, RescheduleRequested
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
-JobHandler = Callable[..., Mapping[str, Any] | None]
+JobHandler = Callable[..., Mapping[str, Any] | RescheduleRequested | None]
 JobDeadLetterHandler = Callable[["Session", JobRow], None]
 
 
@@ -32,6 +32,10 @@ class JobDefinition:
     periodic_interval_seconds: int | None = None
     failed_result_statuses: tuple[str, ...] = ()
     dead_letter_handler: JobDeadLetterHandler | None = None
+    # Dead rows of this kind are never deleted by prune_terminal_jobs (e.g. media
+    # teardown/storage cleanup jobs, where a dead row must stay
+    # operator-discoverable; requeue_dead_job is their repair transition).
+    never_prune_dead: bool = False
 
 
 # Non-periodic kinds whose work a user directly observes (ingest progress, chat/
@@ -284,7 +288,9 @@ def _build_default_registry() -> dict[str, JobDefinition]:
     }
 
 
-def _run_ingest_media_source(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
+def _run_ingest_media_source(
+    *, payload: Mapping[str, Any], context: JobExecutionContext
+) -> Mapping[str, Any] | None:
     from nexus.tasks.ingest_media_source import ingest_media_source
 
     return ingest_media_source(
@@ -295,7 +301,9 @@ def _run_ingest_media_source(*, payload: Mapping[str, Any]) -> Mapping[str, Any]
     )
 
 
-def _run_enrich_metadata(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
+def _run_enrich_metadata(
+    *, payload: Mapping[str, Any], context: JobExecutionContext
+) -> Mapping[str, Any] | None:
     from nexus.tasks.enrich_metadata import enrich_metadata
 
     return enrich_metadata(
@@ -304,7 +312,9 @@ def _run_enrich_metadata(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | N
     )
 
 
-def _run_chat_run(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
+def _run_chat_run(
+    *, payload: Mapping[str, Any], context: JobExecutionContext
+) -> Mapping[str, Any] | None:
     from nexus.tasks.chat_run import chat_run
 
     return chat_run(run_id=str(payload["run_id"]))
@@ -316,25 +326,33 @@ def _dead_letter_chat_run(db: Session, job: JobRow) -> None:
     finalize_dead_lettered_chat_run(db, job)
 
 
-def _run_library_dossier_generate(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
+def _run_library_dossier_generate(
+    *, payload: Mapping[str, Any], context: JobExecutionContext
+) -> Mapping[str, Any] | None:
     from nexus.tasks.artifacts import library_dossier_generate
 
     return library_dossier_generate(revision_id=str(payload["revision_id"]))
 
 
-def _run_conversation_distill(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
+def _run_conversation_distill(
+    *, payload: Mapping[str, Any], context: JobExecutionContext
+) -> Mapping[str, Any] | None:
     from nexus.tasks.artifacts import conversation_distill
 
     return conversation_distill(revision_id=str(payload["revision_id"]))
 
 
-def _run_conversation_distill_sweep(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
+def _run_conversation_distill_sweep(
+    *, payload: Mapping[str, Any], context: JobExecutionContext
+) -> Mapping[str, Any] | None:
     from nexus.tasks.artifacts import conversation_distill_sweep
 
     return conversation_distill_sweep()
 
 
-def _run_podcast_sync_subscription(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
+def _run_podcast_sync_subscription(
+    *, payload: Mapping[str, Any], context: JobExecutionContext
+) -> Mapping[str, Any] | None:
     from nexus.tasks.podcast_sync_subscription import podcast_sync_subscription_job
 
     return podcast_sync_subscription_job(
@@ -344,7 +362,9 @@ def _run_podcast_sync_subscription(*, payload: Mapping[str, Any]) -> Mapping[str
     )
 
 
-def _run_podcast_reindex_semantic(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
+def _run_podcast_reindex_semantic(
+    *, payload: Mapping[str, Any], context: JobExecutionContext
+) -> Mapping[str, Any] | None:
     from nexus.tasks.podcast_reindex_semantic import podcast_reindex_semantic_job
 
     return podcast_reindex_semantic_job(
@@ -355,7 +375,9 @@ def _run_podcast_reindex_semantic(*, payload: Mapping[str, Any]) -> Mapping[str,
     )
 
 
-def _run_note_reindex(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
+def _run_note_reindex(
+    *, payload: Mapping[str, Any], context: JobExecutionContext
+) -> Mapping[str, Any] | None:
     from nexus.tasks.note_reindex import note_reindex_job
 
     return note_reindex_job(
@@ -392,7 +414,7 @@ def _dead_letter_note_reindex(db: Session, job: JobRow) -> None:
 
 
 def _run_podcast_active_subscription_poll(
-    *, payload: Mapping[str, Any]
+    *, payload: Mapping[str, Any], context: JobExecutionContext
 ) -> Mapping[str, Any] | None:
     from nexus.tasks.podcast_active_subscription_poll import podcast_active_subscription_poll_job
 
@@ -402,7 +424,9 @@ def _run_podcast_active_subscription_poll(
     )
 
 
-def _run_reconcile_stale_ingest_media(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
+def _run_reconcile_stale_ingest_media(
+    *, payload: Mapping[str, Any], context: JobExecutionContext
+) -> Mapping[str, Any] | None:
     from nexus.tasks.reconcile_stale_ingest_media import reconcile_stale_ingest_media_job
 
     return reconcile_stale_ingest_media_job(
@@ -410,7 +434,9 @@ def _run_reconcile_stale_ingest_media(*, payload: Mapping[str, Any]) -> Mapping[
     )
 
 
-def _run_sync_gutenberg_catalog(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
+def _run_sync_gutenberg_catalog(
+    *, payload: Mapping[str, Any], context: JobExecutionContext
+) -> Mapping[str, Any] | None:
     from nexus.tasks.sync_gutenberg_catalog import sync_gutenberg_catalog_job
 
     return sync_gutenberg_catalog_job(
@@ -419,14 +445,16 @@ def _run_sync_gutenberg_catalog(*, payload: Mapping[str, Any]) -> Mapping[str, A
     )
 
 
-def _run_prune_background_jobs(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
+def _run_prune_background_jobs(
+    *, payload: Mapping[str, Any], context: JobExecutionContext
+) -> Mapping[str, Any] | None:
     from nexus.tasks.prune_background_jobs import prune_background_jobs_job
 
     return prune_background_jobs_job(request_id=_optional_str(payload.get("request_id")))
 
 
 def _run_purge_expired_auth_handoff_codes(
-    *, payload: Mapping[str, Any]
+    *, payload: Mapping[str, Any], context: JobExecutionContext
 ) -> Mapping[str, Any] | None:
     from nexus.tasks.purge_expired_auth_handoff_codes import purge_expired_auth_handoff_codes_job
 
@@ -436,7 +464,7 @@ def _run_purge_expired_auth_handoff_codes(
 
 
 def _run_backfill_default_library_closure(
-    *, payload: Mapping[str, Any]
+    *, payload: Mapping[str, Any], context: JobExecutionContext
 ) -> Mapping[str, Any] | None:
     from nexus.tasks.backfill_default_library_closure import backfill_default_library_closure_job
 
@@ -448,19 +476,25 @@ def _run_backfill_default_library_closure(
     )
 
 
-def _run_oracle_reading_generate(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
+def _run_oracle_reading_generate(
+    *, payload: Mapping[str, Any], context: JobExecutionContext
+) -> Mapping[str, Any] | None:
     from nexus.tasks.oracle_reading import oracle_reading_generate
 
     return oracle_reading_generate(reading_id=str(payload["reading_id"]))
 
 
-def _run_media_unit_build(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
+def _run_media_unit_build(
+    *, payload: Mapping[str, Any], context: JobExecutionContext
+) -> Mapping[str, Any] | None:
     from nexus.tasks.media_unit_build import media_unit_build
 
     return media_unit_build(media_id=str(payload["media_id"]))
 
 
-def _run_synapse_scan(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
+def _run_synapse_scan(
+    *, payload: Mapping[str, Any], context: JobExecutionContext
+) -> Mapping[str, Any] | None:
     from nexus.tasks.synapse_scan import synapse_scan
 
     return synapse_scan(
@@ -470,13 +504,17 @@ def _run_synapse_scan(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None
     )
 
 
-def _run_dawn_write_sweep(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
+def _run_dawn_write_sweep(
+    *, payload: Mapping[str, Any], context: JobExecutionContext
+) -> Mapping[str, Any] | None:
     from nexus.tasks.dawn_write import dawn_write_sweep
 
     return dawn_write_sweep()
 
 
-def _run_atlas_project(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
+def _run_atlas_project(
+    *, payload: Mapping[str, Any], context: JobExecutionContext
+) -> Mapping[str, Any] | None:
     from nexus.tasks.atlas_project import atlas_project
 
     return atlas_project(payload=payload)

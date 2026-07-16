@@ -14,7 +14,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from nexus.db.models import ChatRun, Message
-from nexus.jobs.queue import enqueue_job, fail_job
+from nexus.jobs.queue import JobExecutionContext, RescheduleRequested, enqueue_job, fail_job
 from nexus.jobs.registry import JobDefinition
 from nexus.jobs.worker import JobWorker
 from tests.factories import create_test_conversation, create_test_message, create_test_model
@@ -38,7 +38,8 @@ def _fetch_job_row(db: Session, job_id: UUID) -> dict[str, object]:
         db.execute(
             text(
                 """
-            SELECT status, attempts, claimed_by, result, dedupe_key, error_code, last_error
+            SELECT status, attempts, claimed_by, result, dedupe_key, error_code, last_error,
+                   payload, available_at
             FROM background_jobs
             WHERE id = :job_id
             """
@@ -54,7 +55,7 @@ def _fetch_job_row(db: Session, job_id: UUID) -> dict[str, object]:
 def test_worker_run_once_executes_handler_and_marks_job_succeeded(db_session: Session):
     observed_payloads: list[dict[str, object]] = []
 
-    def handler(*, payload: dict[str, object]) -> dict[str, object]:
+    def handler(*, payload: dict[str, object], context: JobExecutionContext) -> dict[str, object]:
         observed_payloads.append(payload)
         return {"ok": True, "payload_value": payload.get("value")}
 
@@ -95,7 +96,7 @@ def test_worker_run_once_executes_handler_and_marks_job_succeeded(db_session: Se
 
 
 def test_worker_can_treat_failed_task_result_as_failed_job(db_session: Session):
-    def handler(*, payload: dict[str, object]) -> dict[str, object]:
+    def handler(*, payload: dict[str, object], context: JobExecutionContext) -> dict[str, object]:
         return {
             "status": "failed",
             "reason": "parse_failed",
@@ -145,7 +146,7 @@ def test_worker_can_treat_failed_task_result_as_failed_job(db_session: Session):
 def test_worker_runs_dead_letter_handler_when_task_exhausts_attempts(db_session: Session):
     handled: list[tuple[str, str | None]] = []
 
-    def handler(*, payload: dict[str, object]) -> dict[str, object]:
+    def handler(*, payload: dict[str, object], context: JobExecutionContext) -> dict[str, object]:
         return {
             "status": "failed",
             "reason": "terminal_failure",
@@ -193,7 +194,7 @@ def test_worker_runs_dead_letter_handler_for_exhausted_expired_lease(
 ):
     handled: list[tuple[str, str | None]] = []
 
-    def handler(*, payload: dict[str, object]) -> dict[str, object]:
+    def handler(*, payload: dict[str, object], context: JobExecutionContext) -> dict[str, object]:
         raise AssertionError("expired exhausted job must not run handler again")
 
     def dead_letter_handler(db: Session, job) -> None:
@@ -362,7 +363,7 @@ def test_worker_run_once_skips_handler_when_start_heartbeat_loses_ownership(
     observed_payloads: list[dict[str, object]] = []
     ownership_moved = threading.Event()
 
-    def handler(*, payload: dict[str, object]) -> dict[str, object]:
+    def handler(*, payload: dict[str, object], context: JobExecutionContext) -> dict[str, object]:
         observed_payloads.append(payload)
         return {"ok": True}
 
@@ -423,7 +424,7 @@ def test_worker_run_once_skips_handler_when_start_heartbeat_loses_ownership(
 
 
 def test_worker_run_once_reclaims_stale_running_job_and_completes_it(db_session: Session):
-    def handler(*, payload: dict[str, object]) -> dict[str, object]:
+    def handler(*, payload: dict[str, object], context: JobExecutionContext) -> dict[str, object]:
         return {"reclaimed": payload.get("reclaimed", False)}
 
     worker = JobWorker(
@@ -479,6 +480,163 @@ def test_worker_run_once_reclaims_stale_running_job_and_completes_it(db_session:
     )
 
 
+def test_worker_run_once_passes_job_execution_context_to_handler(db_session: Session):
+    observed_contexts: list[JobExecutionContext] = []
+
+    def handler(*, payload: dict[str, object], context: JobExecutionContext) -> dict[str, object]:
+        observed_contexts.append(context)
+        return {"ok": True}
+
+    worker = JobWorker(
+        session_factory=task_session_factory(db_session),
+        worker_id="worker-test-context",
+        registry={
+            "test_context_job": JobDefinition(
+                kind="test_context_job",
+                handler=handler,
+                max_attempts=3,
+                retry_delays_seconds=(1, 5, 10),
+                lease_seconds=60,
+            )
+        },
+    )
+
+    job = enqueue_job(
+        db_session,
+        kind="test_context_job",
+        payload={},
+        max_attempts=3,
+    )
+    db_session.commit()
+
+    assert worker.run_once() is True
+
+    assert len(observed_contexts) == 1, (
+        f"Expected handler to be invoked exactly once. observed={observed_contexts}"
+    )
+    context = observed_contexts[0]
+    assert context.job_id == job.id, (
+        "Expected the handler's context to carry its own job id. "
+        f"Expected {job.id}, got {context.job_id}."
+    )
+    assert context.worker_id == "worker-test-context", (
+        f"Expected context.worker_id to match the executing worker. Got {context.worker_id}."
+    )
+    assert context.attempt_no == 1, (
+        f"Expected the first claim to report attempt_no=1. Got {context.attempt_no}."
+    )
+
+
+def test_worker_run_once_reclaim_reports_incremented_attempt_in_context(
+    db_session: Session,
+):
+    observed_contexts: list[JobExecutionContext] = []
+
+    def handler(*, payload: dict[str, object], context: JobExecutionContext) -> dict[str, object]:
+        observed_contexts.append(context)
+        return {"ok": True}
+
+    worker = JobWorker(
+        session_factory=task_session_factory(db_session),
+        worker_id="worker-test-context-reclaim",
+        registry={
+            "test_context_reclaim_job": JobDefinition(
+                kind="test_context_reclaim_job",
+                handler=handler,
+                max_attempts=3,
+                retry_delays_seconds=(1, 5, 10),
+                lease_seconds=60,
+            )
+        },
+    )
+
+    stale_job = enqueue_job(
+        db_session,
+        kind="test_context_reclaim_job",
+        payload={},
+        max_attempts=3,
+    )
+    db_session.execute(
+        text(
+            """
+            UPDATE background_jobs
+            SET
+                status = 'running',
+                attempts = 1,
+                claimed_by = 'dead-worker',
+                lease_expires_at = now() - interval '3 minutes'
+            WHERE id = :job_id
+            """
+        ),
+        {"job_id": stale_job.id},
+    )
+    db_session.commit()
+
+    assert worker.run_once() is True
+    assert len(observed_contexts) == 1
+    assert observed_contexts[0].attempt_no == 2, (
+        "Expected the reclaiming attempt (attempts incremented 1 -> 2 at claim) to be "
+        f"reflected in the handler's context. Got {observed_contexts[0].attempt_no}."
+    )
+
+
+def test_worker_run_once_honors_reschedule_requested_without_completing_or_failing(
+    db_session: Session,
+):
+    reschedule_at = datetime.now(UTC) + timedelta(seconds=45)
+
+    def handler(*, payload: dict[str, object], context: JobExecutionContext) -> RescheduleRequested:
+        return RescheduleRequested(
+            available_at=reschedule_at,
+            payload={"checkpoint": "waiting-on-drain"},
+        )
+
+    worker = JobWorker(
+        session_factory=task_session_factory(db_session),
+        worker_id="worker-test-reschedule",
+        registry={
+            "test_reschedule_job": JobDefinition(
+                kind="test_reschedule_job",
+                handler=handler,
+                max_attempts=3,
+                retry_delays_seconds=(1, 5, 10),
+                lease_seconds=60,
+            )
+        },
+    )
+
+    job = enqueue_job(
+        db_session,
+        kind="test_reschedule_job",
+        payload={"checkpoint": "start"},
+        max_attempts=3,
+    )
+    db_session.commit()
+
+    assert worker.run_once() is True
+
+    db_session.expire_all()
+    row = _fetch_job_row(db_session, job.id)
+    assert row["status"] == "pending", (
+        f"Expected a RescheduleRequested handler result to leave the job pending, "
+        f"never succeeded or dead/failed. Row state={row}"
+    )
+    assert row["attempts"] == 0, (
+        "Expected reschedule to compensate the claim-side attempt increment so waiting "
+        f"does not burn retry budget. Row state={row}"
+    )
+    assert row["claimed_by"] is None, f"Expected claim to be released. Row state={row}"
+    assert row["payload"] == {"checkpoint": "waiting-on-drain"}, (
+        f"Expected the handler's reschedule payload to be persisted. Row state={row}"
+    )
+    assert row["error_code"] is None, (
+        f"Expected no fail_job transition to have run for a reschedule. Row state={row}"
+    )
+    assert row["result"] is None, (
+        f"Expected no complete_job transition to have run for a reschedule. Row state={row}"
+    )
+
+
 def test_worker_scheduler_enqueues_periodic_jobs_with_slot_dedupe(db_session: Session):
     worker = JobWorker(
         session_factory=task_session_factory(db_session),
@@ -486,7 +644,7 @@ def test_worker_scheduler_enqueues_periodic_jobs_with_slot_dedupe(db_session: Se
         registry={
             "test_periodic_job": JobDefinition(
                 kind="test_periodic_job",
-                handler=lambda *, payload: {"ok": True},
+                handler=lambda *, payload, context: {"ok": True},
                 max_attempts=1,
                 retry_delays_seconds=(1,),
                 lease_seconds=60,
@@ -530,7 +688,7 @@ def test_worker_scheduler_race_enqueues_one_periodic_job(
     registry = {
         kind: JobDefinition(
             kind=kind,
-            handler=lambda *, payload: {"ok": True},
+            handler=lambda *, payload, context: {"ok": True},
             max_attempts=1,
             retry_delays_seconds=(1,),
             lease_seconds=60,
@@ -574,7 +732,7 @@ def test_worker_scheduler_race_enqueues_one_periodic_job(
 def test_worker_run_once_respects_allowed_kinds(db_session: Session):
     observed_payloads: list[dict[str, object]] = []
 
-    def handler(*, payload: dict[str, object]) -> dict[str, object]:
+    def handler(*, payload: dict[str, object], context: JobExecutionContext) -> dict[str, object]:
         observed_payloads.append(payload)
         return {"ok": True}
 
@@ -637,7 +795,7 @@ def test_worker_scheduler_skips_disabled_periodic_jobs_without_db_session():
         registry={
             "disabled_periodic_job": JobDefinition(
                 kind="disabled_periodic_job",
-                handler=lambda *, payload: {"ok": True},
+                handler=lambda *, payload, context: {"ok": True},
                 max_attempts=1,
                 retry_delays_seconds=(0,),
                 lease_seconds=60,
@@ -657,7 +815,7 @@ def test_worker_scheduler_respects_allowed_kinds(db_session: Session):
         registry={
             "allowed_periodic_job": JobDefinition(
                 kind="allowed_periodic_job",
-                handler=lambda *, payload: {"ok": True},
+                handler=lambda *, payload, context: {"ok": True},
                 max_attempts=1,
                 retry_delays_seconds=(0,),
                 lease_seconds=60,
@@ -665,7 +823,7 @@ def test_worker_scheduler_respects_allowed_kinds(db_session: Session):
             ),
             "blocked_periodic_job": JobDefinition(
                 kind="blocked_periodic_job",
-                handler=lambda *, payload: {"ok": True},
+                handler=lambda *, payload, context: {"ok": True},
                 max_attempts=1,
                 retry_delays_seconds=(0,),
                 lease_seconds=60,
@@ -696,7 +854,7 @@ def test_worker_run_forever_wakes_on_enqueue_notification(direct_db: DirectSessi
     processed = threading.Event()
     stop = threading.Event()
 
-    def handler(*, payload: dict[str, object]) -> dict[str, object]:
+    def handler(*, payload: dict[str, object], context: JobExecutionContext) -> dict[str, object]:
         processed.set()
         stop.set()
         return {"ok": True, "payload": payload}
@@ -763,7 +921,7 @@ def test_worker_run_forever_ignores_disallowed_notification_until_allowed_job(
     stop = threading.Event()
     observed_payloads: list[dict[str, object]] = []
 
-    def handler(*, payload: dict[str, object]) -> dict[str, object]:
+    def handler(*, payload: dict[str, object], context: JobExecutionContext) -> dict[str, object]:
         observed_payloads.append(payload)
         processed.set()
         stop.set()
@@ -856,7 +1014,7 @@ def test_worker_run_forever_wakes_when_future_job_becomes_due(direct_db: DirectS
     processed = threading.Event()
     stop = threading.Event()
 
-    def handler(*, payload: dict[str, object]) -> dict[str, object]:
+    def handler(*, payload: dict[str, object], context: JobExecutionContext) -> dict[str, object]:
         processed.set()
         stop.set()
         return {"ok": True, "payload": payload}
@@ -908,7 +1066,7 @@ def test_worker_run_forever_caps_idle_wait_at_scheduler_deadline(direct_db: Dire
     processed_count = 0
     stop = threading.Event()
 
-    def handler(*, payload: dict[str, object]) -> dict[str, object]:
+    def handler(*, payload: dict[str, object], context: JobExecutionContext) -> dict[str, object]:
         nonlocal processed_count
         processed_count += 1
         if processed_count >= 2:
@@ -979,7 +1137,7 @@ def test_worker_run_forever_wakes_on_failed_retry_notification(direct_db: Direct
     processed = threading.Event()
     stop = threading.Event()
 
-    def handler(*, payload: dict[str, object]) -> dict[str, object]:
+    def handler(*, payload: dict[str, object], context: JobExecutionContext) -> dict[str, object]:
         processed.set()
         stop.set()
         return {"ok": True, "payload": payload}

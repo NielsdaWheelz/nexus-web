@@ -194,10 +194,14 @@ def test_prune_background_jobs_handler_wiring(monkeypatch: pytest.MonkeyPatch):
     )
     _clear_registry_cache()
 
+    from uuid import uuid4
+
+    from nexus.jobs.queue import JobExecutionContext
     from nexus.jobs.registry import get_default_registry
 
     result = get_default_registry()["prune_background_jobs_job"].handler(
-        payload={"request_id": "req-prune"}
+        payload={"request_id": "req-prune"},
+        context=JobExecutionContext(job_id=uuid4(), worker_id="worker-test", attempt_no=1),
     )
     assert result == {"deleted_count": 3}
     assert observed_request_ids == ["req-prune"]

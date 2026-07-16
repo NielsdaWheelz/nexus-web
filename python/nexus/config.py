@@ -150,6 +150,28 @@ class Settings(BaseSettings):
         exclude=True,
         repr=False,
     )
+    # Explicit botocore timeouts for the R2 S3-compatible client. Bounded low so a
+    # stalled object-store call fails fast instead of holding a worker/request open.
+    r2_connect_timeout_seconds: float = Field(default=5.0, alias="R2_CONNECT_TIMEOUT_SECONDS")
+    r2_read_timeout_seconds: float = Field(default=30.0, alias="R2_READ_TIMEOUT_SECONDS")
+
+    # Media teardown: durable cleanup timing for the media-deletion job family
+    # (media_teardown, storage_object_cleanup, storage_orphan_sweep).
+    media_teardown_cleanup_grace_seconds: int = Field(
+        default=60, alias="MEDIA_TEARDOWN_CLEANUP_GRACE_SECONDS"
+    )
+    # writeMayLandUntil horizon for an in-process write's durable final-sweep
+    # record. Must exceed r2_read_timeout_seconds so a delayed writer can be
+    # aborted (or must renew under the media lock) before its reservation lapses.
+    storage_object_cleanup_write_window_seconds: int = Field(
+        default=300, alias="STORAGE_OBJECT_CLEANUP_WRITE_WINDOW_SECONDS"
+    )
+    storage_orphan_sweep_interval_seconds: int = Field(
+        default=21600, alias="STORAGE_ORPHAN_SWEEP_INTERVAL_SECONDS"
+    )
+    storage_orphan_sweep_min_age_seconds: int = Field(
+        default=86400, alias="STORAGE_ORPHAN_SWEEP_MIN_AGE_SECONDS"
+    )
 
     # Storage limits
     max_pdf_bytes: int = Field(default=100 * 1024 * 1024, alias="MAX_PDF_BYTES")  # 100 MB
@@ -586,6 +608,25 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "R2_S3_API_ORIGIN must be the Cloudflare R2 S3 API origin for staging/prod."
                 )
+
+        if self.r2_connect_timeout_seconds <= 0 or self.r2_connect_timeout_seconds > 10:
+            raise ValueError("R2_CONNECT_TIMEOUT_SECONDS must be > 0 and <= 10.")
+        if self.r2_read_timeout_seconds <= 0 or self.r2_read_timeout_seconds > 60:
+            raise ValueError("R2_READ_TIMEOUT_SECONDS must be > 0 and <= 60.")
+        if self.media_teardown_cleanup_grace_seconds < 0:
+            raise ValueError("MEDIA_TEARDOWN_CLEANUP_GRACE_SECONDS must be >= 0.")
+        if self.storage_object_cleanup_write_window_seconds <= 0:
+            raise ValueError("STORAGE_OBJECT_CLEANUP_WRITE_WINDOW_SECONDS must be > 0.")
+        if self.storage_object_cleanup_write_window_seconds <= self.r2_read_timeout_seconds:
+            raise ValueError(
+                "STORAGE_OBJECT_CLEANUP_WRITE_WINDOW_SECONDS must be greater than "
+                "R2_READ_TIMEOUT_SECONDS so a delayed writer can be aborted before "
+                "its reservation lapses."
+            )
+        if self.storage_orphan_sweep_interval_seconds <= 0:
+            raise ValueError("STORAGE_ORPHAN_SWEEP_INTERVAL_SECONDS must be > 0.")
+        if self.storage_orphan_sweep_min_age_seconds < 0:
+            raise ValueError("STORAGE_ORPHAN_SWEEP_MIN_AGE_SECONDS must be >= 0.")
 
         for field_name, ceiling in self._EPUB_ARCHIVE_CEILINGS.items():
             value = getattr(self, field_name)
