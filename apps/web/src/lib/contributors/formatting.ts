@@ -20,18 +20,17 @@ export function formatContributorCreditSummary(
   const seen = new Set<string>();
   const names: string[] = [];
   for (const credit of credits) {
-    const handle = credit.contributor_handle?.trim();
-    if (!handle) {
-      continue;
-    }
     const name = getContributorCreditLabel(credit);
     if (!name) {
       continue;
     }
-    if (seen.has(handle)) {
+    // Dedupe by handle when present; handle-less text-fact credits (podcast
+    // previews) dedupe by their credited label so they still count.
+    const key = credit.contributor_handle?.trim() || name;
+    if (seen.has(key)) {
       continue;
     }
-    seen.add(handle);
+    seen.add(key);
     names.push(name);
   }
 

@@ -11,7 +11,7 @@ from provider_runtime.types import ModelResponse, ProviderApiKey, TokenUsage
 from sqlalchemy import text
 
 from nexus.services.api_key_resolver import ResolvedKey
-from nexus.services.contributor_credits import replace_media_contributor_credits
+from nexus.services.contributor_credits import load_contributor_credits_for_media
 from nexus.services.crypto import MASTER_KEY_SIZE, _get_master_key, encrypt_api_key
 from tests.helpers import create_test_user_id
 from tests.utils.db import DirectSessionManager
@@ -493,6 +493,11 @@ class TestEnrichMetadata:
     def test_repeated_structured_enrichment_replaces_machine_authors_without_duplicates(
         self, direct_db: DirectSessionManager, monkeypatch
     ):
+        # Manual-pin-blocks-automatic-authors and per-source coexistence are
+        # covered by the author facade's own suite (test_author_deduplication_
+        # cutover.py); this test's remaining scope is enrich_metadata's own
+        # observation build: repeated structured runs stay deduped and
+        # idempotent (no duplicate rows across two identical LLM responses).
         user_id = create_test_user_id()
         media_id = uuid4()
 
@@ -514,45 +519,6 @@ class TestEnrichMetadata:
                     """
                 ),
                 {"id": media_id, "user_id": user_id},
-            )
-            replace_media_contributor_credits(
-                session,
-                media_id=media_id,
-                source="web_article_byline",
-                credits=[
-                    {
-                        "name": "Ada Lovelace",
-                        "role": "author",
-                        "ordinal": 0,
-                        "source": "web_article_byline",
-                    }
-                ],
-            )
-            replace_media_contributor_credits(
-                session,
-                media_id=media_id,
-                source="epub_opf",
-                credits=[
-                    {
-                        "name": "Ada Lovelace",
-                        "role": "author",
-                        "ordinal": 0,
-                        "source": "epub_opf",
-                    }
-                ],
-            )
-            replace_media_contributor_credits(
-                session,
-                media_id=media_id,
-                source="manual",
-                credits=[
-                    {
-                        "name": "Curated Author",
-                        "role": "author",
-                        "ordinal": 0,
-                        "source": "manual",
-                    }
-                ],
             )
             session.commit()
 
@@ -587,24 +553,15 @@ class TestEnrichMetadata:
         assert second["status"] == "success", second
 
         with direct_db.session() as session:
-            rows = session.execute(
-                text(
-                    """
-                    SELECT credited_name, source
-                    FROM contributor_credits
-                    WHERE media_id = :media_id
-                      AND role = 'author'
-                    ORDER BY source ASC, ordinal ASC, credited_name ASC
-                    """
-                ),
-                {"media_id": media_id},
-            ).fetchall()
+            credits_by_media = load_contributor_credits_for_media(session, [media_id])
 
-        assert [(row[0], row[1]) for row in rows] == [
-            ("Curated Author", "manual"),
-            ("Ada Lovelace", "metadata_enrichment"),
-            ("Charles Babbage", "metadata_enrichment"),
+        author_names = [
+            credit.credited_name for credit in credits_by_media[media_id] if credit.role == "author"
         ]
+        assert author_names == ["Ada Lovelace", "Charles Babbage"], (
+            "duplicate near-identical name is deduped and the replacement is "
+            "idempotent across two identical enrichment runs"
+        )
 
     def test_llm_failure_records_metadata_failure(
         self, direct_db: DirectSessionManager, monkeypatch

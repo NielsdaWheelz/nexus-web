@@ -214,7 +214,7 @@ describe("CollectionView", () => {
     expect(host.scrollWidth).toBeLessThanOrEqual(host.clientWidth + 1);
     expect(horizontallyScrollableElements(host)).toEqual([]);
     expect(screen.getAllByRole("link", { name: /Contributor/ })).toHaveLength(2);
-    expect(screen.getByText("+1")).toBeInTheDocument();
+    expect(screen.getByText(", +1 more")).toBeInTheDocument();
     expect(screen.getByRole("img", { name: /compact collection row/ })).toHaveStyle({
       width: "32px",
       height: "32px",
@@ -230,7 +230,7 @@ describe("CollectionView", () => {
     await userEvent.keyboard("{ArrowRight}");
     expect(screen.getByRole("link", { name: "Contributor 1" })).toHaveFocus();
     expect(screen.getByRole("link", { name: "Contributor 1" })).toHaveStyle({
-      outlineOffset: "-2px",
+      outlineOffset: "2px",
     });
 
     await userEvent.keyboard("{ArrowRight}");

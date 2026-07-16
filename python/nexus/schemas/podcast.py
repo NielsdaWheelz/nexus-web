@@ -4,12 +4,11 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from nexus.schemas.contributors import (
     ContributorCreditIn,
     ContributorCreditOut,
-    contributor_credit_write_payload,
 )
 
 
@@ -25,6 +24,15 @@ class PodcastDiscoveryOut(BaseModel):
 
 
 class _PodcastWritePayload(BaseModel):
+    """Podcast write boundary (subscribe/OPML).
+
+    ``contributors`` rides the snake-strict :class:`ContributorCreditIn` v2 (D-4):
+    ``{credited_name, role, raw_role}`` only, ``extra="forbid"`` — an unknown
+    field (a stale ``source``/``ordinal``/output-shaped key) is a 400. The former
+    ``contributor_credit_write_payload`` output-field scrub is gone; clients send
+    the typed input shape.
+    """
+
     provider_podcast_id: str = Field(min_length=1)
     title: str = Field(min_length=1)
     contributors: list[ContributorCreditIn] = Field(default_factory=list)
@@ -33,22 +41,7 @@ class _PodcastWritePayload(BaseModel):
     image_url: str | None = None
     description: str | None = None
 
-    @field_validator("contributors", mode="before")
-    @classmethod
-    def normalize_contributors(cls, value: object) -> object:
-        if not isinstance(value, list):
-            return value
-        return [contributor_credit_write_payload(item) for item in value]
-
     model_config = ConfigDict(extra="forbid")
-
-
-class PodcastEnsureRequest(_PodcastWritePayload):
-    pass
-
-
-class PodcastEnsureOut(BaseModel):
-    podcast_id: UUID
 
 
 class PodcastSubscribeRequest(_PodcastWritePayload):

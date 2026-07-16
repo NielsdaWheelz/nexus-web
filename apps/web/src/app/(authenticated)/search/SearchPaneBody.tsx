@@ -41,6 +41,7 @@ import {
   type SearchKind,
 } from "@/lib/search/kinds";
 import { parseSearchInput } from "@/lib/search/parseSearchInput";
+import { consumeSearchInputFocus } from "@/lib/search/pendingSearchFocus";
 import {
   applyParsedInput,
   hasActiveFilters,
@@ -116,10 +117,28 @@ export default function SearchPaneBody() {
   const expectedQueryStringRef = useRef<string | null>(queryString);
   const draftRef = useRef(query.text);
   const draftPinnedRef = useRef(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setMounted(true);
   }, []);
+
+  // Focus the box on the freshly-navigated-to blank landing. `mounted` flips the
+  // input from its SSR-disabled state to enabled (the browser can only skip a
+  // disabled autofocus, so autofocus is inert here); we focus it on that flip.
+  // Gated on a Launcher-set request so ordinary arrivals — first-paint pane
+  // restore, Back/Forward, a results URL — do not steal focus, and skipped when the
+  // landing carries a query so a text navigation never yanks focus into the box.
+  useEffect(() => {
+    if (!mounted) return;
+    if (!consumeSearchInputFocus()) return;
+    if (!isBlankQuery(query)) return;
+    const frame = window.requestAnimationFrame(() => searchInputRef.current?.focus());
+    return () => window.cancelAnimationFrame(frame);
+    // Runs once when the input flips enabled; `query` is intentionally the landing
+    // query captured at that flip, not a live dependency.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- justify-eslint-override: one-shot focus on the mount flip; re-running on query edits would refocus mid-typing.
+  }, [mounted]);
 
   const replaceQuery = useCallback(
     (next: SearchQuery) => {
@@ -367,6 +386,7 @@ export default function SearchPaneBody() {
       toolbar={
         <div className={styles.searchForm}>
           <Input
+            ref={searchInputRef}
             aria-label="Search content"
             className={styles.searchInputField}
             size="lg"
@@ -384,7 +404,6 @@ export default function SearchPaneBody() {
             }}
             placeholder="Search your Nexus… (try format:pdf or author:le-guin)"
             disabled={!mounted}
-            autoFocus
           />
 
           <KindChips

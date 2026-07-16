@@ -1,452 +1,214 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { ExternalLink, UserRound, X } from "lucide-react";
 import {
-  FeedbackNotice,
-  toFeedback,
-  type FeedbackContent,
-} from "@/components/feedback/Feedback";
-import PaneSurface from "@/components/ui/PaneSurface";
-import SectionOpener from "@/components/ui/SectionOpener";
-import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
-import CollectionView from "@/components/collections/CollectionView";
-import CollectionDisplayControls from "@/components/collections/CollectionDisplayControls";
-import Pill from "@/components/ui/Pill";
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
-import Select from "@/components/ui/Select";
-import ContributorPicker from "@/components/contributors/ContributorPicker";
-import ContributorReconciliationCandidates from "@/components/contributors/ContributorReconciliationCandidates";
-import { AUTHOR_WORKS_LIMIT, contributorResource } from "@/lib/api/resource";
-import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import Dialog from "@/components/ui/Dialog";
+import PaneSurface from "@/components/ui/PaneSurface";
+import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
+import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
 import {
-  acceptContributorReconciliationCandidate,
-  addContributorAlias,
-  addContributorExternalId,
-  deleteContributorAlias,
-  deleteContributorExternalId,
-  fetchContributor,
-  fetchContributorReconciliationCandidates,
-  fetchContributorWorks,
-  mergeContributor,
-  rejectContributorReconciliationCandidate,
-  tombstoneContributor,
-} from "@/lib/contributors/api";
+  FeedbackNotice,
+  FieldFeedback,
+  toFeedback,
+  useFeedback,
+  type FeedbackContent,
+} from "@/components/feedback/Feedback";
+import { isApiError } from "@/lib/api/client";
+import { contributorResource } from "@/lib/api/resource";
 import { clientResourceFetcher } from "@/lib/api/resourceTransport.client";
 import { useResource } from "@/lib/api/useResource";
-import { paneResourceLoaders } from "@/lib/panes/paneResourceLoaders";
-import type {
-  ContributorAlias,
-  ContributorExternalId,
-  ContributorReconciliationCandidate,
-  ContributorSummary,
-  ContributorWork,
-} from "@/lib/contributors/types";
-import { formatContributorRole } from "@/lib/contributors/formatting";
-import { presentContributorWork } from "@/lib/collections/presenters/contributor";
-import { useCollectionDisplayState } from "@/lib/collections/useCollectionDisplayState";
-import { useConnectionSummaries } from "@/lib/collections/useConnectionSummaries";
-import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
-  usePaneParam,
-  usePaneRouter,
-  useSetPaneTitle,
-} from "@/lib/panes/paneRuntime";
-import { useDialogOverlay } from "@/lib/ui/useDialogOverlay";
-import { compareStableString } from "@/lib/display/format";
+  fetchContributorWorks,
+  patchContributorDisplayName,
+} from "@/lib/contributors/api";
+import { createMutationIntent } from "@/lib/contributors/mutationIntent";
+import type {
+  ContributorDetail,
+  ContributorRoleFact,
+} from "@/lib/contributors/types";
+import { paneResourceLoaders, type AuthorPaneSeed } from "@/lib/panes/paneResourceLoaders";
+import { usePaneParam, useSetPaneTitle } from "@/lib/panes/paneRuntime";
 import styles from "./page.module.css";
 
-interface ContributorPaneData {
-  contributor: ContributorSummary;
-  aliases: ContributorAlias[];
-  externalIds: ContributorExternalId[];
-  works: ContributorWork[];
-  workFilterOptions: ContributorWork[];
+// Singular role labels (content spec §0.2 / §4.3) — a work role-fact is one
+// credit, so it renders the singular form. Anything outside the closed vocabulary
+// (or a null role) reads as the generic "Contributor".
+const ROLE_SINGULAR: Record<string, string> = {
+  author: "Author",
+  editor: "Editor",
+  translator: "Translator",
+  host: "Host",
+  guest: "Guest",
+  narrator: "Narrator",
+  creator: "Creator",
+  producer: "Producer",
+  publisher: "Publisher",
+  channel: "Channel",
+  organization: "Organization",
+  unknown: "Contributor",
+};
+
+function roleFactLabel(role: string): string {
+  return ROLE_SINGULAR[role.trim()] ?? "Contributor";
 }
 
-function workRequestKey(handle: string, role: string, kind: string, query: string): string {
-  return `${handle}\n${role}\n${kind}\n${query}`;
-}
+const MONTHS = [
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
+];
 
-function formatContentKind(kind: string): string {
-  return (kind || "work").replace(/_/g, " ");
-}
-
-function workContentKind(work: ContributorWork): string {
-  return (
-    normalizeFilterValue(work.content_kind) ||
-    normalizeFilterValue(work.object_type) ||
-    "work"
-  );
-}
-
-function normalizeFilterValue(value: string | null | undefined): string {
-  return value?.trim() || "";
-}
-
-function uniqueSorted(values: Array<string | null | undefined>): string[] {
-  return Array.from(
-    new Set(values.map((value) => normalizeFilterValue(value)).filter(Boolean))
-  ).sort(compareStableString);
+// Render a partial ISO date at its known precision (content spec §4.3): YYYY,
+// "Month YYYY", or "Month D, YYYY". A null/unparseable date renders nothing (no
+// "Unknown date", no "n.d.").
+function formatWorkDate(date: string | null): string | null {
+  if (!date) return null;
+  const full = /^(\d{4})-(\d{2})-(\d{2})/.exec(date);
+  if (full) {
+    const month = MONTHS[Number(full[2]) - 1];
+    if (!month) return null;
+    return `${month} ${Number(full[3])}, ${Number(full[1])}`;
+  }
+  const yearMonth = /^(\d{4})-(\d{2})$/.exec(date);
+  if (yearMonth) {
+    const month = MONTHS[Number(yearMonth[2]) - 1];
+    if (!month) return null;
+    return `${month} ${Number(yearMonth[1])}`;
+  }
+  const year = /^(\d{4})$/.exec(date);
+  if (year) return year[1];
+  return null;
 }
 
 export default function AuthorPaneBody() {
   const handle = usePaneParam("handle");
-  const { displayState, setDisplayState } = useCollectionDisplayState(
-    `/authors/${encodeURIComponent(handle ?? "")}`,
-  );
-  const initialAuthor = useResource<ContributorPaneData, { handle: string }>({
+  const initialAuthor = useResource<AuthorPaneSeed, { handle: string }>({
     descriptor: contributorResource,
     params: handle ? { handle } : null,
     load: (params, signal) =>
       paneResourceLoaders.author!.load(
         clientResourceFetcher(signal),
         params,
-      ) as Promise<ContributorPaneData>,
+      ) as Promise<AuthorPaneSeed>,
   });
-  const paneRouter = usePaneRouter();
-  const [data, setData] = useState<ContributorPaneData | null>(null);
+
+  const [data, setData] = useState<AuthorPaneSeed | null>(null);
   const [error, setError] = useState<FeedbackContent | null>(null);
-  const [roleFilter, setRoleFilter] = useState("");
-  const [kindFilter, setKindFilter] = useState("");
-  const [queryFilter, setQueryFilter] = useState("");
-  const [mergeOpen, setMergeOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [busyCandidate, setBusyCandidate] = useState<{
-    id: string;
-    action: "accept" | "reject";
-  } | null>(null);
-  const [reconciliationCandidates, setReconciliationCandidates] = useState<
-    ContributorReconciliationCandidate[]
-  >([]);
-  const [reconciliationStatus, setReconciliationStatus] = useState<
-    "loading" | "error" | "ready"
-  >("loading");
-  const [reconciliationError, setReconciliationError] =
-    useState<FeedbackContent | null>(null);
-  const [aliasDraft, setAliasDraft] = useState("");
-  const [authorityDraft, setAuthorityDraft] = useState("");
-  const [externalKeyDraft, setExternalKeyDraft] = useState("");
-  const lastWorksRequestKeyRef = useRef<string | null>(null);
-  const worksRequestIdRef = useRef(0);
-  const reconciliationRequestIdRef = useRef(0);
-  const mergeCardRef = useRef<HTMLDivElement>(null);
+  const [worksError, setWorksError] = useState<FeedbackContent | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [announcement, setAnnouncement] = useState("");
+
+  const worksListRef = useRef<HTMLOListElement>(null);
+  const pendingFocusIndexRef = useRef<number | null>(null);
+
   const loading =
-    !!handle && !error && (data === null || data.contributor.handle !== handle);
-  useDialogOverlay({
-    ref: mergeCardRef,
-    active: mergeOpen,
-    onDismiss: () => setMergeOpen(false),
-  });
+    !!handle && !error && (data === null || data.detail.handle !== handle);
 
-  // After a curation mutation, the survivor handle may equal the loaded handle
-  // (alias/external-id/tombstone) — reload its summary + works in place so the
-  // pane reflects the change without losing the active filters.
-  async function reload(): Promise<void> {
-    if (!data) return;
-    const targetHandle = data.contributor.handle;
-    try {
-      const [contributorResponse, works] = await Promise.all([
-        fetchContributor(targetHandle),
-        fetchContributorWorks(targetHandle, {
-          role: roleFilter,
-          contentKind: kindFilter,
-          query: queryFilter,
-          limit: AUTHOR_WORKS_LIMIT,
-        }),
-      ]);
-      setData((current) =>
-        current && current.contributor.handle === targetHandle
-          ? {
-              ...current,
-              contributor: contributorResponse,
-              aliases: contributorResponse.aliases ?? [],
-              externalIds: contributorResponse.external_ids ?? [],
-              works,
-            }
-          : current,
-      );
-      void refreshReconciliationCandidates(targetHandle);
-    } catch (reloadError) {
-      if (handleUnauthenticatedApiError(reloadError)) return;
-      setError(toFeedback(reloadError, { fallback: "Failed to refresh author" }));
-    }
-  }
-
-  async function refreshReconciliationCandidates(targetHandle: string): Promise<void> {
-    const requestId = reconciliationRequestIdRef.current + 1;
-    reconciliationRequestIdRef.current = requestId;
-    setReconciliationStatus("loading");
-    setReconciliationError(null);
-    try {
-      const reconciliationPage = await fetchContributorReconciliationCandidates({
-        contributorHandle: targetHandle,
-        status: "pending",
-        limit: 20,
-      });
-      if (requestId !== reconciliationRequestIdRef.current) return;
-      setReconciliationCandidates(reconciliationPage.candidates);
-      setReconciliationStatus("ready");
-    } catch (loadError) {
-      if (handleUnauthenticatedApiError(loadError)) return;
-      if (requestId !== reconciliationRequestIdRef.current) return;
-      setReconciliationCandidates([]);
-      setReconciliationStatus("error");
-      setReconciliationError(
-        toFeedback(loadError, { fallback: "Failed to load duplicate suggestions" }),
-      );
-    }
-  }
-
-  async function runMutation(
-    action: () => Promise<unknown>,
-    fallback: string,
-  ): Promise<boolean> {
-    setBusy(true);
-    setError(null);
-    try {
-      await action();
-      await reload();
-      return true;
-    } catch (mutationError) {
-      if (handleUnauthenticatedApiError(mutationError)) return false;
-      setError(toFeedback(mutationError, { fallback }));
-      return false;
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function handleMergeSelect(target: ContributorSummary): Promise<void> {
-    if (!data) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const survivor = await mergeContributor(data.contributor.handle, target.handle);
-      setMergeOpen(false);
-      paneRouter.push(`/authors/${encodeURIComponent(survivor.handle)}`);
-    } catch (mergeError) {
-      if (handleUnauthenticatedApiError(mergeError)) return;
-      setError(toFeedback(mergeError, { fallback: "Failed to merge author" }));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function handleAcceptCandidate(
-    candidate: ContributorReconciliationCandidate,
-  ): Promise<void> {
-    setBusy(true);
-    setBusyCandidate({ id: candidate.id, action: "accept" });
-    setError(null);
-    try {
-      const survivor = await acceptContributorReconciliationCandidate(candidate.id);
-      setReconciliationCandidates((current) =>
-        current.filter((item) => item.id !== candidate.id),
-      );
-      if (data?.contributor.handle === survivor.handle) {
-        await reload();
-      } else {
-        paneRouter.push(`/authors/${encodeURIComponent(survivor.handle)}`);
-      }
-    } catch (acceptError) {
-      if (handleUnauthenticatedApiError(acceptError)) return;
-      setError(toFeedback(acceptError, { fallback: "Failed to accept duplicate suggestion" }));
-    } finally {
-      setBusyCandidate(null);
-      setBusy(false);
-    }
-  }
-
-  async function handleRejectCandidate(
-    candidate: ContributorReconciliationCandidate,
-  ): Promise<void> {
-    setBusyCandidate({ id: candidate.id, action: "reject" });
-    setReconciliationError(null);
-    try {
-      await rejectContributorReconciliationCandidate(candidate.id);
-      setReconciliationCandidates((current) =>
-        current.filter((item) => item.id !== candidate.id),
-      );
-      setReconciliationStatus("ready");
-    } catch (rejectError) {
-      if (handleUnauthenticatedApiError(rejectError)) return;
-      setReconciliationStatus("error");
-      setReconciliationError(
-        toFeedback(rejectError, { fallback: "Failed to reject duplicate suggestion" }),
-      );
-    } finally {
-      setBusyCandidate(null);
-    }
-  }
-
-  async function handleAddAlias(): Promise<void> {
-    if (!data) return;
-    const alias = aliasDraft.trim();
-    if (!alias) return;
-    const ok = await runMutation(
-      () => addContributorAlias(data.contributor.handle, { alias }),
-      "Failed to add alias",
-    );
-    if (ok) setAliasDraft("");
-  }
-
-  async function handleAddExternalId(): Promise<void> {
-    if (!data) return;
-    const authority = authorityDraft.trim();
-    const externalKey = externalKeyDraft.trim();
-    if (!authority || !externalKey) return;
-    const ok = await runMutation(
-      () =>
-        addContributorExternalId(data.contributor.handle, {
-          authority,
-          external_key: externalKey,
-        }),
-      "Failed to add authority ID",
-    );
-    if (ok) {
-      setAuthorityDraft("");
-      setExternalKeyDraft("");
-    }
-  }
-
-  useSetPaneTitle(loading ? null : (data?.contributor.display_name ?? "Author"));
-
-  // Reset the local copy + filters whenever the route handle changes, so stale
-  // author data never bleeds across panes while the next initial load runs.
+  // Reset the local copy whenever the route handle changes, so stale author data
+  // never bleeds across panes while the next initial load runs.
   useEffect(() => {
     setData(null);
-    setRoleFilter("");
-    setKindFilter("");
-    setQueryFilter("");
-    setMergeOpen(false);
-    setBusyCandidate(null);
-    setReconciliationCandidates([]);
-    setReconciliationStatus(handle ? "loading" : "ready");
-    setReconciliationError(null);
-    setAliasDraft("");
-    setAuthorityDraft("");
-    setExternalKeyDraft("");
-    lastWorksRequestKeyRef.current = null;
-    worksRequestIdRef.current += 1;
-    reconciliationRequestIdRef.current += 1;
-    setError(
-      handle ? null : { severity: "error", title: "Author handle is missing" },
-    );
+    setError(handle ? null : { severity: "error", title: "Author handle is missing" });
+    setWorksError(null);
+    setLoadingMore(false);
+    setRenameOpen(false);
+    setAnnouncement("");
+    pendingFocusIndexRef.current = null;
   }, [handle]);
 
   // Seed the local copy from the initial resource's ready/error branch.
   useEffect(() => {
     if (initialAuthor.status === "ready") {
-      lastWorksRequestKeyRef.current = workRequestKey(
-        initialAuthor.data.contributor.handle,
-        "",
-        "",
-        "",
-      );
       setData(initialAuthor.data);
       setError(null);
     } else if (initialAuthor.status === "error") {
-      setError(
-        toFeedback(initialAuthor.error, { fallback: "Failed to load author" }),
-      );
+      setError(toFeedback(initialAuthor.error, { fallback: "Couldn't load this author." }));
       setData(null);
     }
   }, [initialAuthor]);
 
-  useEffect(() => {
-    if (!data?.contributor.handle) {
-      return;
-    }
-    void refreshReconciliationCandidates(data.contributor.handle);
-  }, [data?.contributor.handle]);
+  useSetPaneTitle(loading ? null : (data?.detail.displayName ?? "Author"));
 
-  useEffect(() => {
-    if (!handle || !data || data.contributor.handle !== handle) {
-      return;
-    }
-
-    const requestKey = workRequestKey(handle, roleFilter, kindFilter, queryFilter);
-    if (lastWorksRequestKeyRef.current === requestKey) {
-      return;
-    }
-
-    let cancelled = false;
-    const requestId = worksRequestIdRef.current + 1;
-    worksRequestIdRef.current = requestId;
-    setError(null);
-    void (async () => {
-      try {
-        const works = await fetchContributorWorks(handle, {
-          role: roleFilter,
-          contentKind: kindFilter,
-          query: queryFilter,
-          limit: AUTHOR_WORKS_LIMIT,
-        });
-        if (cancelled || requestId !== worksRequestIdRef.current) {
-          return;
-        }
-        lastWorksRequestKeyRef.current = requestKey;
-        setData((current) =>
-          current && current.contributor.handle === handle
-            ? {
-                ...current,
-                works,
-                workFilterOptions:
-                  roleFilter || kindFilter || queryFilter
-                    ? current.workFilterOptions
-                    : works,
-              }
-            : current
-        );
-      } catch (loadError) {
-        if (handleUnauthenticatedApiError(loadError)) return;
-        if (!cancelled && requestId === worksRequestIdRef.current) {
-          setError(toFeedback(loadError, { fallback: "Failed to load author works" }));
-        }
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [data, handle, kindFilter, queryFilter, roleFilter]);
-
-  const roleOptions = useMemo(
-    () => uniqueSorted(data?.workFilterOptions.map((work) => work.role) ?? []),
-    [data?.workFilterOptions]
-  );
-  const kindOptions = useMemo(
-    () => uniqueSorted(data?.workFilterOptions.map(workContentKind) ?? []),
-    [data?.workFilterOptions]
-  );
-  const visibleWorks = data?.works ?? [];
-  const workConnectionSummaries = useConnectionSummaries(
-    visibleWorks.map((work) => `${work.object_type}:${work.object_id}`),
-  );
-  // The backend follows merges, so a requested handle that no longer matches the
-  // resolved survivor means the URL handle was merged away.
-  const formerlyHandle =
-    data && handle && handle !== data.contributor.handle ? handle : null;
-
-  // The author name is the section opener's display line (the sole <h1>, §7.6);
-  // the bespoke identity block below keeps avatar + metadata + actions. The
-  // running head carries the AUTHORS standing head + a works folio.
+  const workCount = data?.works.length ?? 0;
+  // The folio is omitted entirely when there are no works (content spec M3):
+  // passing a {kind:"count", value:0} folio would render the banned "0 works".
   usePaneChromeOverride({
-    folio: { kind: "count", value: visibleWorks.length, unit: "work" },
+    folio:
+      workCount > 0 ? { kind: "count", value: workCount, unit: "work" } : undefined,
     folioPending: loading,
   });
 
+  // After appending a Load-more page, move focus to the first newly-appended
+  // work title for keyboard continuity (content spec §4.2).
+  useEffect(() => {
+    const index = pendingFocusIndexRef.current;
+    if (index === null) return;
+    pendingFocusIndexRef.current = null;
+    worksListRef.current
+      ?.querySelector<HTMLElement>(`[data-work-title="${index}"]`)
+      ?.focus();
+  }, [workCount]);
+
+  const loadMore = useCallback(async () => {
+    if (!handle || !data || data.worksNextCursor === null || loadingMore) return;
+    const cursor = data.worksNextCursor;
+    const canonicalHandle = data.detail.handle;
+    const appendAt = data.works.length;
+    setLoadingMore(true);
+    setWorksError(null);
+    try {
+      const page = await fetchContributorWorks(handle, { cursor });
+      setData((current) =>
+        current && current.detail.handle === canonicalHandle
+          ? {
+              ...current,
+              works: [...current.works, ...page.works],
+              worksNextCursor: page.nextCursor,
+            }
+          : current,
+      );
+      if (page.works.length > 0) {
+        pendingFocusIndexRef.current = appendAt;
+        setAnnouncement(
+          page.works.length === 1
+            ? "1 more work loaded"
+            : `${page.works.length} more works loaded`,
+        );
+      }
+    } catch (loadMoreError) {
+      if (handleUnauthenticatedApiError(loadMoreError)) return;
+      setWorksError(
+        toFeedback(loadMoreError, { fallback: "Couldn't load more works." }),
+      );
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [handle, data, loadingMore]);
+
+  const otherNames = data?.detail.otherNames ?? [];
+
   return (
     <PaneSurface
-      opener={
-        <SectionOpener
-          heading={data?.contributor.display_name ?? "Author"}
-          scale="title"
-          pending={loading}
-        />
-      }
       state={
         loading || (error && !data) ? (
           <>
@@ -457,321 +219,242 @@ export default function AuthorPaneBody() {
       }
     >
       {data ? (
-        <>
+        <div className={styles.detail}>
           <header className={styles.header}>
-            <div className={styles.avatar} aria-hidden="true">
-              <UserRound size={24} />
-            </div>
-            <div className={styles.identity}>
-              <div className={styles.identityMeta}>
-                {data.contributor.sort_name ? (
-                  <span>{data.contributor.sort_name}</span>
-                ) : null}
-                {data.contributor.status ? (
-                  <Pill tone="neutral">{data.contributor.status}</Pill>
-                ) : null}
-                {data.contributor.kind ? (
-                  <span>{data.contributor.kind.replace(/_/g, " ")}</span>
-                ) : null}
-                {formerlyHandle ? (
-                  <span className={styles.formerly}>Formerly {formerlyHandle}</span>
-                ) : null}
-              </div>
-              {data.contributor.disambiguation ? (
-                <p className={styles.disambiguation}>
-                  {data.contributor.disambiguation}
-                </p>
-              ) : null}
-              <div className={styles.headerActions}>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => setMergeOpen(true)}
-                  disabled={busy}
-                >
-                  Merge into…
-                </Button>
-                <Button
-                  variant="danger"
-                  size="sm"
-                  onClick={() =>
-                    void runMutation(
-                      () => tombstoneContributor(data.contributor.handle),
-                      "Failed to tombstone author",
-                    )
-                  }
-                  disabled={busy}
-                >
-                  Tombstone
-                </Button>
-              </div>
-            </div>
+            <h1 className={styles.heading} dir="auto">
+              {data.detail.displayName}
+            </h1>
+            {data.detail.canRename ? (
+              <Button
+                variant="secondary"
+                size="sm"
+                className={styles.editName}
+                onClick={() => setRenameOpen(true)}
+              >
+                Edit name
+              </Button>
+            ) : null}
           </header>
 
-          {/* split UI deferred */}
-          {reconciliationStatus !== "ready" || reconciliationCandidates.length > 0 ? (
-            <ContributorReconciliationCandidates
-              title="Possible Duplicates"
-              status={reconciliationStatus}
-              candidates={reconciliationCandidates}
-              error={reconciliationError}
-              busyCandidate={busyCandidate}
-              emptyTitle="No duplicate suggestions"
-              emptyMessage="No contributor duplicates are pending review."
-              onAccept={(candidate) => void handleAcceptCandidate(candidate)}
-              onReject={(candidate) => void handleRejectCandidate(candidate)}
-            />
+          {otherNames.length > 0 ? (
+            <section className={styles.otherNames}>
+              <h2 className={styles.sectionHeading}>Other names</h2>
+              <p className={styles.otherNamesList}>
+                {otherNames.map((name, index) => (
+                  <span key={`${name}-${index}`}>
+                    {index > 0 ? ", " : null}
+                    <span dir="auto">{name}</span>
+                  </span>
+                ))}
+              </p>
+            </section>
           ) : null}
 
-          <div className={styles.identityDetails}>
-            <section>
-              <h2>Aliases</h2>
-              <div className={styles.pillRow}>
-                {data.aliases.map((alias, index) => (
-                  <span
-                    key={alias.id ?? `${alias.alias}-${index}`}
-                    className={styles.removablePill}
-                  >
-                    {alias.alias}
-                    {alias.id ? (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        aria-label={`Remove alias ${alias.alias}`}
-                        disabled={busy}
-                        onClick={() =>
-                          void runMutation(
-                            () =>
-                              deleteContributorAlias(
-                                data.contributor.handle,
-                                alias.id as string,
-                              ),
-                            "Failed to remove alias",
-                          )
-                        }
-                      >
-                        <X size={12} aria-hidden="true" />
-                      </Button>
-                    ) : null}
-                  </span>
-                ))}
-              </div>
-              <div className={styles.inlineForm}>
-                <Input
-                  aria-label="New alias"
-                  value={aliasDraft}
-                  placeholder="Add alias…"
-                  className={styles.inlineFormInput}
-                  onChange={(event) => setAliasDraft(event.target.value)}
-                />
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  disabled={busy || !aliasDraft.trim()}
-                  onClick={() => void handleAddAlias()}
-                >
-                  Add
-                </Button>
-              </div>
-            </section>
-            <section>
-              <h2>Authority IDs</h2>
-              <div className={styles.pillRow}>
-                {data.externalIds.map((externalId, index) => (
-                  <span
-                    key={
-                      externalId.id ??
-                      `${externalId.authority}-${externalId.external_key}-${index}`
-                    }
-                    className={styles.removablePill}
-                  >
-                    {externalId.external_url ? (
+          <section className={styles.works} aria-label="Works">
+            {data.works.length === 0 ? (
+              <p className={styles.empty}>No works yet.</p>
+            ) : (
+              <ol className={styles.workList} ref={worksListRef}>
+                {data.works.map((work, index) => {
+                  const dateLabel = formatWorkDate(work.date);
+                  return (
+                    <li key={`${work.href}-${index}`} className={styles.workRow}>
                       <a
-                        href={externalId.external_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className={styles.detailPill}
+                        className={styles.workTitle}
+                        href={work.href}
+                        dir="auto"
+                        data-work-title={index}
                       >
-                        {externalId.authority}
-                        <ExternalLink size={12} aria-hidden="true" />
+                        {work.title}
                       </a>
-                    ) : (
-                      externalId.authority
-                    )}
-                    {externalId.id ? (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        aria-label={`Remove authority ID ${externalId.authority}`}
-                        disabled={busy}
-                        onClick={() =>
-                          void runMutation(
-                            () =>
-                              deleteContributorExternalId(
-                                data.contributor.handle,
-                                externalId.id as string,
-                              ),
-                            "Failed to remove authority ID",
-                          )
-                        }
-                      >
-                        <X size={12} aria-hidden="true" />
-                      </Button>
-                    ) : null}
-                  </span>
-                ))}
-              </div>
-              <div className={styles.inlineForm}>
-                <Input
-                  aria-label="New authority"
-                  value={authorityDraft}
-                  placeholder="Authority…"
-                  className={styles.inlineFormInput}
-                  onChange={(event) => setAuthorityDraft(event.target.value)}
-                />
-                <Input
-                  aria-label="New authority key"
-                  value={externalKeyDraft}
-                  placeholder="External key…"
-                  className={styles.inlineFormInput}
-                  onChange={(event) => setExternalKeyDraft(event.target.value)}
-                />
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  disabled={busy || !authorityDraft.trim() || !externalKeyDraft.trim()}
-                  onClick={() => void handleAddExternalId()}
-                >
-                  Add
-                </Button>
-              </div>
-            </section>
-          </div>
-
-          <section className={styles.worksSection}>
-            <div className={styles.worksHeader}>
-              <h2>Works</h2>
-              <a
-                href={`/search?authors=${encodeURIComponent(
-                  data.contributor.handle,
-                )}`}
-                onClick={(event) => {
-                  event.preventDefault();
-                  paneRouter.push(
-                    `/search?authors=${encodeURIComponent(
-                      data.contributor.handle,
-                    )}`,
+                      {dateLabel || work.contentKind ? (
+                        <p className={styles.workMeta}>
+                          {dateLabel ? <span>{dateLabel}</span> : null}
+                          {work.contentKind ? (
+                            <span className={styles.workKind}>
+                              {work.contentKind.replace(/_/g, " ")}
+                            </span>
+                          ) : null}
+                        </p>
+                      ) : null}
+                      <ul className={styles.workFacts}>
+                        {work.roleFacts.map((fact, factIndex) => (
+                          <li
+                            key={`${fact.role}-${fact.creditedName}-${factIndex}`}
+                            className={styles.fact}
+                          >
+                            <RoleFact fact={fact} displayName={data.detail.displayName} />
+                          </li>
+                        ))}
+                      </ul>
+                    </li>
                   );
-                }}
-              >
-                Search this author&apos;s works
-              </a>
-            </div>
-            <div className={styles.workToolbar}>
-              <label>
-                <span>Search works</span>
-                <Input
-                  type="search"
-                  value={queryFilter}
-                  onChange={(event) => setQueryFilter(event.target.value)}
-                  placeholder="Filter credited works..."
-                  className={styles.workSearchInput}
-                />
-              </label>
-              <label>
-                <span>Role</span>
-                <Select
-                  value={roleFilter}
-                  onChange={(event) => setRoleFilter(event.target.value)}
-                >
-                  <option value="">All roles</option>
-                  {roleOptions.map((role) => (
-                    <option key={role} value={role}>
-                      {formatContributorRole(role)}
-                    </option>
-                  ))}
-                </Select>
-              </label>
-              <label>
-                <span>Kind</span>
-                <Select
-                  value={kindFilter}
-                  onChange={(event) => setKindFilter(event.target.value)}
-                >
-                  <option value="">All kinds</option>
-                  {kindOptions.map((kind) => (
-                    <option key={kind} value={kind}>
-                      {formatContentKind(kind)}
-                    </option>
-                  ))}
-                </Select>
-              </label>
-              <CollectionDisplayControls
-                value={displayState}
-                onChange={setDisplayState}
-              />
-            </div>
+                })}
+              </ol>
+            )}
 
-            <CollectionView
-              rows={visibleWorks.map((work) =>
-                presentContributorWork(work, {
-                  connectionSummary: workConnectionSummaries.get(
-                    `${work.object_type}:${work.object_id}`,
-                  ),
-                }),
-              )}
-              view={displayState.view}
-              density={displayState.density}
-              status={error ? "error" : "ready"}
-              ariaLabel="Works"
-              error={error ? <FeedbackNotice feedback={error} /> : undefined}
-              empty={
-                <FeedbackNotice severity="neutral">
-                  No visible credited works match the current filters.
-                </FeedbackNotice>
-              }
-            />
-          </section>
-
-          {mergeOpen ? (
-            <div
-              className={styles.modalBackdrop}
-              role="presentation"
-              onClick={() => setMergeOpen(false)}
-            >
-              <div
-                ref={mergeCardRef}
-                className={styles.modalCard}
-                role="dialog"
-                aria-modal="true"
-                aria-label="Merge author"
-                onClick={(event) => event.stopPropagation()}
-              >
-                <h2 className={styles.modalTitle}>Merge into…</h2>
-                <p className={styles.modalDescription}>
-                  Pick the author to merge <strong>{data.contributor.display_name}</strong>{" "}
-                  into. Credits, aliases, and authority IDs move to the survivor.
-                </p>
-                <ContributorPicker
-                  excludeHandle={data.contributor.handle}
-                  onSelect={(target) => void handleMergeSelect(target)}
-                  busy={busy}
-                />
-                <div className={styles.modalActions}>
-                  <Button
-                    variant="secondary"
-                    size="md"
-                    onClick={() => setMergeOpen(false)}
-                    disabled={busy}
-                  >
-                    Cancel
+            {data.worksNextCursor !== null ? (
+              worksError ? (
+                <div className={styles.worksError}>
+                  <FeedbackNotice feedback={worksError} />
+                  <Button variant="secondary" size="sm" onClick={() => void loadMore()}>
+                    Try again
                   </Button>
                 </div>
-              </div>
-            </div>
+              ) : (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className={styles.loadMore}
+                  onClick={() => void loadMore()}
+                  disabled={loadingMore}
+                  loading={loadingMore}
+                >
+                  Load more
+                </Button>
+              )
+            ) : null}
+          </section>
+
+          <div className="sr-only" role="status" aria-live="polite">
+            {announcement}
+          </div>
+
+          {renameOpen ? (
+            <RenameAuthorDialog
+              handle={data.detail.handle}
+              currentName={data.detail.displayName}
+              onClose={() => setRenameOpen(false)}
+              onRenamed={(detail) =>
+                setData((current) =>
+                  current && current.detail.handle === detail.handle
+                    ? { ...current, detail }
+                    : current,
+                )
+              }
+            />
           ) : null}
-        </>
+        </div>
       ) : null}
     </PaneSurface>
+  );
+}
+
+function RoleFact({
+  fact,
+  displayName,
+}: {
+  fact: ContributorRoleFact;
+  displayName: string;
+}) {
+  const label = roleFactLabel(fact.role);
+  // When the credited spelling matches the canonical heading, the role stands
+  // alone; otherwise it names the exact spelling used on this work (§4.3).
+  if (fact.creditedName === displayName) {
+    return <span>{label}</span>;
+  }
+  return (
+    <span>
+      {label} · credited as “<span dir="auto">{fact.creditedName}</span>”
+    </span>
+  );
+}
+
+function RenameAuthorDialog({
+  handle,
+  currentName,
+  onClose,
+  onRenamed,
+}: {
+  handle: string;
+  currentName: string;
+  onClose: () => void;
+  onRenamed: (detail: ContributorDetail) => void;
+}) {
+  const toast = useFeedback();
+  const [value, setValue] = useState(currentName);
+  const [saving, setSaving] = useState(false);
+  const [notice, setNotice] = useState<FeedbackContent | null>(null);
+  const intentRef = useRef(createMutationIntent());
+  const emptyErrorId = useId();
+
+  const trimmed = value.trim();
+  const isBlank = trimmed.length === 0;
+  const isUnchanged = trimmed === currentName.trim();
+  const canSave = !isBlank && !isUnchanged && !saving;
+
+  const emptyFeedback = useMemo<FeedbackContent | null>(
+    () => (isBlank ? { severity: "error", title: "Enter a name." } : null),
+    [isBlank],
+  );
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (!canSave) return;
+    setSaving(true);
+    setNotice(null);
+    const clientMutationId = intentRef.current.clientMutationId(trimmed);
+    try {
+      const detail = await patchContributorDisplayName(handle, {
+        clientMutationId,
+        displayName: trimmed,
+      });
+      intentRef.current.discard();
+      onRenamed(detail);
+      toast.show({ severity: "success", title: "Author name updated." });
+      onClose();
+    } catch (renameError) {
+      if (handleUnauthenticatedApiError(renameError)) return;
+      if (isApiError(renameError)) {
+        // A proven 409 replay mismatch rotates the mutation id — the reused key is
+        // now bound to a different request server-side (spec §7 shared
+        // mutation-intent rule; matches MediaAuthorsEditor). Other 4xx keep the
+        // key. The draft is preserved either way.
+        if (renameError.code === "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH") {
+          intentRef.current.rotate();
+        }
+        setNotice(toFeedback(renameError, { fallback: "Couldn't update the name." }));
+      } else {
+        // Transport/timeout: the server may have committed. Keep the same key so a
+        // retry replays idempotently and resolves the ambiguity (DP-1).
+        setNotice({
+          severity: "error",
+          title: "Couldn't confirm the change. Try again.",
+        });
+      }
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Dialog open title="Edit name" onClose={onClose}>
+      <form className={styles.renameForm} onSubmit={submit}>
+        <p className={styles.renameHelper}>
+          Used across Nexus. Each work keeps the name it was credited under.
+        </p>
+        <label className={styles.renameField}>
+          <span className={styles.renameLabel}>Author name</span>
+          <Input
+            value={value}
+            dir="auto"
+            autoFocus
+            aria-invalid={isBlank || undefined}
+            aria-describedby={isBlank ? emptyErrorId : undefined}
+            onChange={(nextEvent) => setValue(nextEvent.target.value)}
+          />
+        </label>
+        <FieldFeedback feedback={emptyFeedback} id={emptyErrorId} />
+        {notice ? <FeedbackNotice feedback={notice} /> : null}
+        <div className={styles.renameActions}>
+          <Button type="button" variant="secondary" size="md" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit" variant="primary" size="md" disabled={!canSave} loading={saving}>
+            Save
+          </Button>
+        </div>
+      </form>
+    </Dialog>
   );
 }

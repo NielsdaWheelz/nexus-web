@@ -10,7 +10,6 @@ const appListItem = `${appList}Item`;
 const contextRow = ["Context", "Row"].join("");
 const settingRow = ["Setting", "Row"].join("");
 const standardPaneBodies = [
-  "src/app/(authenticated)/authors/AuthorsPaneBody.tsx",
   "src/app/(authenticated)/authors/[handle]/AuthorPaneBody.tsx",
   "src/app/(authenticated)/conversations/ConversationsPaneBody.tsx",
   "src/app/(authenticated)/libraries/LibrariesPaneBody.tsx",

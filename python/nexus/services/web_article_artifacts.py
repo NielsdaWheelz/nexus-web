@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import delete, select, text
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from nexus.db.models import Fragment, FragmentBlock, Highlight, HighlightFragmentAnchor
@@ -43,8 +43,11 @@ def delete_web_article_artifacts(
         db.execute(delete(FragmentBlock).where(FragmentBlock.fragment_id.in_(fragment_ids)))
 
     db.execute(delete(Fragment).where(Fragment.media_id == media_id))
-    db.execute(
-        text("DELETE FROM contributor_credits WHERE media_id = :media_id"),
-        {"media_id": media_id},
-    )
+    # Deliberately NOT credits/author memos: every caller of this helper is a
+    # LIVE-media refresh/re-ingest (web re-ingest, source requeue, browser
+    # re-capture, X thread/post refresh). Refresh keeps the prior author list
+    # until the post-commit observation replaces it (spec 2.4), NOT_OBSERVED
+    # re-fetches preserve it (AC 10), and a manual pin plus its replay memos
+    # survive refresh (AC 13, spec 2.8). Deletion cleanup lives with true
+    # deletions only: contributors.cleanup_credits_for_deleted_target.
     db.flush()

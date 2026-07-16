@@ -1,81 +1,345 @@
-"""Contributor reads and pane hydration."""
+"""The public author operations facade (spec §3).
+
+Sole transaction/operation owner for contributor identity. The final semantic
+surface is exactly: contributor search, contributor detail, distinct works,
+ref resolve/hydrate for panes, observed role-slice replacement (single and
+gutenberg-chunked batch), media-author PUT/reset, display-name rename, and the
+transaction-scoped target cleanup + orphan prune helpers. No second public
+identity/write path exists.
+
+Composition:
+
+- identity rows (contributors/aliases/keys) mutate only via the visibly private
+  ``_contributor_identity``; credit rows and the media pin only via
+  ``_contributor_credit_writes``; replay memos only via ``_contributor_replay``;
+- reads compose the canonical credit relation owned by ``contributor_credits``
+  and the visibility CTEs owned by ``auth/permissions``;
+- the four mutation entry points take NO session: each opens a fresh session
+  (precedent: ``tasks/enrich_metadata.dispatch_enrich_metadata``) and terminates
+  in ``retry_serializable`` so SERIALIZABLE + the named-constraint whole-op
+  retry is the only race recovery (spec 2.7, D-11/D-22) — no savepoints, no
+  locks, no nested runners;
+- ``cleanup_credits_for_deleted_target``/``prune_contributors_if_orphaned`` are
+  the deliberate composition exception: they run on the caller's deletion
+  transaction and start no runner (spec §3).
+"""
 
 from __future__ import annotations
 
 import base64
-import hashlib
 import json
-import re
-from collections.abc import Callable, Collection, Sequence
-from dataclasses import dataclass
-from typing import Any, Literal, cast
-from uuid import UUID, uuid4
+from collections.abc import Iterable, Sequence
+from functools import partial
+from typing import Literal, cast
+from uuid import UUID
 
-from sqlalchemy import String, bindparam, func, or_, select, text
-from sqlalchemy.exc import IntegrityError
+from pydantic import BaseModel, ValidationError
+from sqlalchemy import delete, func, or_, select, text
 from sqlalchemy.orm import Session
 
+from nexus.auth.middleware import Viewer
 from nexus.auth.permissions import (
-    visible_content_credit_rows_sql,
+    can_read_media,
+    credited_visible_contributor_ids_cte_sql,
     visible_contributor_ids_cte_sql,
-    visible_media_ids_cte_sql,
-    visible_podcast_ids_cte_sql,
 )
-from nexus.db.errors import integrity_constraint_name
 from nexus.db.models import (
+    ChatRunTurnContext,
     Contributor,
     ContributorAlias,
     ContributorCredit,
     ContributorExternalId,
-    ContributorIdentityEvent,
+    Media,
+    PinnedObjectRef,
     ResourceEdge,
+    ResourceMutation,
+    ResourceVersion,
+    ResourceViewState,
 )
 from nexus.db.retries import retry_serializable
-from nexus.errors import ApiError, ApiErrorCode, ForbiddenError, NotFoundError
+from nexus.db.session import get_session_factory
+from nexus.errors import (
+    ApiError,
+    ApiErrorCode,
+    ForbiddenError,
+    InvalidRequestError,
+    NotFoundError,
+)
 from nexus.schemas.contributors import (
-    ContributorAliasCreateRequest,
-    ContributorAliasOut,
-    ContributorDirectoryEntry,
-    ContributorDirectoryFacets,
-    ContributorDirectoryPage,
-    ContributorDirectoryPageInfo,
-    ContributorExternalIdCreateRequest,
-    ContributorExternalIdOut,
-    ContributorKind,
-    ContributorMergeRequest,
-    ContributorOut,
-    ContributorSearchResultOut,
-    ContributorSplitRequest,
-    ContributorStatus,
-    ContributorWorkOut,
-    FacetCount,
+    ContributorDetailOut,
+    ContributorRenameRequest,
+    ContributorRole,
+    ContributorRoleFactOut,
+    ContributorSearchItemOut,
+    ContributorSearchPageOut,
+    ContributorWorkExampleOut,
+    ContributorWorkItemOut,
+    ContributorWorkPageOut,
+    ExistingAuthorBinding,
+    ManualMediaAuthorsRequest,
+    MediaAuthorCreditOut,
+    MediaAuthorsOut,
+    MediaAuthorsPutRequest,
 )
 from nexus.schemas.resource_items import HydratedObjectRef
+from nexus.services._contributor_credit_writes import (
+    CreditTarget as CreditTarget,
+)
+from nexus.services._contributor_credit_writes import (
+    GutenbergTarget as GutenbergTarget,
+)
+from nexus.services._contributor_credit_writes import (
+    MediaTarget as MediaTarget,
+)
+from nexus.services._contributor_credit_writes import (
+    PodcastTarget as PodcastTarget,
+)
+
+# Internal-use helpers are bound to underscored names: the facade is the only
+# public author surface, and a plain re-export would mint a second write path
+# (e.g. calling the credit writer with a job session, bypassing the fresh-session
+# + retry_serializable discipline). Gated in test_contributor_ownership_guards.
+from nexus.services._contributor_credit_writes import (
+    replace_role_slices as _replace_role_slices,
+)
+from nexus.services._contributor_credit_writes import (
+    set_media_author_mode as _set_media_author_mode,
+)
+from nexus.services._contributor_identity import (
+    ResolvedCredit as _ResolvedCredit,
+)
+from nexus.services._contributor_identity import (
+    create_contributor as _create_contributor,
+)
+from nexus.services._contributor_identity import (
+    ensure_alias as _ensure_alias,
+)
+from nexus.services._contributor_identity import (
+    resolve_observation_credits as _resolve_observation_credits,
+)
+from nexus.services._contributor_replay import lookup_memo as _lookup_memo
+from nexus.services._contributor_replay import record_memo as _record_memo
+from nexus.services._contributor_replay import request_hash as _request_hash
+from nexus.services.capabilities import can_edit_media_authors, can_rename_contributor
 from nexus.services.chat_context_refs import contributor_is_referenced_in_persisted_context
+from nexus.services.contributor_credits import (
+    distinct_visible_works_sql,
+    load_contributor_credits_for_media,
+)
 from nexus.services.contributor_taxonomy import (
-    CONFIRMED_ALIAS_SOURCES,
-    CONTRIBUTOR_EXTERNAL_ID_AUTHORITIES,
-    normalize_contributor_name,
-    normalize_contributor_role,
+    CONTRIBUTOR_ROLES_ORDERED,
+    ContributorHandle,
+    ContributorObservation,
+    ContributorObservationBatch,
+    ManualDistinctSeed,
+    NotObserved,
+    ObservedRoleSlices,
+    clean_contributor_display,
+    contributor_handle_candidates,
+    contributor_match_key,
 )
 from nexus.services.resource_graph.refs import ResourceRef
 
-ACTIVE_STATUSES = ("unverified", "verified")
-CONTRIBUTOR_CURATOR_ROLES = frozenset({"admin", "contributor_curator"})
-MergeContributorTransactionHook = Callable[[Session, Contributor, Contributor], None]
+# One fresh session + one serializable operation per chunk of gutenberg targets
+# (D-15): caps a 75k-row first sync at ~375 transactions without sharing any
+# transaction across the source/author boundary.
+_BATCH_CHUNK_SIZE = 200
+
+_WORKS_ORDER_SQL = "w.date_key DESC NULLS LAST, w.title ASC, w.href ASC"
 
 
-def get_contributor_by_handle(
+# ---------------------------------------------------------------------------
+# Queries (caller session)
+# ---------------------------------------------------------------------------
+
+
+def search_contributors(
     db: Session,
-    contributor_handle: str,
-    viewer_id: UUID | None = None,
-) -> ContributorOut:
-    contributor = (
-        _load_visible_contributor_by_handle(db, contributor_handle, viewer_id)
-        if viewer_id is not None
-        else _load_active_contributor_by_handle(db, contributor_handle)
-    )
-    return _contributor_out(db, contributor)
+    *,
+    viewer_id: UUID,
+    q: str,
+    cursor: str | None = None,
+    limit: int = 20,
+) -> ContributorSearchPageOut:
+    """Lexical canonical-name/alias search for the picker (spec §6, D-8/D-25).
+
+    Matching is on the normalized (match-key) form of every alias; the canonical
+    display spelling always owns an alias row, so display matches are alias
+    matches. Ordering is ``(match_key(display_name), handle)``: the display
+    alias row (literal equal to ``display_name``) carries exactly that match key,
+    which makes the ordering key SQL-computable for keyset pagination.
+    """
+    q_key = contributor_match_key(q)
+    if not q_key:
+        return ContributorSearchPageOut(contributors=[], nextCursor=None)
+
+    pattern = f"%{_escape_like(q_key)}%"
+    params: dict[str, object] = {
+        "viewer_id": viewer_id,
+        "pattern": pattern,
+        "limit_plus_one": limit + 1,
+    }
+    keyset_sql = ""
+    if cursor is not None:
+        decoded = _decode_cursor(cursor, ("n", "h"))
+        after_key, after_handle = decoded["n"], decoded["h"]
+        if not isinstance(after_key, str) or not isinstance(after_handle, str):
+            raise InvalidRequestError(message="Invalid cursor")
+        keyset_sql = "AND (da.normalized_alias, c.handle) > (:after_key, :after_handle)"
+        params["after_key"] = after_key
+        params["after_handle"] = after_handle
+
+    rows = db.execute(
+        text(
+            f"""
+            SELECT c.id, c.handle, c.display_name, da.normalized_alias AS display_key
+            FROM contributors c
+            JOIN ({credited_visible_contributor_ids_cte_sql()}) cv
+                ON cv.contributor_id = c.id
+            JOIN contributor_aliases da
+                ON da.contributor_id = c.id AND da.alias = c.display_name
+            WHERE EXISTS (
+                SELECT 1
+                FROM contributor_aliases ca
+                WHERE ca.contributor_id = c.id
+                  AND ca.normalized_alias LIKE :pattern ESCAPE '\\'
+            )
+            {keyset_sql}
+            ORDER BY da.normalized_alias ASC, c.handle ASC
+            LIMIT :limit_plus_one
+            """
+        ),
+        params,
+    ).all()
+
+    page = rows[:limit]
+    next_cursor = None
+    if len(rows) > limit and page:
+        next_cursor = _encode_cursor({"n": page[-1].display_key, "h": page[-1].handle})
+
+    contributor_ids = [row.id for row in page]
+    matched_alias_by_id = _matched_aliases(db, {row.id: row.display_name for row in page}, pattern)
+    stats_by_id = _work_stats(db, viewer_id=viewer_id, contributor_ids=contributor_ids)
+
+    items: list[ContributorSearchItemOut] = []
+    for row in page:
+        work_count, examples = stats_by_id.get(row.id, (0, []))
+        matched_alias = None
+        if q_key not in row.display_key:
+            # The canonical name did not match; surface the alias that did.
+            matched_alias = matched_alias_by_id.get(row.id)
+        items.append(
+            ContributorSearchItemOut(
+                handle=row.handle,
+                href=f"/authors/{row.handle}",
+                displayName=row.display_name,
+                workCount=work_count,
+                workExamples=examples,
+                matchedAlias=matched_alias,
+            )
+        )
+    return ContributorSearchPageOut(contributors=items, nextCursor=next_cursor)
+
+
+def get_contributor_detail(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    contributor_handle: ContributorHandle,
+    viewer_roles: frozenset[str] = frozenset(),
+) -> ContributorDetailOut:
+    """Detail view under broad visibility. ``viewer_roles`` shapes ``canRename``.
+
+    Roles ride the viewer's token (they are not database-derivable from
+    ``viewer_id``), so the route passes ``viewer.roles``; the default keeps the
+    capability truthfully false for role-less callers.
+    """
+    contributor = _load_visible_contributor_by_handle(db, str(contributor_handle), viewer_id)
+    return _contributor_detail_out(db, contributor, can_rename=can_rename_contributor(viewer_roles))
+
+
+def list_contributor_works(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    contributor_handle: ContributorHandle,
+    cursor: str | None = None,
+    limit: int = 100,
+) -> ContributorWorkPageOut:
+    """Distinct visible works with nested role facts (spec §4, D-25 ordering)."""
+    contributor = _load_visible_contributor_by_handle(db, str(contributor_handle), viewer_id)
+
+    params: dict[str, object] = {
+        "viewer_id": viewer_id,
+        "contributor_id": contributor.id,
+        "limit_plus_one": limit + 1,
+    }
+    keyset_sql = ""
+    if cursor is not None:
+        decoded = _decode_cursor(cursor, ("d", "t", "h"))
+        after_date, after_title, after_href = decoded["d"], decoded["t"], decoded["h"]
+        if (
+            not (after_date is None or isinstance(after_date, str))
+            or not isinstance(after_title, str)
+            or not isinstance(after_href, str)
+        ):
+            raise InvalidRequestError(message="Invalid cursor")
+        params["after_title"] = after_title
+        params["after_href"] = after_href
+        if after_date is not None:
+            params["after_date"] = after_date
+            keyset_sql = """AND (
+                w.date_key IS NULL
+                OR w.date_key < :after_date
+                OR (
+                    w.date_key = :after_date
+                    AND (w.title, w.href) > (:after_title, :after_href)
+                )
+            )"""
+        else:
+            keyset_sql = (
+                "AND w.date_key IS NULL AND (w.title, w.href) > (:after_title, :after_href)"
+            )
+
+    rows = db.execute(
+        text(
+            f"""
+            WITH works AS ({distinct_visible_works_sql()})
+            SELECT w.title, w.href, w.content_kind, w.date_key, w.role_facts
+            FROM works w
+            WHERE w.contributor_id = :contributor_id
+            {keyset_sql}
+            ORDER BY {_WORKS_ORDER_SQL}
+            LIMIT :limit_plus_one
+            """
+        ),
+        params,
+    ).all()
+
+    page = rows[:limit]
+    next_cursor = None
+    if len(rows) > limit and page:
+        last = page[-1]
+        next_cursor = _encode_cursor({"d": last.date_key, "t": last.title, "h": last.href})
+
+    works = [
+        ContributorWorkItemOut(
+            title=row.title,
+            href=row.href,
+            contentKind=row.content_kind,
+            date=row.date_key,
+            roleFacts=[
+                ContributorRoleFactOut(
+                    creditedName=fact["credited_name"],
+                    role=cast(ContributorRole, fact["role"]),
+                    rawRole=fact["raw_role"],
+                )
+                for fact in row.role_facts
+            ],
+        )
+        for row in page
+    ]
+    return ContributorWorkPageOut(works=works, nextCursor=next_cursor)
 
 
 def resolve_contributor_ref_by_handle(
@@ -88,1018 +352,6 @@ def resolve_contributor_ref_by_handle(
     return ResourceRef(scheme="contributor", id=contributor.id)
 
 
-def resolve_canonical_contributor_ids(db: Session, handles: Sequence[str]) -> list[UUID]:
-    """Map handles to their canonical survivor ids (following merges), deduped and order-preserving.
-
-    Unknown handles are dropped. Callers filter by these ids so a merged handle returns the
-    survivor's content."""
-    canonical_ids: list[UUID] = []
-    seen: set[UUID] = set()
-    for handle in handles:
-        start_id = db.scalar(select(Contributor.id).where(Contributor.handle == handle))
-        if start_id is None:
-            continue
-        canonical_id = _canonical_contributor_id(db, start_id)
-        if canonical_id not in seen:
-            seen.add(canonical_id)
-            canonical_ids.append(canonical_id)
-    return canonical_ids
-
-
-def list_contributor_works(
-    db: Session,
-    viewer_id: UUID,
-    contributor_handle: str,
-    *,
-    role: str | None = None,
-    content_kind: str | None = None,
-    q: str | None = None,
-    limit: int = 100,
-) -> list[ContributorWorkOut]:
-    contributor = _load_visible_contributor_by_handle(db, contributor_handle, viewer_id)
-    normalized_role = normalize_contributor_role(role) if role else None
-    q_pattern = f"%{q.strip()}%" if q and q.strip() else None
-
-    rows = db.execute(
-        text(
-            f"""
-            WITH visible_media AS ({visible_media_ids_cte_sql()}),
-            works AS (
-                SELECT
-                    'media' AS object_type,
-                    cc.media_id::text AS object_id,
-                    '/media/' || cc.media_id::text AS route,
-                    m.title,
-                    m.kind AS content_kind,
-                    m.published_date,
-                    m.publisher,
-                    m.description,
-                    cc.credited_name,
-                    cc.role,
-                    cc.raw_role,
-                    cc.ordinal,
-                    cc.source,
-                    cc.created_at
-                FROM contributor_credits cc
-                JOIN media m ON m.id = cc.media_id
-                JOIN visible_media vm ON vm.media_id = m.id
-                WHERE cc.contributor_id = :contributor_id
-                  AND cc.media_id IS NOT NULL
-
-                UNION ALL
-
-                SELECT
-                    'podcast' AS object_type,
-                    cc.podcast_id::text AS object_id,
-                    '/podcasts/' || cc.podcast_id::text AS route,
-                    p.title,
-                    'podcast' AS content_kind,
-                    NULL AS published_date,
-                    NULL AS publisher,
-                    p.description,
-                    cc.credited_name,
-                    cc.role,
-                    cc.raw_role,
-                    cc.ordinal,
-                    cc.source,
-                    cc.created_at
-                FROM contributor_credits cc
-                JOIN podcasts p ON p.id = cc.podcast_id
-                WHERE cc.contributor_id = :contributor_id
-                  AND cc.podcast_id IS NOT NULL
-                  AND cc.podcast_id IN ({visible_podcast_ids_cte_sql()})
-
-                UNION ALL
-
-                SELECT
-                    'project_gutenberg_catalog' AS object_type,
-                    cc.project_gutenberg_catalog_ebook_id::text AS object_id,
-                    '/browse/gutenberg/' ||
-                        cc.project_gutenberg_catalog_ebook_id::text AS route,
-                    pg.title,
-                    'project_gutenberg_ebook' AS content_kind,
-                    pg.issued::text AS published_date,
-                    NULL AS publisher,
-                    NULL AS description,
-                    cc.credited_name,
-                    cc.role,
-                    cc.raw_role,
-                    cc.ordinal,
-                    cc.source,
-                    cc.created_at
-                FROM contributor_credits cc
-                JOIN project_gutenberg_catalog pg
-                  ON pg.ebook_id = cc.project_gutenberg_catalog_ebook_id
-                WHERE cc.contributor_id = :contributor_id
-                  AND cc.project_gutenberg_catalog_ebook_id IS NOT NULL
-            )
-            SELECT *
-            FROM works
-            WHERE (:role IS NULL OR role = :role)
-              AND (:content_kind IS NULL OR content_kind = :content_kind)
-              AND (
-                    :q_pattern IS NULL
-                    OR title ILIKE :q_pattern
-                    OR credited_name ILIKE :q_pattern
-                  )
-            ORDER BY role ASC, content_kind ASC, title ASC, ordinal ASC, created_at ASC
-            LIMIT :limit
-            """
-        ).bindparams(
-            bindparam("role", type_=String),
-            bindparam("content_kind", type_=String),
-            bindparam("q_pattern", type_=String),
-        ),
-        {
-            "viewer_id": viewer_id,
-            "contributor_id": contributor.id,
-            "role": normalized_role,
-            "content_kind": content_kind,
-            "q_pattern": q_pattern,
-            "limit": limit,
-        },
-    ).mappings()
-
-    works: list[ContributorWorkOut] = []
-    for row in rows:
-        object_id: str | int = row["object_id"]
-        if row["object_type"] == "project_gutenberg_catalog":
-            object_id = int(object_id)
-        works.append(
-            ContributorWorkOut(
-                object_type=row["object_type"],
-                object_id=object_id,
-                route=row["route"],
-                title=row["title"],
-                content_kind=row["content_kind"],
-                published_date=row["published_date"],
-                publisher=row["publisher"],
-                description=row["description"],
-                credited_name=row["credited_name"],
-                role=row["role"],
-                raw_role=row["raw_role"],
-                ordinal=row["ordinal"],
-                source=row["source"],
-            )
-        )
-    return works
-
-
-def search_contributors(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    q: str | None = None,
-    limit: int = 20,
-) -> list[ContributorSearchResultOut]:
-    q_text = q.strip() if q else ""
-    q_pattern = f"%{q_text}%" if q_text else None
-    rows = db.execute(
-        text(
-            f"""
-            WITH {_visible_contributor_ctes_sql()},
-            matches AS (
-                SELECT
-                    c.id,
-                    c.handle,
-                    c.display_name,
-                    c.sort_name,
-                    c.kind,
-                    c.status,
-                    c.disambiguation,
-                    c.display_name AS matched_name,
-                    0 AS match_rank
-                FROM contributors c
-                JOIN visible_contributors vc ON vc.contributor_id = c.id
-                WHERE c.status IN ('unverified', 'verified')
-                  AND (
-                        :q_pattern IS NULL
-                        OR c.display_name ILIKE :q_pattern
-                        OR c.handle ILIKE :q_pattern
-                  )
-
-                UNION ALL
-
-                SELECT
-                    c.id,
-                    c.handle,
-                    c.display_name,
-                    c.sort_name,
-                    c.kind,
-                    c.status,
-                    c.disambiguation,
-                    ca.alias AS matched_name,
-                    1 AS match_rank
-                FROM contributor_aliases ca
-                JOIN contributors c ON c.id = ca.contributor_id
-                JOIN visible_contributors vc ON vc.contributor_id = c.id
-                WHERE c.status IN ('unverified', 'verified')
-                  AND :q_pattern IS NOT NULL
-                  AND ca.alias ILIKE :q_pattern
-
-                UNION ALL
-
-                SELECT
-                    c.id,
-                    c.handle,
-                    c.display_name,
-                    c.sort_name,
-                    c.kind,
-                    c.status,
-                    c.disambiguation,
-                    cc.credited_name AS matched_name,
-                    2 AS match_rank
-                FROM visible_contributor_credits cc
-                JOIN contributors c ON c.id = cc.contributor_id
-                JOIN visible_contributors vc ON vc.contributor_id = c.id
-                WHERE c.status IN ('unverified', 'verified')
-                  AND :q_pattern IS NOT NULL
-                  AND cc.credited_name ILIKE :q_pattern
-
-                UNION ALL
-
-                SELECT
-                    c.id,
-                    c.handle,
-                    c.display_name,
-                    c.sort_name,
-                    c.kind,
-                    c.status,
-                    c.disambiguation,
-                    cei.external_key AS matched_name,
-                    3 AS match_rank
-                FROM contributor_external_ids cei
-                JOIN contributors c ON c.id = cei.contributor_id
-                JOIN visible_contributors vc ON vc.contributor_id = c.id
-                WHERE c.status IN ('unverified', 'verified')
-                  AND :q_pattern IS NOT NULL
-                  AND (
-                        cei.external_key ILIKE :q_pattern
-                        OR cei.external_url ILIKE :q_pattern
-                  )
-            ),
-            ranked AS (
-                SELECT DISTINCT ON (id) *
-                FROM matches
-                ORDER BY id, match_rank ASC, display_name ASC
-            )
-            SELECT *
-            FROM ranked
-            ORDER BY match_rank ASC, display_name ASC, handle ASC
-            LIMIT :limit
-            """
-        ).bindparams(bindparam("q_pattern", type_=String)),
-        {"viewer_id": viewer_id, "q_pattern": q_pattern, "limit": limit},
-    ).mappings()
-
-    return [
-        ContributorSearchResultOut(
-            handle=row["handle"],
-            href=f"/authors/{row['handle']}",
-            display_name=row["display_name"],
-            sort_name=row["sort_name"],
-            kind=row["kind"],
-            status=row["status"],
-            disambiguation=row["disambiguation"],
-            matched_name=row["matched_name"],
-        )
-        for row in rows
-    ]
-
-
-def list_contributors(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    q: str | None = None,
-    roles: frozenset[str] = frozenset(),
-    kinds: frozenset[str] = frozenset(),
-    content_kinds: frozenset[str] = frozenset(),
-    statuses: frozenset[str] = frozenset(),
-    sort: Literal["works", "name"] = "works",
-    cursor: str | None = None,
-    limit: int = 40,
-) -> ContributorDirectoryPage:
-    """Faceted directory of contributors visible to the viewer, with visibility-scoped work counts.
-
-    Object-link-only contributors appear with a work_count of 0. ``sort="name"`` paginates with a
-    keyset cursor over (sort_name, id); ``sort="works"`` paginates with an offset cursor."""
-    params: dict[str, Any] = {"viewer_id": viewer_id, "limit": limit + 1}
-    filters = ["c.status NOT IN ('merged', 'tombstoned')"]
-    if roles:
-        filters.append(
-            "EXISTS (SELECT 1 FROM scoped s WHERE s.contributor_id = c.id AND s.role = ANY(:roles))"
-        )
-        params["roles"] = sorted(roles)
-    if kinds:
-        filters.append("c.kind = ANY(:kinds)")
-        params["kinds"] = sorted(kinds)
-    if content_kinds:
-        filters.append(
-            "EXISTS (SELECT 1 FROM scoped s "
-            "WHERE s.contributor_id = c.id AND s.content_kind = ANY(:content_kinds))"
-        )
-        params["content_kinds"] = sorted(content_kinds)
-    if statuses:
-        filters.append("c.status = ANY(:statuses)")
-        params["statuses"] = sorted(statuses)
-    q_text = q.strip() if q else ""
-    if q_text:
-        filters.append(
-            "(c.display_name ILIKE :q_like OR c.sort_name ILIKE :q_like "
-            "OR EXISTS (SELECT 1 FROM contributor_aliases a "
-            "WHERE a.contributor_id = c.id AND a.normalized_alias ILIKE :q_prefix))"
-        )
-        params["q_like"] = f"%{q_text}%"
-        params["q_prefix"] = f"{q_text.lower()}%"
-
-    if sort == "name":
-        decoded = _decode_directory_cursor(cursor, "name") if cursor else None
-        if decoded is not None:
-            filters.append("(c.sort_name, c.id) > (:after_sort, CAST(:after_id AS uuid))")
-            params["after_sort"] = decoded["after"][0]
-            params["after_id"] = decoded["after"][1]
-        order_by = "ORDER BY c.sort_name ASC, c.id ASC"
-        offset = 0
-    else:
-        offset = _decode_directory_cursor(cursor, "works")["offset"] if cursor else 0
-        params["offset"] = offset
-        order_by = "ORDER BY work_count DESC, c.sort_name ASC, c.id ASC OFFSET :offset"
-
-    rows = (
-        db.execute(
-            text(
-                f"""
-            WITH {_directory_scoped_cte_sql()},
-                 counts AS (
-                     SELECT contributor_id,
-                            COUNT(DISTINCT work_key) AS work_count,
-                            array_agg(DISTINCT role) AS roles,
-                            array_agg(DISTINCT content_kind) AS content_kinds
-                     FROM scoped GROUP BY contributor_id
-                 )
-            SELECT c.id, c.handle, c.display_name, c.sort_name, c.kind, c.status, c.disambiguation,
-                   COALESCE(counts.work_count, 0) AS work_count,
-                   COALESCE(counts.roles, ARRAY[]::text[]) AS roles,
-                   COALESCE(counts.content_kinds, ARRAY[]::text[]) AS content_kinds
-            FROM contributors c
-            JOIN visible v ON v.contributor_id = c.id
-            LEFT JOIN counts ON counts.contributor_id = c.id
-            WHERE {" AND ".join(filters)}
-            {order_by}
-            LIMIT :limit
-            """
-            ),
-            params,
-        )
-        .mappings()
-        .all()
-    )
-
-    has_more = len(rows) > limit
-    page_rows = rows[:limit]
-    entries = [
-        ContributorDirectoryEntry(
-            handle=row["handle"],
-            href=f"/authors/{row['handle']}",
-            display_name=row["display_name"],
-            sort_name=row["sort_name"],
-            kind=row["kind"],
-            status=row["status"],
-            disambiguation=row["disambiguation"],
-            work_count=row["work_count"],
-            roles=sorted(row["roles"]),
-            content_kinds=sorted(row["content_kinds"]),
-        )
-        for row in page_rows
-    ]
-
-    next_cursor: str | None = None
-    if has_more and page_rows:
-        if sort == "name":
-            last = page_rows[-1]
-            next_cursor = _encode_directory_cursor(
-                {"k": "name", "after": [last["sort_name"], str(last["id"])]}
-            )
-        else:
-            next_cursor = _encode_directory_cursor({"k": "works", "offset": offset + limit})
-
-    return ContributorDirectoryPage(
-        entries=entries,
-        facets=_contributor_directory_facets(db, viewer_id),
-        page=ContributorDirectoryPageInfo(has_more=has_more, next_cursor=next_cursor),
-    )
-
-
-def _contributor_directory_facets(db: Session, viewer_id: UUID) -> ContributorDirectoryFacets:
-    rows = (
-        db.execute(
-            text(
-                f"""
-            WITH {_directory_scoped_cte_sql()},
-                 active AS (
-                     SELECT c.id, c.kind, c.status
-                     FROM contributors c
-                     JOIN visible v ON v.contributor_id = c.id
-                     WHERE c.status NOT IN ('merged', 'tombstoned')
-                 )
-            SELECT 'role' AS facet, role AS value, COUNT(DISTINCT contributor_id) AS count
-            FROM scoped GROUP BY role
-            UNION ALL
-            SELECT 'content_kind', content_kind, COUNT(DISTINCT contributor_id) FROM scoped
-            GROUP BY content_kind
-            UNION ALL
-            SELECT 'kind', kind, COUNT(*) FROM active GROUP BY kind
-            UNION ALL
-            SELECT 'status', status, COUNT(*) FROM active GROUP BY status
-            """
-            ),
-            {"viewer_id": viewer_id},
-        )
-        .mappings()
-        .all()
-    )
-
-    buckets: dict[str, list[FacetCount]] = {
-        "role": [],
-        "content_kind": [],
-        "kind": [],
-        "status": [],
-    }
-    for row in rows:
-        buckets[row["facet"]].append(FacetCount(value=row["value"], count=row["count"]))
-    for facet_counts in buckets.values():
-        facet_counts.sort(key=lambda fc: (-fc.count, fc.value))
-    return ContributorDirectoryFacets(
-        roles=buckets["role"],
-        kinds=buckets["kind"],
-        content_kinds=buckets["content_kind"],
-        statuses=buckets["status"],
-    )
-
-
-def _directory_scoped_cte_sql() -> str:
-    """`visible` (viewer-visible contributor ids) + `scoped` (their visible credit rows with
-    role/content_kind/work_key) — the shared base of the directory listing and its facets."""
-    return f"""visible AS ({visible_contributor_ids_cte_sql()}),
-                 scoped AS (
-                     SELECT cc.contributor_id, cc.role,
-                            CASE WHEN cc.media_id IS NOT NULL THEN m.kind
-                                 WHEN cc.podcast_id IS NOT NULL THEN 'podcast'
-                                 ELSE 'gutenberg' END AS content_kind,
-                            COALESCE(cc.media_id::text, cc.podcast_id::text,
-                                     cc.project_gutenberg_catalog_ebook_id::text) AS work_key
-                     FROM ({visible_content_credit_rows_sql()}) cc
-                     LEFT JOIN media m ON m.id = cc.media_id
-                 )"""
-
-
-def _encode_directory_cursor(payload: dict[str, Any]) -> str:
-    return base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
-
-
-def _decode_directory_cursor(cursor: str, expected_kind: str) -> dict[str, Any]:
-    invalid = ApiError(ApiErrorCode.E_INVALID_REQUEST, "Invalid directory cursor")
-    try:
-        payload = json.loads(base64.urlsafe_b64decode(cursor.encode()))
-    except (ValueError, json.JSONDecodeError) as exc:
-        raise invalid from exc
-    if not isinstance(payload, dict) or payload.get("k") != expected_kind:
-        raise invalid
-    if expected_kind == "name":
-        after = payload.get("after")
-        if not (isinstance(after, list) and len(after) == 2 and isinstance(after[0], str)):
-            raise invalid
-        try:
-            UUID(after[1])
-        except (ValueError, TypeError) as exc:
-            raise invalid from exc
-    else:
-        offset = payload.get("offset")
-        if not isinstance(offset, int) or isinstance(offset, bool) or offset < 0:
-            raise invalid
-    return payload
-
-
-# ---------------------------------------------------------------------------
-# Identity writes — curator-gated, each atomic under SERIALIZABLE with retry
-# via retry_serializable (no explicit row locking, per concurrency.md).
-# ---------------------------------------------------------------------------
-
-
-def split_contributor(
-    db: Session,
-    *,
-    actor_user_id: UUID,
-    actor_roles: Collection[str] = frozenset(),
-    contributor_handle: str,
-    request: ContributorSplitRequest,
-) -> ContributorOut:
-    _require_contributor_curator(actor_roles)
-    # Function-local import: resource_graph.edges reaches back here via
-    # resolve → notes → object_refs → contributors.
-    from nexus.services.resource_graph.edges import repoint_edges
-
-    if not (request.credit_ids or request.alias_ids or request.external_id_ids):
-        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Select contributor records to split")
-    display_name = request.display_name.strip()
-
-    def _txn() -> ContributorOut:
-        source = _load_active_contributor_by_handle(db, contributor_handle)
-        selected_credits = _load_selected_credits_for_split(db, source.id, request.credit_ids)
-        selected_aliases = _load_selected_aliases_for_split(db, source.id, request.alias_ids)
-        selected_external_ids = _load_selected_external_ids_for_split(
-            db, source.id, request.external_id_ids
-        )
-
-        new_contributor = Contributor(
-            id=uuid4(),
-            handle=unique_contributor_handle_for_name(db, normalize_contributor_name(display_name)),
-            display_name=display_name,
-            sort_name=display_name,
-            kind=source.kind,
-            status="unverified",
-            disambiguation=source.disambiguation,
-        )
-        db.add(new_contributor)
-        db.flush()
-        db.add(
-            ContributorAlias(
-                contributor_id=new_contributor.id,
-                alias=display_name,
-                normalized_alias=normalize_contributor_name(display_name),
-                alias_kind="display",
-                source="manual",
-                is_primary=True,
-            )
-        )
-
-        moved_credit_count = _move_selected_credits(selected_credits, new_contributor.id)
-        moved_alias_count = _move_selected_aliases(selected_aliases, new_contributor.id)
-        moved_external_id_count = _move_selected_external_ids(
-            selected_external_ids, new_contributor.id
-        )
-        # All of the actor's graph edges follow the new identity (AC11);
-        # ordinals and snapshots ride along untouched.
-        moved_link_count = repoint_edges(
-            db,
-            viewer_id=actor_user_id,
-            from_ref=ResourceRef(scheme="contributor", id=source.id),
-            to_ref=ResourceRef(scheme="contributor", id=new_contributor.id),
-        )
-
-        db_now = db.scalar(select(func.now()))
-        assert (
-            db_now is not None
-        )  # justify-service-invariant-check: PostgreSQL now() always yields a row.
-        source.updated_at = db_now
-        new_contributor.updated_at = db_now
-        db.add(
-            ContributorIdentityEvent(
-                event_type="split",
-                actor_user_id=actor_user_id,
-                source_contributor_id=source.id,
-                target_contributor_id=new_contributor.id,
-                payload={
-                    "source_handle": source.handle,
-                    "target_handle": new_contributor.handle,
-                    "moved_credit_count": moved_credit_count,
-                    "moved_alias_count": moved_alias_count,
-                    "moved_external_id_count": moved_external_id_count,
-                    "moved_link_count": moved_link_count,
-                },
-            )
-        )
-        db.commit()
-        db.refresh(new_contributor)
-        return _contributor_out(db, new_contributor)
-
-    return retry_serializable(db, "run_identity_write", _txn)
-
-
-def tombstone_contributor(
-    db: Session,
-    *,
-    actor_user_id: UUID,
-    actor_roles: Collection[str] = frozenset(),
-    contributor_handle: str,
-) -> ContributorOut:
-    _require_contributor_curator(actor_roles)
-
-    def _txn() -> ContributorOut:
-        contributor = _load_active_contributor_by_handle(db, contributor_handle)
-        blocking_reference = _blocking_contributor_reference_kind(db, contributor)
-        if blocking_reference is not None:
-            raise ApiError(
-                ApiErrorCode.E_INVALID_REQUEST,
-                f"Move or remove contributor {blocking_reference} before tombstoning",
-            )
-        db_now = db.scalar(select(func.now()))
-        assert (
-            db_now is not None
-        )  # justify-service-invariant-check: PostgreSQL now() always yields a row.
-        contributor.status = "tombstoned"
-        contributor.updated_at = db_now
-        db.add(
-            ContributorIdentityEvent(
-                event_type="tombstone",
-                actor_user_id=actor_user_id,
-                source_contributor_id=contributor.id,
-                target_contributor_id=None,
-                payload={"handle": contributor.handle},
-            )
-        )
-        db.commit()
-        db.refresh(contributor)
-        return _contributor_out(db, contributor)
-
-    return retry_serializable(db, "run_identity_write", _txn)
-
-
-def add_contributor_alias(
-    db: Session,
-    *,
-    actor_user_id: UUID,
-    actor_roles: Collection[str] = frozenset(),
-    contributor_handle: str,
-    request: ContributorAliasCreateRequest,
-) -> ContributorOut:
-    _require_contributor_curator(actor_roles)
-
-    def _txn() -> ContributorOut:
-        contributor = _load_active_contributor_by_handle(db, contributor_handle)
-        alias_text = " ".join(request.alias.split())
-        normalized_alias = normalize_contributor_name(alias_text)
-        duplicate_id = db.scalar(
-            select(ContributorAlias.id).where(
-                ContributorAlias.contributor_id == contributor.id,
-                ContributorAlias.normalized_alias == normalized_alias,
-                ContributorAlias.alias_kind == request.alias_kind,
-            )
-        )
-        if duplicate_id is not None:
-            raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Contributor alias already exists")
-
-        alias = ContributorAlias(
-            contributor_id=contributor.id,
-            alias=alias_text,
-            normalized_alias=normalized_alias,
-            sort_name=request.sort_name,
-            alias_kind=request.alias_kind,
-            locale=request.locale,
-            script=request.script,
-            source=request.source,
-            confidence=request.confidence,
-            is_primary=request.is_primary,
-        )
-        db.add(alias)
-        db.flush()
-        db.add(
-            ContributorIdentityEvent(
-                event_type="alias_add",
-                actor_user_id=actor_user_id,
-                source_contributor_id=contributor.id,
-                target_contributor_id=None,
-                payload={
-                    "contributor_handle": contributor.handle,
-                    "alias_id": str(alias.id),
-                    "alias": alias.alias,
-                    "alias_kind": alias.alias_kind,
-                },
-            )
-        )
-        db.commit()
-        db.refresh(contributor)
-        return _contributor_out(db, contributor)
-
-    return retry_serializable(db, "run_identity_write", _txn)
-
-
-def delete_contributor_alias(
-    db: Session,
-    *,
-    actor_user_id: UUID,
-    actor_roles: Collection[str] = frozenset(),
-    contributor_handle: str,
-    alias_id: UUID,
-) -> ContributorOut:
-    _require_contributor_curator(actor_roles)
-
-    def _txn() -> ContributorOut:
-        contributor = _load_active_contributor_by_handle(db, contributor_handle)
-        alias = db.scalar(
-            select(ContributorAlias).where(
-                ContributorAlias.id == alias_id,
-                ContributorAlias.contributor_id == contributor.id,
-            )
-        )
-        if alias is None:
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Contributor alias not found")
-        payload = {
-            "contributor_handle": contributor.handle,
-            "alias_id": str(alias.id),
-            "alias": alias.alias,
-            "alias_kind": alias.alias_kind,
-        }
-        db.delete(alias)
-        db.add(
-            ContributorIdentityEvent(
-                event_type="alias_remove",
-                actor_user_id=actor_user_id,
-                source_contributor_id=contributor.id,
-                target_contributor_id=None,
-                payload=payload,
-            )
-        )
-        db.commit()
-        db.refresh(contributor)
-        return _contributor_out(db, contributor)
-
-    return retry_serializable(db, "run_identity_write", _txn)
-
-
-def add_contributor_external_id(
-    db: Session,
-    *,
-    actor_user_id: UUID,
-    actor_roles: Collection[str] = frozenset(),
-    contributor_handle: str,
-    request: ContributorExternalIdCreateRequest,
-) -> ContributorOut:
-    _require_contributor_curator(actor_roles)
-
-    def _txn() -> ContributorOut:
-        contributor = _load_active_contributor_by_handle(db, contributor_handle)
-        authority = request.authority.strip().lower()
-        external_key = request.external_key.strip()
-        if authority not in CONTRIBUTOR_EXTERNAL_ID_AUTHORITIES:
-            raise ApiError(
-                ApiErrorCode.E_INVALID_REQUEST, "Contributor external ID authority is invalid"
-            )
-
-        existing = db.scalar(
-            select(ContributorExternalId).where(
-                ContributorExternalId.authority == authority,
-                ContributorExternalId.external_key == external_key,
-            )
-        )
-        if existing is not None:
-            raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Contributor external ID already exists")
-
-        external_id = ContributorExternalId(
-            contributor_id=contributor.id,
-            authority=authority,
-            external_key=external_key,
-            external_url=request.external_url,
-            source=request.source,
-        )
-        db.add(external_id)
-        db.flush()
-        db.add(
-            ContributorIdentityEvent(
-                event_type="external_id_add",
-                actor_user_id=actor_user_id,
-                source_contributor_id=contributor.id,
-                target_contributor_id=None,
-                payload={
-                    "contributor_handle": contributor.handle,
-                    "external_id_id": str(external_id.id),
-                    "authority": external_id.authority,
-                    "external_key": external_id.external_key,
-                },
-            )
-        )
-        db.commit()
-        db.refresh(contributor)
-        return _contributor_out(db, contributor)
-
-    return retry_serializable(db, "run_identity_write", _txn)
-
-
-def delete_contributor_external_id(
-    db: Session,
-    *,
-    actor_user_id: UUID,
-    actor_roles: Collection[str] = frozenset(),
-    contributor_handle: str,
-    external_id_id: UUID,
-) -> ContributorOut:
-    _require_contributor_curator(actor_roles)
-
-    def _txn() -> ContributorOut:
-        contributor = _load_active_contributor_by_handle(db, contributor_handle)
-        external_id = db.scalar(
-            select(ContributorExternalId).where(
-                ContributorExternalId.id == external_id_id,
-                ContributorExternalId.contributor_id == contributor.id,
-            )
-        )
-        if external_id is None:
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Contributor external ID not found")
-        payload = {
-            "contributor_handle": contributor.handle,
-            "external_id_id": str(external_id.id),
-            "authority": external_id.authority,
-            "external_key": external_id.external_key,
-        }
-        db.delete(external_id)
-        db.add(
-            ContributorIdentityEvent(
-                event_type="external_id_remove",
-                actor_user_id=actor_user_id,
-                source_contributor_id=contributor.id,
-                target_contributor_id=None,
-                payload=payload,
-            )
-        )
-        db.commit()
-        db.refresh(contributor)
-        return _contributor_out(db, contributor)
-
-    return retry_serializable(db, "run_identity_write", _txn)
-
-
-def merge_contributor(
-    db: Session,
-    *,
-    actor_user_id: UUID,
-    actor_roles: Collection[str] = frozenset(),
-    contributor_handle: str,
-    request: ContributorMergeRequest,
-    on_merge_transaction: MergeContributorTransactionHook | None = None,
-) -> ContributorOut:
-    """Redirect a duplicate contributor (source, from the path handle) into a survivor (target).
-
-    Repoints credits/aliases/external-ids onto the target (deduping equivalents), writes a confirmed
-    merge-alias for the source name so name-only reingest resolves to the survivor, flattens prior
-    merge chains, and marks the source ``merged``. Graph edges are repointed explicitly and totally
-    through ``resource_graph.edges.repoint_edges`` (AC11) — including citation edges, whose
-    ordinals and snapshots are untouched."""
-    _require_contributor_curator(actor_roles)
-    # Function-local import: resource_graph.edges reaches back here via
-    # resolve → notes → object_refs → contributors.
-    from nexus.services.resource_graph.edges import repoint_edges
-
-    def _txn() -> ContributorOut:
-        source = _load_contributor_for_merge(db, contributor_handle)
-        target = _load_contributor_for_merge(db, request.target_handle)
-        if source.id == target.id:
-            raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Cannot merge a contributor into itself")
-        if on_merge_transaction is not None:
-            on_merge_transaction(db, source, target)
-
-        ids = {"source_id": source.id, "target_id": target.id}
-        merged_duplicate_credits = len(
-            db.execute(
-                text(
-                    """
-                    DELETE FROM contributor_credits src
-                    WHERE src.contributor_id = :source_id
-                      AND EXISTS (
-                          SELECT 1 FROM contributor_credits tgt
-                          WHERE tgt.contributor_id = :target_id
-                            AND tgt.role = src.role
-                            AND tgt.normalized_credited_name = src.normalized_credited_name
-                            AND tgt.media_id IS NOT DISTINCT FROM src.media_id
-                            AND tgt.podcast_id IS NOT DISTINCT FROM src.podcast_id
-                            AND tgt.project_gutenberg_catalog_ebook_id
-                                IS NOT DISTINCT FROM src.project_gutenberg_catalog_ebook_id
-                      )
-                    RETURNING src.id
-                    """
-                ),
-                ids,
-            ).fetchall()
-        )
-        repointed_credits = len(
-            db.execute(
-                text(
-                    """
-                    UPDATE contributor_credits SET contributor_id = :target_id, updated_at = now()
-                    WHERE contributor_id = :source_id
-                    RETURNING id
-                    """
-                ),
-                ids,
-            ).fetchall()
-        )
-
-        db.execute(
-            text(
-                """
-                DELETE FROM contributor_aliases src
-                WHERE src.contributor_id = :source_id
-                  AND EXISTS (
-                      SELECT 1 FROM contributor_aliases tgt
-                      WHERE tgt.contributor_id = :target_id
-                        AND tgt.normalized_alias = src.normalized_alias
-                        AND tgt.alias_kind = src.alias_kind
-                  )
-                """
-            ),
-            ids,
-        )
-        db.execute(
-            text(
-                """
-                UPDATE contributor_aliases SET contributor_id = :target_id, is_primary = false
-                WHERE contributor_id = :source_id
-                """
-            ),
-            ids,
-        )
-
-        # Durable confirmed merge-alias so name-only reingest of the source name resolves to the
-        # target. "merge" is in CONFIRMED_ALIAS_SOURCES; written even if another confirmed alias
-        # exists, so the breadcrumb survives later alias edits. Idempotent on (name, source="merge").
-        merged_name = normalize_contributor_name(source.display_name)
-        existing_merge_alias = db.scalar(
-            select(ContributorAlias.id).where(
-                ContributorAlias.contributor_id == target.id,
-                ContributorAlias.normalized_alias == merged_name,
-                ContributorAlias.source == "merge",
-            )
-        )
-        if existing_merge_alias is None:
-            db.add(
-                ContributorAlias(
-                    contributor_id=target.id,
-                    alias=source.display_name,
-                    normalized_alias=merged_name,
-                    alias_kind="search",
-                    source="merge",
-                    is_primary=False,
-                )
-            )
-
-        # External ids are globally unique on (authority, external_key), so a plain repoint never
-        # collides; differing keys for one authority simply coexist on the target (R3).
-        db.execute(
-            text(
-                "UPDATE contributor_external_ids SET contributor_id = :target_id "
-                "WHERE contributor_id = :source_id"
-            ),
-            ids,
-        )
-        # Every graph edge follows the survivor — bare links (dropping bare-pair
-        # duplicates) and citations with ordinals/snapshots intact (§9.6, AC11).
-        repointed_edges = repoint_edges(
-            db,
-            viewer_id=actor_user_id,
-            from_ref=ResourceRef(scheme="contributor", id=source.id),
-            to_ref=ResourceRef(scheme="contributor", id=target.id),
-        )
-        # Flatten prior chains so resolution stays depth 1.
-        db.execute(
-            text(
-                "UPDATE contributors SET merged_into_contributor_id = :target_id "
-                "WHERE merged_into_contributor_id = :source_id"
-            ),
-            ids,
-        )
-
-        db_now = db.scalar(select(func.now()))
-        assert (
-            db_now is not None
-        )  # justify-service-invariant-check: PostgreSQL now() always yields a row.
-        source.status = "merged"
-        source.merged_into_contributor_id = target.id
-        source.merged_at = db_now
-        source.updated_at = db_now
-        target.updated_at = db_now
-        db.add(
-            ContributorIdentityEvent(
-                event_type="merge",
-                actor_user_id=actor_user_id,
-                source_contributor_id=source.id,
-                target_contributor_id=target.id,
-                payload={
-                    "source_handle": source.handle,
-                    "target_handle": target.handle,
-                    "merged_duplicate_credits": merged_duplicate_credits,
-                    "repointed_credits": repointed_credits,
-                    "repointed_edges": repointed_edges,
-                },
-            )
-        )
-        db.commit()
-        db.refresh(target)
-        return _contributor_out(db, target)
-
-    return retry_serializable(db, "run_identity_write", _txn)
-
-
-def _load_contributor_for_merge(db: Session, contributor_handle: str) -> Contributor:
-    contributor = db.scalar(select(Contributor).where(Contributor.handle == contributor_handle))
-    if contributor is None:
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Contributor not found")
-    if contributor.status not in ACTIVE_STATUSES:
-        raise ApiError(
-            ApiErrorCode.E_INVALID_REQUEST, "Contributor is already merged or tombstoned"
-        )
-    return contributor
-
-
 def hydrate_contributor_object_ref(
     db: Session,
     viewer_id: UUID,
@@ -1107,17 +359,14 @@ def hydrate_contributor_object_ref(
 ) -> HydratedObjectRef:
     from nexus.services.resource_items.routing import route_for_ref
 
-    contributor = _load_visible_contributor_by_id(
-        db,
-        _canonical_contributor_id(db, contributor_id),
-        viewer_id,
-        message="Object not found",
-    )
+    contributor = db.get(Contributor, contributor_id)
+    if contributor is None or not _contributor_visible(db, contributor.id, viewer_id):
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Object not found")
     return HydratedObjectRef(
         object_type="contributor",
         object_id=contributor.id,
         label=contributor.display_name,
-        snippet=contributor.disambiguation or contributor.sort_name,
+        snippet=contributor.display_name,
         route=route_for_ref(
             db, viewer_id=viewer_id, ref=ResourceRef(scheme="contributor", id=contributor.id)
         ),
@@ -1125,43 +374,609 @@ def hydrate_contributor_object_ref(
     )
 
 
-def _require_contributor_curator(actor_roles: Collection[str]) -> None:
-    if CONTRIBUTOR_CURATOR_ROLES.isdisjoint(actor_roles):
+def resolve_contributor_ids_by_handles(db: Session, handles: Sequence[str]) -> dict[str, UUID]:
+    """Map handles directly to contributor ids, dropping unknown handles (D-29).
+
+    Every row is active post-cutover; there is no merge chain to follow. Result
+    preserves first-seen input order.
+    """
+    unique_handles = list(dict.fromkeys(handles))
+    if not unique_handles:
+        return {}
+    found: dict[str, UUID] = {}
+    for handle, contributor_id in db.execute(
+        select(Contributor.handle, Contributor.id).where(Contributor.handle.in_(unique_handles))
+    ).tuples():
+        found[handle] = contributor_id
+    return {handle: found[handle] for handle in unique_handles if handle in found}
+
+
+# ---------------------------------------------------------------------------
+# Mutations (no session parameter: fresh session + retry_serializable inside)
+# ---------------------------------------------------------------------------
+
+
+def replace_observed_role_slices(
+    *,
+    target: CreditTarget,
+    observation: ContributorObservationBatch,
+    source: str,
+) -> None:
+    """One unreplayable automatic author mutation (spec 2.4).
+
+    ``NOT_OBSERVED`` returns before any session is opened and never erases prior
+    credits. Never touches ``resource_mutations`` (D-43): a stable job key may
+    legitimately observe different authors later, and background lanes have no
+    user.
+    """
+    if isinstance(observation, NotObserved):
+        return
+    fresh = _fresh_author_session()
+    try:
+        retry_serializable(
+            fresh,
+            "replace_observed_role_slices",
+            partial(_run_observations_op, fresh, ((target, observation, source),)),
+        )
+    finally:
+        fresh.close()
+
+
+def replace_observed_role_slices_batch(
+    items: Sequence[tuple[CreditTarget, ContributorObservationBatch, str]],
+) -> None:
+    """Chunked variant of :func:`replace_observed_role_slices` (D-15).
+
+    Used only by the gutenberg catalog sync: one fresh session and one
+    serializable operation per chunk of ``_BATCH_CHUNK_SIZE`` targets, applying
+    the same per-target semantics sequentially. A chunk retry recomputes from
+    current rows; unchanged targets perform no DML, so retries converge.
+    """
+    observed = [
+        (target, observation, source)
+        for target, observation, source in items
+        if isinstance(observation, ObservedRoleSlices)
+    ]
+    for start in range(0, len(observed), _BATCH_CHUNK_SIZE):
+        chunk = observed[start : start + _BATCH_CHUNK_SIZE]
+        fresh = _fresh_author_session()
+        try:
+            retry_serializable(
+                fresh,
+                "replace_observed_role_slices_batch",
+                partial(_run_observations_op, fresh, chunk),
+            )
+        finally:
+            fresh.close()
+
+
+def put_media_authors(
+    *,
+    viewer: Viewer,
+    media_id: UUID,
+    request: MediaAuthorsPutRequest,
+) -> MediaAuthorsOut:
+    """Replayable manual author-slice PUT / automatic reset (spec 2.5)."""
+    fresh = _fresh_author_session()
+    try:
+        return retry_serializable(
+            fresh,
+            "put_media_authors",
+            partial(_put_media_authors_op, fresh, viewer, media_id, request),
+        )
+    finally:
+        fresh.close()
+
+
+def ensure_contributor_display_name(
+    *,
+    viewer: Viewer,
+    contributor_handle: ContributorHandle,
+    request: ContributorRenameRequest,
+) -> ContributorDetailOut:
+    """Replayable display-name rename; an already-equal cleaned name is success."""
+    fresh = _fresh_author_session()
+    try:
+        return retry_serializable(
+            fresh,
+            "ensure_contributor_display_name",
+            partial(_ensure_display_name_op, fresh, viewer, contributor_handle, request),
+        )
+    finally:
+        fresh.close()
+
+
+# ---------------------------------------------------------------------------
+# Transaction-scoped composition (caller's deletion transaction, no runner)
+# ---------------------------------------------------------------------------
+
+
+def cleanup_credits_for_deleted_target(db: Session, *, target: CreditTarget) -> None:
+    """Remove a deleted target's credits, its author-edit memos, then prune.
+
+    The deliberate composition exception (spec §3): media/podcast/Gutenberg
+    deletion calls this inside its owning deletion transaction; it performs no
+    resolution and starts no runner or retry loop. (No podcast deletion flow
+    exists today; if one appears it must call this.)
+    """
+    outcome = _replace_role_slices(
+        db,
+        target=target,
+        managed_roles=frozenset(CONTRIBUTOR_ROLES_ORDERED),
+        resolved=(),
+        source="cleanup",
+    )
+    to_prune = set(outcome.dropped_contributor_ids)
+    if isinstance(target, MediaTarget):
+        scope = f"media:{target.media_id}:authors"
+        # The memos deleted here may be the LAST reference keeping a
+        # replay-protected identity alive (spec 2.8: "not pruned until its
+        # owning media memo is removed") — e.g. a manual author a later PUT
+        # already dropped from the slice. Collect the contributors those memos
+        # name so they are prune-tested once the memos are gone.
+        memo_handles = set(
+            db.scalars(
+                text(
+                    "SELECT DISTINCT jsonb_path_query(rm.response_json,"
+                    " '$.authors[*].contributorHandle') #>> '{}'"
+                    " FROM resource_mutations rm WHERE rm.mutation_scope = :scope"
+                ),
+                {"scope": scope},
+            )
+        )
+        if memo_handles:
+            to_prune.update(
+                db.scalars(select(Contributor.id).where(Contributor.handle.in_(memo_handles)))
+            )
+        db.execute(delete(ResourceMutation).where(ResourceMutation.mutation_scope == scope))
+    if to_prune:
+        prune_contributors_if_orphaned(db, contributor_ids=to_prune)
+
+
+def prune_contributors_if_orphaned(db: Session, *, contributor_ids: Iterable[UUID]) -> None:
+    """Delete each contributor that is provably unreferenced (spec 2.8, D-41).
+
+    Eligible only with zero credits, no exact key, and no graph/pin/version/
+    view-state/chat or foreign replay reference. Deletes the contributor's own
+    display-name memos and aliases before the row. Keyed or referenced zero-work
+    identities remain privately reusable but undiscoverable.
+    """
+    for contributor_id in dict.fromkeys(contributor_ids):
+        # select, not Session.get: on a retry attempt the identity map may hold
+        # an expired instance and get() would raise ObjectDeletedError for a row
+        # a concurrent transaction deleted.
+        contributor = db.scalar(select(Contributor).where(Contributor.id == contributor_id))
+        if contributor is None or not _contributor_is_orphaned(db, contributor):
+            continue
+        db.execute(
+            delete(ResourceMutation).where(
+                ResourceMutation.mutation_scope == f"contributor:{contributor.id}:display-name"
+            )
+        )
+        db.execute(
+            delete(ContributorAlias).where(ContributorAlias.contributor_id == contributor.id)
+        )
+        db.delete(contributor)
+        # Flush the row delete now (sessions are autoflush=False): a later
+        # same-transaction resolution of the same name must see the freed base
+        # handle, or create_contributor would skip its only candidate and
+        # exhaust the deterministic ladder.
+        db.flush()
+
+
+# ---------------------------------------------------------------------------
+# Private helpers
+# ---------------------------------------------------------------------------
+
+
+def _fresh_author_session() -> Session:
+    fresh = get_session_factory()()
+    # An open transaction would make use_serializable_if_available silently
+    # retain weaker isolation (spec 2.7); factory sessions must arrive clean.
+    assert not fresh.in_transaction(), "author mutations require a fresh session"
+    return fresh
+
+
+def _run_observations_op(
+    db: Session,
+    items: Sequence[tuple[CreditTarget, ObservedRoleSlices, str]],
+) -> None:
+    for target, observation, source in items:
+        _apply_observation(db, target=target, observation=observation, source=source)
+    db.commit()
+
+
+def _apply_observation(
+    db: Session,
+    *,
+    target: CreditTarget,
+    observation: ObservedRoleSlices,
+    source: str,
+) -> None:
+    managed_roles = observation.managed_roles
+    if isinstance(target, MediaTarget):
+        # select, not Session.get: get() raises ObjectDeletedError on a retry
+        # attempt when the expired identity-map row was deleted concurrently.
+        media = db.scalar(select(Media).where(Media.id == target.media_id))
+        if media is None:
+            return  # target deleted mid-flight; nothing to credit
+        if media.authors_manually_managed:
+            # The pin freezes only the author slice; declared non-author slices
+            # still replace normally (spec 2.4).
+            managed_roles = managed_roles - {"author"}
+    if not managed_roles:
+        return
+    relevant = [credit for credit in observation.credits if credit.role in managed_roles]
+    resolved = _resolve_observation_credits(db, relevant)
+    outcome = _replace_role_slices(
+        db,
+        target=target,
+        managed_roles=managed_roles,
+        resolved=list(zip(resolved, relevant, strict=True)),
+        source=source,
+    )
+    if outcome.dropped_contributor_ids:
+        prune_contributors_if_orphaned(db, contributor_ids=outcome.dropped_contributor_ids)
+
+
+def _put_media_authors_op(
+    db: Session,
+    viewer: Viewer,
+    media_id: UUID,
+    request: MediaAuthorsPutRequest,
+) -> MediaAuthorsOut:
+    media = db.scalar(select(Media).where(Media.id == media_id))
+    if media is None or not can_read_media(db, viewer.user_id, media_id):
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Media not found")
+    if not can_edit_media_authors(
+        can_read=True,
+        is_creator=media.created_by_user_id == viewer.user_id,
+        is_admin="admin" in viewer.roles,
+    ):
         raise ForbiddenError(
             ApiErrorCode.E_FORBIDDEN,
-            "Contributor identity curation requires a curator role",
+            "Only the media creator or an administrator can edit authors",
         )
+    scope = f"media:{media_id}:authors"
+    payload_hash = _request_hash(request)
+    stored = _lookup_memo(
+        db,
+        viewer_id=viewer.user_id,
+        scope=scope,
+        client_mutation_id=request.client_mutation_id,
+        request_hash=payload_hash,
+    )
+    if stored is not None:
+        return _revalidated_memo(MediaAuthorsOut, stored)
 
-
-def _canonical_contributor_id(db: Session, contributor_id: UUID) -> UUID:
-    """Follow ``merged_into_contributor_id`` to the surviving contributor. Merge flattens chains,
-    so depth is normally 1; the guard catches a cycle (a defect)."""
-    current = contributor_id
-    for _ in range(8):
-        merged_into = db.scalar(
-            select(Contributor.merged_into_contributor_id).where(Contributor.id == current)
+    dropped: frozenset[UUID] = frozenset()
+    if isinstance(request, ManualMediaAuthorsRequest):
+        resolved_rows = _bind_manual_author_rows(
+            db, viewer=viewer, media_id=media_id, request=request
         )
-        if merged_into is None:
-            return current
-        current = merged_into
-    # justify-defect: merge flattens chains to depth 1; a longer chain is a cycle/defect.
-    raise AssertionError(f"contributor merge chain too deep from {contributor_id}")
+        outcome = _replace_role_slices(
+            db,
+            target=MediaTarget(media_id),
+            managed_roles=frozenset({"author"}),
+            resolved=resolved_rows,
+            source="user",
+        )
+        dropped = outcome.dropped_contributor_ids
+        _set_media_author_mode(db, media_id=media_id, manual=True)
+        author_mode: Literal["automatic", "manual"] = "manual"
+    else:
+        # Reset: release the pin and leave current rows in place; the next
+        # successful observed author slice replaces them (spec 2.5).
+        _set_media_author_mode(db, media_id=media_id, manual=False)
+        author_mode = "automatic"
+
+    response = _media_authors_out(db, media_id=media_id, author_mode=author_mode)
+    _record_memo(
+        db,
+        viewer_id=viewer.user_id,
+        scope=scope,
+        client_mutation_id=request.client_mutation_id,
+        request_hash=payload_hash,
+        response_json=response.model_dump(mode="json", by_alias=True),
+    )
+    if dropped:
+        prune_contributors_if_orphaned(db, contributor_ids=dropped)
+    db.commit()
+    return response
 
 
-def _canonical_id_for_handle(db: Session, contributor_handle: str) -> UUID:
-    row = db.execute(
-        select(Contributor.id, Contributor.status).where(Contributor.handle == contributor_handle)
-    ).first()
-    if row is None or row.status == "tombstoned":
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Contributor not found")
-    return _canonical_contributor_id(db, row.id)
+def _bind_manual_author_rows(
+    db: Session,
+    *,
+    viewer: Viewer,
+    media_id: UUID,
+    request: ManualMediaAuthorsRequest,
+) -> list[tuple[_ResolvedCredit, ContributorObservation]]:
+    resolved_rows: list[tuple[_ResolvedCredit, ContributorObservation]] = []
+    bound_ids: set[UUID] = set()
+    for row_index, row in enumerate(request.authors):
+        binding = row.binding
+        if isinstance(binding, ExistingAuthorBinding):
+            resolved = _load_selectable_author(
+                db, viewer_id=viewer.user_id, handle=binding.contributor_handle
+            )
+        else:
+            resolved = _create_manual_author(
+                db,
+                viewer=viewer,
+                media_id=media_id,
+                client_mutation_id=request.client_mutation_id,
+                row_index=row_index,
+                display_name=binding.display_name,
+            )
+        if resolved.contributor_id in bound_ids:
+            raise ApiError(
+                ApiErrorCode.E_AUTHOR_ALREADY_LISTED,
+                "That author is already listed for this role.",
+            )
+        bound_ids.add(resolved.contributor_id)
+        resolved_rows.append(
+            (
+                resolved,
+                ContributorObservation(
+                    credited_name=clean_contributor_display(row.credited_name),
+                    role="author",
+                    raw_role=None,
+                    identity_key=None,
+                ),
+            )
+        )
+    return resolved_rows
 
 
-def _load_active_contributor_by_handle(db: Session, contributor_handle: str) -> Contributor:
-    contributor = db.get(Contributor, _canonical_id_for_handle(db, contributor_handle))
-    if contributor is None or contributor.status not in ACTIVE_STATUSES:
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Contributor not found")
-    return contributor
+def _load_selectable_author(db: Session, *, viewer_id: UUID, handle: str) -> _ResolvedCredit:
+    contributor = db.scalar(select(Contributor).where(Contributor.handle == handle))
+    if contributor is None or not _contributor_visible(db, contributor.id, viewer_id):
+        # One message for unknown and invisible: selection must never reveal
+        # whether an invisible record exists (spec §6).
+        raise ApiError(ApiErrorCode.E_AUTHOR_NOT_SELECTABLE, "That author can't be selected.")
+    return _ResolvedCredit(contributor.id, contributor.handle, contributor.display_name)
+
+
+def _create_manual_author(
+    db: Session,
+    *,
+    viewer: Viewer,
+    media_id: UUID,
+    client_mutation_id: str,
+    row_index: int,
+    display_name: str,
+) -> _ResolvedCredit:
+    """Create a manual ``new`` author per the D-7 manual rule.
+
+    With no same-name resolving owner and a free base handle this is an ordinary
+    create (future automatic observations should find this person); otherwise it
+    is a deliberately distinct identity seeded by user/media/mutation/row, which
+    makes whole-operation retries converge on the same handle.
+    """
+    display = clean_contributor_display(display_name)
+    base_handle = next(iter(contributor_handle_candidates(display)))
+    has_resolving_owner = (
+        db.scalar(
+            select(ContributorAlias.id)
+            .where(
+                ContributorAlias.normalized_alias == contributor_match_key(display),
+                ContributorAlias.resolves_identity.is_(True),
+            )
+            .limit(1)
+        )
+        is not None
+    )
+    base_taken = (
+        db.scalar(select(Contributor.id).where(Contributor.handle == base_handle)) is not None
+    )
+    if has_resolving_owner or base_taken:
+        seed = ManualDistinctSeed(
+            user_id=str(viewer.user_id),
+            media_id=str(media_id),
+            client_mutation_id=client_mutation_id,
+            row_index=row_index,
+        )
+        created = _create_contributor(db, display_name=display, distinct_seed=seed)
+    else:
+        created = _create_contributor(db, display_name=display)
+    # Every canonical display owns a resolving alias (spec §4 invariant).
+    _ensure_alias(db, contributor_id=created.contributor_id, alias=display, resolves_identity=True)
+    return created
+
+
+def _media_authors_out(
+    db: Session,
+    *,
+    media_id: UUID,
+    author_mode: Literal["automatic", "manual"],
+) -> MediaAuthorsOut:
+    credits = load_contributor_credits_for_media(db, [media_id])[media_id]
+    authors: list[MediaAuthorCreditOut] = []
+    for credit in credits:
+        if credit.role != "author":
+            continue
+        if (
+            credit.contributor_handle is None
+            or credit.contributor_display_name is None
+            or credit.href is None
+        ):
+            # justify-defect: stored credits always join a contributor; the
+            # narrowed DTO keeps these optional only for handle-less preview
+            # facts that never come from this loader.
+            raise AssertionError("stored media author credit lost its contributor")
+        authors.append(
+            MediaAuthorCreditOut(
+                contributorHandle=credit.contributor_handle,
+                href=credit.href,
+                displayName=credit.contributor_display_name,
+                creditedName=credit.credited_name,
+            )
+        )
+    # canEditAuthors is True by construction: the PUT already authorized this
+    # viewer, and the response describes what that same viewer may do.
+    return MediaAuthorsOut(authorMode=author_mode, authors=authors, canEditAuthors=True)
+
+
+def _ensure_display_name_op(
+    db: Session,
+    viewer: Viewer,
+    contributor_handle: ContributorHandle,
+    request: ContributorRenameRequest,
+) -> ContributorDetailOut:
+    # D-44 order: load via broad visibility (404) -> authorize (403) -> replay.
+    contributor = _load_visible_contributor_by_handle(db, str(contributor_handle), viewer.user_id)
+    if not can_rename_contributor(viewer.roles):
+        raise ForbiddenError(
+            ApiErrorCode.E_FORBIDDEN,
+            "Renaming an author requires an administrator or curator role",
+        )
+    scope = f"contributor:{contributor.id}:display-name"
+    payload_hash = _request_hash(request)
+    stored = _lookup_memo(
+        db,
+        viewer_id=viewer.user_id,
+        scope=scope,
+        client_mutation_id=request.client_mutation_id,
+        request_hash=payload_hash,
+    )
+    if stored is not None:
+        return _revalidated_memo(ContributorDetailOut, stored)
+
+    new_display = clean_contributor_display(request.display_name)
+    if new_display and new_display != contributor.display_name:
+        old_display = contributor.display_name
+        contributor.display_name = new_display
+        contributor.updated_at = func.now()
+        # Old and new canonical spellings both resolve future identity; the
+        # handle and existing credited spellings never change (spec 2.6). The
+        # new spelling is ensured LAST so a same-match-key rename (case or
+        # ignorable-codepoint variant) leaves the shared alias row's literal
+        # equal to the new display name.
+        _ensure_alias(db, contributor_id=contributor.id, alias=old_display, resolves_identity=True)
+        _ensure_alias(db, contributor_id=contributor.id, alias=new_display, resolves_identity=True)
+
+    response = _contributor_detail_out(db, contributor, can_rename=True)
+    _record_memo(
+        db,
+        viewer_id=viewer.user_id,
+        scope=scope,
+        client_mutation_id=request.client_mutation_id,
+        request_hash=payload_hash,
+        response_json=response.model_dump(mode="json", by_alias=True),
+    )
+    db.commit()
+    return response
+
+
+def _contributor_detail_out(
+    db: Session,
+    contributor: Contributor,
+    *,
+    can_rename: bool,
+) -> ContributorDetailOut:
+    other_names = list(
+        db.scalars(
+            select(ContributorAlias.alias)
+            .where(
+                ContributorAlias.contributor_id == contributor.id,
+                ContributorAlias.alias != contributor.display_name,
+            )
+            .order_by(ContributorAlias.alias.asc())
+        )
+    )
+    return ContributorDetailOut(
+        handle=contributor.handle,
+        href=f"/authors/{contributor.handle}",
+        displayName=contributor.display_name,
+        otherNames=other_names,
+        canRename=can_rename,
+    )
+
+
+def _revalidated_memo[TModel: BaseModel](model: type[TModel], stored: dict[str, object]) -> TModel:
+    try:
+        return model.model_validate(stored)
+    except ValidationError as exc:
+        # justify-defect: a stored replay memo must decode as the exact public
+        # response (D-42); a mismatch means the memo or the model drifted, and
+        # returning the raw dict would leak an unvalidated shape.
+        raise AssertionError("Stored author mutation memo failed response validation") from exc
+
+
+def _matched_aliases(
+    db: Session,
+    display_by_id: dict[UUID, str],
+    pattern: str,
+) -> dict[UUID, str]:
+    """First matching non-display alias literal per contributor (D-25)."""
+    if not display_by_id:
+        return {}
+    rows = db.execute(
+        text(
+            """
+            SELECT ca.contributor_id, ca.alias
+            FROM contributor_aliases ca
+            WHERE ca.contributor_id = ANY(:contributor_ids)
+              AND ca.normalized_alias LIKE :pattern ESCAPE '\\'
+            ORDER BY ca.contributor_id ASC, ca.created_at ASC, ca.id ASC
+            """
+        ),
+        {"contributor_ids": list(display_by_id), "pattern": pattern},
+    ).all()
+    matched: dict[UUID, str] = {}
+    for contributor_id, alias in rows:
+        if alias != display_by_id[contributor_id] and contributor_id not in matched:
+            matched[contributor_id] = alias
+    return matched
+
+
+def _work_stats(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    contributor_ids: Sequence[UUID],
+) -> dict[UUID, tuple[int, list[ContributorWorkExampleOut]]]:
+    """Distinct visible work count and up to two examples per contributor."""
+    if not contributor_ids:
+        return {}
+    rows = db.execute(
+        text(
+            f"""
+            WITH works AS ({distinct_visible_works_sql()}),
+            ranked AS (
+                SELECT
+                    w.contributor_id,
+                    w.title,
+                    w.href,
+                    row_number() OVER (
+                        PARTITION BY w.contributor_id
+                        ORDER BY {_WORKS_ORDER_SQL}
+                    ) AS rn
+                FROM works w
+                WHERE w.contributor_id = ANY(:contributor_ids)
+            )
+            SELECT
+                contributor_id,
+                count(*) AS work_count,
+                jsonb_agg(jsonb_build_object('title', title, 'href', href) ORDER BY rn ASC)
+                    FILTER (WHERE rn <= 2) AS work_examples
+            FROM ranked
+            GROUP BY contributor_id
+            """
+        ),
+        {"viewer_id": viewer_id, "contributor_ids": list(contributor_ids)},
+    ).all()
+    return {
+        row.contributor_id: (
+            int(row.work_count),
+            [
+                ContributorWorkExampleOut(title=example["title"], href=example["href"])
+                for example in (row.work_examples or [])
+            ],
+        )
+        for row in rows
+    }
 
 
 def _load_visible_contributor_by_handle(
@@ -1169,503 +984,200 @@ def _load_visible_contributor_by_handle(
     contributor_handle: str,
     viewer_id: UUID,
 ) -> Contributor:
-    return _load_visible_contributor_by_id(
-        db, _canonical_id_for_handle(db, contributor_handle), viewer_id
-    )
-
-
-def _load_visible_contributor_by_id(
-    db: Session,
-    contributor_id: UUID,
-    viewer_id: UUID,
-    *,
-    message: str = "Contributor not found",
-) -> Contributor:
-    visible_id = db.execute(
-        text(
-            f"""
-            WITH {_visible_contributor_ctes_sql()}
-            SELECT c.id
-            FROM contributors c
-            JOIN visible_contributors vc ON vc.contributor_id = c.id
-            WHERE c.id = :contributor_id
-              AND c.status IN ('unverified', 'verified')
-            """
-        ),
-        {"viewer_id": viewer_id, "contributor_id": contributor_id},
-    ).scalar_one_or_none()
-    if visible_id is None:
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, message)
-    contributor = db.get(Contributor, contributor_id)
-    if contributor is None:
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, message)
+    contributor = db.scalar(select(Contributor).where(Contributor.handle == contributor_handle))
+    if contributor is None or not _contributor_visible(db, contributor.id, viewer_id):
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Contributor not found")
     return contributor
 
 
-def _visible_contributor_ctes_sql() -> str:
-    """Define ``visible_contributor_credits`` (rows) and ``visible_contributors`` (ids)
-    from the single owner in ``permissions``."""
-    return f"""
-            visible_contributor_credits AS (
-                {visible_content_credit_rows_sql()}
-            ),
-            visible_contributors AS (
-                {visible_contributor_ids_cte_sql()}
-            )
-    """
-
-
-def _load_selected_credits_for_split(
-    db: Session,
-    source_id: UUID,
-    credit_ids: list[UUID],
-) -> list[ContributorCredit]:
-    if not credit_ids:
-        return []
-    credits = db.scalars(
-        select(ContributorCredit).where(
-            ContributorCredit.id.in_(credit_ids),
-            ContributorCredit.contributor_id == source_id,
-        )
-    ).all()
-    if len(credits) != len(set(credit_ids)):
-        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Split credit selection is invalid")
-    return list(credits)
-
-
-def _move_selected_credits(
-    credits: list[ContributorCredit],
-    target_id: UUID,
-) -> int:
-    for credit in credits:
-        credit.contributor_id = target_id
-        credit.resolution_status = "manual"
-    return len(credits)
-
-
-def _load_selected_aliases_for_split(
-    db: Session,
-    source_id: UUID,
-    alias_ids: list[UUID],
-) -> list[ContributorAlias]:
-    if not alias_ids:
-        return []
-    aliases = db.scalars(
-        select(ContributorAlias).where(
-            ContributorAlias.id.in_(alias_ids),
-            ContributorAlias.contributor_id == source_id,
-        )
-    ).all()
-    if len(aliases) != len(set(alias_ids)):
-        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Split alias selection is invalid")
-    return list(aliases)
-
-
-def _move_selected_aliases(
-    aliases: list[ContributorAlias],
-    target_id: UUID,
-) -> int:
-    for alias in aliases:
-        alias.contributor_id = target_id
-        alias.source = "manual"
-    return len(aliases)
-
-
-def _load_selected_external_ids_for_split(
-    db: Session,
-    source_id: UUID,
-    external_id_ids: list[UUID],
-) -> list[ContributorExternalId]:
-    if not external_id_ids:
-        return []
-    external_ids = db.scalars(
-        select(ContributorExternalId).where(
-            ContributorExternalId.id.in_(external_id_ids),
-            ContributorExternalId.contributor_id == source_id,
-        )
-    ).all()
-    if len(external_ids) != len(set(external_id_ids)):
-        raise ApiError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            "Split external ID selection is invalid",
-        )
-    return list(external_ids)
-
-
-def _move_selected_external_ids(
-    external_ids: list[ContributorExternalId],
-    target_id: UUID,
-) -> int:
-    for external_id in external_ids:
-        external_id.contributor_id = target_id
-    return len(external_ids)
-
-
-def _blocking_contributor_reference_kind(db: Session, contributor: Contributor) -> str | None:
-    credit_id = db.scalar(
-        select(ContributorCredit.id)
-        .where(ContributorCredit.contributor_id == contributor.id)
-        .limit(1)
-    )
-    if credit_id is not None:
-        return "credits"
-
-    # Read-only existence probe on the graph (any user, either endpoint);
-    # writes stay with resource_graph (AC13).
-    edge_id = db.scalar(
-        select(ResourceEdge.id)
-        .where(
-            or_(
-                (ResourceEdge.source_scheme == "contributor")
-                & (ResourceEdge.source_id == contributor.id),
-                (ResourceEdge.target_scheme == "contributor")
-                & (ResourceEdge.target_id == contributor.id),
-            )
-        )
-        .limit(1)
-    )
-    if edge_id is not None:
-        return "links"
-
-    if contributor_is_referenced_in_persisted_context(db, contributor_handle=contributor.handle):
-        return "persisted references"
-
-    return None
-
-
-def _contributor_out(db: Session, contributor: Contributor) -> ContributorOut:
-    aliases = db.scalars(
-        select(ContributorAlias)
-        .where(ContributorAlias.contributor_id == contributor.id)
-        .order_by(
-            ContributorAlias.is_primary.desc(),
-            ContributorAlias.alias.asc(),
-            ContributorAlias.id.asc(),
-        )
-    ).all()
-    external_ids = db.scalars(
-        select(ContributorExternalId)
-        .where(ContributorExternalId.contributor_id == contributor.id)
-        .order_by(
-            ContributorExternalId.authority.asc(),
-            ContributorExternalId.external_key.asc(),
-        )
-    ).all()
-    return ContributorOut(
-        handle=contributor.handle,
-        href=f"/authors/{contributor.handle}",
-        display_name=contributor.display_name,
-        sort_name=contributor.sort_name,
-        kind=cast(ContributorKind, contributor.kind),
-        status=cast(ContributorStatus, contributor.status),
-        disambiguation=contributor.disambiguation,
-        aliases=[ContributorAliasOut.model_validate(alias) for alias in aliases],
-        external_ids=[
-            ContributorExternalIdOut.model_validate(external_id) for external_id in external_ids
-        ],
-        created_at=contributor.created_at,
-        updated_at=contributor.updated_at,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Identity resolution — the single owner, called by contributor_credits.
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class ContributorExternalIdEvidence:
-    """A strong-authority external identifier that asserts contributor identity."""
-
-    authority: str
-    external_key: str
-    external_url: str | None = None
-
-
-@dataclass(frozen=True)
-class ContributorResolutionInput:
-    """Typed identity evidence for one credit. Provider IDs and ``source_ref`` provenance are
-    deliberately absent — only explicit ids/handles and strong external ids assert identity."""
-
-    credited_name: str
-    source: str
-    explicit_id: UUID | None = None
-    explicit_handle: str | None = None
-    external_ids: tuple[ContributorExternalIdEvidence, ...] = ()
-
-
-@dataclass(frozen=True)
-class ContributorResolution:
-    contributor_id: UUID
-    resolution_status: str  # external_id | manual | confirmed_alias | unverified
-
-
-def resolve_or_create_contributor(
-    db: Session, item: ContributorResolutionInput
-) -> ContributorResolution:
-    explicit = _resolve_explicit_contributor(db, item)
-    if explicit is not None:
-        return ContributorResolution(explicit, "manual")
-
-    if item.external_ids:
-        return ContributorResolution(
-            _resolve_or_attach_external_id(db, item, item.external_ids[0]), "external_id"
-        )
-
-    confirmed_alias = _resolve_confirmed_alias(db, item.credited_name)
-    if confirmed_alias is not None:
-        return ContributorResolution(confirmed_alias, "confirmed_alias")
-
-    return ContributorResolution(_create_unverified_contributor(db, item), "unverified")
-
-
-def _resolve_explicit_contributor(db: Session, item: ContributorResolutionInput) -> UUID | None:
-    if item.explicit_id is not None:
-        row = db.execute(
-            text(
-                """
-                SELECT id
-                FROM contributors
-                WHERE id = :contributor_id
-                  AND status IN ('unverified', 'verified')
-                """
-            ),
-            {"contributor_id": item.explicit_id},
-        ).fetchone()
-        return row[0] if row is not None else None
-
-    if item.explicit_handle:
-        row = db.execute(
-            text(
-                """
-                SELECT id
-                FROM contributors
-                WHERE handle = :contributor_handle
-                  AND status IN ('unverified', 'verified')
-                """
-            ),
-            {"contributor_handle": item.explicit_handle},
-        ).fetchone()
-        return row[0] if row is not None else None
-
-    return None
-
-
-def _resolve_or_attach_external_id(
-    db: Session,
-    item: ContributorResolutionInput,
-    evidence: ContributorExternalIdEvidence,
-) -> UUID:
-    existing = _select_contributor_by_external_id(db, evidence.authority, evidence.external_key)
-    if existing is not None:
-        return existing
-    try:
-        with db.begin_nested():
-            contributor_id = _create_unverified_contributor(db, item)
-            _insert_external_id(db, contributor_id, evidence, item.source)
-            return contributor_id
-    except IntegrityError as exc:
-        if not _is_contributor_identity_race(exc):
-            raise
-        existing = _select_contributor_by_external_id(db, evidence.authority, evidence.external_key)
-        if existing is not None:
-            return existing
-        # The handle was taken in the race; attach the external id to that owner instead.
-        handle_owner = _select_contributor_by_handle(
-            db, contributor_handle_for_name(normalize_contributor_name(item.credited_name))
-        )
-        if handle_owner is None:
-            raise
-        try:
-            with db.begin_nested():
-                _insert_external_id(db, handle_owner, evidence, item.source)
-        except IntegrityError as attach_exc:
-            if not _is_contributor_external_id_conflict(attach_exc):
-                raise
-            external_owner = _select_contributor_by_external_id(
-                db, evidence.authority, evidence.external_key
-            )
-            if external_owner is None:
-                raise
-            handle_owner = external_owner
-        return handle_owner
-
-
-def _insert_external_id(
-    db: Session,
-    contributor_id: UUID,
-    evidence: ContributorExternalIdEvidence,
-    source: str,
-) -> None:
-    db.execute(
-        text(
-            """
-            INSERT INTO contributor_external_ids (
-                contributor_id, authority, external_key, external_url, source
-            )
-            VALUES (:contributor_id, :authority, :external_key, :external_url, :source)
-            """
-        ),
-        {
-            "contributor_id": contributor_id,
-            "authority": evidence.authority,
-            "external_key": evidence.external_key,
-            "external_url": evidence.external_url,
-            "source": source,
-        },
-    )
-
-
-def _resolve_confirmed_alias(db: Session, credited_name: str) -> UUID | None:
-    normalized_name = normalize_contributor_name(credited_name)
-    rows = db.execute(
-        text(
-            """
-            SELECT
-                c.id,
-                bool_or(ca.is_primary) AS has_primary,
-                min(c.created_at) AS created_at
-            FROM contributor_aliases ca
-            JOIN contributors c ON c.id = ca.contributor_id
-            WHERE ca.normalized_alias = :normalized_name
-              AND ca.source = ANY(:confirmed_alias_sources)
-              AND c.status IN ('unverified', 'verified')
-            GROUP BY c.id
-            ORDER BY has_primary DESC, created_at ASC, c.id ASC
-            LIMIT 2
-            """
-        ),
-        {
-            "normalized_name": normalized_name,
-            "confirmed_alias_sources": sorted(CONFIRMED_ALIAS_SOURCES),
-        },
-    ).fetchall()
-    return rows[0][0] if len(rows) == 1 else None
-
-
-def _create_unverified_contributor(db: Session, item: ContributorResolutionInput) -> UUID:
-    # justify-service-invariant-check: contributors.sort_name is NOT NULL and is written
-    # from credited_name here; `str` cannot express "non-empty". Callers drop empty credited
-    # names before resolving, so an empty one reaching the sole create seam is a defect.
-    assert item.credited_name.strip(), "contributor credited_name must be non-empty"
-    normalized_name = normalize_contributor_name(item.credited_name)
-    handle = unique_contributor_handle_for_name(db, normalized_name)
-    contributor_id = uuid4()
-    try:
-        with db.begin_nested():
-            db.execute(
-                text(
-                    """
-                    INSERT INTO contributors (id, handle, display_name, sort_name, kind, status)
-                    VALUES (:id, :handle, :display_name, :sort_name, 'unknown', 'unverified')
-                    """
-                ),
-                {
-                    "id": contributor_id,
-                    "handle": handle,
-                    "display_name": item.credited_name,
-                    "sort_name": item.credited_name,
-                },
-            )
-            db.execute(
-                text(
-                    """
-                    INSERT INTO contributor_aliases (
-                        contributor_id, alias, normalized_alias, alias_kind, source, is_primary
-                    )
-                    VALUES (:contributor_id, :alias, :normalized_alias, 'display', :source, true)
-                    """
-                ),
-                {
-                    "contributor_id": contributor_id,
-                    "alias": item.credited_name,
-                    "normalized_alias": normalized_name,
-                    "source": item.source,
-                },
-            )
-            return contributor_id
-    except IntegrityError as exc:
-        if not _is_contributor_handle_conflict(exc):
-            raise
-        existing = _select_contributor_by_handle(db, handle)
-        if existing is None:
-            raise
-        return existing
-
-
-def unique_contributor_handle_for_name(db: Session, normalized_name: str) -> str:
-    base_handle = contributor_handle_for_name(normalized_name)
-    handle = base_handle
-    while True:
-        row = db.execute(
-            text("SELECT 1 FROM contributors WHERE handle = :handle"),
-            {"handle": handle},
-        ).fetchone()
-        if row is None:
-            return handle
-        handle = f"{base_handle}-{uuid4().hex[:8]}"
-
-
-def contributor_handle_for_name(normalized_name: str) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "-", normalized_name).strip("-") or "contributor"
-    suffix = hashlib.md5(normalized_name.encode("utf-8")).hexdigest()[:8]
-    return f"{slug[:48]}-{suffix}"
-
-
-def _select_contributor_by_external_id(
-    db: Session, authority: str, external_key: str
-) -> UUID | None:
+def _contributor_visible(db: Session, contributor_id: UUID, viewer_id: UUID) -> bool:
+    """Broad visibility: a visible credit or a viewer-owned graph edge (D-8)."""
     row = db.execute(
         text(
-            """
-            SELECT c.id
-            FROM contributor_external_ids cei
-            JOIN contributors c ON c.id = cei.contributor_id
-            WHERE cei.authority = :authority
-              AND cei.external_key = :external_key
-              AND c.status IN ('unverified', 'verified')
+            f"""
+            SELECT 1
+            FROM ({visible_contributor_ids_cte_sql()}) visible
+            WHERE visible.contributor_id = :contributor_id
             LIMIT 1
             """
         ),
-        {"authority": authority, "external_key": external_key},
-    ).fetchone()
-    return row[0] if row is not None else None
+        {"viewer_id": viewer_id, "contributor_id": contributor_id},
+    ).first()
+    return row is not None
 
 
-def _select_contributor_by_handle(db: Session, handle: str) -> UUID | None:
+def _contributor_is_orphaned(db: Session, contributor: Contributor) -> bool:
+    contributor_id = contributor.id
+    if (
+        db.scalar(
+            select(ContributorCredit.id)
+            .where(ContributorCredit.contributor_id == contributor_id)
+            .limit(1)
+        )
+        is not None
+    ):
+        return False
+    if (
+        db.scalar(
+            select(ContributorExternalId.id)
+            .where(ContributorExternalId.contributor_id == contributor_id)
+            .limit(1)
+        )
+        is not None
+    ):
+        return False
+    # Any user's edge blocks; note-body embeds sync to resource_edges
+    # (origin='note_body') in the note-save transaction, so this transitively
+    # gates note-body references (D-41). A view-state edge_id points at one of
+    # these rows, so no separate edge-id probe is needed.
+    if (
+        db.scalar(
+            select(ResourceEdge.id)
+            .where(
+                or_(
+                    (ResourceEdge.source_scheme == "contributor")
+                    & (ResourceEdge.source_id == contributor_id),
+                    (ResourceEdge.target_scheme == "contributor")
+                    & (ResourceEdge.target_id == contributor_id),
+                )
+            )
+            .limit(1)
+        )
+        is not None
+    ):
+        return False
+    if (
+        db.scalar(
+            select(PinnedObjectRef.id)
+            .where(
+                PinnedObjectRef.object_type == "contributor",
+                PinnedObjectRef.object_id == contributor_id,
+            )
+            .limit(1)
+        )
+        is not None
+    ):
+        return False
+    if (
+        db.scalar(
+            select(ResourceVersion.id)
+            .where(
+                ResourceVersion.resource_scheme == "contributor",
+                ResourceVersion.resource_id == contributor_id,
+            )
+            .limit(1)
+        )
+        is not None
+    ):
+        return False
+    if (
+        db.scalar(
+            select(ResourceViewState.id)
+            .where(
+                or_(
+                    (ResourceViewState.surface_scheme == "contributor")
+                    & (ResourceViewState.surface_id == contributor_id),
+                    (ResourceViewState.target_scheme == "contributor")
+                    & (ResourceViewState.target_id == contributor_id),
+                )
+            )
+            .limit(1)
+        )
+        is not None
+    ):
+        return False
+    if (
+        db.scalar(
+            select(ChatRunTurnContext.chat_run_id)
+            .where(
+                or_(
+                    (ChatRunTurnContext.requested_subject_scheme == "contributor")
+                    & (ChatRunTurnContext.requested_subject_id == contributor_id),
+                    (ChatRunTurnContext.subject_scheme == "contributor")
+                    & (ChatRunTurnContext.subject_id == contributor_id),
+                )
+            )
+            .limit(1)
+        )
+        is not None
+    ):
+        return False
+    if contributor_is_referenced_in_persisted_context(
+        db, contributor_id=contributor_id, contributor_handle=contributor.handle
+    ):
+        return False
+    if _foreign_author_memo_exists(db, contributor=contributor):
+        return False
+    return True
+
+
+def _foreign_author_memo_exists(db: Session, *, contributor: Contributor) -> bool:
+    """D-41 foreign replay probe: typed object, URI string, or foreign scope.
+
+    ``jsonb_path_exists`` (not text LIKE) over ``response_json`` for the known
+    ref forms — any ``contributorHandle`` field (author-edit memos are recorded
+    ``by_alias=True``, so they carry the camel spelling), plus the typed
+    contributor object, the snake ``contributor_handle`` field, and the
+    ``contributor:<uuid>`` URI (D-41's future-proof forms; no current memo shape
+    produces them) — plus a scope-prefix check that excludes the contributor's
+    own display-name scope, which the prune deletes itself. A media-author memo
+    naming this contributor therefore keeps a replay-protected identity alive
+    until that memo is removed (spec 2.8).
+    """
+    handle_path = (
+        '$.** ? ((@.type == "contributor" && @.id == $h)'
+        " || @.contributorHandle == $h || @.contributor_handle == $h)"
+    )
     row = db.execute(
         text(
             """
-            SELECT id
-            FROM contributors
-            WHERE handle = :handle
-              AND status IN ('unverified', 'verified')
+            SELECT 1
+            FROM resource_mutations rm
+            WHERE (
+                jsonb_path_exists(
+                    rm.response_json,
+                    CAST(:handle_path AS jsonpath),
+                    jsonb_build_object('h', CAST(:contributor_handle AS text))
+                )
+                OR jsonb_path_exists(
+                    rm.response_json,
+                    '$.** ? (@ == $uri)',
+                    jsonb_build_object('uri', CAST(:contributor_uri AS text))
+                )
+                OR (
+                    rm.mutation_scope LIKE :scope_prefix
+                    AND rm.mutation_scope != :own_scope
+                )
+            )
+            LIMIT 1
             """
         ),
-        {"handle": handle},
-    ).fetchone()
-    return row[0] if row is not None else None
+        {
+            "handle_path": handle_path,
+            "contributor_handle": contributor.handle,
+            "contributor_uri": f"contributor:{contributor.id}",
+            "scope_prefix": f"contributor:{contributor.id}:%",
+            "own_scope": f"contributor:{contributor.id}:display-name",
+        },
+    ).first()
+    return row is not None
 
 
-def _is_contributor_identity_race(exc: IntegrityError) -> bool:
-    return _is_contributor_handle_conflict(exc) or _is_contributor_external_id_conflict(exc)
+def _escape_like(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
-def _is_contributor_handle_conflict(exc: IntegrityError) -> bool:
-    return _resolved_constraint_name(exc) == "uq_contributors_handle"
+def _encode_cursor(payload: dict[str, object]) -> str:
+    return base64.urlsafe_b64encode(
+        json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    ).decode("ascii")
 
 
-def _is_contributor_external_id_conflict(exc: IntegrityError) -> bool:
-    return _resolved_constraint_name(exc) == "uq_contributor_external_ids_authority_key"
-
-
-def _resolved_constraint_name(exc: IntegrityError) -> str | None:
-    name = integrity_constraint_name(exc)
-    if name:
-        return name
-    message = str(getattr(exc, "orig", None) or exc)
-    if "uq_contributors_handle" in message:
-        return "uq_contributors_handle"
-    if "uq_contributor_external_ids_authority_key" in message:
-        return "uq_contributor_external_ids_authority_key"
-    return None
+def _decode_cursor(cursor: str, keys: tuple[str, ...]) -> dict[str, object]:
+    try:
+        decoded = json.loads(base64.urlsafe_b64decode(cursor.encode("ascii")))
+    except ValueError:
+        raise InvalidRequestError(message="Invalid cursor") from None
+    if not isinstance(decoded, dict) or set(decoded) != set(keys):
+        raise InvalidRequestError(message="Invalid cursor")
+    return decoded

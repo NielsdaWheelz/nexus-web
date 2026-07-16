@@ -110,9 +110,6 @@ def test_generated_and_identity_resources_project_existing_routes(
         id=uuid4(),
         handle="route-author",
         display_name="Route Author",
-        sort_name="Author, Route",
-        kind="person",
-        status="verified",
     )
     db_session.add(contributor)
     db_session.flush()

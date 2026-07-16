@@ -726,3 +726,66 @@ def test_pdf_legal_footnote_apparatus_rejects_same_line_target_body():
     assert result.items == []
     assert result.edges == []
     assert result.diagnostics["pdf_legal_footnotes"]["status"] == "no_supported_legal_footnotes"
+
+
+class TestBuildPdfAuthorObservation:
+    """`build_pdf_author_observation` — the PDF `author` observation (D-31).
+
+    D-31 reverses the old comma-splitting: `Last, First` is ONE name and only
+    semicolons separate people. These assert observation *shape* — the values
+    the runner hands to the author facade — not any DB effect.
+    """
+
+    @staticmethod
+    def _observe(pdf_author: str | None):
+        from nexus.services.pdf_metadata import build_pdf_author_observation
+
+        return build_pdf_author_observation(PdfExtractionResult(pdf_author=pdf_author))
+
+    def test_last_comma_first_is_one_name(self):
+        from nexus.services.contributor_taxonomy import ObservedRoleSlices
+
+        batch, truncated = self._observe("Melville, Herman")
+        assert isinstance(batch, ObservedRoleSlices)
+        assert batch.managed_roles == frozenset({"author"})
+        assert [c.credited_name for c in batch.credits] == ["Melville, Herman"]
+        assert all(c.role == "author" for c in batch.credits)
+        assert truncated == {}
+
+    def test_semicolons_separate_people_and_preserve_commas(self):
+        from nexus.services.contributor_taxonomy import ObservedRoleSlices
+
+        batch, _ = self._observe("Smith, John; Doe, Jane")
+        assert isinstance(batch, ObservedRoleSlices)
+        assert [c.credited_name for c in batch.credits] == ["Smith, John", "Doe, Jane"]
+
+    def test_duplicate_names_dedupe(self):
+        from nexus.services.contributor_taxonomy import ObservedRoleSlices
+
+        batch, _ = self._observe("Ada Lovelace; ada lovelace")
+        assert isinstance(batch, ObservedRoleSlices)
+        assert [c.credited_name for c in batch.credits] == ["Ada Lovelace"]
+
+    def test_no_author_is_not_observed(self):
+        from nexus.services.contributor_taxonomy import NotObserved
+
+        for value in (None, "", "   ", ";  ; "):
+            batch, truncated = self._observe(value)
+            assert isinstance(batch, NotObserved)
+            assert truncated == {}
+
+    def test_over_twenty_authors_truncate_with_count_only(self):
+        from nexus.services.contributor_taxonomy import ObservedRoleSlices
+
+        raw = "; ".join(f"Author {i:02d}" for i in range(25))
+        batch, truncated = self._observe(raw)
+        assert isinstance(batch, ObservedRoleSlices)
+        assert len(batch.credits) == 20
+        assert truncated == {"author": 5}
+
+    def test_no_identity_key(self):
+        from nexus.services.contributor_taxonomy import ObservedRoleSlices
+
+        batch, _ = self._observe("Grace Hopper")
+        assert isinstance(batch, ObservedRoleSlices)
+        assert batch.credits[0].identity_key is None

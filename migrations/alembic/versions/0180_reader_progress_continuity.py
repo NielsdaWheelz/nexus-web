@@ -18,15 +18,12 @@ monotonically increasing ``revision`` conflict token per user/media row:
    attention-only writes stop incidentally touching the cursor row.
 
 Revision ID: 0180
-Revises: 0178 (see integration note below)
+Revises: 0179
 Create Date: 2026-07-16
 
-INTEGRATION NOTE: revision id "0179" is burned — the lightweight-author-dedup
-cutover (branch ``author-dedup-cutover``, deployed to production 2026-07-16)
-owns it and is not yet merged to main. This migration is therefore ``0180``.
-``down_revision`` is "0178" only so the pre-merge main tree keeps a valid
-chain; whoever merges ``author-dedup-cutover`` must flip ``down_revision`` to
-"0179" in the same commit so production (already at 0179) upgrades cleanly.
+Numbering note: revision id "0179" belongs to the lightweight-author-dedup
+cutover, which was deployed to production from its branch before this
+migration merged; this migration therefore chains after it as ``0180``.
 """
 
 from collections.abc import Sequence
@@ -34,7 +31,7 @@ from collections.abc import Sequence
 from alembic import op
 
 revision: str = "0180"
-down_revision: str | Sequence[str] | None = "0178"
+down_revision: str | Sequence[str] | None = "0179"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

@@ -142,6 +142,10 @@ class ApiErrorCode(str, Enum):
     # PDF errors (422)
     E_PDF_PASSWORD_REQUIRED = "E_PDF_PASSWORD_REQUIRED"  # 422
 
+    # Author errors (422)
+    E_AUTHOR_ALREADY_LISTED = "E_AUTHOR_ALREADY_LISTED"  # 422 - duplicate canonical contributor
+    E_AUTHOR_NOT_SELECTABLE = "E_AUTHOR_NOT_SELECTABLE"  # 422 - unknown or invisible handle
+
     # Ingestion errors (502/504)
     E_INGEST_FAILED = "E_INGEST_FAILED"  # 502
     E_INGEST_TIMEOUT = "E_INGEST_TIMEOUT"  # 504
@@ -284,6 +288,9 @@ ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
     ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE: 409,
     # PDF errors
     ApiErrorCode.E_PDF_PASSWORD_REQUIRED: 422,
+    # Author errors
+    ApiErrorCode.E_AUTHOR_ALREADY_LISTED: 422,
+    ApiErrorCode.E_AUTHOR_NOT_SELECTABLE: 422,
     # Ingestion errors
     ApiErrorCode.E_INGEST_FAILED: 502,
     ApiErrorCode.E_INGEST_TIMEOUT: 504,

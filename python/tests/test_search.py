@@ -31,13 +31,14 @@ from sqlalchemy import text
 from nexus.config import clear_settings_cache
 from nexus.db.models import Fragment
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
+from nexus.services import contributors
 from nexus.services.content_indexing import (
     IndexOwner,
     mark_content_index_failed,
     rebuild_fragment_content_index,
     rebuild_transcript_content_index,
 )
-from nexus.services.contributor_credits import replace_media_contributor_credits
+from nexus.services.contributor_taxonomy import ContributorObservation, ObservedRoleSlices
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
 from nexus.services.note_indexing import rebuild_note_content_index
 from nexus.services.notes import get_daily_note
@@ -2087,16 +2088,37 @@ class TestSearchResultFormat:
                 user_id,
                 title=f"Contributor Wire Contract {uuid4()}",
             )
-            replace_media_contributor_credits(
-                session,
-                media_id=media_id,
-                credits=[{"name": "Wire Contract Author", "role": "author", "source": "test"}],
-            )
             session.commit()
+
+        # The author facade opens its own fresh session and commits, so it runs
+        # after the media is committed (not on the direct_db session).
+        contributors.replace_observed_role_slices(
+            target=contributors.MediaTarget(media_id),
+            observation=ObservedRoleSlices(
+                managed_roles=frozenset({"author"}),
+                credits=(
+                    ContributorObservation(
+                        credited_name="Wire Contract Author",
+                        role="author",
+                        raw_role=None,
+                        identity_key=None,
+                    ),
+                ),
+            ),
+            source="web_article_byline",
+        )
+
+        with direct_db.session() as session:
+            contributor_id = session.execute(
+                text("SELECT contributor_id FROM contributor_credits WHERE media_id = :m LIMIT 1"),
+                {"m": media_id},
+            ).scalar_one()
 
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("contributor_credits", "media_id", media_id)
+        direct_db.register_cleanup("contributors", "id", contributor_id)
+        direct_db.register_cleanup("contributor_aliases", "contributor_id", contributor_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         response = auth_client.get(

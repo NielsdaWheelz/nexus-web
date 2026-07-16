@@ -14,7 +14,7 @@ from nexus.db.session import transaction
 from nexus.errors import ApiErrorCode, ForbiddenError, InvalidRequestError, NotFoundError
 from nexus.logging import get_logger
 from nexus.schemas.media import DeleteDocumentResponse, DeleteDocumentStatus
-from nexus.services import library_entries, library_governance, media_intelligence
+from nexus.services import contributors, library_entries, library_governance, media_intelligence
 from nexus.services.content_indexing import IndexOwner, delete_content_index
 from nexus.services.default_library_closure import (
     count_default_references,
@@ -526,10 +526,10 @@ def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[s
         text("DELETE FROM user_media_deletions WHERE media_id = :media_id"),
         {"media_id": media_id},
     )
-    db.execute(
-        text("DELETE FROM contributor_credits WHERE media_id = :media_id"),
-        {"media_id": media_id},
-    )
+    # Removes the credits, deletes this media's author-edit replay memos, and
+    # prunes any contributor left with no other reference (spec §2.8). Runs on
+    # this deletion transaction — the documented composition exception (§3).
+    contributors.cleanup_credits_for_deleted_target(db, target=contributors.MediaTarget(media_id))
     db.execute(
         text("""
             UPDATE external_provider_events

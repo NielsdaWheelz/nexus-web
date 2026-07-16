@@ -22,7 +22,10 @@ from nexus.schemas.podcast import (
     PodcastSubscriptionStatusOut,
 )
 from nexus.services import library_entries
-from nexus.services.contributor_credits import load_contributor_credits_for_podcasts
+from nexus.services.contributor_credits import (
+    load_contributor_credits_for_podcasts,
+    podcast_credit_text_match_sql,
+)
 
 PODCAST_SUBSCRIPTION_SORT_OPTIONS = {"recent_episode", "unplayed_count", "alpha"}
 PODCAST_SUBSCRIPTION_FILTER_OPTIONS = {"all", "has_new", "not_in_library"}
@@ -205,19 +208,7 @@ def list_subscriptions(
               AND (
                     :has_query IS FALSE
                     OR p.title ILIKE :q_pattern
-                    OR EXISTS (
-                        SELECT 1
-                        FROM contributor_credits cc
-                        JOIN contributors c ON c.id = cc.contributor_id
-                        LEFT JOIN contributor_aliases ca ON ca.contributor_id = c.id
-                        WHERE cc.podcast_id = p.id
-                          AND c.status NOT IN ('merged', 'tombstoned')
-                          AND (
-                                cc.credited_name ILIKE :q_pattern
-                                OR c.display_name ILIKE :q_pattern
-                                OR ca.alias ILIKE :q_pattern
-                          )
-                    )
+                    OR {podcast_credit_text_match_sql("p.id")}
                 )
               AND {filter_sql}
               AND {library_scope_sql}

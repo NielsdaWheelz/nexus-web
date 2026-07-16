@@ -3,6 +3,17 @@ import { userEvent } from "vitest/browser";
 import { describe, expect, it, vi } from "vitest";
 import ContributorFilter from "./ContributorFilter";
 
+function searchItem(handle: string, displayName: string) {
+  return {
+    handle,
+    href: `/authors/${handle}`,
+    displayName,
+    workCount: 1,
+    workExamples: [],
+    matchedAlias: null,
+  };
+}
+
 describe("ContributorFilter", () => {
   it("loads selected author labels and filters selected handles from suggestions", async () => {
     const onChange = vi.fn();
@@ -13,23 +24,21 @@ describe("ContributorFilter", () => {
           return jsonResponse({
             data: {
               handle: "ursula-le-guin",
-              display_name: "Ursula K. Le Guin",
+              href: "/authors/ursula-le-guin",
+              displayName: "Ursula K. Le Guin",
+              otherNames: [],
+              canRename: false,
             },
           });
         }
-        if (path === "/api/contributors?q=le") {
+        if (path === "/api/contributors?q=le&limit=10") {
           return jsonResponse({
             data: {
               contributors: [
-                {
-                  handle: "ursula-le-guin",
-                  display_name: "Ursula K. Le Guin",
-                },
-                {
-                  handle: "octavia-butler",
-                  display_name: "Octavia E. Butler",
-                },
+                searchItem("ursula-le-guin", "Ursula K. Le Guin"),
+                searchItem("octavia-butler", "Octavia E. Butler"),
               ],
+              nextCursor: null,
             },
           });
         }
@@ -76,7 +85,7 @@ describe("ContributorFilter", () => {
       <ContributorFilter
         selectedHandles={["ursula-le-guin", "octavia-butler"]}
         onChange={vi.fn()}
-      />
+      />,
     );
 
     await waitFor(() => {
@@ -84,7 +93,7 @@ describe("ContributorFilter", () => {
         expect.arrayContaining([
           "/api/contributors/ursula-le-guin",
           "/api/contributors/octavia-butler",
-        ])
+        ]),
       );
     });
 
@@ -93,15 +102,18 @@ describe("ContributorFilter", () => {
         jsonResponse({
           data: {
             handle: "ursula-le-guin",
-            display_name: "Ursula K. Le Guin",
+            href: "/authors/ursula-le-guin",
+            displayName: "Ursula K. Le Guin",
+            otherNames: [],
+            canRename: false,
           },
-        })
+        }),
       );
     });
 
     expect(await screen.findByRole("link", { name: "Ursula K. Le Guin" })).toBeVisible();
     expect(
-      fetchMock.mock.calls.filter(([path]) => path === "/api/contributors/octavia-butler")
+      fetchMock.mock.calls.filter(([path]) => path === "/api/contributors/octavia-butler"),
     ).toHaveLength(1);
 
     await act(async () => {
@@ -109,15 +121,18 @@ describe("ContributorFilter", () => {
         jsonResponse({
           data: {
             handle: "octavia-butler",
-            display_name: "Octavia E. Butler",
+            href: "/authors/octavia-butler",
+            displayName: "Octavia E. Butler",
+            otherNames: [],
+            canRename: false,
           },
-        })
+        }),
       );
     });
 
     expect(await screen.findByRole("link", { name: "Octavia E. Butler" })).toBeVisible();
     expect(
-      fetchMock.mock.calls.filter(([path]) => path === "/api/contributors/octavia-butler")
+      fetchMock.mock.calls.filter(([path]) => path === "/api/contributors/octavia-butler"),
     ).toHaveLength(1);
   });
 });

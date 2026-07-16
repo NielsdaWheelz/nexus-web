@@ -46,6 +46,7 @@ class CapabilitiesOut(BaseModel):
     can_retry: bool = False
     can_refresh_source: bool = False
     can_retry_metadata: bool = False
+    can_edit_authors: bool = False
     can_read_embeds: bool = False
 
 
@@ -206,6 +207,10 @@ class MediaOut(BaseModel):
     capabilities: CapabilitiesOut
     document_embed_summary: DocumentEmbedSummaryOut | None = None
     contributors: list[ContributorCreditOut] = Field(default_factory=list)
+    # Snake wire (D-1): embedded media DTOs stay snake_case. "manual" mirrors
+    # media.authors_manually_managed; the five camel author endpoints expose the
+    # camel `authorMode` separately.
+    author_mode: Literal["automatic", "manual"] = "automatic"
     published_date: str | None = None
     publisher: str | None = None
     language: str | None = None

@@ -167,6 +167,22 @@ def visible_content_credit_rows_sql() -> str:
     """
 
 
+def credited_visible_contributor_ids_cte_sql() -> str:
+    """Contributors with at least one visible credited target. Binds :viewer_id.
+
+    The narrow picker/search predicate (spec 2.8, D-8): used by ``GET
+    /contributors`` search, the search-package contributors retriever, and
+    ``object_refs`` contributor search, so retained key owners or graph-referenced
+    identities with zero visible credits never surface as eternal "0 works"
+    choices. Detail, works, hydration, and mutation handle-binding keep the broad
+    :func:`visible_contributor_ids_cte_sql` below.
+    """
+    return f"""
+        SELECT DISTINCT vcc.contributor_id
+        FROM ({visible_content_credit_rows_sql()}) vcc
+    """
+
+
 def visible_contributor_ids_cte_sql() -> str:
     """Contributors visible to a viewer: a visible credit OR a viewer-owned graph edge.
 

@@ -77,6 +77,54 @@ def _latest_attempt_id(db: Session, media_id: UUID) -> UUID:
     ).scalar_one()
 
 
+# ---------------------------------------------------------------------------
+# direct_db helpers: accept_email_message runs the author op in its own fresh
+# session and commits, so credit-asserting tests need committed data across
+# connections (savepoint-isolated ``db_session`` cannot see it).
+# ---------------------------------------------------------------------------
+
+
+def _bootstrap_owner(direct_db) -> UUID:
+    user_id = uuid4()
+    direct_db.register_cleanup("users", "id", user_id)
+    direct_db.register_cleanup("libraries", "owner_user_id", user_id)
+    direct_db.register_cleanup("memberships", "user_id", user_id)
+    with direct_db.session() as session:
+        ensure_user_and_default_library(session, user_id)
+        session.commit()
+    return user_id
+
+
+def _track_email_media(direct_db, media_id: UUID) -> None:
+    """Register cleanup for a media and its contributors (LIFO: credits first)."""
+    direct_db.register_cleanup("media", "id", media_id)
+    direct_db.register_cleanup("media_source_attempts", "media_id", media_id)
+    direct_db.register_cleanup("library_entries", "media_id", media_id)
+    with direct_db.session() as session:
+        contributor_ids = [
+            row[0]
+            for row in session.execute(
+                text("SELECT DISTINCT contributor_id FROM contributor_credits WHERE media_id = :m"),
+                {"m": media_id},
+            )
+        ]
+    for contributor_id in contributor_ids:
+        direct_db.register_cleanup("contributors", "id", contributor_id)
+        direct_db.register_cleanup("contributor_external_ids", "contributor_id", contributor_id)
+        direct_db.register_cleanup("contributor_aliases", "contributor_id", contributor_id)
+        direct_db.register_cleanup("contributor_credits", "contributor_id", contributor_id)
+    direct_db.register_cleanup("contributor_credits", "media_id", media_id)
+
+
+def _accept(direct_db, raw_body: bytes, owner_user_id: UUID):
+    with direct_db.session() as session:
+        result = accept_email_message(
+            db=session, raw_body=raw_body, owner_user_id=owner_user_id, request_id=None
+        )
+    _track_email_media(direct_db, result.media_id)
+    return result
+
+
 @pytest.fixture
 def email_env(monkeypatch, owner_user_id: UUID) -> UUID:
     """Patch env vars for email ingest + clear settings cache. Returns owner_user_id."""
@@ -203,58 +251,99 @@ class TestAcceptEmailMessage:
         assert row.processing_status is not None
 
     def test_sender_contributor_resolved_by_email_authority(
-        self, db_session: Session, owner_user_id: UUID, fake_storage: FakeStorageClient
+        self, direct_db, fake_storage: FakeStorageClient
     ):
-        body = _eml("substack_issue.eml")
-        result = accept_email_message(
-            db=db_session, raw_body=body, owner_user_id=owner_user_id, request_id=None
-        )
-        # Contributor credit exists with authority='email'
-        credit = db_session.execute(
-            text(
-                """
-                SELECT cc.contributor_id, ceid.authority, ceid.external_key
-                FROM contributor_credits cc
-                JOIN contributor_external_ids ceid
-                  ON ceid.contributor_id = cc.contributor_id
-                WHERE cc.media_id = :mid AND cc.role = 'author' AND ceid.authority = 'email'
-                """
-            ),
-            {"mid": result.media_id},
-        ).one_or_none()
-        assert credit is not None, "No email-authority contributor credit found"
-        assert credit.authority == "email"
+        owner_user_id = _bootstrap_owner(direct_db)
+        result = _accept(direct_db, _eml("substack_issue.eml"), owner_user_id)
+        # Contributor credit exists with the canonical email_address identity key.
+        with direct_db.session() as session:
+            credit = session.execute(
+                text(
+                    """
+                    SELECT cc.contributor_id, ceid.authority, ceid.external_key
+                    FROM contributor_credits cc
+                    JOIN contributor_external_ids ceid
+                      ON ceid.contributor_id = cc.contributor_id
+                    WHERE cc.media_id = :mid AND cc.role = 'author'
+                      AND ceid.authority = 'email_address'
+                    """
+                ),
+                {"mid": result.media_id},
+            ).one_or_none()
+        assert credit is not None, "No email_address-authority contributor credit found"
+        assert credit.authority == "email_address"
         assert credit.external_key == "alice@substack.com"
 
     def test_two_issues_same_sender_resolve_same_contributor(
-        self, db_session: Session, owner_user_id: UUID, fake_storage: FakeStorageClient
+        self, direct_db, fake_storage: FakeStorageClient
     ):
-        r1 = accept_email_message(
-            db=db_session,
-            raw_body=_eml("substack_issue.eml"),
-            owner_user_id=owner_user_id,
-            request_id=None,
-        )
-        r2 = accept_email_message(
-            db=db_session,
-            raw_body=_eml("substack_issue2.eml"),
-            owner_user_id=owner_user_id,
-            request_id=None,
-        )
-        # Fetch contributor_id for each media
-        cid1 = db_session.execute(
-            text(
-                "SELECT contributor_id FROM contributor_credits WHERE media_id = :mid AND role = 'author'"
-            ),
-            {"mid": r1.media_id},
-        ).scalar_one()
-        cid2 = db_session.execute(
-            text(
-                "SELECT contributor_id FROM contributor_credits WHERE media_id = :mid AND role = 'author'"
-            ),
-            {"mid": r2.media_id},
-        ).scalar_one()
+        owner_user_id = _bootstrap_owner(direct_db)
+        r1 = _accept(direct_db, _eml("substack_issue.eml"), owner_user_id)
+        r2 = _accept(direct_db, _eml("substack_issue2.eml"), owner_user_id)
+        with direct_db.session() as session:
+            cid1 = session.execute(
+                text(
+                    "SELECT contributor_id FROM contributor_credits "
+                    "WHERE media_id = :mid AND role = 'author'"
+                ),
+                {"mid": r1.media_id},
+            ).scalar_one()
+            cid2 = session.execute(
+                text(
+                    "SELECT contributor_id FROM contributor_credits "
+                    "WHERE media_id = :mid AND role = 'author'"
+                ),
+                {"mid": r2.media_id},
+            ).scalar_one()
         assert cid1 == cid2, "Both issues must credit the same contributor"
+
+    def test_author_op_failure_then_redelivery_converges(
+        self, direct_db, fake_storage: FakeStorageClient, monkeypatch
+    ):
+        """D-27 / AC 9 (email path): the author op runs on the duplicate path.
+
+        If the accept-time author op crashes after the media transaction commits,
+        a provider re-delivery hits the duplicate short-circuit and re-runs it —
+        the sender credit converges instead of being lost forever (email is
+        excluded from enrichment, so this is the only author write).
+        """
+        import nexus.services.email_ingest_service as svc
+
+        owner_user_id = _bootstrap_owner(direct_db)
+        real = svc.replace_observed_role_slices
+        calls = {"n": 0}
+
+        def flaky(*args: object, **kwargs: object) -> None:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("author op crashed")
+            real(*args, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(svc, "replace_observed_role_slices", flaky)
+
+        body = _eml("substack_issue.eml")
+        # First accept: media commits, then the author op crashes (provider sees 500).
+        with pytest.raises(RuntimeError, match="author op crashed"):
+            with direct_db.session() as session:
+                accept_email_message(
+                    db=session, raw_body=body, owner_user_id=owner_user_id, request_id=None
+                )
+
+        # Re-delivery of the same Message-ID hits the duplicate path and re-runs
+        # the author op, this time successfully.
+        result = _accept(direct_db, body, owner_user_id)
+        assert result.outcome == "duplicate"
+        assert calls["n"] == 2
+
+        with direct_db.session() as session:
+            credit_count = session.execute(
+                text(
+                    "SELECT COUNT(*) FROM contributor_credits "
+                    "WHERE media_id = :mid AND role = 'author'"
+                ),
+                {"mid": result.media_id},
+            ).scalar_one()
+        assert credit_count == 1, "sender credit converged on re-delivery"
 
     def test_media_lands_in_default_library(
         self, db_session: Session, owner_user_id: UUID, fake_storage: FakeStorageClient

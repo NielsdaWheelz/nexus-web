@@ -8,8 +8,8 @@ from nexus.errors import (
     ApiErrorCode,
     InvalidRequestError,
 )
+from nexus.schemas.contributors import ContributorCreditOut
 from nexus.schemas.podcast import PodcastDiscoveryOut
-from nexus.services.contributor_credits import upstream_contributor_credit_previews_for_names
 
 from .identity import (
     select_podcast_id_by_feed_url,
@@ -45,15 +45,20 @@ def discover_podcasts(
         if podcast_id is None:
             podcast_id = select_podcast_id_by_feed_url(db, feed_url)
 
-        contributors = []
+        # Provider author text becomes a handle-less credit-shaped text fact (D-9):
+        # discovery persists nothing, so there is no contributor to link to. The
+        # frontend renders these as plain text; a fabricated handle/href would point
+        # at an author page that does not exist.
+        contributors: list[ContributorCreditOut] = []
         raw_author = str(row.get("author") or "").strip()
         if raw_author:
-            contributors = upstream_contributor_credit_previews_for_names(
-                db,
-                [raw_author],
-                role="author",
-                source="podcast_index",
-            )
+            contributors = [
+                ContributorCreditOut(
+                    credited_name=raw_author,
+                    contributor_display_name=raw_author,
+                    role="author",
+                )
+            ]
 
         results.append(
             PodcastDiscoveryOut(

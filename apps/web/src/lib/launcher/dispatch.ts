@@ -21,6 +21,7 @@ import { paragraphFromText } from "@/lib/notes/prosemirror/schema";
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
 import { resolvePaneRoute } from "@/lib/panes/paneRouteTable";
 import { activateResource } from "@/lib/resources/activation";
+import { requestSearchInputFocus } from "@/lib/search/pendingSearchFocus";
 import { copyText } from "@/lib/ui/copyText";
 import { subscribeToPodcast } from "@/app/(authenticated)/podcasts/podcastSubscriptions";
 import type { LauncherActionTarget } from "./model";
@@ -30,6 +31,35 @@ import type { LauncherActionTarget } from "./model";
 // target the viewer can't actually open). External/unknown routes → false.
 export function isAndroidShellRestrictedHref(href: string, androidShell: boolean): boolean {
   return androidShell && isAndroidShellRestrictedRouteId(resolvePaneRoute(href).id);
+}
+
+// True when dispatching `target` moves the workspace to a new/other surface (opens or
+// switches a pane, or leaves the app). The controller uses this to drop the Launcher's
+// return-focus on a navigating close so it doesn't yank focus back from the destination
+// it just navigated to; toast-only targets return false and keep the a11y return-focus.
+export function targetNavigates(target: LauncherActionTarget): boolean {
+  switch (target.kind) {
+    case "href":
+    case "resource":
+    case "ask":
+    case "add-url":
+    case "browse-acquire":
+    case "new-conversation":
+    case "create-page":
+    case "open-today":
+    case "create-note":
+    case "pane-open":
+      return true;
+    case "queue-add":
+    case "copy-link":
+    case "pane-close":
+    case "set-lane":
+      return false;
+    default: {
+      const exhaustive: never = target;
+      return exhaustive;
+    }
+  }
 }
 
 export interface LauncherDispatchCtx {
@@ -73,6 +103,10 @@ export async function dispatchTarget(
         return;
       }
       if (blockedByAndroid(target.href)) return;
+      // Navigating to the search surface (Go to Authors / Search) declares intent to
+      // type: ask that pane to focus its box on arrival. SearchPaneBody enforces the
+      // blank-query gate, so a search href carrying a query never grabs focus.
+      if (resolvePaneRoute(target.href).id === "search") requestSearchInputFocus();
       requestOpenInAppPane(target.href, target.titleHint ? { titleHint: target.titleHint } : undefined);
       return;
     case "resource":

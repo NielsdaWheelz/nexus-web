@@ -15,7 +15,7 @@ import pytest
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
-from nexus.db.models import Contributor, Fragment, NoteBlock, ResourceEdge
+from nexus.db.models import Fragment, NoteBlock, ResourceEdge
 from nexus.errors import InvalidRequestError, NotFoundError
 from nexus.schemas.highlights import CreateHighlightRequest
 from nexus.services.highlights import create_highlight_for_fragment
@@ -35,7 +35,6 @@ from nexus.services.resource_graph.edges import (
     create_edge,
     delete_edge,
     replace_edges_for_origin,
-    repoint_edges,
 )
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.resource_graph.schemas import (
@@ -173,18 +172,6 @@ def _indexed_note_refs(db: Session, user_id: UUID) -> tuple[ResourceRef, Resourc
         ResourceRef(scheme="content_chunk", id=row["id"]),
         ResourceRef(scheme="evidence_span", id=row["primary_evidence_span_id"]),
     )
-
-
-def _contributor_ref(db: Session, *, name: str) -> ResourceRef:
-    contributor = Contributor(
-        id=uuid4(),
-        handle=f"{name.lower().replace(' ', '-')}-{uuid4().hex[:8]}",
-        display_name=name,
-        sort_name=name,
-    )
-    db.add(contributor)
-    db.commit()
-    return ResourceRef(scheme="contributor", id=contributor.id)
 
 
 def _bare(source: ResourceRef, target: ResourceRef, *, origin: EdgeOrigin = "user") -> EdgeCreate:
@@ -1084,98 +1071,8 @@ def test_note_block_citation_locator_resolves_nested_block(
 
 
 # =============================================================================
-# Repoint (identity merges)
+# create_edge self-edge guard
 # =============================================================================
-
-
-def test_repoint_moves_every_kind_and_keeps_ordinals(db_session: Session, bootstrapped_user: UUID):
-    duplicate = _contributor_ref(db_session, name="Dupe Author")
-    canonical = _contributor_ref(db_session, name="Canonical Author")
-    page = _page_ref(db_session, bootstrapped_user)
-    media = _media_ref(db_session, bootstrapped_user)
-    message = _message_ref(db_session, bootstrapped_user)
-
-    create_edge(db_session, viewer_id=bootstrapped_user, input=_bare(page, duplicate))
-    create_edge(
-        db_session,
-        viewer_id=bootstrapped_user,
-        input=EdgeCreate(source=duplicate, target=media, kind="supports", origin="user"),
-    )
-    record_citation(
-        db_session,
-        viewer_id=bootstrapped_user,
-        source=message,
-        target=duplicate,
-        ordinal=1,
-        kind="context",
-        snapshot=_SNAPSHOT,
-    )
-
-    moved = repoint_edges(
-        db_session, viewer_id=bootstrapped_user, from_ref=duplicate, to_ref=canonical
-    )
-
-    assert moved == 3, f"All three edges touch the duplicate and must move; got {moved}"
-    assert _connection_edges(db_session, viewer_id=bootstrapped_user, ref=duplicate) == [], (
-        "No edge may still reference the merged-away identity"
-    )
-    repointed = _connection_edges(db_session, viewer_id=bootstrapped_user, ref=canonical)
-    assert len(repointed) == 3, f"Every kind moves (bare, stance, citation); got {repointed}"
-    citation = next(edge for edge in repointed if edge.ordinal is not None)
-    assert citation.ordinal == 1 and citation.snapshot is not None, (
-        "Repoint must leave ordinals and snapshots untouched"
-    )
-    stance = next(edge for edge in repointed if edge.kind == "supports")
-    assert stance.source == canonical and stance.target == media, (
-        f"Source endpoints repoint too; got {stance}"
-    )
-
-
-def test_repoint_drops_bare_duplicates_on_reverse_collision(
-    db_session: Session, bootstrapped_user: UUID
-):
-    """User links are undirected (§5.4): a merge into the reverse pair must not leave
-    a symmetric duplicate that double-renders."""
-    duplicate = _contributor_ref(db_session, name="Dupe Author")
-    canonical = _contributor_ref(db_session, name="Canonical Author")
-    page = _page_ref(db_session, bootstrapped_user)
-
-    # A user link toward the duplicate, plus the *reverse* pair toward canonical.
-    create_edge(db_session, viewer_id=bootstrapped_user, input=_bare(page, duplicate))
-    kept = create_edge(db_session, viewer_id=bootstrapped_user, input=_bare(canonical, page))
-
-    moved = repoint_edges(
-        db_session, viewer_id=bootstrapped_user, from_ref=duplicate, to_ref=canonical
-    )
-
-    assert moved == 1, f"The reverse-colliding edge is processed (dropped); got {moved}"
-    edges = _connection_edges(db_session, viewer_id=bootstrapped_user, ref=canonical)
-    assert [edge.id for edge in edges] == [kept.id], (
-        f"Repoint must not leave a symmetric user-link pair; got "
-        f"{[(e.source.uri, e.target.uri) for e in edges]}"
-    )
-
-
-def test_repoint_drops_edge_that_would_become_a_self_edge(
-    db_session: Session, bootstrapped_user: UUID
-):
-    """Merging A into B when a user link A<->B exists must not mint a B->B self-edge
-    (§5.4 has no self-links); the moving row is dropped."""
-    duplicate = _contributor_ref(db_session, name="Dupe Author")
-    canonical = _contributor_ref(db_session, name="Canonical Author")
-
-    create_edge(db_session, viewer_id=bootstrapped_user, input=_bare(duplicate, canonical))
-
-    moved = repoint_edges(
-        db_session, viewer_id=bootstrapped_user, from_ref=duplicate, to_ref=canonical
-    )
-
-    assert moved == 1, f"The would-be self-edge is processed (dropped); got {moved}"
-    edges = _connection_edges(db_session, viewer_id=bootstrapped_user, ref=canonical)
-    assert edges == [], (
-        f"A repoint collapsing both endpoints must drop the row, not store a self-edge; "
-        f"got {[(e.source.uri, e.target.uri) for e in edges]}"
-    )
 
 
 def test_create_edge_rejects_self_edge(db_session: Session, bootstrapped_user: UUID):
@@ -1183,25 +1080,6 @@ def test_create_edge_rejects_self_edge(db_session: Session, bootstrapped_user: U
     ref = _media_ref(db_session, bootstrapped_user)
     with pytest.raises(InvalidRequestError):
         create_edge(db_session, viewer_id=bootstrapped_user, input=_bare(ref, ref))
-
-
-def test_repoint_drops_bare_duplicates_on_collision(db_session: Session, bootstrapped_user: UUID):
-    duplicate = _contributor_ref(db_session, name="Dupe Author")
-    canonical = _contributor_ref(db_session, name="Canonical Author")
-    page = _page_ref(db_session, bootstrapped_user)
-
-    create_edge(db_session, viewer_id=bootstrapped_user, input=_bare(page, duplicate))
-    kept = create_edge(db_session, viewer_id=bootstrapped_user, input=_bare(page, canonical))
-
-    moved = repoint_edges(
-        db_session, viewer_id=bootstrapped_user, from_ref=duplicate, to_ref=canonical
-    )
-
-    assert moved == 1, f"The colliding edge is processed (dropped); got {moved}"
-    edges = _connection_edges(db_session, viewer_id=bootstrapped_user, ref=canonical)
-    assert [edge.id for edge in edges] == [kept.id], (
-        f"The pre-existing pair survives; the moving duplicate is dropped; got {edges}"
-    )
 
 
 # =============================================================================

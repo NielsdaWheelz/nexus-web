@@ -7,12 +7,29 @@ from sqlalchemy import text
 
 from nexus.schemas.podcast import PodcastDiscoveryOut
 from nexus.services import browse as browse_service
-from nexus.services.contributor_credits import replace_media_contributor_credits
+from nexus.services import contributors as contributors_service
+from nexus.services.contributor_taxonomy import ContributorObservation, ObservedRoleSlices
 from tests.factories import create_searchable_media
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
 
 pytestmark = pytest.mark.integration
+
+
+def _observe_media_author(media_id: UUID, name: str, *, role: str, source: str) -> None:
+    """Observe one credited name for a media via the facade (fresh session inside)."""
+    contributors_service.replace_observed_role_slices(
+        target=contributors_service.MediaTarget(media_id),
+        observation=ObservedRoleSlices(
+            managed_roles=frozenset({role}),
+            credits=(
+                ContributorObservation(
+                    credited_name=name, role=role, raw_role=None, identity_key=None
+                ),
+            ),
+        ),
+        source=source,
+    )
 
 
 def _bootstrap_user(auth_client, user_id):
@@ -105,7 +122,7 @@ class TestBrowse:
         monkeypatch.setattr(
             browse_service,
             "_search_project_gutenberg_rows",
-            lambda db, query, *, limit, offset: [
+            lambda db, viewer_id, query, *, limit, offset: [
                 {
                     "type": "documents",
                     "title": "Pride and Prejudice",
@@ -219,7 +236,7 @@ class TestBrowse:
             calls.append(("nexus_documents", (viewer_id, query, limit, offset)))
             return []
 
-        def fake_gutenberg_documents(db, query, *, limit, offset):
+        def fake_gutenberg_documents(db, viewer_id, query, *, limit, offset):
             calls.append(("gutenberg_documents", (query, limit, offset)))
             return []
 
@@ -296,7 +313,7 @@ class TestBrowse:
                 ]
             return []
 
-        def fake_gutenberg_documents(db, query, *, limit, offset):
+        def fake_gutenberg_documents(db, viewer_id, query, *, limit, offset):
             gutenberg_calls.append((query, limit, offset))
             rows = [
                 {
@@ -402,13 +419,7 @@ class TestBrowse:
         visible_author = f"Visible Browse Author {uuid4()}"
         direct_db.register_cleanup("contributors", "display_name", visible_author)
         direct_db.register_cleanup("contributor_aliases", "alias", visible_author)
-        with direct_db.session() as session:
-            replace_media_contributor_credits(
-                session,
-                media_id=visible_media_id,
-                credits=[{"name": visible_author, "role": "author", "source": "manual"}],
-            )
-            session.commit()
+        _observe_media_author(visible_media_id, visible_author, role="author", source="epub_opf")
 
         direct_db.register_cleanup("fragments", "media_id", visible_media_id)
         direct_db.register_cleanup("library_entries", "media_id", visible_media_id)
@@ -493,13 +504,7 @@ class TestBrowse:
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
-        with direct_db.session() as session:
-            replace_media_contributor_credits(
-                session,
-                media_id=media_id,
-                credits=[{"name": video_author, "role": "channel", "source": "youtube"}],
-            )
-            session.commit()
+        _observe_media_author(media_id, video_author, role="channel", source="youtube_metadata")
 
         monkeypatch.setattr(
             browse_service,

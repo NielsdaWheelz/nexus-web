@@ -379,9 +379,9 @@ export function startE2eWorkerUntilMediaReady({
     // `ingest_media_source` job handler (extract -> chunk -> embed -> index all
     // run in-handler). Scope this drain worker to that single kind so it does
     // not spend its budget claiming the older, unrelated LLM side-effect backlog
-    // (enrich_metadata / media_unit_build / synapse_scan /
-    // contributor_reconciliation) that ingest leaves queued and that the
-    // media-ready drains never run to completion. Under the full config
+    // (enrich_metadata / media_unit_build / synapse_scan) that ingest leaves
+    // queued and that the media-ready drains never run to completion. Under
+    // the full config
     // allowlist the newest refresh/re-ingest row sits behind dozens of those
     // older jobs and is never reached before the drain budget expires.
     WORKER_ALLOWED_JOB_KINDS: "ingest_media_source",

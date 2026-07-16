@@ -19,6 +19,9 @@ export default function LauncherSurface({ controller }: { controller: LauncherCo
     active: true,
     onDismiss: () => (controller.page.kind === "root" ? controller.close() : controller.back()),
     initialFocus: (container) => container.querySelector<HTMLElement>('[role="combobox"]'),
+    // A command that navigates focuses its destination; don't restore the opener and
+    // fight it. Dismissal (Escape/backdrop) keeps the default return-focus.
+    skipReturnFocus: controller.shouldSuppressReturnFocusOnClose,
     focusKey: controller.page.kind,
   });
 

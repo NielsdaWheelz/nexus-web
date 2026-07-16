@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import visible_media_ids_cte_sql
 from nexus.errors import NotFoundError
+from nexus.services.contributor_credits import credit_target_filter_exists_sql
 from nexus.services.locator_resolver import locator_from_resolution, resolve_evidence_span
 from nexus.services.search.constants import (
     CONTENT_CHUNK_ANN_CANDIDATE_MULTIPLIER,
@@ -77,20 +78,16 @@ def _search_content_chunks(
         content_kind_filter = "AND m.kind = ANY(:content_kinds)"
         params["content_kinds"] = content_kinds
     if contributor_ids is not None or roles:
-        credit_clauses = ["cc_filter.media_id = m.id"]
         if contributor_ids is not None:
-            credit_clauses.append("cc_filter.contributor_id = ANY(:contributor_ids)")
             params["contributor_ids"] = contributor_ids
         if roles:
-            credit_clauses.append("cc_filter.role = ANY(:roles)")
             params["roles"] = roles
-        contributor_credit_filter = f"""
-            AND EXISTS (
-                SELECT 1
-                FROM contributor_credits cc_filter
-                WHERE {" AND ".join(credit_clauses)}
-            )
-        """
+        contributor_credit_filter = credit_target_filter_exists_sql(
+            "media_id",
+            "m.id",
+            filter_contributor_ids=contributor_ids is not None,
+            filter_roles=bool(roles),
+        )
     if semantic_query_embedding is not None:
         embedding_model, query_embedding = semantic_query_embedding
         params["query_embedding"] = to_pgvector_literal(query_embedding)

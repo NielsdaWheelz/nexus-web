@@ -14,8 +14,16 @@ from nexus.db.models import (
     ProcessingStatus,
     ResourceEdge,
     ResourceExternalSnapshot,
+    ResourceMutation,
 )
+from nexus.services import contributors
 from nexus.services.content_indexing import rebuild_fragment_content_index
+from nexus.services.contributor_taxonomy import (
+    ContributorIdentityKey,
+    ContributorObservation,
+    ObservedRoleSlices,
+    canonicalize_identity_key,
+)
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
 from nexus.services.resource_graph.cleanup import (
     assert_no_dangling_bare_edges,
@@ -1164,3 +1172,107 @@ def test_delete_library_applies_graph_cleanup_two_rules(
         ("message", "library", library_id, 2),
     ], "Only the citation sourced outside the library may survive its deletion"
     assert surviving[0].snapshot == {"title": "Doomed Library", "excerpt": "scoped"}
+
+
+def test_delete_document_removes_credits_and_memos_prunes_only_keyless_authors(
+    auth_client, direct_db: DirectSessionManager
+):
+    """Hard-delete tears down credits + author-edit memos, prunes keyless orphans,
+    and retains a key-owner contributor whose last credit is gone (AC 19)."""
+    user_id = create_test_user_id()
+    default_id = auth_client.get("/me", headers=auth_headers(user_id)).json()["data"][
+        "default_library_id"
+    ]
+
+    with direct_db.session() as session:
+        media_id = create_test_media(session)
+    direct_db.register_cleanup("media", "id", media_id)
+    direct_db.register_cleanup("library_entries", "media_id", media_id)
+    direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+    direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
+    direct_db.register_cleanup("resource_mutations", "user_id", user_id)
+
+    keep_key = ContributorIdentityKey(
+        "orcid", canonicalize_identity_key("orcid", "0000-0002-1825-0097")
+    )
+    observation = ObservedRoleSlices(
+        managed_roles=frozenset({"author"}),
+        credits=(
+            ContributorObservation("Prune Me", "author", None, None),
+            ContributorObservation("Keep Me", "author", None, keep_key),
+        ),
+    )
+    contributors.replace_observed_role_slices(
+        target=contributors.MediaTarget(media_id),
+        observation=observation,
+        source="epub_opf",
+    )
+
+    with direct_db.session() as session:
+        rows = session.execute(
+            text(
+                "SELECT cc.credited_name, cc.contributor_id, c.handle "
+                "FROM contributor_credits cc JOIN contributors c ON c.id = cc.contributor_id "
+                "WHERE cc.media_id = :m"
+            ),
+            {"m": media_id},
+        ).fetchall()
+    by_name = {row[0]: (row[1], row[2]) for row in rows}
+    prune_id = by_name["Prune Me"][0]
+    keep_id, keep_handle = by_name["Keep Me"]
+    for contributor_id in (prune_id, keep_id):
+        direct_db.register_cleanup("contributors", "id", contributor_id)
+        direct_db.register_cleanup("contributor_aliases", "contributor_id", contributor_id)
+        direct_db.register_cleanup("contributor_external_ids", "contributor_id", contributor_id)
+        direct_db.register_cleanup("contributor_credits", "contributor_id", contributor_id)
+
+    # A manual author-edit memo naming the key owner: cleanup must delete it and,
+    # once gone, re-test the keyed contributor for prune (it stays — it has a key).
+    with direct_db.session() as session:
+        session.add(
+            ResourceMutation(
+                user_id=user_id,
+                mutation_scope=f"media:{media_id}:authors",
+                client_mutation_id="cm-authors-1",
+                request_hash="a" * 64,
+                changed_lanes={},
+                response_json={"authors": [{"contributorHandle": keep_handle}]},
+            )
+        )
+        session.commit()
+
+    auth_client.post(
+        f"/libraries/{default_id}/media",
+        json={"media_id": str(media_id)},
+        headers=auth_headers(user_id),
+    )
+    delete_response = auth_client.delete(f"/media/{media_id}", headers=auth_headers(user_id))
+    assert delete_response.status_code == 200, delete_response.json()
+    assert delete_response.json()["data"]["status"] == "deleted"
+
+    with direct_db.session() as session:
+        credit_count = session.execute(
+            text("SELECT count(*) FROM contributor_credits WHERE media_id = :m"),
+            {"m": media_id},
+        ).scalar_one()
+        memo_count = session.execute(
+            text("SELECT count(*) FROM resource_mutations WHERE mutation_scope = :s"),
+            {"s": f"media:{media_id}:authors"},
+        ).scalar_one()
+        prune_exists = (
+            session.execute(
+                text("SELECT 1 FROM contributors WHERE id = :c"), {"c": prune_id}
+            ).first()
+            is not None
+        )
+        keep_exists = (
+            session.execute(
+                text("SELECT 1 FROM contributors WHERE id = :c"), {"c": keep_id}
+            ).first()
+            is not None
+        )
+
+    assert credit_count == 0
+    assert memo_count == 0
+    assert prune_exists is False, "keyless orphaned author should be pruned"
+    assert keep_exists is True, "key-owner author is retained after its last credit is gone"

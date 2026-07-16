@@ -287,6 +287,52 @@ describe("MobileSheet", () => {
     expect(history.pushState).toHaveBeenCalledTimes(2);
   });
 
+  it("onDismissRequest 'blocked' vetoes backdrop, Escape, and drag dismissal", () => {
+    const onDismiss = vi.fn();
+    const onDismissRequest = vi.fn(() => "blocked" as const);
+    render(sheet({ onDismiss, onDismissRequest, backdropTestId: "sheet-backdrop" }));
+
+    fireEvent.click(screen.getByTestId("sheet-backdrop"));
+    expect(onDismissRequest).toHaveBeenCalledTimes(1);
+    expect(onDismiss).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(onDismissRequest).toHaveBeenCalledTimes(2);
+    expect(onDismiss).not.toHaveBeenCalled();
+
+    const handle = grabber()!;
+    fireEvent.pointerDown(handle, { clientY: 100, pointerId: 1, bubbles: true });
+    fireEvent.pointerMove(handle, { clientY: 197, pointerId: 1, bubbles: true });
+    fireEvent.pointerUp(handle, { clientY: 197, pointerId: 1, bubbles: true });
+    expect(onDismissRequest).toHaveBeenCalledTimes(3);
+    expect(onDismiss).not.toHaveBeenCalled();
+  });
+
+  it("onDismissRequest 'accepted' dismisses via onDismiss", () => {
+    const onDismiss = vi.fn();
+    const onDismissRequest = vi.fn(() => "accepted" as const);
+    render(sheet({ onDismiss, onDismissRequest, backdropTestId: "sheet-backdrop" }));
+
+    fireEvent.click(screen.getByTestId("sheet-backdrop"));
+    expect(onDismissRequest).toHaveBeenCalledTimes(1);
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+  });
+
+  it("a blocked back button re-arms the history marker and does not dismiss", async () => {
+    const onDismiss = vi.fn();
+    const onDismissRequest = vi.fn(() => "blocked" as const);
+    render(sheet({ onDismiss, onDismissRequest }));
+    expect(history.pushState).toHaveBeenCalledTimes(1);
+
+    fakeState = null; // the browser popped our entry before firing popstate
+    act(() => window.dispatchEvent(new PopStateEvent("popstate")));
+    await flushMicrotasks();
+
+    expect(onDismissRequest).toHaveBeenCalledTimes(1);
+    expect(onDismiss).not.toHaveBeenCalled();
+    expect(history.pushState).toHaveBeenCalledTimes(2); // re-armed
+  });
+
   it("historyDismiss={false} opts out of history wiring", () => {
     const onDismiss = vi.fn();
     render(sheet({ onDismiss, historyDismiss: false }));

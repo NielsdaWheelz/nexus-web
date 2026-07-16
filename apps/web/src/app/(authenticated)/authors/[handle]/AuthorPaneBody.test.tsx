@@ -1,498 +1,372 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
 import AuthorPaneBody from "./AuthorPaneBody";
+
+const HANDLE = "ursula-le-guin";
+const CANONICAL = "Ursula K. Le Guin";
 
 describe("AuthorPaneBody", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
-  it("clears stale author data and filters when the handle changes", async () => {
-    const secondContributor = deferred<Response>();
-    const secondWorks = deferred<Response>();
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (path: string) => {
-        const url = requestUrl(path);
-        if (url.pathname === "/api/contributors/first-author") {
-          return jsonResponse({
-            data: contributor("first-author", "First Author"),
-          });
-        }
-        if (url.pathname === "/api/contributors/first-author/works") {
-          return jsonResponse({
-            data: {
-              works: [
-                work({
-                  route: "/media/first",
-                  title: "First Work",
-                  role: "author",
-                }),
-              ],
-            },
-          });
-        }
-        if (isReconciliationRequest(url, "first-author")) {
-          return jsonResponse({ data: { candidates: [] } });
-        }
-        if (url.pathname === "/api/contributors/second-author") {
-          return secondContributor.promise;
-        }
-        if (url.pathname === "/api/contributors/second-author/works") {
-          return secondWorks.promise;
-        }
-        if (isReconciliationRequest(url, "second-author")) {
-          return jsonResponse({ data: { candidates: [] } });
-        }
-        throw new Error(`Unexpected fetch path: ${path}`);
-      }),
-    );
-
-    const { rerender } = render(authorPane("first-author"));
-
-    expect(await screen.findByRole("heading", { name: "First Author" })).toBeVisible();
-    expect(screen.getByRole("link", { name: /First Work/ })).toBeVisible();
-    fireEvent.change(screen.getByLabelText("Role"), { target: { value: "author" } });
-    expect(screen.getByLabelText("Role")).toHaveValue("author");
-
-    rerender(authorPane("second-author"));
-
-    await waitFor(() => {
-      expect(screen.queryByRole("heading", { name: "First Author" })).not.toBeInTheDocument();
+  it("renders the canonical heading, other names, and work role facts", async () => {
+    stubRoutes({
+      detail: detail({ otherNames: ["Ursula Kroeber"] }),
+      works: worksPage([
+        work({
+          title: "A Wizard of Earthsea",
+          href: "/media/earthsea",
+          date: "1968",
+          roleFacts: [fact({ creditedName: CANONICAL, role: "author" })],
+        }),
+        work({
+          title: "Kalpa Imperial",
+          href: "/media/kalpa",
+          date: "1983-11",
+          roleFacts: [fact({ creditedName: "U. K. Le Guin", role: "translator" })],
+        }),
+      ]),
     });
-    expect(screen.getByRole("status")).toBeInTheDocument();
 
-    secondContributor.resolve(jsonResponse({ data: contributor("second-author", "Second Author") }));
-    secondWorks.resolve(
-      jsonResponse({
-        data: {
-          works: [
-            work({
-              route: "/media/second",
-              title: "Second Work",
-              role: "translator",
-            }),
-          ],
-        },
-      }),
+    render(authorPane());
+
+    expect(await screen.findByRole("heading", { name: CANONICAL })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Other names" })).toBeVisible();
+    expect(screen.getByText("Ursula Kroeber")).toBeVisible();
+
+    expect(screen.getByRole("link", { name: "A Wizard of Earthsea" })).toHaveAttribute(
+      "href",
+      "/media/earthsea",
     );
+    expect(screen.getByRole("link", { name: "Kalpa Imperial" })).toBeVisible();
 
-    expect(await screen.findByRole("heading", { name: "Second Author" })).toBeVisible();
-    expect(screen.getByRole("link", { name: /Second Work/ })).toBeVisible();
-    expect(screen.getByLabelText("Role")).toHaveValue("");
+    // Dates rendered at their known precision.
+    expect(screen.getByText("1968")).toBeVisible();
+    expect(screen.getByText("November 1983")).toBeVisible();
+
+    // The Earthsea credit equals the heading → the role stands alone; the Kalpa
+    // credit differs → it names the exact credited spelling. Only one row shows a
+    // "credited as" fact.
+    expect(screen.getByText("Author")).toBeVisible();
+    expect(screen.getByText(/Translator · credited as/)).toBeVisible();
+    expect(screen.getByText("U. K. Le Guin")).toBeVisible();
+    expect(screen.getAllByText(/credited as/)).toHaveLength(1);
   });
 
-  it("reloads works from the backend when filters change", async () => {
-    const worksRequests: URL[] = [];
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (path: string) => {
-        const url = requestUrl(path);
-        if (url.pathname === "/api/contributors/filter-author") {
-          return jsonResponse({ data: contributor("filter-author", "Filter Author") });
+  it("omits the Other names section when there are none", async () => {
+    stubRoutes({ detail: detail({ otherNames: [] }), works: worksPage([work({})]) });
+    render(authorPane());
+
+    expect(await screen.findByRole("heading", { name: CANONICAL })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "Other names" })).not.toBeInTheDocument();
+  });
+
+  it("shows the zero-work state instead of a count", async () => {
+    stubRoutes({ detail: detail({}), works: worksPage([]) });
+    render(authorPane());
+
+    expect(await screen.findByRole("heading", { name: CANONICAL })).toBeVisible();
+    expect(screen.getByText("No works yet.")).toBeVisible();
+    expect(screen.queryByText(/0 works/)).not.toBeInTheDocument();
+  });
+
+  it("appends the next page when Load more is pressed", async () => {
+    const cursors: Array<string | null> = [];
+    stubFetchRouter((url) => {
+      if (url.pathname === `/api/contributors/${HANDLE}`) return detail({});
+      if (url.pathname === `/api/contributors/${HANDLE}/works`) {
+        cursors.push(url.searchParams.get("cursor"));
+        if (url.searchParams.get("cursor") === "cursor-2") {
+          return worksPage([work({ title: "Second Page Work", href: "/media/p2" })]);
         }
-        if (url.pathname === "/api/contributors/filter-author/works") {
-          worksRequests.push(url);
-          if (
-            url.searchParams.get("role") === "translator" ||
-            url.searchParams.get("content_kind") === "pdf" ||
-            url.searchParams.get("q") === "selected"
-          ) {
-            return jsonResponse({
-              data: {
-                works: [
-                  work({
-                    route: "/media/selected",
-                    title: "Selected Work",
-                    role: "translator",
-                    contentKind: "pdf",
-                  }),
-                ],
-              },
-            });
+        return worksPage([work({ title: "First Page Work", href: "/media/p1" })], "cursor-2");
+      }
+      throw new Error(`unexpected path ${url.pathname}`);
+    });
+
+    render(authorPane());
+
+    expect(await screen.findByRole("link", { name: "First Page Work" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Load more" }));
+
+    expect(await screen.findByRole("link", { name: "Second Page Work" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "First Page Work" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Load more" })).not.toBeInTheDocument();
+    expect(cursors).toEqual([null, "cursor-2"]);
+  });
+
+  it("retains rows and offers Try again when a Load more page fails", async () => {
+    let failNext = true;
+    stubFetchRouter((url) => {
+      if (url.pathname === `/api/contributors/${HANDLE}`) return detail({});
+      if (url.pathname === `/api/contributors/${HANDLE}/works`) {
+        if (url.searchParams.get("cursor") === "cursor-2") {
+          if (failNext) {
+            failNext = false;
+            return errorResponse(500, "E_INTERNAL", "boom");
           }
-          return jsonResponse({
-            data: {
-              works: [
-                work({
-                  route: "/media/initial",
-                  title: "Initial Work",
-                  role: "author",
-                  contentKind: "epub",
-                }),
-                work({
-                  route: "/media/selected",
-                  title: "Selected Work",
-                  role: "translator",
-                  contentKind: "pdf",
-                }),
-              ],
-            },
-          });
+          return worksPage([work({ title: "Recovered Work", href: "/media/ok" })]);
         }
-        if (isReconciliationRequest(url, "filter-author")) {
-          return jsonResponse({ data: { candidates: [] } });
-        }
-        throw new Error(`Unexpected fetch path: ${path}`);
-      }),
-    );
-
-    render(authorPane("filter-author"));
-
-    expect(await screen.findByRole("heading", { name: "Filter Author" })).toBeVisible();
-    await waitFor(() => {
-      expect(worksRequests).toHaveLength(1);
+        return worksPage([work({ title: "First Page Work", href: "/media/p1" })], "cursor-2");
+      }
+      throw new Error(`unexpected path ${url.pathname}`);
     });
 
-    fireEvent.change(screen.getByLabelText("Role"), {
-      target: { value: "translator" },
-    });
-    fireEvent.change(screen.getByLabelText("Kind"), { target: { value: "pdf" } });
-    fireEvent.change(screen.getByLabelText("Search works"), {
-      target: { value: "selected" },
-    });
+    render(authorPane());
 
-    await waitFor(() => {
-      const lastRequest = worksRequests[worksRequests.length - 1];
-      expect(lastRequest?.searchParams.get("role")).toBe("translator");
-      expect(lastRequest?.searchParams.get("content_kind")).toBe("pdf");
-      expect(lastRequest?.searchParams.get("q")).toBe("selected");
-      expect(lastRequest?.searchParams.get("limit")).toBe("100");
-    });
-    await waitFor(() => {
-      expect(screen.queryByRole("link", { name: /Initial Work/ })).not.toBeInTheDocument();
-    });
-    expect(screen.getByRole("link", { name: /Selected Work/ })).toBeVisible();
+    expect(await screen.findByRole("link", { name: "First Page Work" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Load more" }));
+
+    const tryAgain = await screen.findByRole("button", { name: "Try again" });
+    // Existing rows survive the failure.
+    expect(screen.getByRole("link", { name: "First Page Work" })).toBeVisible();
+
+    fireEvent.click(tryAgain);
+    expect(await screen.findByRole("link", { name: "Recovered Work" })).toBeVisible();
   });
 
-  it("merges into a picked target then navigates to the survivor", async () => {
-    let mergeBody: unknown = null;
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (path: string, init?: RequestInit) => {
-        const url = requestUrl(path);
-        if (url.pathname === "/api/contributors/source-author") {
-          return jsonResponse({ data: contributor("source-author", "Source Author") });
-        }
-        if (url.pathname === "/api/contributors/source-author/works") {
-          return jsonResponse({ data: { works: [] } });
-        }
-        if (isReconciliationRequest(url, "source-author")) {
-          return jsonResponse({ data: { candidates: [] } });
-        }
-        if (url.pathname === "/api/contributors" && init?.method !== "POST") {
-          return jsonResponse({
-            data: { contributors: [contributor("target-author", "Target Author")] },
-          });
-        }
-        if (url.pathname === "/api/contributors/source-author/merge") {
-          mergeBody = init?.body ? JSON.parse(init.body as string) : null;
-          return jsonResponse({ data: contributor("target-author", "Target Author") });
-        }
-        throw new Error(`Unexpected fetch path: ${path}`);
-      }),
-    );
+  it("hides the rename action when the viewer cannot rename", async () => {
+    stubRoutes({ detail: detail({ canRename: false }), works: worksPage([work({})]) });
+    render(authorPane());
 
-    const onNavigatePane = vi.fn();
-    render(authorPane("source-author", { onNavigatePane }));
-
-    expect(await screen.findByRole("heading", { name: "Source Author" })).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: /Merge into/ }));
-
-    const dialog = await screen.findByRole("dialog", { name: "Merge author" });
-    fireEvent.change(screen.getByLabelText("Search authors"), {
-      target: { value: "target" },
-    });
-    const targetButton = await screen.findByRole("button", { name: "Target Author" });
-    fireEvent.click(targetButton);
-
-    await waitFor(() => {
-      expect(mergeBody).toEqual({ target_handle: "target-author" });
-    });
-    await waitFor(() => {
-      expect(onNavigatePane).toHaveBeenCalledWith(
-        "pane-1",
-        "/authors/target-author",
-        undefined,
-      );
-    });
-    expect(dialog).not.toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: CANONICAL })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Edit name" })).not.toBeInTheDocument();
   });
 
-  it("accepts a duplicate suggestion through the reconciliation endpoint", async () => {
-    const candidate = reconciliationCandidate("candidate-1", "source-author", "target-author");
-    let acceptedCandidateId: string | null = null;
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (path: string, init?: RequestInit) => {
-        const url = requestUrl(path);
-        if (url.pathname === "/api/contributors/source-author") {
-          return jsonResponse({ data: contributor("source-author", "Source Author") });
-        }
-        if (url.pathname === "/api/contributors/source-author/works") {
-          return jsonResponse({ data: { works: [] } });
-        }
-        if (isReconciliationRequest(url, "source-author")) {
-          return jsonResponse({ data: { candidates: [candidate] } });
-        }
-        if (
-          url.pathname === "/api/contributors/reconciliation-candidates/candidate-1/accept" &&
-          init?.method === "POST"
-        ) {
-          acceptedCandidateId = "candidate-1";
-          return jsonResponse({ data: contributor("target-author", "Target Author") });
-        }
-        throw new Error(`Unexpected fetch path: ${path}`);
-      }),
-    );
-
-    const onNavigatePane = vi.fn();
-    render(authorPane("source-author", { onNavigatePane }));
-
-    expect(await screen.findByRole("heading", { name: "Possible Duplicates" })).toBeVisible();
-    expect(await screen.findByText("Target Author")).toBeVisible();
-    fireEvent.click(await screen.findByRole("button", { name: "Accept merge" }));
-
-    await waitFor(() => {
-      expect(acceptedCandidateId).toBe("candidate-1");
-      expect(onNavigatePane).toHaveBeenCalledWith(
-        "pane-1",
-        "/authors/target-author",
-        undefined,
-      );
+  it("renames the author and shows a success toast", async () => {
+    let patchBody: { clientMutationId?: string; displayName?: string } | null = null;
+    stubFetchRouter((url, init) => {
+      if (url.pathname === `/api/contributors/${HANDLE}` && init?.method === "PATCH") {
+        patchBody = JSON.parse(init.body as string);
+        return detail({ displayName: "Ursula Le Guin" });
+      }
+      if (url.pathname === `/api/contributors/${HANDLE}`) return detail({ canRename: true });
+      if (url.pathname === `/api/contributors/${HANDLE}/works`) return worksPage([work({})]);
+      throw new Error(`unexpected path ${url.pathname}`);
     });
-  });
 
-  it("refreshes in place when accepting a duplicate suggestion on the survivor page", async () => {
-    const candidate = reconciliationCandidate("candidate-1", "source-author", "target-author");
-    let accepted = false;
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (path: string, init?: RequestInit) => {
-        const url = requestUrl(path);
-        if (url.pathname === "/api/contributors/target-author") {
-          return jsonResponse({ data: contributor("target-author", "Target Author") });
-        }
-        if (url.pathname === "/api/contributors/target-author/works") {
-          return jsonResponse({ data: { works: [] } });
-        }
-        if (isReconciliationRequest(url, "target-author")) {
-          return jsonResponse({ data: { candidates: accepted ? [] : [candidate] } });
-        }
-        if (
-          url.pathname === "/api/contributors/reconciliation-candidates/candidate-1/accept" &&
-          init?.method === "POST"
-        ) {
-          accepted = true;
-          return jsonResponse({ data: contributor("target-author", "Target Author") });
-        }
-        throw new Error(`Unexpected fetch path: ${path}`);
-      }),
-    );
+    render(authorPane());
 
-    const onNavigatePane = vi.fn();
-    render(authorPane("target-author", { onNavigatePane }));
-
-    expect(await screen.findByRole("heading", { name: "Possible Duplicates" })).toBeVisible();
-    fireEvent.click(await screen.findByRole("button", { name: "Accept merge" }));
-
-    await waitFor(() => {
-      expect(onNavigatePane).not.toHaveBeenCalled();
-      expect(screen.queryByText("Source Author")).not.toBeInTheDocument();
-    });
-  });
-
-  it("keeps the author pane visible when duplicate suggestions fail", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (path: string) => {
-        const url = requestUrl(path);
-        if (url.pathname === "/api/contributors/stable-author") {
-          return jsonResponse({ data: contributor("stable-author", "Stable Author") });
-        }
-        if (url.pathname === "/api/contributors/stable-author/works") {
-          return jsonResponse({
-            data: {
-              works: [work({ route: "/media/stable", title: "Stable Work", role: "author" })],
-            },
-          });
-        }
-        if (isReconciliationRequest(url, "stable-author")) {
-          return new Response(
-            JSON.stringify({
-              error: { code: "E_INTERNAL", message: "suggestions unavailable" },
-            }),
-            { status: 500, headers: { "Content-Type": "application/json" } },
-          );
-        }
-        throw new Error(`Unexpected fetch path: ${path}`);
-      }),
-    );
-
-    render(authorPane("stable-author"));
-
-    expect(await screen.findByRole("heading", { name: "Stable Author" })).toBeVisible();
-    expect(screen.getByRole("link", { name: /Stable Work/ })).toBeVisible();
-    expect(await screen.findByText("Failed to load duplicate suggestions")).toBeVisible();
-  });
-
-  it("links the search pivot to the contributor handle", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (path: string) => {
-        const url = requestUrl(path);
-        if (url.pathname === "/api/contributors/pivot-author") {
-          return jsonResponse({ data: contributor("pivot-author", "Pivot Author") });
-        }
-        if (url.pathname === "/api/contributors/pivot-author/works") {
-          return jsonResponse({ data: { works: [] } });
-        }
-        if (isReconciliationRequest(url, "pivot-author")) {
-          return jsonResponse({ data: { candidates: [] } });
-        }
-        throw new Error(`Unexpected fetch path: ${path}`);
-      }),
-    );
-
-    render(authorPane("pivot-author"));
-
-    expect(await screen.findByRole("heading", { name: "Pivot Author" })).toBeVisible();
+    fireEvent.click(await screen.findByRole("button", { name: "Edit name" }));
+    const dialog = await screen.findByRole("dialog", { name: "Edit name" });
     expect(
-      screen.getByRole("link", { name: /Search this author's works/ }),
-    ).toHaveAttribute("href", "/search?authors=pivot-author");
+      within(dialog).getByText(
+        "Used across Nexus. Each work keeps the name it was credited under.",
+      ),
+    ).toBeVisible();
+
+    fireEvent.change(within(dialog).getByLabelText("Author name"), {
+      target: { value: "Ursula Le Guin" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(patchBody?.displayName).toBe("Ursula Le Guin");
+      expect(typeof patchBody?.clientMutationId).toBe("string");
+    });
+    expect(await screen.findByText("Author name updated.")).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Ursula Le Guin" })).toBeVisible();
   });
 
-  it("shows a 'Formerly' note when the URL handle was merged away", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (path: string) => {
-        const url = requestUrl(path);
-        // The backend follows merges: the requested old handle resolves to the survivor.
-        if (url.pathname === "/api/contributors/old-handle") {
-          return jsonResponse({ data: contributor("new-handle", "Merged Author") });
-        }
-        if (url.pathname === "/api/contributors/old-handle/works") {
-          return jsonResponse({ data: { works: [] } });
-        }
-        if (isReconciliationRequest(url, "old-handle")) {
-          return jsonResponse({ data: { candidates: [] } });
-        }
-        throw new Error(`Unexpected fetch path: ${path}`);
-      }),
-    );
+  it("blocks an empty rename and keeps Save disabled until the name changes", async () => {
+    stubRoutes({ detail: detail({ canRename: true }), works: worksPage([work({})]) });
+    render(authorPane());
 
-    render(authorPane("old-handle"));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit name" }));
+    const dialog = await screen.findByRole("dialog", { name: "Edit name" });
+    // Prefilled + unchanged → Save disabled.
+    expect(within(dialog).getByRole("button", { name: "Save" })).toBeDisabled();
 
-    expect(await screen.findByRole("heading", { name: "Merged Author" })).toBeVisible();
-    expect(screen.getByText("Formerly old-handle")).toBeVisible();
+    fireEvent.change(within(dialog).getByLabelText("Author name"), {
+      target: { value: "   " },
+    });
+    expect(within(dialog).getByText("Enter a name.")).toBeVisible();
+    expect(within(dialog).getByRole("button", { name: "Save" })).toBeDisabled();
+
+    fireEvent.change(within(dialog).getByLabelText("Author name"), {
+      target: { value: "New Name" },
+    });
+    expect(within(dialog).getByRole("button", { name: "Save" })).toBeEnabled();
+  });
+
+  it("surfaces the replay-mismatch title on a 409", async () => {
+    stubFetchRouter((url, init) => {
+      if (url.pathname === `/api/contributors/${HANDLE}` && init?.method === "PATCH") {
+        return errorResponse(409, "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH", "replay");
+      }
+      if (url.pathname === `/api/contributors/${HANDLE}`) return detail({ canRename: true });
+      if (url.pathname === `/api/contributors/${HANDLE}/works`) return worksPage([work({})]);
+      throw new Error(`unexpected path ${url.pathname}`);
+    });
+
+    render(authorPane());
+    fireEvent.click(await screen.findByRole("button", { name: "Edit name" }));
+    const dialog = await screen.findByRole("dialog", { name: "Edit name" });
+    fireEvent.change(within(dialog).getByLabelText("Author name"), {
+      target: { value: "Ursula Le Guin" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+
+    expect(
+      await within(dialog).findByText("That author change changed. Reload and try again."),
+    ).toBeVisible();
+    // Dialog stays open with the draft retained.
+    expect(within(dialog).getByLabelText("Author name")).toHaveValue("Ursula Le Guin");
+  });
+
+  it("rotates the mutation id after a 409 replay mismatch (matches the editor, spec §7)", async () => {
+    const mutationIds: string[] = [];
+    stubFetchRouter((url, init) => {
+      if (url.pathname === `/api/contributors/${HANDLE}` && init?.method === "PATCH") {
+        mutationIds.push(JSON.parse(init.body as string).clientMutationId);
+        return errorResponse(409, "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH", "replay");
+      }
+      if (url.pathname === `/api/contributors/${HANDLE}`) return detail({ canRename: true });
+      if (url.pathname === `/api/contributors/${HANDLE}/works`) return worksPage([work({})]);
+      throw new Error(`unexpected path ${url.pathname}`);
+    });
+
+    render(authorPane());
+    fireEvent.click(await screen.findByRole("button", { name: "Edit name" }));
+    const dialog = await screen.findByRole("dialog", { name: "Edit name" });
+    fireEvent.change(within(dialog).getByLabelText("Author name"), {
+      target: { value: "Ursula Le Guin" },
+    });
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+    expect(
+      await within(dialog).findByText("That author change changed. Reload and try again."),
+    ).toBeVisible();
+    await waitFor(() => expect(mutationIds).toHaveLength(1));
+
+    // The draft is unchanged and Save is enabled again; a second Save reuses the
+    // same payload but must mint a fresh id — the prior key is now bound to a
+    // different server request (a retained key would deterministically re-409).
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(mutationIds).toHaveLength(2));
+    expect(mutationIds[1]).not.toBe(mutationIds[0]);
+  });
+
+  it("shows the transport copy and reuses the mutation id on a network failure", async () => {
+    const mutationIds: string[] = [];
+    let failNext = true;
+    stubFetchRouter((url, init) => {
+      if (url.pathname === `/api/contributors/${HANDLE}` && init?.method === "PATCH") {
+        mutationIds.push(JSON.parse(init.body as string).clientMutationId);
+        if (failNext) {
+          failNext = false;
+          throw new TypeError("network down");
+        }
+        return detail({ displayName: "Ursula Le Guin" });
+      }
+      if (url.pathname === `/api/contributors/${HANDLE}`) return detail({ canRename: true });
+      if (url.pathname === `/api/contributors/${HANDLE}/works`) return worksPage([work({})]);
+      throw new Error(`unexpected path ${url.pathname}`);
+    });
+
+    render(authorPane());
+    fireEvent.click(await screen.findByRole("button", { name: "Edit name" }));
+    const dialog = await screen.findByRole("dialog", { name: "Edit name" });
+    fireEvent.change(within(dialog).getByLabelText("Author name"), {
+      target: { value: "Ursula Le Guin" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+
+    expect(
+      await within(dialog).findByText("Couldn't confirm the change. Try again."),
+    ).toBeVisible();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+    await waitFor(() => {
+      expect(screen.getByText("Author name updated.")).toBeVisible();
+    });
+    // The same key was replayed across the transport-uncertain retry.
+    expect(mutationIds).toHaveLength(2);
+    expect(mutationIds[0]).toBe(mutationIds[1]);
   });
 });
 
-function authorPane(
-  handle: string,
-  options: { onNavigatePane?: (paneId: string, href: string) => void } = {},
+// --- helpers -------------------------------------------------------------
+
+function authorPane() {
+  const href = `/authors/${HANDLE}`;
+  return (
+    <FeedbackProvider>
+      <PaneRuntimeProvider
+        paneId="pane-1"
+        isActive={true}
+        href={href}
+        routeId="author"
+        routeKey={resolvePaneRouteIdentity(href).routeKey}
+        canGoBack={false}
+        canGoForward={false}
+        onGoBackPane={vi.fn()}
+        onGoForwardPane={vi.fn()}
+        pathParams={{ handle: HANDLE }}
+        onNavigatePane={() => {}}
+        onReplacePane={() => {}}
+        onOpenInNewPane={() => {}}
+      >
+        <AuthorPaneBody />
+      </PaneRuntimeProvider>
+    </FeedbackProvider>
+  );
+}
+
+function detail(over: Record<string, unknown>): Response {
+  return jsonResponse({
+    data: {
+      handle: HANDLE,
+      href: `/authors/${HANDLE}`,
+      displayName: CANONICAL,
+      otherNames: [],
+      canRename: false,
+      ...over,
+    },
+  });
+}
+
+function worksPage(works: unknown[], nextCursor: string | null = null): Response {
+  return jsonResponse({ data: { works, nextCursor } });
+}
+
+function work(over: Record<string, unknown>) {
+  return {
+    title: "A Work",
+    href: "/media/w1",
+    contentKind: "epub",
+    date: null,
+    roleFacts: [fact({ creditedName: CANONICAL, role: "author" })],
+    ...over,
+  };
+}
+
+function fact(over: { creditedName: string; role: string }) {
+  return { creditedName: over.creditedName, role: over.role, rawRole: null };
+}
+
+function stubRoutes({ detail: detailResponse, works }: { detail: Response; works: Response }) {
+  stubFetchRouter((url) => {
+    if (url.pathname === `/api/contributors/${HANDLE}`) return detailResponse.clone();
+    if (url.pathname === `/api/contributors/${HANDLE}/works`) return works.clone();
+    throw new Error(`unexpected path ${url.pathname}`);
+  });
+}
+
+function stubFetchRouter(
+  handler: (url: URL, init?: RequestInit) => Response,
 ) {
-  const href = `/authors/${handle}`;
-  return (
-    <PaneRuntimeProvider
-      paneId="pane-1"
-      isActive={true}
-      href={href}
-      routeId="author"
-      routeKey={resolvePaneRouteIdentity(href).routeKey}
-      canGoBack={false}
-      canGoForward={false}
-      onGoBackPane={vi.fn()}
-      onGoForwardPane={vi.fn()}
-      pathParams={{ handle }}
-      onNavigatePane={options.onNavigatePane ?? (() => {})}
-      onReplacePane={() => {}}
-      onOpenInNewPane={() => {}}
-    >
-      <AuthorPaneBody />
-    </PaneRuntimeProvider>
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (path: string | Request, init?: RequestInit) => {
+      const raw = path instanceof Request ? path.url : String(path);
+      return handler(new URL(raw, "https://nexus.test"), init);
+    }),
   );
-}
-
-function contributor(handle: string, displayName: string) {
-  return {
-    handle,
-    display_name: displayName,
-    sort_name: displayName,
-    kind: "person",
-    status: "verified",
-    disambiguation: null,
-    aliases: [],
-    external_ids: [],
-  };
-}
-
-function requestUrl(path: string): URL {
-  return new URL(path, "https://nexus.test");
-}
-
-function isReconciliationRequest(url: URL, handle: string): boolean {
-  return (
-    url.pathname === "/api/contributors/reconciliation-candidates" &&
-    url.searchParams.get("contributor_handle") === handle
-  );
-}
-
-function work(input: { route: string; title: string; role: string; contentKind?: string }) {
-  return {
-    object_type: "media",
-    object_id: input.route.split("/").pop() ?? input.route,
-    route: input.route,
-    title: input.title,
-    content_kind: input.contentKind ?? "epub",
-    role: input.role,
-    credited_name: input.title,
-    published_date: null,
-    publisher: null,
-    description: null,
-    source: "local",
-  };
-}
-
-function reconciliationCandidate(id: string, sourceHandle: string, targetHandle: string) {
-  return {
-    id,
-    status: "pending",
-    score: 82,
-    source_contributor: {
-      ...contributor(sourceHandle, "Source Author"),
-      href: `/authors/${sourceHandle}`,
-      work_count: 1,
-    },
-    target_contributor: {
-      ...contributor(targetHandle, "Target Author"),
-      href: `/authors/${targetHandle}`,
-      work_count: 2,
-    },
-    evidence: {
-      matcher: "deterministic",
-      algorithm_version: "contributor_reconciliation_v2",
-      reason: "test",
-      score: 82,
-      signals: ["shared_alias"],
-      shared_aliases: ["source author"],
-      shared_confirmed_aliases: [],
-      shared_work_count: 1,
-      source_handle: sourceHandle,
-      target_handle: targetHandle,
-      source_work_count: 1,
-      target_work_count: 2,
-      source_confirmed_alias_count: 0,
-      target_confirmed_alias_count: 0,
-      source_strong_external_id_count: 0,
-      target_strong_external_id_count: 0,
-    },
-    created_at: "2026-07-07T00:00:00Z",
-    updated_at: "2026-07-07T00:00:00Z",
-    decided_at: null,
-  };
 }
 
 function jsonResponse(body: unknown): Response {
@@ -502,10 +376,9 @@ function jsonResponse(body: unknown): Response {
   });
 }
 
-function deferred<T>() {
-  let resolve: (value: T) => void = () => undefined;
-  const promise = new Promise<T>((next) => {
-    resolve = next;
+function errorResponse(status: number, code: string, message: string): Response {
+  return new Response(JSON.stringify({ error: { code, message } }), {
+    status,
+    headers: { "Content-Type": "application/json" },
   });
-  return { promise, resolve };
 }

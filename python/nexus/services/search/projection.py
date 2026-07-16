@@ -15,6 +15,7 @@ from nexus.schemas.search import (
     ConversationArtifactSearchOut,
     SearchResultContentChunkOut,
     SearchResultContextRefOut,
+    SearchResultContributorIdentityOut,
     SearchResultContributorOut,
     SearchResultConversationOut,
     SearchResultEpisodeOut,
@@ -293,7 +294,7 @@ def _result_model_fields(
 
     if isinstance(result, _RankedContributorResult):
         return {
-            "title": getattr(result.contributor, "display_name", result.handle),
+            "title": result.display_name,
             "source_label": "contributor",
             "media_id": None,
             "media_kind": None,
@@ -431,7 +432,10 @@ def _result_to_out(db: Session, viewer_id: UUID, result: InternalSearchResult) -
         return SearchResultContributorOut(
             type="contributor",
             contributor_handle=result.handle,
-            contributor=result.contributor,
+            contributor=SearchResultContributorIdentityOut(
+                handle=result.handle,
+                display_name=result.display_name,
+            ),
             **base_payload,
         )
 

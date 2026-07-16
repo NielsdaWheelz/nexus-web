@@ -20,7 +20,6 @@ from sqlalchemy.orm import Session
 
 from nexus.services.agent_tools.read_resource import ReadResourceResult, execute_read_resource
 from nexus.services.bootstrap import ensure_user_and_default_library
-from nexus.services.contributor_credits import replace_media_contributor_credits
 from nexus.services.reader_apparatus import replace_media_apparatus
 from nexus.services.resource_graph.refs import ResourceRefParseFailure, parse_resource_ref
 from tests.factories import (
@@ -41,6 +40,7 @@ from tests.test_resource_graph_resolve import (
     _make_pdf,
     _make_span,
     _seed_resolved_oracle_anchor,
+    seed_media_author_credits,
 )
 
 pytestmark = pytest.mark.integration
@@ -460,12 +460,7 @@ def test_read_resource_highlight_returns_enriched_quote(
     media_id = create_test_media_in_library(
         db_session, bootstrapped_user, library_id, title="Highlighted Source"
     )
-    replace_media_contributor_credits(
-        db_session,
-        media_id=media_id,
-        credits=[{"name": "Octavia Butler", "role": "author"}],
-        source="manual",
-    )
+    seed_media_author_credits(db_session, media_id=media_id, names=["Octavia Butler"])
     highlight_id = _make_highlight_with_anchor(
         db_session,
         bootstrapped_user,

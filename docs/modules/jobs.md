@@ -91,11 +91,11 @@ allowlist literal still lives in runtime/env owners (`config.py`,
 `deploy/env/env-prod-worker*`, and `sync-env.sh`); tests read those owners rather
 than copy the literal again.
 
-`contributor_reconciliation` is user-facing because it materializes duplicate
-author proposals the user can accept or reject in the author surface. Source
-ingest, metadata enrichment, podcast identity writes, and podcast episode syncs
-enqueue it after contributor-credit writes so the proposal table follows the
-authority file instead of becoming a separate dedupe system.
+There is no `contributor_reconciliation` job (or any other author-dedupe job):
+author identity is resolved inline, synchronously, inside the ingest/enrichment
+lane's own fresh SERIALIZABLE-retried transaction (`nexus.services.contributors`)
+at the moment credits are written, not proposed to a queue and reconciled
+later.
 
 ## SERIALIZABLE retries (`db/retries.py`)
 

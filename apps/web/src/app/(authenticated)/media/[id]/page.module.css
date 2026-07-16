@@ -34,13 +34,12 @@
   text-transform: uppercase;
 }
 
-.authorMeta {
+/* Media detail byline header (ContributorRoleGroups). A wrapping editorial
+ * block — never the old truncating single-line author meta. */
+.byline {
   min-width: 0;
-  color: var(--ink-faint);
-  font-size: var(--text-sm);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  padding: var(--space-3) var(--space-4) var(--space-2);
+  border-bottom: 1px solid var(--edge-subtle);
 }
 
 .sourceLink {

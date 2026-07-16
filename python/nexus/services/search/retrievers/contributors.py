@@ -1,4 +1,4 @@
-"""Contributor identity retriever and its FTS text SQL."""
+"""Contributor identity retriever, composed on the canonical credit relation."""
 
 from __future__ import annotations
 
@@ -8,34 +8,18 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import (
-    visible_contributor_ids_cte_sql,
-    visible_media_ids_cte_sql,
-    visible_podcast_ids_cte_sql,
+from nexus.auth.permissions import visible_contributor_ids_cte_sql
+from nexus.services.contributor_credits import (
+    contributor_fts_text_sql,
+    visible_credit_rows_sql,
 )
 from nexus.services.search.projection import _truncate_snippet
 from nexus.services.search.results import (
     InternalSearchResult,
     _build_search_score,
-    _parse_contributor,
     _RankedContributorResult,
 )
 from nexus.services.search.scope import ScopeUnsupported, scope_filter_sql
-
-
-def _contributor_fts_text_sql() -> str:
-    """The single full-text blob for a contributor — display/sort name, disambiguation, and the
-    aggregated alias/external-id/credit text from this query's CTEs. The rank, headline, and
-    match expressions all derive from it so they can never drift apart."""
-    return """concat_ws(
-                    ' ',
-                    c.display_name,
-                    COALESCE(c.sort_name, ''),
-                    COALESCE(c.disambiguation, ''),
-                    COALESCE(alias_text.aliases, ''),
-                    COALESCE(external_id_text.external_ids, ''),
-                    COALESCE(credit_text.credited_names, '')
-                )"""
 
 
 def _search_contributors(
@@ -49,8 +33,25 @@ def _search_contributors(
     roles: list[str],
     content_kinds: list[str],
     limit: int,
+    *,
+    broad_visibility: bool = False,
 ) -> list[InternalSearchResult]:
-    """Search contributor identities by display name, aliases, credits, and external IDs."""
+    """Search contributor identities by display name, aliases, and visible credited names.
+
+    Composes the canonical read relation (``contributor_credits.visible_credit_rows_sql``
+    for the credited-visible predicate, ``contributor_fts_text_sql`` for the blob) rather
+    than reading raw credit SQL. On the discovery surfaces a contributor surfaces only with
+    at least one visible credited target (spec §2.8 / D-8): retained key owners and
+    graph-referenced identities with zero visible credits never appear. The FTS blob is
+    display name + every human alias + visible credited names — never an external key (AC 24).
+
+    ``broad_visibility=True`` is the durable-ref re-resolution mode used by
+    ``get_search_result`` (id-pinned, ``has_query=False``): it uses the BROAD contributor
+    visibility predicate (visible credit OR viewer-owned graph edge) so a chat citation to a
+    contributor that is reachable only via a ``resource_edges`` endpoint — with zero visible
+    credits — still re-materializes, matching ``hydrate_contributor_object_ref`` /
+    ``resolve.py::_load_contributor``. Discovery keeps the narrow credited-visible gate.
+    """
     params: dict[str, Any] = {
         "viewer_id": viewer_id,
         "query": q,
@@ -59,11 +60,16 @@ def _search_contributors(
     }
     handle_filter = ""
     credit_filter = ""
-    scope_credit_filter = ""
 
     if contributor_ids is not None:
         handle_filter = "AND c.id = ANY(:contributor_ids)"
         params["contributor_ids"] = contributor_ids
+
+    scope_clause = scope_filter_sql(scope_type, scope_id, "contributor")
+    if isinstance(scope_clause, ScopeUnsupported):
+        return []
+    scope_credit_filter, scope_params = scope_clause
+    params.update(scope_params)
 
     if roles or content_kinds:
         credit_clauses = ["cc_filter.contributor_id = c.id"]
@@ -91,92 +97,45 @@ def _search_contributors(
         credit_filter = f"""
             AND EXISTS (
                 SELECT 1
-                FROM visible_scoped_credits cc_filter
+                FROM scoped_credits cc_filter
                 WHERE {" AND ".join(credit_clauses)}
             )
         """
 
-    scope_clause = scope_filter_sql(scope_type, scope_id, "contributor")
-    if isinstance(scope_clause, ScopeUnsupported):
-        return []
-    scope_credit_filter, scope_params = scope_clause
-    params.update(scope_params)
-
-    # Unscoped search shows every visible contributor (credit OR viewer object-link), the
-    # single-owner predicate. A content scope narrows to contributors credited within it.
-    visible_contributors_cte = (
-        f"visible_contributors AS ({visible_contributor_ids_cte_sql()})"
-        if scope_type == "all"
-        else "visible_contributors AS (SELECT DISTINCT contributor_id FROM visible_scoped_credits)"
+    visibility_gate_sql = (
+        visible_contributor_ids_cte_sql()
+        if broad_visibility
+        else "SELECT DISTINCT contributor_id FROM scoped_credits"
     )
 
-    fts_text = _contributor_fts_text_sql()
     query = f"""
         WITH
-            visible_media AS ({visible_media_ids_cte_sql()}),
-            visible_podcasts AS ({visible_podcast_ids_cte_sql()}),
-            alias_text AS (
-                SELECT contributor_id, string_agg(alias, ' ') AS aliases
-                FROM contributor_aliases
-                GROUP BY contributor_id
-            ),
-            external_id_text AS (
-                SELECT contributor_id, string_agg(external_key, ' ') AS external_ids
-                FROM contributor_external_ids
-                GROUP BY contributor_id
-            ),
-            visible_scoped_credits AS (
+            scoped_credits AS (
                 SELECT cc.*
-                FROM contributor_credits cc
-                WHERE (
-                        EXISTS (
-                            SELECT 1
-                            FROM visible_media vm
-                            WHERE vm.media_id = cc.media_id
-                        )
-                        OR EXISTS (
-                            SELECT 1
-                            FROM visible_podcasts vp
-                            WHERE vp.podcast_id = cc.podcast_id
-                        )
-                        OR cc.project_gutenberg_catalog_ebook_id IS NOT NULL
-                  )
+                FROM ({visible_credit_rows_sql()}) cc
+                WHERE TRUE
                 {scope_credit_filter}
             ),
-            {visible_contributors_cte},
-            credit_text AS (
-                SELECT contributor_id, string_agg(credited_name, ' ') AS credited_names
-                FROM visible_scoped_credits
-                GROUP BY contributor_id
-            )
+            visible_gate AS ({visibility_gate_sql}),
+            contributor_fts AS ({contributor_fts_text_sql()})
         SELECT
             c.id,
             c.handle,
-            jsonb_build_object(
-                'handle', c.handle,
-                'display_name', c.display_name,
-                'sort_name', c.sort_name,
-                'kind', c.kind,
-                'status', c.status,
-                'disambiguation', c.disambiguation
-            ) AS contributor,
+            c.display_name,
             CASE WHEN :has_query THEN ts_rank_cd(
-                to_tsvector('english', {fts_text}),
+                to_tsvector('english', fts.search_text),
                 websearch_to_tsquery('english', :query)
             ) ELSE 0.0 END AS score,
             CASE WHEN :has_query THEN ts_headline(
                 'english',
-                {fts_text},
+                fts.search_text,
                 websearch_to_tsquery('english', :query),
                 'MaxWords=50, MinWords=10, MaxFragments=1'
             ) ELSE c.display_name END AS snippet
         FROM contributors c
-        LEFT JOIN alias_text ON alias_text.contributor_id = c.id
-        LEFT JOIN external_id_text ON external_id_text.contributor_id = c.id
-        LEFT JOIN credit_text ON credit_text.contributor_id = c.id
-        JOIN visible_contributors vc ON vc.contributor_id = c.id
-        WHERE c.status NOT IN ('merged', 'tombstoned')
-          AND (:has_query IS FALSE OR to_tsvector('english', {fts_text})
+        JOIN visible_gate cv ON cv.contributor_id = c.id
+        JOIN contributor_fts fts ON fts.contributor_id = c.id
+        WHERE (:has_query IS FALSE OR to_tsvector('english', fts.search_text)
                 @@ websearch_to_tsquery('english', :query))
         {handle_filter}
         {credit_filter}
@@ -189,8 +148,8 @@ def _search_contributors(
         _RankedContributorResult(
             id=row[0],
             handle=str(row[1]),
-            contributor=_parse_contributor(row[2]),
-            snippet=_truncate_snippet(str(row[4] or row[1])),
+            display_name=str(row[2]),
+            snippet=_truncate_snippet(str(row[4] or row[2])),
             score=_build_search_score(row[3]),
         )
         for row in rows

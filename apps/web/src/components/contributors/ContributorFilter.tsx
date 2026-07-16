@@ -4,10 +4,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Button from "@/components/ui/Button";
 import Chip from "@/components/ui/Chip";
 import Input from "@/components/ui/Input";
-import { fetchContributor } from "@/lib/contributors/api";
+import { fetchContributorDetail } from "@/lib/contributors/api";
 import { contributorAuthorHref } from "@/lib/contributors/routes";
-import type { ContributorSummary } from "@/lib/contributors/types";
+import type { ContributorSearchItem } from "@/lib/contributors/types";
 import { useContributorSearch } from "@/lib/contributors/useContributorSearch";
+import { useStringIdSet } from "@/lib/useStringIdSet";
 
 interface ContributorFilterProps {
   selectedHandles: string[];
@@ -28,25 +29,23 @@ function dedupeHandles(handles: string[]): string[] {
   return next;
 }
 
-export default function ContributorFilter({
-  selectedHandles,
-  onChange,
-}: ContributorFilterProps) {
+export default function ContributorFilter({ selectedHandles, onChange }: ContributorFilterProps) {
   const [query, setQuery] = useState("");
-  const [selectedByHandle, setSelectedByHandle] = useState<Record<string, ContributorSummary>>({});
-  const selectedHandleRequestsRef = useRef(new Set<string>());
-  const selectedHandleSetRef = useRef(new Set<string>());
+  const [labels, setLabels] = useState<Record<string, string>>({});
+  // Request-once set for selected-handle label hydration: a handle is added before
+  // its detail fetch and never removed, so a failed fetch never retries in a loop.
+  const requested = useStringIdSet();
   const mountedRef = useRef(true);
   const normalizedHandles = useMemo(() => dedupeHandles(selectedHandles), [selectedHandles]);
-  const searchResults = useContributorSearch(query);
-  const suggestions = useMemo(() => {
-    const selected = new Set(normalizedHandles);
-    return searchResults.filter((contributor) => !selected.has(contributor.handle));
-  }, [normalizedHandles, searchResults]);
+  const search = useContributorSearch(query);
 
-  useEffect(() => {
-    selectedHandleSetRef.current = new Set(normalizedHandles);
-  }, [normalizedHandles]);
+  const suggestions = useMemo<ContributorSearchItem[]>(() => {
+    if (search.status !== "ready") {
+      return [];
+    }
+    const selected = new Set(normalizedHandles);
+    return search.items.filter((item) => !selected.has(item.handle));
+  }, [search, normalizedHandles]);
 
   useEffect(() => {
     return () => {
@@ -56,37 +55,26 @@ export default function ContributorFilter({
 
   useEffect(() => {
     for (const handle of normalizedHandles) {
-      if (selectedByHandle[handle] || selectedHandleRequestsRef.current.has(handle)) {
+      if (labels[handle] || requested.has(handle)) {
         continue;
       }
-      selectedHandleRequestsRef.current.add(handle);
-      void fetchContributor(handle)
-        .then((response) => {
-          if (!mountedRef.current || !selectedHandleSetRef.current.has(handle)) {
+      requested.add(handle);
+      void fetchContributorDetail(handle)
+        .then((detail) => {
+          if (!mountedRef.current) {
             return;
           }
-          setSelectedByHandle((current) =>
-            current[handle]
-              ? current
-              : {
-                  ...current,
-                  [handle]: response,
-                }
+          setLabels((current) =>
+            current[handle] ? current : { ...current, [handle]: detail.displayName },
           );
         })
-        .catch(() => {})
-        .finally(() => {
-          selectedHandleRequestsRef.current.delete(handle);
-        });
+        .catch(() => {});
     }
-  }, [normalizedHandles, selectedByHandle]);
+  }, [normalizedHandles, labels, requested]);
 
-  function addContributor(contributor: ContributorSummary) {
-    onChange(dedupeHandles([...normalizedHandles, contributor.handle]));
-    setSelectedByHandle((current) => ({
-      ...current,
-      [contributor.handle]: contributor,
-    }));
+  function addContributor(item: ContributorSearchItem) {
+    onChange(dedupeHandles([...normalizedHandles, item.handle]));
+    setLabels((current) => ({ ...current, [item.handle]: item.displayName }));
     setQuery("");
   }
 
@@ -102,15 +90,9 @@ export default function ContributorFilter({
           aria-label="Selected authors"
         >
           {normalizedHandles.map((handle) => {
-            const contributor = selectedByHandle[handle];
-            const label = contributor?.display_name ?? handle;
+            const label = labels[handle] ?? handle;
             return (
-              <Chip
-                key={handle}
-                removable
-                onRemove={() => removeHandle(handle)}
-                aria-label={label}
-              >
+              <Chip key={handle} removable onRemove={() => removeHandle(handle)} aria-label={label}>
                 <a
                   href={contributorAuthorHref(handle)}
                   style={{ color: "inherit", textDecoration: "none" }}
@@ -134,6 +116,12 @@ export default function ContributorFilter({
         />
       </label>
 
+      {search.status === "error" ? (
+        <p role="alert" style={{ color: "var(--ink-muted)", fontSize: "var(--text-sm)" }}>
+          Couldn&rsquo;t load authors.
+        </p>
+      ) : null}
+
       {suggestions.length > 0 ? (
         <div
           style={{
@@ -143,15 +131,15 @@ export default function ContributorFilter({
             maxWidth: "360px",
           }}
         >
-          {suggestions.map((contributor) => (
+          {suggestions.map((item) => (
             <Button
-              key={contributor.handle}
+              key={item.handle}
               variant="secondary"
               size="sm"
-              onClick={() => addContributor(contributor)}
+              onClick={() => addContributor(item)}
               style={{ justifyContent: "flex-start" }}
             >
-              {contributor.display_name}
+              {item.displayName}
             </Button>
           ))}
         </div>

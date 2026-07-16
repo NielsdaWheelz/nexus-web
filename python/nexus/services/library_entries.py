@@ -34,7 +34,10 @@ from nexus.schemas.library import (
 from nexus.schemas.media import MediaLibrariesResponse
 from nexus.schemas.podcast import PodcastSubscriptionVisibleLibraryOut
 from nexus.services import library_governance as governance
-from nexus.services.contributor_credits import load_contributor_credits_for_podcasts
+from nexus.services.contributor_credits import (
+    load_contributor_credits_for_podcasts,
+    visible_credit_rows_sql,
+)
 
 # Mirrors index ix_library_entries_library_order (library_id, position, created_at DESC,
 # id DESC). The single definition of the entry total order.
@@ -156,11 +159,15 @@ _PUBLISHED_AT_SQL = """
     END
 """
 
-_SHARED_AUTHOR_HITS_SQL = """
+# Shared-author affinity over the canonical visible-credit relation (spec §4): the
+# resonance score's author term self-joins the visible-credit relation on
+# contributor_id (author role only), so neither this module nor the score reads
+# contributor_credits directly. Binds :viewer_id via the composed relation.
+_SHARED_AUTHOR_HITS_SQL = f"""
     (
         SELECT COUNT(DISTINCT mine.contributor_id)
-        FROM contributor_credits mine
-        JOIN contributor_credits other
+        FROM ({visible_credit_rows_sql()}) mine
+        JOIN ({visible_credit_rows_sql()}) other
           ON other.contributor_id = mine.contributor_id
          AND other.role = 'author'
         JOIN library_entries peer

@@ -21,6 +21,7 @@ from nexus.errors import (
     NotFoundError,
 )
 from nexus.logging import get_logger
+from nexus.schemas.contributors import ContributorCreditIn
 from nexus.schemas.podcast import (
     PodcastOpmlImportErrorOut,
     PodcastOpmlImportOut,
@@ -38,12 +39,13 @@ from nexus.services.library_governance import validate_writable_library_destinat
 from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
 
 from .identity import (
+    observe_podcast_contributor_credits,
     select_podcast_id_by_feed_url,
     upsert_podcast,
     validate_and_normalize_feed_url,
 )
 from .poll import enqueue_podcast_subscription_sync, get_subscription_sync_snapshot
-from .provider import PODCAST_PROVIDER, get_podcast_index_client
+from .provider import get_podcast_index_client
 
 logger = get_logger(__name__)
 
@@ -128,28 +130,37 @@ def import_subscriptions_from_opml(
 
         library_ids = per_feed_library_ids.get(normalized_feed_url, default_library_ids)
 
+        subscribe_body: PodcastSubscribeRequest | None = None
+        podcast_id: UUID | None = None
         try:
+            # Read the local feed owner in its own committed transaction so the
+            # provider HTTP below runs with NO open DB transaction (spec 2.7/3;
+            # OPML previously performed the provider lookup mid-transaction, D-3).
+            with transaction(db):
+                podcast_id = select_podcast_id_by_feed_url(db, normalized_feed_url)
+
+            if podcast_id is None:
+                provider_row: dict[str, Any] | None = None
+                try:
+                    provider_row = client.lookup_podcast_by_feed_url(normalized_feed_url)
+                except ApiError as provider_exc:
+                    logger.warning(
+                        "podcast_opml_provider_lookup_failed",
+                        feed_url=normalized_feed_url,
+                        error=provider_exc.message,
+                    )
+                subscribe_body = _build_opml_subscribe_request(
+                    normalized_feed_url=normalized_feed_url,
+                    opml_title=opml_title,
+                    opml_website_url=opml_website_url,
+                    provider_row=provider_row,
+                )
+
             with transaction(db):
                 now = datetime.now(UTC)
-                podcast_id = select_podcast_id_by_feed_url(db, normalized_feed_url)
-                if podcast_id is None:
-                    provider_row: dict[str, Any] | None = None
-                    try:
-                        provider_row = client.lookup_podcast_by_feed_url(normalized_feed_url)
-                    except ApiError as provider_exc:
-                        logger.warning(
-                            "podcast_opml_provider_lookup_failed",
-                            feed_url=normalized_feed_url,
-                            error=provider_exc.message,
-                        )
-
-                    subscribe_body = _build_opml_subscribe_request(
-                        normalized_feed_url=normalized_feed_url,
-                        opml_title=opml_title,
-                        opml_website_url=opml_website_url,
-                        provider_row=provider_row,
-                    )
+                if subscribe_body is not None:
                     podcast_id = upsert_podcast(db, subscribe_body, now=now)
+                assert podcast_id is not None
 
                 existing_status = _get_subscription_status_value(db, viewer_id, podcast_id)
                 if existing_status == "active":
@@ -182,6 +193,7 @@ def import_subscriptions_from_opml(
                     error=_truncate_opml_error(exc.message),
                 )
             )
+            continue
         except Exception as exc:  # justify-ignore-error: per-row OPML import boundary; one bad row must not fail the whole import
             logger.exception(
                 "podcast_opml_import_unexpected_error",
@@ -194,6 +206,32 @@ def import_subscriptions_from_opml(
                     error=_truncate_opml_error("Unexpected OPML import error"),
                 )
             )
+            continue
+
+        # After the subscription commits, apply the provider payload's author slice
+        # through the facade in a fresh session (spec 2.1). Only a newly-created
+        # podcast carries a built body; an already-known feed contributes no payload,
+        # so its prior credits are preserved (D-5). The subscription itself survives
+        # a failed observation (it already committed), but the outcome must be
+        # honest: report a per-feed error row — nothing else re-observes
+        # podcast-level credits until a resubscribe/re-import.
+        if subscribe_body is not None:
+            try:
+                observe_podcast_contributor_credits(podcast_id, subscribe_body.contributors)
+            except Exception as exc:  # justify-ignore-error: OPML is best-effort per feed; the subscription already committed
+                logger.warning(
+                    "podcast_opml_contributor_observation_failed",
+                    feed_url=normalized_feed_url,
+                    error=str(exc),
+                )
+                summary.errors.append(
+                    PodcastOpmlImportErrorOut(
+                        feed_url=normalized_feed_url,
+                        error=_truncate_opml_error(
+                            "Subscribed, but contributor credits could not be recorded"
+                        ),
+                    )
+                )
 
     return summary
 
@@ -255,6 +293,9 @@ def subscribe_to_podcast(
     normalized_body = body.model_copy(update={"feed_url": normalized_feed_url})
     now = datetime.now(UTC)
 
+    # The subscribe body already carries the discovered provider metadata, so no
+    # provider HTTP happens on this path; one transaction owns the podcast upsert,
+    # subscription, library set, and sync enqueue (spec 2.7, D-3).
     with transaction(db):
         podcast_id = upsert_podcast(db, normalized_body, now=now)
         subscription_created = _upsert_subscription(
@@ -275,6 +316,13 @@ def subscribe_to_podcast(
         snapshot = get_subscription_sync_snapshot(db, viewer_id, podcast_id)
         if snapshot is None:
             raise ApiError(ApiErrorCode.E_INTERNAL, "Failed to read podcast subscription state.")
+
+    # After the transaction commits, apply the typed payload's contributor slices
+    # through the author facade in a fresh session (spec 2.1/2.4). The mutation
+    # gates handler success, mirroring the ingest lanes: a genuine failure surfaces
+    # (the facade already retries 40001/uniqueness three times) and a retried
+    # subscribe converges via the resolver's no-DML-when-unchanged comparison.
+    observe_podcast_contributor_credits(podcast_id, normalized_body.contributors)
 
     return PodcastSubscribeOut(
         podcast_id=podcast_id,
@@ -534,14 +582,7 @@ def _build_opml_subscribe_request(
     return PodcastSubscribeRequest(
         provider_podcast_id=provider_podcast_id or _opml_provider_podcast_id(normalized_feed_url),
         title=provider_title or opml_title or normalized_feed_url,
-        contributors=[
-            {
-                "credited_name": provider_author,
-                "role": "author",
-                "source": "podcast_index",
-                "source_ref": {"provider": PODCAST_PROVIDER},
-            }
-        ]
+        contributors=[ContributorCreditIn(credited_name=provider_author, role="author")]
         if provider_author
         else [],
         feed_url=normalized_feed_url,

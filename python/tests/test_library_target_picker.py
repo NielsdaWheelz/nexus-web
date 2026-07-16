@@ -180,7 +180,6 @@ class TestLibraryTargetPickerOptions:
                     {
                         "credited_name": "Nexus",
                         "role": "author",
-                        "source": "test",
                     }
                 ],
                 "feed_url": "https://feeds.example.com/picker-read.xml",

@@ -19,7 +19,10 @@ from nexus.config import get_settings
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError
 from nexus.logging import get_logger
 from nexus.schemas.contributors import ContributorCreditOut
-from nexus.services.contributor_credits import load_contributor_credits_for_media
+from nexus.services.contributor_credits import (
+    load_contributor_credits_for_media,
+    visible_credit_rows_sql,
+)
 from nexus.services.podcasts import discovery as podcast_discovery_service
 from nexus.services.podcasts import provider as podcast_provider_service
 
@@ -159,6 +162,7 @@ def _browse_documents(
     if phase == "gutenberg":
         gutenberg_rows = _search_project_gutenberg_rows(
             db,
+            viewer_id,
             query,
             limit=limit + 1,
             offset=gutenberg_offset,
@@ -214,6 +218,7 @@ def _browse_documents(
     remaining = limit - len(page_rows)
     gutenberg_rows = _search_project_gutenberg_rows(
         db,
+        viewer_id,
         query,
         limit=remaining + 1,
         offset=0,
@@ -458,14 +463,20 @@ def _search_nexus_document_rows(
 
 def _search_project_gutenberg_rows(
     db: Session,
+    viewer_id: UUID,
     query: str,
     *,
     limit: int,
     offset: int,
 ) -> list[dict[str, object]]:
+    # The per-ebook credit rollup composes the canonical visible-credit relation
+    # (spec §4) instead of reading contributor_credits directly. Gutenberg credits
+    # are globally visible, so the relation returns every catalog credit; the JSON
+    # is the narrowed embedded shape (D-33: no id/source/nested contributor) and
+    # the search text carries names only — never external keys.
     raw_rows = db.execute(
         text(
-            """
+            f"""
             WITH search_hits AS (
                 SELECT
                     pg.ebook_id,
@@ -491,35 +502,24 @@ def _search_project_gutenberg_rows(
                 FROM project_gutenberg_catalog pg
                 LEFT JOIN (
                     SELECT
-                        cc.project_gutenberg_catalog_ebook_id AS ebook_id,
+                        vcc.project_gutenberg_catalog_ebook_id AS ebook_id,
                         jsonb_agg(
                             jsonb_build_object(
-                                'id', cc.id,
-                                'credited_name', cc.credited_name,
-                                'role', cc.role,
-                                'raw_role', cc.raw_role,
-                                'ordinal', cc.ordinal,
-                                'source', cc.source,
                                 'contributor_handle', c.handle,
                                 'contributor_display_name', c.display_name,
                                 'href', '/authors/' || c.handle,
-                                'contributor', jsonb_build_object(
-                                    'handle', c.handle,
-                                    'display_name', c.display_name,
-                                    'sort_name', c.sort_name,
-                                    'kind', c.kind,
-                                    'status', c.status,
-                                    'disambiguation', c.disambiguation
-                                )
+                                'credited_name', vcc.credited_name,
+                                'role', vcc.role,
+                                'raw_role', vcc.raw_role,
+                                'ordinal', vcc.ordinal
                             )
-                            ORDER BY cc.ordinal ASC, cc.created_at ASC, cc.id ASC
+                            ORDER BY vcc.ordinal ASC
                         ) AS contributor_credits,
-                        string_agg(cc.credited_name || ' ' || c.display_name, ' ') AS contributor_search_text
-                    FROM contributor_credits cc
-                    JOIN contributors c ON c.id = cc.contributor_id
-                    WHERE cc.project_gutenberg_catalog_ebook_id IS NOT NULL
-                      AND c.status NOT IN ('merged', 'tombstoned')
-                    GROUP BY cc.project_gutenberg_catalog_ebook_id
+                        string_agg(vcc.credited_name || ' ' || c.display_name, ' ') AS contributor_search_text
+                    FROM ({visible_credit_rows_sql()}) vcc
+                    JOIN contributors c ON c.id = vcc.contributor_id
+                    WHERE vcc.project_gutenberg_catalog_ebook_id IS NOT NULL
+                    GROUP BY vcc.project_gutenberg_catalog_ebook_id
                 ) gcc ON gcc.ebook_id = pg.ebook_id
                 WHERE to_tsvector(
                         'english',
@@ -547,6 +547,7 @@ def _search_project_gutenberg_rows(
             """
         ),
         {
+            "viewer_id": viewer_id,
             "query": query,
             "offset": offset,
             "limit": limit,

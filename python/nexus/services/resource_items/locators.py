@@ -11,6 +11,7 @@ from nexus.schemas.resource_items import (
     ResourceLocatorResolutionOut,
 )
 from nexus.services import contributors, notes
+from nexus.services.contributor_taxonomy import try_parse_contributor_handle
 from nexus.services.resource_graph.refs import ResourceRefParseFailure, parse_resource_ref
 from nexus.services.resource_items import surfaces
 
@@ -40,10 +41,16 @@ def resolve_resource_locator(
                 "Resource locator ref is invalid",
             )
     elif locator.kind == "contributor_handle":
+        handle = try_parse_contributor_handle(locator.handle)
+        if handle is None:
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST,
+                "Resource locator handle is invalid",
+            )
         ref = contributors.resolve_contributor_ref_by_handle(
             db,
             viewer_id=viewer_id,
-            contributor_handle=locator.handle,
+            contributor_handle=handle,
         )
     elif locator.kind == "daily_note_today":
         ref = notes.resolve_today_daily_note_page_ref(

@@ -16,14 +16,27 @@ from sqlalchemy.orm import Session
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
 from nexus.responses import ok, success_response
+from nexus.schemas.contributors import MediaAuthorsPutRequest
 from nexus.schemas.media import MediaLibrariesRequest
 from nexus.schemas.resource_graph import ConnectionEndpointOut, RelatedMediaOut
-from nexus.services import library_entries, media_intelligence, media_related, media_source_ingest
+from nexus.services import (
+    contributors as contributors_service,
+)
+from nexus.services import (
+    library_entries,
+    media_intelligence,
+    media_related,
+    media_source_ingest,
+)
 from nexus.services import media as media_service
 from nexus.services import media_deletion as media_deletion_service
 from nexus.services.resource_graph.schemas import ConnectionEndpoint
 
 router = APIRouter(tags=["media"])
+
+# The administrator role that widens author-editing to null/other-creator media
+# (spec 6: canEditAuthors = canReadMedia AND (isMediaCreator OR isAdministrator)).
+_ADMIN_ROLE = "admin"
 
 # Clamp for GET /media/{id}/related ``limit`` (spec S5).
 _RELATED_LIMIT_MIN = 1
@@ -63,6 +76,7 @@ def list_media(
         search=search,
         cursor=cursor,
         limit=limit,
+        is_admin=_ADMIN_ROLE in viewer.roles,
     )
     return {**ok(media_list), "page": {"next_cursor": next_cursor}}
 
@@ -74,8 +88,27 @@ def get_media(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
     """Get media by ID. Returns 404 if it does not exist or the viewer cannot read it."""
-    result = media_service.get_media_for_viewer(db, viewer.user_id, media_id)
+    result = media_service.get_media_for_viewer(
+        db, viewer.user_id, media_id, is_admin=_ADMIN_ROLE in viewer.roles
+    )
     return ok(result)
+
+
+@router.put("/media/{media_id}/authors")
+def put_media_authors(
+    media_id: UUID,
+    request: MediaAuthorsPutRequest,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+) -> dict:
+    """Replace or reset the media's manual author slice (spec 2.5).
+
+    Transport-only: the facade owns the fresh session, visibility/capability
+    re-check, replay and the whole mutation. Strict camelCase in and out.
+    """
+    result = contributors_service.put_media_authors(
+        viewer=viewer, media_id=media_id, request=request
+    )
+    return ok(result, by_alias=True)
 
 
 @router.delete("/media/{media_id}")

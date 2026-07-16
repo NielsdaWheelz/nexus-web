@@ -1,26 +1,41 @@
 """Sole reader of persisted chat context for contributor references.
 
-Owns every read of the chat-domain ref columns (``message_retrievals`` and
-``message_tool_calls``). Other domains ask "is this contributor still referenced
-anywhere in persisted chat context?" by handle and never touch the chat tables
-themselves.
+Owns every read of the chat-domain ref columns (``message_retrievals``,
+``message_tool_calls``, ``message_retrieval_candidate_ledgers``,
+``chat_prompt_assemblies``, ``chat_run_events``). Other domains ask "is this
+contributor still referenced anywhere in persisted chat context?" and never
+touch the chat tables themselves. The single caller is the orphan-prune
+eligibility check in ``services/contributors`` (spec 2.8, D-41).
 """
 
 from __future__ import annotations
+
+from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 
-def contributor_is_referenced_in_persisted_context(db: Session, *, contributor_handle: str) -> bool:
-    """True if any persisted chat retrieval or tool call still references the contributor.
+def contributor_is_referenced_in_persisted_context(
+    db: Session,
+    *,
+    contributor_id: UUID,
+    contributor_handle: str,
+) -> bool:
+    """True if any persisted chat context still references the contributor.
 
-    Every persisted contributor ref carries ``{"type": "contributor", "id": <handle>}``
-    at its top level — that is the single retrieval-citation contract written to
-    ``message_retrievals.context_ref``/``.result_ref`` and to each element of
-    ``message_tool_calls.result_refs``/``.selected_context_refs`` (see
-    ``retrieval_citation.RetrievalCitation`` and ``search._result_context_ref``). One
-    containment test on the handle therefore covers every shape that can exist.
+    Two persisted ref forms exist (D-18/D-41):
+
+    - the typed object ``{"type": "contributor", "id": <handle>}`` — the single
+      retrieval-citation contract written to ``message_retrievals.context_ref``/
+      ``.result_ref``, each element of ``message_tool_calls.result_refs``/
+      ``.selected_context_refs``, and ``message_retrieval_candidate_ledgers.
+      result_ref`` (whose scalar ``source_id`` carries the same handle for
+      ``result_type = 'contributor'`` rows);
+    - the ``"contributor:<uuid>"`` URI string nested anywhere inside
+      ``chat_prompt_assemblies`` manifests/refs and ``chat_run_events`` payloads
+      (``resource_uri``, ``requested_resource_uri``, ``chat_subject.*``,
+      ``companions[]``).
     """
     row = db.execute(
         text(
@@ -36,9 +51,30 @@ def contributor_is_referenced_in_persisted_context(db: Session, *, contributor_h
                 WHERE {_array_contains_contributor_ref_sql("mtc.result_refs")}
                    OR {_array_contains_contributor_ref_sql("mtc.selected_context_refs")}
             )
+            OR EXISTS (
+                SELECT 1 FROM message_retrieval_candidate_ledgers ml
+                WHERE {_contains_contributor_ref_sql("ml.result_ref")}
+                   OR (
+                        ml.result_type = 'contributor'
+                        AND ml.source_id = CAST(:contributor_handle AS text)
+                   )
+            )
+            OR EXISTS (
+                SELECT 1 FROM chat_prompt_assemblies cpa
+                WHERE {_contains_contributor_uri_sql("cpa.prompt_block_manifest")}
+                   OR {_contains_contributor_uri_sql("cpa.included_context_refs")}
+                   OR {_contains_contributor_uri_sql("cpa.dropped_items")}
+            )
+            OR EXISTS (
+                SELECT 1 FROM chat_run_events cre
+                WHERE {_contains_contributor_uri_sql("cre.payload")}
+            )
             """
         ),
-        {"contributor_handle": contributor_handle},
+        {
+            "contributor_handle": contributor_handle,
+            "contributor_uri": f"contributor:{contributor_id}",
+        },
     ).fetchone()
     return row is not None
 
@@ -55,3 +91,12 @@ def _array_contains_contributor_ref_sql(column: str) -> str:
         SELECT 1 FROM jsonb_array_elements({column}) AS element(value)
         WHERE {_contains_contributor_ref_sql("element.value")}
     )"""
+
+
+def _contains_contributor_uri_sql(column: str) -> str:
+    # jsonb_path_exists in (default) lax mode visits every nested value via $.**
+    # and string-compares scalars; objects/arrays simply never equal the URI.
+    return (
+        f"jsonb_path_exists({column}, '$.** ? (@ == $uri)', "
+        "jsonb_build_object('uri', CAST(:contributor_uri AS text)))"
+    )

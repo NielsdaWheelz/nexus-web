@@ -1,9 +1,17 @@
-.dialog {
+.backdrop {
   position: fixed;
   inset: 0;
-  margin: auto;
+  z-index: var(--z-modal);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+  background: var(--overlay-scrim);
+}
+
+.dialog {
   max-width: 560px;
-  width: calc(100% - var(--space-8));
+  width: 100%;
   max-height: calc(100vh - var(--space-8));
   border: 1px solid var(--edge);
   border-radius: var(--radius-xl);
@@ -12,10 +20,6 @@
   padding: 0;
   overflow: hidden;
   box-shadow: var(--shadow-3);
-}
-
-.dialog::backdrop {
-  background: var(--overlay-scrim);
 }
 
 .inner {

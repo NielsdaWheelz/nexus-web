@@ -13,6 +13,8 @@ import {
   useCallback,
   useRef,
   useMemo,
+  lazy,
+  Suspense,
   type MouseEvent,
   type UIEvent,
 } from "react";
@@ -241,9 +243,10 @@ import {
   upsertHighlightSorted,
   type HighlightLinkedNoteBlock,
 } from "@/lib/highlights/api";
-import type { ContributorCredit } from "@/lib/contributors/types";
+import type { ContributorCredit, MediaAuthors } from "@/lib/contributors/types";
+import ContributorRoleGroups from "@/components/contributors/ContributorRoleGroups";
 import ResourceThumb from "@/components/ui/ResourceThumb";
-import { buildCompactMediaPaneTitle } from "./mediaFormatting";
+import { buildCompactMediaPaneTitle, mapMediaAuthorCredits } from "./mediaFormatting";
 import {
   type NavigationTocNodeLike,
   resolveEpubInternalLinkTarget,
@@ -262,6 +265,19 @@ import { mediaKindIcon } from "@/lib/resources/resourceKind";
 import { buildReaderSurfaceStyle } from "@/lib/reader/readerSurfaceStyle";
 import styles from "./page.module.css";
 
+// F3 (parallel lane) owns MediaAuthorsEditor + AuthorSearchField. It is lazily
+// mounted only after the user first opens the editor, so the media byline
+// renders (and its tests run) without depending on that module being present
+// yet. Frozen props contract: { mediaId, open, onClose, authors, authorMode,
+// onSaved }; F3 exports it as a named `MediaAuthorsEditor`.
+const MediaAuthorsEditor = lazy(() =>
+  import(
+    /* @vite-ignore */ "@/components/contributors/MediaAuthorsEditor"
+  ).then((module) => ({
+    default: module.MediaAuthorsEditor,
+  })),
+);
+
 // =============================================================================
 // Constants
 // =============================================================================
@@ -278,6 +294,7 @@ export interface Media extends MediaProcessingSnapshot {
   playback_source?: TranscriptPlaybackSource | null;
   chapters?: TranscriptChapter[];
   contributors: ContributorCredit[];
+  author_mode?: "automatic" | "manual" | null;
   published_date?: string | null;
   publisher?: string | null;
   language?: string | null;
@@ -685,6 +702,39 @@ export default function MediaPaneBody() {
   // ---- Core data state ----
   const [media, setMedia] = useState<Media | null>(null);
   const [loading, setLoading] = useState(media === null);
+  // Media authors editor (F3). `mounted` latches on first open so the mobile
+  // MobileSheet stays mounted for its active→false dismissal after that, while
+  // never mounting (or resolving the lazy module) until the user opens it.
+  const [authorsEditorOpen, setAuthorsEditorOpen] = useState(false);
+  const [authorsEditorMounted, setAuthorsEditorMounted] = useState(false);
+  const openAuthorsEditor = useCallback(() => {
+    setAuthorsEditorMounted(true);
+    setAuthorsEditorOpen(true);
+  }, []);
+  const handleAuthorsSaved = useCallback((result: MediaAuthors) => {
+    setMedia((prev) => {
+      if (!prev) return prev;
+      const authorCredits: ContributorCredit[] = result.authors.map(
+        (author, index) => ({
+          contributor_handle: author.contributorHandle,
+          contributor_display_name: author.displayName,
+          credited_name: author.creditedName,
+          role: "author",
+          href: author.href,
+          ordinal: index,
+        }),
+      );
+      const otherCredits = prev.contributors.filter(
+        (credit) => credit.role !== "author",
+      );
+      return {
+        ...prev,
+        contributors: [...authorCredits, ...otherCredits],
+        author_mode: result.authorMode,
+      };
+    });
+    setAuthorsEditorOpen(false);
+  }, []);
   const [error, setError] = useState<FeedbackContent | null>(null);
   const metadataRetryBaselineRef = useRef<MetadataRetryBaseline | null>(null);
   const [metadataRetryPollsRemaining, setMetadataRetryPollsRemaining] =
@@ -5765,6 +5815,16 @@ export default function MediaPaneBody() {
           </div>
         ) : null}
         <div className={styles.readerColumn}>
+          <div className={styles.byline}>
+            <ContributorRoleGroups
+              credits={media.contributors}
+              media={{
+                canEditAuthors: media.capabilities?.can_edit_authors ?? false,
+                authorMode: media.author_mode ?? "automatic",
+                onEditAuthors: openAuthorsEditor,
+              }}
+            />
+          </div>
           {!isPdf && isMismatchDisabled && (
             <div className={styles.mismatchBanner}>
               Highlights disabled due to content mismatch. Try reloading.
@@ -6095,6 +6155,19 @@ export default function MediaPaneBody() {
           }}
           onDismiss={dismissHighlightActions}
         />
+      ) : null}
+
+      {authorsEditorMounted ? (
+        <Suspense fallback={null}>
+          <MediaAuthorsEditor
+            mediaId={media.id}
+            open={authorsEditorOpen}
+            onClose={() => setAuthorsEditorOpen(false)}
+            authors={mapMediaAuthorCredits(media.contributors)}
+            authorMode={media.author_mode ?? "automatic"}
+            onSaved={handleAuthorsSaved}
+          />
+        </Suspense>
       ) : null}
 
       {/* Mount contract: always rendered, driven by `session`. */}

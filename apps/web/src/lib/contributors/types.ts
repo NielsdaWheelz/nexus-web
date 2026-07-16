@@ -1,147 +1,119 @@
+// Contributor/author frontend types (lightweight-author-deduplication hard cutover).
+//
+// Two wire cases live here by design (spec D-1):
+//  - EMBEDDED read credits inside existing media/search/podcast/library GET DTOs stay
+//    snake_case and narrowed to the effective-credit facts (D-33): the
+//    `ContributorCredit` below. A handle-less credit is a legitimate text fact
+//    (podcast browse/discovery previews, D-9), so `contributor_handle`/`href` are
+//    optional.
+//  - The five author-surface endpoints speak strict camelCase; their DTOs are the
+//    camel types below. Every handle field on those types carries the branded
+//    `ContributorHandle` (D-45) — the api-layer decode brands them at ingress.
+
+import type { ContributorHandle } from "@/lib/contributors/handle";
+
+// ---------------------------------------------------------------------------
+// Embedded snake credit (narrowed, D-33)
+// ---------------------------------------------------------------------------
+
 export interface ContributorCredit {
-  id?: string | null;
-  contributor_handle: string;
+  contributor_handle?: string | null;
   contributor_display_name?: string | null;
   credited_name: string;
-  role: string | null;
+  role: string;
   raw_role?: string | null;
+  href?: string | null;
   ordinal?: number | null;
-  source?: string | null;
-  source_ref?: Record<string, unknown> | null;
-  resolution_status?: string | null;
-  confidence?: string | number | null;
-  href?: string | null;
 }
 
-export interface ContributorSummary {
-  handle: string;
-  contributor_handle?: string;
-  display_name: string;
-  sort_name: string;
-  kind?: string | null;
-  status?: string | null;
-  disambiguation?: string | null;
-  href?: string | null;
-  aliases?: ContributorAlias[];
-  external_ids?: ContributorExternalId[];
-}
+// ---------------------------------------------------------------------------
+// Author-surface camel DTOs (strict camelCase wire; handles branded, D-45)
+// ---------------------------------------------------------------------------
 
-export interface ContributorAlias {
-  id?: string;
-  alias: string;
-  alias_kind?: string | null;
-  sort_name?: string | null;
-  source?: string | null;
-  is_primary?: boolean | null;
-}
-
-export interface ContributorExternalId {
-  id?: string;
-  authority: string;
-  external_key: string;
-  external_url?: string | null;
-  source?: string | null;
-}
-
-export type ContributorReconciliationStatus = "pending" | "accepted" | "rejected" | "stale";
-export type ContributorReconciliationMatcher = "deterministic";
-export type ContributorReconciliationSignal =
-  | "same_display_name"
-  | "same_kind"
-  | "same_sort_name"
-  | "shared_alias"
-  | "shared_confirmed_alias"
-  | "shared_work";
-
-export interface ContributorReconciliationContributor {
-  handle: string;
-  href: string;
-  display_name: string;
-  sort_name: string;
-  kind: string;
-  status: string;
-  disambiguation?: string | null;
-  work_count: number;
-}
-
-export interface ContributorReconciliationEvidence {
-  matcher: ContributorReconciliationMatcher;
-  algorithm_version: string;
-  reason: string;
-  score: number;
-  signals: ContributorReconciliationSignal[];
-  shared_aliases: string[];
-  shared_confirmed_aliases: string[];
-  shared_work_count: number;
-  source_handle: string;
-  target_handle: string;
-  source_work_count: number;
-  target_work_count: number;
-  source_confirmed_alias_count: number;
-  target_confirmed_alias_count: number;
-  source_strong_external_id_count: number;
-  target_strong_external_id_count: number;
-}
-
-export interface ContributorReconciliationCandidate {
-  id: string;
-  run_id: string;
-  status: ContributorReconciliationStatus;
-  score: number;
-  source_contributor: ContributorReconciliationContributor;
-  target_contributor: ContributorReconciliationContributor;
-  evidence: ContributorReconciliationEvidence;
-  decided_by_user_id?: string | null;
-  created_at: string;
-  updated_at: string;
-  decided_at?: string | null;
-}
-
-export interface ContributorReconciliationCandidatesPage {
-  candidates: ContributorReconciliationCandidate[];
-}
-
-export interface ContributorWork {
-  object_type: string;
-  object_id: string | number;
-  route: string;
+export interface ContributorWorkExample {
   title: string;
-  content_kind: string;
-  role?: string | null;
-  credited_name?: string | null;
-  published_date?: string | null;
-  publisher?: string | null;
-  description?: string | null;
-  source?: string | null;
-}
-
-export interface FacetCount {
-  value: string;
-  count: number;
-}
-
-export interface ContributorDirectoryFacets {
-  roles: FacetCount[];
-  kinds: FacetCount[];
-  content_kinds: FacetCount[];
-  statuses: FacetCount[];
-}
-
-export interface ContributorDirectoryEntry {
-  handle: string;
   href: string;
-  display_name: string;
-  sort_name: string;
-  kind: string;
-  status: string;
-  disambiguation?: string | null;
-  work_count: number;
-  roles: string[];
-  content_kinds: string[];
 }
 
-export interface ContributorDirectoryPage {
-  entries: ContributorDirectoryEntry[];
-  facets: ContributorDirectoryFacets;
-  page: { has_more: boolean; next_cursor: string | null };
+export interface ContributorSearchItem {
+  handle: ContributorHandle;
+  href: string;
+  displayName: string;
+  workCount: number;
+  /** At most two example works, used for disambiguation in the picker listbox. */
+  workExamples: ContributorWorkExample[];
+  /** A non-display alias literal whose normalized form matched, else null. */
+  matchedAlias: string | null;
+}
+
+export interface ContributorSearchPage {
+  contributors: ContributorSearchItem[];
+  nextCursor: string | null;
+}
+
+export interface ContributorDetail {
+  handle: ContributorHandle;
+  href: string;
+  displayName: string;
+  otherNames: string[];
+  canRename: boolean;
+}
+
+export interface ContributorRoleFact {
+  creditedName: string;
+  role: string;
+  rawRole: string | null;
+}
+
+export interface ContributorWorkItem {
+  title: string;
+  href: string;
+  contentKind: string;
+  date: string | null;
+  roleFacts: ContributorRoleFact[];
+}
+
+export interface ContributorWorkPage {
+  works: ContributorWorkItem[];
+  nextCursor: string | null;
+}
+
+export interface MediaAuthorCredit {
+  contributorHandle: ContributorHandle;
+  href: string;
+  displayName: string;
+  creditedName: string;
+}
+
+export interface MediaAuthors {
+  authorMode: "automatic" | "manual";
+  authors: MediaAuthorCredit[];
+  canEditAuthors: boolean;
+}
+
+/** One editor row's binding: an existing visible contributor, or a new person. */
+export type AuthorBinding =
+  | { kind: "existing"; contributorHandle: ContributorHandle }
+  | { kind: "new"; displayName: string };
+
+// ---------------------------------------------------------------------------
+// Author-surface request bodies (camelCase; shared by editor + rename)
+// ---------------------------------------------------------------------------
+
+export interface MediaAuthorsManualBody {
+  clientMutationId: string;
+  mode: "manual";
+  authors: Array<{ creditedName: string; binding: AuthorBinding }>;
+}
+
+export interface MediaAuthorsAutomaticBody {
+  clientMutationId: string;
+  mode: "automatic";
+}
+
+export type MediaAuthorsPutBody = MediaAuthorsManualBody | MediaAuthorsAutomaticBody;
+
+export interface ContributorRenameBody {
+  clientMutationId: string;
+  displayName: string;
 }

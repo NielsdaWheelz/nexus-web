@@ -1,32 +1,52 @@
-"""Contributor DTOs."""
+"""Contributor DTOs.
 
-from datetime import datetime
-from decimal import Decimal
-from typing import Any, Literal
-from uuid import UUID
+Wire-case seam (D-1). The five author-surface endpoints — ``GET /contributors``,
+``GET /contributors/{handle}``, ``GET /contributors/{handle}/works``,
+``PATCH /contributors/{handle}`` and ``PUT /media/{id}/authors`` — speak STRICT
+camelCase both directions:
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+- request models accept camel keys only (``alias`` + ``populate_by_name=False`` +
+  ``extra="forbid"``), so a snake payload is rejected;
+- response models serialise camel via ``ok(model, by_alias=True)`` and re-validate
+  their own camel dump on replay. They keep ``populate_by_name=True`` so the facade
+  can construct them with ordinary snake field names while replay's
+  ``Model.model_validate(stored_camel_dump)`` still round-trips (D-42).
 
-ContributorKind = Literal["person", "organization", "group", "unknown"]
-ContributorStatus = Literal["unverified", "verified", "tombstoned", "merged"]
-ContributorReconciliationStatus = Literal["pending", "accepted", "rejected", "stale"]
-ContributorReconciliationMatcher = Literal["deterministic"]
-ContributorReconciliationSignal = Literal[
-    "same_display_name",
-    "same_kind",
-    "same_sort_name",
-    "shared_alias",
-    "shared_confirmed_alias",
-    "shared_work",
-]
-ContributorAliasKind = Literal[
-    "display",
-    "credited",
-    "legal",
-    "pseudonym",
-    "transliteration",
-    "search",
-]
+EMBEDDED credits inside the existing media/search/podcast/library GET DTOs stay
+snake_case: the narrowed :class:`ContributorCreditOut` (D-33) carries no aliases
+and rides the snake ``ok(by_alias=False)`` wire. The podcast subscribe payload
+rides the same snake surface via the snake-strict :class:`ContributorCreditIn`
+(v2, D-4).
+"""
+
+from __future__ import annotations
+
+from typing import Annotated, Literal
+
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field
+
+from nexus.services.contributor_taxonomy import clean_contributor_display
+
+# Bounds are inlined literals (matching migration D-32 / observation value types):
+# credited/display names 200 code points, raw role 80, one author slice 20 rows,
+# clientMutationId 1..120 (the existing resource_mutations key length).
+_MAX_NAME_CODE_POINTS = 200
+_MAX_RAW_ROLE_LENGTH = 80
+_MAX_AUTHORS_PER_SLICE = 20
+_MAX_CLIENT_MUTATION_ID = 120
+
+
+def _require_nonblank_name(value: str) -> str:
+    # Whitespace-only names pass min_length but clean to empty downstream (a
+    # ValueError-turned-500 or an empty-display contributor); reject at the
+    # boundary. The literal is preserved — cleaning stays a service concern.
+    if not clean_contributor_display(value):
+        raise ValueError("must not be blank")
+    return value
+
+
+_NonblankName = Annotated[str, AfterValidator(_require_nonblank_name)]
+
 ContributorRole = Literal[
     "author",
     "editor",
@@ -41,380 +61,211 @@ ContributorRole = Literal[
     "organization",
     "unknown",
 ]
-ContributorResolutionStatus = Literal[
-    "external_id",
-    "manual",
-    "confirmed_alias",
-    "unverified",
-]
 
 
-class ContributorAliasOut(BaseModel):
-    id: UUID
-    alias: str
-    normalized_alias: str = Field(serialization_alias="normalizedAlias")
-    sort_name: str | None = Field(None, serialization_alias="sortName")
-    alias_kind: ContributorAliasKind = Field(serialization_alias="aliasKind")
-    locale: str | None = None
-    script: str | None = None
-    source: str
-    confidence: Decimal | None = None
-    is_primary: bool = Field(serialization_alias="isPrimary")
-
-    model_config = ConfigDict(from_attributes=True, populate_by_name=True, extra="forbid")
-
-
-class ContributorExternalIdOut(BaseModel):
-    id: UUID
-    authority: str
-    external_key: str = Field(serialization_alias="externalKey")
-    external_url: str | None = Field(None, serialization_alias="externalUrl")
-    source: str
-
-    model_config = ConfigDict(from_attributes=True, populate_by_name=True, extra="forbid")
-
-
-class ContributorAliasCreateRequest(BaseModel):
-    alias: str = Field(..., min_length=1, max_length=200)
-    sort_name: str | None = Field(
-        None,
-        validation_alias=AliasChoices("sort_name", "sortName"),
-        serialization_alias="sortName",
-        max_length=200,
-    )
-    alias_kind: ContributorAliasKind = Field(
-        "search",
-        validation_alias=AliasChoices("alias_kind", "aliasKind"),
-        serialization_alias="aliasKind",
-    )
-    locale: str | None = Field(None, max_length=32)
-    script: str | None = Field(None, max_length=32)
-    source: str = Field("manual", min_length=1, max_length=80)
-    confidence: Decimal | None = None
-    is_primary: bool = Field(
-        False,
-        validation_alias=AliasChoices("is_primary", "isPrimary"),
-        serialization_alias="isPrimary",
-    )
-
-    model_config = ConfigDict(str_strip_whitespace=True, populate_by_name=True, extra="forbid")
-
-
-class ContributorExternalIdCreateRequest(BaseModel):
-    authority: str = Field(..., min_length=1, max_length=40)
-    external_key: str = Field(
-        ...,
-        validation_alias=AliasChoices("external_key", "externalKey"),
-        serialization_alias="externalKey",
-        min_length=1,
-        max_length=200,
-    )
-    external_url: str | None = Field(
-        None,
-        validation_alias=AliasChoices("external_url", "externalUrl"),
-        serialization_alias="externalUrl",
-        max_length=1000,
-    )
-    source: str = Field("manual", min_length=1, max_length=80)
-
-    model_config = ConfigDict(str_strip_whitespace=True, populate_by_name=True, extra="forbid")
-
-
-class ContributorOut(BaseModel):
-    handle: str
-    href: str = ""
-    display_name: str = Field(serialization_alias="displayName")
-    sort_name: str = Field(serialization_alias="sortName")
-    kind: ContributorKind
-    status: ContributorStatus
-    disambiguation: str | None = None
-    aliases: list[ContributorAliasOut] = Field(default_factory=list)
-    external_ids: list[ContributorExternalIdOut] = Field(
-        default_factory=list,
-        serialization_alias="externalIds",
-    )
-    created_at: datetime | None = Field(None, serialization_alias="createdAt")
-    updated_at: datetime | None = Field(None, serialization_alias="updatedAt")
-
-    model_config = ConfigDict(from_attributes=True, populate_by_name=True, extra="forbid")
+# ---------------------------------------------------------------------------
+# Snake-strict adapter input (podcast subscribe payload rides the snake surface)
+# ---------------------------------------------------------------------------
 
 
 class ContributorCreditIn(BaseModel):
-    credited_name: str = Field(
-        validation_alias=AliasChoices("credited_name", "creditedName"),
-        serialization_alias="creditedName",
-        min_length=1,
-        max_length=255,
-    )
-    role: str = Field("author", min_length=1, max_length=80)
-    raw_role: str | None = Field(
-        None,
-        validation_alias=AliasChoices("raw_role", "rawRole"),
-        serialization_alias="rawRole",
-        max_length=80,
-    )
-    ordinal: int | None = Field(None, ge=0)
-    source: str = Field("local", min_length=1, max_length=80)
-    source_ref: dict[str, Any] | None = Field(
-        None,
-        validation_alias=AliasChoices("source_ref", "sourceRef"),
-        serialization_alias="sourceRef",
-    )
-    confidence: Decimal | None = None
+    """Typed provider credit (v2, D-4): snake-only, strict, server facts dropped.
 
-    model_config = ConfigDict(str_strip_whitespace=True, populate_by_name=True, extra="forbid")
+    ``ordinal`` (list order is the order), ``source``/``source_ref`` and
+    ``confidence`` are server-owned and no longer client inputs. An unknown role
+    is rejected by the closed vocabulary (422-shaped validation).
+    """
+
+    credited_name: str = Field(min_length=1, max_length=_MAX_NAME_CODE_POINTS)
+    role: ContributorRole
+    raw_role: str | None = Field(default=None, max_length=_MAX_RAW_ROLE_LENGTH)
+
+    model_config = ConfigDict(str_strip_whitespace=True, populate_by_name=False, extra="forbid")
 
 
-def contributor_credit_write_payload(value: Any) -> Any:
-    if not isinstance(value, dict):
-        return value
-
-    return {
-        key: item
-        for key, item in value.items()
-        if key
-        not in {
-            "id",
-            "contributor",
-            "contributor_handle",
-            "contributorHandle",
-            "contributor_display_name",
-            "contributorDisplayName",
-            "href",
-            "resolution_status",
-            "resolutionStatus",
-        }
-    }
+# ---------------------------------------------------------------------------
+# Embedded snake credit (narrowed, D-33) — media/search/podcast/library GET DTOs
+# ---------------------------------------------------------------------------
 
 
 class ContributorCreditOut(BaseModel):
-    id: UUID | None = None
-    contributor_handle: str = Field(
-        validation_alias=AliasChoices("contributor_handle", "contributorHandle"),
-        serialization_alias="contributorHandle",
-        min_length=1,
-    )
-    contributor_display_name: str = Field(
-        validation_alias=AliasChoices("contributor_display_name", "contributorDisplayName"),
-        serialization_alias="contributorDisplayName",
-        min_length=1,
-    )
-    href: str = Field(min_length=1)
-    credited_name: str = Field(
-        validation_alias=AliasChoices("credited_name", "creditedName"),
-        serialization_alias="creditedName",
-        min_length=1,
-    )
+    """One effective credit fact, embedded snake-case in existing GET DTOs.
+
+    Handle-bearing credits link to author detail; handle-less text-fact credits
+    (podcast browse/discovery previews, D-9) leave the handle/href absent.
+    Removed vs. the legacy shape: ``id``, ``source``, ``source_ref``,
+    ``resolution_status``, ``confidence`` and the nested full contributor.
+    """
+
+    contributor_handle: str | None = None
+    contributor_display_name: str | None = None
+    href: str | None = None
+    credited_name: str
     role: ContributorRole
-    raw_role: str | None = Field(
-        None,
-        validation_alias=AliasChoices("raw_role", "rawRole"),
-        serialization_alias="rawRole",
-    )
-    ordinal: int
-    source: str = Field(min_length=1)
-    resolution_status: ContributorResolutionStatus = Field(
-        "unverified",
-        validation_alias=AliasChoices("resolution_status", "resolutionStatus"),
-        serialization_alias="resolutionStatus",
-    )
-    confidence: Decimal | None = None
-    contributor: ContributorOut | None = None
+    raw_role: str | None = None
+    ordinal: int | None = None
 
-    model_config = ConfigDict(
-        str_strip_whitespace=True, from_attributes=True, populate_by_name=True, extra="forbid"
-    )
+    model_config = ConfigDict(from_attributes=True, extra="forbid")
 
 
-class ContributorWorkOut(BaseModel):
-    object_type: str = Field(serialization_alias="objectType")
-    object_id: str | int = Field(serialization_alias="objectId")
-    route: str
+# ---------------------------------------------------------------------------
+# Author-surface request models — STRICT camelCase, snake rejected
+# ---------------------------------------------------------------------------
+
+
+class ExistingAuthorBinding(BaseModel):
+    """Bind a manual author row to an already-visible contributor."""
+
+    kind: Literal["existing"]
+    contributor_handle: str = Field(alias="contributorHandle", min_length=1)
+
+    model_config = ConfigDict(populate_by_name=False, extra="forbid")
+
+
+class NewAuthorBinding(BaseModel):
+    """Bind a manual author row to an explicit, deliberately-distinct new person."""
+
+    kind: Literal["new"]
+    display_name: _NonblankName = Field(
+        alias="displayName", min_length=1, max_length=_MAX_NAME_CODE_POINTS
+    )
+
+    model_config = ConfigDict(populate_by_name=False, extra="forbid")
+
+
+AuthorBindingIn = Annotated[ExistingAuthorBinding | NewAuthorBinding, Field(discriminator="kind")]
+
+
+class ManualAuthorRowIn(BaseModel):
+    """One ordered manual author row. Every row is role ``author``."""
+
+    credited_name: _NonblankName = Field(
+        alias="creditedName", min_length=1, max_length=_MAX_NAME_CODE_POINTS
+    )
+    binding: AuthorBindingIn
+
+    model_config = ConfigDict(populate_by_name=False, extra="forbid")
+
+
+class ManualMediaAuthorsRequest(BaseModel):
+    """PUT /media/{id}/authors — manual branch: the complete ordered author slice."""
+
+    client_mutation_id: str = Field(
+        alias="clientMutationId", min_length=1, max_length=_MAX_CLIENT_MUTATION_ID
+    )
+    mode: Literal["manual"]
+    authors: list[ManualAuthorRowIn] = Field(max_length=_MAX_AUTHORS_PER_SLICE)
+
+    model_config = ConfigDict(populate_by_name=False, extra="forbid")
+
+
+class AutomaticMediaAuthorsRequest(BaseModel):
+    """PUT /media/{id}/authors — reset branch: clears the pin, rejects ``authors``."""
+
+    client_mutation_id: str = Field(
+        alias="clientMutationId", min_length=1, max_length=_MAX_CLIENT_MUTATION_ID
+    )
+    mode: Literal["automatic"]
+
+    model_config = ConfigDict(populate_by_name=False, extra="forbid")
+
+
+MediaAuthorsPutRequest = Annotated[
+    ManualMediaAuthorsRequest | AutomaticMediaAuthorsRequest,
+    Field(discriminator="mode"),
+]
+
+
+class ContributorRenameRequest(BaseModel):
+    """PATCH /contributors/{handle} — replayable display-name rename."""
+
+    client_mutation_id: str = Field(
+        alias="clientMutationId", min_length=1, max_length=_MAX_CLIENT_MUTATION_ID
+    )
+    display_name: _NonblankName = Field(
+        alias="displayName", min_length=1, max_length=_MAX_NAME_CODE_POINTS
+    )
+
+    model_config = ConfigDict(populate_by_name=False, extra="forbid")
+
+
+# ---------------------------------------------------------------------------
+# Author-surface response models — camelCase, replay-round-trippable
+# ---------------------------------------------------------------------------
+
+
+class MediaAuthorCreditOut(BaseModel):
+    contributor_handle: str = Field(alias="contributorHandle")
+    href: str
+    display_name: str = Field(alias="displayName")
+    credited_name: str = Field(alias="creditedName")
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+
+class MediaAuthorsOut(BaseModel):
+    author_mode: Literal["automatic", "manual"] = Field(alias="authorMode")
+    authors: list[MediaAuthorCreditOut]
+    can_edit_authors: bool = Field(alias="canEditAuthors")
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+
+class ContributorWorkExampleOut(BaseModel):
     title: str
-    content_kind: str = Field(serialization_alias="contentKind")
-    published_date: str | None = Field(None, serialization_alias="publishedDate")
-    publisher: str | None = None
-    description: str | None = None
-    credited_name: str = Field(serialization_alias="creditedName")
-    role: ContributorRole
-    raw_role: str | None = Field(None, serialization_alias="rawRole")
-    ordinal: int
-    source: str
-
-    model_config = ConfigDict(populate_by_name=True, extra="forbid")
-
-
-class ContributorSearchResultOut(BaseModel):
-    handle: str
     href: str
-    display_name: str = Field(serialization_alias="displayName")
-    sort_name: str = Field(serialization_alias="sortName")
-    kind: ContributorKind
-    status: ContributorStatus
-    disambiguation: str | None = None
-    matched_name: str | None = Field(None, serialization_alias="matchedName")
-
-    model_config = ConfigDict(populate_by_name=True, extra="forbid")
-
-
-class ContributorSplitRequest(BaseModel):
-    display_name: str = Field(
-        validation_alias=AliasChoices("display_name", "displayName"),
-        serialization_alias="displayName",
-        min_length=1,
-        max_length=200,
-    )
-    credit_ids: list[UUID] = Field(
-        default_factory=list,
-        validation_alias=AliasChoices("credit_ids", "creditIds"),
-        serialization_alias="creditIds",
-    )
-    alias_ids: list[UUID] = Field(
-        default_factory=list,
-        validation_alias=AliasChoices("alias_ids", "aliasIds"),
-        serialization_alias="aliasIds",
-    )
-    external_id_ids: list[UUID] = Field(
-        default_factory=list,
-        validation_alias=AliasChoices("external_id_ids", "externalIdIds"),
-        serialization_alias="externalIdIds",
-    )
-
-    model_config = ConfigDict(str_strip_whitespace=True, populate_by_name=True, extra="forbid")
-
-
-class ContributorMergeRequest(BaseModel):
-    target_handle: str = Field(
-        validation_alias=AliasChoices("target_handle", "targetHandle"),
-        serialization_alias="targetHandle",
-        min_length=1,
-        max_length=200,
-    )
-
-    model_config = ConfigDict(str_strip_whitespace=True, populate_by_name=True, extra="forbid")
-
-
-class ContributorReconciliationContributorOut(BaseModel):
-    handle: str
-    href: str
-    display_name: str = Field(serialization_alias="displayName")
-    sort_name: str = Field(serialization_alias="sortName")
-    kind: ContributorKind
-    status: ContributorStatus
-    disambiguation: str | None = None
-    work_count: int = Field(serialization_alias="workCount")
-
-    model_config = ConfigDict(populate_by_name=True, extra="forbid")
-
-
-class ContributorReconciliationEvidenceOut(BaseModel):
-    matcher: ContributorReconciliationMatcher
-    algorithm_version: str = Field(serialization_alias="algorithmVersion")
-    reason: str
-    score: int
-    signals: list[ContributorReconciliationSignal] = Field(default_factory=list)
-    shared_aliases: list[str] = Field(
-        default_factory=list,
-        serialization_alias="sharedAliases",
-    )
-    shared_confirmed_aliases: list[str] = Field(
-        default_factory=list,
-        serialization_alias="sharedConfirmedAliases",
-    )
-    shared_work_count: int = Field(serialization_alias="sharedWorkCount")
-    source_handle: str = Field(serialization_alias="sourceHandle")
-    target_handle: str = Field(serialization_alias="targetHandle")
-    source_work_count: int = Field(serialization_alias="sourceWorkCount")
-    target_work_count: int = Field(serialization_alias="targetWorkCount")
-    source_confirmed_alias_count: int = Field(serialization_alias="sourceConfirmedAliasCount")
-    target_confirmed_alias_count: int = Field(serialization_alias="targetConfirmedAliasCount")
-    source_strong_external_id_count: int = Field(serialization_alias="sourceStrongExternalIdCount")
-    target_strong_external_id_count: int = Field(serialization_alias="targetStrongExternalIdCount")
-
-    model_config = ConfigDict(populate_by_name=True, extra="forbid")
-
-
-class ContributorReconciliationCandidateOut(BaseModel):
-    id: UUID
-    run_id: UUID = Field(serialization_alias="runId")
-    status: ContributorReconciliationStatus
-    score: int
-    source_contributor: ContributorReconciliationContributorOut = Field(
-        serialization_alias="sourceContributor"
-    )
-    target_contributor: ContributorReconciliationContributorOut = Field(
-        serialization_alias="targetContributor"
-    )
-    evidence: ContributorReconciliationEvidenceOut
-    decided_by_user_id: UUID | None = Field(None, serialization_alias="decidedByUserId")
-    created_at: datetime = Field(serialization_alias="createdAt")
-    updated_at: datetime = Field(serialization_alias="updatedAt")
-    decided_at: datetime | None = Field(None, serialization_alias="decidedAt")
-
-    model_config = ConfigDict(populate_by_name=True, extra="forbid")
-
-
-class ContributorReconciliationRunOut(BaseModel):
-    id: UUID
-    algorithm_version: str = Field(serialization_alias="algorithmVersion")
-    candidate_count: int = Field(serialization_alias="candidateCount")
-    evaluated_pair_count: int = Field(serialization_alias="evaluatedPairCount")
-    actor_user_id: UUID | None = Field(None, serialization_alias="actorUserId")
-    created_at: datetime = Field(serialization_alias="createdAt")
-    candidates: list[ContributorReconciliationCandidateOut] = Field(default_factory=list)
-
-    model_config = ConfigDict(populate_by_name=True, extra="forbid")
-
-
-class ContributorReconciliationCandidatesPage(BaseModel):
-    candidates: list[ContributorReconciliationCandidateOut] = Field(default_factory=list)
-
-    model_config = ConfigDict(populate_by_name=True, extra="forbid")
-
-
-class FacetCount(BaseModel):
-    value: str
-    count: int
 
     model_config = ConfigDict(extra="forbid")
 
 
-class ContributorDirectoryFacets(BaseModel):
-    roles: list[FacetCount] = Field(default_factory=list)
-    kinds: list[FacetCount] = Field(default_factory=list)
-    content_kinds: list[FacetCount] = Field(
-        default_factory=list, serialization_alias="contentKinds"
-    )
-    statuses: list[FacetCount] = Field(default_factory=list)
-
-    model_config = ConfigDict(populate_by_name=True, extra="forbid")
-
-
-class ContributorDirectoryEntry(BaseModel):
+class ContributorSearchItemOut(BaseModel):
     handle: str
     href: str
-    display_name: str = Field(serialization_alias="displayName")
-    sort_name: str = Field(serialization_alias="sortName")
-    kind: ContributorKind
-    status: ContributorStatus
-    disambiguation: str | None = None
-    work_count: int = Field(serialization_alias="workCount")
-    roles: list[str] = Field(default_factory=list)
-    content_kinds: list[str] = Field(default_factory=list, serialization_alias="contentKinds")
+    display_name: str = Field(alias="displayName")
+    work_count: int = Field(alias="workCount")
+    work_examples: list[ContributorWorkExampleOut] = Field(alias="workExamples", max_length=2)
+    matched_alias: str | None = Field(default=None, alias="matchedAlias")
 
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
 
-class ContributorDirectoryPageInfo(BaseModel):
-    has_more: bool = Field(serialization_alias="hasMore")
-    next_cursor: str | None = Field(None, serialization_alias="nextCursor")
+class ContributorSearchPageOut(BaseModel):
+    contributors: list[ContributorSearchItemOut]
+    next_cursor: str | None = Field(default=None, alias="nextCursor")
 
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
 
-class ContributorDirectoryPage(BaseModel):
-    entries: list[ContributorDirectoryEntry] = Field(default_factory=list)
-    facets: ContributorDirectoryFacets
-    page: ContributorDirectoryPageInfo
+class ContributorDetailOut(BaseModel):
+    handle: str
+    href: str
+    display_name: str = Field(alias="displayName")
+    other_names: list[str] = Field(alias="otherNames")
+    can_rename: bool = Field(alias="canRename")
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+
+class ContributorRoleFactOut(BaseModel):
+    credited_name: str = Field(alias="creditedName")
+    role: ContributorRole
+    raw_role: str | None = Field(default=None, alias="rawRole")
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+
+class ContributorWorkItemOut(BaseModel):
+    title: str
+    href: str
+    content_kind: str = Field(alias="contentKind")
+    date: str | None = None
+    role_facts: list[ContributorRoleFactOut] = Field(alias="roleFacts")
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+
+class ContributorWorkPageOut(BaseModel):
+    works: list[ContributorWorkItemOut]
+    next_cursor: str | None = Field(default=None, alias="nextCursor")
 
     model_config = ConfigDict(populate_by_name=True, extra="forbid")

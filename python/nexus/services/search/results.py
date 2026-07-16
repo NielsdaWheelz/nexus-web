@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 from uuid import UUID
 
-from nexus.schemas.contributors import ContributorCreditOut, ContributorOut
+from nexus.schemas.contributors import ContributorCreditOut
 from nexus.schemas.retrieval import retrieval_result_ref_json
 from nexus.schemas.search import SearchResultSourceOut
 
@@ -133,7 +133,7 @@ class _RankedFragmentResult:
 class _RankedContributorResult:
     id: UUID
     handle: str
-    contributor: ContributorOut
+    display_name: str
     snippet: str
     score: _SearchScore
     result_type: Literal["contributor"] = "contributor"
@@ -227,10 +227,6 @@ def _parse_contributor_credits(value: Any) -> list[ContributorCreditOut]:
     if not value:
         return []
     return [ContributorCreditOut.model_validate(item) for item in list(value)]
-
-
-def _parse_contributor(value: Any) -> ContributorOut:
-    return ContributorOut.model_validate(dict(value or {}))
 
 
 def _credited_names(contributors: list[ContributorCreditOut]) -> list[str]:

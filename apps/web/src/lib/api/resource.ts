@@ -32,26 +32,7 @@ interface ContributorResourceParams {
 }
 
 export interface ContributorWorksResourceParams extends ContributorResourceParams {
-  role?: string;
-  contentKind?: string;
-  query?: string;
-  limit?: number;
-}
-
-export interface ContributorDirectoryResourceParams {
-  q?: string;
-  roles?: string[];
-  kinds?: string[];
-  contentKinds?: string[];
-  statuses?: string[];
-  sort?: "works" | "name";
   cursor?: string;
-  limit?: number;
-}
-
-export interface ContributorReconciliationCandidatesResourceParams {
-  contributorHandle?: string;
-  status?: "pending" | "accepted" | "rejected" | "stale";
   limit?: number;
 }
 
@@ -65,39 +46,7 @@ function encoded(value: string): string {
 
 function contributorWorksSuffix(params: ContributorWorksResourceParams): string {
   const query = new URLSearchParams();
-  const role = params.role?.trim();
-  if (role) query.set("role", role);
-  const contentKind = params.contentKind?.trim();
-  if (contentKind) query.set("content_kind", contentKind);
-  const textQuery = params.query?.trim();
-  if (textQuery) query.set("q", textQuery);
-  if (params.limit !== undefined) query.set("limit", String(params.limit));
-  const suffix = query.toString();
-  return suffix ? `?${suffix}` : "";
-}
-
-function contributorDirectorySuffix(params: ContributorDirectoryResourceParams): string {
-  const query = new URLSearchParams();
-  const textQuery = params.q?.trim();
-  if (textQuery) query.set("q", textQuery);
-  if (params.roles?.length) query.set("roles", params.roles.join(","));
-  if (params.kinds?.length) query.set("kinds", params.kinds.join(","));
-  if (params.contentKinds?.length) query.set("content_kinds", params.contentKinds.join(","));
-  if (params.statuses?.length) query.set("statuses", params.statuses.join(","));
-  if (params.sort) query.set("sort", params.sort);
   if (params.cursor) query.set("cursor", params.cursor);
-  if (params.limit !== undefined) query.set("limit", String(params.limit));
-  const suffix = query.toString();
-  return suffix ? `?${suffix}` : "";
-}
-
-function contributorReconciliationCandidatesSuffix(
-  params: ContributorReconciliationCandidatesResourceParams
-): string {
-  const query = new URLSearchParams();
-  const contributorHandle = params.contributorHandle?.trim();
-  if (contributorHandle) query.set("contributor_handle", contributorHandle);
-  if (params.status) query.set("status", params.status);
   if (params.limit !== undefined) query.set("limit", String(params.limit));
   const suffix = query.toString();
   return suffix ? `?${suffix}` : "";
@@ -169,22 +118,6 @@ export const contributorWorksResource: ResourceDescriptor<ContributorWorksResour
 // client mount, and the in-place reload so all three agree. The works cacheKey
 // ignores limit, so a mismatch would silently seed a different row count.
 export const AUTHOR_WORKS_LIMIT = 100;
-
-export const contributorDirectoryResource: ResourceDescriptor<ContributorDirectoryResourceParams> = {
-  cacheKey: (params) => `contributors:directory${contributorDirectorySuffix(params)}`,
-  serverPath: (params) => `/contributors/directory${contributorDirectorySuffix(params)}`,
-  clientPath: (params) => `/api/contributors/directory${contributorDirectorySuffix(params)}`,
-};
-
-export const contributorReconciliationCandidatesResource: ResourceDescriptor<ContributorReconciliationCandidatesResourceParams> =
-  {
-    cacheKey: (params) =>
-      `contributors:reconciliation-candidates${contributorReconciliationCandidatesSuffix(params)}`,
-    serverPath: (params) =>
-      `/contributors/reconciliation-candidates${contributorReconciliationCandidatesSuffix(params)}`,
-    clientPath: (params) =>
-      `/api/contributors/reconciliation-candidates${contributorReconciliationCandidatesSuffix(params)}`,
-  };
 
 export const notePagesResource: ResourceDescriptor<NoResourceParams> = {
   cacheKey: () => "notes:pages",

@@ -7,6 +7,7 @@ import {
   type WorkspaceSecondaryGroupId,
   type WorkspaceSecondarySurfaceId,
 } from "@/lib/panes/paneSecondaryModel";
+import { RESERVED_CONTRIBUTOR_HANDLE_SEGMENTS } from "@/lib/contributors/handle";
 
 export const MAX_STANDARD_PANE_WIDTH_PX = 1400;
 export const MAX_MEDIA_PANE_WIDTH_PX = 2400;
@@ -37,7 +38,6 @@ export type PaneRouteId =
   | "podcasts"
   | "podcastDetail"
   | "search"
-  | "authors"
   | "author"
   | "notes"
   | "page"
@@ -170,14 +170,6 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
     id: "search",
     pattern: ["search"],
     staticTitle: "Search",
-    titleMode: "static",
-    bodyMode: "standard",
-    ...STANDARD_WIDTH_CONTRACT,
-  }),
-  route({
-    id: "authors",
-    pattern: ["authors"],
-    staticTitle: "Authors",
     titleMode: "static",
     bodyMode: "standard",
     ...STANDARD_WIDTH_CONTRACT,
@@ -356,6 +348,15 @@ export function resolvePaneRouteModel(href: string): ResolvedPaneRouteModel {
   for (const definition of PANE_ROUTE_MODELS) {
     const params = matchPattern(pathname, definition.pattern);
     if (!params) {
+      continue;
+    }
+    // The `/authors/{handle}` space shadows the reserved collection segments the
+    // deleted directory/reconciliation surfaces used; they are not author panes
+    // (author-dedup §7 / D-26) — fall through to the unsupported placeholder.
+    if (
+      definition.id === "author" &&
+      RESERVED_CONTRIBUTOR_HANDLE_SEGMENTS.has(params.handle ?? "")
+    ) {
       continue;
     }
     return {

@@ -37,7 +37,9 @@ function parseSnippetSegments(snippet: string) {
 
 function buildSourceMeta(result: SearchApiResult): string | null {
   if (result.type === "contributor") {
-    return result.contributor.status;
+    // Author rows carry no status/kind after the cutover; the "author" type label
+    // is the only meta signal a contributor row needs.
+    return null;
   }
 
   if (result.type === "message") {

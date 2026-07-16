@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import IntegrityError, OperationalError
 
 from nexus.db.retries import retry_serializable
 
@@ -46,6 +46,36 @@ def _serialization_error() -> OperationalError:
     )
 
 
+class _FakeDiag:
+    def __init__(self, constraint_name: str | None) -> None:
+        self.constraint_name = constraint_name
+
+
+class _FakeIntegrityOrig:
+    """Stand-in for psycopg's ``orig``: exposes ``.diag.constraint_name`` (or none)."""
+
+    def __init__(self, *, constraint_name: str | None) -> None:
+        self.diag = _FakeDiag(constraint_name) if constraint_name is not None else None
+
+    def __str__(self) -> str:
+        return "duplicate key value violates unique constraint"
+
+
+def _integrity_error(constraint_name: str | None) -> IntegrityError:
+    return IntegrityError("INSERT ...", {}, _FakeIntegrityOrig(constraint_name=constraint_name))
+
+
+class _FakeIntegrityOrigNoDiag:
+    """Stand-in for a driver ``orig`` that never populates ``.diag`` at all."""
+
+    def __str__(self) -> str:
+        return "duplicate key value violates unique constraint"
+
+
+def _integrity_error_missing_diag() -> IntegrityError:
+    return IntegrityError("INSERT ...", {}, _FakeIntegrityOrigNoDiag())
+
+
 def test_retry_serializable_retries_serialization_failure_then_succeeds() -> None:
     db = _FakeSession()
     attempts = {"n": 0}
@@ -84,6 +114,63 @@ def test_retry_serializable_reraises_after_exhausting_retries() -> None:
         raise _serialization_error()
 
     with pytest.raises(OperationalError):
+        retry_serializable(db, "test_op", op, retries=3)  # type: ignore[arg-type]
+    assert attempts["n"] == 3, f"expected exactly 3 attempts, got {attempts['n']}"
+    assert db.rollbacks == 3
+
+
+def test_retry_serializable_retries_allowlisted_integrity_error_then_succeeds() -> None:
+    db = _FakeSession()
+    attempts = {"n": 0}
+
+    def op():
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise _integrity_error("uq_contributors_handle")
+        return "ok"
+
+    assert retry_serializable(db, "test_op", op) == "ok"  # type: ignore[arg-type]
+    assert attempts["n"] == 2
+    assert db.rollbacks == 1
+
+
+def test_retry_serializable_propagates_non_allowlisted_integrity_error() -> None:
+    db = _FakeSession()
+    attempts = {"n": 0}
+
+    def op():
+        attempts["n"] += 1
+        raise _integrity_error("ck_some_unrelated_check")
+
+    with pytest.raises(IntegrityError):
+        retry_serializable(db, "test_op", op)  # type: ignore[arg-type]
+    assert attempts["n"] == 1, "non-allowlisted constraint violations must not be retried"
+    assert db.rollbacks == 1
+
+
+def test_retry_serializable_propagates_integrity_error_missing_diag() -> None:
+    db = _FakeSession()
+    attempts = {"n": 0}
+
+    def op():
+        attempts["n"] += 1
+        raise _integrity_error_missing_diag()
+
+    with pytest.raises(IntegrityError):
+        retry_serializable(db, "test_op", op)  # type: ignore[arg-type]
+    assert attempts["n"] == 1, "a missing orig.diag must not be treated as retryable"
+    assert db.rollbacks == 1
+
+
+def test_retry_serializable_reraises_after_exhausting_integrity_retries() -> None:
+    db = _FakeSession()
+    attempts = {"n": 0}
+
+    def op():
+        attempts["n"] += 1
+        raise _integrity_error("uix_resource_mutations_client_id")
+
+    with pytest.raises(IntegrityError):
         retry_serializable(db, "test_op", op, retries=3)  # type: ignore[arg-type]
     assert attempts["n"] == 3, f"expected exactly 3 attempts, got {attempts['n']}"
     assert db.rollbacks == 3

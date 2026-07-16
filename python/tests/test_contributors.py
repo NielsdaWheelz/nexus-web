@@ -1,1571 +1,747 @@
-import threading
+"""HTTP route surface for the lightweight author-deduplication cutover.
+
+Service-level resolver/replacement/replay behaviour lives in
+``test_author_deduplication_cutover.py`` and ``test_author_races.py``; this file
+exercises the final FastAPI surface end to end through ``auth_client``:
+
+    GET   /contributors?q=...&cursor=...&limit=...
+    GET   /contributors/{handle}
+    GET   /contributors/{handle}/works?cursor=...&limit=...
+    PATCH /contributors/{handle}
+    PUT   /media/{media_id}/authors
+
+Contributors are seeded the way the product creates them — through the manual
+media-author PUT — so these tests double as coverage of the create/bind path.
+"""
+
 from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import text
 
-from nexus.db.models import ResourceEdge
-from nexus.errors import ApiError, ApiErrorCode, ForbiddenError, NotFoundError
-from nexus.schemas.contributors import (
-    ContributorAliasCreateRequest,
-    ContributorExternalIdCreateRequest,
-    ContributorSplitRequest,
-)
-from nexus.services.bootstrap import ensure_user_and_default_library
-from nexus.services.contributor_credits import (
-    replace_gutenberg_contributor_credits,
-    replace_machine_derived_media_author_credits,
-    replace_media_contributor_credits,
-    replace_podcast_contributor_credits,
-    upstream_contributor_credit_previews_for_names,
-)
-from nexus.services.contributors import (
-    add_contributor_alias,
-    add_contributor_external_id,
-    delete_contributor_alias,
-    delete_contributor_external_id,
-    get_contributor_by_handle,
-    hydrate_contributor_object_ref,
-    list_contributor_works,
-    search_contributors,
-    split_contributor,
-    tombstone_contributor,
-)
-from nexus.services.object_refs import search_object_refs
-from tests.factories import (
-    add_media_to_library,
-    create_test_conversation,
-    create_test_media,
-    create_test_media_in_library,
-    create_test_message,
-)
+from tests.factories import add_media_to_library, create_test_media, create_test_media_in_library
 from tests.helpers import auth_headers, create_test_user_id
 
-CURATOR_ROLES = frozenset({"contributor_curator"})
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 
-@pytest.mark.integration
-def test_name_only_credits_do_not_auto_merge_by_alias(db_session):
-    media_a = create_test_media(db_session, title=f"Contributor A {uuid4()}")
-    media_b = create_test_media(db_session, title=f"Contributor B {uuid4()}")
-
-    for media_id in (media_a, media_b):
-        replace_media_contributor_credits(
-            db_session,
-            media_id=media_id,
-            credits=[
-                {
-                    "name": "Same Display Name",
-                    "role": "author",
-                    "source": "test_provider",
-                }
-            ],
-        )
-
-    rows = db_session.execute(
-        text(
-            """
-            SELECT media_id, contributor_id
-            FROM contributor_credits
-            WHERE media_id IN (:media_a, :media_b)
-            ORDER BY media_id
-            """
-        ),
-        {"media_a": media_a, "media_b": media_b},
-    ).fetchall()
-
-    assert len(rows) == 2
-    assert rows[0][1] != rows[1][1]
+def _bootstrap_user(auth_client, direct_db, *, roles=None):
+    """Create + register a fresh user and return (user_id, default_library_id)."""
+    user_id = create_test_user_id()
+    direct_db.register_cleanup("users", "id", user_id)
+    direct_db.register_cleanup("libraries", "owner_user_id", user_id)
+    direct_db.register_cleanup("memberships", "user_id", user_id)
+    direct_db.register_cleanup("resource_mutations", "user_id", user_id)
+    headers = auth_headers(user_id, nexus_roles=roles) if roles else auth_headers(user_id)
+    me = auth_client.get("/me", headers=headers)
+    assert me.status_code == 200, me.text
+    return user_id, UUID(me.json()["data"]["default_library_id"])
 
 
-@pytest.mark.integration
-def test_external_id_credits_reuse_the_same_contributor(db_session):
-    media_a = create_test_media(db_session, title=f"External Contributor A {uuid4()}")
-    media_b = create_test_media(db_session, title=f"External Contributor B {uuid4()}")
-    external_key = f"orcid-{uuid4()}"
-
-    for media_id in (media_a, media_b):
-        replace_media_contributor_credits(
-            db_session,
-            media_id=media_id,
-            credits=[
-                {
-                    "name": "Authority Matched Name",
-                    "role": "author",
-                    "source": "test_provider",
-                    "external_id": {
-                        "authority": "orcid",
-                        "external_key": external_key,
-                    },
-                }
-            ],
-        )
-
-    rows = db_session.execute(
-        text(
-            """
-            SELECT contributor_id, resolution_status
-            FROM contributor_credits
-            WHERE media_id IN (:media_a, :media_b)
-            ORDER BY media_id
-            """
-        ),
-        {"media_a": media_a, "media_b": media_b},
-    ).fetchall()
-    external_id_count = db_session.execute(
-        text(
-            """
-            SELECT count(*)
-            FROM contributor_external_ids
-            WHERE authority = 'orcid'
-              AND external_key = :external_key
-            """
-        ),
-        {"external_key": external_key},
-    ).scalar_one()
-
-    assert len(rows) == 2
-    assert rows[0][0] == rows[1][0]
-    assert {row[1] for row in rows} == {"external_id"}
-    assert external_id_count == 1
+def _new_author_row(credited_name, display_name=None):
+    return {
+        "creditedName": credited_name,
+        "binding": {"kind": "new", "displayName": display_name or credited_name},
+    }
 
 
-@pytest.mark.integration
-def test_concurrent_external_id_credits_reselect_same_contributor(direct_db):
-    credited_name = f"Concurrent External Contributor {uuid4()}"
-    external_key = f"orcid-{uuid4()}"
-    source = f"contributor-race-{uuid4()}"
-    media_ids: list[UUID] = []
+def _existing_author_row(credited_name, handle):
+    return {
+        "creditedName": credited_name,
+        "binding": {"kind": "existing", "contributorHandle": handle},
+    }
 
+
+def _put_authors(auth_client, user_id, media_id, rows, *, mode="manual", client_mutation_id=None):
+    body = {"clientMutationId": client_mutation_id or f"cmid-{uuid4()}", "mode": mode}
+    if mode == "manual":
+        body["authors"] = rows
+    return auth_client.put(
+        f"/media/{media_id}/authors",
+        headers=auth_headers(user_id),
+        json=body,
+    )
+
+
+def _register_media_credit_cleanup(direct_db, media_id):
+    direct_db.register_cleanup("media", "id", media_id)
+    direct_db.register_cleanup("library_entries", "media_id", media_id)
+    direct_db.register_cleanup("contributor_credits", "media_id", media_id)
+
+
+def _contributor_id_for_handle(direct_db, handle):
     with direct_db.session() as session:
-        media_ids = [
-            create_test_media(session, title=f"Contributor race {index} {uuid4()}")
-            for index in range(2)
-        ]
-        session.commit()
-
-    direct_db.register_cleanup("contributors", "display_name", credited_name)
-    direct_db.register_cleanup("contributor_aliases", "source", source)
-    direct_db.register_cleanup("contributor_external_ids", "source", source)
-    for media_id in media_ids:
-        direct_db.register_cleanup("media", "id", media_id)
-
-    barrier = threading.Barrier(len(media_ids))
-    errors: list[BaseException] = []
-    lock = threading.Lock()
-
-    def replace_once(media_id: UUID) -> None:
-        try:
-            barrier.wait(timeout=5)
-            with direct_db.session() as session:
-                replace_media_contributor_credits(
-                    session,
-                    media_id=media_id,
-                    credits=[
-                        {
-                            "name": credited_name,
-                            "role": "author",
-                            "source": source,
-                            "external_id": {
-                                "authority": "orcid",
-                                "external_key": external_key,
-                            },
-                        }
-                    ],
-                )
-                session.commit()
-        except BaseException as exc:  # pragma: no cover - surfaced below.
-            with lock:
-                errors.append(exc)
-
-    threads = [threading.Thread(target=replace_once, args=(media_id,)) for media_id in media_ids]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join(timeout=10)
-    for thread in threads:
-        if thread.is_alive():
-            errors.append(AssertionError(f"worker thread did not finish: {thread.name}"))
-
-    assert errors == []
-
-    with direct_db.session() as session:
-        rows = session.execute(
-            text(
-                """
-                SELECT contributor_id
-                FROM contributor_credits
-                WHERE media_id = ANY(:media_ids)
-                ORDER BY media_id
-                """
-            ),
-            {"media_ids": media_ids},
-        ).fetchall()
-        external_id_count = session.execute(
-            text(
-                """
-                SELECT count(*)
-                FROM contributor_external_ids
-                WHERE authority = 'orcid'
-                  AND external_key = :external_key
-                """
-            ),
-            {"external_key": external_key},
+        contributor_id = session.execute(
+            text("SELECT id FROM contributors WHERE handle = :handle"),
+            {"handle": handle},
         ).scalar_one()
-
-    assert len(rows) == 2
-    assert rows[0][0] == rows[1][0]
-    assert external_id_count == 1
-
-
-@pytest.mark.integration
-def test_manual_confirmed_alias_can_resolve_new_credit(db_session):
-    media_a = create_test_media(db_session, title=f"Manual Alias A {uuid4()}")
-    media_b = create_test_media(db_session, title=f"Manual Alias B {uuid4()}")
-
-    replace_media_contributor_credits(
-        db_session,
-        media_id=media_a,
-        credits=[
-            {
-                "name": "Curated Alias",
-                "role": "author",
-                "source": "manual",
-            }
-        ],
-    )
-    manual_contributor_id = db_session.execute(
-        text(
-            """
-            SELECT contributor_id
-            FROM contributor_credits
-            WHERE media_id = :media_id
-            """
-        ),
-        {"media_id": media_a},
-    ).scalar_one()
-
-    replace_media_contributor_credits(
-        db_session,
-        media_id=media_b,
-        credits=[
-            {
-                "name": "Curated Alias",
-                "role": "author",
-                "source": "provider_byline",
-            }
-        ],
-    )
-    provider_row = db_session.execute(
-        text(
-            """
-            SELECT contributor_id, resolution_status
-            FROM contributor_credits
-            WHERE media_id = :media_id
-            """
-        ),
-        {"media_id": media_b},
-    ).fetchone()
-
-    assert provider_row is not None
-    assert provider_row[0] == manual_contributor_id
-    assert provider_row[1] == "confirmed_alias"
-
-
-@pytest.mark.integration
-def test_duplicate_confirmed_aliases_do_not_auto_resolve(db_session):
-    media_a = create_test_media(db_session, title=f"Ambiguous Alias A {uuid4()}")
-    media_b = create_test_media(db_session, title=f"Ambiguous Alias B {uuid4()}")
-    ambiguous_alias = "Ambiguous Pen Name"
-    normalized_alias = "ambiguous pen name"
-
-    replace_media_contributor_credits(
-        db_session,
-        media_id=media_a,
-        credits=[
-            {
-                "name": ambiguous_alias,
-                "role": "author",
-                "source": "manual",
-            }
-        ],
-    )
-    first_contributor_id = db_session.execute(
-        text(
-            """
-            SELECT contributor_id
-            FROM contributor_credits
-            WHERE media_id = :media_id
-            """
-        ),
-        {"media_id": media_a},
-    ).scalar_one()
-
-    second_contributor_id = uuid4()
-    db_session.execute(
-        text(
-            """
-            INSERT INTO contributors (
-                id,
-                handle,
-                display_name,
-                sort_name,
-                kind,
-                status
-            )
-            VALUES (
-                :id,
-                :handle,
-                :display_name,
-                :display_name,
-                'unknown',
-                'unverified'
-            )
-            """
-        ),
-        {
-            "id": second_contributor_id,
-            "handle": f"ambiguous-pen-name-{uuid4().hex[:8]}",
-            "display_name": ambiguous_alias,
-        },
-    )
-    db_session.execute(
-        text(
-            """
-            INSERT INTO contributor_aliases (
-                contributor_id,
-                alias,
-                normalized_alias,
-                alias_kind,
-                source,
-                is_primary
-            )
-            VALUES (
-                :contributor_id,
-                :alias,
-                :normalized_alias,
-                'display',
-                'manual',
-                true
-            )
-            """
-        ),
-        {
-            "contributor_id": second_contributor_id,
-            "alias": ambiguous_alias,
-            "normalized_alias": normalized_alias,
-        },
-    )
-
-    replace_media_contributor_credits(
-        db_session,
-        media_id=media_b,
-        credits=[
-            {
-                "name": ambiguous_alias,
-                "role": "author",
-                "source": "provider_byline",
-            }
-        ],
-    )
-    provider_row = db_session.execute(
-        text(
-            """
-            SELECT contributor_id, resolution_status
-            FROM contributor_credits
-            WHERE media_id = :media_id
-            """
-        ),
-        {"media_id": media_b},
-    ).fetchone()
-
-    assert provider_row is not None
-    assert provider_row[0] not in {first_contributor_id, second_contributor_id}
-    assert provider_row[1] == "unverified"
-
-
-@pytest.mark.integration
-def test_upstream_previews_leave_unconfirmed_names_unverified(db_session):
-    media_id = create_test_media(db_session, title=f"Preview Display Name {uuid4()}")
-    credited_name = f"Unconfirmed Preview Name {uuid4()}"
-    replace_media_contributor_credits(
-        db_session,
-        media_id=media_id,
-        credits=[{"name": credited_name, "role": "author", "source": "rss"}],
-    )
-
-    previews = upstream_contributor_credit_previews_for_names(
-        db_session,
-        [credited_name],
-        role="author",
-        source="podcast_index",
-    )
-
-    assert len(previews) == 1
-    assert previews[0].credited_name == credited_name
-    assert previews[0].resolution_status == "unverified"
-    assert previews[0].source == "podcast_index"
-
-
-@pytest.mark.integration
-def test_upstream_previews_can_attach_confirmed_alias(db_session):
-    media_id = create_test_media(db_session, title=f"Preview Confirmed Alias {uuid4()}")
-    credited_name = f"Confirmed Preview Name {uuid4()}"
-    replace_media_contributor_credits(
-        db_session,
-        media_id=media_id,
-        credits=[{"name": credited_name, "role": "author", "source": "manual"}],
-    )
-    _contributor_id, handle, _credit_id = _credit_contributor(db_session, media_id)
-
-    previews = upstream_contributor_credit_previews_for_names(
-        db_session,
-        [credited_name],
-        role="author",
-        source="podcast_index",
-    )
-
-    assert len(previews) == 1
-    assert previews[0].contributor_handle == handle
-    assert previews[0].resolution_status == "confirmed_alias"
-
-
-@pytest.mark.integration
-def test_replace_credits_deletes_only_replacing_source(db_session):
-    media_id = create_test_media(db_session, title=f"Source Scoped Credits {uuid4()}")
-
-    replace_media_contributor_credits(
-        db_session,
-        media_id=media_id,
-        credits=[
-            {
-                "name": "Provider Author",
-                "role": "author",
-                "source": "rss",
-            }
-        ],
-    )
-    replace_media_contributor_credits(
-        db_session,
-        media_id=media_id,
-        credits=[
-            {
-                "name": "Curated Author",
-                "role": "author",
-                "source": "manual",
-            }
-        ],
-    )
-    replace_media_contributor_credits(
-        db_session,
-        media_id=media_id,
-        credits=[
-            {
-                "name": "Provider Replacement",
-                "role": "author",
-                "source": "rss",
-            }
-        ],
-    )
-
-    rows = db_session.execute(
-        text(
-            """
-            SELECT source, credited_name
-            FROM contributor_credits
-            WHERE media_id = :media_id
-            ORDER BY source, credited_name
-            """
-        ),
-        {"media_id": media_id},
-    ).fetchall()
-
-    assert ("manual", "Curated Author") in rows
-    assert ("rss", "Provider Replacement") in rows
-    assert ("rss", "Provider Author") not in rows
-
-
-@pytest.mark.integration
-def test_replace_credits_can_delete_empty_source_reingest(db_session):
-    media_id = create_test_media(db_session, title=f"Empty Source Reingest {uuid4()}")
-
-    replace_media_contributor_credits(
-        db_session,
-        media_id=media_id,
-        credits=[{"name": "Provider Author", "role": "author", "source": "rss"}],
-    )
-    replace_media_contributor_credits(
-        db_session,
-        media_id=media_id,
-        credits=[{"name": "Curated Author", "role": "author", "source": "manual"}],
-    )
-
-    replace_media_contributor_credits(
-        db_session,
-        media_id=media_id,
-        credits=[],
-        source="rss",
-    )
-
-    rows = db_session.execute(
-        text(
-            """
-            SELECT source, credited_name
-            FROM contributor_credits
-            WHERE media_id = :media_id
-            ORDER BY source, credited_name
-            """
-        ),
-        {"media_id": media_id},
-    ).fetchall()
-
-    assert rows == [("manual", "Curated Author")]
-
-
-@pytest.mark.integration
-def test_replace_machine_derived_media_author_credits_preserves_curated_sources(db_session):
-    media_id = create_test_media(db_session, title=f"Machine Author Replacement {uuid4()}")
-
-    replace_media_contributor_credits(
-        db_session,
-        media_id=media_id,
-        credits=[
-            {"name": "Manual Author", "role": "author", "source": "manual"},
-            {"name": "User Author", "role": "author", "source": "user"},
-            {"name": "Curated Author", "role": "author", "source": "curated"},
-        ],
-    )
-    replace_media_contributor_credits(
-        db_session,
-        media_id=media_id,
-        credits=[{"name": "PDF Author", "role": "author", "source": "pdf_metadata"}],
-        source="pdf_metadata",
-    )
-    replace_media_contributor_credits(
-        db_session,
-        media_id=media_id,
-        credits=[{"name": "EPUB Author", "role": "author", "source": "epub_opf"}],
-        source="epub_opf",
-    )
-    replace_media_contributor_credits(
-        db_session,
-        media_id=media_id,
-        credits=[{"name": "Podcast Index Author", "role": "author", "source": "podcast_index"}],
-        source="podcast_index",
-    )
-    replace_media_contributor_credits(
-        db_session,
-        media_id=media_id,
-        credits=[
-            {
-                "name": "Machine Editor",
-                "role": "editor",
-                "source": "metadata_enrichment",
-            }
-        ],
-        source="metadata_enrichment",
-    )
-
-    replace_machine_derived_media_author_credits(
-        db_session,
-        media_id=media_id,
-        names=[" Replacement Author ", "replacement   author", "Second Author"],
-        source="metadata_enrichment",
-    )
-
-    rows = db_session.execute(
-        text(
-            """
-            SELECT source, role, credited_name, ordinal
-            FROM contributor_credits
-            WHERE media_id = :media_id
-            ORDER BY source, role, ordinal, credited_name
-            """
-        ),
-        {"media_id": media_id},
-    ).fetchall()
-
-    assert ("manual", "author", "Manual Author", 0) in rows
-    assert ("user", "author", "User Author", 1) in rows
-    assert ("curated", "author", "Curated Author", 2) in rows
-    assert ("metadata_enrichment", "editor", "Machine Editor", 0) in rows
-    assert ("metadata_enrichment", "author", "Replacement Author", 0) in rows
-    assert ("metadata_enrichment", "author", "Second Author", 1) in rows
-    assert ("pdf_metadata", "author", "PDF Author", 0) not in rows
-    assert ("epub_opf", "author", "EPUB Author", 0) not in rows
-    assert ("podcast_index", "author", "Podcast Index Author", 0) not in rows
-    assert rows.count(("metadata_enrichment", "author", "Replacement Author", 0)) == 1
-
-
-@pytest.mark.integration
-def test_replace_machine_derived_media_author_credits_rejects_curated_source(db_session):
-    media_id = create_test_media(db_session, title=f"Machine Author Source Guard {uuid4()}")
-
-    with pytest.raises(ValueError):
-        replace_machine_derived_media_author_credits(
-            db_session,
-            media_id=media_id,
-            names=["Curated Author"],
-            source="manual",
-        )
-
-
-@pytest.mark.integration
-def test_name_only_media_reingest_reuses_same_source_contributor(db_session):
-    media_id = create_test_media(db_session, title=f"Media Reingest {uuid4()}")
-
-    replace_media_contributor_credits(
-        db_session,
-        media_id=media_id,
-        credits=[{"name": "Stable Media Author", "role": "author", "source": "rss"}],
-    )
-    first_row = db_session.execute(
-        text(
-            """
-            SELECT c.id, c.handle
-            FROM contributor_credits cc
-            JOIN contributors c ON c.id = cc.contributor_id
-            WHERE cc.media_id = :media_id
-            """
-        ),
-        {"media_id": media_id},
-    ).one()
-
-    replace_media_contributor_credits(
-        db_session,
-        media_id=media_id,
-        credits=[{"name": "Stable Media Author", "role": "author", "source": "rss"}],
-    )
-
-    rows = db_session.execute(
-        text(
-            """
-            SELECT c.id, c.handle
-            FROM contributor_credits cc
-            JOIN contributors c ON c.id = cc.contributor_id
-            WHERE cc.media_id = :media_id
-            """
-        ),
-        {"media_id": media_id},
-    ).fetchall()
-    contributor_count = db_session.execute(
-        text(
-            """
-            SELECT count(*)
-            FROM contributors
-            WHERE display_name = 'Stable Media Author'
-            """
-        )
-    ).scalar_one()
-
-    assert len(rows) == 1
-    assert rows[0] == first_row
-    assert contributor_count == 1
-
-
-@pytest.mark.integration
-def test_name_only_podcast_reingest_reuses_same_source_contributor(db_session):
-    podcast_id = uuid4()
-    db_session.execute(
-        text(
-            """
-            INSERT INTO podcasts (
-                id,
-                provider,
-                provider_podcast_id,
-                title,
-                feed_url
-            )
-            VALUES (
-                :id,
-                'podcast_index',
-                :provider_podcast_id,
-                'Stable Podcast',
-                :feed_url
-            )
-            """
-        ),
-        {
-            "id": podcast_id,
-            "provider_podcast_id": f"stable-podcast-{uuid4()}",
-            "feed_url": f"https://feeds.example.com/stable-podcast-{uuid4()}.xml",
-        },
-    )
-
-    replace_podcast_contributor_credits(
-        db_session,
-        podcast_id=podcast_id,
-        credits=[
-            {
-                "credited_name": "Stable Podcast Author",
-                "role": "author",
-                "source": "podcast_index",
-            }
-        ],
-    )
-    first_row = db_session.execute(
-        text(
-            """
-            SELECT c.id, c.handle
-            FROM contributor_credits cc
-            JOIN contributors c ON c.id = cc.contributor_id
-            WHERE cc.podcast_id = :podcast_id
-            """
-        ),
-        {"podcast_id": podcast_id},
-    ).one()
-
-    replace_podcast_contributor_credits(
-        db_session,
-        podcast_id=podcast_id,
-        credits=[
-            {
-                "credited_name": "Stable Podcast Author",
-                "role": "author",
-                "source": "podcast_index",
-            }
-        ],
-    )
-
-    rows = db_session.execute(
-        text(
-            """
-            SELECT c.id, c.handle
-            FROM contributor_credits cc
-            JOIN contributors c ON c.id = cc.contributor_id
-            WHERE cc.podcast_id = :podcast_id
-            """
-        ),
-        {"podcast_id": podcast_id},
-    ).fetchall()
-    contributor_count = db_session.execute(
-        text(
-            """
-            SELECT count(*)
-            FROM contributors
-            WHERE display_name = 'Stable Podcast Author'
-            """
-        )
-    ).scalar_one()
-
-    assert len(rows) == 1
-    assert rows[0] == first_row
-    assert contributor_count == 1
-
-
-@pytest.mark.integration
-def test_name_only_gutenberg_reingest_reuses_same_source_contributor(db_session):
-    ebook_id = 900000 + int(uuid4().int % 99999)
-    db_session.execute(
-        text(
-            """
-            INSERT INTO project_gutenberg_catalog (ebook_id, title)
-            VALUES (:ebook_id, :title)
-            """
-        ),
-        {"ebook_id": ebook_id, "title": f"Stable Gutenberg {uuid4()}"},
-    )
-
-    replace_gutenberg_contributor_credits(
-        db_session,
-        ebook_id=ebook_id,
-        credits=[{"name": "Stable Gutenberg Author", "role": "author", "source": "gutenberg"}],
-    )
-    first_row = db_session.execute(
-        text(
-            """
-            SELECT c.id, c.handle
-            FROM contributor_credits cc
-            JOIN contributors c ON c.id = cc.contributor_id
-            WHERE cc.project_gutenberg_catalog_ebook_id = :ebook_id
-            """
-        ),
-        {"ebook_id": ebook_id},
-    ).one()
-
-    replace_gutenberg_contributor_credits(
-        db_session,
-        ebook_id=ebook_id,
-        credits=[{"name": "Stable Gutenberg Author", "role": "author", "source": "gutenberg"}],
-    )
-
-    rows = db_session.execute(
-        text(
-            """
-            SELECT c.id, c.handle
-            FROM contributor_credits cc
-            JOIN contributors c ON c.id = cc.contributor_id
-            WHERE cc.project_gutenberg_catalog_ebook_id = :ebook_id
-            """
-        ),
-        {"ebook_id": ebook_id},
-    ).fetchall()
-    contributor_count = db_session.execute(
-        text(
-            """
-            SELECT count(*)
-            FROM contributors
-            WHERE display_name = 'Stable Gutenberg Author'
-            """
-        )
-    ).scalar_one()
-
-    assert len(rows) == 1
-    assert rows[0] == first_row
-    assert contributor_count == 1
-
-
-@pytest.mark.integration
-def test_public_contributor_reads_require_visible_credit(db_session):
-    viewer_id = uuid4()
-    default_library_id = ensure_user_and_default_library(db_session, viewer_id)
-    media_id = create_test_media(db_session, title=f"Private Contributor {uuid4()}")
-    replace_media_contributor_credits(
-        db_session,
-        media_id=media_id,
-        credits=[{"name": "Private Detail Author", "role": "author", "source": "manual"}],
-    )
-    contributor_id, handle, _credit_id = _credit_contributor(db_session, media_id)
-
-    with pytest.raises(NotFoundError):
-        get_contributor_by_handle(db_session, handle, viewer_id)
-    with pytest.raises(NotFoundError):
-        hydrate_contributor_object_ref(db_session, viewer_id, contributor_id)
-
-    add_media_to_library(db_session, default_library_id, media_id)
-    db_session.commit()
-
-    assert get_contributor_by_handle(db_session, handle, viewer_id).handle == handle
-    assert hydrate_contributor_object_ref(db_session, viewer_id, contributor_id).object_id == (
-        contributor_id
-    )
-
-
-@pytest.mark.integration
-def test_contributor_pane_opens_from_user_edge_with_no_visible_works(db_session):
-    viewer_id = uuid4()
-    default_library_id = ensure_user_and_default_library(db_session, viewer_id)
-    media_id = create_test_media(db_session, title=f"Contributor Link Empty Works {uuid4()}")
-    add_media_to_library(db_session, default_library_id, media_id)
-    replace_media_contributor_credits(
-        db_session,
-        media_id=media_id,
-        credits=[{"name": "Linked Empty Author", "role": "author", "source": "manual"}],
-    )
-    contributor_id, handle, _credit_id = _credit_contributor(db_session, media_id)
-    db_session.execute(
-        text("DELETE FROM contributor_credits WHERE contributor_id = :contributor_id"),
-        {"contributor_id": contributor_id},
-    )
-
-    with pytest.raises(NotFoundError):
-        get_contributor_by_handle(db_session, handle, viewer_id)
-
-    db_session.add(
-        ResourceEdge(
-            user_id=viewer_id,
-            kind="context",
-            origin="user",
-            source_scheme="contributor",
-            source_id=contributor_id,
-            target_scheme="media",
-            target_id=media_id,
-        )
-    )
-    db_session.flush()
-
-    assert get_contributor_by_handle(db_session, handle, viewer_id).handle == handle
-    assert list_contributor_works(db_session, viewer_id, handle) == []
-
-
-@pytest.mark.integration
-def test_project_gutenberg_catalog_credits_are_public_contributor_reads(db_session):
-    viewer_id = uuid4()
-    ensure_user_and_default_library(db_session, viewer_id)
-    ebook_id = 900000 + int(uuid4().int % 99999)
-    db_session.execute(
-        text(
-            """
-            INSERT INTO project_gutenberg_catalog (ebook_id, title)
-            VALUES (:ebook_id, :title)
-            """
-        ),
-        {"ebook_id": ebook_id, "title": f"Public Gutenberg {uuid4()}"},
-    )
-    replace_gutenberg_contributor_credits(
-        db_session,
-        ebook_id=ebook_id,
-        credits=[{"name": "Public Gutenberg Author", "role": "author", "source": "gutenberg"}],
-    )
-    contributor_id = db_session.execute(
-        text(
-            """
-            SELECT contributor_id
-            FROM contributor_credits
-            WHERE project_gutenberg_catalog_ebook_id = :ebook_id
-            """
-        ),
-        {"ebook_id": ebook_id},
-    ).scalar_one()
-    handle = db_session.execute(
-        text("SELECT handle FROM contributors WHERE id = :contributor_id"),
-        {"contributor_id": contributor_id},
-    ).scalar_one()
-
-    assert get_contributor_by_handle(db_session, handle, viewer_id).handle == handle
-    assert hydrate_contributor_object_ref(db_session, viewer_id, contributor_id).object_id == (
-        contributor_id
-    )
-
-
-@pytest.mark.integration
-def test_contributor_search_matches_visible_credited_name(db_session):
-    viewer_id = uuid4()
-    library_id = ensure_user_and_default_library(db_session, viewer_id)
-    media_id = create_test_media_in_library(
-        db_session,
-        viewer_id,
-        library_id,
-        title=f"Credited Name Search {uuid4()}",
-    )
-    replace_media_contributor_credits(
-        db_session,
-        media_id=media_id,
-        credits=[{"name": "Original Search Author", "role": "author", "source": "manual"}],
-    )
-    contributor_id, handle, _credit_id = _credit_contributor(db_session, media_id)
-    db_session.execute(
-        text(
-            """
-            UPDATE contributor_credits
-            SET credited_name = 'Reviewed Credit Alias',
-                normalized_credited_name = 'reviewed credit alias'
-            WHERE media_id = :media_id
-            """
-        ),
-        {"media_id": media_id},
-    )
-
-    results = search_contributors(
-        db_session,
-        viewer_id=viewer_id,
-        q="Reviewed Credit Alias",
-    )
-
-    assert [(result.handle, result.matched_name) for result in results] == [
-        (handle, "Reviewed Credit Alias")
-    ]
-    assert contributor_id is not None
-
-
-@pytest.mark.integration
-def test_object_ref_search_matches_visible_credited_name_and_external_id(db_session):
-    viewer_id = uuid4()
-    library_id = ensure_user_and_default_library(db_session, viewer_id)
-    media_id = create_test_media_in_library(
-        db_session,
-        viewer_id,
-        library_id,
-        title=f"Object ref contributor source {uuid4()}",
-    )
-    external_key = f"viaf-{uuid4()}"
-    replace_media_contributor_credits(
-        db_session,
-        media_id=media_id,
-        credits=[
-            {
-                "name": "Object Ref Display Name",
-                "role": "author",
-                "source": "manual",
-                "external_id": {"authority": "viaf", "external_key": external_key},
-            }
-        ],
-    )
-    contributor_id, _handle, _credit_id = _credit_contributor(db_session, media_id)
-    db_session.execute(
-        text(
-            """
-            UPDATE contributor_credits
-            SET credited_name = 'Object Ref Credited Alias',
-                normalized_credited_name = 'object ref credited alias'
-            WHERE media_id = :media_id
-            """
-        ),
-        {"media_id": media_id},
-    )
-
-    credited_name_refs = search_object_refs(
-        db_session,
-        viewer_id,
-        "Object Ref Credited Alias",
-        limit=10,
-    )
-    external_id_refs = search_object_refs(db_session, viewer_id, external_key, limit=10)
-
-    assert ("contributor", contributor_id) in {
-        (ref.object_type, ref.object_id) for ref in credited_name_refs
-    }
-    assert ("contributor", contributor_id) in {
-        (ref.object_type, ref.object_id) for ref in external_id_refs
-    }
-
-
-@pytest.mark.integration
-def test_contributor_curation_adds_and_removes_aliases_and_external_ids(db_session):
-    actor_user_id = uuid4()
-    db_session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": actor_user_id})
-    media_id = create_test_media(db_session, title=f"Curated Contributor {uuid4()}")
-    replace_media_contributor_credits(
-        db_session,
-        media_id=media_id,
-        credits=[{"name": "Curated Service Author", "role": "author", "source": "manual"}],
-    )
-    _contributor_id, handle, _credit_id = _credit_contributor(db_session, media_id)
-
-    with_alias = add_contributor_alias(
-        db_session,
-        actor_user_id=actor_user_id,
-        actor_roles=CURATOR_ROLES,
-        contributor_handle=handle,
-        request=ContributorAliasCreateRequest(alias="Curated Pen Name", alias_kind="pseudonym"),
-    )
-    alias = next(alias for alias in with_alias.aliases if alias.alias == "Curated Pen Name")
-    with_external_id = add_contributor_external_id(
-        db_session,
-        actor_user_id=actor_user_id,
-        actor_roles=CURATOR_ROLES,
-        contributor_handle=handle,
-        request=ContributorExternalIdCreateRequest(
-            authority="wikidata",
-            external_key=f"Q{uuid4().int % 100000000}",
-        ),
-    )
-    external_id = next(
-        external_id
-        for external_id in with_external_id.external_ids
-        if external_id.authority == "wikidata"
-    )
-
-    after_alias_delete = delete_contributor_alias(
-        db_session,
-        actor_user_id=actor_user_id,
-        actor_roles=CURATOR_ROLES,
-        contributor_handle=handle,
-        alias_id=alias.id,
-    )
-    after_external_delete = delete_contributor_external_id(
-        db_session,
-        actor_user_id=actor_user_id,
-        actor_roles=CURATOR_ROLES,
-        contributor_handle=handle,
-        external_id_id=external_id.id,
-    )
-    event_types = db_session.execute(
-        text(
-            """
-            SELECT event_type
-            FROM contributor_identity_events
-            WHERE actor_user_id = :actor_user_id
-            ORDER BY created_at ASC, id ASC
-            """
-        ),
-        {"actor_user_id": actor_user_id},
-    ).scalars()
-
-    assert all(existing.id != alias.id for existing in after_alias_delete.aliases)
-    assert all(existing.id != external_id.id for existing in after_external_delete.external_ids)
-    assert set(event_types) >= {
-        "alias_add",
-        "alias_remove",
-        "external_id_add",
-        "external_id_remove",
-    }
-
-
-@pytest.mark.integration
-def test_contributor_http_routes_mask_private_only_works(auth_client, direct_db):
-    owner_id = create_test_user_id()
-    outsider_id = create_test_user_id()
-    for user_id in (owner_id, outsider_id):
-        direct_db.register_cleanup("users", "id", user_id)
-        direct_db.register_cleanup("libraries", "owner_user_id", user_id)
-        direct_db.register_cleanup("memberships", "user_id", user_id)
-
-    owner_me = auth_client.get("/me", headers=auth_headers(owner_id))
-    assert owner_me.status_code == 200
-    default_library_id = UUID(owner_me.json()["data"]["default_library_id"])
-    assert auth_client.get("/me", headers=auth_headers(outsider_id)).status_code == 200
-
-    with direct_db.session() as session:
-        media_id = create_test_media(session, title=f"HTTP Contributor Work {uuid4()}")
-        add_media_to_library(session, default_library_id, media_id)
-        replace_media_contributor_credits(
-            session,
-            media_id=media_id,
-            credits=[{"name": "HTTP Visible Author", "role": "author", "source": "manual"}],
-        )
-        contributor_id, handle, _credit_id = _credit_contributor(session, media_id)
-        session.commit()
-
     direct_db.register_cleanup("contributors", "id", contributor_id)
     direct_db.register_cleanup("contributor_aliases", "contributor_id", contributor_id)
-    direct_db.register_cleanup("library_entries", "media_id", media_id)
-    direct_db.register_cleanup("media", "id", media_id)
+    direct_db.register_cleanup("contributor_external_ids", "contributor_id", contributor_id)
+    # Cleanup runs LIFO: credits must delete before the contributor row they
+    # reference (media-scoped credit cleanups registered earlier run last).
+    direct_db.register_cleanup("contributor_credits", "contributor_id", contributor_id)
+    return contributor_id
 
-    search_response = auth_client.get(
-        "/contributors?q=HTTP+Visible",
-        headers=auth_headers(owner_id),
-    )
-    assert search_response.status_code == 200
-    search_rows = search_response.json()["data"]["contributors"]
-    assert search_rows[0]["handle"] == handle
-    assert search_rows[0]["href"] == f"/authors/{handle}"
 
-    detail_response = auth_client.get(f"/contributors/{handle}", headers=auth_headers(owner_id))
-    assert detail_response.status_code == 200
-    assert detail_response.json()["data"]["handle"] == handle
+def _seed_owned_media(direct_db, owner_id, library_id, *, title=None):
+    with direct_db.session() as session:
+        media_id = create_test_media_in_library(
+            session, owner_id, library_id, title=title or f"Authored Work {uuid4()}"
+        )
+        session.commit()
+    _register_media_credit_cleanup(direct_db, media_id)
+    return media_id
 
-    works_response = auth_client.get(
-        f"/contributors/{handle}/works",
-        headers=auth_headers(owner_id),
-    )
-    assert works_response.status_code == 200
-    works = works_response.json()["data"]["works"]
-    assert len(works) == 1
-    assert works[0]["route"] == f"/media/{media_id}"
 
-    outsider_detail = auth_client.get(
-        f"/contributors/{handle}",
-        headers=auth_headers(outsider_id),
+def _seed_author(auth_client, direct_db, owner_id, library_id, *, credited_name, display_name=None):
+    """Create an owned media with one ``new`` author; return (media_id, handle)."""
+    media_id = _seed_owned_media(direct_db, owner_id, library_id, title=f"{credited_name} Work")
+    response = _put_authors(
+        auth_client, owner_id, media_id, [_new_author_row(credited_name, display_name)]
     )
-    outsider_works = auth_client.get(
-        f"/contributors/{handle}/works",
-        headers=auth_headers(outsider_id),
-    )
-    assert outsider_detail.status_code == 404
-    assert outsider_detail.json()["error"]["code"] == "E_NOT_FOUND"
-    assert outsider_works.status_code == 404
-    assert outsider_works.json()["error"]["code"] == "E_NOT_FOUND"
+    assert response.status_code == 200, response.text
+    handle = response.json()["data"]["authors"][0]["contributorHandle"]
+    _contributor_id_for_handle(direct_db, handle)
+    return media_id, handle
+
+
+# ---------------------------------------------------------------------------
+# GET /contributors — required nonblank q
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.integration
-def test_contributor_http_tombstone_rejects_active_bylines(auth_client, direct_db):
-    curator_id = create_test_user_id()
-    direct_db.register_cleanup("users", "id", curator_id)
-    direct_db.register_cleanup("libraries", "owner_user_id", curator_id)
-    direct_db.register_cleanup("memberships", "user_id", curator_id)
-    me_response = auth_client.get("/me", headers=auth_headers(curator_id))
-    assert me_response.status_code == 200
-    default_library_id = UUID(me_response.json()["data"]["default_library_id"])
-
-    with direct_db.session() as session:
-        media_id = create_test_media(session, title=f"HTTP Tombstone Guard {uuid4()}")
-        add_media_to_library(session, default_library_id, media_id)
-        replace_media_contributor_credits(
-            session,
-            media_id=media_id,
-            credits=[{"name": "HTTP Tombstone Author", "role": "author", "source": "manual"}],
-        )
-        contributor_id, handle, _credit_id = _credit_contributor(session, media_id)
-        session.commit()
-
-    direct_db.register_cleanup("contributors", "id", contributor_id)
-    direct_db.register_cleanup("contributor_aliases", "contributor_id", contributor_id)
-    direct_db.register_cleanup("library_entries", "media_id", media_id)
-    direct_db.register_cleanup("media", "id", media_id)
-
-    response = auth_client.post(
-        f"/contributors/{handle}/tombstone",
-        headers=auth_headers(curator_id, nexus_roles=["contributor_curator"]),
-    )
-
-    assert response.status_code == 400
+@pytest.mark.parametrize("query", ["", "%20%20", "+"])
+def test_search_contributors_rejects_blank_query_with_422(auth_client, direct_db, query):
+    viewer_id, _ = _bootstrap_user(auth_client, direct_db)
+    response = auth_client.get(f"/contributors?q={query}", headers=auth_headers(viewer_id))
+    assert response.status_code == 422, response.text
     assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
 
 
-def _credit_contributor(db_session, media_id):
-    return db_session.execute(
-        text(
-            """
-            SELECT c.id, c.handle, cc.id
-            FROM contributor_credits cc
-            JOIN contributors c ON c.id = cc.contributor_id
-            WHERE cc.media_id = :media_id
-            """
-        ),
-        {"media_id": media_id},
-    ).one()
+# ---------------------------------------------------------------------------
+# Handle parsing: reserved + invisible + garbage all 404
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.integration
-def test_split_contributor_moves_selected_records_and_repoints_edges(db_session):
-    actor_user_id = uuid4()
-    db_session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": actor_user_id})
-    media_a = create_test_media(db_session, title=f"Split A {uuid4()}")
-    media_b = create_test_media(db_session, title=f"Split B {uuid4()}")
-    external_key = f"orcid-{uuid4()}"
-    for media_id in (media_a, media_b):
-        replace_media_contributor_credits(
-            db_session,
-            media_id=media_id,
-            credits=[
-                {
-                    "name": "Combined Author",
-                    "role": "author",
-                    "source": "test_provider",
-                    "external_id": {"authority": "orcid", "external_key": external_key},
-                }
+@pytest.mark.parametrize(
+    "handle",
+    ["directory", "reconciliation-candidates", "a", "Not-A-Handle", "-leading", "trailing-"],
+)
+def test_reserved_or_invalid_handles_return_404(auth_client, direct_db, handle):
+    viewer_id, _ = _bootstrap_user(auth_client, direct_db)
+    detail = auth_client.get(f"/contributors/{handle}", headers=auth_headers(viewer_id))
+    works = auth_client.get(f"/contributors/{handle}/works", headers=auth_headers(viewer_id))
+    assert detail.status_code == 404, detail.text
+    assert works.status_code == 404, works.text
+    assert detail.json()["error"]["code"] == "E_NOT_FOUND"
+
+
+@pytest.mark.integration
+def test_contributor_detail_masks_invisible_records(auth_client, direct_db):
+    owner_id, owner_library = _bootstrap_user(auth_client, direct_db)
+    outsider_id, _ = _bootstrap_user(auth_client, direct_db)
+    _media_id, handle = _seed_author(
+        auth_client, direct_db, owner_id, owner_library, credited_name=f"Hidden Author {uuid4()}"
+    )
+
+    owner_view = auth_client.get(f"/contributors/{handle}", headers=auth_headers(owner_id))
+    outsider_view = auth_client.get(f"/contributors/{handle}", headers=auth_headers(outsider_id))
+
+    assert owner_view.status_code == 200, owner_view.text
+    assert outsider_view.status_code == 404, outsider_view.text
+
+
+# ---------------------------------------------------------------------------
+# Removed-endpoint matrix (AC 30): the old surface is gone
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "method,path",
+    [
+        ("GET", "/contributors/directory"),
+        ("GET", "/contributors/reconciliation-candidates"),
+        ("POST", "/contributors/reconciliation-candidates/x/accept"),
+        ("POST", "/contributors/reconciliation-candidates/x/reject"),
+        ("POST", "/contributors/some-author/merge"),
+        ("POST", "/contributors/some-author/split"),
+        ("POST", "/contributors/some-author/tombstone"),
+        ("POST", "/contributors/some-author/aliases"),
+        ("DELETE", "/contributors/some-author/aliases/x"),
+        ("POST", "/contributors/some-author/external-ids"),
+        ("DELETE", "/contributors/some-author/external-ids/x"),
+    ],
+)
+def test_removed_contributor_endpoints_are_gone(auth_client, direct_db, method, path):
+    viewer_id, _ = _bootstrap_user(auth_client, direct_db)
+    response = auth_client.request(method, path, headers=auth_headers(viewer_id))
+    assert response.status_code in (404, 405), f"{method} {path} -> {response.status_code}"
+
+
+# ---------------------------------------------------------------------------
+# Strict camelCase both directions (D-1): snake payloads are rejected
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_put_media_authors_rejects_snake_payload(auth_client, direct_db):
+    owner_id, owner_library = _bootstrap_user(auth_client, direct_db)
+    media_id = _seed_owned_media(direct_db, owner_id, owner_library)
+    response = auth_client.put(
+        f"/media/{media_id}/authors",
+        headers=auth_headers(owner_id),
+        json={
+            "client_mutation_id": f"cmid-{uuid4()}",
+            "mode": "manual",
+            "authors": [
+                {"credited_name": "Snake Author", "binding": {"kind": "new", "display_name": "x"}}
             ],
-        )
-
-    source_id, source_handle, moved_credit_id = _credit_contributor(db_session, media_a)
-    _same_source_id, _same_handle, kept_credit_id = _credit_contributor(db_session, media_b)
-    edge = ResourceEdge(
-        user_id=actor_user_id,
-        kind="context",
-        origin="user",
-        source_scheme="contributor",
-        source_id=source_id,
-        target_scheme="media",
-        target_id=media_a,
-    )
-    db_session.add(edge)
-    db_session.flush()
-    edge_id = edge.id
-
-    split = split_contributor(
-        db_session,
-        actor_user_id=actor_user_id,
-        actor_roles=CURATOR_ROLES,
-        contributor_handle=source_handle,
-        request=ContributorSplitRequest(
-            display_name="Separated Author",
-            credit_ids=[moved_credit_id],
-        ),
-    )
-    split_id = db_session.execute(
-        text("SELECT id FROM contributors WHERE handle = :handle"),
-        {"handle": split.handle},
-    ).scalar_one()
-
-    rows = db_session.execute(
-        text(
-            """
-            SELECT
-                (SELECT contributor_id FROM contributor_credits WHERE id = :moved_credit_id)
-                    AS moved_credit,
-                (SELECT contributor_id FROM contributor_credits WHERE id = :kept_credit_id)
-                    AS kept_credit,
-                (SELECT source_id FROM resource_edges WHERE id = :edge_id) AS moved_link,
-                (
-                    SELECT count(*)
-                    FROM contributor_identity_events
-                    WHERE event_type = 'split'
-                      AND source_contributor_id = :source_id
-                      AND target_contributor_id = :split_id
-                )
-                    AS split_events
-            """
-        ),
-        {
-            "moved_credit_id": moved_credit_id,
-            "kept_credit_id": kept_credit_id,
-            "edge_id": edge_id,
-            "source_id": source_id,
-            "split_id": split_id,
         },
-    ).one()
-
-    assert rows.moved_credit == split_id
-    assert rows.kept_credit == source_id
-    assert rows.moved_link == split_id
-    assert rows.split_events == 1
+    )
+    assert response.status_code == 422, response.text
 
 
 @pytest.mark.integration
-def test_split_contributor_leaves_other_users_edges_untouched(db_session):
-    # repoint_edges is viewer-scoped: the split moves the actor's edges to the
-    # new identity, never another user's rows.
-    actor_user_id = uuid4()
-    other_user_id = uuid4()
-    db_session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": actor_user_id})
-    db_session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": other_user_id})
-    media_id = create_test_media(db_session, title=f"Split Ownership {uuid4()}")
-    replace_media_contributor_credits(
-        db_session,
-        media_id=media_id,
-        credits=[{"name": "Shared Author", "role": "author", "source": "manual"}],
+def test_rename_rejects_snake_payload(auth_client, direct_db):
+    owner_id, owner_library = _bootstrap_user(auth_client, direct_db, roles=["contributor_curator"])
+    _media_id, handle = _seed_author(
+        auth_client, direct_db, owner_id, owner_library, credited_name=f"Snake Rename {uuid4()}"
     )
-    source_id, source_handle, credit_id = _credit_contributor(db_session, media_id)
-    other_edge = ResourceEdge(
-        user_id=other_user_id,
-        kind="context",
-        origin="user",
-        source_scheme="contributor",
-        source_id=source_id,
-        target_scheme="media",
-        target_id=media_id,
+    response = auth_client.patch(
+        f"/contributors/{handle}",
+        headers=auth_headers(owner_id, nexus_roles=["contributor_curator"]),
+        json={"client_mutation_id": f"cmid-{uuid4()}", "display_name": "New Name"},
     )
-    db_session.add(other_edge)
-    db_session.flush()
-    other_edge_id = other_edge.id
-
-    split_contributor(
-        db_session,
-        actor_user_id=actor_user_id,
-        actor_roles=CURATOR_ROLES,
-        contributor_handle=source_handle,
-        request=ContributorSplitRequest(
-            display_name="Moved Author",
-            credit_ids=[credit_id],
-        ),
-    )
-
-    other_edge_contributor_id = db_session.execute(
-        text("SELECT source_id FROM resource_edges WHERE id = :edge_id"),
-        {"edge_id": other_edge_id},
-    ).scalar_one()
-    assert other_edge_contributor_id == source_id
+    assert response.status_code == 422, response.text
 
 
 @pytest.mark.integration
-def test_split_contributor_requires_curator_role(db_session):
-    actor_user_id = uuid4()
-    db_session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": actor_user_id})
-    media_id = create_test_media(db_session, title=f"Blocked Split {uuid4()}")
-    replace_media_contributor_credits(
-        db_session,
-        media_id=media_id,
-        credits=[{"name": "Blocked Split Author", "role": "author", "source": "manual"}],
-    )
-    _contributor_id, handle, credit_id = _credit_contributor(db_session, media_id)
+@pytest.mark.parametrize(
+    "row",
+    [
+        # Whitespace-only creditedName would clean to empty (a 500 without the
+        # boundary validator); whitespace-only new displayName would persist an
+        # empty-display contributor.
+        {"creditedName": "   ", "binding": {"kind": "new", "displayName": "Valid Name"}},
+        {"creditedName": "Valid Name", "binding": {"kind": "new", "displayName": " 　 "}},
+    ],
+)
+def test_put_media_authors_rejects_blank_names_with_422(auth_client, direct_db, row):
+    owner_id, owner_library = _bootstrap_user(auth_client, direct_db)
+    media_id = _seed_owned_media(direct_db, owner_id, owner_library)
+    response = _put_authors(auth_client, owner_id, media_id, [row])
+    assert response.status_code == 422, response.text
+    assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
 
-    with pytest.raises(ForbiddenError) as error:
-        split_contributor(
-            db_session,
-            actor_user_id=actor_user_id,
-            contributor_handle=handle,
-            request=ContributorSplitRequest(
-                display_name="Unauthorized Split",
-                credit_ids=[credit_id],
+
+@pytest.mark.integration
+def test_rename_rejects_blank_display_name_with_422(auth_client, direct_db):
+    owner_id, owner_library = _bootstrap_user(auth_client, direct_db, roles=["contributor_curator"])
+    _media_id, handle = _seed_author(
+        auth_client, direct_db, owner_id, owner_library, credited_name=f"Blank Rename {uuid4()}"
+    )
+    response = auth_client.patch(
+        f"/contributors/{handle}",
+        headers=auth_headers(owner_id, nexus_roles=["contributor_curator"]),
+        json={"clientMutationId": f"cmid-{uuid4()}", "displayName": "   "},
+    )
+    assert response.status_code == 422, response.text
+    assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
+
+
+# ---------------------------------------------------------------------------
+# PUT matrix
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_put_media_authors_manual_preserves_order(auth_client, direct_db):
+    owner_id, owner_library = _bootstrap_user(auth_client, direct_db)
+    media_id = _seed_owned_media(direct_db, owner_id, owner_library)
+    response = _put_authors(
+        auth_client,
+        owner_id,
+        media_id,
+        [_new_author_row("First Author"), _new_author_row("Second Author")],
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["authorMode"] == "manual"
+    assert [row["creditedName"] for row in data["authors"]] == ["First Author", "Second Author"]
+    for row in data["authors"]:
+        _contributor_id_for_handle(direct_db, row["contributorHandle"])
+
+
+@pytest.mark.integration
+def test_put_media_authors_accepts_empty_manual_slice(auth_client, direct_db):
+    owner_id, owner_library = _bootstrap_user(auth_client, direct_db)
+    media_id, handle = _seed_author(
+        auth_client, direct_db, owner_id, owner_library, credited_name=f"Erasable {uuid4()}"
+    )
+    assert handle
+    cleared = _put_authors(auth_client, owner_id, media_id, [])
+    assert cleared.status_code == 200, cleared.text
+    body = cleared.json()["data"]
+    assert body["authors"] == []
+    assert body["authorMode"] == "manual"
+
+
+@pytest.mark.integration
+def test_put_media_authors_rejects_duplicate_contributor(auth_client, direct_db):
+    owner_id, owner_library = _bootstrap_user(auth_client, direct_db)
+    media_id, handle = _seed_author(
+        auth_client, direct_db, owner_id, owner_library, credited_name=f"Dupe Source {uuid4()}"
+    )
+    response = _put_authors(
+        auth_client,
+        owner_id,
+        media_id,
+        [_existing_author_row("Once", handle), _existing_author_row("Twice", handle)],
+    )
+    assert response.status_code == 422, response.text
+    assert response.json()["error"]["code"] == "E_AUTHOR_ALREADY_LISTED"
+
+
+@pytest.mark.integration
+def test_put_media_authors_rejects_unknown_handle(auth_client, direct_db):
+    owner_id, owner_library = _bootstrap_user(auth_client, direct_db)
+    media_id = _seed_owned_media(direct_db, owner_id, owner_library)
+    response = _put_authors(
+        auth_client,
+        owner_id,
+        media_id,
+        [_existing_author_row("Ghost", "no-such-author-abcdef123456")],
+    )
+    assert response.status_code == 422, response.text
+    assert response.json()["error"]["code"] == "E_AUTHOR_NOT_SELECTABLE"
+
+
+@pytest.mark.integration
+def test_put_media_authors_rejects_invisible_handle_without_leaking(auth_client, direct_db):
+    # A contributor credited only on another user's private media is invisible;
+    # binding to it is E_AUTHOR_NOT_SELECTABLE, indistinguishable from unknown.
+    other_id, other_library = _bootstrap_user(auth_client, direct_db)
+    _other_media, hidden_handle = _seed_author(
+        auth_client, direct_db, other_id, other_library, credited_name=f"Private Only {uuid4()}"
+    )
+    owner_id, owner_library = _bootstrap_user(auth_client, direct_db)
+    media_id = _seed_owned_media(direct_db, owner_id, owner_library)
+    response = _put_authors(
+        auth_client, owner_id, media_id, [_existing_author_row("Hidden", hidden_handle)]
+    )
+    assert response.status_code == 422, response.text
+    assert response.json()["error"]["code"] == "E_AUTHOR_NOT_SELECTABLE"
+
+
+@pytest.mark.integration
+def test_put_media_authors_automatic_reset_rejects_authors_field(auth_client, direct_db):
+    owner_id, owner_library = _bootstrap_user(auth_client, direct_db)
+    media_id, _handle = _seed_author(
+        auth_client, direct_db, owner_id, owner_library, credited_name=f"Reset Me {uuid4()}"
+    )
+    rejected = auth_client.put(
+        f"/media/{media_id}/authors",
+        headers=auth_headers(owner_id),
+        json={"clientMutationId": f"cmid-{uuid4()}", "mode": "automatic", "authors": []},
+    )
+    assert rejected.status_code == 422, rejected.text
+
+    reset = _put_authors(auth_client, owner_id, media_id, [], mode="automatic")
+    assert reset.status_code == 200, reset.text
+    assert reset.json()["data"]["authorMode"] == "automatic"
+
+
+@pytest.mark.integration
+def test_put_media_authors_capability_parity_creator_and_reader(auth_client, direct_db):
+    owner_id, owner_library = _bootstrap_user(auth_client, direct_db)
+    reader_id, reader_library = _bootstrap_user(auth_client, direct_db)
+    media_id = _seed_owned_media(direct_db, owner_id, owner_library)
+    with direct_db.session() as session:
+        add_media_to_library(session, reader_library, media_id)
+        session.commit()
+
+    owner_media = auth_client.get(f"/media/{media_id}", headers=auth_headers(owner_id))
+    reader_media = auth_client.get(f"/media/{media_id}", headers=auth_headers(reader_id))
+    assert owner_media.status_code == 200, owner_media.text
+    assert reader_media.status_code == 200, reader_media.text
+    assert owner_media.json()["data"]["capabilities"]["can_edit_authors"] is True
+    assert reader_media.json()["data"]["capabilities"]["can_edit_authors"] is False
+
+    owner_put = _put_authors(auth_client, owner_id, media_id, [_new_author_row("Owner Author")])
+    reader_put = _put_authors(auth_client, reader_id, media_id, [_new_author_row("Reader Author")])
+    assert owner_put.status_code == 200, owner_put.text
+    assert reader_put.status_code == 403, reader_put.text
+    for row in owner_put.json()["data"]["authors"]:
+        _contributor_id_for_handle(direct_db, row["contributorHandle"])
+
+
+@pytest.mark.integration
+def test_put_media_authors_capability_parity_for_unready_media(auth_client, direct_db):
+    """Author editing must not depend on content readability (spec §6): a creator's
+    failed-ingest media reports can_edit_authors=True AND the PUT succeeds."""
+    owner_id, owner_library = _bootstrap_user(auth_client, direct_db)
+    with direct_db.session() as session:
+        media_id = create_test_media_in_library(
+            session, owner_id, owner_library, title=f"Failed Ingest {uuid4()}", status="failed"
+        )
+    _register_media_credit_cleanup(direct_db, media_id)
+
+    media = auth_client.get(f"/media/{media_id}", headers=auth_headers(owner_id))
+    assert media.status_code == 200, media.text
+    capabilities = media.json()["data"]["capabilities"]
+    assert capabilities["can_read"] is False, "content must not be readable while failed"
+    assert capabilities["can_edit_authors"] is True, (
+        "the DTO must agree with enforcement: the creator can edit authors of unready media"
+    )
+
+    put = _put_authors(auth_client, owner_id, media_id, [_new_author_row("Unready Author")])
+    assert put.status_code == 200, put.text
+    for row in put.json()["data"]["authors"]:
+        _contributor_id_for_handle(direct_db, row["contributorHandle"])
+
+
+@pytest.mark.integration
+def test_null_creator_media_is_admin_only(auth_client, direct_db):
+    admin_id, admin_library = _bootstrap_user(auth_client, direct_db, roles=["admin"])
+    reader_id, reader_library = _bootstrap_user(auth_client, direct_db)
+    with direct_db.session() as session:
+        media_id = create_test_media(session, title=f"System Media {uuid4()}")
+        add_media_to_library(session, admin_library, media_id)
+        add_media_to_library(session, reader_library, media_id)
+        session.commit()
+    _register_media_credit_cleanup(direct_db, media_id)
+
+    admin_media = auth_client.get(
+        f"/media/{media_id}", headers=auth_headers(admin_id, nexus_roles=["admin"])
+    )
+    reader_media = auth_client.get(f"/media/{media_id}", headers=auth_headers(reader_id))
+    assert admin_media.json()["data"]["capabilities"]["can_edit_authors"] is True
+    assert reader_media.json()["data"]["capabilities"]["can_edit_authors"] is False
+
+    admin_put = auth_client.put(
+        f"/media/{media_id}/authors",
+        headers=auth_headers(admin_id, nexus_roles=["admin"]),
+        json={
+            "clientMutationId": f"cmid-{uuid4()}",
+            "mode": "manual",
+            "authors": [_new_author_row("Admin Curated Author")],
+        },
+    )
+    reader_put = _put_authors(auth_client, reader_id, media_id, [_new_author_row("Reader Author")])
+    assert admin_put.status_code == 200, admin_put.text
+    assert reader_put.status_code == 403, reader_put.text
+    for row in admin_put.json()["data"]["authors"]:
+        _contributor_id_for_handle(direct_db, row["contributorHandle"])
+
+
+# ---------------------------------------------------------------------------
+# Replay (idempotency) on the PUT
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_put_media_authors_replays_exact_memo_and_409s_on_mismatch(auth_client, direct_db):
+    owner_id, owner_library = _bootstrap_user(auth_client, direct_db)
+    media_id = _seed_owned_media(direct_db, owner_id, owner_library)
+    cmid = f"cmid-{uuid4()}"
+
+    first = _put_authors(
+        auth_client, owner_id, media_id, [_new_author_row("Replay Author")], client_mutation_id=cmid
+    )
+    assert first.status_code == 200, first.text
+    handle = first.json()["data"]["authors"][0]["contributorHandle"]
+    _contributor_id_for_handle(direct_db, handle)
+
+    # Later edit with a different key changes the list.
+    later = _put_authors(auth_client, owner_id, media_id, [_new_author_row("Later Author")])
+    assert later.status_code == 200, later.text
+    for row in later.json()["data"]["authors"]:
+        _contributor_id_for_handle(direct_db, row["contributorHandle"])
+
+    # Exact replay of the first key returns the recorded response without writing.
+    replay = _put_authors(
+        auth_client, owner_id, media_id, [_new_author_row("Replay Author")], client_mutation_id=cmid
+    )
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["data"] == first.json()["data"]
+
+    # Same key, different payload -> 409.
+    mismatch = _put_authors(
+        auth_client, owner_id, media_id, [_new_author_row("Different")], client_mutation_id=cmid
+    )
+    assert mismatch.status_code == 409, mismatch.text
+    assert mismatch.json()["error"]["code"] == "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH"
+
+
+# ---------------------------------------------------------------------------
+# GET /contributors search + detail + works
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_search_returns_visible_author_with_work_context(auth_client, direct_db):
+    owner_id, owner_library = _bootstrap_user(auth_client, direct_db)
+    name = f"Searchable Author {uuid4()}"
+    _media_id, handle = _seed_author(
+        auth_client, direct_db, owner_id, owner_library, credited_name=name
+    )
+    response = auth_client.get(
+        f"/contributors?q={name.split()[0]}+Author", headers=auth_headers(owner_id)
+    )
+    assert response.status_code == 200, response.text
+    items = response.json()["data"]["contributors"]
+    match = next(item for item in items if item["handle"] == handle)
+    assert match["href"] == f"/authors/{handle}"
+    assert match["workCount"] >= 1
+    assert len(match["workExamples"]) <= 2
+
+
+@pytest.mark.integration
+def test_zero_work_key_owner_is_absent_from_search(auth_client, direct_db):
+    # A retained key owner with no visible credited work never becomes an eternal
+    # "0 works" pick (spec 2.8 / D-8); the search predicate requires >=1 visible
+    # credited target.
+    viewer_id, _ = _bootstrap_user(auth_client, direct_db)
+    name = f"Keyed No Works {uuid4()}"
+    handle = f"keyed-no-works-{uuid4().hex[:12]}"
+    contributor_id = uuid4()
+    with direct_db.session() as session:
+        session.execute(
+            text(
+                """
+                INSERT INTO contributors (id, handle, display_name)
+                VALUES (:id, :handle, :display_name)
+                """
             ),
+            {"id": contributor_id, "handle": handle, "display_name": name},
         )
-
-    assert error.value.code == ApiErrorCode.E_FORBIDDEN
-
-
-@pytest.mark.integration
-def test_tombstone_rejects_active_credit_references(db_session):
-    actor_user_id = uuid4()
-    db_session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": actor_user_id})
-    media_id = create_test_media(db_session, title=f"Tombstone {uuid4()}")
-    replace_media_contributor_credits(
-        db_session,
-        media_id=media_id,
-        credits=[{"name": "Tombstoned Author", "role": "author", "source": "manual"}],
-    )
-    _contributor_id, handle, _credit_id = _credit_contributor(db_session, media_id)
-
-    with pytest.raises(ApiError) as error:
-        tombstone_contributor(
-            db_session,
-            actor_user_id=actor_user_id,
-            actor_roles=CURATOR_ROLES,
-            contributor_handle=handle,
-        )
-
-    assert error.value.code == ApiErrorCode.E_INVALID_REQUEST
-    assert get_contributor_by_handle(db_session, handle).handle == handle
-
-
-@pytest.mark.integration
-def test_tombstone_rejects_edge_references(db_session):
-    actor_user_id = uuid4()
-    db_session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": actor_user_id})
-    media_id = create_test_media(db_session, title=f"Tombstone Edge {uuid4()}")
-    replace_media_contributor_credits(
-        db_session,
-        media_id=media_id,
-        credits=[{"name": "Linked Tombstone Author", "role": "author", "source": "manual"}],
-    )
-    contributor_id, handle, _credit_id = _credit_contributor(db_session, media_id)
-    db_session.execute(
-        text("DELETE FROM contributor_credits WHERE contributor_id = :contributor_id"),
-        {"contributor_id": contributor_id},
-    )
-    db_session.add(
-        ResourceEdge(
-            user_id=actor_user_id,
-            kind="context",
-            origin="user",
-            source_scheme="media",
-            source_id=media_id,
-            target_scheme="contributor",
-            target_id=contributor_id,
-        )
-    )
-    db_session.flush()
-
-    with pytest.raises(ApiError) as error:
-        tombstone_contributor(
-            db_session,
-            actor_user_id=actor_user_id,
-            actor_roles=CURATOR_ROLES,
-            contributor_handle=handle,
-        )
-
-    assert error.value.code == ApiErrorCode.E_INVALID_REQUEST
-    assert get_contributor_by_handle(db_session, handle).handle == handle
-
-
-@pytest.mark.integration
-def test_tombstone_rejects_persisted_contributor_refs(db_session):
-    actor_user_id = uuid4()
-    db_session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": actor_user_id})
-    media_id = create_test_media(db_session, title=f"Tombstone Persisted Ref {uuid4()}")
-    replace_media_contributor_credits(
-        db_session,
-        media_id=media_id,
-        credits=[{"name": "Persisted Ref Author", "role": "author", "source": "manual"}],
-    )
-    contributor_id, handle, _credit_id = _credit_contributor(db_session, media_id)
-    db_session.execute(
-        text("DELETE FROM contributor_credits WHERE contributor_id = :contributor_id"),
-        {"contributor_id": contributor_id},
-    )
-    conversation_id = create_test_conversation(db_session, actor_user_id)
-    user_message_id = create_test_message(db_session, conversation_id, seq=1)
-    assistant_message_id = create_test_message(
-        db_session,
-        conversation_id,
-        seq=2,
-        role="assistant",
-    )
-    tool_call_id = uuid4()
-    db_session.execute(
-        text(
-            """
-            INSERT INTO message_tool_calls (
-                id,
-                conversation_id,
-                user_message_id,
-                assistant_message_id,
-                tool_name,
-                tool_call_index,
-                scope,
-                status
-            )
-            VALUES (
-                :tool_call_id,
-                :conversation_id,
-                :user_message_id,
-                :assistant_message_id,
-                'app_search',
-                0,
-                'all',
-                'complete'
-            )
-            """
-        ),
-        {
-            "tool_call_id": tool_call_id,
-            "conversation_id": conversation_id,
-            "user_message_id": user_message_id,
-            "assistant_message_id": assistant_message_id,
-        },
-    )
-    db_session.execute(
-        text(
-            """
-            INSERT INTO message_retrievals (
-                tool_call_id,
-                ordinal,
-                result_type,
-                source_id,
-                context_ref,
-                result_ref
-            )
-            VALUES (
-                :tool_call_id,
-                0,
-                'contributor',
-                :source_id,
-                CAST(:context_ref AS jsonb),
-                CAST(:result_ref AS jsonb)
-            )
-            """
-        ),
-        {
-            "tool_call_id": tool_call_id,
-            # The real retrieval-citation contract: a contributor ref keys on the bare
-            # handle (search._result_context_ref / RetrievalCitation.result_ref_json),
-            # not a "contributor:"-prefixed string.
-            "source_id": handle,
-            "context_ref": f'{{"type":"contributor","id":"{handle}"}}',
-            "result_ref": (
-                '{"type":"contributor",'
-                f'"id":"{handle}",'
-                '"result_type":"contributor",'
-                f'"source_id":"{handle}",'
-                f'"context_ref":{{"type":"contributor","id":"{handle}"}}}}'
+        session.execute(
+            text(
+                """
+                INSERT INTO contributor_aliases
+                    (id, contributor_id, alias, normalized_alias, resolves_identity)
+                VALUES (:id, :contributor_id, :alias, :normalized, true)
+                """
             ),
-        },
-    )
-
-    with pytest.raises(ApiError) as error:
-        tombstone_contributor(
-            db_session,
-            actor_user_id=actor_user_id,
-            actor_roles=CURATOR_ROLES,
-            contributor_handle=handle,
+            {
+                "id": uuid4(),
+                "contributor_id": contributor_id,
+                "alias": name,
+                "normalized": name.lower(),
+            },
         )
+        session.execute(
+            text(
+                """
+                INSERT INTO contributor_external_ids
+                    (id, contributor_id, authority, external_key)
+                VALUES (:id, :contributor_id, 'orcid', :key)
+                """
+            ),
+            {"id": uuid4(), "contributor_id": contributor_id, "key": f"0000-{uuid4().hex[:12]}"},
+        )
+        session.commit()
+    direct_db.register_cleanup("contributors", "id", contributor_id)
+    direct_db.register_cleanup("contributor_aliases", "contributor_id", contributor_id)
+    direct_db.register_cleanup("contributor_external_ids", "contributor_id", contributor_id)
 
-    assert error.value.code == ApiErrorCode.E_INVALID_REQUEST
-    assert get_contributor_by_handle(db_session, handle).handle == handle
+    response = auth_client.get(
+        f"/contributors?q={name.split()[0]}+No+Works", headers=auth_headers(viewer_id)
+    )
+    assert response.status_code == 200, response.text
+    handles = {item["handle"] for item in response.json()["data"]["contributors"]}
+    assert handle not in handles
 
 
 @pytest.mark.integration
-def test_tombstone_hides_unreferenced_contributor_from_normal_reads(db_session):
-    actor_user_id = uuid4()
-    db_session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": actor_user_id})
-    media_id = create_test_media(db_session, title=f"Unreferenced Tombstone {uuid4()}")
-    replace_media_contributor_credits(
-        db_session,
-        media_id=media_id,
-        credits=[{"name": "Unreferenced Tombstone Author", "role": "author", "source": "manual"}],
+def test_contributor_detail_reports_fresh_author(auth_client, direct_db):
+    owner_id, owner_library = _bootstrap_user(auth_client, direct_db)
+    _media_id, handle = _seed_author(
+        auth_client, direct_db, owner_id, owner_library, credited_name=f"Detail Author {uuid4()}"
     )
-    _contributor_id, handle, _credit_id = _credit_contributor(db_session, media_id)
-    db_session.execute(
-        text("DELETE FROM contributor_credits WHERE media_id = :media_id"),
-        {"media_id": media_id},
-    )
-
-    tombstoned = tombstone_contributor(
-        db_session,
-        actor_user_id=actor_user_id,
-        actor_roles=CURATOR_ROLES,
-        contributor_handle=handle,
-    )
-
-    assert tombstoned.status == "tombstoned"
-    with pytest.raises(NotFoundError):
-        get_contributor_by_handle(db_session, handle)
+    response = auth_client.get(f"/contributors/{handle}", headers=auth_headers(owner_id))
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["handle"] == handle
+    assert data["href"] == f"/authors/{handle}"
+    assert data["otherNames"] == []
+    assert data["canRename"] is False
 
 
 @pytest.mark.integration
-def test_tombstone_contributor_requires_curator_role(db_session):
-    actor_user_id = uuid4()
-    db_session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": actor_user_id})
-    media_id = create_test_media(db_session, title=f"Blocked Tombstone {uuid4()}")
-    replace_media_contributor_credits(
-        db_session,
-        media_id=media_id,
-        credits=[{"name": "Blocked Tombstone Author", "role": "author", "source": "manual"}],
+def test_contributor_works_reports_role_facts(auth_client, direct_db):
+    owner_id, owner_library = _bootstrap_user(auth_client, direct_db)
+    credited = f"Works Author {uuid4()}"
+    media_id, handle = _seed_author(
+        auth_client, direct_db, owner_id, owner_library, credited_name=credited
     )
-    _contributor_id, handle, _credit_id = _credit_contributor(db_session, media_id)
+    response = auth_client.get(f"/contributors/{handle}/works", headers=auth_headers(owner_id))
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["nextCursor"] is None
+    assert len(data["works"]) == 1
+    work = data["works"][0]
+    assert work["href"] == f"/media/{media_id}"
+    assert {"creditedName": credited, "role": "author", "rawRole": None} in work["roleFacts"]
 
-    with pytest.raises(ForbiddenError) as error:
-        tombstone_contributor(db_session, actor_user_id=actor_user_id, contributor_handle=handle)
 
-    assert error.value.code == ApiErrorCode.E_FORBIDDEN
-    assert get_contributor_by_handle(db_session, handle).handle == handle
+@pytest.mark.integration
+def test_contributor_works_pagination_uses_opaque_stable_cursor(auth_client, direct_db):
+    owner_id, owner_library = _bootstrap_user(auth_client, direct_db)
+    credited = f"Prolific Author {uuid4()}"
+    _first_media, handle = _seed_author(
+        auth_client, direct_db, owner_id, owner_library, credited_name=credited
+    )
+    second_media = _seed_owned_media(direct_db, owner_id, owner_library)
+    bound = _put_authors(
+        auth_client, owner_id, second_media, [_existing_author_row(credited, handle)]
+    )
+    assert bound.status_code == 200, bound.text
+
+    page1 = auth_client.get(f"/contributors/{handle}/works?limit=1", headers=auth_headers(owner_id))
+    assert page1.status_code == 200, page1.text
+    body1 = page1.json()["data"]
+    assert len(body1["works"]) == 1
+    cursor = body1["nextCursor"]
+    assert isinstance(cursor, str) and cursor
+
+    # Cursor is opaque (not a raw title/href) and stable across identical calls.
+    repeat = auth_client.get(
+        f"/contributors/{handle}/works?limit=1", headers=auth_headers(owner_id)
+    )
+    assert repeat.json()["data"]["nextCursor"] == cursor
+    assert f"/media/{second_media}" not in cursor and f"/media/{_first_media}" not in cursor
+
+    page2 = auth_client.get(
+        f"/contributors/{handle}/works?limit=1&cursor={cursor}",
+        headers=auth_headers(owner_id),
+    )
+    assert page2.status_code == 200, page2.text
+    body2 = page2.json()["data"]
+    assert len(body2["works"]) == 1
+    assert body2["works"][0]["href"] != body1["works"][0]["href"]
+
+
+# ---------------------------------------------------------------------------
+# PATCH /contributors/{handle} — rename authorization + replay
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_rename_visible_but_unauthorized_returns_403(auth_client, direct_db):
+    owner_id, owner_library = _bootstrap_user(auth_client, direct_db)
+    _media_id, handle = _seed_author(
+        auth_client, direct_db, owner_id, owner_library, credited_name=f"Rename Guard {uuid4()}"
+    )
+    # The creator can see the contributor but is not a curator/admin -> 403 (not 404).
+    response = auth_client.patch(
+        f"/contributors/{handle}",
+        headers=auth_headers(owner_id),
+        json={"clientMutationId": f"cmid-{uuid4()}", "displayName": "Blocked Rename"},
+    )
+    assert response.status_code == 403, response.text
+    assert response.json()["error"]["code"] == "E_FORBIDDEN"
+
+
+@pytest.mark.integration
+def test_rename_invisible_contributor_returns_404(auth_client, direct_db):
+    owner_id, owner_library = _bootstrap_user(auth_client, direct_db)
+    _media_id, handle = _seed_author(
+        auth_client, direct_db, owner_id, owner_library, credited_name=f"Rename Hidden {uuid4()}"
+    )
+    outsider_id, _ = _bootstrap_user(auth_client, direct_db, roles=["contributor_curator"])
+    response = auth_client.patch(
+        f"/contributors/{handle}",
+        headers=auth_headers(outsider_id, nexus_roles=["contributor_curator"]),
+        json={"clientMutationId": f"cmid-{uuid4()}", "displayName": "Unseen Rename"},
+    )
+    assert response.status_code == 404, response.text
+
+
+@pytest.mark.integration
+def test_rename_by_curator_updates_display_name_and_keeps_handle(auth_client, direct_db):
+    owner_id, owner_library = _bootstrap_user(auth_client, direct_db, roles=["contributor_curator"])
+    curator_headers = auth_headers(owner_id, nexus_roles=["contributor_curator"])
+    original = f"Original Name {uuid4()}"
+    _media_id, handle = _seed_author(
+        auth_client, direct_db, owner_id, owner_library, credited_name=original
+    )
+    response = auth_client.patch(
+        f"/contributors/{handle}",
+        headers=curator_headers,
+        json={"clientMutationId": f"cmid-{uuid4()}", "displayName": "Renamed Author"},
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["handle"] == handle
+    assert data["displayName"] == "Renamed Author"
+    assert data["canRename"] is True
+    assert original in data["otherNames"]
+
+
+@pytest.mark.integration
+def test_rename_replay_returns_recorded_response_after_later_change(auth_client, direct_db):
+    owner_id, owner_library = _bootstrap_user(auth_client, direct_db, roles=["contributor_curator"])
+    headers = auth_headers(owner_id, nexus_roles=["contributor_curator"])
+    _media_id, handle = _seed_author(
+        auth_client, direct_db, owner_id, owner_library, credited_name=f"Rename Replay {uuid4()}"
+    )
+    cmid = f"cmid-{uuid4()}"
+
+    to_b = auth_client.patch(
+        f"/contributors/{handle}",
+        headers=headers,
+        json={"clientMutationId": cmid, "displayName": "Name B"},
+    )
+    assert to_b.status_code == 200, to_b.text
+
+    to_c = auth_client.patch(
+        f"/contributors/{handle}",
+        headers=headers,
+        json={"clientMutationId": f"cmid-{uuid4()}", "displayName": "Name C"},
+    )
+    assert to_c.status_code == 200, to_c.text
+
+    replay = auth_client.patch(
+        f"/contributors/{handle}",
+        headers=headers,
+        json={"clientMutationId": cmid, "displayName": "Name B"},
+    )
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["data"]["displayName"] == "Name B"
+
+    # Current state is still C — replay did not revert it.
+    current = auth_client.get(f"/contributors/{handle}", headers=headers)
+    assert current.json()["data"]["displayName"] == "Name C"
+
+
+@pytest.mark.integration
+def test_rename_authorizes_before_replay_lookup(auth_client, direct_db):
+    # D-44: an unauthorized viewer replaying a real memo key still gets 403, never
+    # the recorded response.
+    owner_id, owner_library = _bootstrap_user(auth_client, direct_db, roles=["contributor_curator"])
+    curator_headers = auth_headers(owner_id, nexus_roles=["contributor_curator"])
+    _media_id, handle = _seed_author(
+        auth_client, direct_db, owner_id, owner_library, credited_name=f"Auth First {uuid4()}"
+    )
+    cmid = f"cmid-{uuid4()}"
+    recorded = auth_client.patch(
+        f"/contributors/{handle}",
+        headers=curator_headers,
+        json={"clientMutationId": cmid, "displayName": "Curated Rename"},
+    )
+    assert recorded.status_code == 200, recorded.text
+
+    # The creator sees the contributor but is not a curator: 403 before replay.
+    replayed = auth_client.patch(
+        f"/contributors/{handle}",
+        headers=auth_headers(owner_id),
+        json={"clientMutationId": cmid, "displayName": "Curated Rename"},
+    )
+    assert replayed.status_code == 403, replayed.text

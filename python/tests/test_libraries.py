@@ -5546,83 +5546,47 @@ class TestLibraryEntryResonanceOrdering:
     def test_resonance_includes_shared_author_hits(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        from nexus.services.contributor_credits import replace_media_contributor_credits
+        from nexus.services import contributors as contributors_service
+        from nexus.services.contributor_taxonomy import (
+            ContributorObservation,
+            ObservedRoleSlices,
+        )
 
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
         library_id, media_a, media_b, media_c = self._seed_library_with_three_entries(
             direct_db, user_id
         )
-        contributor_one = uuid4()
-        contributor_two = uuid4()
 
-        with direct_db.session() as session:
-            session.execute(
-                text(
-                    """
-                    INSERT INTO contributors (id, handle, display_name, sort_name, kind, status)
-                    VALUES
-                      (:one, :one_handle, 'Shared One', 'Shared One', 'unknown', 'unverified'),
-                      (:two, :two_handle, 'Shared Two', 'Shared Two', 'unknown', 'unverified')
-                    """
+        def _observe(media_id: UUID, names: list[str]) -> None:
+            contributors_service.replace_observed_role_slices(
+                target=contributors_service.MediaTarget(media_id),
+                observation=ObservedRoleSlices(
+                    managed_roles=frozenset({"author"}),
+                    credits=tuple(
+                        ContributorObservation(
+                            credited_name=name, role="author", raw_role=None, identity_key=None
+                        )
+                        for name in names
+                    ),
                 ),
-                {
-                    "one": contributor_one,
-                    "one_handle": f"shared-one-{contributor_one.hex[:8]}",
-                    "two": contributor_two,
-                    "two_handle": f"shared-two-{contributor_two.hex[:8]}",
-                },
+                source="epub_opf",
             )
-            replace_media_contributor_credits(
-                session,
-                media_id=media_a,
-                credits=[
-                    {
-                        "credited_name": "Shared One",
-                        "contributor_id": str(contributor_one),
-                        "role": "author",
-                        "ordinal": 0,
-                    }
-                ],
-                source="test",
-            )
-            replace_media_contributor_credits(
-                session,
-                media_id=media_b,
-                credits=[
-                    {
-                        "credited_name": "Shared One",
-                        "contributor_id": str(contributor_one),
-                        "role": "author",
-                        "ordinal": 0,
-                    },
-                    {
-                        "credited_name": "Shared Two",
-                        "contributor_id": str(contributor_two),
-                        "role": "author",
-                        "ordinal": 1,
-                    },
-                ],
-                source="test",
-            )
-            replace_media_contributor_credits(
-                session,
-                media_id=media_c,
-                credits=[
-                    {
-                        "credited_name": "Shared Two",
-                        "contributor_id": str(contributor_two),
-                        "role": "author",
-                        "ordinal": 0,
-                    }
-                ],
-                source="test",
-            )
-            session.commit()
-        direct_db.register_cleanup("contributors", "id", contributor_one)
-        direct_db.register_cleanup("contributors", "id", contributor_two)
-        direct_db.register_cleanup("contributor_credits", "contributor_id", contributor_one)
-        direct_db.register_cleanup("contributor_credits", "contributor_id", contributor_two)
+
+        # The facade resolves each name to one contributor, so media_b — which shares
+        # "Shared One" with media_a and "Shared Two" with media_c — carries the most
+        # shared-author affinity and ranks first under resonance.
+        _observe(media_a, ["Shared One"])
+        _observe(media_b, ["Shared One", "Shared Two"])
+        _observe(media_c, ["Shared Two"])
+
+        # Clean the facade-created rows FK-safe (LIFO): credits first, then each
+        # contributor's alias, then the contributor.
+        for name in ("Shared One", "Shared Two"):
+            direct_db.register_cleanup("contributors", "display_name", name)
+            direct_db.register_cleanup("contributor_aliases", "alias", name)
+        for media_id in (media_a, media_b, media_c):
+            direct_db.register_cleanup("contributor_credits", "media_id", media_id)
 
         response = self._entries(auth_client, user_id, library_id, sort="resonance")
 

@@ -11,7 +11,6 @@ from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
 from nexus.responses import ok
 from nexus.schemas.podcast import (
-    PodcastEnsureRequest,
     PodcastOpmlImportRequest,
     PodcastSubscribeRequest,
     PodcastSubscriptionSettingsPatchRequest,
@@ -19,7 +18,6 @@ from nexus.schemas.podcast import (
 from nexus.services import library_entries
 from nexus.services.podcasts import discovery as podcast_discovery_service
 from nexus.services.podcasts import episodes as podcast_episodes_service
-from nexus.services.podcasts import identity as podcast_identity_service
 from nexus.services.podcasts import poll as podcast_sync_service
 from nexus.services.podcasts import subscriptions as podcast_subscription_service
 from nexus.services.podcasts import subscriptions_query as podcast_subscriptions_query_service
@@ -38,18 +36,6 @@ def discover_podcasts(
     _ = viewer
     rows = podcast_discovery_service.discover_podcasts(db, q, limit=limit)
     return ok(rows)
-
-
-@router.post("/podcasts/ensure")
-def ensure_podcast(
-    body: PodcastEnsureRequest,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict:
-    """Ensure one discovered podcast exists locally and return its local id."""
-    _ = viewer
-    out = podcast_identity_service.ensure_podcast(db, body)
-    return ok(out)
 
 
 @router.post("/podcasts/subscriptions")

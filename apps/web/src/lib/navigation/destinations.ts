@@ -5,7 +5,7 @@
  * rows are NOT destinations (they have no href) — they live in the Launcher providers.
  */
 
-import { Sparkles, type LucideIcon } from "lucide-react";
+import { Sparkles, UserRound, type LucideIcon } from "lucide-react";
 
 export interface Destination {
   id: string;
@@ -39,12 +39,17 @@ export const DESTINATIONS: Destination[] = [
     match: { exact: ["/libraries"], prefix: ["/libraries/"] },
   },
   {
+    // No root Authors directory page or fixed nav item (author-dedup cutover §7):
+    // slot-less, so it stays out of the nav rail/sheet but keeps the single
+    // registry entry the standing head, Launcher, and the "Go to Authors"
+    // keybinding derive from. It opens Search with People selected — an explicit
+    // icon is required because the /authors root pane route (which used to supply
+    // the fallback icon) is deleted, and it declares no route `match`.
     id: "authors",
     label: "Authors",
-    href: "/authors",
+    href: "/search?kinds=people",
     keywords: ["contributors", "people", "writers"],
-    slot: "primary",
-    match: { exact: ["/authors"], prefix: ["/authors/"] },
+    icon: UserRound,
   },
   {
     id: "podcasts",

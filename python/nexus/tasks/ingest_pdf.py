@@ -12,6 +12,7 @@ from uuid import UUID
 from nexus.db.models import Media, ProcessingStatus
 from nexus.db.session import get_session_factory
 from nexus.logging import get_logger
+from nexus.services import contributors
 from nexus.services.media_processing_state import (
     mark_failed,
     mark_ready_for_reading,
@@ -23,7 +24,7 @@ from nexus.services.pdf_ingest import (
     PdfExtractionResult,
     extract_pdf_artifacts,
 )
-from nexus.services.pdf_metadata import persist_pdf_metadata
+from nexus.services.pdf_metadata import build_pdf_author_observation, persist_pdf_metadata
 from nexus.storage.client import get_storage_client
 from nexus.tasks.enrich_metadata import dispatch_enrich_metadata
 
@@ -102,7 +103,24 @@ def ingest_pdf(
 
         assert isinstance(result, PdfExtractionResult)
 
+        # Persist source work and commit WITHOUT crossing ready, then apply the
+        # author observation through the facade in a fresh session (spec 2.4 /
+        # D-13); ready is only crossed after the author op commits.
         persist_pdf_metadata(db, media, result)
+        db.commit()
+
+        observation, truncated = build_pdf_author_observation(result)
+        if truncated:
+            logger.info("pdf_author_truncation", media_id=media_id, truncated=truncated)
+        contributors.replace_observed_role_slices(
+            target=contributors.MediaTarget(media_uuid),
+            observation=observation,
+            source="pdf_metadata",
+        )
+
+        media = db.get(Media, media_uuid)
+        if media is None or media.processing_status != ProcessingStatus.extracting:
+            return {"status": "skipped", "reason": "state_changed"}
         mark_ready_for_reading(db, media)
 
         if not result.has_text:

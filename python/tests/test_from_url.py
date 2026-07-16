@@ -124,7 +124,17 @@ def _bootstrap_user(auth_client, user_id):
 def remote_http(monkeypatch):
     """Mock the remote HTTP boundary while preserving real URL/SSRF validation."""
 
+    real_getaddrinfo = socket.getaddrinfo
+
     def _getaddrinfo(host: str, port: int | str | None, *args, **kwargs):
+        if host in {"localhost", "127.0.0.1", "::1"}:
+            # Loopback must keep resolving for real: local test services
+            # (postgres/minio/httpserver) are dialed mid-test — the author
+            # facade opens fresh DB connections during source attempts, and a
+            # hijacked loopback lookup would send psycopg to a black-hole IP
+            # until connect_timeout. SSRF tests reject loopback URLs at
+            # validation, before any DNS lookup, so they are unaffected.
+            return real_getaddrinfo(host, port, *args, **kwargs)
         if host == "private.test":
             return [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("10.0.0.1", int(port or 80)))]
         return [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("93.184.216.34", int(port or 80)))]
@@ -2526,6 +2536,117 @@ class TestFromUrlXPost:
 
         assert response.status_code == 400
         assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
+
+    def test_x_quoted_post_author_converges_after_author_step_crash(
+        self, auth_client, direct_db: DirectSessionManager, remote_http, monkeypatch
+    ):
+        """AC 9 for the quoted-post sub-media: it commits (and crosses ready) with
+        the source transaction, BEFORE the author ops. A crash in that window must
+        not lose the quoted author forever — the retry reuses the quoted media
+        (quote_created=False) and must still re-observe its author (spec 2.4)."""
+        import nexus.services.x_ingest as x_ingest_module
+
+        _patch_x_api_settings(monkeypatch)
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        _expect_x_author_thread(remote_http, "9999994444")
+
+        response = auth_client.post(
+            "/media/from_url",
+            json={"url": "https://x.com/ada/status/9999994444"},
+            headers=auth_headers(user_id),
+        )
+        assert response.status_code == 202
+        data = response.json()["data"]
+        media_id = UUID(data["media_id"])
+        source_attempt_id = UUID(data["source_attempt_id"])
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("media_source_attempts", "id", source_attempt_id)
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+
+        real_apply = x_ingest_module._apply_x_author_observations
+
+        def _crash_before_author_ops(observations) -> None:
+            raise RuntimeError("simulated crash before the author step")
+
+        monkeypatch.setattr(
+            x_ingest_module, "_apply_x_author_observations", _crash_before_author_ops
+        )
+        first_result = _run_source_attempt_for_media(direct_db, media_id)
+        assert first_result["status"] == "failed"
+
+        with direct_db.session() as session:
+            quoted = session.execute(
+                text("""
+                    SELECT id, processing_status
+                    FROM media
+                    WHERE provider = 'x' AND provider_id = 'post:4444444444'
+                """)
+            ).one()
+        quoted_media_id = quoted[0]
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", quoted_media_id)
+        direct_db.register_cleanup("library_entries", "media_id", quoted_media_id)
+        direct_db.register_cleanup("media", "id", quoted_media_id)
+        assert quoted[1] == "ready_for_reading"
+        with direct_db.session() as session:
+            quoted_credits = session.execute(
+                text("SELECT count(*) FROM contributor_credits WHERE media_id = :m"),
+                {"m": quoted_media_id},
+            ).scalar_one()
+        assert quoted_credits == 0, "the crash window leaves the quoted media author-less"
+
+        monkeypatch.setattr(x_ingest_module, "_apply_x_author_observations", real_apply)
+        retry_response = auth_client.post(
+            f"/media/{media_id}/retry",
+            json={"from_stage": "source"},
+            headers=auth_headers(user_id),
+        )
+        assert retry_response.status_code == 202
+        retry_attempt_id = UUID(retry_response.json()["data"]["source_attempt_id"])
+        direct_db.register_cleanup("media_source_attempts", "id", retry_attempt_id)
+
+        retry_result = _run_source_attempt_for_media(direct_db, media_id)
+        assert retry_result["processing_status"] == "ready_for_reading"
+        _register_x_provider_event_cleanup(
+            direct_db,
+            "9999994444",
+            "author-thread:10:9999994444",
+        )
+
+        with direct_db.session() as session:
+            quoted_rows = session.execute(
+                text("""
+                    SELECT cc.credited_name, cc.role, cc.contributor_id
+                    FROM contributor_credits cc
+                    WHERE cc.media_id = :m
+                    ORDER BY cc.ordinal
+                """),
+                {"m": quoted_media_id},
+            ).fetchall()
+            thread_rows = session.execute(
+                text("""
+                    SELECT cc.credited_name, cc.role, cc.contributor_id
+                    FROM contributor_credits cc
+                    WHERE cc.media_id = :m
+                    ORDER BY cc.ordinal
+                """),
+                {"m": media_id},
+            ).fetchall()
+            reused_quoted_count = session.execute(
+                text("""
+                    SELECT count(*) FROM media
+                    WHERE provider = 'x' AND provider_id = 'post:4444444444'
+                """)
+            ).scalar_one()
+        for contributor_id in {row[2] for row in [*quoted_rows, *thread_rows]}:
+            direct_db.register_cleanup("contributors", "id", contributor_id)
+            direct_db.register_cleanup("contributor_aliases", "contributor_id", contributor_id)
+            direct_db.register_cleanup("contributor_external_ids", "contributor_id", contributor_id)
+            direct_db.register_cleanup("contributor_credits", "contributor_id", contributor_id)
+        assert reused_quoted_count == 1, "the retry must reuse the quoted media, not duplicate it"
+        assert [(row[0], row[1]) for row in quoted_rows] == [("Grace Hopper", "author")]
+        assert [(row[0], row[1]) for row in thread_rows] == [("Ada Lovelace", "author")]
 
 
 class TestBrowserArticleCapture:

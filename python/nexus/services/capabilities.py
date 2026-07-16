@@ -1,7 +1,31 @@
-"""Capabilities derivation for media items."""
+"""Capabilities derivation for media items.
+
+Also the single owner of the two author-editing permission predicates (spec 6).
+The same functions shape the returned capabilities on the media DTO and
+re-authorize each author mutation inside its transaction — the facade calls them
+directly so the wire capability and the enforced rule can never diverge.
+"""
 
 from nexus.db.models import MediaKind, ProcessingStatus, TranscriptCoverage, TranscriptState
 from nexus.schemas.media import CapabilitiesOut
+
+# Roles that may rename a canonical contributor (spec 6:
+# canRename = isAdministrator OR canCurateContributors).
+CONTRIBUTOR_CURATOR_ROLES = frozenset({"admin", "contributor_curator"})
+
+
+def can_edit_media_authors(*, can_read: bool, is_creator: bool, is_admin: bool) -> bool:
+    """Spec 6: canEditAuthors = canReadMedia AND (isMediaCreator OR isAdministrator).
+
+    Null/system-creator media therefore remains editable only by an administrator.
+    """
+    return can_read and (is_creator or is_admin)
+
+
+def can_rename_contributor(roles: frozenset[str]) -> bool:
+    """Spec 6: canRename = isAdministrator OR canCurateContributors."""
+    return not CONTRIBUTOR_CURATOR_ROLES.isdisjoint(roles)
+
 
 READABLE_PROCESSING_STATUSES = frozenset(
     {
@@ -113,6 +137,7 @@ def derive_capabilities(
     retrieval_active_ready: bool | None = None,
     can_delete: bool = False,
     is_creator: bool = False,
+    is_admin: bool = False,
     requested_url_exists: bool = False,
     source_retry_available: bool = False,
     source_refresh_available: bool = False,
@@ -189,6 +214,15 @@ def derive_capabilities(
         and processing_status in _REFRESHABLE_PROCESSING_STATUSES
     )
     can_retry_metadata = is_creator and processing_status in READABLE_PROCESSING_STATUSES
+    # Spec §6 canReadMedia is the ACCESS predicate (auth/permissions.can_read_media
+    # — library/provenance membership), not this file's content-readability
+    # can_read. Media DTOs are assembled only for media the viewer can access, so
+    # the access term is true by construction here — the same value the PUT
+    # enforcement passes after re-checking can_read_media. Author editing must
+    # not depend on processing state (a failed ingest still has editable authors).
+    can_edit_authors = can_edit_media_authors(
+        can_read=True, is_creator=is_creator, is_admin=is_admin
+    )
 
     return CapabilitiesOut(
         can_read=can_read,
@@ -201,5 +235,6 @@ def derive_capabilities(
         can_retry=can_retry,
         can_refresh_source=can_refresh_source,
         can_retry_metadata=can_retry_metadata,
+        can_edit_authors=can_edit_authors,
         can_read_embeds=is_document and kind == MediaKind.web_article.value,
     )

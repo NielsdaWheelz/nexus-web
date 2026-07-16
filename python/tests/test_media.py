@@ -34,7 +34,6 @@ from nexus.db.models import (
 )
 from nexus.services.billing_entitlements import grant_entitlement_override
 from nexus.services.content_indexing import rebuild_fragment_content_index
-from nexus.services.contributor_credits import replace_media_contributor_credits
 from nexus.services.fragment_blocks import insert_fragment_blocks
 from nexus.services.web_article_structure import prepare_web_article_fragment
 from nexus.storage.paths import build_epub_asset_storage_path
@@ -2688,6 +2687,7 @@ class TestRetryWebArticleEndpoint:
 
         media_id = uuid4()
         fragment_id = uuid4()
+        contributor_id = uuid4()
         with direct_db.session() as session:
             from nexus.services.content_indexing import rebuild_fragment_content_index
 
@@ -2740,10 +2740,24 @@ class TestRetryWebArticleEndpoint:
                 """),
                 {"fragment_id": fragment_id},
             )
-            replace_media_contributor_credits(
-                session,
-                media_id=media_id,
-                credits=[{"name": "Old Author", "role": "author", "ordinal": 0}],
+            # Seed a stale author credit directly; retry must wipe it (asserted
+            # below). The legacy replace-all writer is a deleted cutover scaffold.
+            session.execute(
+                text(
+                    "INSERT INTO contributors (id, handle, display_name)"
+                    " VALUES (:id, :handle, :name)"
+                ),
+                {"id": contributor_id, "handle": contributor_id.hex[:12], "name": "Old Author"},
+            )
+            session.execute(
+                text(
+                    "INSERT INTO contributor_credits"
+                    " (id, contributor_id, media_id, credited_name,"
+                    "  normalized_credited_name, role, ordinal, source)"
+                    " VALUES (:id, :cid, :media_id, 'Old Author', 'old author',"
+                    "  'author', 0, 'manual')"
+                ),
+                {"id": uuid4(), "cid": contributor_id, "media_id": media_id},
             )
             fragment = session.get(Fragment, fragment_id)
             assert fragment is not None
@@ -2756,6 +2770,7 @@ class TestRetryWebArticleEndpoint:
             )
             session.commit()
 
+        direct_db.register_cleanup("contributors", "id", contributor_id)
         direct_db.register_cleanup("fragment_blocks", "fragment_id", fragment_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
@@ -2796,7 +2811,6 @@ class TestRetryWebArticleEndpoint:
                     SELECT
                         (SELECT count(*) FROM fragments WHERE media_id = :media_id),
                         (SELECT count(*) FROM fragment_blocks WHERE fragment_id = :fragment_id),
-                        (SELECT count(*) FROM contributor_credits WHERE media_id = :media_id),
                         (SELECT count(*) FROM content_index_states WHERE owner_kind = 'media' AND owner_id = :media_id),
                         (SELECT count(*) FROM content_chunks WHERE owner_kind = 'media' AND owner_id = :media_id),
                         (SELECT count(*) FROM evidence_spans WHERE owner_kind = 'media' AND owner_id = :media_id),
@@ -2804,7 +2818,16 @@ class TestRetryWebArticleEndpoint:
                 """),
                 {"media_id": media_id, "fragment_id": fragment_id},
             ).one()
-            assert tuple(artifact_counts) == (0, 0, 0, 0, 0, 0, 0)
+            assert tuple(artifact_counts) == (0, 0, 0, 0, 0, 0)
+
+            # Author credits are NOT rewriteable artifacts: a refresh/re-ingest
+            # keeps the prior author slice until the post-commit observation
+            # replaces it (spec 2.4, AC 10). Retry preserves them.
+            credit_count = session.execute(
+                text("SELECT count(*) FROM contributor_credits WHERE media_id = :media_id"),
+                {"media_id": media_id},
+            ).scalar_one()
+            assert credit_count == 1
 
     def test_retry_failed_web_article_reuses_idempotency_key(
         self,

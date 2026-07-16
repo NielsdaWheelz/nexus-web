@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID, uuid4
@@ -14,9 +15,13 @@ from nexus.coerce import coerce_non_negative_int, coerce_positive_int
 from nexus.jobs.queue import enqueue_unique_job
 from nexus.logging import get_logger
 from nexus.services import consumption_queue as consumption_queue_service
-from nexus.services.contributor_credits import (
-    load_contributor_credits_for_podcasts,
-    replace_media_contributor_credits,
+from nexus.services.contributor_credits import load_contributor_credits_for_podcasts
+from nexus.services.contributor_taxonomy import (
+    NOT_OBSERVED,
+    ContributorObservationBatch,
+    ObservedRoleSlices,
+    RawCreditEntry,
+    build_observation,
 )
 from nexus.services.library_entries import assign_libraries_for_media_in_current_transaction
 from nexus.services.rss_transcript_fetch import fetch_rss_transcript
@@ -43,6 +48,39 @@ from .provider import (
 logger = get_logger(__name__)
 
 
+@dataclass(frozen=True)
+class SubscriptionIngestResult:
+    """Result of ingesting a subscription's selected episodes.
+
+    ``author_observations`` carries one ``(media_id, observation)`` per touched
+    episode whose RSS/inherited author text produced a real slice. The caller
+    applies each through the author facade in a fresh session *after* the ingest
+    transaction commits (spec 2.4); episodes that observed nothing are absent, so
+    their prior credits are preserved (D-5/D-16).
+    """
+
+    ingested_episode_count: int
+    reused_episode_count: int
+    author_observations: tuple[tuple[UUID, ObservedRoleSlices], ...]
+
+
+def _build_episode_author_observation(author_names: list[str]) -> ContributorObservationBatch:
+    """Cleaned episode/inherited author names -> one ``{author}`` observation.
+
+    RSS carries no person identity key (spec 5). An empty list is ``NOT_OBSERVED``
+    (absent data preserves prior credits, never an erase — D-5/D-16). The shared
+    :func:`build_observation` cleans, dedupes, and truncates to the 20-row cap.
+    """
+    if not author_names:
+        return NOT_OBSERVED
+    batch, truncated = build_observation(
+        {"author": [RawCreditEntry(credited_name=name) for name in author_names]}
+    )
+    if truncated:
+        logger.info("podcast_episode_author_truncated", truncated=truncated)
+    return batch
+
+
 def sync_subscription_ingest(
     *,
     db: Session,
@@ -51,11 +89,12 @@ def sync_subscription_ingest(
     feed_url: str,
     selected_episodes: list[dict[str, Any]],
     now: datetime,
-) -> tuple[int, int]:
+) -> SubscriptionIngestResult:
     ingested_episode_count = 0
     reused_episode_count = 0
     ingested_media_ids: list[UUID] = []
     enrichment_media_ids: set[UUID] = set()
+    author_observations: list[tuple[UUID, ObservedRoleSlices]] = []
     chapter_sync_rows: list[tuple[UUID, list[dict[str, Any]] | None]] = []
     transcript_sync_rows: list[dict[str, Any]] = []
     subscription_library_rows = db.execute(
@@ -172,20 +211,9 @@ def sync_subscription_ingest(
                     "rss_transcript_url": rss_transcript_url,
                 },
             )
-            replace_media_contributor_credits(
-                db,
-                media_id=media_id,
-                source="rss",
-                credits=[
-                    {
-                        "name": name[:255],
-                        "role": "author",
-                        "ordinal": sort_order,
-                        "source": "rss",
-                    }
-                    for sort_order, name in enumerate(author_names)
-                ],
-            )
+            observation = _build_episode_author_observation(author_names)
+            if isinstance(observation, ObservedRoleSlices):
+                author_observations.append((media_id, observation))
             if not author_names:
                 enrichment_media_ids.add(media_id)
             reused_episode_count += 1
@@ -300,20 +328,9 @@ def sync_subscription_ingest(
                     "created_at": now,
                 },
             )
-            replace_media_contributor_credits(
-                db,
-                media_id=media_id,
-                source="rss",
-                credits=[
-                    {
-                        "name": name[:255],
-                        "role": "author",
-                        "ordinal": sort_order,
-                        "source": "rss",
-                    }
-                    for sort_order, name in enumerate(author_names)
-                ],
-            )
+            observation = _build_episode_author_observation(author_names)
+            if isinstance(observation, ObservedRoleSlices):
+                author_observations.append((media_id, observation))
             if not author_names:
                 enrichment_media_ids.add(media_id)
             assign_libraries_for_media_in_current_transaction(
@@ -453,7 +470,11 @@ def sync_subscription_ingest(
                 error=str(exc),
             )
 
-    return ingested_episode_count, reused_episode_count
+    return SubscriptionIngestResult(
+        ingested_episode_count=ingested_episode_count,
+        reused_episode_count=reused_episode_count,
+        author_observations=tuple(author_observations),
+    )
 
 
 def _upsert_podcast_episode_chapters(

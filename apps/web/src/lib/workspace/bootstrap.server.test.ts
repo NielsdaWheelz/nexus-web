@@ -211,26 +211,40 @@ describe("loadWorkspaceBootstrap", () => {
     );
   });
 
-  it("composes the author pane resource with snake-to-camel mapping", async () => {
+  it("composes the author pane resource with the detail + first works page", async () => {
     requestHeaders.set(REQUEST_PATH_HEADER, "/authors/jane");
-    const alias = { name: "J. Doe" };
-    const externalId = { provider: "isni", value: "0000" };
-    const work = { id: "work-1", title: "A Book" };
-    const contributor = { aliases: [alias], external_ids: [externalId] };
+    const detail = {
+      handle: "jane",
+      href: "/authors/jane",
+      displayName: "Jane Doe",
+      otherNames: ["J. Doe"],
+      canRename: true,
+    };
+    const work = {
+      title: "A Book",
+      href: "/media/work-1",
+      contentKind: "epub",
+      date: "2020-01-01",
+      roleFacts: [{ creditedName: "Jane Doe", role: "author", rawRole: null }],
+    };
     respondWith({
       "/me/reader-profile": PROFILE_OK,
-      "/contributors/jane": { data: contributor },
-      "/contributors/jane/works?limit=100": { data: { works: [work] } },
+      "/contributors/jane": { data: detail },
+      "/contributors/jane/works?limit=100": { data: { works: [work], nextCursor: null } },
     });
 
     const result = await loadWorkspaceBootstrap(false);
 
     expect(result.resources["author:jane"]).toEqual({
-      contributor,
-      aliases: [alias],
-      externalIds: [externalId],
+      detail: {
+        handle: "jane",
+        href: "/authors/jane",
+        displayName: "Jane Doe",
+        otherNames: ["J. Doe"],
+        canRename: true,
+      },
       works: [work],
-      workFilterOptions: [work],
+      worksNextCursor: null,
     });
   });
 

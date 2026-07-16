@@ -426,6 +426,9 @@ def create_test_media_in_library(
         title=title,
         canonical_source_url="https://example.com/article",
         processing_status=ProcessingStatus(status),
+        # The passed user owns this media; creator-derived capabilities
+        # (can_edit_authors, can_retry_metadata, ...) apply to them.
+        created_by_user_id=user_id,
     )
     session.add(media)
     session.flush()

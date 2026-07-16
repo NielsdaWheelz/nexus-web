@@ -16,7 +16,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
-from nexus.schemas.contributors import ContributorCreditOut, ContributorOut
+from nexus.schemas.contributors import ContributorCreditOut
 from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.schemas.retrieval import RetrievalLocator, validate_locator_for_result_type
 
@@ -169,13 +169,28 @@ class SearchResultFragmentOut(SearchResultBaseOut):
         return self
 
 
+class SearchResultContributorIdentityOut(BaseModel):
+    """Minimal contributor identity embedded in a contributor search hit (D-33).
+
+    The narrowed replacement for the old nested full ``ContributorOut`` on the
+    ``/search`` wire: handle + display name only. No status, kind, sort name,
+    disambiguation, aliases, or external ids ever reach this surface (AC 24).
+    The ``/search`` wire is snake-case throughout (``ok(by_alias=False)``).
+    """
+
+    handle: str
+    display_name: str
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class SearchResultContributorOut(SearchResultBaseOut):
     """Typed search result for contributor identity hits."""
 
     type: Literal["contributor"]
     id: str
     contributor_handle: str
-    contributor: ContributorOut
+    contributor: SearchResultContributorIdentityOut
 
 
 class SearchResultNoteBlockOut(SearchResultBaseOut):

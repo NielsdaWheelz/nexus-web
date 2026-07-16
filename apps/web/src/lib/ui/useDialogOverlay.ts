@@ -23,12 +23,19 @@ export function useDialogOverlay(args: {
   onDismiss: () => void;
   initialFocus?: (container: HTMLElement) => HTMLElement | null;
   returnFocusFallback?: () => HTMLElement | null;
+  /**
+   * Read at close time; when it returns true, focus is NOT restored to the opener
+   * (a navigating dispatch already claimed focus at the destination). Dismissal
+   * paths omit it and keep the default return-focus.
+   */
+  skipReturnFocus?: () => boolean;
   focusKey?: unknown;
 }): void {
-  const { ref, active, onDismiss, initialFocus, returnFocusFallback, focusKey } = args;
+  const { ref, active, onDismiss, initialFocus, returnFocusFallback, skipReturnFocus, focusKey } =
+    args;
   useBodyOverflowLock(active);
   useFocusTrap(ref, active);
-  useReturnFocus(active, returnFocusFallback);
+  useReturnFocus(active, returnFocusFallback, { skip: skipReturnFocus });
   useInitialFocus(ref, active, { select: initialFocus, key: focusKey });
   useEscapeKey(active, onDismiss);
 }
